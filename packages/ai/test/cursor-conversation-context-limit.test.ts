@@ -3,9 +3,11 @@ import {
 	forgetCursorConversationContextLimit,
 	getCursorConversationContextLimit,
 	recordCursorConversationContextLimit,
+	setCursorActiveConversationWire,
 } from "../src/cursor/conversation-context-limit.ts";
 
 const SESSION = "session-under-test";
+const BASE_CONVERSATION = "base-conversation";
 const CONVERSATION_A = "conversation-a";
 const CONVERSATION_B = "conversation-b";
 
@@ -33,6 +35,55 @@ describe("cursor conversation context limit", () => {
 		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 262_000);
 
 		expect(getCursorConversationContextLimit(SESSION, CONVERSATION_A)).toBe(262_000);
+	});
+
+	it("keeps the live wire's limit reachable after Cursor rotates the wire id", () => {
+		setCursorActiveConversationWire(SESSION, BASE_CONVERSATION, CONVERSATION_A);
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 200_000);
+
+		// Cursor rotates the wire id. The rotated wire has not reported yet, so its
+		// budget stays unknown instead of inheriting the previous wire's limit.
+		setCursorActiveConversationWire(SESSION, BASE_CONVERSATION, CONVERSATION_B);
+		expect(getCursorConversationContextLimit(SESSION, BASE_CONVERSATION)).toBeUndefined();
+
+		// Its own checkpoint reported the server limit, which admission must find
+		// through the base conversation identity it names.
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_B, 200_000);
+		expect(getCursorConversationContextLimit(SESSION, BASE_CONVERSATION)).toBe(200_000);
+	});
+
+	it("does not let a brand-new conversation inherit a rotated conversation's limit", () => {
+		setCursorActiveConversationWire(SESSION, BASE_CONVERSATION, CONVERSATION_B);
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_B, 200_000);
+
+		setCursorActiveConversationWire(SESSION, "new-base", "new-wire");
+
+		expect(getCursorConversationContextLimit(SESSION, "new-base")).toBeUndefined();
+		// The rotated conversation keeps its own reported limit.
+		expect(getCursorConversationContextLimit(SESSION, BASE_CONVERSATION)).toBe(200_000);
+	});
+
+	it("never lets a zero checkpoint inherit the previous wire's limit after a rotation", () => {
+		setCursorActiveConversationWire(SESSION, BASE_CONVERSATION, CONVERSATION_A);
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 200_000);
+
+		setCursorActiveConversationWire(SESSION, BASE_CONVERSATION, CONVERSATION_B);
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_B, 0);
+
+		expect(getCursorConversationContextLimit(SESSION, BASE_CONVERSATION)).toBeUndefined();
+		expect(getCursorConversationContextLimit(SESSION)).toBeUndefined();
+	});
+
+	it("forgets the published wire on teardown", () => {
+		setCursorActiveConversationWire(SESSION, BASE_CONVERSATION, CONVERSATION_A);
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 200_000);
+
+		setCursorActiveConversationWire(SESSION, BASE_CONVERSATION, CONVERSATION_B);
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_B, 200_000);
+
+		forgetCursorConversationContextLimit(SESSION);
+
+		expect(getCursorConversationContextLimit(SESSION, BASE_CONVERSATION)).toBeUndefined();
 	});
 
 	it("keeps a limit when a later checkpoint for the same conversation omits it", () => {

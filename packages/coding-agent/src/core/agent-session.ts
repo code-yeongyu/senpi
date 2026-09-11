@@ -1655,10 +1655,12 @@ export class AgentSession {
 		this.agent.transformContext = async (messages, signal) => {
 			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
 			if (this.model?.provider === "cursor" || this.model?.provider === "cursor-cli-oauth") {
-				// The provider derives the conversation it runs on as
+				// The provider derives the base conversation id as
 				// `options.conversationId ?? options.sessionId`; this host never overrides
-				// `conversationId`, so that is the agent's session id. Passing it makes a
-				// replacement conversation bootstrap at the legacy cap instead of
+				// `conversationId`, so that is the agent's session id. The provider
+				// publishes the wire that base id currently resolves to, so this same id
+				// reaches the limit recorded after an in-call wire-id rotation, while a
+				// replacement conversation bootstraps at the legacy cap instead of
 				// inheriting the previous conversation's reported limit.
 				const cursorSessionId = this.agent.sessionId ?? this.sessionManager.getSessionId();
 				return (

@@ -8,6 +8,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentServerMessageSchema } from "../src/api/cursor-agent/gen/agent_pb.ts";
 import { frameConnectMessage, stream as streamCursorAgent } from "../src/api/cursor-agent.ts";
 import { CURSOR_CONVERSATION_POISONED_MESSAGE } from "../src/api/cursor-conversation-rotation.ts";
+import {
+	forgetCursorConversationContextLimit,
+	getCursorConversationContextLimit,
+} from "../src/cursor/conversation-context-limit.ts";
 import type { Model } from "../src/types.ts";
 
 process.env.CURSOR_CONVERSATION_ID_STORE = join(mkdtempSync(join(tmpdir(), "cursor-rotate-")), "ids.json");
@@ -45,6 +49,20 @@ function endStreamErrorFrame(code: string, message: string): Buffer {
 	return frameConnectMessage(
 		new TextEncoder().encode(JSON.stringify({ error: { code, message } })),
 		CONNECT_END_STREAM_FLAG,
+	);
+}
+
+function checkpointFrame(usedTokens: number, maxTokens: number): Buffer {
+	return frameConnectMessage(
+		toBinary(
+			AgentServerMessageSchema,
+			create(AgentServerMessageSchema, {
+				message: {
+					case: "conversationCheckpointUpdate",
+					value: { tokenDetails: { usedTokens, maxTokens } },
+				},
+			}),
+		),
 	);
 }
 
@@ -86,6 +104,7 @@ describe("cursor-agent zero-token RE retry", () => {
 		// Rotation state is persisted per base conversation id, so each test needs
 		// its own store or the 3-rotation cap leaks across cases.
 		process.env.CURSOR_CONVERSATION_ID_STORE = join(mkdtempSync(join(tmpdir(), "cursor-rotate-")), "ids.json");
+		forgetCursorConversationContextLimit();
 	});
 
 	afterEach(async () => {
@@ -136,6 +155,35 @@ describe("cursor-agent zero-token RE retry", () => {
 		const second = await runStream(baseUrl, "sess-rotate-stream");
 		expect(runs).toBe(3);
 		expect(second.stopReason).not.toBe("error");
+	});
+
+	it("keeps the rotated wire's reported limit reachable for the session's admission", async () => {
+		let runs = 0;
+		const baseUrl = await startServer((stream) => {
+			runs += 1;
+			if (runs === 3) {
+				// The rotated wire's own checkpoint carries the real ceiling.
+				stream.write(checkpointFrame(17_962, 200_000));
+				stream.write(turnEndedFrame());
+				stream.end();
+				return;
+			}
+			stream.write(endStreamErrorFrame("resource_exhausted", "Error"));
+			stream.end();
+		});
+		const sessionId = "sess-rotation-limit";
+		const first = await runStream(baseUrl, sessionId);
+		expect(first.stopReason).toBe("error");
+		// The session's retry rotates the wire in-call; the checkpoint arrives on
+		// the new wire id, which the provider published as the live conversation.
+		const second = await runStream(baseUrl, sessionId);
+		expect(second.stopReason).not.toBe("error");
+		expect(runs).toBe(3);
+		// Admission names the session id, so that is the identity the recorded
+		// limit must resolve through after the rotation.
+		expect(getCursorConversationContextLimit(sessionId, sessionId)).toBe(200_000);
+		// A conversation that never reported inherits nothing.
+		expect(getCursorConversationContextLimit("sess-never-reported", "sess-never-reported")).toBeUndefined();
 	});
 
 	it("surfaces the poisoned-conversation error after the rotation cap", async () => {

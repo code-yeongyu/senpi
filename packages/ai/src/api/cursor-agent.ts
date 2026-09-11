@@ -24,6 +24,7 @@ import { CURSOR_COMPOSER_PROMPT, isCursorComposerModel } from "../cursor/compose
 import {
 	forgetCursorConversationContextLimit,
 	recordCursorConversationContextLimit,
+	setCursorActiveConversationWire,
 } from "../cursor/conversation-context-limit.ts";
 import { calculateCost } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
@@ -829,6 +830,9 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 
 				baseConversationId = options?.conversationId ?? options?.sessionId ?? randomUUID();
 				conversationId = rotationStore().getWireId(baseConversationId);
+				// Admission can only name the base conversation id; publish the wire this
+				// attempt runs on so a rotation cannot orphan the limit its checkpoint records.
+				setCursorActiveConversationWire(options?.sessionId, baseConversationId, conversationId);
 				registerConversationCacheKey(options?.sessionId, conversationId);
 				// Claim the conversation before the cap can see it: the count cap never
 				// evicts a live key, and every blob this attempt touches stays pinned

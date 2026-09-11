@@ -5,6 +5,7 @@ import {
 	forgetCursorConversationContextLimit,
 	getCursorConversationContextLimit,
 	recordCursorConversationContextLimit,
+	setCursorActiveConversationWire,
 } from "../../../../ai/src/cursor/conversation-context-limit.ts";
 import {
 	CURSOR_TOOL_RESULT_MAX_BYTES,
@@ -189,5 +190,46 @@ describe("1603 cursor history budget", () => {
 		const admitted = await transform(messages.slice());
 		expect(admitted.length).toBe(messages.length);
 		expect(serializedText(admitted)).toContain(CODEWORD);
+	});
+
+	it("keeps the reported budget after Cursor rotates the conversation's wire id", async () => {
+		const harness = await createHarness({ provider: "cursor", models: [{ id: "cursor", contextWindow: 100_000 }] });
+		harnesses.push(harness);
+		const sessionId = harness.sessionManager.getSessionId();
+		harness.agent.sessionId = sessionId;
+		const messages = reviewerCounterCaseMessages();
+		const transform = harness.agent.transformContext;
+		if (!transform) throw new Error("expected the installed Cursor transform");
+
+		const firstWire = `${sessionId}-wire-1`;
+		const rotatedWire = `${sessionId}-wire-2`;
+		try {
+			// The provider publishes the wire each attempt and records the limit that
+			// wire's checkpoint reported; the session id is the base identity admission
+			// names, so this is the provider's post-rotation sequence.
+			setCursorActiveConversationWire(sessionId, sessionId, firstWire);
+			recordCursorConversationContextLimit(sessionId, firstWire, SERVER_REPORTED_KIMI_K3_LIMIT);
+
+			// Cursor rotates the wire id in-call. The rotated conversation starts
+			// unknown, so admission falls back to exactly the bootstrap cap until its
+			// own positive checkpoint reports.
+			setCursorActiveConversationWire(sessionId, sessionId, rotatedWire);
+			expect(resolveCursorAdmissionMaxBytes(getCursorConversationContextLimit(sessionId, sessionId))).toBe(
+				CURSOR_TOOL_RESULT_MAX_BYTES,
+			);
+
+			// Its checkpoint reported the server limit; admission must size from that
+			// budget instead of collapsing the history at 50,000 bytes. All 3 messages
+			// and the sentinel survive.
+			recordCursorConversationContextLimit(sessionId, rotatedWire, SERVER_REPORTED_KIMI_K3_LIMIT);
+			expect(resolveCursorAdmissionMaxBytes(getCursorConversationContextLimit(sessionId, sessionId))).toBe(
+				resolveCursorAdmissionMaxBytes(SERVER_REPORTED_KIMI_K3_LIMIT),
+			);
+			const admitted = await transform(messages.slice());
+			expect(admitted.length).toBe(messages.length);
+			expect(serializedText(admitted)).toContain(CODEWORD);
+		} finally {
+			forgetCursorConversationContextLimit(sessionId);
+		}
 	});
 });

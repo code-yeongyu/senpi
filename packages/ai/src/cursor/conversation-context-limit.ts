@@ -7,9 +7,20 @@
  *
  * Limits are therefore keyed by the session/conversation pair, with the
  * session kept as the teardown scope, and each session also tracks which
- * conversation reported last. A report for a different conversation switches
- * the active one even when it carries no limit (the bootstrap checkpoint
- * reports `0`), so the previous conversation's value stops being returned.
+ * conversation is live (the last to report or be published). A report for a
+ * different conversation switches the active one even when it carries no
+ * limit (the bootstrap checkpoint reports `0`), so the previous
+ * conversation's value stops being returned.
+ *
+ * Cursor can rotate a conversation's wire id without changing the base
+ * conversation id the provider derives from `options.conversationId ??
+ * options.sessionId`, and the admission side only knows that base identity
+ * (this host's session id). The provider therefore publishes which wire
+ * conversation the base identity currently resolves to
+ * ({@link setCursorActiveConversationWire}); admission resolving the base
+ * through the published wire reaches the limit recorded by the live wire's
+ * checkpoint after a rotation, while the rotated wire contributes no limit
+ * until its own checkpoint reports one.
  */
 
 type CursorConversationLimit = {
@@ -21,9 +32,36 @@ type CursorConversationLimit = {
 const limitsByConversation = new Map<string, CursorConversationLimit>();
 const conversationsBySession = new Map<string, Set<string>>();
 const activeConversationBySession = new Map<string, string>();
+const wiresByBaseBySession = new Map<string, Map<string, string>>();
 
 function limitKey(sessionId: string, conversationId: string): string {
 	return `${sessionId}\u0000${conversationId}`;
+}
+
+/**
+ * Publishes `wireConversationId` as the conversation Cursor currently runs for
+ * `baseConversationId` under `sessionId`.
+ *
+ * The provider derives the wire id from the base id and can rotate it while
+ * the base id - the identity admission names - stays put. Publishing the live
+ * wire lets admission resolve that base identity to the conversation whose
+ * checkpoint reports the limit, so a rotation cannot orphan the limit. The
+ * wire keeps its own records, so the rotated wire contributes no limit until
+ * its own checkpoint reports one.
+ */
+export function setCursorActiveConversationWire(
+	sessionId: string | undefined,
+	baseConversationId: string | undefined,
+	wireConversationId: string | undefined,
+): void {
+	if (sessionId === undefined || baseConversationId === undefined || wireConversationId === undefined) return;
+	let wires = wiresByBaseBySession.get(sessionId);
+	if (wires === undefined) {
+		wires = new Map();
+		wiresByBaseBySession.set(sessionId, wires);
+	}
+	wires.set(baseConversationId, wireConversationId);
+	activeConversationBySession.set(sessionId, wireConversationId);
 }
 
 /**
@@ -63,7 +101,10 @@ export function recordCursorConversationContextLimit(
  *
  * Callers admitting a request must pass the conversation that request will
  * run on (`options.conversationId ?? options.sessionId`, mirroring how the
- * provider derives the base conversation id): a limit recorded for any other
+ * provider derives the base conversation id). When the provider has published
+ * the wire that base identity resolves to, the wire is authoritative: a
+ * rotation keeps the live wire's recorded limit reachable. Otherwise the id
+ * must name the active conversation, and a limit recorded for any other
  * conversation is never returned.
  */
 export function getCursorConversationContextLimit(
@@ -71,9 +112,17 @@ export function getCursorConversationContextLimit(
 	conversationId?: string,
 ): number | undefined {
 	if (sessionId === undefined) return undefined;
+	if (conversationId !== undefined) {
+		const publishedWireId = wiresByBaseBySession.get(sessionId)?.get(conversationId);
+		if (publishedWireId !== undefined) {
+			return limitsByConversation.get(limitKey(sessionId, publishedWireId))?.maxTokens;
+		}
+		const activeConversationId = activeConversationBySession.get(sessionId);
+		if (activeConversationId === undefined || conversationId !== activeConversationId) return undefined;
+		return limitsByConversation.get(limitKey(sessionId, activeConversationId))?.maxTokens;
+	}
 	const activeConversationId = activeConversationBySession.get(sessionId);
 	if (activeConversationId === undefined) return undefined;
-	if (conversationId !== undefined && conversationId !== activeConversationId) return undefined;
 	return limitsByConversation.get(limitKey(sessionId, activeConversationId))?.maxTokens;
 }
 
@@ -83,6 +132,7 @@ export function forgetCursorConversationContextLimit(sessionId?: string): void {
 		limitsByConversation.clear();
 		conversationsBySession.clear();
 		activeConversationBySession.clear();
+		wiresByBaseBySession.clear();
 		return;
 	}
 	for (const conversationId of conversationsBySession.get(sessionId) ?? []) {
@@ -90,4 +140,5 @@ export function forgetCursorConversationContextLimit(sessionId?: string): void {
 	}
 	conversationsBySession.delete(sessionId);
 	activeConversationBySession.delete(sessionId);
+	wiresByBaseBySession.delete(sessionId);
 }
