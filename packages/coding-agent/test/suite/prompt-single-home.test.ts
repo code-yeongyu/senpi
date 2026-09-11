@@ -17,7 +17,6 @@ function registeredToolDescriptions(): Map<string, string> {
 		goalStoreRef: () => {
 			throw new Error("not used");
 		},
-		liveWakeSources: () => [],
 		accountCurrentAgentTurn: async () => null,
 		beginAgentGoalAccounting: () => {},
 		markGoalBlockedThisTurn: () => {},

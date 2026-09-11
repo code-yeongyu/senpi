@@ -40,9 +40,7 @@ export function mergeRemoteCatalogModels(
 			continue;
 		}
 		const staticModel = merged[index];
-		const fields = MODEL_CAPABILITY_FIELDS.filter(
-			(field) => !isDeepStrictEqual(staticModel[field], model[field]),
-		);
+		const fields = MODEL_CAPABILITY_FIELDS.filter((field) => !isDeepStrictEqual(staticModel[field], model[field]));
 		if (fields.length > 0) conflicts.push({ providerId, modelId: model.id, fields });
 		merged[index] = { ...staticModel, name: model.name, cost: model.cost };
 	}
