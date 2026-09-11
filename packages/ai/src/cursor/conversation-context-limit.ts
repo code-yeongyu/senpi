@@ -8,9 +8,10 @@
  * Limits are therefore keyed by the session/conversation pair, with the
  * session kept as the teardown scope, and each session also tracks which
  * conversation is live (the last to report or be published). A report for a
- * different conversation switches the active one even when it carries no
- * limit (the bootstrap checkpoint reports `0`), so the previous
- * conversation's value stops being returned.
+ * different conversation switches the active one even when it reports an
+ * explicit `0` (the bootstrap checkpoint), so the previous conversation's
+ * value stops being returned; a checkpoint whose `tokenDetails` is absent
+ * preserves whatever limit that conversation already had.
  *
  * Cursor can rotate a conversation's wire id without changing the base
  * conversation id the provider derives from `options.conversationId ??
@@ -65,19 +66,23 @@ export function setCursorActiveConversationWire(
 }
 
 /**
- * Records `maxTokens` for `conversationId` under `sessionId`.
+ * Records the limit a checkpoint reported for `conversationId` under
+ * `sessionId`, or the absence of a limit when the checkpoint had none.
  *
  * Reporting makes `conversationId` the session's active conversation, so a
  * checkpoint for a different conversation - including the zero-valued
  * bootstrap checkpoint - never lets it inherit the previous conversation's
- * limit. Non-positive or non-finite values are never recorded; for the
- * already active conversation they leave the existing limit in place, since a
- * later checkpoint may be a partial patch without token details.
+ * limit. The two non-positive cases mean different things: `undefined` is a
+ * checkpoint that carried no token details at all (a partial patch), so an
+ * existing limit stays in place, while an explicit non-positive report is the
+ * server stating there is no ceiling to admit against, so the conversation's
+ * recorded limit is dropped and admission falls back to the bootstrap byte
+ * cap. Non-finite values are never recorded and preserve.
  */
 export function recordCursorConversationContextLimit(
 	sessionId: string | undefined,
 	conversationId: string | undefined,
-	maxTokens: number,
+	maxTokens: number | undefined,
 ): void {
 	if (sessionId === undefined || conversationId === undefined) return;
 	let conversations = conversationsBySession.get(sessionId);
@@ -87,7 +92,11 @@ export function recordCursorConversationContextLimit(
 	}
 	conversations.add(conversationId);
 	activeConversationBySession.set(sessionId, conversationId);
-	if (!Number.isFinite(maxTokens) || maxTokens <= 0) return;
+	if (maxTokens === undefined || !Number.isFinite(maxTokens)) return;
+	if (maxTokens <= 0) {
+		limitsByConversation.delete(limitKey(sessionId, conversationId));
+		return;
+	}
 	limitsByConversation.set(limitKey(sessionId, conversationId), {
 		sessionId,
 		conversationId,

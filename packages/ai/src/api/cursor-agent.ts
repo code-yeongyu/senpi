@@ -950,10 +950,12 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				const onConversationCheckpoint = (checkpoint: ConversationStateStructure) => {
 					attemptSawCheckpoint = true;
 					conversationStateCache.set(conversationId!, checkpoint);
+					// `undefined` (this checkpoint carried no token details) preserves an
+					// earlier report; an explicit zero invalidates it.
 					recordCursorConversationContextLimit(
 						options?.sessionId,
 						conversationId,
-						checkpoint.tokenDetails?.maxTokens ?? 0,
+						checkpoint.tokenDetails?.maxTokens,
 					);
 				};
 				const healthFailThresholdMs =

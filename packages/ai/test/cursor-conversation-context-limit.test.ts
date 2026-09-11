@@ -86,11 +86,35 @@ describe("cursor conversation context limit", () => {
 		expect(getCursorConversationContextLimit(SESSION, BASE_CONVERSATION)).toBeUndefined();
 	});
 
-	it("keeps a limit when a later checkpoint for the same conversation omits it", () => {
+	it("keeps a limit when a later checkpoint for the same conversation carries no token details", () => {
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 200_000);
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, undefined);
+
+		expect(getCursorConversationContextLimit(SESSION, CONVERSATION_A)).toBe(200_000);
+		expect(getCursorConversationContextLimit(SESSION)).toBe(200_000);
+	});
+
+	it("drops a limit when the same conversation reports an explicit zero", () => {
 		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 200_000);
 		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 0);
 
-		expect(getCursorConversationContextLimit(SESSION, CONVERSATION_A)).toBe(200_000);
+		expect(getCursorConversationContextLimit(SESSION, CONVERSATION_A)).toBeUndefined();
+		expect(getCursorConversationContextLimit(SESSION)).toBeUndefined();
+
+		// A later positive checkpoint restores a limit.
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 262_000);
+		expect(getCursorConversationContextLimit(SESSION, CONVERSATION_A)).toBe(262_000);
+	});
+
+	it("drops the live wire's limit when its own checkpoint reports an explicit zero", () => {
+		setCursorActiveConversationWire(SESSION, BASE_CONVERSATION, CONVERSATION_A);
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 200_000);
+		expect(getCursorConversationContextLimit(SESSION, BASE_CONVERSATION)).toBe(200_000);
+
+		recordCursorConversationContextLimit(SESSION, CONVERSATION_A, 0);
+
+		expect(getCursorConversationContextLimit(SESSION, BASE_CONVERSATION)).toBeUndefined();
+		expect(getCursorConversationContextLimit(SESSION)).toBeUndefined();
 	});
 
 	it("does not return conversation A's limit for conversation B under the same session", () => {

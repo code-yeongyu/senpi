@@ -114,6 +114,28 @@ describe("1603 cursor history budget", () => {
 		expect(resolveCursorAdmissionMaxBytes(0)).toBe(CURSOR_TOOL_RESULT_MAX_BYTES);
 	});
 
+	it("drops back to exactly the legacy cap when the conversation reports an explicit zero", () => {
+		const session = "1603-explicit-zero-session";
+		try {
+			recordCursorConversationContextLimit(session, session, SERVER_REPORTED_KIMI_K3_LIMIT);
+			expect(resolveCursorAdmissionMaxBytes(getCursorConversationContextLimit(session, session))).toBe(
+				resolveCursorAdmissionMaxBytes(SERVER_REPORTED_KIMI_K3_LIMIT),
+			);
+
+			// Cursor's checkpoint reports an explicit zero: that invalidates the earlier
+			// 200000-token report instead of preserving it, so admission must fall back
+			// to exactly 50000 bytes.
+			recordCursorConversationContextLimit(session, session, 0);
+
+			expect(getCursorConversationContextLimit(session, session)).toBeUndefined();
+			expect(resolveCursorAdmissionMaxBytes(getCursorConversationContextLimit(session, session))).toBe(
+				CURSOR_TOOL_RESULT_MAX_BYTES,
+			);
+		} finally {
+			forgetCursorConversationContextLimit(session);
+		}
+	});
+
 	it("never shrinks the budget below the legacy cap", () => {
 		expect(resolveCursorAdmissionMaxBytes(1)).toBe(CURSOR_TOOL_RESULT_MAX_BYTES);
 	});
@@ -190,6 +212,35 @@ describe("1603 cursor history budget", () => {
 		const admitted = await transform(messages.slice());
 		expect(admitted.length).toBe(messages.length);
 		expect(serializedText(admitted)).toContain(CODEWORD);
+	});
+
+	it("admits at exactly the legacy cap through the installed transform after an explicit zero", async () => {
+		const harness = await createHarness({ provider: "cursor", models: [{ id: "cursor", contextWindow: 100_000 }] });
+		harnesses.push(harness);
+		const sessionId = harness.sessionManager.getSessionId();
+		harness.agent.sessionId = sessionId;
+		const messages = reviewerCounterCaseMessages();
+		const transform = harness.agent.transformContext;
+		if (!transform) throw new Error("expected the installed Cursor transform");
+		try {
+			recordCursorConversationContextLimit(sessionId, sessionId, SERVER_REPORTED_KIMI_K3_LIMIT);
+			const admitted = await transform(messages.slice());
+			expect(admitted.length).toBe(messages.length);
+			expect(serializedText(admitted)).toContain(CODEWORD);
+
+			// The conversation's later checkpoint reports an explicit zero, which must
+			// invalidate its own earlier report: admission falls back to exactly 50000
+			// bytes and the reviewer's counter-case collapses again.
+			recordCursorConversationContextLimit(sessionId, sessionId, 0);
+			expect(resolveCursorAdmissionMaxBytes(getCursorConversationContextLimit(sessionId, sessionId))).toBe(
+				CURSOR_TOOL_RESULT_MAX_BYTES,
+			);
+			const reverted = await transform(messages.slice());
+			expect(reverted.length).toBeLessThan(messages.length);
+			expect(serializedText(reverted)).not.toContain(CODEWORD);
+		} finally {
+			forgetCursorConversationContextLimit(sessionId);
+		}
 	});
 
 	it("keeps the reported budget after Cursor rotates the conversation's wire id", async () => {
