@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { readModelDataStructure } from "../scripts/model-data.ts";
 import { FORK_OWNED_MODEL_SHARDS, isPrunableModelShard, MODEL_SHARD_SUFFIX } from "../scripts/model-shards.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -54,5 +55,9 @@ describe("model catalog shard ownership", () => {
 
 	it("ignores files that are not catalog shards", () => {
 		expect(isPrunableModelShard("devin.ts", new Set())).toBe(false);
+	});
+
+	it("accepts the committed catalog while fork-owned shards sit beside the generated ones", () => {
+		expect(() => readModelDataStructure(packageRoot)).not.toThrow();
 	});
 });
