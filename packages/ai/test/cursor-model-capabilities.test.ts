@@ -6,6 +6,7 @@ import {
 	parseCursorVariantId,
 } from "../src/cursor/model-capabilities.ts";
 import fixture from "./fixtures/cursor-usable-models-20260818.json" with { type: "json" };
+import fable51Fixture from "./fixtures/cursor-usable-models-claude-fable-5-1-20260911.json" with { type: "json" };
 
 /**
  * C1 — capability table and context windows.
@@ -35,6 +36,7 @@ describe("cursor model capabilities", () => {
 			"claude-4.6-sonnet": 1000000,
 			"claude-4.6-opus": 1000000,
 			"claude-fable-5": 1000000,
+			"claude-fable-5-1": 1000000,
 			"claude-sonnet-5": 1000000,
 			"claude-opus-4-7": 1000000,
 			"claude-opus-4-8": 1000000,
@@ -65,6 +67,8 @@ describe("cursor model capabilities", () => {
 	it("resolves a variant id to its base capability with the same window", () => {
 		expect(getCursorBaseIdForVariant("kimi-k3-max")).toBe("kimi-k3");
 		expect(getCursorBaseIdForVariant("claude-fable-5-thinking-xhigh")).toBe("claude-fable-5");
+		expect(getCursorBaseIdForVariant("claude-fable-5-1-thinking-xhigh")).toBe("claude-fable-5-1");
+		expect(getCursorBaseIdForVariant("claude-fable-5-1-max")).toBe("claude-fable-5-1");
 		expect(getCursorBaseIdForVariant("claude-opus-4-7-thinking-high-fast")).toBe("claude-opus-4-7");
 		expect(getCursorCapabilityForBase(getCursorBaseIdForVariant("kimi-k3-max")!)?.window).toBe(1048576);
 	});
@@ -80,6 +84,19 @@ describe("cursor model capabilities", () => {
 		}
 		// Only the bare `default` pseudo-model may lack a capability entry.
 		expect([...uncovered].sort()).toEqual(["default"]);
+	});
+
+	it("gives claude-fable-5-1 the same 1M contract as claude-fable-5", () => {
+		const fable = getCursorCapabilityForBase("claude-fable-5");
+		const fable51 = getCursorCapabilityForBase("claude-fable-5-1");
+		expect(fable51).toEqual(fable);
+		expect(fable51?.window).toBe(1000000);
+		expect(fable51?.requestContext).toBe("1m");
+		for (const entry of fable51Fixture) {
+			const parsed = parseCursorVariantId(entry.id);
+			expect(parsed.baseId, entry.id).toBe("claude-fable-5-1");
+			expect(getCursorBaseIdForVariant(entry.id), entry.id).toBe("claude-fable-5-1");
+		}
 	});
 
 	it("marks evidence provenance for every entry", () => {

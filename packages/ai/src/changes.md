@@ -1,3 +1,23 @@
+## Cursor claude-fable-5-1 capability entry and variant aliases (2026-09-11)
+
+### What changed
+
+- `packages/ai/src/cursor/model-capabilities.ts`: `CURSOR_MODEL_CAPABILITIES` gains `claude-fable-5-1` with the same contract as `claude-fable-5` (1M window, 1M maxWindow, `300k` default context, `1m` request context, `low..max` effort ladder).
+- `packages/ai/src/cursor/cursor-variant-aliases.json`: ten new aliases (`claude-fable-5-1-{low,medium,high,xhigh,max}` and `claude-fable-5-1-thinking-{low,medium,high,xhigh,max}`) resolving to the `claude-fable-5-1` / `claude-fable-5-1-thinking` identities; `source` records the 2026-09-11 capture.
+- `packages/ai/test/fixtures/cursor-usable-models-claude-fable-5-1-20260911.json`: the ten raw `GetUsableModels` entries as Cursor served them on 2026-09-11, every display name carrying the "1M" label.
+
+### Why
+
+- Cursor started serving `claude-fable-5-1-*` after the 2026-08-18 capture the table and alias file were built from. Without a capability entry, `normalizeCursorCatalog` kept the ten variants ungrouped and stamped each with the 200000 unknown-family fallback, discarding the 1M window discovery had already recovered from the display name, so compaction fired at 200k on a 1M model; without an alias, `regroupStoredCursorModels` could never fold an existing store into the grouped shape, and the ten variants stayed ten separate 200k entries in the picker instead of one plain and one thinking identity with an effort ladder.
+
+### Why an extension could not handle it
+
+- The capability table and alias map are the core provider data both Cursor transports and the store migration read; there is no extension hook between discovery and the persisted catalog.
+
+### Expected merge conflict zones
+
+- `model-capabilities.ts` family table, `cursor-variant-aliases.json` Claude block, the expected-window map in `test/cursor-model-capabilities.test.ts`.
+
 ## Devin Cascade model transport (2026-09-12)
 
 ### What changed

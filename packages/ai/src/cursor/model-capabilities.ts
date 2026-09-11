@@ -77,9 +77,15 @@ function gpt(
  * local-ignore/qa-evidence/20260818-cursor-reasoning-levels/available-models-catalog.json).
  * `GetUsableModels` carries no window or parameter field, so this table is the
  * authoritative source; see .omo/plans/cursor-reasoning-levels.md §3.1/§6.
+ *
+ * `claude-fable-5-1` comes from the 2026-09-11 `GetUsableModels` capture
+ * (test/fixtures/cursor-usable-models-claude-fable-5-1-20260911.json): the same
+ * ten `-{level}` / `-thinking-{level}` variant ids as `claude-fable-5`, every
+ * display name carrying the "1M" label, so it takes the same 1M contract.
  */
 export const CURSOR_MODEL_CAPABILITIES: Record<string, CursorModelCapability> = {
 	"claude-fable-5": claude(1000000, 1000000, ["low", "medium", "high", "xhigh", "max"], "300k"),
+	"claude-fable-5-1": claude(1000000, 1000000, ["low", "medium", "high", "xhigh", "max"], "300k"),
 	"claude-sonnet-5": claude(1000000, 1000000, ["low", "medium", "high", "xhigh", "max"], "300k"),
 	"claude-opus-4-7": claude(1000000, 1000000, ["low", "medium", "high", "xhigh", "max"], "300k"),
 	"claude-opus-4-8": claude(1000000, 1000000, ["low", "medium", "high", "xhigh", "max"], "300k"),
