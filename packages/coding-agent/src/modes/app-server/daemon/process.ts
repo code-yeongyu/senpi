@@ -2,7 +2,12 @@ import { execFile } from "node:child_process";
 
 export interface DaemonPidFile {
 	readonly pid: number;
-	readonly processStartTime: string;
+	/**
+	 * Identity guard for the recorded pid. `null` means the host was registered while its
+	 * identity probe was starved: the pid is known, ownership is not provable, and no caller
+	 * may signal it on that record.
+	 */
+	readonly processStartTime: string | null;
 }
 
 export function parseDaemonPidFile(text: string): DaemonPidFile | undefined {
@@ -13,12 +18,17 @@ export function parseDaemonPidFile(text: string): DaemonPidFile | undefined {
 		if (error instanceof SyntaxError) return undefined;
 		throw error;
 	}
-	if (!isRecord(parsed) || typeof parsed.pid !== "number" || typeof parsed.processStartTime !== "string") {
+	const unguarded = parsed !== null && isRecord(parsed) && parsed.processStartTime === null;
+	if (
+		!isRecord(parsed) ||
+		typeof parsed.pid !== "number" ||
+		(!unguarded && typeof parsed.processStartTime !== "string")
+	) {
 		return undefined;
 	}
-	if (!Number.isInteger(parsed.pid) || parsed.pid <= 0 || parsed.processStartTime.trim() === "") {
-		return undefined;
-	}
+	if (!Number.isInteger(parsed.pid) || parsed.pid <= 0) return undefined;
+	if (unguarded) return { pid: parsed.pid, processStartTime: null };
+	if (typeof parsed.processStartTime !== "string" || parsed.processStartTime.trim() === "") return undefined;
 	return { pid: parsed.pid, processStartTime: parsed.processStartTime };
 }
 
@@ -64,6 +74,12 @@ export async function processMatchesPidFile(
 	isLive: (pid: number) => boolean = processIsLive,
 	retry: IdentityProbeRetry = {},
 ): Promise<boolean> {
+	// A record without an identity guard answers only the liveness half of the question: a pid
+	// that is gone is gone, and a live one stays unknown so it is never claimed or signalled.
+	if (pidFile.processStartTime === null) {
+		if (!isLive(pidFile.pid)) return false;
+		throw new ProcessIdentityUnreadableError(pidFile.pid, 0, new Error("pidfile carries no process identity guard"));
+	}
 	const attempts = Math.max(1, retry.attempts ?? 5);
 	const delayMs = retry.delayMs ?? 200;
 	let lastError: unknown;
