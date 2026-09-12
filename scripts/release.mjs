@@ -122,8 +122,7 @@ function runCommand(bin, args, extraEnv) {
 		execFileSync(bin, args, extraEnv ? { stdio: "inherit", env: { ...process.env, ...extraEnv } } : { stdio: "inherit" });
 	} catch (err) {
 		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
-		process.stderr.write(`[release] error: ${bin} ${args.join(" ")} failed: ${message}\n`);
-		process.exit(1);
+		throw new Error(`${bin} ${args.join(" ")} failed: ${message}`, { cause: err });
 	}
 }
 
@@ -374,4 +373,9 @@ function main() {
 	}
 }
 
-main();
+try {
+	main();
+} catch (err) {
+	process.stderr.write(`[release] error: ${err instanceof Error ? err.message : String(err)}\n`);
+	process.exitCode = 1;
+}

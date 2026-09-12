@@ -13,6 +13,9 @@ import { buildPublishArgs } from "./publish-command.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
 import { materializeMissingPublishRuntime } from "./materialize-publish-runtime.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
+import { queryNpmRegistry } from "./npm-registry.mjs";
+import { getPublicWorkspacePackages } from "./release-packages.mjs";
+import { registryPackageNames } from "./registry-packages.mjs";
 
 // Source packages retain their upstream names and private guard. Registry-backed
 // packages are published from temporary manifests under our scope, while bundled-only
@@ -20,15 +23,10 @@ import { parseNpmPackJson } from "./npm-pack-json.mjs";
 //
 // @code-yeongyu/senpi-server remains excluded because it is `private: true`, and
 // The sqlite session backend keeps upstream's independent semver line.
-const packages = [
-	{ directory: "packages/ai", name: "@code-yeongyu/senpi-ai", rewriteManifest: true },
-	{ directory: "packages/agent", name: "@code-yeongyu/senpi-agent-core", rewriteManifest: true },
-	{ directory: "packages/tui", name: "@code-yeongyu/senpi-tui", rewriteManifest: true },
-	{ directory: "packages/pty", name: "@code-yeongyu/senpi-pty", rewriteManifest: true },
-	{ directory: "packages/telemetry", name: "@code-yeongyu/senpi-telemetry", rewriteManifest: true },
-	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode", rewriteManifest: true },
-	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi", rewriteManifest: true },
-];
+const publishOrder = [...registryPackageNames.values()];
+const packages = getPublicWorkspacePackages()
+	.sort((a, b) => publishOrder.indexOf(a.name) - publishOrder.indexOf(b.name))
+	.map((pkg) => ({ ...pkg, rewriteManifest: true }));
 const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
 const temporaryPublishDirectories = [];
 
@@ -126,21 +124,7 @@ function validatePack(directory, sourceDirectory) {
 }
 
 function isPublished(name, version) {
-	const result = spawnSync(commandForPlatform("npm"), ["view", `${name}@${version}`, "version", "--json"], {
-		encoding: "utf8",
-		stdio: ["inherit", "pipe", "pipe"],
-	});
-
-	if (result.status === 0 && result.stdout.trim()) {
-		return true;
-	}
-
-	const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
-	if (result.status !== 0 && (output.includes("E404") || output.includes("404 Not Found"))) {
-		return false;
-	}
-
-	throw new Error(output ? `Failed to query ${name}@${version}\n${output}` : `Failed to query ${name}@${version}`);
+	return queryNpmRegistry(`${name}@${version}`, "version") !== null;
 }
 
 const packageVersions = new Map();
