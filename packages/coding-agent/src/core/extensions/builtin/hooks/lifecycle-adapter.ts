@@ -12,7 +12,7 @@ import { HOOK_CUSTOM_MESSAGE_TYPE, safeDiagnosticDetails } from "./prompt-adapte
 import { createHookTrustEntry, hookTrustId, listHookTrustRecords } from "./trust.ts";
 import type { ExecutableHookHandler, HookDiagnostic, HookInputWire, HookTrustState } from "./types.ts";
 
-type LifecycleHookEvent = "SessionStart" | "PreCompact" | "PostCompact";
+type LifecycleHookEvent = "SessionStart" | "PreCompact" | "PostCompact" | "Notification";
 
 type LifecycleDispatchOptions = {
 	readonly cwd: string;
@@ -68,6 +68,53 @@ export function buildPreCompactHookInput(event: SessionBeforeCompactEvent, ctx: 
 		...(event.customInstructions === undefined ? {} : { custom_instructions: event.customInstructions }),
 		...(transcriptPath === undefined ? {} : { transcript_path: transcriptPath }),
 	};
+}
+
+export type NotificationHookInput = {
+	readonly message: string;
+	readonly kind: string;
+	readonly title?: string;
+	readonly source?: string;
+	readonly requestId?: string;
+	readonly status?: string;
+};
+
+export function buildNotificationHookInput(input: NotificationHookInput, ctx: ExtensionContext): HookInputWire {
+	const transcriptPath = ctx.sessionManager.getSessionFile();
+	return {
+		cwd: ctx.cwd,
+		event: "Notification",
+		hook_event_name: "Notification",
+		kind: input.kind,
+		message: input.message,
+		session_id: ctx.sessionManager.getSessionId(),
+		...(input.title === undefined ? {} : { title: input.title }),
+		...(input.source === undefined ? {} : { notification_source: input.source }),
+		...(input.requestId === undefined ? {} : { request_id: input.requestId }),
+		...(input.status === undefined ? {} : { status: input.status }),
+		...(transcriptPath === undefined ? {} : { transcript_path: transcriptPath }),
+	};
+}
+
+export async function dispatchNotificationHookEvent(options: {
+	cwd: string;
+	handlers: readonly ExecutableHookHandler[];
+	input: HookInputWire;
+	signal?: AbortSignal;
+	trustState: HookTrustState;
+}): Promise<HookDispatchResult | undefined> {
+	return dispatchLifecycleHookEvent({
+		cwd: options.cwd,
+		handlers: options.handlers,
+		input: options.input,
+		matcherInputs: ["Notification"],
+		...(options.signal === undefined ? {} : { signal: options.signal }),
+		trustState: options.trustState,
+	});
+}
+
+export function notificationResultDetails(result: HookDispatchResult | undefined): LifecycleResultDetails {
+	return lifecycleResultDetails("Notification", result);
 }
 
 export function buildPostCompactHookInput(event: SessionCompactEvent, ctx: ExtensionContext): HookInputWire {

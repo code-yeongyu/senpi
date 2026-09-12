@@ -6,6 +6,7 @@ export const SUPPORTED_HOOK_EVENTS = [
 	"PreCompact",
 	"PostCompact",
 	"Stop",
+	"Notification",
 ] as const;
 
 export const UNSUPPORTED_KNOWN_HOOK_EVENTS = [
@@ -13,7 +14,6 @@ export const UNSUPPORTED_KNOWN_HOOK_EVENTS = [
 	"PermissionDenied",
 	"SubagentStart",
 	"SubagentStop",
-	"Notification",
 	"Setup",
 	"UserPromptExpansion",
 	"PostToolUseFailure",
@@ -193,6 +193,18 @@ export type HookInputWire =
 			readonly hook_event_name?: "Stop";
 			readonly session_id?: string;
 			readonly transcript_path?: string;
+	  }
+	| {
+			readonly event: "Notification";
+			readonly message: string;
+			readonly kind: string;
+			readonly title?: string;
+			readonly cwd: string;
+			readonly hook_event_name?: "Notification";
+			readonly session_id?: string;
+			readonly notification_source?: string;
+			readonly request_id?: string;
+			readonly status?: string;
 	  };
 
 export type HookOutputWire = {

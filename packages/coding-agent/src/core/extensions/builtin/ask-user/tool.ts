@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
 import { formatResultDetails, formatResultText, formatUserMessage } from "./format.ts";
+import { emitAskUserNotification } from "./notify.ts";
 import { createPendingQuestion } from "./pending.ts";
 import { getPendingQuestions, type QuestionDialogOptions, registerPendingQuestion } from "./registry.ts";
 import { renderCall, renderResult } from "./render.ts";
@@ -44,11 +45,13 @@ function deliverAnswer(
 	ctx: ExtensionContext,
 	request: QuestionRequest,
 	response: QuestionResponse,
+	variant: "codex" | "claude",
 ): void {
 	if (response.status === "cancelled") return;
 	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions), {
 		deliverAs: ctx.isIdle() ? "followUp" : "steer",
 	});
+	void emitAskUserNotification(pi, ctx, request, response, variant);
 }
 function emitWake(pi: ExtensionAPI, sessionId: string) {
 	const entries = getPendingQuestions(sessionId).filter((e) => !e.request.waitForAnswer);
@@ -68,6 +71,7 @@ function startQuestion(
 	request: QuestionRequest,
 	signal: AbortSignal | undefined,
 	state: AskUserState,
+	variant: "codex" | "claude",
 ) {
 	const question = ctx.ui.question;
 	if (!question) throw new Error("Question UI is unavailable");
@@ -145,7 +149,8 @@ function startQuestion(
 			fail(error);
 		}
 	}
-	if (!request.waitForAnswer) void completion.promise.then((response) => deliverAnswer(pi, ctx, request, response));
+	if (!request.waitForAnswer)
+		void completion.promise.then((response) => deliverAnswer(pi, ctx, request, response, variant));
 	return completion.promise;
 }
 export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, state: AskUserState): ToolDefinition {
@@ -195,13 +200,16 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				pi.setActiveTools(pi.getActiveTools().filter((name) => !Object.values(TOOL_NAMES).includes(name)));
 				return result(variant, unavailable, request);
 			}
-			const completion = startQuestion(pi, ctx, request, signal, state);
+			const completion = startQuestion(pi, ctx, request, signal, state, variant);
 			if (!request.waitForAnswer)
 				return {
 					content: [{ type: "text", text: "Question accepted; the answer will arrive as a user message." }],
 					details: { accepted: true, requestId: request.requestId, status: "pending" },
 				};
 			const response = await completion;
+			if (response.status !== "cancelled") {
+				void emitAskUserNotification(pi, ctx, request, response, variant);
+			}
 			return result(
 				variant,
 				response,
