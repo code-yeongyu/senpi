@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Resuming a GPT-6 Astra session restores a supported surviving configuration effort when missing ancestry makes the original thinking selection unreachable, instead of replacing it with remembered startup defaults. Explicit overrides and later thinking selections still win, and the resumed inline configuration agrees with the selected effort ([#1596](https://github.com/code-yeongyu/senpi/pull/1596) by [@rlaope](https://github.com/rlaope)).
+
 ### Removed
 
 ## [2026.9.12-2] - 2026-09-12

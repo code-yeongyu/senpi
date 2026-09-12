@@ -151,61 +151,75 @@ it("starts real session workers under Node as well as Bun", async () => {
 	}
 }, 60_000);
 
-it("broadcasts question prompts across IPC and hydrates a late attachment", async () => {
-	const host = await startWorkerHost(
-		`export default function(pi) {
+it.each(["answered", "comment-submitted"] as const)(
+	"broadcasts question prompts across IPC and hydrates a late attachment (%s)",
+	async (outcome) => {
+		const host = await startWorkerHost(
+			`export default function(pi) {
  pi.registerCommand("ask-question", {description: "question fixture", handler: async (_args, ctx) => {
  const result = await ctx.ui.question({requestId: "tool-question", waitForAnswer: true, timeoutMs: 60000,
  questions: ["q1", "q2"].map(id => ({id, header: id, question: id, options: [{label: "A"}, {label: "B"}], multiSelect: false}))});
  ctx.ui.notify(JSON.stringify(result));
  }}); }`,
-		{ socket: true },
-	);
-	try {
-		const a = await host.connect();
-		const b = await host.connect();
-		const opened = await a.request({ type: "open_session", cwd: host.cwd, capabilities: ["question"] });
-		const sessionId = opened.data?.sessionId;
-		await a.request({ type: "set_client_info", sessionId, capabilities: ["question"] });
-		await b.request({ type: "open_session", cwd: host.cwd, sessionPath: opened.data?.state?.sessionFile });
-		const qa = a.wait((r) => r.type === "extension_ui_request" && r.method === "question");
-		const qb = b.wait((r) => r.type === "extension_ui_request" && r.method === "question");
-		const prompt = a.request({ type: "prompt", sessionId, message: "/ask-question" });
-		const frame = await qa;
-		expect((await qb).id).toBe(frame.id);
-		const c = await host.connect();
-		const replay = c.wait((r) => r.type === "extension_ui_request" && r.method === "question");
-		const attached = await c.request({
-			type: "open_session",
-			cwd: host.cwd,
-			sessionPath: opened.data?.state?.sessionFile,
-		});
-		expect(attached.data?.state?.pendingQuestions).toEqual([expect.objectContaining({ id: frame.id })]);
-		expect((await replay).id).toBe(frame.id);
-		const updated = a.wait((r) => r.type === "question_updated");
-		b.send({ type: "extension_ui_progress", sessionId, id: frame.id, answers: { q1: { selected: ["A"] } } });
-		expect((await updated).remainingMs).toBeGreaterThan(0);
-		// A submission with neither an answer nor a comment carries no decision: it is
-		// rejected and the question stays pending for every attachment.
-		const incomplete = b.wait((r) => r.error === "question_incomplete");
-		b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: {}, comment: "" });
-		await incomplete;
-		const ra = a.wait((r) => r.type === "question_resolved");
-		const rb = b.wait((r) => r.type === "question_resolved");
-		// A partial answer map is a decision on every surface (ask-user/pending.ts): it
-		// resolves the question as answered and reports the ids left unanswered.
-		b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: { q1: { selected: ["A"] } } });
-		const resolution = { outcome: "answered", answers: { q1: { selected: ["A"] } }, unanswered: ["q2"] };
-		expect(await ra).toMatchObject(resolution);
-		expect(await rb).toMatchObject(resolution);
-		expect((await prompt).success).toBe(true);
-		const late = b.wait((r) => r.error === "question_already_resolved");
-		b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: {}, comment: "do it" });
-		await late;
-		expect(c.records.filter((r) => r.method === "question")).toHaveLength(1);
-		const state = await c.request({ type: "get_state", sessionId });
-		expect(state.data?.pendingQuestions).toEqual([]);
-	} finally {
-		await host.dispose();
-	}
-}, 60_000);
+			{ socket: true },
+		);
+		try {
+			const a = await host.connect();
+			const b = await host.connect();
+			const opened = await a.request({ type: "open_session", cwd: host.cwd, capabilities: ["question"] });
+			const sessionId = opened.data?.sessionId;
+			await a.request({ type: "set_client_info", sessionId, capabilities: ["question"] });
+			await b.request({ type: "open_session", cwd: host.cwd, sessionPath: opened.data?.state?.sessionFile });
+			const qa = a.wait((r) => r.type === "extension_ui_request" && r.method === "question");
+			const qb = b.wait((r) => r.type === "extension_ui_request" && r.method === "question");
+			const prompt = a.request({ type: "prompt", sessionId, message: "/ask-question" });
+			const frame = await qa;
+			expect((await qb).id).toBe(frame.id);
+			const c = await host.connect();
+			const replay = c.wait((r) => r.type === "extension_ui_request" && r.method === "question");
+			const attached = await c.request({
+				type: "open_session",
+				cwd: host.cwd,
+				sessionPath: opened.data?.state?.sessionFile,
+			});
+			expect(attached.data?.state?.pendingQuestions).toEqual([expect.objectContaining({ id: frame.id })]);
+			expect((await replay).id).toBe(frame.id);
+			const updated = a.wait((r) => r.type === "question_updated");
+			b.send({ type: "extension_ui_progress", sessionId, id: frame.id, answers: { q1: { selected: ["A"] } } });
+			expect((await updated).remainingMs).toBeGreaterThan(0);
+			const incomplete = b.wait((r) => r.error === "question_incomplete");
+			b.send({
+				type: "extension_ui_response",
+				sessionId,
+				id: frame.id,
+				answers: {},
+				comment: "",
+			});
+			await incomplete;
+			const resolved = [a, b, c].map((peer) =>
+				peer.wait((r) => r.type === "question_resolved" && r.id === frame.id),
+			);
+			const answers = outcome === "answered" ? { q1: { selected: ["A"] } } : {};
+			const comment = outcome === "answered" ? "" : "do it";
+			b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers, comment });
+			for (const record of await Promise.all(resolved)) {
+				expect(record).toMatchObject({
+					outcome,
+					answers,
+					comment,
+					unanswered: outcome === "answered" ? ["q2"] : ["q1", "q2"],
+				});
+			}
+			expect((await prompt).success).toBe(true);
+			const late = b.wait((r) => r.error === "question_already_resolved");
+			b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: {} });
+			await late;
+			expect(c.records.filter((r) => r.method === "question")).toHaveLength(1);
+			const state = await c.request({ type: "get_state", sessionId });
+			expect(state.data?.pendingQuestions).toEqual([]);
+		} finally {
+			await host.dispose();
+		}
+	},
+	60_000,
+);

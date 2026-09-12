@@ -338,6 +338,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = existingSession.thinkingLevel as ThinkingLevel;
 		thinkingSelection = existingSession.thinkingSelection;
 	}
+	// Match the native positional configuration-update scope in the Responses converter.
+	const hasApplicableConfiguration =
+		model?.reasoning &&
+		model.id === "gpt-6-astra" &&
+		(model.provider === "openai" || model.provider === "openai-codex") &&
+		existingSession.configurationUpdate !== undefined;
+	if (thinkingLevel === undefined && hasExistingSession && model && hasApplicableConfiguration) {
+		// Missing ancestry can leave the configuration reachable but lose the original selection.
+		// Recover only supported levels, without inventing explicit-selection provenance.
+		thinkingLevel = getSupportedThinkingLevels(model).find(
+			(level) => level === existingSession.configurationUpdate?.effort,
+		);
+	}
 	if (thinkingLevel === undefined && model) {
 		const remembered = settingsManager.getModelThinkingLevel(model.provider, model.id);
 		if (remembered !== undefined) {
@@ -502,8 +515,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// Restore messages if session has existing data
 	if (hasExistingSession) {
 		agent.state.messages = existingSession.messages;
-		if (!hasThinkingEntry) {
+		if (!hasThinkingEntry || (hasApplicableConfiguration && thinkingLevel !== existingSession.thinkingLevel)) {
 			sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection);
+		}
+		if (hasApplicableConfiguration && existingSession.configurationUpdate?.effort !== thinkingLevel) {
+			// An explicit override or later thinking selection must also win over inline history.
+			// Append rather than rewrite the cache prefix or its original request baseline.
+			sessionManager.appendConfigurationUpdate(thinkingLevel);
+			agent.state.messages = sessionManager.buildSessionContext().messages;
 		}
 	} else {
 		// Save initial model and thinking level for new sessions so they can be restored on resume

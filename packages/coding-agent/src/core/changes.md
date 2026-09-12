@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-11 - Recover surviving session configuration effort on resume
+
+### What changed
+
+- `packages/coding-agent/src/core/sdk.ts`: restores supported reachable configuration effort before remembered defaults when no thinking selection survives. Uses the existing native GPT-6 Astra configuration scope and appends a final inline update when explicit or later selections disagree with historical configuration.
+
+### Why
+
+- Missing parent ancestry can make earlier thinking selections unreachable while leaving a session configuration update intact. Ignoring that update silently replaces the session effort with an unrelated startup default; retaining an older inline update can also override an explicit selection on the wire.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/sdk.ts` selects and persists resume effort before extension startup. The SDK must establish consistent local and inline state without repairing ancestry or changing global settings.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/sdk.ts`: initial thinking selection precedence and existing-session message restoration. Preserve the original reasoning baseline and append-only history semantics.
+
 ## 2026-09-12 - `app.question.answer` keybinding and `/answer` command for the async ask-user widget (senpi#1623)
 
 ### What changed
