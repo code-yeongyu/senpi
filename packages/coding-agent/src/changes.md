@@ -3105,3 +3105,25 @@ The instrumented transitions (`_emit`, queue internals, `RequiredCompactionError
 - HIGH: `packages/coding-agent/src/cli.ts` top-level flow; `packages/coding-agent/src/index.ts` export list.
 - MEDIUM: `packages/coding-agent/src/config.ts` constants block and `getAgentDir`; `packages/coding-agent/src/bun/cli.ts` import order.
 - LOW: `packages/coding-agent/src/migrations.ts` migration order.
+
+## 2026-09-12 - Sync CI repair: experimental runtime honors explicit agent dir and spawn context
+
+### What changed
+
+- `packages/coding-agent/src/experimental/server.ts`: `resolveSessionDirectory()` now honors an explicit `PI_CODING_AGENT_DIR` ahead of the branded `getAgentDir()` (SENPI_/OMO_ lanes), so the durable experimental server lists and attaches sessions from the directory its process was actually started with instead of the brand-quarantine default. The ask-user widget's minimal borrowed receiver also stays a prototype call target.
+- `packages/coding-agent/src/experimental/process.ts`: spawned internal processes carry the same explicit-dir resolution through their cwd/env instead of inheriting the brand default, so a server child sees its parent's session directory.
+- `packages/coding-agent/src/experimental/source-resolver.ts`: the experimental source resolver prefers the explicit `PI_CODING_AGENT_DIR` lane over the branded lane for the same reason; behavior on the plain `senpi` brand is unchanged when the variable is unset.
+- `packages/coding-agent/src/experimental/plugins/bundled.ts`: bundled plugin registration carries the explicit agent directory so cold server composition finds its own sessions (upstream CI arbiter: `test/experimental-remote-runtime.test.ts`, 26/26).
+
+### Why
+
+- The upstream durable-server composition contract treats an explicit `PI_CODING_AGENT_DIR` as THE agent-directory override; the fork's branded `envValue` lanes (SENPI_/OMO_ before PI_) shadowed it, so the server listed sessions from an empty quarantine dir and rejected every attach with `Unknown session`.
+
+### Why an extension could not handle it
+
+- The resolution lives inside the experimental server's process bootstrap and spawn plumbing, before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `resolveSessionDirectory` and the spawn context construction in `experimental/{server,process,source-resolver}.ts`; upstream only touches these for new composition features.
+

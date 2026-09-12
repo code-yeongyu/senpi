@@ -1701,3 +1701,22 @@ wire shape, multi-session tagging, and payload validation responsibilities.
 - RPC command unions, response unions, and client methods.
 
 - Added append_session_entry RPC transport for verbatim shared-host setup mutations, preserving entry shape and order.
+
+## 2026-09-12 - Sync CI repair: RPC client stop kills the real spawned host under bun re-exec
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.stop()` kills the process tree of the RPC host it spawned, not only the wrapper pid, so under `SENPI_RUNTIME=bun` (where cli.ts re-execs the node wrapper under Bun) the real Bun host is terminated instead of being orphaned and leaking an ENOTEMPTY temp-dir error into `afterEach`.
+
+### Why
+
+- The wrapper exits immediately after re-exec, so resolving `stop()` on the wrapper's exit event left the real host holding the session dir open; the merged bun re-exec made that wrapper indistinguishable from the host.
+
+### Why an extension could not handle it
+
+- Process lifecycle for the RPC transport is host-side plumbing below the extension layer.
+
+### Expected merge conflict zones
+
+- LOW: the `stop()` implementation and the spawn bookkeeping in `rpc-client.ts`.
+

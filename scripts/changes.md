@@ -593,3 +593,24 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - HIGH: `scripts/generate-coding-agent-install-lock.mjs` and `scripts/generate-coding-agent-shrinkwrap.mjs` whenever upstream changes lock generation; `scripts/local-release.mjs` flow.
 - MEDIUM: `scripts/release-packages.mjs` workspace list.
 - LOW: `scripts/check-pinned-deps.mjs` internal-name predicate; `scripts/build-coding-agent-bundle.mjs` entry list.
+
+## 2026-09-12 - Sync CI repair: upstream release tooling against the fork manifest and typescript-Go layouts
+
+### What changed
+
+- `scripts/release-packages.mjs`: `getRuntimeDepsCheckPackages()` (new) returns the public-by-flag workspaces union the fork registry sources; `getPublicWorkspacePackages()` keeps its 7-package registry contract for publishing.
+- `scripts/check-runtime-deps.mjs`: the classic TypeScript API is imported from `@typescript/typescript6` (root `typescript` is typescript-Go 7.0.2 with no classic entry), config reads fall back to plain fs, and a file excluded from a package build is only a violation when a runtime import edge from a build root reaches it (the fork's generated app-server protocol tree is excluded on purpose and is no longer flagged).
+- `scripts/local-release.mjs` / `scripts/local-release.test.mjs`: the pty build/pack step resolves the fork's pi-pty packaging (native/index.js + platform prebuild), and the release-package list materializes the chord workspace; fixture arithmetic carries a provenance comment.
+
+### Why
+
+- Upstream's new release tooling assumed upstream's manifest layout (all pi-* public, registry-resolvable sources); the fork keeps pi-* private in source, publishes under @code-yeongyu, excludes generated trees from the build, and installs typescript-Go — so the tooling crashed or misflagged instead of checking.
+
+### Why an extension could not handle it
+
+- Manifest/private/publish naming and the toolchain layout are repo-wide invariants, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the public-package lists and the classic-API import in these three scripts; upstream edits them only for new release tooling.
+
