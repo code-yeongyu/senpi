@@ -149,11 +149,11 @@ import {
 } from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
 import {
-	ASK_USER_ANSWER_KEY,
 	ASK_USER_WIDGET_KEY,
 	AskUserAsyncWidget,
 	buildCommentResponse,
 	buildTimedOutResponse,
+	matchesAskUserAnswerKey,
 	unansweredIds,
 } from "./components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "./components/ask-user-question.ts";
@@ -3946,7 +3946,7 @@ export class InteractiveMode {
 	/** Editor shortcut: expand the pending async question into the full component. */
 	private handleAskUserShortcut(data: string): boolean {
 		const state = this.asyncQuestion;
-		if (!state || this.askUserQuestion || !matchesKey(data, ASK_USER_ANSWER_KEY)) return false;
+		if (!state || this.askUserQuestion || !matchesAskUserAnswerKey(data)) return false;
 		const component = new AskUserQuestionComponent(
 			state.request,
 			(response) => {
