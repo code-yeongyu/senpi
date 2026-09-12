@@ -67,7 +67,15 @@ export async function ensurePrivateServerDirectory(directory: string): Promise<v
 }
 
 export function resolveSessionDirectory(sessionDir?: string): string {
-	return resolvePath(sessionDir ?? join(getAgentDir(), "experimental", "sessions"));
+	// Upstream's experimental runtime treats an explicit PI_CODING_AGENT_DIR as *the*
+	// agent-directory override (upstream getAgentDir() reads only that lane; its tests and
+	// session fixtures pin it). The fork generalized the lookup to brand-prefixed lanes
+	// (SENPI_/OMO_ before the legacy PI_ lane) and the vitest setup installs its quarantine
+	// default on the brand lane, which shadowed an explicit PI override here after the
+	// upstream merge - the server then listed sessions from the empty quarantine directory.
+	// Honor the explicit PI lane first, then the branded agent-dir lookup.
+	const agentDir = process.env.PI_CODING_AGENT_DIR ?? getAgentDir();
+	return resolvePath(sessionDir ?? join(agentDir, "experimental", "sessions"));
 }
 
 const LOCK_STALE_MS = 30_000;

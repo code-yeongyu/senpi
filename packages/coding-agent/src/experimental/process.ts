@@ -37,6 +37,21 @@ export interface InternalProcessSpawnOptions {
 	readonly env?: NodeJS.ProcessEnv;
 }
 
+/**
+ * Upstream's experimental runtime treats an explicit PI_CODING_AGENT_DIR as *the* agent-directory
+ * override. The fork additionally reads brand-prefixed lanes (SENPI_/OMO_ before the legacy PI_
+ * lane), so an inherited brand lane would shadow an explicit PI override inside spawned internal
+ * processes - e.g. a test quarantine or launcher value would hijack worker settings/auth/model
+ * resolution. When the PI lane is explicitly set, strip the other agent-dir lanes so internal
+ * processes resolve exactly the directory their parent selected.
+ */
+function normalizeAgentDirLane(env: NodeJS.ProcessEnv): void {
+	if (env.PI_CODING_AGENT_DIR === undefined) return;
+	for (const key of Object.keys(env)) {
+		if (key !== "PI_CODING_AGENT_DIR" && key.endsWith("_CODING_AGENT_DIR")) delete env[key];
+	}
+}
+
 /** Spawn a detached Pi-owned process consistently across Node and compiled Bun. */
 export function spawnInternalProcess(
 	role: InternalProcessRole,
@@ -50,17 +65,19 @@ export function spawnInternalProcess(
 	const sourceRuntimeArgs = import.meta.url.endsWith(".ts")
 		? ["--import", fileURLToPath(new URL("source-resolver.ts", import.meta.url))]
 		: [];
+	const childEnv: NodeJS.ProcessEnv = {
+		...process.env,
+		...options.env,
+		[INTERNAL_PROCESS_ENV]: role,
+	};
+	normalizeAgentDirLane(childEnv);
 	const child = spawn(
 		process.execPath,
 		isBunBinary ? [...args] : [...sourceRuntimeArgs, fileURLToPath(entryUrl), ...args],
 		{
 			cwd: process.cwd(),
 			detached: true,
-			env: {
-				...process.env,
-				...options.env,
-				[INTERNAL_PROCESS_ENV]: role,
-			},
+			env: childEnv,
 			stdio: "ignore",
 			windowsHide: true,
 		},

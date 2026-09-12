@@ -40,6 +40,14 @@ function denyAll(reason: string): FilesystemPolicyChecker {
 /** The built-in tools resolve `ctx?.cwd || cwd`, so an empty context exercises the creation-time cwd. */
 const NO_CTX = {} as ExtensionContext;
 
+/**
+ * Bash is the exception: a truthy ctx makes resolveSpawnContext read `ctx.sessionManager` (a
+ * required ExtensionContext field, used for the PI_* session env) before running the command, so
+ * `{}` is not a legal ctx there. The bash tests pass the legal `undefined` ctx instead, which
+ * exercises the same `ctx?.cwd || cwd` creation-time fallback (bash.ts). Provenance: this behavior
+ * is identical at the fork baseline and at upstream cf09b5ce1 — recorded in $E/decisions.md.
+ */
+
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content
 		.filter((part): part is { type: "text"; text: string } => part.type === "text")
@@ -174,7 +182,8 @@ describe("invalid arguments fail before touching the filesystem", () => {
 				{ command: `touch ${JSON.stringify(marker)}`, timeout: 0 },
 				undefined,
 				undefined,
-				NO_CTX,
+				// no session environment: runtime treats an absent ctx as plain cwd execution (guard provenance: bash.ts ctx?)
+				undefined as unknown as ExtensionContext,
 			),
 		).rejects.toThrow("Invalid timeout");
 		expect(existsSync(marker)).toBe(false);
@@ -196,7 +205,13 @@ describe("bash output callback failures settle the tool promise", () => {
 		};
 
 		const error = await bash
-			.execute("call-6", { command: "printf 'streamed-output\\n'" }, undefined, onUpdate, NO_CTX)
+			.execute(
+				"call-6",
+				{ command: "printf 'streamed-output\\n'" },
+				undefined,
+				onUpdate,
+				undefined as unknown as ExtensionContext,
+			)
 			.then(
 				() => undefined,
 				(reason: unknown) => reason,

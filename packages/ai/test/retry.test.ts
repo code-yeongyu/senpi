@@ -499,9 +499,18 @@ describe("retryAssistantCall", () => {
 	});
 
 	it("reports capped retry delays", async () => {
-		// Regression for #8826.
+		// Regression for #8826. The fork jitters the scheduled delay by +/-10% before
+		// the cap applies, so pin the jitter source to its neutral midpoint
+		// (multiplier exactly 1.0) instead of letting Math.random perturb the
+		// schedule: without this the first reported delay is 9, 10, or 11 by luck.
+		const policy: RetryPolicy = {
+			enabled: true,
+			maxRetries: 4,
+			baseDelayMs: 10,
+			maxAgentDelayMs: 15,
+			random: () => 0.5,
+		};
 		let n = 0;
-		const policy: RetryPolicy = { enabled: true, maxRetries: 4, baseDelayMs: 10, maxAgentDelayMs: 15 };
 		const produce = vi.fn(async () => {
 			n++;
 			return n < 5

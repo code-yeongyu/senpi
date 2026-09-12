@@ -91,8 +91,16 @@ describe("model usability budget", () => {
 		// declaring a switch, so an empty session keeps the cold-start contract - the
 		// switch wording would promise a compaction remedy with nothing to compact.
 		expect(error.projection.admission).toBe("start");
+		// Numbers re-derived from the merged runtime (PR #1626, upstream 71dca871):
+		// the merged default active tool set (read/bash/edit/write - the renderer
+		// split and strict-prefer schemas) estimates 758 active tool schema tokens
+		// (was 695 pre-merge), moving the 16000-window minimum 37464 -> 37527 and the
+		// shortfall 21464 -> 21527. Computed by replaying this scenario against both
+		// the pre-merge baseline and the merged worktree with
+		// local-ignore/senpi-sync-20260912/evidence/rederive-model-usability-budget.mjs
+		// (same harness + production estimators); message shape and fields unchanged.
 		expect(error.message).toBe(
-			'Model "faux/low-context" cannot start: context window 16000 tokens is 21464 tokens short of the 37464-token minimum (system prompt 1, active tool schemas 695, output reserve 4000, compaction reserve 16384, speculation lead 8192, safety margin 8192 [default]).',
+			'Model "faux/low-context" cannot start: context window 16000 tokens is 21527 tokens short of the 37527-token minimum (system prompt 1, active tool schemas 758, output reserve 4000, compaction reserve 16384, speculation lead 8192, safety margin 8192 [default]).',
 		);
 	});
 
@@ -126,8 +134,13 @@ describe("model usability budget", () => {
 			safetyMarginTokens: 8_192,
 			usable: false,
 		});
-		expect(error.projection.liveContextTokens).toBeGreaterThanOrEqual(318_180);
-		expect(error.projection.liveContextTokens).toBeLessThanOrEqual(318_280);
+		// liveContext = usage 321000 - system prompt 2083 - active tool schemas
+		// (695 pre-merge -> 758 merged, same +63 as the start-admission case above),
+		// so the exact value moved 318222 -> 318159 and this band shifts by the same
+		// +63: [318180, 318280] -> [318117, 318217], keeping the 100-token tolerance.
+		// Re-derived with the same rederive-model-usability-budget.mjs replay.
+		expect(error.projection.liveContextTokens).toBeGreaterThanOrEqual(318_117);
+		expect(error.projection.liveContextTokens).toBeLessThanOrEqual(318_217);
 		expect(error.projection.speculationLeadTokens).toBeGreaterThan(0);
 		expect(error.projection.requiredTokens).toBe(
 			error.projection.liveContextTokens +

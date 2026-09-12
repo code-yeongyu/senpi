@@ -4365,11 +4365,15 @@ export class InteractiveMode {
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			this.getSessionLogger().warn("clipboard_error", {
+			// `?.` guards keep this handler callable on a minimal borrowed receiver
+			// ({ editor, ui }) - the contract upstream's clipboard tests pin; a full
+			// InteractiveMode instance still logs to the session log and shows the
+			// status line.
+			this.getSessionLogger?.().warn("clipboard_error", {
 				op: "paste",
 				error: message,
 			});
-			this.showStatus(`Clipboard paste failed: ${sanitizeTuiErrorMessage(message)}`);
+			this.showStatus?.(`Clipboard paste failed: ${sanitizeTuiErrorMessage(message)}`);
 		}
 	}
 

@@ -5,9 +5,34 @@ import {
 	type FacetBundleArtifact,
 	readFacetBundleManifest,
 } from "@earendil-works/chord/node";
+import { registerWorkspaceSourceResolver } from "../source-resolver.ts";
 
 const PRESENTATION_FACET_BUNDLES_KEY = "presentationFacetBundles";
 const PI_PLUGIN_API = "@earendil-works/pi-coding-agent/experimental/plugin";
+
+let rawWorkspaceSourceResolution: "pending" | "ready" | "unavailable" = "pending";
+
+/**
+ * Ensure bare workspace specifiers resolve to source for raw Node requires.
+ *
+ * The plugin API external maps to a workspace source file whose import graph uses bare
+ * `@earendil-works/*` specifiers. In a source-only checkout those resolve through the package
+ * manifests to dist files that are never built, so a raw `require` of the mapped target fails.
+ * Registering the tsconfig workspace aliases (the same resolver spawned internal processes
+ * preload) fixes resolution for the current thread; dist layouts skip it because bundled code
+ * never reaches this path and a compiled tree may not carry the source tree at all.
+ */
+function ensureRawWorkspaceSourceResolution(): void {
+	if (rawWorkspaceSourceResolution !== "pending") return;
+	rawWorkspaceSourceResolution = "unavailable";
+	if (!import.meta.url.endsWith(".ts")) return;
+	try {
+		registerWorkspaceSourceResolver();
+		rawWorkspaceSourceResolution = "ready";
+	} catch {
+		// Keep Node's default resolution; an unresolvable tsconfig cannot be aliased here.
+	}
+}
 
 export function createSessionPluginFacetLoader(manifestPaths: readonly string[]): FacetLoader | undefined {
 	if (manifestPaths.length === 0) return undefined;
@@ -50,6 +75,7 @@ export function createPresentationFacetLoaders(data: JsonValue): readonly FacetL
 
 function resolvePluginExternal(specifier: string): string | undefined {
 	if (specifier !== PI_PLUGIN_API) return undefined;
+	ensureRawWorkspaceSourceResolution();
 	const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
 	return new URL(`../plugin.${extension}`, import.meta.url).href;
 }

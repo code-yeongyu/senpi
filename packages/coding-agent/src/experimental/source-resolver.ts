@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { registerHooks } from "node:module";
+import { type ModuleHooks, registerHooks } from "node:module";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -20,46 +20,61 @@ interface SourceAlias {
 	readonly replacements: readonly string[];
 }
 
-const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
-const tsconfigPath = resolve(repositoryRoot, "tsconfig.json");
-const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8")) as TsConfig;
-const paths = tsconfig.compilerOptions?.paths;
-if (!paths) throw new Error(`Source runtime requires compilerOptions.paths in ${tsconfigPath}`);
+let registered: ModuleHooks | undefined;
 
-const aliases: SourceAlias[] = Object.entries(paths)
-	.filter(([pattern]) => pattern.startsWith("@earendil-works/"))
-	.map(([pattern, replacements]) => {
-		const wildcard = pattern.indexOf("*");
-		if (wildcard !== -1 && pattern.indexOf("*", wildcard + 1) !== -1) {
-			throw new Error(`Source runtime does not support multiple wildcards in ${pattern}`);
-		}
-		return {
-			pattern,
-			prefix: wildcard === -1 ? pattern : pattern.slice(0, wildcard),
-			suffix: wildcard === -1 ? "" : pattern.slice(wildcard + 1),
-			replacements,
-		};
-	})
-	.sort((left, right) => right.pattern.length - left.pattern.length);
+/**
+ * Register the tsconfig workspace source aliases for the current thread (idempotent).
+ *
+ * Spawned internal processes get this via `--import` (see process.ts). In-process
+ * consumers that hand raw Node `require` a workspace source file - e.g. the facet
+ * bundle loader resolving a plugin API whose graph imports `@earendil-works/chord`
+ * by bare specifier - must call this first, because plain Node resolves workspace
+ * packages through their manifest exports, which point at dist files that a
+ * source-only checkout never builds.
+ */
+export function registerWorkspaceSourceResolver(): void {
+	if (registered !== undefined) return;
+	const repositoryRoot = fileURLToPath(new URL("../../../..", import.meta.url));
+	const tsconfigPath = resolve(repositoryRoot, "tsconfig.json");
+	const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8")) as TsConfig;
+	const paths = tsconfig.compilerOptions?.paths;
+	if (!paths) throw new Error(`Source runtime requires compilerOptions.paths in ${tsconfigPath}`);
 
-registerHooks({
-	resolve(specifier, context, nextResolve) {
-		let matchedPattern: string | undefined;
-		for (const alias of aliases) {
-			const wildcard = matchAlias(alias, specifier);
-			if (wildcard === undefined) continue;
-			matchedPattern ??= alias.pattern;
-			for (const replacement of alias.replacements) {
-				const resolved = resolveSourcePath(replacement.replace("*", wildcard));
-				if (resolved) return { url: pathToFileURL(resolved).href, shortCircuit: true };
+	const aliases: SourceAlias[] = Object.entries(paths)
+		.filter(([pattern]) => pattern.startsWith("@earendil-works/"))
+		.map(([pattern, replacements]) => {
+			const wildcard = pattern.indexOf("*");
+			if (wildcard !== -1 && pattern.indexOf("*", wildcard + 1) !== -1) {
+				throw new Error(`Source runtime does not support multiple wildcards in ${pattern}`);
 			}
-		}
-		if (matchedPattern) {
-			throw new Error(`Source runtime could not resolve ${specifier} through tsconfig path ${matchedPattern}`);
-		}
-		return nextResolve(specifier, context);
-	},
-});
+			return {
+				pattern,
+				prefix: wildcard === -1 ? pattern : pattern.slice(0, wildcard),
+				suffix: wildcard === -1 ? "" : pattern.slice(wildcard + 1),
+				replacements,
+			};
+		})
+		.sort((left, right) => right.pattern.length - left.pattern.length);
+
+	registered = registerHooks({
+		resolve(specifier, context, nextResolve) {
+			let matchedPattern: string | undefined;
+			for (const alias of aliases) {
+				const wildcard = matchAlias(alias, specifier);
+				if (wildcard === undefined) continue;
+				matchedPattern ??= alias.pattern;
+				for (const replacement of alias.replacements) {
+					const resolved = resolveSourcePath(repositoryRoot, replacement.replace("*", wildcard));
+					if (resolved) return { url: pathToFileURL(resolved).href, shortCircuit: true };
+				}
+			}
+			if (matchedPattern) {
+				throw new Error(`Source runtime could not resolve ${specifier} through tsconfig path ${matchedPattern}`);
+			}
+			return nextResolve(specifier, context);
+		},
+	});
+}
 
 function matchAlias(alias: SourceAlias, specifier: string): string | undefined {
 	if (!alias.pattern.includes("*")) return specifier === alias.pattern ? "" : undefined;
@@ -67,7 +82,7 @@ function matchAlias(alias: SourceAlias, specifier: string): string | undefined {
 	return specifier.slice(alias.prefix.length, specifier.length - alias.suffix.length);
 }
 
-function resolveSourcePath(replacement: string): string | undefined {
+function resolveSourcePath(repositoryRoot: string, replacement: string): string | undefined {
 	const basePath = resolve(repositoryRoot, replacement);
 	const rootPrefix = repositoryRoot.endsWith(sep) ? repositoryRoot : `${repositoryRoot}${sep}`;
 	if (!basePath.startsWith(rootPrefix)) return undefined;
@@ -83,4 +98,11 @@ function resolveSourcePath(replacement: string): string | undefined {
 		if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
 	}
 	return undefined;
+}
+
+// Preload form: internal source processes launch with `--import <this file>` (see
+// process.ts), so registration must already be active before their entrypoint runs.
+// Library imports of this module register explicitly through the exported function.
+if (import.meta.url.endsWith(".ts") && process.execArgv.some((arg) => arg.includes("source-resolver"))) {
+	registerWorkspaceSourceResolver();
 }

@@ -8443,7 +8443,17 @@ export class AgentSession {
 		// `retry.maxAgentDelayMs` is a hard ceiling on ONE agent-level wait, applied after
 		// the profile/hint/jitter planning above (the planner still owns the schedule).
 		// It bounds the worst case a provider hint or a long backoff can impose on a turn.
-		const delayMs = Math.min(plannedDelayMs, settings.maxAgentDelayMs);
+		// A profile's override-mode turn hint ceiling owns this clamp instead of the
+		// settings default (fork semantics: the ceiling belongs to the profile, and an
+		// explicit profile ceiling must not be clamped by the global default): `null`
+		// (kimi-code) is explicitly uncapped, so a wait the over-ceiling gate above
+		// admitted passes through verbatim; a number is the profile's own cap. The
+		// settings cap applies only when the profile declares no ceiling of its own
+		// (the tiered senpi-default).
+		const profileTurnCeilingMs =
+			retryProfile.turn.serverHint.mode === "override" ? retryProfile.turn.serverHint.ceiling.maxDelayMs : undefined;
+		const agentCeilingMs = profileTurnCeilingMs === undefined ? settings.maxAgentDelayMs : profileTurnCeilingMs;
+		const delayMs = Math.min(plannedDelayMs, agentCeilingMs ?? Number.MAX_SAFE_INTEGER);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
 

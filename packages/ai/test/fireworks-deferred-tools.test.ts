@@ -155,7 +155,18 @@ describe("Fireworks deferred tools", () => {
 			context.messages.push({ role: "user", content: "Now look up beta.", timestamp: 0 });
 			const next = await capture(model, context);
 			expect(next.tools).toEqual(payload.tools);
-			expect(next.messages.slice(0, -1)).toEqual(replay.messages);
+			// Fork deviation from upstream (senpi 72f73866e): convertMessages coalesces a
+			// tool_result turn and the user text that follows into ONE alternating user turn,
+			// because strict Anthropic-family endpoints 400 on consecutive role:"user" messages
+			// (pinned by test/anthropic-adjacent-user-tool-result-coalesce.test.ts). Upstream
+			// expects the new text as its own message, so its slice(0, -1) append check cannot
+			// hold here; the same invariants are pinned on the coalesced shape — the whole
+			// replayed prefix stays byte-identical and the tool_result with its id survives.
+			expect(next.messages.slice(0, -1)).toEqual(replay.messages.slice(0, -1));
+			expect(next.messages[next.messages.length - 1].content).toEqual([
+				{ type: "tool_result", tool_use_id: "tool_use_tool_1", content: "SYNTHETIC_ALPHA_17", is_error: false },
+				{ type: "text", text: "Now look up beta." },
+			]);
 		}
 	});
 

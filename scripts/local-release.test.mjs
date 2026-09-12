@@ -154,6 +154,11 @@ function writeLocalReleaseFixture(repoRoot) {
 		packages: {},
 	});
 	for (const [directory, name] of [
+		// Provenance (upstream merge 2026-09-12): the chord workspace rides the fork's bundled
+		// build now — prepare-senpi-bundled-workspaces stages packages/chord into the senpi
+		// tarball (requiring package.json, dist/index.js, dist/context/index.js), so the
+		// local-release fixture must materialize those loader-visible files like the real repo.
+		["packages/chord", "@earendil-works/chord"],
 		["packages/telemetry", "@earendil-works/pi-telemetry"],
 		["packages/ai", "@earendil-works/pi-ai"],
 		["packages/pty", "@earendil-works/pi-pty"],
@@ -173,6 +178,10 @@ function writeLocalReleaseFixture(repoRoot) {
 		});
 		mkdirSync(join(repoRoot, directory, "dist"), { recursive: true });
 		writeFileSync(join(repoRoot, directory, "dist", "index.js"), "");
+		if (directory === "packages/chord") {
+			mkdirSync(join(repoRoot, directory, "dist", "context"), { recursive: true });
+			writeFileSync(join(repoRoot, directory, "dist", "context", "index.js"), "");
+		}
 		if (directory === "packages/client" || directory === "packages/protocol") {
 			writeFileSync(join(repoRoot, directory, "dist", "index.d.ts"), "");
 		}

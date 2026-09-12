@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
 import type { SessionBeforeCompactEvent } from "../../src/core/extensions/index.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
@@ -88,18 +89,49 @@ describe("AgentSession compaction model overrides", () => {
 				reserveTokens: 2000,
 				keepRecentTokens: 150,
 			});
+			// Fork deviation (senpi): CompactionReason is a route-source taxonomy
+			// ("manual" | "threshold" | "overflow" | "pre_prompt" | "branch" | "extension",
+			// src/core/extensions/types.ts). Upstream labels the admission compaction that
+			// runs before a new prompt "threshold"; the fork reports the route source
+			// "pre_prompt" for it (pinned by agent-session-compaction.test.ts's pre-prompt
+			// cases: compaction_end reason "pre_prompt" with rejectionCause
+			// cancelled-by-extension / would-overflow).
 			expect(preparations[0]?.reason).toBe(
-				path === "manual" ? "manual" : path === "overflow" ? "overflow" : "threshold",
+				path === "manual"
+					? "manual"
+					: path === "overflow"
+						? "overflow"
+						: path === "pre-prompt"
+							? "pre_prompt"
+							: "threshold",
 			);
 			if (path === "manual" || path === "pre-prompt") {
 				expect(preparations[0]?.preparation.firstKeptEntryId).toBe(recentUserId);
 			}
 			expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
-			expect(harness.eventsOfType("compaction_end")[0]).toMatchObject({
-				aborted: false,
-				willRetry: path === "overflow",
-				result: { summary: "compacted history" },
-			});
+			if (path === "post-run") {
+				// Fork deviation (senpi): the would-overflow admission gate
+				// (AgentSession._wouldCompactionOverflow) rejects a compaction whose retained
+				// context would still exceed contextWindow - reserve. The 8000-char response
+				// alone fills the override's 4000 - 2000 token budget, so upstream's accepted
+				// result is unreachable for this fixture; the fork's pinned contract is the
+				// rejection (agent-session-compaction.test.ts "would remain oversized" case).
+				// The per-model budget assertions above (preparation.settings, reason) are
+				// unchanged.
+				expect(harness.eventsOfType("compaction_end")[0]).toMatchObject({
+					aborted: false,
+					willRetry: false,
+					accepted: false,
+					rejectionCause: "would-overflow",
+					result: undefined,
+				});
+			} else {
+				expect(harness.eventsOfType("compaction_end")[0]).toMatchObject({
+					aborted: false,
+					willRetry: path === "overflow",
+					result: { summary: "compacted history" },
+				});
+			}
 			expect(harness.getPendingResponseCount()).toBe(0);
 		},
 	);
@@ -135,7 +167,7 @@ describe("AgentSession compaction model overrides", () => {
 		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
-	it("uses the newly selected model without changing ordinary settings", async () => {
+	it("rejects a model switch the usability budget cannot admit, without changing ordinary settings", async () => {
 		const harness = await createHarness({
 			models: [
 				{ id: "small", contextWindow: 4000 },
@@ -162,17 +194,29 @@ describe("AgentSession compaction model overrides", () => {
 		});
 		harnesses.push(harness);
 		seedHistory(harness, 2500);
-		harness.setResponses([fauxAssistantMessage("small response"), fauxAssistantMessage("big response")]);
+		harness.setResponses([fauxAssistantMessage("small response")]);
 		await harness.session.prompt("continue on small");
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
-		// Retain usage from the small model: the next check must use the active big model's policy.
+		// Retain usage from the small model: the switch projection below must still
+		// account for it.
 		seedHistory(harness, 2500);
-		await harness.session.setModel(harness.getModel("big")!);
-		await harness.session.prompt("continue on big");
-		expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
-		expect(harness.eventsOfType("compaction_end")[0]?.result?.summary).toBe("big model summary");
+		// Fork deviation (senpi): upstream switches to the 10000-token "big" model and
+		// expects its 8000-token reserve override to drive the next compaction. The
+		// fork's model-switch usability guard (projectModelUsabilityBudget, pinned by
+		// agent-session-model-switch-rejection.test.ts for #1526) refuses a switch onto
+		// a model whose window cannot hold the fixed budget (system prompt + output
+		// reserve + compaction reserve + speculation lead + 8192 default safety margin).
+		// No fork-admissible fixture can preserve upstream's scenario: admission needs
+		// the target's post-switch headroom to cover the live context, while the
+		// override-driven compaction upstream asserts needs the opposite (threshold
+		// below the live context). The switch is rejected by design; per-model budget
+		// resolution for the active model stays covered by the "captures model identity
+		// before awaiting summarization auth" case below and by
+		// test/suite/settings-manager-compaction.test.ts.
+		await expect(harness.session.setModel(harness.getModel("big")!)).rejects.toThrow(ModelUsabilityBudgetError);
+		expect(harness.eventsOfType("model_change_rejected")).toHaveLength(1);
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(0);
 		expect(harness.settingsManager.getCompactionReserveTokens()).toBe(10);
-		await harness.session.setModel(harness.getModel("small")!);
 		expect(harness.settingsManager.getCompactionReserveTokens(harness.session.model)).toBe(10);
 	});
 
