@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Required compaction preserves recovery feedback from extensions returning the legacy compaction-cap rejection, including resumed-session admission, instead of reporting only a generic failure. Successful builtin compactions remain uncapped ([#875](https://github.com/code-yeongyu/senpi/pull/875) by [@rlaope](https://github.com/rlaope)).
+
 ### Removed
 
 ## [2026.9.12-2] - 2026-09-12

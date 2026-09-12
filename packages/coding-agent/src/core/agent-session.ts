@@ -710,6 +710,10 @@ type PendingCompactionAdmission = {
 	outcome?: "completed" | "failed" | "aborted";
 };
 
+type RequiredCompactionRejectionCapture = {
+	rejectionCause?: CompactionRejectionCause;
+};
+
 function isCompactionOwnedPreCompactDiagnostic(message: AgentMessage, requestId: string): boolean {
 	if (message.role !== "custom" || message.customType !== "senpi.hook") return false;
 	const details = message.details;
@@ -738,9 +742,9 @@ function describeCompactionRejection(cause: CompactionRejectionCause): string {
 		case "circuit-breaker":
 			return "Compaction rejected: the compaction circuit breaker is open after repeated failures. Wait for the cooldown and retry.";
 		case "per-turn-cap":
-			// Historical cause identifier kept for extension-API stability; since the
-			// per-turn soft cap was removed it fires only at the absolute session cap.
-			return "Compaction rejected: absolute compaction cap reached for this session.";
+			// Historical cause identifier retained for extension compatibility.
+			// The builtin no longer caps successful compactions.
+			return "Compaction rejected: the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.";
 		case "stale-revision":
 			return "Compaction rejected: the session changed while the summary was being prepared. Retry compaction against the latest context.";
 	}
@@ -797,9 +801,16 @@ function isCompactionExecutionAborted(error: unknown): boolean {
 }
 
 class RequiredCompactionError extends Error {
-	constructor() {
-		super("Context remains above the compaction threshold because compaction did not complete");
+	readonly rejectionCause: CompactionRejectionCause | undefined;
+
+	constructor(rejectionCause?: CompactionRejectionCause) {
+		super(
+			rejectionCause === undefined
+				? "Context remains above the compaction threshold because compaction did not complete"
+				: `Context remains above the compaction threshold because compaction did not complete. ${describeCompactionRejection(rejectionCause)}`,
+		);
 		this.name = "RequiredCompactionError";
+		this.rejectionCause = rejectionCause;
 	}
 }
 
@@ -1046,7 +1057,9 @@ export class AgentSession {
 	 * none of those change the context that was rejected; only a real reduction, a
 	 * new user prompt, or a manual compaction releases it (#7921 case 6).
 	 */
-	private _blockedPostCompactionAssistant: { assistant: AssistantMessage; contentTokens: number } | undefined;
+	private _blockedPostCompactionAssistant:
+		| { assistant: AssistantMessage; contentTokens: number; rejectionCause?: CompactionRejectionCause }
+		| undefined;
 	private _delegatedCompactionKey: { provider: string; id: string } | undefined;
 	private _skipNextPostCompactionAssistantCheck = false;
 	private _scheduledContinuationRecompacted = false;
@@ -2480,13 +2493,21 @@ export class AgentSession {
 					cursorQuotaRe ||
 					claudeSdkSameModelRemint);
 			let compactedBeforeRetry = false;
+			const retryCompactionRejectionCapture: RequiredCompactionRejectionCapture = {};
 			if (
 				retryCanAdmitProvider &&
 				requiredAutoCompaction &&
 				!(requiredAutoCompaction === "threshold" && this._hasPendingPostCompactionUsageExemption(msg))
 			) {
 				this._retireFailedRetryAssistant(msg);
-				compactedBeforeRetry = await this._runPrePromptCompaction(msg, true, requiredAutoCompaction, true);
+				compactedBeforeRetry = await this._runPrePromptCompaction(
+					msg,
+					true,
+					requiredAutoCompaction,
+					true,
+					false,
+					retryCompactionRejectionCapture,
+				);
 				retryContinuationBlocked =
 					!compactedBeforeRetry && !this._isCompactionDelegated() && !cursorQuotaRe && !hardErrorFallbackEligible;
 			}
@@ -2552,7 +2573,13 @@ export class AgentSession {
 					this._scheduleContinuationAfterCurrentEvent();
 					launchedContinuation = true;
 				} else {
-					launchedContinuation = await this._checkCompaction(msg, true, undefined, retryAfterRequiredCompaction);
+					launchedContinuation = await this._checkCompaction(
+						msg,
+						true,
+						undefined,
+						retryAfterRequiredCompaction,
+						retryCompactionRejectionCapture,
+					);
 					if (launchedContinuation && this.agent.hasQueuedMessages()) {
 						// Same supersession on the post-check path: an accepted recovery
 						// compaction owns the continuation now.
@@ -2571,7 +2598,9 @@ export class AgentSession {
 						this.agent.hasQueuedMessages() &&
 						this._getRequiredAutoCompactionReason(msg) !== undefined
 					) {
-						this._requiredCompactionAdmissionError = new RequiredCompactionError();
+						this._requiredCompactionAdmissionError = new RequiredCompactionError(
+							retryCompactionRejectionCapture.rejectionCause,
+						);
 					}
 				}
 			}
@@ -6240,15 +6269,23 @@ export class AgentSession {
 		this._releaseBlockedPostCompactionAdmissionIfReduced();
 		const blockedAdmission = this._blockedPostCompactionAssistant;
 		if (blockedAdmission !== undefined && blockedAdmission.assistant === assistantMessage) {
-			throw new RequiredCompactionError();
+			throw new RequiredCompactionError(blockedAdmission.rejectionCause);
 		}
 
+		const rejectionCapture: RequiredCompactionRejectionCapture = {};
 		const settings = this._getCompactionSettings();
 		const model = this.model;
 		if (this._resumeCompactionRequirement !== undefined) {
 			if (!model) throw new RequiredCompactionError();
-			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
-			if (!compacted) throw new RequiredCompactionError();
+			const compacted = await this._runPrePromptCompaction(
+				assistantMessage,
+				skipAbortedCheck,
+				inlineReason,
+				false,
+				false,
+				rejectionCapture,
+			);
+			if (!compacted) throw new RequiredCompactionError(rejectionCapture.rejectionCause);
 			const currentContext = estimateContextTokens(
 				filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
 			).tokens;
@@ -6269,7 +6306,13 @@ export class AgentSession {
 			filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages),
 		).tokens;
 		const compacted = assistantMessage
-			? await this._checkCompaction(assistantMessage, skipAbortedCheck, inlineReason, retryAfterCompaction)
+			? await this._checkCompaction(
+					assistantMessage,
+					skipAbortedCheck,
+					inlineReason,
+					retryAfterCompaction,
+					rejectionCapture,
+				)
 			: false;
 		if (compacted || (assistantMessage && this._postCompactionUsageExemptAssistants.has(assistantMessage))) {
 			return compacted;
@@ -6292,13 +6335,20 @@ export class AgentSession {
 			return false;
 		}
 		if (assistantBeforeLatestCompaction && assistantMessage) {
-			const compacted = await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, inlineReason);
+			const compacted = await this._runPrePromptCompaction(
+				assistantMessage,
+				skipAbortedCheck,
+				inlineReason,
+				false,
+				false,
+				rejectionCapture,
+			);
 			if (compacted) return true;
 		}
 		if (this._isCompactionOnCooldown() || this._isCompactionDelegated() || this._hasSupersedingCompactionClaim()) {
 			return false;
 		}
-		throw new RequiredCompactionError();
+		throw new RequiredCompactionError(rejectionCapture.rejectionCause);
 	}
 
 	/**
@@ -6367,12 +6417,20 @@ export class AgentSession {
 			throw new RequiredCompactionError();
 		}
 
-		const compacted = await this._runPrePromptCompaction(lastAssistantMessage, false, "pre_prompt");
+		const rejectionCapture: RequiredCompactionRejectionCapture = {};
+		const compacted = await this._runPrePromptCompaction(
+			lastAssistantMessage,
+			false,
+			"pre_prompt",
+			false,
+			false,
+			rejectionCapture,
+		);
 		if (!compacted && this._isCompactionDelegated()) return;
 		if (!compacted && this._hasSupersedingCompactionClaim()) return;
 		if (!compacted && !isOversized() && this._isCompactionOnCooldown()) return;
 		if (!compacted || isOversized()) {
-			throw new RequiredCompactionError();
+			throw new RequiredCompactionError(rejectionCapture.rejectionCause);
 		}
 	}
 
@@ -6381,6 +6439,7 @@ export class AgentSession {
 		skipAbortedCheck = true,
 		inlineReason?: "pre_prompt" | "threshold",
 		retryAfterCompaction = false,
+		rejectionCapture: RequiredCompactionRejectionCapture = {},
 	): Promise<boolean> {
 		const settings = this._getCompactionSettings();
 
@@ -6445,7 +6504,7 @@ export class AgentSession {
 			// Case 2: the response completed successfully. Compact, but do not retry because
 			// agent.continue() cannot continue from a completed assistant response.
 			if (!willRetry) {
-				const compacted = await this._runAutoCompaction("overflow", false);
+				const compacted = await this._runAutoCompaction("overflow", false, rejectionCapture);
 				if (
 					!compacted &&
 					this._compactionLifecycle.state.status === "failed" &&
@@ -6455,6 +6514,7 @@ export class AgentSession {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
+						rejectionCause: rejectionCapture.rejectionCause,
 					};
 				}
 				return compacted;
@@ -6490,8 +6550,15 @@ export class AgentSession {
 				this._incrementMessageRevision();
 			}
 			const compacted = inlineReason
-				? await this._runPrePromptCompaction(assistantMessage, skipAbortedCheck, "overflow", willRetry)
-				: await this._runAutoCompaction("overflow", willRetry);
+				? await this._runPrePromptCompaction(
+						assistantMessage,
+						skipAbortedCheck,
+						"overflow",
+						willRetry,
+						false,
+						rejectionCapture,
+					)
+				: await this._runAutoCompaction("overflow", willRetry, rejectionCapture);
 			if (!compacted && removedOverflowAssistant) {
 				this._restoreAgentMessagesFromSession();
 				this._incrementMessageRevision();
@@ -6505,7 +6572,7 @@ export class AgentSession {
 					}
 					return true;
 				}
-				throw new RequiredCompactionError();
+				throw new RequiredCompactionError(rejectionCapture.rejectionCause);
 			}
 			return compacted;
 		}
@@ -6560,9 +6627,11 @@ export class AgentSession {
 					skipAbortedCheck,
 					inlineReason,
 					retryAfterCompaction,
+					false,
+					rejectionCapture,
 				);
 			} else {
-				const compacted = await this._runAutoCompaction("threshold", retryAfterCompaction);
+				const compacted = await this._runAutoCompaction("threshold", retryAfterCompaction, rejectionCapture);
 				if (
 					!compacted &&
 					this._compactionLifecycle.state.status === "failed" &&
@@ -6572,6 +6641,7 @@ export class AgentSession {
 					this._blockedPostCompactionAssistant = {
 						assistant: assistantMessage,
 						contentTokens: this._blockedAdmissionContentTokens(),
+						rejectionCause: rejectionCapture.rejectionCause,
 					};
 				}
 				return compacted;
@@ -6613,6 +6683,7 @@ export class AgentSession {
 		reason: "pre_prompt" | "overflow" | "threshold" = "pre_prompt",
 		willRetry = false,
 		allowSummaryOnly = false,
+		rejectionCapture?: RequiredCompactionRejectionCapture,
 	): Promise<boolean> {
 		if (this._isCompactionDelegated()) return false;
 		const controller = new AbortController();
@@ -6637,6 +6708,9 @@ export class AgentSession {
 				isContextOverflow(lastAssistantMessage, this.model?.contextWindow ?? 0)
 			) {
 				this._overflowRecoveryAttempted = false;
+			}
+			if (!execution.accepted && execution.rejectionCause === "per-turn-cap") {
+				if (rejectionCapture) rejectionCapture.rejectionCause = execution.rejectionCause;
 			}
 			return execution.accepted;
 		} catch (error) {
@@ -6695,7 +6769,15 @@ export class AgentSession {
 		);
 		if (!atHardLimit && !overProactiveThreshold) return;
 
-		const compacted = await this._runPrePromptCompaction(this._findLastAssistantMessage(), true, "pre_prompt");
+		const rejectionCapture: RequiredCompactionRejectionCapture = {};
+		const compacted = await this._runPrePromptCompaction(
+			this._findLastAssistantMessage(),
+			true,
+			"pre_prompt",
+			false,
+			false,
+			rejectionCapture,
+		);
 		if (!compacted) {
 			// Proactive pressure alone must never brick an automatic continuation:
 			// only the hard reserve valve stays fail-closed (#531/#886).
@@ -6707,7 +6789,7 @@ export class AgentSession {
 			) {
 				return;
 			}
-			throw new RequiredCompactionError();
+			throw new RequiredCompactionError(rejectionCapture.rejectionCause);
 		}
 		this._scheduledContinuationRecompacted = true;
 	}
@@ -6838,7 +6920,11 @@ export class AgentSession {
 	 * @param willRetry Whether to continue the interrupted turn after overflow compaction
 	 * @returns Whether the post-run loop should call `agent.continue()`
 	 */
-	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+	private async _runAutoCompaction(
+		reason: "overflow" | "threshold",
+		willRetry: boolean,
+		rejectionCapture?: RequiredCompactionRejectionCapture,
+	): Promise<boolean> {
 		if (this._isCompactionDelegated()) return false;
 		const finishCompactionWork = this._sessionWorkBarrier.begin();
 		const agentMessagesAtStart = this.agent.state.messages.slice();
@@ -6905,6 +6991,9 @@ export class AgentSession {
 			});
 			if (!execution.accepted) {
 				if (reason === "overflow") this._overflowRecoveryAttempted = false;
+				if (rejectionCapture && execution.rejectionCause === "per-turn-cap") {
+					rejectionCapture.rejectionCause = execution.rejectionCause;
+				}
 				return false;
 			}
 			if (this._autoCompactionAbortController === autoCompactionController) {
@@ -8424,7 +8513,15 @@ export class AgentSession {
 			model &&
 			shouldCompact(contextTokens, model.contextWindow, compactionSettings)
 		) {
-			const preRetryCompaction = await this._runPrePromptCompaction(message, true, "threshold", true, true);
+			const rejectionCapture: RequiredCompactionRejectionCapture = {};
+			const preRetryCompaction = await this._runPrePromptCompaction(
+				message,
+				true,
+				"threshold",
+				true,
+				true,
+				rejectionCapture,
+			);
 			if (
 				!preRetryCompaction &&
 				!this._isCompactionOnCooldown() &&
@@ -8438,7 +8535,7 @@ export class AgentSession {
 					type: "auto_retry_end",
 					success: false,
 					attempt,
-					finalError: new RequiredCompactionError().message,
+					finalError: new RequiredCompactionError(rejectionCapture.rejectionCause).message,
 				});
 				this._resolveRetry();
 				return "blocked";

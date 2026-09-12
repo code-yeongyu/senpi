@@ -1,5 +1,25 @@
 # changes
 
+## 2026-09-12 - Preserve legacy cap feedback through required compaction admission (PR #875)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` carries the request-local `per-turn-cap` rejection into required provider-admission errors, queued continuation blocking, final custom-input admission, scheduled retries, and resumed-session required compaction. Errors retain the structured cause and the runtime restart/resume or new-session recovery description.
+- The ordinary merge preserves main's content-token-based blocked-admission release, session-scoped compaction settings, provider delegation, superseding-claim bypass, Cursor/fallback recovery, and proactive-versus-hard-limit distinction. Successful builtin compactions remain uncapped as introduced by `305c0651f`; this is compatibility feedback for extensions still returning the historical cause, not a restored admission cap.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts` still reduced the structured execution rejection to a boolean and emitted a generic required-compaction error. The old-base PR missed the new resume path and conflicted with newer admission ownership semantics.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the private provider-admission and continuation errors after extension hooks return. An extension cannot preserve its rejection across these boolean result boundaries.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/core/agent-session.ts` required-compaction errors, boolean execution wrappers, blocked-assistant state, resume admission, and retry/continuation gates.
+- Tests: `packages/coding-agent/test/suite/regressions/875-required-compaction-cap-feedback.test.ts` and existing compaction regressions; source RPC evidence exercises more than ten builtin compactions, legacy rejection, and persisted-session restart recovery.
+
 ## 2026-09-12 - `app.question.answer` keybinding and `/answer` command for the async ask-user widget (senpi#1623)
 
 ### What changed

@@ -60,7 +60,7 @@ describe("issue #8328 zero-usage auto-compaction", () => {
 		await sessionInternals._checkCompaction(assistant);
 
 		expect(runAutoCompactionSpy).toHaveBeenCalledOnce();
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false, {});
 	});
 
 	it("does not compact when the zero-usage message estimate is below the threshold", async () => {

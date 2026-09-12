@@ -1992,7 +1992,7 @@ describe("AgentSession compaction characterization", () => {
 
 		await checkCompaction(harness.session, overflowMessage);
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", true);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("overflow", true, expect.any(Object));
 	});
 
 	it("compacts successful overflow responses without retrying", async () => {
@@ -2097,7 +2097,7 @@ describe("AgentSession compaction characterization", () => {
 
 		await checkCompaction(harness.session, errorAssistant);
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false, expect.any(Object));
 	});
 
 	it("does not trigger threshold compaction for error messages when no prior usage exists", async () => {
