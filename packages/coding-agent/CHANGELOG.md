@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Cursor conversations no longer lose their earliest turns to a hardcoded history cap: senpi sent at most 50,000 serialized bytes of history to Cursor because Cursor's model list carries no context-window field, and once that budget was exceeded the oldest complete turns were deleted outright - a 551-message conversation collapsed to 4 messages, and even a session that never called a tool lost its first 30KB turn. It now takes the real context limit Cursor reports for the live conversation (200,000 for kimi-k3, where senpi previously assumed 1,048,576), counts only what Cursor actually feeds the model instead of double-counting its display copies, keeps that limit correct when Cursor rotates a conversation, and forgets a remembered limit when Cursor reports none so a fresh conversation starts from the safe default; individually oversized tool results stay bounded as before (fixes #1603).
+
 - Image-heavy `/resume` sessions no longer reparse the complete JSONL once per evicted resident string; one ordered materialization pass performs one authoritative history load while preserving transcript contents and branch state ([#1407](https://github.com/code-yeongyu/senpi/issues/1407))
 
 - Windows RPC host ownership checks no longer treat a temporarily empty process-identity probe
