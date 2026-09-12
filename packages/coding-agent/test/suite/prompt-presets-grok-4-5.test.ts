@@ -117,3 +117,17 @@ describe("Grok 4.5 prompt preset", () => {
 		expect(misses).toEqual([]);
 	});
 });
+
+describe("Devin SWE-2 prompt preset", () => {
+	it.each(["swe-2-high", "swe-2-max", "swe-2-low", "swe-2-high-lite", "devin/swe-2-high"])(
+		"resolves %s to K3",
+		(id) => {
+			const preset = resolvePreset(createModel(id, "devin"), { promptPreset: "auto" });
+			expect(preset?.name).toBe("kimi-k3");
+		},
+	);
+
+	it("does not route the rejected bare swe-2 id", () => {
+		expect(resolvePreset(createModel("swe-2", "devin"), { promptPreset: "auto" })?.name).not.toBe("kimi-k3");
+	});
+});

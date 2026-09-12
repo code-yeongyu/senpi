@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Fixed native prompt-preset matching for Devin SWE-2 effort variants so `swe-2-high`, `swe-2-max`, `swe-2-low`, and `swe-2-high-lite` resolve to the Kimi K3 preset; the rejected bare `swe-2` id remains unmatched.
+
 ### Removed
 
 ## [2026.9.12-2] - 2026-09-12
