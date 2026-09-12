@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed Cursor Claude Fable 5.1 variants remaining as ten separate models with a 200k fallback window: they now group into plain and thinking identities with the full effort ladder and a 1M catalog window, while server-observed context limits still take precedence ([#1613](https://github.com/code-yeongyu/senpi/pull/1613) by [@thisisjun786](https://github.com/thisisjun786)).
+
 ### Removed
 
 ## [2026.9.12-2] - 2026-09-12
