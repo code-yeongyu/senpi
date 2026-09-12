@@ -105,6 +105,7 @@ import {
 import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from "./compaction/lifecycle.ts";
 import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
+import type { CompactionModelSelector } from "./compaction-settings-access.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
 import {
@@ -857,6 +858,17 @@ export type ClearedQueue = {
 	/** Global enqueue order, independent of native delivery priority. */
 	readonly ordered: readonly QueuedInput[];
 };
+
+/** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
+export interface QueuedInputOptions {
+	/**
+	 * Recovery-ordered enqueue position. A reconnecting client replays its pending
+	 * messages with their original order so the queue is rebuilt as the user typed it.
+	 */
+	enqueueOrder?: number;
+	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
+	source?: InputSource;
+}
 
 export interface PromptOptions {
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
@@ -3637,6 +3649,46 @@ export class AgentSession {
 	}
 
 	/**
+	 * Run `input` extension handlers for queued (steer / follow-up) input.
+	 *
+	 * Queued input reaches the model exactly like a prompt does, so it passes the same
+	 * extension surface: a handler may consume it or rewrite it. The input keeps the
+	 * session-scoped `inputId` identity, so the `input_disposition` event a handler
+	 * observes correlates with the input it saw.
+	 *
+	 * @returns the (possibly transformed) input, or `undefined` when a handler consumed it.
+	 */
+	private async _runInputHandlers(
+		text: string,
+		images: ImageContent[] | undefined,
+		source: InputSource,
+		streamingBehavior?: "steer" | "followUp",
+	): Promise<{ text: string; images: ImageContent[] | undefined; inputId?: string } | undefined> {
+		if (!this._extensionRunner.hasHandlers("input")) {
+			return { text, images };
+		}
+
+		const inputId = `${this.sessionManager.getSessionId()}:${++this._nextInputId}`;
+		const inputResult = await this._extensionRunner.emitInput(text, images, source, streamingBehavior, inputId);
+		if (inputResult.action === "handled") {
+			await this._emitInputDisposition(inputId, "handled");
+			return undefined;
+		}
+		if (inputResult.action === "transform") {
+			return { text: inputResult.text, images: inputResult.images ?? images, inputId };
+		}
+		return { text, images, inputId };
+	}
+
+	private async _emitInputDisposition(
+		inputId: string | undefined,
+		disposition: "handled" | "queued" | "started" | "rejected",
+	): Promise<void> {
+		if (inputId === undefined) return;
+		await this._extensionRunner.emit({ type: "input_disposition", inputId, disposition });
+	}
+
+	/**
 	 * Send a prompt to the agent.
 	 * - Handles extension commands (registered via pi.registerCommand) immediately, even during streaming
 	 * - Expands file-based prompt templates by default
@@ -4204,25 +4256,39 @@ export class AgentSession {
 	}
 
 	/**
-	 * Queue a steering message while the agent is running.
-	 * Delivered after the current assistant turn finishes executing its tool calls,
-	 * before the next LLM call.
-	 * Expands skill commands and prompt templates. Errors on extension commands.
-	 * @param images Optional image attachments to include with the message
-	 * @throws Error if text is an extension command
+	 * Shared queueing path for `steer()` and `followUp()`: extension-command guard,
+	 * `input` handlers, skill/template expansion, then the recovery-ordered enqueue.
 	 */
-	async steer(text: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
+	private async _queueUserInput(
+		text: string,
+		images: ImageContent[] | undefined,
+		behavior: "steer" | "followUp",
+		options?: QueuedInputOptions,
+	): Promise<void> {
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
 		}
 
+		const processedInput = await this._runInputHandlers(
+			text,
+			images,
+			options?.source ?? "interactive",
+			this.isStreaming ? behavior : undefined,
+		);
+		if (!processedInput) return;
+
 		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillCommand(text);
+		let expandedText = this._expandSkillCommand(processedInput.text);
 		const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
 		expandedText = templateExpansion.text;
 
-		await this._queueSteer(expandedText, images, recovery?.enqueueOrder);
+		if (behavior === "steer") {
+			await this._queueSteer(expandedText, processedInput.images, options?.enqueueOrder);
+		} else {
+			await this._queueFollowUp(expandedText, processedInput.images, options?.enqueueOrder);
+		}
+		await this._emitInputDisposition(processedInput.inputId, "queued");
 		if (templateExpansion.template) {
 			this._emit({
 				type: "command_invocation",
@@ -4237,35 +4303,30 @@ export class AgentSession {
 	}
 
 	/**
-	 * Queue a follow-up message to be processed after the agent finishes.
-	 * Delivered only when agent has no more tool calls or steering messages.
-	 * Expands skill commands and prompt templates. Errors on extension commands.
+	 * Queue a steering message while the agent is running.
+	 * Delivered after the current assistant turn finishes executing its tool calls,
+	 * before the next LLM call.
+	 * Runs `input` extension handlers, then expands skill commands and prompt templates.
+	 * Errors on extension commands.
 	 * @param images Optional image attachments to include with the message
+	 * @param options Recovery enqueue order and input source; source defaults to interactive
 	 * @throws Error if text is an extension command
 	 */
-	async followUp(text: string, images?: ImageContent[], recovery?: { enqueueOrder?: number }): Promise<void> {
-		// Check for extension commands (cannot be queued)
-		if (text.startsWith("/")) {
-			this._throwIfExtensionCommand(text);
-		}
+	async steer(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+		await this._queueUserInput(text, images, "steer", options);
+	}
 
-		// Expand skill commands and prompt templates
-		let expandedText = this._expandSkillCommand(text);
-		const templateExpansion = expandPromptTemplateWithMetadata(expandedText, [...this.promptTemplates]);
-		expandedText = templateExpansion.text;
-
-		await this._queueFollowUp(expandedText, images, recovery?.enqueueOrder);
-		if (templateExpansion.template) {
-			this._emit({
-				type: "command_invocation",
-				command: {
-					name: templateExpansion.template.name,
-					source: "prompt",
-					sourceInfo: templateExpansion.template.sourceInfo,
-					syntax: "slash",
-				},
-			});
-		}
+	/**
+	 * Queue a follow-up message to be processed after the agent finishes.
+	 * Delivered only when agent has no more tool calls or steering messages.
+	 * Runs `input` extension handlers, then expands skill commands and prompt templates.
+	 * Errors on extension commands.
+	 * @param images Optional image attachments to include with the message
+	 * @param options Recovery enqueue order and input source; source defaults to interactive
+	 * @throws Error if text is an extension command
+	 */
+	async followUp(text: string, images?: ImageContent[], options?: QueuedInputOptions): Promise<void> {
+		await this._queueUserInput(text, images, "followUp", options);
 	}
 
 	private _startSessionTitleGeneration(firstPrompt: string): void {
@@ -5643,7 +5704,7 @@ export class AgentSession {
 		// (#7921 case 6).
 		this._releaseBlockedPostCompactionAdmission();
 		const pathEntries = this.sessionManager.getBranch();
-		const settings = cursorOverflowCompactionSettings(this._getCompactionSettings(), model.provider, "manual");
+		const settings = cursorOverflowCompactionSettings(this._getCompactionSettings(model), model.provider, "manual");
 		if (!prepareCompaction(pathEntries, settings)) {
 			const requestId = randomUUID();
 			const lastEntry = pathEntries[pathEntries.length - 1];
@@ -6923,6 +6984,9 @@ export class AgentSession {
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		if (this._isCompactionDelegated()) return false;
+		// Model identity is captured before the auth await below: a model switch during
+		// that await must not change the token budgets this compaction was admitted with.
+		const model = this.model;
 		const finishCompactionWork = this._sessionWorkBarrier.begin();
 		const agentMessagesAtStart = this.agent.state.messages.slice();
 		const autoCompactionController = new AbortController();
@@ -6969,7 +7033,7 @@ export class AgentSession {
 
 			const preparation = prepareCompaction(
 				this.sessionManager.getBranch(),
-				cursorOverflowCompactionSettings(this._getCompactionSettings(), this.model?.provider, reason),
+				cursorOverflowCompactionSettings(this._getCompactionSettings(model), model?.provider, reason),
 				reason === "overflow",
 			);
 			if (!preparation) {
@@ -7065,8 +7129,16 @@ export class AgentSession {
 		this._emitSessionSettingsChanged();
 	}
 
-	private _getCompactionSettings(): ReturnType<SettingsManager["getCompactionSettings"]> {
-		const settings = this.settingsManager.getCompactionSettings();
+	/**
+	 * Compaction settings for a model, defaulting to the session model so per-model
+	 * token budgets (`compaction.modelOverrides`) apply to every compaction read here.
+	 * Callers that captured a model before an await pass it explicitly, so a model
+	 * switch during that await cannot change the budget the operation started with.
+	 */
+	private _getCompactionSettings(
+		forModel: CompactionModelSelector | undefined = this.model,
+	): ReturnType<SettingsManager["getCompactionSettings"]> {
+		const settings = this.settingsManager.getCompactionSettings(forModel);
 		if (this._autoCompactionSessionOverride === undefined) return settings;
 		return { ...settings, enabled: this._autoCompactionSessionOverride };
 	}
@@ -8445,12 +8517,16 @@ export class AgentSession {
 			this._retryAttempt,
 			this._retryRandom(),
 		);
-		const delayMs =
+		const plannedDelayMs =
 			switchedFallback || sameModelNativeRecovery
 				? 0
 				: is429TierRouted
 					? (hintTierDelayMs ?? providerDelayMs ?? localExponentialMs)
 					: (nonTierProviderDelayMs ?? localExponentialMs);
+		// `retry.maxAgentDelayMs` is a hard ceiling on ONE agent-level wait, applied after
+		// the profile/hint/jitter planning above (the planner still owns the schedule).
+		// It bounds the worst case a provider hint or a long backoff can impose on a turn.
+		const delayMs = Math.min(plannedDelayMs, settings.maxAgentDelayMs);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
 
@@ -8803,6 +8879,11 @@ export class AgentSession {
 	): Promise<AssistantEditResult> {
 		if (this.isStreaming) {
 			throw new SessionStreamingError();
+		}
+		if (this.isCompacting) {
+			throw new Error(
+				"Wait for the current compaction or tree navigation to finish before navigating the session tree.",
+			);
 		}
 
 		const oldLeafId = this.sessionManager.getLeafId();

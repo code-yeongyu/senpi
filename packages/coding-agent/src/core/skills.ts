@@ -356,7 +356,9 @@ function loadSkillFromFile(
 // that prefix per skill bills it once per skill. The roots table pays it once per
 // distinct root and each location becomes a short alias/relative path. A one-line
 // rule tells the model to expand aliases by joining them back to the root.
-export function formatSkillsForPrompt(skills: Skill[]): string {
+// `fileReadTool` lets a bash-only tool set still load skills: the loading rule names
+// the tool the session actually has.
+export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "bash" = "read"): string {
 	const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
 
 	if (visibleSkills.length === 0) {
@@ -371,7 +373,9 @@ export function formatSkillsForPrompt(skills: Skill[]): string {
 
 	const lines = [
 		"\n\nThe following skills provide specialized instructions for specific tasks.",
-		"Use the read tool to load a skill's file whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work.",
+		fileReadTool === "read"
+			? "Use the read tool to load a skill's file whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work."
+			: "Use bash to load a skill's file whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work.",
 		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
 		"",
 		"<skill_roots>",

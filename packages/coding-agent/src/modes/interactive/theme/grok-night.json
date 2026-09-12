@@ -39,7 +39,8 @@
 		"thinkingText": "label",
 
 		"selectedBg": "selected",
-		"scrollbarThumb": "#3a3a4a",
+		"scrollbarTrack": "#505050",
+		"scrollbarThumb": "#d4d4d4",
 		"searchMatchBg": "#3a3a4a",
 		"searchMatchText": "#d4d4d4",
 		"userMessageBg": "altRow",

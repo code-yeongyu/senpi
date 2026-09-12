@@ -73,3 +73,4 @@ collect.sh
 # Ephemeral agent working state. Existing tracked archives remain tracked,
 # but new untracked files must never block a release commit.
 .omo/
+packages/agent/docs/extensions/pi-server-artifact/index.md

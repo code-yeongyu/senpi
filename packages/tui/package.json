@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-tui",
-	"version": "2026.9.11",
+	"version": "2026.9.12",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
@@ -8,6 +8,7 @@
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json",
 		"build:native:darwin": "native/darwin/build.sh",
+		"build:native:linux": "native/linux/build.sh",
 		"build:native:win32": "node native/win32/build.mjs",
 		"test": "node --test --import tsx --import ./test/setup-multiplexer-env.mjs --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts",
 		"prepublishOnly": "npm run clean && npm run build",
@@ -15,14 +16,20 @@
 	},
 	"files": [
 		"dist/**/*",
+		"native/napi.h",
+		"native/clipboard.h",
 		"native/win32/prebuilds/**/*.node",
 		"native/win32/src/**/*.c",
 		"native/win32/build.mjs",
 		"native/win32/README.md",
 		"native/darwin/prebuilds/**/*.node",
-		"native/darwin/src/**/*.c",
+		"native/darwin/src/**/*.m",
 		"native/darwin/build.sh",
 		"native/darwin/README.md",
+		"native/linux/prebuilds/**/*.node",
+		"native/linux/src/**/*.{c,h}",
+		"native/linux/build.sh",
+		"native/linux/README.md",
 		"README.md"
 	],
 	"keywords": [
@@ -47,7 +54,7 @@
 	"types": "./dist/index.d.ts",
 	"dependencies": {
 		"get-east-asian-width": "1.6.0",
-		"marked": "18.0.10"
+		"marked": "18.0.11"
 	},
 	"devDependencies": {
 		"@xterm/headless": "6.0.0",

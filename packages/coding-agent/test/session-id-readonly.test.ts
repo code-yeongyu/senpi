@@ -13,6 +13,7 @@ import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prer
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
+const sourceResolverPath = resolve(__dirname, "../src/experimental/source-resolver.ts");
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -57,13 +58,12 @@ async function runCli(args: string[]): Promise<{ code: number | null; agentDir: 
 	mkdirSync(projectDir, { recursive: true });
 
 	const code = await new Promise<number | null>((resolvePromise, reject) => {
-		const child = spawn(process.execPath, [cliPath, ...args], {
+		const child = spawn(process.execPath, ["--import", sourceResolverPath, cliPath, ...args], {
 			cwd: projectDir,
 			env: {
 				...process.env,
 				[ENV_AGENT_DIR]: agentDir,
 				PI_OFFLINE: "1",
-				TSX_TSCONFIG_PATH: resolve(__dirname, "../../../tsconfig.json"),
 			},
 			stdio: ["ignore", "ignore", "ignore"],
 		});

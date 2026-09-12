@@ -1,5 +1,26 @@
 # TUI delta rendering fork changes
 
+## 2026-09-12 - Carry-forwards from the upstream v0.85.x sync
+
+### What changed
+
+- `packages/tui/src/latex.ts` stays deleted; upstream f0592205f's seven relational-algebra join symbols now live in `packages/tui/src/components/latex.ts`, pinned by `test/components-latex-relations.test.ts`.
+- `packages/tui/src/tui.ts` keeps `PI_DEBUG_REDRAW` and the `pi-debug.log` filename instead of upstream c505f4c19's `PI_TUI_DEBUG_REDRAW` / `pi-tui-debug.log` rename.
+- `packages/tui/src/tui.ts` (`TuiBase.logDirectory`) keeps its `~/.senpi/agent` default, so over-wide crash dumps stay at `<home>/.senpi/agent/senpi-crash.log`; upstream's `os.tmpdir()` fallback when no log directory is supplied is not adopted.
+- `packages/tui/src/components/loader.ts` gains upstream's protected `getRenderedIndicator()` hook on top of the fork message/indicator formatters.
+
+### Why
+
+- The fork's debug and crash artifacts are documented under the `senpi` names and read by the QA harness; renaming them would break existing evidence tooling for no user benefit. The LaTeX symbol table belongs with the living component module.
+
+### Why an extension could not handle it
+
+- Renderer logging paths, crash dumps, and component internals are not reachable from extensions.
+
+### Expected merge conflict zones
+
+- `src/tui.ts` env-var and log-filename constants, `components/latex.ts` symbol tables, and `components/loader.ts` render hooks.
+
 ## 2026-09-11 - Keep dollar skill hints active across multiline drafts
 
 ### What changed

@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-12 - Binary build script drops the `--min-release-age=0` native install clause
+
+### What changed
+
+- `scripts/build-binaries.sh`: the `--min-release-age=0` native install step listed in the 2026-08-25 entry below is gone; it guarded the cross-platform `@mariozechner/clipboard` install, which D-E/C25 delete along with `--skip-deps`. Every other fork-owned behavior in that entry (jsdom xhr sync worker embedding, codemode sidecar, PTY prebuilds, TUI native helpers, darwin codesign, host smoke test) still holds for the resolved script.
+
+### Why
+
+- The clipboard package the clause installed no longer exists in the fork; the native clipboard now ships as tui prebuilds.
+
+### Why an extension could not handle it
+
+- Release packaging is build tooling, not runtime.
+
+### Expected merge conflict zones
+
+- The dependency-install section of `scripts/build-binaries.sh`.
+
 ## 2026-09-10 - Publish a Bun-compile-safe css-tree
 
 ### What changed

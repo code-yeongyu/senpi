@@ -31,6 +31,7 @@ describe("build-all", () => {
 
 		// Then
 		assert.deepEqual(flattened, [
+			"packages/chord",
 			"packages/tui",
 			"packages/pty",
 			"packages/telemetry",
@@ -52,6 +53,23 @@ describe("build-all", () => {
 		assert.ok(index("packages/server") > index("packages/coding-agent"));
 	});
 
+	it("builds chord before every workspace that declares it as a dependency", () => {
+		// Given
+		const index = (pkg) => BUILD_PHASES.findIndex((phase) => phase.includes(pkg));
+		const chordIndex = index("packages/chord");
+		const chordDependents = BUILD_PHASES.flat().filter((relativePath) => {
+			const manifest = JSON.parse(readFileSync(join(root, relativePath, "package.json"), "utf8"));
+			return manifest.dependencies?.["@earendil-works/chord"] !== undefined;
+		});
+
+		// Then
+		assert.equal(chordIndex, 0);
+		assert.ok(chordDependents.length > 0);
+		for (const dependent of chordDependents) {
+			assert.ok(index(dependent) > chordIndex, `${dependent} must build after packages/chord`);
+		}
+	});
+
 	it("keeps every explicitly built package inside the pnpm workspace", () => {
 		// Given
 		const pnpmWorkspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
@@ -67,11 +85,12 @@ describe("build-all", () => {
 	it("builds pty beside tui in the first native-adjacent phase", () => {
 		// Given
 		const packageJson = JSON.parse(readFileSync(join(root, "packages/pty/package.json"), "utf8"));
-		const phaseOne = BUILD_PHASES[0];
+		const phaseOne = BUILD_PHASES[1];
 
 		// Then
 		assert.equal(packageJson.name, "@earendil-works/pi-pty");
 		assert.deepEqual(phaseOne, ["packages/tui", "packages/pty", "packages/telemetry", "packages/protocol"]);
+		assert.deepEqual(BUILD_PHASES[0], ["packages/chord"]);
 	});
 
 	it("wires the pty package export surface for workspace imports", () => {

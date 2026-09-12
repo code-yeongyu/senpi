@@ -71,10 +71,12 @@ describe("AgentSession retry", () => {
 	async function createSession(options?: {
 		failCount?: number;
 		maxRetries?: number;
+		maxAgentDelayMs?: number;
 		delayAssistantMessageEndMs?: number;
 	}) {
 		const failCount = options?.failCount ?? 1;
 		const maxRetries = options?.maxRetries ?? 3;
+		const maxAgentDelayMs = options?.maxAgentDelayMs ?? 60000;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
 		let callCount = 0;
 
@@ -112,7 +114,7 @@ describe("AgentSession retry", () => {
 		// (the per-rung budget is existing, deliberate behaviour - see
 		// retry-fallback-engine "spends a fresh retry budget on every rung").
 		settingsManager.applyOverrides({
-			retry: { enabled: true, maxRetries, baseDelayMs: 1, fallbackChains: { "*": [] } },
+			retry: { enabled: true, maxRetries, baseDelayMs: 1, maxAgentDelayMs, fallbackChains: { "*": [] } },
 		});
 
 		session = new AgentSession({
@@ -122,6 +124,9 @@ describe("AgentSession retry", () => {
 			cwd: tempDir,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
+			// The fork's retry planner adds jitter through this seam; pinning the sample to 0
+			// keeps the backoff schedule exact so delay assertions stay deterministic.
+			retryRandom: () => 0,
 		});
 
 		if (delayAssistantMessageEndMs > 0) {
@@ -168,6 +173,19 @@ describe("AgentSession retry", () => {
 		expect(events).toContain("start:2");
 		expect(events).toContain("end:success=false");
 		expect(created.session.isRetrying).toBe(false);
+	});
+
+	it("caps agent retry delay", async () => {
+		// Regression for #8826.
+		const created = await createSession({ failCount: 4, maxRetries: 5, maxAgentDelayMs: 5 });
+		const delays: number[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") delays.push(event.delayMs);
+		});
+
+		await created.session.prompt("Test");
+
+		expect(delays).toEqual([1, 2, 4, 5]);
 	});
 
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {

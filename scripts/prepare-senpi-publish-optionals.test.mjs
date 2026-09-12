@@ -13,6 +13,9 @@ it("accepts consumer-resolved platform optionals outside the packed bundle", () 
 	const packed = {
 		files: [
 			{ path: "package/dist/cli.js" },
+			{ path: "package/node_modules/@earendil-works/chord/package.json" },
+			{ path: "package/node_modules/@earendil-works/chord/dist/index.js" },
+			{ path: "package/node_modules/@earendil-works/chord/dist/context/index.js" },
 			{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 			{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 			{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },

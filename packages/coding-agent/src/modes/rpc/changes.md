@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-12 - Queued RPC input carries its source to extension `input` handlers
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `steer` and `follow_up` commands pass `{ enqueueOrder, source: "rpc" }` to `AgentSession.steer()` / `followUp()`, so queued input runs extension `input` handlers and skill or template expansion with `source: "rpc"` instead of the interactive default (upstream faa9863cb, adopted per D-N in the fork's `inputId` / disposition shape).
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts` keeps the fork deletion of `handleCommand`; the upstream two-line change lives in the connection handler.
+
+### Why
+
+- Extensions that filter or rewrite input by source were bypassed for queued RPC messages while `prompt` already honored them.
+
+### Why an extension could not handle it
+
+- The handler dispatch happens inside the session before any extension sees the message.
+
+### Expected merge conflict zones
+
+- The `steer` / `follow_up` command branches in `connection-handler.ts` and the `InputSource` union in `src/core/extensions/types.ts`.
+
 ## 2026-09-12 - Keep a live host whose identity probe is starved
 
 ### What changed

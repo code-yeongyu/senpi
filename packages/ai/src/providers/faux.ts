@@ -94,11 +94,11 @@ export function fauxAssistantMessage(
 		model: DEFAULT_MODEL_ID,
 		usage: DEFAULT_USAGE,
 		stopReason: options.stopReason ?? "stop",
-		stopDetails: options.stopDetails,
-		deferred: options.deferred,
-		errorMessage: options.errorMessage,
-		abortSource: options.abortSource,
-		responseId: options.responseId,
+		...(options.stopDetails === undefined ? {} : { stopDetails: options.stopDetails }),
+		...(options.deferred === undefined ? {} : { deferred: options.deferred }),
+		...(options.errorMessage === undefined ? {} : { errorMessage: options.errorMessage }),
+		...(options.abortSource === undefined ? {} : { abortSource: options.abortSource }),
+		...(options.responseId === undefined ? {} : { responseId: options.responseId }),
 		timestamp: options.timestamp ?? Date.now(),
 	};
 }

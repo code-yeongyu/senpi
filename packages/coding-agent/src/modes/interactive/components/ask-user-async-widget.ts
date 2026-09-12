@@ -6,7 +6,7 @@
  * interactive-mode can turn ordinary composer text into the comment answer.
  */
 
-import { Container, Text, type TUI } from "@earendil-works/pi-tui";
+import { Container, decodeKittyPrintable, matchesKey, Text, type TUI } from "@earendil-works/pi-tui";
 import type { QuestionRequest, QuestionResponse } from "../../../core/extensions/types.ts";
 import { theme } from "../theme/theme.ts";
 import { formatCountdownLabel, type QuestionDraft } from "./ask-user-question-state.ts";
@@ -17,6 +17,21 @@ import { rawKeyHint } from "./keybinding-hints.ts";
 export const ASK_USER_WIDGET_KEY = "ask-user";
 /** Editor shortcut that expands the pending question into the full component. */
 export const ASK_USER_ANSWER_KEY = "alt+a";
+/**
+ * What the `a` key types on macOS when the terminal lets Option compose
+ * characters instead of sending it as Alt (the default in Terminal.app,
+ * iTerm2, Ghostty and kitty). Accepting these keeps the advertised `option+a`
+ * working without a terminal-settings detour; other platforms never see
+ * Option this way, so they keep treating the glyphs as text.
+ */
+const DARWIN_OPTION_A_GLYPHS: ReadonlySet<string> = new Set(["å", "Å"]);
+
+/** True when `data` is the editor input that expands the pending question on `platform`. */
+export function matchesAskUserAnswerKey(data: string, platform: NodeJS.Platform = process.platform): boolean {
+	if (matchesKey(data, ASK_USER_ANSWER_KEY)) return true;
+	if (platform !== "darwin") return false;
+	return DARWIN_OPTION_A_GLYPHS.has(decodeKittyPrintable(data) ?? data);
+}
 
 function hasAnswer(answer: QuestionResponse["answers"][string] | undefined): boolean {
 	if (!answer) return false;

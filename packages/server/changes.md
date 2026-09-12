@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-12 - Remove the ai-to-protocol mapper with the protocol v8 adoption
+
+### What changed
+
+- `packages/server/src/protocol.ts` (the `toProtocolModelMetadata()` / `toProtocolAssistantMessage()` / `toProtocolUserMessage()` / `toProtocolToolResultMessage()` bridge), `packages/server/test/protocol.test.ts`, and the matching re-export in `packages/server/src/index.ts` are deleted (C13). Upstream replaced the mapping layer with service-addressed RPC routed through `src/session-router.ts` and deleted `packages/protocol/src/schemas.ts`, so the DTOs the mapper produced no longer exist.
+- The 2026-09-04, 2026-08-25, and 2026-08-13 blocks below that describe `protocol.ts` field accounting remain as history; they no longer name live code.
+
+### Why
+
+- Keeping a mapper for schemas upstream removed would mean re-inventing the wire contract inside the fork; the server now forwards opaque service envelopes and never decodes business payloads.
+
+### Why an extension could not handle it
+
+- The server package sits below the extension layer; the wire contract is not something an extension can shape.
+
+### Expected merge conflict zones
+
+- `packages/server/src/index.ts` exports and any upstream change that reintroduces a typed mapping module; expect fork-side deletions, not edits.
+
 ## 2026-09-10 - Use native TypeScript builds for omob performance
 
 ### What changed

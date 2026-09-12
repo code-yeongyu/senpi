@@ -4,7 +4,11 @@
  * `settings-manager.ts` re-exports everything here so existing importers keep their path;
  * the declarations live apart because that module is already far past the size ceiling.
  */
-export type { CompactionSettings } from "./compaction-settings-access.ts";
+export type {
+	CompactionModelOverride,
+	CompactionModelSelector,
+	CompactionSettings,
+} from "./compaction-settings-access.ts";
 export type {
 	ProviderRetrySettings,
 	RetrySettings,

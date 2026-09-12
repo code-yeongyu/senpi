@@ -8,6 +8,21 @@
 			"*": [
 				"./*"
 			],
+			"@earendil-works/chord": [
+				"./packages/chord/src/index.ts"
+			],
+			"@earendil-works/chord/bundler": [
+				"./packages/chord/src/bundler.ts"
+			],
+			"@earendil-works/chord/context": [
+				"./packages/chord/src/context/index.ts"
+			],
+			"@earendil-works/chord/delta": [
+				"./packages/chord/src/delta/index.ts"
+			],
+			"@earendil-works/chord/node": [
+				"./packages/chord/src/node.ts"
+			],
 			"@earendil-works/pi-telemetry": [
 				"./packages/telemetry/src/index.ts"
 			],
@@ -36,7 +51,12 @@
 			"@earendil-works/pi-agent-core/session/testing": [
 				"./packages/agent/src/harness/session/testing/index.ts"
 			],
+			"@earendil-works/pi-agent-core/harness/session/testing": [
+				"./packages/agent/src/harness/session/testing/index.ts"
+			],
 			"@earendil-works/pi-agent-core/*": [
+				"./packages/agent/src/*.ts",
+				"./packages/agent/src/*/index.ts",
 				"./packages/agent/src/*"
 			],
 			"@earendil-works/pi-session-backend-sqlite-node": [
@@ -44,6 +64,9 @@
 			],
 			"@earendil-works/pi-coding-agent": [
 				"./packages/coding-agent/src/index.ts"
+			],
+			"@earendil-works/pi-coding-agent/experimental/plugin": [
+				"./packages/coding-agent/src/experimental/plugin.ts"
 			],
 			"@earendil-works/pi-coding-agent/hooks": [
 				"./packages/coding-agent/src/core/hooks/index.ts"
@@ -60,11 +83,17 @@
 			"@earendil-works/pi-client": [
 				"./packages/client/src/index.ts"
 			],
+			"@earendil-works/pi-client/unix": [
+				"./packages/client/src/unix.ts"
+			],
 			"@earendil-works/pi-client/*": [
 				"./packages/client/src/*"
 			],
 			"@earendil-works/pi-server": [
 				"./packages/server/src/index.ts"
+			],
+			"@earendil-works/pi-server/unix": [
+				"./packages/server/src/transports/unix/index.ts"
 			],
 			"@earendil-works/pi-server/*": [
 				"./packages/server/src/*"

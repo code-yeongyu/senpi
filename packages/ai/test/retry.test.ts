@@ -40,18 +40,13 @@ const nonCanonicalModelRequestRejectionMessages = [
 
 describe("provider retry classification", () => {
 	it("applies bounded injectable Codex-style jitter", () => {
-		expect(retryDelayMs(1_000, 1, () => 0)).toBe(900);
-		expect(retryDelayMs(1_000, 1, () => 1)).toBe(1_100);
+		expect(retryDelayMs({ baseDelayMs: 1_000, random: () => 0 }, 1)).toBe(900);
+		expect(retryDelayMs({ baseDelayMs: 1_000, random: () => 1 }, 1)).toBe(1_100);
 	});
 
 	it("keeps provider retry hints above the jittered schedule", () => {
 		const hinted = 1_050;
-		expect(
-			Math.max(
-				hinted,
-				retryDelayMs(1_000, 1, () => 0),
-			),
-		).toBe(hinted);
+		expect(Math.max(hinted, retryDelayMs({ baseDelayMs: 1_000, random: () => 0 }, 1))).toBe(hinted);
 	});
 	it("matches explicit provider retry guidance", () => {
 		expect(
@@ -437,6 +432,28 @@ describe("provider retry classification", () => {
 	});
 });
 
+describe("retryDelayMs", () => {
+	it("caps agent retry delay", () => {
+		// Regression for #8826. The fork jitters the scheduled delay by +/-10% before the
+		// cap applies, so the jitter source is pinned here instead of relying on the exact
+		// unjittered product upstream asserts.
+		expect(retryDelayMs({ baseDelayMs: 2000, random: () => 1 }, 6)).toBe(60000);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000, random: () => 1 }, 5)).toBe(5000);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 0, random: () => 1 }, 5)).toBe(0);
+	});
+
+	it("clamps an exponentially overflowed delay to the cap", () => {
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 60000, random: () => 1 }, 20)).toBe(60000);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 60000, random: () => 0 }, 2000)).toBe(60000);
+	});
+
+	it("never exceeds the default cap for any jitter sample", () => {
+		for (const sample of [0, 0.25, 0.5, 0.75, 1]) {
+			expect(retryDelayMs({ baseDelayMs: 2000, random: () => sample }, 8)).toBe(60000);
+		}
+	});
+});
+
 describe("retryAssistantCall", () => {
 	const disabled: RetryPolicy = { enabled: false, maxRetries: 3, baseDelayMs: 0 };
 	const enabled: RetryPolicy = { enabled: true, maxRetries: 3, baseDelayMs: 0 };
@@ -479,6 +496,23 @@ describe("retryAssistantCall", () => {
 		expect(produce).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
 		expect(onRetryScheduled).toHaveBeenCalledTimes(3);
 		expect(onRetryFinished).toHaveBeenCalledWith(false, 3, "terminated");
+	});
+
+	it("reports capped retry delays", async () => {
+		// Regression for #8826.
+		let n = 0;
+		const policy: RetryPolicy = { enabled: true, maxRetries: 4, baseDelayMs: 10, maxAgentDelayMs: 15 };
+		const produce = vi.fn(async () => {
+			n++;
+			return n < 5
+				? fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" })
+				: fauxAssistantMessage("recovered");
+		});
+		const onRetryScheduled = vi.fn();
+
+		await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
+
+		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([10, 15, 15, 15]);
 	});
 
 	it("stops retrying once a call succeeds", async () => {

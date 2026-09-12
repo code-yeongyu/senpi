@@ -22,7 +22,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = dirname(__dirname);
 const SUPPORTED_PMS = new Set(SUPPORTED_PACKAGE_MANAGERS);
 
+// Chord is the foundation every other workspace compiles against (protocol/client/agent/server
+// and coding-agent's experimental graph all import `@earendil-works/chord`), and `tsgo -p
+// tsconfig.build.json` resolves it through `../chord/dist/*.d.ts`. It therefore has to finish
+// before any dependent phase starts.
 export const BUILD_PHASES = [
+	["packages/chord"],
 	["packages/tui", "packages/pty", "packages/telemetry", "packages/protocol"],
 	["packages/ai", "packages/client"],
 	["packages/agent"],

@@ -38,6 +38,18 @@ export function nativePrebuildFile(target) {
 }
 
 const bundledWorkspaces = [
+	// Chord is a local workspace, never a registry package for this fork: the vendored
+	// client/protocol dist and the bundled agent-core dist both import
+	// `@earendil-works/chord`, so the packed copy under coding-agent/node_modules must be
+	// the only thing that resolves. `/context` ships too because the client runtime
+	// imports `@earendil-works/chord/context`.
+	{
+		source: "packages/chord",
+		packageName: "@earendil-works/chord",
+		targetParts: ["@earendil-works", "chord"],
+		sourceOnly: false,
+		requiredFiles: ["package.json", "dist/index.js", "dist/context/index.js"],
+	},
 	{ source: "packages/agent", packageName: "@earendil-works/pi-agent-core", targetParts: ["@earendil-works", "pi-agent-core"], sourceOnly: false },
 	{ source: "packages/ai", packageName: "@earendil-works/pi-ai", targetParts: ["@earendil-works", "pi-ai"], sourceOnly: false },
 	{

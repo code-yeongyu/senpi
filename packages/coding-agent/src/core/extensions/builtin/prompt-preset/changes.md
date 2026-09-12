@@ -45,7 +45,6 @@
 
 - LOW: `presets.ts` matcher block and `resolvePresetName` order; `settings.ts` union.
 
-||||||| parent of 4002847aa (fix(goal): earn the blocked status, and let Astra retry without a cap)
 ## Route user questions through the question tool (2026-09-10)
 
 ### What changed

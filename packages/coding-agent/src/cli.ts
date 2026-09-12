@@ -10,6 +10,10 @@ import { APP_NAME, DISPLAY_VERSION, getPackageDir } from "./config.ts";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 
+// Upstream's `cli/setup.ts` helper is deliberately not used here: this launcher only decides the
+// runtime and process structure, and `cli-main.ts` performs the equivalent process/title/env/http
+// setup for both entry paths (Node launcher and the Bun binary).
+
 /**
  * Hand a Bun-installed CLI to Bun before anything else runs.
  *

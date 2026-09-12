@@ -12,6 +12,8 @@ export interface RetrySettings {
 	enabled?: boolean;
 	maxRetries?: number;
 	baseDelayMs?: number;
+	/** Hard ceiling on one agent-level retry wait, applied after profile/hint/jitter planning; default: 60000. */
+	maxAgentDelayMs?: number;
 	provider?: ProviderRetrySettings;
 	providers?: Record<string, import("./profile-override.ts").RetryPolicyOverride>;
 	modelFallback?: boolean;

@@ -5,6 +5,10 @@ import { resolveRegistryPackages } from "./registry-packages.mjs";
 
 export const WORKSPACE_PACKAGES = [
 	"packages/ai/package.json",
+	// Chord is bundled into the senpi tarball rather than published, but it still rides the
+	// fork's CalVer lockstep so the install lock treats it as an internal workspace instead of
+	// trying to resolve a registry-absent `@earendil-works/chord` link entry.
+	"packages/chord/package.json",
 	"packages/agent/package.json",
 	"packages/client/package.json",
 	"packages/coding-agent/package.json",

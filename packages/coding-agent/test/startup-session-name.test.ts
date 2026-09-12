@@ -69,6 +69,8 @@ function readSessionInfoNames(sessionFile: string): string[] {
 
 async function runCli(args: string[], dirs: CliDirs): Promise<CliResult> {
 	let stderr = "";
+	// The stable CLI is spawned exactly as it ships: no experimental source resolver in the
+	// child's module graph (the stable entry must never depend on `src/experimental/**`).
 	const child = spawn(process.execPath, [cliPath, ...args], {
 		cwd: dirs.projectDir,
 		detached: process.platform !== "win32",

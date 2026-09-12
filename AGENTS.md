@@ -121,6 +121,7 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Live/credentialed surfaces are opt-in only: `packages/ai/test/live-api-gates.ts` (`PI_ENABLE_*`), `packages/coding-agent/test/integration/` (`PI_RUN_INTEGRATION=1`), `packages/evals` (`bun run eval --provider X --model Y`). `packages/evals/.eval/` artifacts hold prompts and responses — treat as sensitive.
 - Async tests subscribe before triggering, with bounded deadlines or fake timers; fixed sleeps survive only at genuine OS boundaries and must not be copied from legacy tests.
 - Documentation-only changes use focused validators and `git diff --check`, not runtime QA — but `packages/coding-agent/docs/` ships in the tarball and is test-asserted, so doc edits there can fail CI.
+- For manual checks of the interactive TUI in a controlled tmux terminal, load and follow `.senpi/skills/interactive-testing.md`.
 
 ## DEPENDENCIES AND INFRA
 
@@ -143,6 +144,7 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Releases use CalVer and lockstep-version the packages in `scripts/release-packages.mjs`; the pipeline runs `.github/agent/` drivers -> `scripts/release.mjs` -> `publish-npm.yml` -> `build-binaries.yml` / `native-prebuilds.yml`.
 - Release only from clean `main` after changelog audit and release smoke tests; `scripts/release.mjs` owns versioning, generated artifacts, checks, commits, tag, and push.
 - Never rerun the release script after its tag is pushed; failed publishing is retried from the existing tag workflow. Publishing is fork-scoped: `scripts/publish.mjs` rewrites private `@earendil-works/pi-*` packages into public `@code-yeongyu/senpi-*` manifests, and upstream names never appear on npm.
+- For release preparation, local release smoke tests, publishing, and recovery, load and follow `.senpi/skills/release.md`; it points at `.github/agent/release-driver.md` and the two-phase `publish-npm.yml` flow.
 
 ## NOTES
 

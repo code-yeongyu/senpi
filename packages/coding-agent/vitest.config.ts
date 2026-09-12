@@ -49,6 +49,8 @@ export default mergeConfig(
 		resolve: {
 			alias: [
 				{ find: /^@earendil-works\/pi-ai\/node\/provider-scope$/, replacement: aiSrcProviderScope },
+				{ find: /^@earendil-works\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
+				{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 				{ find: /^@earendil-works\/pi-pty$/, replacement: ptySrcIndex },
 				{
 					find: /^@earendil-works\/pi-client$/,

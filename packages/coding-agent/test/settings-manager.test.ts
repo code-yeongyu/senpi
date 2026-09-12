@@ -655,6 +655,25 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("retry settings", () => {
+		it("defaults and overrides agent retry delay cap", () => {
+			expect(SettingsManager.inMemory().getRetrySettings()).toEqual({
+				enabled: true,
+				// Derived from the shipped senpi-default retry profile's turn budget, not a
+				// second hard-coded default: the one `retry.maxRetries` key must mean the same
+				// budget on every consumer.
+				maxRetries: 5,
+				baseDelayMs: 2000,
+				maxAgentDelayMs: 60000,
+			});
+			expect(
+				SettingsManager.inMemory({
+					retry: { enabled: true, maxRetries: 10, baseDelayMs: 500, maxAgentDelayMs: 5000 },
+				}).getRetrySettings(),
+			).toEqual({ enabled: true, maxRetries: 10, baseDelayMs: 500, maxAgentDelayMs: 5000 });
+		});
+	});
+
 	describe("httpIdleTimeoutMs", () => {
 		it("should default to 5 minutes", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);

@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-12 - App-server turn steering carries its input source
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/threads/turns.ts` and `src/modes/app-server/turn-adapter.ts`: turn steering and follow-up input pass the app-server `InputSource` value to `AgentSession.steer()` / `followUp()`, so extension `input` handlers observe the real source instead of the interactive default (upstream faa9863cb, adopted per D-N).
+
+### Why
+
+- Same gap as RPC: queued app-server input skipped extension `input` handlers.
+
+### Why an extension could not handle it
+
+- Source tagging happens where the session enqueues input, below the extension API.
+
+### Expected merge conflict zones
+
+- The steer/follow-up call sites in `threads/turns.ts` and `turn-adapter.ts`, and the `InputSource` union.
+
 ## 2026-09-12 - Read a guard-less pidfile as unknown ownership
 
 ### What changed

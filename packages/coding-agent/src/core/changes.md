@@ -299,7 +299,6 @@
 ### Expected merge conflict zones
 
 - LOW: the `executeTool` try block in `packages/coding-agent/src/core/agent-session.ts`.
-||||||| parent of e351a846f (docs(rpc): document edit_assistant_message, the leaf token, and the entry_appended identity channel)
 ## askUser settings and --no-ask-user session override (2026-09-10)
 
 ### What changed

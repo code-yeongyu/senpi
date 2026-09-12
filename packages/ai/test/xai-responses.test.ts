@@ -113,8 +113,10 @@ describe("xAI Responses provider", () => {
 		vi.restoreAllMocks();
 	});
 
+	// The Grok 4.20 reasoning/non-reasoning variants stay in the catalog (see below);
+	// grok-build-0.1 was retired upstream.
 	it("excludes retired models from the built-in catalog", () => {
-		for (const modelId of ["grok-3", "grok-3-fast", "grok-code-fast-1"]) {
+		for (const modelId of ["grok-3", "grok-3-fast", "grok-build-0.1", "grok-code-fast-1"]) {
 			expect(Object.keys(XAI_MODELS)).not.toContain(modelId);
 		}
 	});
@@ -144,7 +146,6 @@ describe("xAI Responses provider", () => {
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.6"])).toEqual(["low", "medium", "high", "xhigh"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.3"])).toEqual(["off", "low", "medium", "high"]);
-		expect(getSupportedThinkingLevels(XAI_MODELS["grok-build-0.1"])).toEqual(["low", "medium", "high"]);
 	});
 
 	it("uses /responses with bearer auth and xAI-compatible request fields", async () => {

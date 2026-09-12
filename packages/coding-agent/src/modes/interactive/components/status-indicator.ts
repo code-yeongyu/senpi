@@ -28,6 +28,15 @@ export class StatusIndicator extends Loader {
 		this.kind = kind;
 	}
 
+	renderInBorder(width: number): string {
+		const line = super.render(width + 2)[1] ?? "";
+		return truncateToWidth(line.startsWith(" ") ? line.slice(1).trimEnd() : line.trimEnd(), width, "");
+	}
+
+	renderSpinnerInBorder(width: number): string {
+		return truncateToWidth(this.getRenderedIndicator(), width, "");
+	}
+
 	dispose(): void {
 		this.stop();
 	}
@@ -38,12 +47,12 @@ export class StatusIndicator extends Loader {
 }
 
 export class WorkingStatusIndicator extends StatusIndicator {
-	constructor(ui: TUI, message: string, indicator?: LoaderIndicatorOptions) {
+	constructor(ui: TUI, message: string, indicator?: LoaderIndicatorOptions, colorFn?: (text: string) => string) {
 		super(
 			"working",
 			ui,
-			(spinner) => theme.fg("accent", spinner),
-			(text) => theme.fg("muted", text),
+			colorFn ?? ((text) => theme.fg("accent", text)),
+			colorFn ?? ((text) => theme.fg("muted", text)),
 			message,
 			indicator,
 		);
@@ -123,6 +132,12 @@ export class CompactionStatusIndicator extends StatusIndicator {
 	setProgressText(progressText: string): void {
 		if (!this.progressText && progressText) this.setMessage(this.progressLabel);
 		this.progressText = progressText;
+	}
+
+	override renderInBorder(width: number): string {
+		// The embedded editor border goes through this hook, not render(), so route it through the
+		// single-row render below to keep the cancellation hint and the streamed preview.
+		return truncateToWidth((this.render(width)[0] ?? "").trim(), width, "");
 	}
 
 	override render(width: number): string[] {

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { createJudge, describeEval } from "vitest-evals";
-import { createPiCodingAgentHarness, type PiCodingAgentInput } from "./pi-harness.ts";
+import { createPiCodingAgentHarness, excludePiDocumentation, type PiCodingAgentInput } from "./pi-harness.ts";
 import { recordEvalSourceArtifact } from "./vitest-evals/artifacts.ts";
 import { evalHarnessTable } from "./vitest-evals/harness-table.ts";
 
@@ -19,14 +19,14 @@ function createExtensionAuthoringHarness(name: string, transformSystemPrompt?: (
 	return createPiCodingAgentHarness({
 		name,
 		...(transformSystemPrompt ? { transformSystemPrompt } : {}),
-		output: ({ response, session }) => {
+		output: ({ response, session, systemPrompt }) => {
 			const extensions = session.resourceLoader.getExtensions();
 			const extensionPath = join(session.sessionManager.getCwd(), ".pi", "extensions", "hello.ts");
 			const extensionSource = existsSync(extensionPath) ? readFileSync(extensionPath, "utf8") : null;
 			return {
 				response,
-				systemPromptHasGuidelines: session.systemPrompt.includes("\nGuidelines:\n"),
-				systemPromptHasPiDocs: session.systemPrompt.includes("\nPi documentation (read only"),
+				systemPromptHasGuidelines: systemPrompt.includes("\nGuidelines:\n"),
+				systemPromptHasPiDocs: systemPrompt.includes("\nPi documentation (read only"),
 				extensionErrors: extensions.errors,
 				loadedExtensions: extensions.extensions.map(({ path, tools }) => ({
 					path,
@@ -36,18 +36,6 @@ function createExtensionAuthoringHarness(name: string, transformSystemPrompt?: (
 			};
 		},
 	});
-}
-
-function excludeGuidelinesAndDocumentation(defaultPrompt: string): string {
-	const guidelinesStart = defaultPrompt.indexOf("\nGuidelines:\n");
-	if (guidelinesStart === -1) throw new Error("Default Pi system prompt has no Guidelines section.");
-	return defaultPrompt.slice(0, guidelinesStart);
-}
-
-function prepareDefaultPromptOverride(defaultPrompt: string): string {
-	const cwdStart = defaultPrompt.lastIndexOf("\nCurrent working directory: ");
-	if (cwdStart === -1) throw new Error("Default Pi system prompt has no working-directory section.");
-	return defaultPrompt.slice(0, cwdStart);
 }
 
 const ExtensionAuthoringJudge = createJudge<PiCodingAgentInput, ExtensionAuthoringOutput>(
@@ -97,17 +85,17 @@ const ExtensionAuthoringJudge = createJudge<PiCodingAgentInput, ExtensionAuthori
 	},
 );
 
-const extensionHarnessTable = evalHarnessTable("Pi extension authoring system prompt", {
-	baseline: createExtensionAuthoringHarness("system-prompt-without-docs", excludeGuidelinesAndDocumentation),
-	candidate: createExtensionAuthoringHarness("default-system-prompt", prepareDefaultPromptOverride),
+const extensionHarnessTable = evalHarnessTable("Create and use a tool extension", {
+	baseline: createExtensionAuthoringHarness("system-prompt-without-docs", excludePiDocumentation),
+	candidate: createExtensionAuthoringHarness("default-system-prompt"),
 });
 
 describe.for(extensionHarnessTable)("$name", ({ harness }) => {
 	describeEval(
-		"Pi extension authoring system prompt",
+		"Create and use a tool extension",
 		{ harness, judges: [ExtensionAuthoringJudge], judgeThreshold: null },
 		(it) => {
-			it("creates, reloads, and uses a hello extension", async ({ run, task }) => {
+			it("creates and uses the extension", async ({ run, task }) => {
 				const result = await run([
 					{
 						type: "prompt",
@@ -131,9 +119,8 @@ describe.for(extensionHarnessTable)("$name", ({ harness }) => {
 						bodyEncoding: "utf-8",
 					});
 				}
-				const expectsFullPrompt = harness.name === "default-system-prompt";
-				expect(result.output.systemPromptHasGuidelines).toBe(expectsFullPrompt);
-				expect(result.output.systemPromptHasPiDocs).toBe(expectsFullPrompt);
+				expect(result.output.systemPromptHasGuidelines).toBe(true);
+				expect(result.output.systemPromptHasPiDocs).toBe(harness.name === "default-system-prompt");
 			});
 		},
 	);

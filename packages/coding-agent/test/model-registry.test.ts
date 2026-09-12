@@ -1880,11 +1880,14 @@ describe("ModelRegistry", () => {
 			});
 
 			test("getAvailable filters GitHub Copilot OAuth models to account picker availability", async () => {
+				// Hermetic fixture instead of the shipped catalog: the fork regenerates its own
+				// catalog, so a real Copilot row would make this filter test drift with the data.
+				const copilotModelId = "gpt-4.1";
 				writeRawModelsJson({
 					"github-copilot": {
 						models: [
 							{
-								id: "gpt-4.1",
+								id: copilotModelId,
 								name: "GPT-4.1",
 								reasoning: false,
 								input: ["text"],
@@ -1898,7 +1901,7 @@ describe("ModelRegistry", () => {
 					refresh: "github-access-token",
 					access: "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;",
 					expires: Date.now() + 60_000,
-					availableModelIds: ["gpt-4.1"],
+					availableModelIds: [copilotModelId],
 				}));
 
 				const registry = await createModelRegistry(authStorage, modelsJsonPath);
@@ -1908,7 +1911,7 @@ describe("ModelRegistry", () => {
 						.getAvailable()
 						.filter((m) => m.provider === "github-copilot")
 						.map((m) => m.id),
-				).toEqual(["gpt-4.1"]);
+				).toEqual([copilotModelId]);
 			});
 
 			test("getApiKeyAndHeaders resolves authHeader on every request", async () => {

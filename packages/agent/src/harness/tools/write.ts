@@ -24,20 +24,29 @@ export function createWriteTool<TContext extends ExecutionToolContext = Executio
 		description:
 			"Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
 		parameters: writeSchema,
-		async execute(_toolCallId, { path, content }, signal, _onUpdate, { env, postMutate }) {
-			const absolutePath = await resolveToolPath(env, path, signal);
-			return withFileMutationQueue(env, absolutePath, async () => {
-				if (signal?.aborted) throw new Error("Operation aborted");
-				getOrThrow(await env.writeFile(absolutePath, content, signal));
-				if (signal?.aborted) throw new Error("Operation aborted");
-				const outcome = await runPostMutate(postMutate, { tool: "write", path: absolutePath, signal });
-				if (signal?.aborted) throw new Error("Operation aborted");
-				const text = appendPostMutateNote(`Successfully wrote to ${path}`, outcome.note);
-				return {
-					content: [{ type: "text", text }],
-					details: undefined,
-				};
-			});
+		async execute(_toolCallId, { path, content }, _onUpdate, { env, postMutate }, _invocation, context) {
+			const absolutePath = await resolveToolPath(env, path, context);
+			return withFileMutationQueue(
+				env,
+				absolutePath,
+				async () => {
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
+					getOrThrow(await env.writeFile(absolutePath, content, context));
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
+					const outcome = await runPostMutate(postMutate, {
+						tool: "write",
+						path: absolutePath,
+						signal: context.abortSignal,
+					});
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
+					const text = appendPostMutateNote(`Successfully wrote to ${path}`, outcome.note);
+					return {
+						content: [{ type: "text", text }],
+						details: undefined,
+					};
+				},
+				context,
+			);
 		},
 	};
 }

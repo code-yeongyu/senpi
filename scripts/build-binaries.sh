@@ -4,11 +4,10 @@
 # Mirrors .github/workflows/build-binaries.yml
 #
 # Usage:
-#   ./scripts/build-binaries.sh [--skip-install] [--skip-deps] [--skip-build] [--offline-model-data] [--platform <platform>] [--out <dir>]
+#   ./scripts/build-binaries.sh [--skip-install] [--skip-build] [--offline-model-data] [--platform <platform>] [--out <dir>]
 #
 # Options:
 #   --skip-install       Skip npm ci
-#   --skip-deps          Skip installing cross-platform dependencies
 #   --skip-build         Skip the package build
 #   --offline-model-data Build with bundled model data instead of refreshing it
 #   --platform <name>    Build only for specified platform (darwin-arm64, darwin-x64, linux-x64, linux-arm64, windows-x64, windows-arm64)
@@ -29,7 +28,6 @@ cd "$(dirname "$0")/.."
 REPO_ROOT=$PWD
 
 SKIP_INSTALL=false
-SKIP_DEPS=false
 SKIP_BUILD=false
 OFFLINE_MODEL_DATA=false
 PLATFORM=""
@@ -39,10 +37,6 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --skip-install)
             SKIP_INSTALL=true
-            shift
-            ;;
-        --skip-deps)
-            SKIP_DEPS=true
             shift
             ;;
         --skip-build)
@@ -95,45 +89,6 @@ else
     echo "==> Skipping npm ci (--skip-install)"
 fi
 
-if [[ "$SKIP_DEPS" == "false" ]]; then
-    echo "==> Installing cross-platform native bindings..."
-    CLIPBOARD_VERSION=$(node -p "require('./packages/coding-agent/package.json').optionalDependencies['@mariozechner/clipboard']")
-    # npm ci only installs optional deps for the current platform. Install the
-    # cross-platform packages in isolation so npm does not re-resolve and mutate
-    # the workspace dependency graph, which can trigger npm/arborist failures.
-    NATIVE_DEPS_DIR=$(mktemp -d)
-    cleanup_native_deps() {
-        rm -rf "$NATIVE_DEPS_DIR"
-    }
-    trap cleanup_native_deps EXIT
-    printf '%s\n' '{"private":true}' > "$NATIVE_DEPS_DIR/package.json"
-    # Use --force to bypass platform checks (os/cpu restrictions in package.json).
-    npm install --prefix "$NATIVE_DEPS_DIR" --include=optional --no-save --package-lock=false --force --ignore-scripts --min-release-age=0 \
-        @mariozechner/clipboard@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-darwin-arm64@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-darwin-x64@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-linux-x64-gnu@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-linux-arm64-gnu@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-win32-x64-msvc@"$CLIPBOARD_VERSION" \
-        @mariozechner/clipboard-win32-arm64-msvc@"$CLIPBOARD_VERSION"
-    mkdir -p node_modules/@mariozechner
-    for package in \
-        clipboard \
-        clipboard-darwin-arm64 \
-        clipboard-darwin-x64 \
-        clipboard-linux-x64-gnu \
-        clipboard-linux-arm64-gnu \
-        clipboard-win32-x64-msvc \
-        clipboard-win32-arm64-msvc; do
-        rm -rf "node_modules/@mariozechner/$package"
-        cp -R "$NATIVE_DEPS_DIR/node_modules/@mariozechner/$package" node_modules/@mariozechner/
-    done
-    cleanup_native_deps
-    trap - EXIT
-else
-    echo "==> Skipping cross-platform native bindings (--skip-deps)"
-fi
-
 if [[ "$SKIP_BUILD" == "false" ]]; then
     if [[ "$OFFLINE_MODEL_DATA" == "true" ]]; then
         echo "==> Building all packages with bundled model data..."
@@ -164,35 +119,6 @@ if [[ -n "$PLATFORM" ]]; then
 else
     PLATFORMS=(darwin-arm64 darwin-x64 linux-x64 linux-arm64 windows-x64 windows-arm64)
 fi
-
-set_clipboard_target() {
-    case "$1" in
-        darwin-arm64)
-            clipboard_native_package="clipboard-darwin-arm64"
-            clipboard_native_file="clipboard.darwin-arm64.node"
-            ;;
-        darwin-x64)
-            clipboard_native_package="clipboard-darwin-x64"
-            clipboard_native_file="clipboard.darwin-x64.node"
-            ;;
-        linux-x64)
-            clipboard_native_package="clipboard-linux-x64-gnu"
-            clipboard_native_file="clipboard.linux-x64-gnu.node"
-            ;;
-        linux-arm64)
-            clipboard_native_package="clipboard-linux-arm64-gnu"
-            clipboard_native_file="clipboard.linux-arm64-gnu.node"
-            ;;
-        windows-x64)
-            clipboard_native_package="clipboard-win32-x64-msvc"
-            clipboard_native_file="clipboard.win32-x64-msvc.node"
-            ;;
-        windows-arm64)
-            clipboard_native_package="clipboard-win32-arm64-msvc"
-            clipboard_native_file="clipboard.win32-arm64-msvc.node"
-            ;;
-    esac
-}
 
 for platform in "${PLATFORMS[@]}"; do
     echo "Building for $platform..."
@@ -235,12 +161,6 @@ for platform in "${PLATFORMS[@]}"; do
     cp -r examples "$OUTPUT_DIR/$platform/"
     node "../../scripts/copy-codemode-sidecar.mjs" "$OUTPUT_DIR/$platform"
 
-    set_clipboard_target "$platform"
-    mkdir -p "$OUTPUT_DIR/$platform/node_modules/@mariozechner"
-    cp -r ../../node_modules/@mariozechner/clipboard "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
-    cp "../../node_modules/@mariozechner/$clipboard_native_package/$clipboard_native_file" \
-        "$OUTPUT_DIR/$platform/node_modules/@mariozechner/clipboard/"
-
     # Copy the persistent-terminal PTY native prebuild next to the compiled binary at the
     # sidecar path its loader probes: native/prebuilds/<platform>-<arch>/senpi_pty.<host>.node.
     # (bun --compile does not embed .node files.) When the prebuild is absent the runtime
@@ -258,20 +178,11 @@ for platform in "${PLATFORMS[@]}"; do
         echo "  (no pi-pty prebuild for $pty_host — archive uses pipe fallback)"
     fi
 
-    # Copy terminal input native helpers next to compiled binaries.
-    if [[ "$platform" == darwin-* ]]; then
-        mkdir -p "$OUTPUT_DIR/$platform/native/darwin/prebuilds/$platform"
-        cp ../tui/native/darwin/prebuilds/$platform/darwin-modifiers.node "$OUTPUT_DIR/$platform/native/darwin/prebuilds/$platform/"
-    fi
-    if [[ "$platform" == windows-* ]]; then
-        if [[ "$platform" == "windows-arm64" ]]; then
-            win32_arch_dir="win32-arm64"
-        else
-            win32_arch_dir="win32-x64"
-        fi
-        mkdir -p "$OUTPUT_DIR/$platform/native/win32/prebuilds/$win32_arch_dir"
-        cp ../tui/native/win32/prebuilds/$win32_arch_dir/win32-console-mode.node "$OUTPUT_DIR/$platform/native/win32/prebuilds/$win32_arch_dir/"
-    fi
+    # Copy the selected architecture's native platform helpers next to the executable.
+    native_platform="${platform/windows-/win32-}"
+    native_path="native/${native_platform%-*}/prebuilds"
+    mkdir -p "$OUTPUT_DIR/$platform/$native_path"
+    cp -R "../tui/$native_path/$native_platform" "$OUTPUT_DIR/$platform/$native_path/"
 done
 
 # Create archives
