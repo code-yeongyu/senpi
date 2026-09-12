@@ -144,6 +144,10 @@ export class AskUserQuestionComponent extends Container implements Focusable {
 
 	private commitOwnAnswer(): void {
 		this.state.setOwnAnswer(this.state.activeQuestion.id, this.ownAnswerInput.getValue());
+		// Clear the editor after committing: the Enter path advances to the next
+		// question while focus stays in own-answer, and a leftover value would
+		// prefill that question's editor and submit as its own answer on repeat.
+		this.ownAnswerInput.setValue("");
 		this.emitProgress();
 	}
 
