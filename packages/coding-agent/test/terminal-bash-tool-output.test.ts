@@ -12,9 +12,10 @@ import type { TerminalToolContext, TerminalToolResult } from "../src/core/extens
  * raw 1 MB scrollback dumps and ANSI spinner floods used to go straight into
  * the conversation, instantly blowing the context past the compaction
  * threshold. Foreground spawns also inject a non-interactive environment
- * (NO_COLOR / TERM=dumb / cat pagers) so cooperative tools never emit the
- * escape soup in the first place; background interactive sessions keep the
- * user's real TERM.
+ * (NO_COLOR / TERM=dumb / cat pagers / git editor + prompt opt-outs) so
+ * cooperative tools never emit the escape soup — and git never opens an
+ * editor or credential prompt — in the first place; background interactive
+ * sessions keep the user's real TERM and git settings.
  */
 
 function resultText(result: TerminalToolResult): string {
@@ -97,7 +98,10 @@ describe.skipIf(process.platform === "win32")("PTY bash tool model-facing output
 		const result = await withTimeout(
 			tool.execute(
 				"call-env",
-				{ command: 'printf \'%s|%s|%s|%s\' "$NO_COLOR" "$TERM" "$PAGER" "$GH_PAGER"' },
+				{
+					command:
+						'printf \'%s|%s|%s|%s|%s|%s\' "$NO_COLOR" "$TERM" "$PAGER" "$GH_PAGER" "$GIT_EDITOR" "$GIT_TERMINAL_PROMPT"',
+				},
 				undefined,
 				undefined,
 				undefined,
@@ -105,15 +109,27 @@ describe.skipIf(process.platform === "win32")("PTY bash tool model-facing output
 			30000,
 			"env probe",
 		);
-		expect(resultText(result)).toContain("1|dumb|cat|cat");
+		expect(resultText(result)).toContain("1|dumb|cat|cat|true|0");
 	});
 
 	it("does not inject the non-interactive environment into background sessions", async () => {
-		const tool = createPtyBashTool({ ...ctx, getEnv: () => ({ ...process.env, TERM: "xterm-256color" }) });
+		const tool = createPtyBashTool({
+			...ctx,
+			getEnv: () => ({
+				...process.env,
+				TERM: "xterm-256color",
+				GIT_EDITOR: "nvim",
+				GIT_TERMINAL_PROMPT: "1",
+			}),
+		});
 		const result = await withTimeout(
 			tool.execute(
 				"call-bg",
-				{ command: "printf 'TERM=%s\n' \"$TERM\"", run_in_background: true },
+				{
+					command:
+						'printf \'TERM=%s GIT_EDITOR=%s GIT_TERMINAL_PROMPT=%s\' "$TERM" "$GIT_EDITOR" "$GIT_TERMINAL_PROMPT"',
+					run_in_background: true,
+				},
 				undefined,
 				undefined,
 				undefined,
@@ -122,5 +138,7 @@ describe.skipIf(process.platform === "win32")("PTY bash tool model-facing output
 			"background env probe",
 		);
 		expect(resultText(result)).toContain("TERM=xterm-256color");
+		expect(resultText(result)).toContain("GIT_EDITOR=nvim");
+		expect(resultText(result)).toContain("GIT_TERMINAL_PROMPT=1");
 	});
 });

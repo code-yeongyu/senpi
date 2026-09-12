@@ -78,6 +78,7 @@ export async function createHooksCommandHarness(options: { readonly projectHooks
 			newSession: async () => ({ cancelled: false }),
 			fork: async () => ({ cancelled: false }),
 			navigateTree: async () => ({ cancelled: false }),
+			editAssistantMessage: async () => ({ cancelled: false }),
 			switchSession: async () => ({ cancelled: false }),
 			reload: async () => {
 				await resourceLoader.reload();

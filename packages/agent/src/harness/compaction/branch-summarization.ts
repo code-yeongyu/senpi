@@ -114,6 +114,7 @@ function getMessageFromEntry(entry: Entry): AgentMessage | undefined {
 		case "compaction":
 			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
 		case "thinking_level_change":
+		case "configuration_update":
 		case "model_change":
 		case "active_tools_change":
 		case "custom":

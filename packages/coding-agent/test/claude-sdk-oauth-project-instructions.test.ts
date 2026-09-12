@@ -78,6 +78,7 @@ function optionsFor(
 function appendOf(queryOptions: ReturnType<typeof buildClaudeSdkOauthQueryOptions>): string {
 	const prompt = queryOptions.systemPrompt;
 	if (typeof prompt !== "object" || prompt === null || Array.isArray(prompt)) return "";
+	if (prompt.type !== "preset") return "";
 	return prompt.append ?? "";
 }
 

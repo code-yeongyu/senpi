@@ -10,10 +10,13 @@ export interface DetachedCellResultSource {
 	state: EvalDetachedCellState;
 	kernel: EvalKernel | undefined;
 	stateRetained: boolean | undefined;
+	interruptNote?: string | undefined;
 	liveResult: (() => AgentToolResult<EvalToolDetails>) | undefined;
 	terminalResult: AgentToolResult<EvalToolDetails> | undefined;
 	hardLimited?: boolean;
 	hardLimitSeconds?: number;
+	runBudgetExhausted?: boolean;
+	runBudgetSeconds?: number;
 }
 
 export function snapshotDetachedCell(cell: DetachedCellResultSource, nowMs: number): EvalDetachedCellSnapshot {
@@ -26,8 +29,12 @@ export function snapshotDetachedCell(cell: DetachedCellResultSource, nowMs: numb
 		outputTail: detachedOutputTail(result),
 		result,
 		stateRetained: cell.stateRetained,
+		...(cell.interruptNote === undefined ? {} : { interruptNote: cell.interruptNote }),
 		...(cell.hardLimited === true && cell.hardLimitSeconds !== undefined
 			? { hardLimitSeconds: cell.hardLimitSeconds }
+			: {}),
+		...(cell.runBudgetExhausted === true && cell.runBudgetSeconds !== undefined
+			? { runBudgetSeconds: cell.runBudgetSeconds }
 			: {}),
 	};
 }

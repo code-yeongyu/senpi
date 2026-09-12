@@ -31,7 +31,13 @@ export class StreamWatcher {
 		this.#manager.resetBuffers();
 	}
 
-	handleDelta(source: "text" | "thinking", streamKey: string, delta: string, generation: number): WatchOutcome {
+	handleDelta(
+		source: "text" | "thinking" | "tool",
+		streamKey: string,
+		delta: string,
+		generation: number,
+		toolName?: string,
+	): WatchOutcome {
 		const track = this.#trackFor(source, streamKey);
 		const detectorCtx: DetectorContext = { source, streamKey, generation };
 		const leakMatch = this.#disabledBuiltin.has(CONTROL_LEAK_RULE_NAME)
@@ -48,11 +54,11 @@ export class StreamWatcher {
 				? collapseMatch
 				: null;
 		const resolution = resolveDetection(leakMatch, collapseMatch, corroborated);
-		const ruleMatches = this.#manager.checkDelta(delta, { source, streamKey });
+		const ruleMatches = this.#manager.checkDelta(delta, { source, streamKey, toolName });
 		return { resolution, ruleMatches };
 	}
 
-	#trackFor(source: "text" | "thinking", streamKey: string): StreamTrack {
+	#trackFor(source: "text" | "thinking" | "tool", streamKey: string): StreamTrack {
 		const key = `${source}:${streamKey}`;
 		let track = this.#tracks.get(key);
 		if (track === undefined) {

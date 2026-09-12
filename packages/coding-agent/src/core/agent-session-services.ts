@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, ThinkingSelection } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
@@ -61,8 +61,19 @@ export interface CreateAgentSessionFromServicesOptions {
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
 	thinkingLevel?: ThinkingLevel;
-	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
-	favoriteModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+	thinkingSelection?: ThinkingSelection;
+	scopedModels?: Array<{
+		model: Model<any>;
+		thinkingLevel?: ThinkingLevel;
+		thinkingSelection?: ThinkingSelection;
+		serviceTier?: ServiceTier;
+	}>;
+	favoriteModels?: Array<{
+		model: Model<any>;
+		thinkingLevel?: ThinkingLevel;
+		thinkingSelection?: ThinkingSelection;
+		serviceTier?: ServiceTier;
+	}>;
 	tools?: string[];
 	excludeTools?: CreateAgentSessionOptions["excludeTools"];
 	noTools?: CreateAgentSessionOptions["noTools"];
@@ -152,6 +163,8 @@ export async function createAgentSessionServices(
 		options.modelRuntime ??
 		(await ModelRuntime.create({
 			credentials: authStorage,
+			authPath: join(agentDir, "auth.json"),
+			agentDir,
 			modelsPath: join(agentDir, "models.json"),
 			signal: options.modelRuntimeSignal,
 		}));
@@ -172,9 +185,9 @@ export async function createAgentSessionServices(
 	for (const registration of drainPendingProviderRegistrations(extensionsResult.runtime)) {
 		try {
 			if (registration.kind === "config") {
-				modelRuntime.registerProvider(registration.name, registration.config);
+				void modelRuntime.registerProvider(registration.name, registration.config, { refresh: false });
 			} else {
-				modelRuntime.registerNativeProvider(registration.provider);
+				void modelRuntime.registerNativeProvider(registration.provider, { refresh: false });
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -220,6 +233,7 @@ export async function createAgentSessionFromServices(
 		sessionManager: options.sessionManager,
 		model: options.model,
 		thinkingLevel: options.thinkingLevel,
+		thinkingSelection: options.thinkingSelection,
 		scopedModels: options.scopedModels,
 		favoriteModels: options.favoriteModels,
 		tools: options.tools,

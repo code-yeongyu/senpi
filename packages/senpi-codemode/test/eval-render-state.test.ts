@@ -328,3 +328,248 @@ describe("eval renderer state", () => {
 		expect.soft(resultText).toContain("eval py error ✗ · 1h 2m");
 	});
 });
+
+describe("eval completed-cell throughput badge", () => {
+	it("Given one completed cell when rendered finally then header shows exact calls and calls-per-second before duration and timeout", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				durationMs: 1_250,
+				toolCallCount: 2,
+				wallDurationMs: 2_000,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "work()",
+						language: "py",
+						output: "ok",
+						status: "complete",
+						durationMs: 1_250,
+					},
+				],
+			},
+			"ok",
+		);
+
+		// When
+		const text = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext({ args: { language: "py", code: "work()", summary: "throughput", timeout: 420 } }),
+		)
+			.render(120)
+			.join("\n");
+
+		// Then
+		expect(text).toContain("eval py done ✓ · 2 calls · 1.00 calls/s · 2s · timeout 420s");
+	});
+
+	it("Given zero tool calls when rendered finally then header omits the calls and calls-per-second segments", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				durationMs: 1_250,
+				toolCallCount: 0,
+				wallDurationMs: 0,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "work()",
+						language: "py",
+						output: "ok",
+						status: "complete",
+						durationMs: 1_250,
+					},
+				],
+			},
+			"ok",
+		);
+
+		// When
+		const text = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext({ args: { language: "py", code: "work()", summary: "throughput" } }),
+		)
+			.render(120)
+			.join("\n");
+
+		// Then
+		expect(text).not.toContain("calls/s");
+		expect(text).not.toContain("0 calls");
+		expect(text).toContain("eval py done ✓ · <1s");
+	});
+
+	it("Given singular tool-call count when rendered then call noun stays singular", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				durationMs: 400,
+				toolCallCount: 1,
+				wallDurationMs: 400,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "work()",
+						language: "py",
+						output: "ok",
+						status: "complete",
+						durationMs: 400,
+					},
+				],
+			},
+			"ok",
+		);
+
+		// When
+		const text = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext({ args: { language: "py", code: "work()", summary: "throughput" } }),
+		)
+			.render(120)
+			.join("\n");
+
+		// Then
+		expect(text).toContain("1 call · 2.50 calls/s");
+		expect(text).not.toContain("1 calls");
+	});
+
+	it.each(["pending", "running", "error"] as const)(
+		"Given a single %s cell when rendered finally then no throughput badge is attached",
+		(status) => {
+			// Given
+			const givenResult = evalResult(
+				{
+					language: "py",
+					durationMs: 2_000,
+					toolCallCount: 2,
+					wallDurationMs: 2_000,
+					toolCalls: [],
+					truncated: false,
+					cells: [
+						{
+							index: 0,
+							code: "work()",
+							language: "py",
+							output: "boom",
+							status,
+							durationMs: 2_000,
+						},
+					],
+				},
+				"boom",
+			);
+
+			// When
+			const text = renderEvalResult(
+				givenResult,
+				{ expanded: false, isPartial: false },
+				undefined,
+				resultContext({ args: { language: "py", code: "work()", summary: "throughput" } }),
+			)
+				.render(120)
+				.join("\n");
+
+			// Then
+			expect(text).not.toContain("calls/s");
+			expect(text).not.toContain("2 calls");
+		},
+	);
+
+	it("Given multiple synthetic cells when rendered finally then the aggregate is not repeated on every header", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				durationMs: 2_000,
+				toolCallCount: 2,
+				wallDurationMs: 2_000,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "first()",
+						language: "py",
+						output: "one",
+						status: "complete",
+						durationMs: 1_000,
+					},
+					{
+						index: 1,
+						code: "second()",
+						language: "py",
+						output: "two",
+						status: "complete",
+						durationMs: 1_000,
+					},
+				],
+			},
+			"two",
+		);
+
+		// When
+		const text = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext({ args: { language: "py", code: "first()", summary: "multi" } }),
+		)
+			.render(120)
+			.join("\n");
+
+		// Then
+		expect(text).not.toContain("calls/s");
+		expect((text.match(/eval py done ✓/gu) ?? []).length).toBe(2);
+	});
+
+	it("Given legacy details without throughput fields when rendered finally then headers stay unchanged", () => {
+		// Given
+		const givenResult = evalResult(
+			{
+				language: "py",
+				durationMs: 2_000,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "work()",
+						language: "py",
+						output: "ok",
+						status: "complete",
+						durationMs: 2_000,
+					},
+				],
+			},
+			"ok",
+		);
+
+		// When
+		const text = renderEvalResult(
+			givenResult,
+			{ expanded: false, isPartial: false },
+			undefined,
+			resultContext({ args: { language: "py", code: "work()", summary: "throughput" } }),
+		)
+			.render(120)
+			.join("\n");
+
+		// Then
+		expect(text).toContain("eval py done ✓ · 2s");
+		expect(text).not.toContain("calls/s");
+	});
+});

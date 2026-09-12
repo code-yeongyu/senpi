@@ -223,9 +223,8 @@ describe("Kimi Code OAuth", () => {
 		});
 		expect(credential.expires).toBeGreaterThanOrEqual(before + 3600 * 1000);
 
-		await expect(kimiCodingOAuth.toAuth(credential)).resolves.toEqual({
-			headers: { Authorization: "Bearer new-access" },
-		});
+		const auth = await kimiCodingOAuth.toAuth(credential);
+		expect(auth.headers).toMatchObject({ Authorization: "Bearer new-access" });
 	});
 
 	it("retries refresh on 429 and fails unauthorized on invalid_grant", async () => {

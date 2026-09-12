@@ -2,11 +2,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GOAL_USER_GRACE_DELAY_MS } from "../../src/core/extensions/builtin/goal/continuation.ts";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import { goalFilePath, readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
+import { didTerminalProviderErrorEndTurn } from "../../src/core/extensions/builtin/goal/terminal-provider-error.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
+import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../src/core/messages.ts";
 import type { SessionEntry } from "../../src/core/session-manager.ts";
 
 type AnyTool = ToolDefinition<any, any, any>;
@@ -70,6 +73,24 @@ async function makeCtx(threadId = "thread-test", branchEntries: SessionEntry[] =
 	} as unknown as ExtensionContext;
 }
 
+/**
+ * Two delivered continuations make the calling turn the third goal turn, which
+ * is the floor `update_goal(blocked)` enforces before a model-declared block.
+ */
+function earnedBlockBranch(): SessionEntry[] {
+	const timestamp = new Date().toISOString();
+	return [0, 1].map(
+		() =>
+			({
+				type: "custom_message",
+				customType: GOAL_CONTINUATION_MESSAGE_TYPE,
+				content: "Continue working toward the active thread goal.",
+				display: false,
+				timestamp,
+			}) as unknown as SessionEntry,
+	);
+}
+
 function todoStateEntry(
 	phases: Array<{ name: string; tasks: Array<{ content: string; status: string }> }>,
 ): SessionEntry {
@@ -113,6 +134,16 @@ function storeRefFor(ctx: ExtensionContext) {
 }
 
 describe("goal extension contract (budget-free)", () => {
+	it("treats provider-owned watchdog aborts as terminal provider errors", () => {
+		expect(
+			didTerminalProviderErrorEndTurn({
+				type: "agent_end",
+				messages: [fauxAssistantMessage("", { stopReason: "aborted" })],
+				willRetry: false,
+				abortSource: "provider",
+			}),
+		).toBe(true);
+	});
 	afterEach(async () => {
 		await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 	});
@@ -217,7 +248,7 @@ describe("goal extension contract (budget-free)", () => {
 
 	it("requires a reason to block and suppresses continuation while blocked", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
-		const ctx = await makeCtx();
+		const ctx = await makeCtx("thread-test", earnedBlockBranch());
 		await tools.get("create_goal")?.execute("c1", { objective: "Wait for a decision" }, undefined, undefined, ctx);
 		await expect(
 			tools.get("update_goal")?.execute("u1", { status: "blocked" }, undefined, undefined, ctx),
@@ -326,7 +357,7 @@ describe("goal extension contract (budget-free)", () => {
 		expect(sent).toHaveLength(0);
 	});
 
-	it("blocks a goal when a provider error ends after retries are exhausted", async () => {
+	it("keeps a goal active when a provider error ends after retries are exhausted", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-terminal-provider-error");
@@ -342,12 +373,49 @@ describe("goal extension contract (budget-free)", () => {
 			ctx,
 		);
 
-		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "provider error ended the turn (retries exhausted)",
-		});
-		expect(notices).toContainEqual(expect.stringContaining("provider error ended the turn (retries exhausted)"));
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "active" });
+		expect(notices).toEqual([]);
 		expect(sent).toHaveLength(0);
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(1);
+	});
+
+	it("keeps a terminal provider error active and queues one recovery after settlement", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
+		const notices: string[] = [];
+		const ctx = await makeNotifyingCtx(notices, "thread-sdk-oauth-exhausted");
+		await tools
+			.get("create_goal")
+			?.execute("c1", { objective: "Survive account exhaustion" }, undefined, undefined, ctx);
+
+		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		// The account-rotating proxy reports exhaustion as an assistant message with
+		// stopReason "stop" and zero usage, so the goal must treat it as a terminal
+		// provider error, not a clean turn end.
+		const exhaustionMessage = {
+			...assistantMessageWithStopReason("stop"),
+			api: "claude-sdk-oauth",
+			content: [
+				{
+					type: "text",
+					text: "API Error: Server is temporarily limiting requests (not your usage limit) · All 3 accounts exhausted. Retry in 300s.",
+				},
+			],
+		};
+		await runHandlers(
+			handlers,
+			"agent_end",
+			{ type: "agent_end", messages: [exhaustionMessage], willRetry: false },
+			ctx,
+		);
+
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "active" });
+		expect(sent).toHaveLength(0);
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.message.customType).toBe("goal-continuation");
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(1);
 	});
 
 	it("keeps a goal active while a provider-error retry is pending", async () => {
@@ -371,20 +439,22 @@ describe("goal extension contract (budget-free)", () => {
 		expect(sent).toHaveLength(0);
 	});
 
-	it("resumes a provider-error-blocked goal when the user sends a new message", async () => {
+	it("keeps persisted provider-error blocks resumable", async () => {
 		const { tools, handlers } = createGoalHarness();
-		const ctx = await makeCtx("thread-provider-error-resume");
+		const ctx = await makeCtx("thread-provider-error-resume", earnedBlockBranch());
 		await tools
 			.get("create_goal")
 			?.execute("c1", { objective: "Survive a provider outage" }, undefined, undefined, ctx);
 
-		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
-		await runHandlers(
-			handlers,
-			"agent_end",
-			{ type: "agent_end", messages: [assistantMessageWithStopReason("error")], willRetry: false },
-			ctx,
-		);
+		await tools
+			.get("update_goal")
+			?.execute(
+				"u1",
+				{ status: "blocked", reason: "provider error ended the turn (retries exhausted)" },
+				undefined,
+				undefined,
+				ctx,
+			);
 		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("blocked");
 
 		await runHandlers(
@@ -466,8 +536,8 @@ describe("goal extension contract (budget-free)", () => {
 		});
 	});
 
-	it("blocks a provenance-free aborted turn after retries are exhausted", async () => {
-		const { tools, handlers } = createGoalHarness();
+	it("keeps a provenance-free aborted turn active for provider recovery", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
 		const ctx = await makeCtx("thread-system-abort-provider-guard");
 		await tools
 			.get("create_goal")
@@ -486,10 +556,42 @@ describe("goal extension contract (budget-free)", () => {
 			ctx,
 		);
 
-		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "provider error ended the turn (retries exhausted)",
-		});
+		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "active" });
+		expect(sent).toHaveLength(0);
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(1);
+	});
+
+	it("cancels staged provider recovery when a user joins before settlement", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
+		const ctx = await makeCtx("thread-provider-late-user");
+		await tools.get("create_goal")?.execute("c1", { objective: "Wait for the provider" }, undefined, undefined, ctx);
+		await runHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runHandlers(
+			handlers,
+			"agent_end",
+			{
+				type: "agent_end",
+				messages: [assistantMessageWithStopReason("aborted")],
+				aborted: true,
+				willRetry: false,
+			},
+			ctx,
+		);
+		await runHandlers(
+			handlers,
+			"input",
+			{ type: "input", inputId: "late-user", text: "retry", source: "interactive" },
+			ctx,
+		);
+		await runHandlers(
+			handlers,
+			"input_disposition",
+			{ type: "input_disposition", inputId: "late-user", disposition: "started" },
+			ctx,
+		);
+		await runHandlers(handlers, "agent_settled", { type: "agent_settled" }, ctx);
+		expect(sent).toHaveLength(0);
 	});
 
 	it("rejects update_goal complete while todo tasks remain open, naming them", async () => {
@@ -546,6 +648,7 @@ describe("goal extension contract (budget-free)", () => {
 	it("still allows update_goal blocked while todo tasks remain open", async () => {
 		const { tools } = createGoalHarness();
 		const ctx = await makeCtx("thread-todo-blocked", [
+			...earnedBlockBranch(),
 			todoStateEntry([{ name: "Build", tasks: [{ content: "ship the fix", status: "pending" }] }]),
 		]);
 		await tools.get("create_goal")?.execute("c1", { objective: "Blockable" }, undefined, undefined, ctx);
@@ -612,14 +715,18 @@ function textOf(result: { content?: Array<{ type: string; text?: string }> } | u
 }
 
 describe("goal extension reload does not auto-start a stopped agent", () => {
-	it("does not queue a continuation on session_start reason 'reload'", async () => {
+	it("does not queue a continuation on session_start reason 'reload' for a blocked goal", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
-		const ctx = await makeCtx("thread-reload-noop");
+		const ctx = await makeCtx("thread-reload-noop", earnedBlockBranch());
 		await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
+		await tools
+			.get("update_goal")
+			?.execute("u1", { status: "blocked", reason: "user interrupted the turn" }, undefined, undefined, ctx);
 
 		await runHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 
 		expect(sent).toHaveLength(0);
+		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("blocked");
 	});
 
 	it("still queues a continuation on session_start reason 'startup'", async () => {
@@ -650,8 +757,9 @@ describe("goal extension resume-on-restart prompt (codex parity)", () => {
 		prompts: string[],
 		choice: (options: string[]) => string | undefined,
 		threadId: string,
+		branchEntries: SessionEntry[] = [],
 	): Promise<ExtensionContext> {
-		const base = await makeCtx(threadId);
+		const base = await makeCtx(threadId, branchEntries);
 		return {
 			...base,
 			hasUI: true,
@@ -669,7 +777,12 @@ describe("goal extension resume-on-restart prompt (codex parity)", () => {
 	it("prompts to resume a blocked goal on session_start reason 'resume'", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const prompts: string[] = [];
-		const ctx = await makeSelectingCtx(prompts, (options) => options[0], "thread-blocked-resume");
+		const ctx = await makeSelectingCtx(
+			prompts,
+			(options) => options[0],
+			"thread-blocked-resume",
+			earnedBlockBranch(),
+		);
 		await tools.get("create_goal")?.execute("c1", { objective: "Finish the migration" }, undefined, undefined, ctx);
 		await tools
 			.get("update_goal")
@@ -686,7 +799,12 @@ describe("goal extension resume-on-restart prompt (codex parity)", () => {
 	it("leaves a blocked goal stopped when the user declines the resume prompt", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const prompts: string[] = [];
-		const ctx = await makeSelectingCtx(prompts, (options) => options[1], "thread-blocked-declined");
+		const ctx = await makeSelectingCtx(
+			prompts,
+			(options) => options[1],
+			"thread-blocked-declined",
+			earnedBlockBranch(),
+		);
 		await tools.get("create_goal")?.execute("c1", { objective: "Finish the migration" }, undefined, undefined, ctx);
 		await tools
 			.get("update_goal")
@@ -695,6 +813,28 @@ describe("goal extension resume-on-restart prompt (codex parity)", () => {
 		await runHandlers(handlers, "session_start", { type: "session_start", reason: "resume" }, ctx);
 
 		expect(prompts).toHaveLength(1);
+		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("blocked");
+		expect(sent).toHaveLength(0);
+	});
+
+	it("does not block an RPC session switch on the stopped-goal resume prompt", async () => {
+		const { tools, handlers, sent } = createGoalHarness();
+		const prompts: string[] = [];
+		const selectingCtx = await makeSelectingCtx(
+			prompts,
+			(options) => options[0],
+			"thread-blocked-rpc-resume",
+			earnedBlockBranch(),
+		);
+		const ctx = { ...selectingCtx, mode: "rpc" } as ExtensionContext;
+		await tools.get("create_goal")?.execute("c1", { objective: "Finish the migration" }, undefined, undefined, ctx);
+		await tools
+			.get("update_goal")
+			?.execute("u1", { status: "blocked", reason: "provider error" }, undefined, undefined, ctx);
+
+		await runHandlers(handlers, "session_start", { type: "session_start", reason: "resume" }, ctx);
+
+		expect(prompts).toHaveLength(0);
 		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("blocked");
 		expect(sent).toHaveLength(0);
 	});
@@ -767,7 +907,7 @@ describe("goal extension session_start migration-lite admission", () => {
 
 	it("resumes normally on the next clean turn after a real user prompt follows a suppressed load", async () => {
 		vi.useFakeTimers();
-		const { tools, handlers, sent, continuationQueued } = createGoalHarness();
+		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-suppressed-then-prompt", [
 			userMessageEntry(),
@@ -796,9 +936,10 @@ describe("goal extension session_start migration-lite admission", () => {
 			{ type: "agent_end", messages: [assistantMessageWithStopReason("stop")] },
 			ctx,
 		);
-		expect(sent).toHaveLength(0);
+		// The accepted user message after a suppressed load resumes the goal
+		// immediately, so the post-turn user-grace path has nothing left to do.
+		expect(sent).toHaveLength(1);
 		await vi.advanceTimersByTimeAsync(GOAL_USER_GRACE_DELAY_MS);
-		await continuationQueued;
 		expect(sent).toHaveLength(1);
 		expect(sent[0]?.message.customType).toBe("goal-continuation");
 		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
@@ -808,7 +949,41 @@ describe("goal extension session_start migration-lite admission", () => {
 		vi.useRealTimers();
 	});
 
-	it("keeps reload sessions inert even with a flooded branch (no queue, no suppression notice)", async () => {
+	it("queues a continuation when the user sends a message after a suppressed flooded load", async () => {
+		// Repro of the resume-stuck report: a session whose branch ends in >= GOAL_CONTINUATION_CAP
+		// trailing continuations is suppressed at load (no continuation queued), and the notice says
+		// "Send a message to resume." When the user then sends that message, the goal must resume
+		// immediately instead of parking: the user message is the resume signal the notice promised.
+		const { tools, handlers, sent } = createGoalHarness();
+		const notices: string[] = [];
+		const ctx = await makeNotifyingCtx(notices, "thread-suppressed-then-user-message", [
+			userMessageEntry(),
+			...goalContinuationEntries(300),
+		]);
+		await tools.get("create_goal")?.execute("c1", { objective: "Keep going" }, undefined, undefined, ctx);
+
+		await runHandlers(handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
+		expect(sent).toHaveLength(0);
+		expect(notices.some((n) => n.includes("suppressed for this resumed session"))).toBe(true);
+
+		await runHandlers(
+			handlers,
+			"input",
+			{ type: "input", inputId: "resume-after-suppression", text: "continue", source: "interactive" },
+			ctx,
+		);
+		await runHandlers(
+			handlers,
+			"input_disposition",
+			{ type: "input_disposition", inputId: "resume-after-suppression", disposition: "started" },
+			ctx,
+		);
+
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.message.customType).toBe("goal-continuation");
+	});
+
+	it("suppresses with a notice on reload when a flooded branch parks an active goal", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const notices: string[] = [];
 		const ctx = await makeNotifyingCtx(notices, "thread-flooded-reload", [
@@ -820,7 +995,9 @@ describe("goal extension session_start migration-lite admission", () => {
 		await runHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 
 		expect(sent).toHaveLength(0);
-		expect(notices).toEqual([]);
+		expect(notices).toContainEqual(
+			"Goal auto-continuation suppressed for this resumed session (300 historical continuations). Send a message to resume.",
+		);
 		expect((await readGoal(storeRefFor(ctx)))?.status).toBe("active");
 	});
 });
@@ -943,7 +1120,7 @@ describe("goal extension session_abort blocks an active goal outside an agent ru
 
 	it("does not block a goal that is already blocked or complete on session_abort", async () => {
 		const { tools, handlers } = createGoalHarness();
-		const ctx = await makeCtx("thread-session-abort-already-blocked");
+		const ctx = await makeCtx("thread-session-abort-already-blocked", earnedBlockBranch());
 		await tools.get("create_goal")?.execute("c1", { objective: "Done waiting" }, undefined, undefined, ctx);
 		await tools
 			.get("update_goal")

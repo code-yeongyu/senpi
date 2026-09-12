@@ -1,7 +1,7 @@
 import type { Buffer } from "node:buffer";
 import type { NativePtyLoadResult } from "./native-loader.ts";
 
-export type TerminalSessionBackend = "native" | "pipe-fallback";
+export type TerminalSessionBackend = "native" | "pipe-fallback" | "bun";
 export type TerminalSessionDataHandler = (chunk: Buffer) => void;
 export type TerminalSessionSignal = NodeJS.Signals;
 
@@ -75,4 +75,6 @@ export interface TerminalSessionDependencies {
 	readonly nativeLoadResult?: NativePtyLoadResult;
 	readonly createNativeSession?: CreateNativeTerminalSession;
 	readonly env?: Readonly<Record<string, string | undefined>>;
+	readonly runtimeVersions?: import("./session-bun.ts").BunRuntimeVersions;
+	readonly bunRuntime?: import("./session-bun.ts").BunRuntime;
 }

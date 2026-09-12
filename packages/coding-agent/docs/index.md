@@ -7,7 +7,7 @@ Senpi is a minimal terminal coding harness. It is designed to stay small at the 
 Install with npm:
 
 ```bash
-npm install -g @code-yeongyu/senpi
+bun add -g @code-yeongyu/senpi
 ```
 
 To uninstall senpi itself, use the package manager that installed it:

@@ -1,0 +1,190 @@
+{
+	"capturedAt": "2026-08-18",
+	"cursorContextEnum": {
+		"1m": 1000000,
+		"200k": 200000,
+		"256k": 256000,
+		"272k": 272000,
+		"300k": 300000
+	},
+	"cursorContextOptionsByFamily": {
+		"claude-4.5-sonnet": [
+			"200k"
+		],
+		"claude-4.6-opus": [
+			"200k",
+			"1m"
+		],
+		"claude-4.6-sonnet": [
+			"200k",
+			"1m"
+		],
+		"claude-fable-5": [
+			"300k",
+			"1m"
+		],
+		"claude-opus-4-7": [
+			"300k",
+			"1m"
+		],
+		"claude-opus-4-8": [
+			"300k",
+			"1m"
+		],
+		"claude-opus-5": [
+			"300k",
+			"1m"
+		],
+		"claude-sonnet-5": [
+			"300k",
+			"1m"
+		],
+		"gpt-5.5": [
+			"272k",
+			"1m"
+		],
+		"gpt-5.6-luna": [
+			"272k",
+			"1m"
+		],
+		"gpt-5.6-sol": [
+			"272k",
+			"1m"
+		],
+		"gpt-5.6-terra": [
+			"272k"
+		]
+	},
+	"cursorReportedWindow": {
+		"claude-4.5-opus": 200000,
+		"claude-4.5-sonnet": 200000,
+		"claude-4.6-opus": 1000000,
+		"claude-4.6-sonnet": 1000000,
+		"claude-fable-5": 1000000,
+		"claude-opus-4-7": 1000000,
+		"claude-opus-4-8": 1000000,
+		"claude-opus-5": 1000000,
+		"claude-sonnet-5": 1000000,
+		"cursor-grok-4.5": 200000,
+		"cursor-grok-4.6": 200000,
+		"gemini-3.5-flash": 200000,
+		"gemini-3.6-flash": 200000,
+		"gemini-3.7-flash": 200000,
+		"glm-5.2": 200000,
+		"gpt-5-mini": 200000,
+		"gpt-5.2": 200000,
+		"gpt-5.3-codex": 200000,
+		"gpt-5.4-mini": 200000,
+		"gpt-5.5": 1000000,
+		"gpt-5.6-luna": 1000000,
+		"gpt-5.6-sol": 1000000,
+		"kimi-k2.7-code": 200000,
+		"kimi-k3": 200000
+	},
+	"firstParty": {
+		"claude-4.5-opus": {
+			"context": 200000,
+			"provider": "anthropic"
+		},
+		"claude-4.5-sonnet": {
+			"context": 1000000,
+			"provider": "anthropic"
+		},
+		"claude-4.6-opus": {
+			"context": 1000000,
+			"provider": "anthropic"
+		},
+		"claude-4.6-sonnet": {
+			"context": 1000000,
+			"provider": "anthropic"
+		},
+		"claude-fable-5": {
+			"context": 1000000,
+			"provider": "anthropic"
+		},
+		"claude-haiku-4-5": {
+			"context": 200000,
+			"provider": "anthropic"
+		},
+		"claude-opus-4-7": {
+			"context": 1000000,
+			"provider": "anthropic"
+		},
+		"claude-opus-4-8": {
+			"context": 1000000,
+			"provider": "anthropic"
+		},
+		"claude-opus-5": {
+			"context": 1000000,
+			"provider": "anthropic"
+		},
+		"claude-sonnet-5": {
+			"context": 1000000,
+			"provider": "anthropic"
+		},
+		"cursor-grok-4.5": {
+			"context": 500000,
+			"provider": "xai"
+		},
+		"cursor-grok-4.6": {
+			"context": 500000,
+			"provider": "xai"
+		},
+		"gemini-3.5-flash": {
+			"context": 1048576,
+			"provider": "google"
+		},
+		"gemini-3.6-flash": {
+			"context": 1048576,
+			"provider": "google"
+		},
+		"gemini-3.7-flash": {
+			"context": 1048576,
+			"provider": "google"
+		},
+		"glm-5.2": {
+			"context": 1000000,
+			"provider": "zai"
+		},
+		"gpt-5-mini": {
+			"context": 400000,
+			"provider": "openai"
+		},
+		"gpt-5.2": {
+			"context": 400000,
+			"provider": "openai"
+		},
+		"gpt-5.3-codex": {
+			"context": 400000,
+			"provider": "openai"
+		},
+		"gpt-5.4-mini": {
+			"context": 400000,
+			"provider": "openai"
+		},
+		"gpt-5.5": {
+			"context": 1050000,
+			"provider": "openai"
+		},
+		"gpt-5.6-luna": {
+			"context": 1050000,
+			"provider": "openai"
+		},
+		"gpt-5.6-sol": {
+			"context": 1050000,
+			"provider": "openai"
+		},
+		"kimi-k2.7-code": {
+			"context": 262144,
+			"provider": "moonshotai"
+		},
+		"kimi-k3": {
+			"context": 1048576,
+			"provider": "moonshotai"
+		}
+	},
+	"notes": "gpt-5.6-terra and the legacy gpt families are offered no 1m context option, so their advertised window is capped at the largest token cursor will accept for them | claude-4.5-sonnet is 1M upstream but cursor offers it only the 200k context option, so senpi advertises 200000: a window it cannot request would break compaction.",
+	"placeholderWindow": 200000,
+	"rule": "window = min(models.dev first-party, max(context options cursor offers that family)) when cursor offers a context choice; otherwise models.dev first-party (cursor's uniform 200000 for those families is a catalog placeholder, not a measured limit); families unknown to models.dev keep the cursor-reported window",
+	"source": "https://models.dev/api.json"
+}

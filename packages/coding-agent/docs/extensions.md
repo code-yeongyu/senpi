@@ -9,7 +9,7 @@ Extensions are TypeScript modules that extend senpi's behavior. They can subscri
 **Key capabilities:**
 - **Custom tools** - Register tools the LLM can call via `pi.registerTool()`
 - **Event interception** - Block or modify tool calls, inject context, customize compaction
-- **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, notify)
+- **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, question, notify)
 - **Custom UI components** - Full TUI components with keyboard input via `ctx.ui.custom()` for complex interactions
 - **Custom commands** - Register commands like `/mycommand` via `pi.registerCommand()`
 - **Model fallback** - The bundled [`/fallback`](#bundled-fallback-command) command manages global per-model retry chains. Use `/fallback <target> <fallback1> [fallback2 ...]` for scripts, or `/fallback` in the TUI to view and edit chains. `--no-model-fallback` and `SENPI_NO_FALLBACK=1` disable it for one run.
@@ -116,7 +116,7 @@ The bundled `model-fallback` extension registers `/fallback` to manage global pe
 Use the quick-set form in scripts or any non-TUI mode:
 
 ```text
-/fallback anthropic/claude-fable-5 ccapi/kimi-k3:max
+/fallback anthropic/claude-fable-5-1 ccapi/kimi-k3:max
 ```
 
 The first argument is the exact primary model selector; each later argument is an ordered fallback selector. Quick-set validates selectors before saving. At least one fallback is required:
@@ -184,9 +184,9 @@ To share extensions via npm or git as senpi packages, see [packages.md](packages
 | `@earendil-works/pi-ai` | AI utilities (`StringEnum` for Google-compatible enums) |
 | `@earendil-works/pi-tui` | TUI components for custom rendering |
 
-npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `npm install`, and imports from `node_modules/` are resolved automatically.
+npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `bun install`, and imports from `node_modules/` are resolved automatically.
 
-For distributed senpi packages installed with `senpi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`npm install --omit=dev`) by default, so `devDependencies` are not available at runtime; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers.
+For distributed senpi packages installed with `senpi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`bun add --omit=dev`) by default, so `devDependencies` are not available at runtime; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers.
 
 Node.js built-ins (`node:fs`, `node:path`, etc.) are also available.
 
@@ -205,6 +205,15 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.notify("Done!", "info");
     ctx.ui.setStatus("my-ext", "Processing...");  // Footer status
     ctx.ui.setWidget("my-ext", ["Line 1", "Line 2"]);  // Widget above editor (default)
+
+    // Multi-question prompt (requires a UI)
+    const result = await ctx.ui.question({
+      questions: [{ id: "db", header: "Database", question: "Which DB?",
+        options: [{ label: "Postgres" }, { label: "SQLite" }], multiSelect: false }],
+      waitForAnswer: true,
+      timeoutMs: 1800000,
+    });
+    // result.outcome is "answered", "comment-submitted", "timed_out", "cancelled", or "unavailable"
   });
 
   // Register tools, commands, shortcuts, flags
@@ -288,7 +297,7 @@ Defer background resource startup until `session_start` or the command/tool/even
 └── my-extension/
     ├── package.json    # Declares dependencies and entry points
     ├── package-lock.json
-    ├── node_modules/   # After npm install
+    ├── node_modules/   # After bun install
     └── src/
         └── index.ts
 ```
@@ -307,7 +316,7 @@ Defer background resource startup until `session_start` or the command/tool/even
 }
 ```
 
-Run `npm install` in the extension directory, then imports from `node_modules/` work automatically.
+Run `bun install` in the extension directory, then imports from `node_modules/` work automatically.
 
 ## Events
 
@@ -375,7 +384,8 @@ user sends another prompt ◄─────────────────
 
 /compact or auto-compaction
   ├─► session_before_compact (can cancel or customize)
-  └─► session_compact
+  ├─► session_compact (success)
+  └─► session_compact_failed (failure or abort)
 
 /tree navigation
   ├─► session_before_tree (can cancel or customize)
@@ -510,7 +520,7 @@ pi.on("session_before_reload", () => {
 
 Use this to protect state a reload would destroy — for example running background children owned by the extension runtime. Keep handlers fast and side-effect free; hosts may consult the veto more than once per reload attempt.
 
-#### session_before_compact / session_compact
+#### session_before_compact / session_compact / session_compact_failed
 
 Fired on compaction. See [compaction.md](compaction.md) for details.
 
@@ -536,12 +546,28 @@ pi.on("session_before_compact", async (event, ctx) => {
 });
 
 pi.on("session_compact", async (event, ctx) => {
-  // event.compactionEntry - the saved compaction
+  // Consumers must check event.accepted before reading event.compactionEntry.
+  if (!event.accepted) {
+    // event.rejectionCause - why compaction was rejected
+    return;
+  }
+
+  // event.compactionEntry - the saved compaction (accepted events only)
   // event.fromExtension - whether extension provided it
   // event.reason - "manual" (/compact), "threshold", or "overflow"
   // event.willRetry - whether the aborted turn is retried after compaction (overflow recovery)
 });
+
+pi.on("session_compact_failed", async (event, ctx) => {
+  // event.reason - "manual" (/compact), "threshold", or "overflow"
+  // event.errorMessage - present for non-abort failures
+  // event.aborted - true for cancelled/aborted compactions
+  // event.willRetry - whether the aborted turn would have retried after compaction
+  // event.fromExtension - whether extension-provided compaction content was being used
+});
 ```
+
+This accepted/rejected contract has been emitted since [#248](https://github.com/code-yeongyu/senpi/pull/248): accepted events carry `compactionEntry`, while rejected events carry `accepted: false` and `rejectionCause` with no compaction entry. Built-in handlers are required to guard on `event.accepted`; for example, the `claude-sdk-oauth` session registry now does so before recording a compaction fork.
 
 #### session_before_tree / session_tree
 
@@ -630,6 +656,24 @@ pi.on("agent_end", async (event, ctx) => {
 
 pi.on("agent_settled", async (_event, ctx) => {
   // ctx.isIdle() is true here unless another extension started a new run.
+});
+```
+
+#### ui_prompt_start / ui_prompt_end
+
+Notification-only lifecycle events for blocking user-facing extension UI prompts. They fire around `ctx.ui.select()`, `ctx.ui.confirm()`, `ctx.ui.input()`, `ctx.ui.editor()`, and `ctx.ui.custom()` so host/status integrations can report "waiting for user" instead of just "running".
+
+Nested or overlapping prompts are coalesced into one outer waiting span. Handlers are invoked best-effort and are not awaited before showing or closing the prompt.
+
+```typescript
+pi.on("ui_prompt_start", async (event, ctx) => {
+  // event.reason === "ui_prompt"
+  // event.kind: "select" | "confirm" | "input" | "editor" | "custom"
+  // event.title: prompt title when available
+});
+
+pi.on("ui_prompt_end", async (event, ctx) => {
+  // Pi is no longer waiting on that UI prompt span.
 });
 ```
 
@@ -1249,6 +1293,24 @@ Options:
 - `replaceInstructions`: If true, `customInstructions` replaces the default prompt instead of being appended
 - `label`: Label to attach to the branch summary entry (or target entry if not summarizing)
 
+### ctx.editAssistantMessage(entryId, text, options?)
+
+Replace an assistant response with an edited copy. The session leaf moves to the entry's parent and the copy (text only - tool calls and thinking blocks are dropped) is appended as the new leaf, so the original stays on an abandoned branch. Fires `session_before_tree` (cancellable) and `session_tree`.
+
+```typescript
+const result = await ctx.editAssistantMessage("entry-id-456", "The corrected answer.", {
+  expectedLeafId: ctx.sessionManager.getLeafId() ?? undefined,
+  summarize: false,
+});
+// result: { cancelled: boolean; unchanged?: boolean; entryId?: string }
+```
+
+Options:
+- `expectedLeafId`: the leaf you last observed; the edit rejects with an `AssistantEditError` (`reason: "stale-leaf"`) when the session moved on, before anything is written
+- `summarize` / `customInstructions`: summarize the abandoned branch like `ctx.navigateTree`
+
+Rejections are typed: `SessionStreamingError` (`code: "streaming"`) while a response streams, and `AssistantEditError` with `reason` `not-found` / `not-assistant` / `empty` / `stale-leaf` (`code` gives the wire spelling). `unchanged: true` means the text matched the original and nothing was appended.
+
 ### ctx.switchSession(sessionPath, options?)
 
 Switch to a different session file:
@@ -1653,12 +1715,16 @@ pi.sendUserMessage([
 // During streaming - must specify delivery mode
 pi.sendUserMessage("Focus on error handling", { deliverAs: "steer" });
 pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
+
+// Opt in to extension command dispatch and skill/prompt template expansion
+pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
 ```
 
 **Options:**
 - `deliverAs` - Required when agent is streaming:
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
+- `expandPromptTemplates` - Dispatch extension commands and expand skill commands and prompt templates. Defaults to `false`.
 
 When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, throws an error.
 
@@ -1899,7 +1965,7 @@ Typical `sourceInfo.source` values:
 
 ### pi.setModel(model)
 
-Set the current model. Returns `false` if no API key is available for the model. See [models.md](models.md) for configuring custom models.
+Set the model for the current session. The change is recorded in session history and restored when that session is resumed, but it does not change the configured `defaultProvider` or `defaultModel` used by new sessions. Returns `false` if authentication is not configured for the model's provider. See [models.md](models.md) for configuring custom models.
 
 ```typescript
 const model = ctx.modelRegistry.find("anthropic", "claude-sonnet-4-5");
@@ -1913,7 +1979,9 @@ if (model) {
 
 ### pi.getThinkingLevel() / pi.setThinkingLevel(level)
 
-Get or set the thinking level. Level is clamped to model capabilities (non-reasoning models always use "off"). Changes emit `thinking_level_select`.
+Get the current thinking level. Level is clamped to model capabilities (non-reasoning models always use "off"). Changes emit `thinking_level_select`.
+
+`pi.setThinkingLevel()` changes the thinking level for the current session. The change is recorded in session history and restored when that session is resumed, but it does not change the configured default used by new sessions.
 
 ```typescript
 const current = pi.getThinkingLevel();  // "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
@@ -2272,17 +2340,33 @@ pi.registerTool({
 
 **Usage accounting:** If a tool makes nested LLM calls, return their combined `Usage` as `usage`. Senpi persists it on the tool result and includes it in footer, `/session`, and RPC session totals. `tool_result` handlers can inspect or replace this value.
 
-**Signaling errors:** To mark a tool execution as failed (sets `isError: true` on the result and reports it to the LLM), throw an error from `execute`. Returning a value never sets the error flag regardless of what properties you include in the return object.
+**Signaling errors:** There are two ways to mark a tool execution as failed (sets `isError: true` on the result, the `tool_execution_end` event, and the `toolResult` message the LLM sees):
+
+- Throw an error from `execute`. The thrown message becomes the result text and `details` is empty.
+- Return a normal result with `isError: true`. `content` and `details` are delivered unchanged, so the LLM can still branch on your typed `details` while every error surface (TUI row background, RPC `isError`, `tool_result` handlers) treats the call as a failure. Omitting `isError` or setting it to `false` is a success.
 
 **Early termination:** Return `terminate: true` from `execute()` to hint that the automatic follow-up LLM call should be skipped after the current tool batch. This only takes effect when every finalized tool result in that batch is terminating. See [examples/extensions/structured-output.ts](../examples/extensions/structured-output.ts) for a minimal example where the agent ends on a final structured-output tool call.
 
 ```typescript
-// Correct: throw to signal an error
+// Throw when there is nothing structured to report
 async execute(toolCallId, params) {
   if (!isValid(params.input)) {
     throw new Error(`Invalid input: ${params.input}`);
   }
   return { content: [{ type: "text", text: "OK" }], details: {} };
+}
+
+// Return isError: true when the LLM should still see typed details
+async execute(toolCallId, params) {
+  const outcome = await createTeam(params);
+  if (outcome.kind === "member_start_rejected") {
+    return {
+      content: [{ type: "text", text: outcome.reason }],
+      details: { kind: "runtime_error", code: outcome.kind },
+      isError: true,
+    };
+  }
+  return { content: [{ type: "text", text: "Created" }], details: { kind: "created" } };
 }
 ```
 
@@ -2337,7 +2421,7 @@ pi.registerTool({
 
 ### Overriding Built-in Tools
 
-Extensions can override built-in tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) by registering a tool with the same name. Interactive mode displays a warning when this happens.
+Extensions can override built-in tools (`read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, `ls`) by registering a tool with the same name. Interactive mode displays a warning when this happens.
 
 ```bash
 # Extension's read tool replaces built-in read
@@ -2361,6 +2445,7 @@ See [examples/extensions/tool-override.ts](../examples/extensions/tool-override.
 Built-in tool implementations:
 - [read.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/read.ts) - `ReadToolDetails`
 - [bash.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/bash.ts) - `BashToolDetails`
+- [powershell.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/powershell.ts) - `PowerShellToolDetails`
 - [edit.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/edit.ts)
 - [write.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/write.ts)
 - [grep.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/tools/grep.ts) - `GrepToolDetails`
@@ -2396,11 +2481,11 @@ pi.registerTool({
 });
 ```
 
-**Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
+**Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `PowerShellOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
 
 For `user_bash`, extensions can reuse pi's local shell backend via `createLocalBashOperations()` instead of reimplementing local process spawning, shell resolution, and process-tree termination.
 
-The bash tool also supports a spawn hook to adjust the command, cwd, or env before execution:
+The `bash` and `powershell` tools also support a spawn hook to adjust the command, cwd, or env before execution:
 
 ```typescript
 import { createBashTool } from "@earendil-works/pi-coding-agent";
@@ -2414,7 +2499,7 @@ const bashTool = createBashTool(cwd, {
 });
 ```
 
-`createBashTool()` exposes the current session to commands through `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL`. Injection happens before `spawnHook`, so hooks receive these values in `env` and preserve them when they spread the existing environment as above. Set `exposeSessionEnvironment: false` to disable them:
+`createBashTool()` and `createPowerShellTool()` expose the current session to commands through `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL`. Injection happens before `spawnHook`, so hooks receive these values in `env` and preserve them when they spread the existing environment as above. Set `exposeSessionEnvironment: false` to disable them:
 
 ```typescript
 const bashTool = createBashTool(cwd, {
@@ -2422,7 +2507,7 @@ const bashTool = createBashTool(cwd, {
 });
 ```
 
-See [Bash tool session environment](environment-variables.md#bash-tool-session-environment) for variable semantics. See [examples/extensions/ssh.ts](../examples/extensions/ssh.ts) for a complete SSH example with `--ssh` flag.
+See [Shell tool session environment](environment-variables.md#shell-tool-session-environment) for variable semantics. See [examples/extensions/ssh.ts](../examples/extensions/ssh.ts) for a complete SSH example with `--ssh` flag.
 
 ### Output Truncation
 
@@ -3201,7 +3286,7 @@ const highlighted = highlightCode(code, lang, theme);
 
 - Extension errors are logged, agent continues
 - `tool_call` errors block the tool (fail-safe)
-- Tool `execute` errors must be signaled by throwing; the thrown error is caught, reported to the LLM with `isError: true`, and execution continues
+- Tool `execute` errors are signaled by throwing or by returning a result with `isError: true`; either way the result reaches the LLM with `isError: true` and execution continues (a returned result keeps its `content` and `details`)
 
 ## Mode Behavior
 

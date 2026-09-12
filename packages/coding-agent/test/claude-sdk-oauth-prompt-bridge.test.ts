@@ -1,6 +1,7 @@
 import type { AssistantMessage, Context } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { buildPromptBlocks, buildPromptStream } from "../src/core/extensions/builtin/claude-sdk-oauth/prompt-bridge.ts";
+import { convertToLlm } from "../src/core/messages.ts";
 
 const anchor =
 	'The above is the conversation history so far, provided as context. Respond as the assistant to the user message below only. Never emit "USER:" or "ASSISTANT:" labels or continue the transcript.';
@@ -118,6 +119,45 @@ describe("Claude SDK OAuth prompt bridge", () => {
 			{ type: "text", text: "\n</conversation_history>" },
 			{ type: "text", text: anchor },
 		]);
+	});
+
+	it("renders no failed-turn content when the history comes from convertToLlm", () => {
+		// Given a provider turn that failed mid-stream (stopReason "error"),
+		// its orphaned tool result, and a healthy final user message
+		const failedTurn: AssistantMessage = {
+			...assistantMessage(
+				[
+					{ type: "text", text: "PARTIAL" },
+					{ type: "toolCall", id: "call-failed", name: "repoSearch", arguments: { query: "needle" } },
+				],
+				2,
+			),
+			stopReason: "error",
+		};
+		const context: Context = {
+			messages: convertToLlm([
+				{ role: "user", content: "Find it", timestamp: 1 },
+				failedTurn,
+				{
+					role: "toolResult",
+					toolCallId: "call-failed",
+					toolName: "repoSearch",
+					content: [{ type: "text", text: "partial match" }],
+					isError: false,
+					timestamp: 3,
+				},
+				{ role: "user", content: "Go on", timestamp: 4 },
+			]),
+		};
+
+		const rendered = buildPromptBlocks(context)
+			.map((block) => (block.type === "text" ? block.text : ""))
+			.join("\n");
+
+		expect(rendered).not.toContain("PARTIAL");
+		expect(rendered).not.toContain("call-failed");
+		expect(rendered).toContain("Find it");
+		expect(rendered).toContain("Go on");
 	});
 
 	it("streams the supplied blocks as one SDK user message", async () => {

@@ -10,11 +10,13 @@ import {
 import { getSessionClaudeAccountPin } from "./account-command.ts";
 import { queryWithAuthLane } from "./auth-lane.ts";
 import { buildCustomToolServers } from "./custom-tools.ts";
+import { sdkAssistantFailure, sdkResultFailure, sdkResultFailureUsage } from "./errors.ts";
 import { defaultExecutableDeps, resolveClaudeCodeExecutable } from "./executable.ts";
 import { buildClaudeSdkOauthQueryOptions } from "./options.ts";
 import { buildPromptBlocks, buildPromptStream } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
-import { getSdkBoundary, type SdkQueryHandle } from "./sdk-boundary.ts";
+import { refusalError } from "./refusal.ts";
+import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { residentSessionMessages } from "./session-stream.ts";
 import { loadClaudeSdkOauthProviderSettingsFromDisk } from "./settings.ts";
@@ -58,13 +60,17 @@ export function streamClaudeSdkOauth(
 		else options?.signal?.addEventListener("abort", onAbort, { once: true });
 
 		try {
+			// Resident before the synchronous SDK member below (getSdkBoundary().query)
+			// reads it - see sdk-boundary.lazy.ts.
+			await loadClaudeAgentSdk();
 			const resolvedTools = resolveSdkTools(context);
 			const affinityKey = options?.affinitySessionId ?? options?.sessionId;
 			const sessionKey = options?.sessionId ? toolWatch.sessionKey(options.sessionId) : undefined;
 			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
 			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
 			const providerSettings = loadClaudeSdkOauthProviderSettingsFromDisk(process.cwd());
-			const mcpServers = buildCustomToolServers(resolvedTools.customTools);
+			const toolLessRequest = options?.toolChoice === "none";
+			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
 			const executable = resolveClaudeCodeExecutable(defaultExecutableDeps());
 			const buildOptions = (authLane: Parameters<typeof buildClaudeSdkOauthQueryOptions>[0]["authLane"]) => {
 				const queryOptions = buildClaudeSdkOauthQueryOptions({
@@ -136,6 +142,7 @@ export function streamClaudeSdkOauth(
 						),
 						query: getSdkBoundary().query,
 						providerSettings,
+						env: options?.env,
 						signal: options?.signal,
 						sessionId: affinityKey,
 						pinnedAccount: getSessionClaudeAccountPin(options?.sessionId),
@@ -147,6 +154,15 @@ export function streamClaudeSdkOauth(
 					});
 
 			for await (const message of messages) {
+				const refusal = refusalError(message);
+				if (refusal) throw refusal;
+				const failure =
+					message.type === "assistant"
+						? sdkAssistantFailure(message)
+						: message.type === "result"
+							? sdkResultFailure(message)
+							: undefined;
+				if (failure) throw failure;
 				if (!started) {
 					stream.push({ type: "start", partial: output });
 					started = true;
@@ -187,12 +203,6 @@ export function streamClaudeSdkOauth(
 						output.stopReason = mapStopReason(message.stop_reason);
 					}
 					if (!sawStreamEvent) output.content.push({ type: "text", text: message.result });
-				} else if (message.type === "result") {
-					const reason =
-						"errors" in message && Array.isArray(message.errors) && message.errors.length > 0
-							? String(message.errors[0])
-							: `Claude Code ${message.subtype}`;
-					throw new Error(reason);
 				}
 			}
 
@@ -208,7 +218,13 @@ export function streamClaudeSdkOauth(
 				});
 			}
 		} catch (error) {
+			// no-excuse-ok: catch
+			// Provider boundary converts every thrown SDK value into the stream error contract.
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+			// A failed result still bills its tokens; managed and resident lanes
+			// throw before the result reaches this loop, so account for it here.
+			const billed = sdkResultFailureUsage(error);
+			if (billed) updateUsage(model, output, billed);
 			output.errorMessage = withAuthGuidance(error, errorMessage(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 		} finally {

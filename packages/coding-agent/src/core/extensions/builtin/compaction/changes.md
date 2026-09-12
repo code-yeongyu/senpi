@@ -1,4 +1,604 @@
+# changes.md — builtin compaction policy
+
+## Deterministic resume slice for an over-window restored context (2026-09-10)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/resume-slice.ts` (new, fork-only): `planResumeSlice()` derives the fixed admission overhead from the failed resume projection, then walks `findCutPoint()` from the largest keep budget downwards, measuring each candidate through `buildSessionContext()` with a preview compaction entry, and returns the first cut whose context plus overhead fits the window. It carries the previous checkpoint summary forward under a bounded character budget and returns `undefined` when the fixed overhead alone cannot fit.
+
+### Why
+
+- Issue #1524: resume admission had no recovery for a restored context larger than the window itself, and summarization cannot be the first step there because the summarization request would itself be over the window.
+
+### Why an extension could not handle it
+
+- The plan is consumed inside `createAgentSession()` before extensions are wired, so it cannot live behind an extension hook.
+
+### Expected merge conflict zones
+
+- NONE: the module is fork-only. Its callers in `sdk.ts` and `agent-session.ts` are tracked in `packages/coding-agent/src/core/changes.md`.
+
+## Resume oversized sessions into required compaction (2026-09-09)
+
+### What changed
+
+- Resume admission now retains an unusable model-budget projection instead of throwing when compaction is enabled. The session emits the projection and a bounded notice through the existing session event stream, then forces the existing pre-provider compaction route before its first prompt.
+- Fresh startup and live model switches continue to reject unusable projections. `--no-tools` remains an explicit manual escape hatch.
+
+### Why
+
+- Restored context is projected with tool schemas and output reserves before extensions bind. That constructor-time projection can reject a session that the existing required-compaction path could reduce, leaving no way to reach `/compact` without disabling tools first.
+
+### Why an extension could not handle it
+
+- `createAgentSession` performs the resume projection before extension hooks are wired. Only core can retain the projection and defer provider admission until the existing compaction gate runs.
+
+### Expected merge conflict zones
+
+- MEDIUM: `sdk.ts` resume assertion and `agent-session.ts` required-compaction admission/event seams.
+- LOW: `resume-admission.ts`, the regression suite, and interactive event rendering.
+
+
+## Allow compaction-eligible restored transcripts during resumed-session admission (2026-09-09)
+
+### What changed
+
+- `projectModelUsabilityBudget`: on `admission: "resume"`, when compaction is enabled and speculation lead is omitted, transcripts whose uncompacted tokens would exceed the target window due to full output generation reserves are now admitted if the uncompacted context fits within the model's summarization capacity (`liveContextTokens + compactionReserveTokens + safetyMarginTokens <= contextWindow`) and the post-compaction context fits for execution (`effectiveKeepRecentTokens + baseRequiredTokens <= contextWindow`).
+- `test/suite/model-usability-budget.test.ts`: added tests covering resume admission for uncompacted transcripts requiring compaction (such as 346k tokens on a 400k model with 128k output reserve) and confirming rejection when compaction is disabled.
+
+### Why
+
+- Resuming a session with a high-context model (e.g. `gpt-6-astra` with a 400,000 window and 128,000 maxTokens output reserve) charged the full output generation reserve (128,000) against the uncompacted transcript (e.g. 346,286 tokens) on startup admission.
+- The resulting 520,291-token requirement threw `ModelUsabilityBudgetError` before the session could open, preventing the compaction extension from running its automatic `before_agent_start` compaction and permanently locking the session.
+
+### Why an extension could not handle it
+
+- `createAgentSession` evaluates model usability during session construction before extension event hooks are wired.
+
+### Expected merge conflict zones
+
+- `model-usability-budget.ts` projection calculation; `test/suite/model-usability-budget.test.ts`.
+
+## Scale the speculative attempt budget and retry allowance with the input size (2026-09-08)
+
+### What changed
+
+- `speculative-summary.ts`: `generateSummaryMessage` applies `summarizationMaxDurationMs()` to the summarization stream (the size-adaptive default, or the resolved budget passed by the caller) instead of the fixed 120s default.
+- `speculative.ts`: computes one per-attempt budget from the summarization input and `compaction.summarizationMaxDurationMs`, passes it into `generateSummaryMessage`, and feeds the same value to the retry gate.
+- `summarization-retry.ts`: `allowSummarizationRetry()` now takes the attempt budget and keeps the "half of one attempt" total allowance (`summarizationRetryTotalBudgetMs()`), so large sessions keep proportional retry room instead of being disqualified after 60s of elapsed time.
+
+### Why
+
+- #1068: with a fixed 120s attempt budget, large sessions lose every summarization attempt to the wall-clock watchdog; the extension route's fixed 60s retry allowance compounds the deadlock by refusing retries after one slow attempt.
+
+### Why an extension could not handle it
+
+- The watchdog constants live in core; the extension route owns the attempt loop, so both sides must share one budget number.
+
+### Expected merge conflict zones
+
+- LOW: `speculative-summary.ts` options and stream consumption.
+- LOW: `speculative.ts` retry-loop budget computation.
+
+## Recover fitting retained suffixes with consistent token accounting (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts` estimates serialized envelopes and checkpoint text through the shared weighted token estimator instead of treating UTF-8 bytes as tokens. Only actual image payloads are omitted from envelope estimation; image costs remain additive and opaque metadata remains charged.
+- Candidate chain validation is suffix-local: discarded historical duplicate IDs cannot invalidate a retained unique pair. Recovery also backtracks from the latest user request to its complete tool-chain boundary.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` now passes fallback diagnostics into a bounded rejection message containing the effective window, reserve, budget, candidate, and unsafe message location, with recovery guidance.
+- Fresh blocking compaction and unchanged failed warm snapshots now use the same required fallback as manual/core compaction. Stale warm failures are regenerated against a fresh snapshot; abort, generation, revision, lane, and core apply checks remain in place.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7952 reported a chain-valid latest turn of roughly 136k tokens that could not recover. The serialized-byte floor could charge that prose as over 540k tokens, while the production caller discarded the diagnostic that distinguished budget rejection from malformed content.
+- Real CLI validation found that the separate automatic blocking route never reached deterministic recovery after a classified summary failure, so correcting only the core/manual hook left that route unprotected.
+
+### Why an extension could not handle it
+
+- The builtin owns candidate acceptance and cancels required compaction before another extension can correct its estimate or select a valid boundary. The repair stays inside that builtin rather than modifying session-core admission.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: suffix scan, chain-valid ranges, candidate diagnostics.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: classified summarization failure handler.
+- Tests: `test/suite/regressions/issue-7952-compaction-recovery.test.ts` and the existing deterministic-fallback budget/unsafe-message fixtures.
+
+## Normalize failed and aborted assistant fragments in the fallback projection (2026-09-07)
+
+### What changed
+
+- New `fallback-failed-turn-normalization.ts` reuses the transport's canonical `dropFailedAssistantTurns` (the last step of `convertToLlm` in `packages/coding-agent/src/core/messages.ts`) to mark, positionally, the messages a provider request never receives: assistant turns that stopped with `error` or `aborted`, plus the tool results orphaned by that drop.
+- `deterministic-fallback.ts` applies that mask to its own candidate projection before structural acceptance runs, so a failed fragment's dangling `toolCall` block is no longer counted as an unpaired or incomplete call and its bytes are no longer charged against the retained budget. The mask is local to the projection; raw session history and the emitted `CompactionResult` boundary are unchanged.
+- Existing acceptance is untouched for everything else: valid call/result pairs, rejection of an incomplete ACTIVE call (`stopReason` `toolUse`/`stop` whose result is genuinely pending), malformed image and signature rejection, duplicate or reversed chains, and the effective-reserve budget all keep their behavior and diagnostics.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921 case 7: after a provider error or abort, the retained suffix carries assistant fragments whose `toolCall` blocks never got a result. Structural acceptance treated those as cut atomic chains and rejected every candidate, so the deterministic fallback returned `undefined` and the session stayed wedged above its threshold - even though the transport already drops exactly those turns before the next request, meaning the rejected candidate would have been valid on the wire.
+
+### Why an extension could not handle it
+
+- Required-compaction fallback admission is this builtin's private recovery contract. An external extension observes only the final cancel reason and cannot re-admit a candidate this handler has already refused.
+
+### Expected merge conflict zones
+
+- LOW: the projection scan head in `deterministic-fallback.ts` (the mask lookup inside the reverse suffix loop).
+- LOW: `fallback-failed-turn-normalization.ts` is fork-owned and new.
+- Tests: `test/compaction/required-compaction-deterministic-fallback.test.ts`.
+
+## Count retained image tokens separately from serialized payload bytes (2026-09-07)
+
+### What changed
+
+- `deterministic-fallback.ts` replaces only the escaped `data` bytes of validated top-level tool-result image blocks with their existing `estimateTokens` image cost.
+- The conservative serialized-byte floor still includes all text, JSON delimiters, image metadata, tool arguments, and unrelated `data` fields. Image costs remain additive when that text floor dominates the ordinary estimator.
+- Bounded-value checks, malformed-content rejection, atomic tool-chain validation, effective reserve scaling, and transport byte budgets are unchanged.
+
+### Why
+
+- Issue #1455: a valid 512x512 PNG costs 1,200 estimated image tokens but its Base64 payload exceeds 1.3 million bytes. Charging those bytes against the token window rejected the prepared suffix after summarization failed, even after #1412 allowed valid image blocks.
+
+### Why an extension could not handle it
+
+- Required-compaction fallback admission is owned by this builtin. A later extension cannot correct its rejection without bypassing normal recovery.
+
+### Expected merge conflict zones
+
+- LOW: retained-message sizing in `deterministic-fallback.ts`.
+- Tests: `test/suite/regressions/issue-1455-*`.
+
+## Allow explicit manual compaction on SDK-owned automatic lanes (2026-09-07)
+
+### What changed
+
+- `lane-policy.ts` exposes one reason-aware `ownsCompaction` predicate: manual requests are senpi-owned for recovery even on SDK-native lanes; automatic threshold, overflow, pre-prompt, and speculative routes remain SDK-owned. The predicate is used for the before-compact admission and failure-accounting sites; the message-end degradation site is automatic-only and remains unchanged.
+- Failed manual compactions are recorded by the circuit breaker, including on SDK-native lanes; manual requests no longer bypass the breaker.
+- Concurrent SDK/native and senpi work is protected by the existing speculative generation and message-revision checks before generated results are applied.
+
+### Why
+
+- A rejected downsizing leaves the larger model selected so the user can compact first. Cancelling explicit `/compact` with `external-owner` blocked that recovery; manual requests must reach the existing summary generation and persistence path without weakening model admission.
+
+### Why an extension could not handle it
+
+- The cancellation is owned by this builtin hook. Another extension cannot safely undo its rejection or replace the coordinated compaction lifecycle.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` around the SDK-native lane guard in `session_before_compact`.
+
+## Omit speculation lead from resumed-session admission (2026-09-03)
+
+### What changed
+
+- `projectModelUsabilityBudget` accepts `includeSpeculationLead` (default true) and `admission`
+  (`start` | `resume` | `switch`). Resume projections report `speculationLeadTokens: 0` when the
+  lead is omitted, so the error breakdown matches the charged budget.
+- `createAgentSession` resume admission passes `includeSpeculationLead: false` and
+  `admission: "resume"`. Fresh startup and live model switches keep charging the lead.
+- `ModelUsabilityBudgetError` uses "cannot resume" for restored transcripts instead of the
+  switch copy that told the user to compact a session that never started.
+
+### Why
+
+- Speculative compaction is enabled by default and starts on `before_agent_start` / idle warmup.
+  Startup admission ran *before* that hook and charged the speculation lead against the full
+  uncompacted transcript, so a session already in the speculative band could not open and
+  auto-compaction never ran. Live miss: 828k restored / 1.05M window / 32,768 lead / 28,351
+  shortfall (`#1339`, `#1340`).
+- Model switch on a live session can still charge the lead: the user can compact first.
+
+### Why an extension could not handle it
+
+- `createAgentSession` throws `ModelUsabilityBudgetError` before the compaction extension is
+  wired; no extension hook can intercept that constructor-time reject.
+
+### Expected merge conflict zones
+
+- `model-usability-budget.ts` projection + error copy; `sdk.ts` startup `assertModelUsable` call;
+  `agent-session.ts` `assertModelUsable` options; `test/suite/model-usability-budget.test.ts`.
+
+## Recover classified manual compaction failures deterministically (2026-09-02)
+
+### What changed
+
+- Manual `/compact` requests now use the existing deterministic, no-LLM recovery when summarization fails with a classified failure (`summarization-timeout`, `upstream-stream-truncated`, `summarization-overflow-exhausted`, or `summarization-empty-summary`).
+- The recovery preserves the existing `required-compaction-recovery` diagnostic and failure kind; unclassified failures remain fail-closed.
+
+### Why
+
+A manual compaction is an explicit request to reduce context immediately. Failing closed on a classified summarizer failure could leave the session above its compaction threshold and eventually trip the compaction breaker, despite a safe local recovery already being available.
+
+### Why an extension could not handle it
+
+The fallback decision is made inside the builtin `session_before_compact` core route, where the summarizer failure classification, compaction preparation boundary, and breaker bookkeeping are coordinated. An external extension cannot safely admit this recovery after the builtin route throws.
+
+### Expected merge conflict zones
+
+- LOW: `extension-wiring.ts` required-compaction reason predicate.
+- LOW: compaction route tests and changelog entries.
+
+## Emergency-prune counter emitted at its one true site (2026-09-01)
+
+### What changed
+
+The `emergency_prune` debug event previously fired in `index.ts` on the proactive
+speculative-start branch, so the counter recorded speculation starts, not prunes,
+and incident analysis (the 2026-08-30 session-death shape) read a corrupted value.
+That mislabeled emission is removed (the speculative start already logs
+`speculative_started` itself), and `buildCompactionContext` now emits the real
+`emergency_prune` exactly when `hardLimitEmergencyPrune` engaged - new array or
+`needsAggressiveCompaction` - through a `logEmergencyPrune` callback passed from
+the context handler. The thrash harness pins the shipped output-adjusted basis at
+the production context callsite with a band payload (image blocks, which bypass the
+text-part admission cap): the assertion fails when the callsite reverts to the full
+window.
+## Recover compaction from a summarizer tool-call hijack (2026-08-31)
+
+### What changed
+
+- `speculative.ts` `runExtensionCompaction` spends exactly one retry when a summarization response ends `stopReason: toolUse` with zero text blocks and the request had offered tools: the same request is resent with `toolChoice: "none"` (`speculative-summary.ts` gains a `forbidToolCalls` option). The tools param stays in the retried request because Anthropic rejects histories containing tool_use blocks when tools are absent, and the unchanged shape keeps the anti-distillation and cache posture of the first attempt.
+- `deterministic-fallback.ts` adds the `summarization-empty-summary` failure kind: `classifyRequiredCompactionFallbackFailure` routes `SummaryGenerationError` kind `empty-summary` (never kind `auth`) into the required-compaction deterministic fallback, so `threshold`/`overflow` routes reduce context without another provider request instead of wedging.
+
+### Why
+
+- Incident 2026-08-31 (openai-codex gpt-5.6-sol, high reasoning): the summarizer hijacked the forwarded agent tools and answered with a bare tool call. The resulting empty-summary error was neither retried (`isRetryableSummaryAttempt` rejects `SummaryGenerationError`) nor classified for the deterministic fallback, so the session wedged on `Compaction rejected: summarization response contained no text (stopReason: toolUse)` followed by `Context remains above the compaction threshold because compaction did not complete` on every subsequent turn.
+- A request that forbids tool calling cannot stop on `toolUse`, so the single forbidden retry deterministically converts a hijack into a summary; the fallback classification guarantees the required route cannot wedge on this class even when the retry also produces no text.
+
+### Why an extension could not handle it
+
+- The retry lives inside this builtin's own summarization loop and shares its overflow shrink/abort budgets, and the fallback classification is this builtin's private recovery contract; an external extension can neither observe the per-attempt stop reason nor participate in required-compaction admission.
+
+### Expected merge conflict zones
+
+- LOW: `speculative.ts` around the summarization while-loop and the empty-summary throw.
+- LOW: `speculative-summary.ts` `generateSummaryMessage` options and stream options.
+- LOW: `deterministic-fallback.ts` failure-kind union and classifier.
+
+## Deliver retry-safe ephemeral budget reminders (2026-08-30)
+
+### What changed
+
+- `before_agent_start` now arms a one-user-turn reminder lease keyed to the accepted-compaction epoch instead of returning a custom reminder message or consuming an undelivered generation.
+- The context projection prepends the leased reminder to the real user message without persisting or adding a turn. Repeated provider projections reuse that shape, so retry/model fallback sees one reminder while the next user turn, disablement, or accepted compaction clears the lease.
+- Restoration custom messages remain separate and unchanged.
+
+### Why
+
+- Ordinary turns had no restoration payload for the reminder to ride on, so the previous state advanced without delivering anything. Returning a standalone custom message fixed delivery but suppressed model fallback. A context-only lease reaches every attempt of the same logical turn without entering session history or changing retry dispatch.
+
+### Why an extension could not handle it
+
+- The lease coordinates this builtin's private compaction epoch, reminder policy, restoration payload, and context transform. Another extension cannot safely observe or mutate that state.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` around accepted `session_compact`, `before_agent_start`, and `context` handlers.
+- LOW: `token-budget-reminder.ts`, `orchestration.ts`, and `context-pipeline.ts` around reminder state/projection.
+
+## Preserve structured tool-result content during admission (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/orchestration.ts` now projects oversized text
+  blocks in place while preserving every image/non-text block and the original mixed-content ordering.
+- The real OpenAI replay pipeline is characterized with an oversized checkpoint-owned tool result: the extension
+  runner's enumerable session-entry identity survives admission and authorizes native replay without extra identity
+  copying in production.
+
+### Why
+
+- Replacing an admitted mixed tool result with one synthesized text block silently discarded images. The separate
+  replay-loss report was incorrect because the extension runner materializes session-entry identity as an enumerable
+  request-local property before context handlers run, and the existing message spread retains it.
+
+### Why an extension could not handle it
+
+- Admission is the builtin compaction extension's first context transform; later extensions cannot recover structured
+  blocks that this handler has already removed.
+
+### Expected merge conflict zones
+
+- LOW: the tool-result content mapping in `orchestration.ts`.
+
+## Deterministic diskless tool admission (2026-08-30)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/tool-admission.ts` now replaces oversized tool
+  results with a deterministic in-memory head/tail projection instead of synchronously writing full results to
+  random spill files. Projection keeps shrinking until its estimated text is at or below the configured admission
+  cap, and visible marker text is never interpreted as trusted state.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/orchestration.ts` no longer allocates a shared
+  temporary spill directory or bypasses admission when tool output contains a marker-shaped line.
+
+### Why
+
+- Context projections are rebuilt from persisted original messages on every provider request. Random spill names
+  therefore caused unbounded duplicate files with umask-dependent permissions, while synchronous filesystem
+  failures could abort this context handler and skip downstream compaction transforms. A forgeable marker also
+  allowed oversized output to bypass the cap.
+
+### Why an extension could not handle it
+
+- This is the builtin compaction extension's context-admission boundary itself. An external extension cannot make
+  an earlier builtin handler deterministic or recover downstream transforms after that handler throws.
+
+### Expected merge conflict zones
+
+- LOW: the admission call in `orchestration.ts` and the projection format and cap loop in `tool-admission.ts`.
 # Builtin compaction extension changes
+
+## Preserve replay-safe Gemini signed state in deterministic fallback recovery (2026-08-18)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/retained-message-safety.ts`: Replaced blanket rejection of `thoughtSignature`, `thinkingSignature`, and `textSignature` with format-aware validation (`isValidProviderSignature`). Allowed valid base64 signatures on assistant blocks while continuing to fail closed on malformed values.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: Added `hasValidToolChains` validation to guarantee retained tool results are never orphaned from their preceding tool calls. Implemented backward boundary search to find earlier safe cut points when the initial cut point would fragment an atomic tool chain. Added structured diagnostic reasons (`DeterministicFallbackRejectionReason`) and telemetry fields for rejection observability without logging secret/signature payloads.
+
+### Why
+
+- During required compaction recovery under Gemini 3+, legitimate assistant turns often contain `thoughtSignature` on tool calls with empty text, or signed thinking/text blocks without visible text. Unconditionally rejecting these valid provider states prevented deterministic fallback recovery from succeeding on valid sessions, causing hard failure.
+
+### Why an extension could not handle it
+
+- The deterministic fallback recovery path and its message-safety validation are internal sub-policies of the builtin compaction extension (`retained-message-safety.ts` and `deterministic-fallback.ts`).
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/retained-message-safety.ts`
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`
+
+## Align idle warm lifecycle with compaction lane ownership (2026-08-30)
+
+### What changed
+
+- `index.ts` enrolls newly started sub-threshold idle warm jobs in the same bounded transient-failure retry lifecycle as above-threshold idle jobs. Retry admission now re-checks the warm-generation floor instead of requiring the apply threshold; the idle apply still requires a fresh above-threshold decision.
+- Sub-threshold local warming is skipped for OpenAI remote-compaction-capable models. Above-threshold idle generation and apply remain local, and the existing remote-first blocking route still falls back to local generation when remote compaction is unavailable.
+- `idle-retry.ts` names its retry gate for warm eligibility rather than threshold eligibility.
+
+### Why
+
+- The half-window idle path started a speculative job without arming its retry watcher. One transient failure therefore left a failed job for later threshold admission to inherit, even though the established idle lifecycle had bounded retries for the same failure class.
+- A completed sub-threshold local summary cannot be consumed by OpenAI remote compaction. Successful remote threshold admission aborted that already-paid local work, so warming it had cost without a viable owner.
+
+### Why an extension could not handle it
+
+- Speculative job ownership, idle retry registration, and remote/local route ordering are private state inside this builtin. Another extension cannot attach lifecycle watchers or transfer a warm job between these routes.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` around `armIdleWarmupRetry` and the `agent_end` warm-action branch.
+- LOW: `idle-retry.ts` retry decision naming.
+
+## Model usability budget admission (2026-08-30)
+
+### What changed
+
+- `model-usability-budget.ts` projects one typed minimum context budget from the assembled system
+  prompt, active tool schemas, model output reserve, effective compaction reserve, speculation lead,
+  a data table of model-family safety margins, and (for a downswitch) the current live context.
+- `agent-session.ts` rejects an unusable model during direct or favorite-cycle selection before any
+  model, history, or default mutation; `sdk.ts` applies the fixed-budget check after session setup has
+  assembled the runtime prompt and active tools. A live-context rejection carries compact, revalidate,
+  and retry guidance, while a successful explicit compaction lets the caller retry the same switch.
+- Disabling compaction removes both its reserve and speculation lead from the projection, while
+  disabling speculation removes only the lead. Reserve-scaling opt-out continues to use the exact
+  configured reserve.
+
+### Why
+
+- Small-context models could have a speculation lead at or beyond their compaction threshold and
+  enter permanent compaction before the prompt and tool surface left any room for useful work.
+  A measured rejection explains the exact shortfall instead of silently degrading.
+- A statically usable target could still be too small for a transcript accumulated on a larger model;
+  committing that downswitch deferred the failure until the next provider request. The live projection
+  now refuses that invalid state and makes compaction an explicit, revalidated recovery step.
+
+### Why an extension could not handle it
+
+- Initial session creation and model mutation must reject before a provider request is admitted;
+  an extension cannot atomically guard every core model-selection and runtime-creation path.
+
+### Expected merge conflict zones
+
+- LOW: the projection imports shared compaction geometry and output-reserve helpers; keep those
+  dependencies aligned if either helper moves.
+
+## Apply idle warm compaction during the idle gap (2026-08-26)
+
+### What changed
+
+- `index.ts` adds an idle-apply watcher (`armIdleApply`) on the speculative job started by the
+  `agent_end` idle trigger (and by the idle warm-up retry timer). When generation completes while
+  the session is still idle and over threshold, the summary is applied immediately through the
+  shared `applyGeneratedCompaction` guards instead of being held warm until the next
+  `before_agent_start`. A new `sessionIdleSinceAgentEnd` flag fences the watcher; it is cleared by
+  `before_agent_start` and `session_shutdown`. Stale or refused applies keep the warm hold, so the
+  next prompt consumes the job exactly as before.
+- `log.ts` adds the `idle_applied` debug event.
+- `test/compaction/idle-compaction.test.ts` updates the two idle warm-up tests to the new contract:
+  one apply at idle, never replayed on the following prompt.
+
+### Why
+
+- Holding the warm summary until the next submit made the user watch their own prompt wait behind
+  a compaction they could not see coming; the [compaction] block rendered at submit time even
+  though generation had finished minutes earlier. Applying during the idle gap renders the block
+  first and lets the next message stack below it.
+
+### Why an extension could not handle it
+
+- The speculative job registry, idle retry timer, and apply admission are private policy inside
+  this builtin; external extensions cannot observe or consume the warm job.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` `agent_end` / `before_agent_start` handlers during upstream syncs.
+
+## Bound todo snapshots and keep successful compaction admission open (2026-08-25)
+
+### What changed
+
+- `todo-bridge.ts` now snapshots only the latest todo phases from the active branch instead of
+  persisting every historical `senpi.todo-state` session envelope. Restore checks use the same
+  branch-local current state, and legacy snapshots containing raw custom entries are normalized
+  to their latest todo payload before any restore message is emitted.
+- `per-turn-cap.ts` retains successful-compaction counters as telemetry but no longer rejects a
+  long-lived session after ten accepted compactions. The independent circuit breaker remains
+  responsible for repeated failed or ineffective attempts.
+
+### Why
+
+- Repeated snapshots recursively retained the full todo-state history, growing from kilobytes to
+  megabytes and immediately refilling context after compaction.
+- The absolute success cap then permanently rejected threshold, overflow, manual, and pre-prompt
+  compaction routes after ten effective compactions, leaving no in-session recovery path.
+
+### Why an extension could not handle it
+
+- Snapshot capture/restore and admission accounting are private policy inside this builtin.
+  External extensions cannot replace the persisted metadata payload or override this builtin's
+  pre-compaction rejection decision.
+
+### Expected merge conflict zones
+
+- LOW: `todo-bridge.ts` around snapshot parsing, current-state capture, and restore suppression.
+- LOW: `per-turn-cap.ts` around the former absolute-cap exports and admission predicate.
+
+## Skip Cursor compaction while the session is not idle (2026-08-19)
+
+Blocking and generated apply refuse `cursor` / `cursor-cli-oauth` when `!ctx.isIdle()`. Mid-run Cursor compact poisons `conversationId`. Idle `agent_end` / `pre_prompt` still compact.
+
+Conflict zone: `applyBlockingCompaction`, `applyGeneratedCompaction`.
+
+## Stand down silently when a compaction request is aborted (2026-08-16)
+
+### What changed
+
+- The `session_before_compact` handler returns immediately when `event.signal` is already aborted,
+  before touching warm-job ownership, and converts an abort-driven throw from
+  `runOpenAiRemoteCompaction` into a silent stand-down (`return undefined`) instead of letting the
+  raw `Request was aborted` escape through `ExtensionRunner.emit` as a stack-bearing extension
+  error ([#886](https://github.com/code-yeongyu/senpi/issues/886)).
+- `applyBlockingCompaction`'s catch treats an aborted feedback signal as a cancellation: it ends
+  feedback with `aborted: true` and no `errorMessage`, records no circuit-breaker failure, and
+  returns `{ applied: false, reason: "rejected" }` instead of painting
+  `Compaction failed: Request was aborted` and rethrowing out of `before_agent_start`. This
+  matches the faux-route contract already pinned by
+  `blocking-compaction-review-hardening.test.ts` ("degrades silently with no error message").
+
+### Why
+
+- Compaction claims are last-writer-wins in core (`_claimCompactionController`), so a resumed
+  session where a queued extension message races the user's prompt routinely aborts the loser's
+  in-flight remote compaction. The remote route deliberately rethrows on abort
+  (`openai-remote.ts` abort guard, `openai-remote-timeout.ts` entry guard); without handler-level
+  containment every such race rendered `Extension "<builtin:compaction>" error: Request was
+  aborted` with a full async stack.
+- The stand-down must NOT use the `{cancel: true}` path: a cancel emits `session_compact` with
+  `accepted: false`, which records a circuit-breaker failure — aborts are not failures.
+- CONTRACT CHANGE: an aborted-at-entry request previously returned `{cancel: true}` without a
+  reason (pinned by `before-compact-error-surfacing.test.ts` and
+  `required-compaction-deterministic-fallback.test.ts`, both updated). The rendering is
+  unchanged — core's aborted classification still shows the plain "Compaction cancelled" — but
+  the abort no longer debits the circuit breaker through the rejected-compaction path.
+
+### Why an extension could not handle it
+
+- The defect is inside this builtin's own handlers; no core change is involved in this half of
+  the fix (the admission-side half lives in `core/agent-session.ts`, see `src/core/changes.md`).
+
+### Expected merge conflict zones
+
+- `index.ts` `session_before_compact` handler entry and the core-route `runOpenAiRemoteCompaction`
+  call site; `applyBlockingCompaction`'s catch block.
+
+## Survive provider body-size rejections and strict turn alternation in summarization requests (2026-08-16)
+
+### What changed
+
+- Gateway HTTP 413 body-size rejections ("Request body too large", "Request Entity Too Large")
+  now flow into the existing overflow shrink-retry: the summarization input halves across
+  attempts and exhaustion throws the classifiable `SummarizationOverflowExhaustedError`, so
+  threshold/overflow compactions degrade through the deterministic fallback instead of wedging
+  the session on `Compaction rejected: compaction generator failed: 413 ...`
+  ([#884](https://github.com/code-yeongyu/senpi/issues/884)).
+- New `summarization-turn-order.ts` normalizes the final summarization message list at the
+  `generateSummaryMessage` seam (after `convertToLlm` + pair repair, where roles are final):
+  adjacent assistant messages merge, and content before the first user message is dropped.
+  Gemini's 400 `function call turn must come immediately after a user turn` fired twice in the
+  incident because sessions carry adjacent assistants (split turns, retries) and budget pruning
+  can drop the leading user message.
+- `overflow-retry.ts` request sizing now adds a CJK density correction (weight 3, mirroring the
+  base64-run weighting) to the chars/4 estimate: Korean text tokenizes near 1 token per 1.5
+  characters, and the 4.00 chars/token estimate let Korean-heavy sessions send first attempts
+  far over provider size limits. The correction rides `estimateTotalTokens`, so it also reaches
+  `hardLimitEmergencyPrune` and the `/btw` side-query bound — both prune Korean-heavy sessions
+  slightly earlier, which is the same undercount corrected in the safe direction.
+
+### Why
+
+- A live session hit all three defects in one compaction: two gateway 413 shapes never reached
+  the shrink path (unclassified), gemini-3.7-flash-high rejected the request's turn order twice,
+  and the final model stalled the 120s wall-clock on the oversized input. Every fallback model
+  retried the same payload and failed identically, permanently wedging the session.
+
+### Why an extension could not handle it
+
+- The shrink-retry classification, the request message construction, and the input sizing all
+  live inside this builtin's summarization pipeline; an external extension observes only the
+  final cancel reason.
+
+### Expected merge conflict zones
+
+- LOW: `speculative.ts` at the `requestContext` construction (one wrapped call site);
+  `overflow-retry.ts` estimator internals. New module `summarization-turn-order.ts` is
+  fork-only with no upstream counterpart.
+
+## Surface the concrete reason a compaction did not apply (2026-08-14)
+
+### What changed
+
+- `endCompactionFeedback` now threads the remote stage's fallback reason (captured from the `remote_fallback` event) and the terminal local reason (`unavailable` / `stale`) into `ctx.endCompaction`'s `errorMessage`, so the decision log and TUI show e.g. `Compaction did not apply: remote-compaction-timeout; local fallback unavailable` instead of the bare generic string.
+- An aborted compaction still renders `Compaction cancelled` downstream and carries no failure message.
+
+### Why
+
+- Both the remote-timeout path and the `unavailable`/`stale` fallback collapsed into the generic `Compaction did not apply`, so the actual cause was not diagnosable after the fact. The remote reason was previously emitted only on an event bus with no subscriber.
+
+### Why an extension could not handle it
+
+- The reason is produced inside this builtin's blocking route; an external extension cannot observe the remote stage's fallback event or the feedback call site.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` `endCompactionFeedback` and the remote-capture emit in `applyBlockingCompaction`; LOW in the compaction tests that pinned silent degradation.
+
+## Report provider-owned compaction as delegated (2026-08-14)
+
+### What changed
+
+- The SDK-native lane's `session_before_compact` cancellation now carries the structured `external-owner` rejection
+  cause while preserving its existing human-readable reason.
+- The lane-policy documentation now describes the structured ownership signal instead of the former generic
+  extension cancellation.
+
+### Why
+
+- Core admission must distinguish a provider lane that will compact inside the admitted query from an ordinary
+  extension refusal. Treating both as `cancelled-by-extension` made over-threshold SDK-native sessions fail with
+  `RequiredCompactionError` before the provider could run.
+
+### Why an extension could not do this
+
+- The builtin compaction extension owns the lane cancellation verdict and is the only layer that can identify this
+  cancellation as provider ownership before core records the lifecycle failure.
+
+### Expected merge-conflict zones
+
+- LOW: `index.ts`, in the SDK-native lane branch of `session_before_compact`.
+- LOW: `lane-policy.ts`, around `SDK_NATIVE_LANE_REJECTION_REASON` documentation.
 
 ## Stand the idle warm-up watcher down on a retired generation (2026-08-13)
 
@@ -541,7 +1141,7 @@ These are corrections to the lane-policy gate itself, not new behavior an extens
 ## Deterministic required-compaction recovery (2026-07-31)
 
 - Required threshold/overflow recovery may synthesize one local checkpoint after a summarization watchdog or a transient `SummaryRequestError` carrying the structured `upstream-stream-truncated` failure kind, without issuing another provider request. Generic thrown text is never fallback authorization, even when it contains truncation-like markers.
-- Recovery is accepted only with a real non-empty retained boundary whose fully reconstructed context fits `contextWindow - reserveTokens`, including the exact cap boundary. An absent or unfit suffix cancels without appending a compaction entry or dropping the latest request.
+- Recovery is accepted only with a real non-empty retained boundary whose fully reconstructed context fits the effective reserve budget (`contextWindow - resolveEffectiveReserveTokens(contextWindow, settings)`), including the exact cap boundary. Acceptance therefore uses the same scaled reserve as the hard-limit valve, so a recovered context can never be admitted only to be compacted again on the next request; `reserveScalingEnabled: false` keeps the configured reserve verbatim. An absent or unfit suffix cancels without appending a compaction entry or dropping the latest request.
 - The checkpoint carries parsed or inherited task intent and a UTF-8-safe bounded prior summary. Todo and agent-checkpoint snapshots remain solely in their canonical custom entries persisted after acceptance, avoiding duplicate unbounded objects in compaction details. Manual, aborted, and unrelated failures remain fail-closed.
 - Local summaries now persist parsed task intent and inherit it through subsequent local compactions while ignoring remote checkpoint metadata.
 - Coverage: `test/compaction/required-compaction-deterministic-fallback.test.ts`, `test/compaction/task-intent-anchor.test.ts`, and the existing blocking/runtime-provider suites.
@@ -1133,3 +1733,50 @@ session on the same gateway and model in the same minutes had zero misses, isola
 Only *when* the prune disengages changes; what gets pruned and the `needsAggressiveCompaction` signal are
 untouched. Expected upstream conflict zones: `builtin/compaction/speculative.ts` around
 `hardLimitEmergencyPrune`, and `builtin/compaction/index.ts` around the `context` hook.
+
+## 2026-08-29
+
+- Integrated ideal-compaction policy primitives into builtin event wiring: scaled reserve tokens, explicit speculative lead tokens, grace-band deferral, idle warm-floor refresh and stale warm invalidation.
+- Added optional settings for grace-band deferral, tool-result admission, context reminders, reserve scaling, and a configured speculative lead override; all feature gates default to enabled.
+- Tool results exceeding the admission cap are spilled to `os.tmpdir()/senpi-tool-spill` and represented by bounded excerpts, with marker-aware re-admission bypass.
+- Context reminders are delivered through the existing `before_agent_start` custom-message return seam and reset after accepted compaction. Breaker trips retain deterministic context reduction rather than leaving the context untouched.
+
+## 2026-08-30 - External lane ownership survives the circuit breaker
+
+### What changed
+
+- `index.ts` `session_compact`: a rejection carrying `rejectionCause: "external-owner"` returns before `breaker.recordFailure()`. Every other rejection cause still debits the breaker exactly as before. The cause is read off the event, so the lane policy is not re-consulted and no additional provider-settings read is paid.
+- `context-pipeline.ts`: the breaker's deterministic context-reduction fallback is now `breakerFallback && !laneOwnsCompaction`. The reduction pass therefore stands down on an externally owned lane even when the breaker is tripped, narrowing the 2026-08-29 entry above: breaker trips retain deterministic reduction only on lanes senpi owns.
+
+### Why
+
+- Senpi declining to compact an SDK-native lane is a policy stand-down, not a senpi failure. Debiting the breaker for it tripped senpi's own health accounting on a perfectly healthy session after three ordinary turns.
+- Once tripped, `breakerFallback` short-circuited ahead of `shouldApplyContextReduction()`, whose `isProviderNativeCompactionPath` gate already stands reduction down for owned lanes. That let senpi rewrite a history the Claude Agent SDK owns — the exact thing `lane-policy.ts` exists to prevent. The two guards are independent because a breaker tripped by earlier senpi-owned failures must still stand down once the session moves onto an SDK-native lane.
+
+### Why an extension could not handle it
+
+- Both the breaker counter and the context-reduction fallback are private state of the builtin compaction extension closure; no public hook observes a rejection cause before the debit or intercepts the reduction pass.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` around the `session_compact` rejected branch.
+- LOW: `context-pipeline.ts` around the `sourceMessages` reduction predicate.
+- Coverage: `test/compaction/external-owner-breaker-isolation.test.ts`.
+
+## 2026-09-06 - Re-enable senpi compaction for configured SDK-lane overrides
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: accepts resolved compaction settings and lifts the Claude SDK OAuth stand-down when `compaction.model` is configured, while preserving the stand-down when it is unset.
+
+### Why
+
+- A configured alternate summarization model makes senpi the owner of summarization for the lane, preventing resident SDK sessions from growing without a compaction path.
+
+### Why an extension could not handle it
+
+- Lane ownership is decided by the builtin compaction policy before compaction triggers and context-reduction decisions; no external extension seam can override that policy safely.
+
+### Expected merge conflict zones
+
+- LOW: `lane-policy.ts` `LaneContext` and `disablesSenpiCompaction()` provider-scoping logic.

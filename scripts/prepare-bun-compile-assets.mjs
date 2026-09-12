@@ -1,131 +1,134 @@
 #!/usr/bin/env node
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Two kinds of preparation live here, and the difference decides who may call them.
+//
+// PORTABLE (inlineCssTreeCompileData): css-tree resolves data/patch.json, the mdn-data
+// dictionaries and its own package.json through createRequire(import.meta.url) at module
+// scope. Bun's compiled filesystem serves no dynamic require, so a compiled binary dies on
+// the first webfetch HTML conversion with "Cannot find module '../data/patch.json'".
+// Inlining that JSON is pure data with identical semantics under Node, Bun and a compiled
+// binary, so the published tarball carries it too (staged by copyPublishDependencies).
+//
+// BINARY-LAYOUT (patchJsdomBinaryLookups): rewriting jsdom's worker lookup hardcodes a path
+// that is only correct inside our standalone binary layout. It must never reach the npm
+// tarball, or a plain Bun consumer of the published package would resolve the wrong file.
+
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(process.env.PI_BUN_COMPILE_REPO_ROOT ?? join(scriptDirectory, ".."));
-const cssTreeRoots = [
-	join(repoRoot, "node_modules", "css-tree"),
-	join(repoRoot, "packages", "coding-agent", "node_modules", "css-tree"),
-];
-const jsdomRoots = [
-	join(repoRoot, "node_modules", "jsdom"),
-	join(repoRoot, "packages", "coding-agent", "node_modules", "jsdom"),
-];
-const imageGenSkillSourcePath = join(
-	repoRoot,
-	"packages",
-	"coding-agent",
-	"src",
-	"core",
-	"extensions",
-	"builtin",
-	"imagegen",
-	"skill",
-	"SKILL.md",
-);
-const imageGenSkillDestinationPath = join(
-	repoRoot,
-	"packages",
-	"coding-agent",
-	"dist",
-	"core",
-	"extensions",
-	"builtin",
-	"imagegen",
-	"skill",
-	"SKILL.md",
-);
+
+const CJS_MDN_REQUIRES =
+	"const mdnAtrules = require('mdn-data/css/at-rules.json');\nconst mdnProperties = require('mdn-data/css/properties.json');\nconst mdnSyntaxes = require('mdn-data/css/syntaxes.json');";
+const ESM_MDN_REQUIRES = `const require = createRequire(import.meta.url);\n${CJS_MDN_REQUIRES}`;
+const MDN_INLINED_MARKER = "const mdnAtrules = {";
+const ESM_CREATE_REQUIRE_IMPORT = "import { createRequire } from 'module';\n";
 const jsdomDefaultStylesheetRead =
 	/const defaultStyleSheet = fs\.readFileSync\(\s*path\.resolve\(\s*__dirname,\s*["']\.\.\/\.\.\/\.\.\/browser\/default-stylesheet\.css["']\s*\),\s*(?:\{\s*encoding:\s*["']utf-8["']\s*\}|["']utf8["'])\s*\);/;
 const jsdomSyncWorkerResolve =
 	/const syncWorkerFile = require\.resolve\(\s*["']\.\/xhr-sync-worker\.js["']\s*\);/;
 
-let preparedCssTreeCount = 0;
-let preparedJsdomCount = 0;
-let preparedImageGenSkillCount = 0;
-
-for (const cssTreeRoot of cssTreeRoots) {
-	const patchJsonPath = join(cssTreeRoot, "data", "patch.json");
-	const packageJsonPath = join(cssTreeRoot, "package.json");
-	const mdnCssRoot = join(cssTreeRoot, "..", "mdn-data", "css");
-	const cjsDataPath = join(cssTreeRoot, "cjs", "data.cjs");
-	const cjsPatchPath = join(cssTreeRoot, "cjs", "data-patch.cjs");
-	const cjsVersionPath = join(cssTreeRoot, "cjs", "version.cjs");
-	const esmDataPath = join(cssTreeRoot, "lib", "data.js");
-	const esmPatchPath = join(cssTreeRoot, "lib", "data-patch.js");
-	const esmVersionPath = join(cssTreeRoot, "lib", "version.js");
-
-	if (!existsSync(patchJsonPath)) {
-		continue;
-	}
-
-	const patchData = JSON.parse(readFileSync(patchJsonPath, "utf8"));
-	const serializedPatch = `${JSON.stringify(patchData, null, "\t")}\n`;
-
-	if (existsSync(cjsPatchPath)) {
-		writeFileSync(cjsPatchPath, `'use strict';\n\nmodule.exports = ${serializedPatch}`);
-	}
-
-	if (existsSync(esmPatchPath)) {
-		writeFileSync(esmPatchPath, `const patch = ${serializedPatch}\nexport default patch;\n`);
-	}
-
-	const mdnAtrulesPath = join(mdnCssRoot, "at-rules.json");
-	const mdnPropertiesPath = join(mdnCssRoot, "properties.json");
-	const mdnSyntaxesPath = join(mdnCssRoot, "syntaxes.json");
-	if (existsSync(mdnAtrulesPath) && existsSync(mdnPropertiesPath) && existsSync(mdnSyntaxesPath)) {
-		const dataConstants = [
-			`const mdnAtrules = ${JSON.stringify(JSON.parse(readFileSync(mdnAtrulesPath, "utf8")), null, "\t")};`,
-			`const mdnProperties = ${JSON.stringify(JSON.parse(readFileSync(mdnPropertiesPath, "utf8")), null, "\t")};`,
-			`const mdnSyntaxes = ${JSON.stringify(JSON.parse(readFileSync(mdnSyntaxesPath, "utf8")), null, "\t")};`,
-		].join("\n");
-
-		if (existsSync(cjsDataPath)) {
-			const dataSource = readFileSync(cjsDataPath, "utf8");
-			writeFileSync(
-				cjsDataPath,
-				dataSource.replace(
-					/const mdnAtrules = require\('mdn-data\/css\/at-rules\.json'\);\nconst mdnProperties = require\('mdn-data\/css\/properties\.json'\);\nconst mdnSyntaxes = require\('mdn-data\/css\/syntaxes\.json'\);/,
-					() => dataConstants,
-				),
-			);
-		}
-
-		if (existsSync(esmDataPath)) {
-			const dataSource = readFileSync(esmDataPath, "utf8");
-			writeFileSync(
-				esmDataPath,
-				dataSource.replace(
-					/const require = createRequire\(import\.meta\.url\);\nconst mdnAtrules = require\('mdn-data\/css\/at-rules\.json'\);\nconst mdnProperties = require\('mdn-data\/css\/properties\.json'\);\nconst mdnSyntaxes = require\('mdn-data\/css\/syntaxes\.json'\);/,
-					() => dataConstants,
-				),
-			);
-		}
-	}
-
-	if (existsSync(packageJsonPath)) {
-		const { version } = JSON.parse(readFileSync(packageJsonPath, "utf8"));
-		if (existsSync(cjsVersionPath)) {
-			writeFileSync(cjsVersionPath, `'use strict';\n\nmodule.exports.version = ${JSON.stringify(version)};\n`);
-		}
-		if (existsSync(esmVersionPath)) {
-			writeFileSync(esmVersionPath, `export const version = ${JSON.stringify(version)};\n`);
-		}
-	}
-
-	preparedCssTreeCount += 1;
+function serializeJsonFile(path) {
+	return JSON.stringify(JSON.parse(readFileSync(path, "utf8")), null, "\t");
 }
 
-for (const jsdomRoot of jsdomRoots) {
+function writeIfChanged(path, contents) {
+	if (!existsSync(path)) {
+		return;
+	}
+	if (readFileSync(path, "utf8") === contents) {
+		return;
+	}
+	writeFileSync(path, contents);
+}
+
+// Inlining the data leaves css-tree's createRequire import unused; a shipped artifact should
+// carry no dead resolver, so it goes once nothing calls it.
+function dropUnusedCreateRequireImport(path) {
+	if (!existsSync(path)) {
+		return;
+	}
+	const source = readFileSync(path, "utf8");
+	if (source.includes("createRequire(") || !source.includes(ESM_CREATE_REQUIRE_IMPORT)) {
+		return;
+	}
+	writeFileSync(path, source.replace(ESM_CREATE_REQUIRE_IMPORT, ""));
+}
+
+// A file matching neither the upstream shape nor the already-inlined one is dependency
+// drift: failing here beats shipping an artifact that only breaks once a user fetches a page.
+function inlineOnce(path, pattern, replacement, inlinedMarker, relativeName) {
+	if (!existsSync(path)) {
+		return;
+	}
+	const source = readFileSync(path, "utf8");
+	const inlined = source.replace(pattern, () => replacement);
+	if (inlined !== source) {
+		writeFileSync(path, inlined);
+		return;
+	}
+	if (!source.includes(inlinedMarker)) {
+		throw new Error(`Unable to inline ${relativeName}`);
+	}
+}
+
+export function inlineCssTreeCompileData(nodeModulesRoot) {
+	const cssTreeRoot = join(nodeModulesRoot, "css-tree");
+	const patchJsonPath = join(cssTreeRoot, "data", "patch.json");
+	if (!existsSync(patchJsonPath)) {
+		return false;
+	}
+
+	const patch = `${serializeJsonFile(patchJsonPath)}\n`;
+	writeIfChanged(join(cssTreeRoot, "lib", "data-patch.js"), `const patch = ${patch}\nexport default patch;\n`);
+	writeIfChanged(join(cssTreeRoot, "cjs", "data-patch.cjs"), `'use strict';\n\nmodule.exports = ${patch}`);
+
+	const mdnCssRoot = join(nodeModulesRoot, "mdn-data", "css");
+	if (existsSync(join(mdnCssRoot, "at-rules.json"))) {
+		const dataConstants = [
+			`const mdnAtrules = ${serializeJsonFile(join(mdnCssRoot, "at-rules.json"))};`,
+			`const mdnProperties = ${serializeJsonFile(join(mdnCssRoot, "properties.json"))};`,
+			`const mdnSyntaxes = ${serializeJsonFile(join(mdnCssRoot, "syntaxes.json"))};`,
+		].join("\n");
+		inlineOnce(
+			join(cssTreeRoot, "lib", "data.js"),
+			ESM_MDN_REQUIRES,
+			dataConstants,
+			MDN_INLINED_MARKER,
+			"css-tree/lib/data.js",
+		);
+		inlineOnce(
+			join(cssTreeRoot, "cjs", "data.cjs"),
+			CJS_MDN_REQUIRES,
+			dataConstants,
+			MDN_INLINED_MARKER,
+			"css-tree/cjs/data.cjs",
+		);
+		dropUnusedCreateRequireImport(join(cssTreeRoot, "lib", "data.js"));
+	}
+
+	const packageJsonPath = join(cssTreeRoot, "package.json");
+	if (existsSync(packageJsonPath)) {
+		const { version } = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+		writeIfChanged(join(cssTreeRoot, "lib", "version.js"), `export const version = ${JSON.stringify(version)};\n`);
+		writeIfChanged(
+			join(cssTreeRoot, "cjs", "version.cjs"),
+			`'use strict';\n\nmodule.exports.version = ${JSON.stringify(version)};\n`,
+		);
+	}
+
+	return true;
+}
+
+export function patchJsdomBinaryLookups(nodeModulesRoot) {
+	const jsdomRoot = join(nodeModulesRoot, "jsdom");
 	const stylesheetPath = join(jsdomRoot, "lib", "jsdom", "browser", "default-stylesheet.css");
 	const computedStylePath = join(jsdomRoot, "lib", "jsdom", "living", "css", "helpers", "computed-style.js");
 	const xhrRoot = join(jsdomRoot, "lib", "jsdom", "living", "xhr");
 	const xhrImplementationPath = join(xhrRoot, "XMLHttpRequest-impl.js");
 	const xhrSyncWorkerPath = join(xhrRoot, "xhr-sync-worker.js");
-	let preparedJsdom = false;
+	let prepared = false;
 
 	if (existsSync(stylesheetPath) && existsSync(computedStylePath)) {
 		const stylesheet = readFileSync(stylesheetPath, "utf8");
@@ -139,7 +142,7 @@ for (const jsdomRoot of jsdomRoots) {
 		} else {
 			writeFileSync(computedStylePath, preparedComputedStyleSource);
 		}
-		preparedJsdom = true;
+		prepared = true;
 	}
 
 	if (existsSync(xhrImplementationPath) && existsSync(xhrSyncWorkerPath)) {
@@ -156,25 +159,65 @@ for (const jsdomRoot of jsdomRoots) {
 		} else {
 			writeFileSync(xhrImplementationPath, preparedXhrImplementationSource);
 		}
-		preparedJsdom = true;
+		prepared = true;
 	}
 
-	if (preparedJsdom) {
-		preparedJsdomCount += 1;
+	return prepared;
+}
+
+export function stageImageGenSkill(repoRoot) {
+	const sourcePath = join(
+		repoRoot,
+		"packages/coding-agent/src/core/extensions/builtin/imagegen/skill/SKILL.md",
+	);
+	if (!existsSync(sourcePath)) {
+		return false;
+	}
+	const destinationPath = join(
+		repoRoot,
+		"packages/coding-agent/dist/core/extensions/builtin/imagegen/skill/SKILL.md",
+	);
+	mkdirSync(dirname(destinationPath), { recursive: true });
+	copyFileSync(sourcePath, destinationPath);
+	return true;
+}
+
+function main() {
+	const repoRoot = resolve(process.env.PI_BUN_COMPILE_REPO_ROOT ?? join(scriptDirectory, ".."));
+	const nodeModulesRoots = [join(repoRoot, "node_modules"), join(repoRoot, "packages", "coding-agent", "node_modules")];
+
+	let preparedCssTreeCount = 0;
+	let preparedJsdomCount = 0;
+	for (const nodeModulesRoot of nodeModulesRoots) {
+		if (inlineCssTreeCompileData(nodeModulesRoot)) {
+			preparedCssTreeCount += 1;
+		}
+		if (patchJsdomBinaryLookups(nodeModulesRoot)) {
+			preparedJsdomCount += 1;
+		}
+	}
+	const preparedImageGenSkillCount = stageImageGenSkill(repoRoot) ? 1 : 0;
+
+	if (preparedCssTreeCount === 0 && preparedJsdomCount === 0 && preparedImageGenSkillCount === 0) {
+		console.log("[prepare-bun-compile-assets] css-tree, jsdom, and imagegen assets not installed; skipping");
+		return;
+	}
+
+	console.log(
+		`[prepare-bun-compile-assets] prepared Bun compile assets (${preparedCssTreeCount} css-tree, ${preparedJsdomCount} jsdom, ${preparedImageGenSkillCount} imagegen skill)`,
+	);
+}
+
+// macOS TMPDIR is a symlink (/var/folders -> /private/var/folders), so the entry check
+// compares real paths: argv[1] keeps the symlinked spelling while import.meta.url does not.
+function realPathOrSelf(path) {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
 	}
 }
 
-if (existsSync(imageGenSkillSourcePath)) {
-	mkdirSync(dirname(imageGenSkillDestinationPath), { recursive: true });
-	copyFileSync(imageGenSkillSourcePath, imageGenSkillDestinationPath);
-	preparedImageGenSkillCount = 1;
+if (process.argv[1] && realPathOrSelf(fileURLToPath(import.meta.url)) === realPathOrSelf(resolve(process.argv[1]))) {
+	main();
 }
-
-if (preparedCssTreeCount === 0 && preparedJsdomCount === 0 && preparedImageGenSkillCount === 0) {
-	console.log("[prepare-bun-compile-assets] css-tree, jsdom, and imagegen assets not installed; skipping");
-	process.exit(0);
-}
-
-console.log(
-	`[prepare-bun-compile-assets] prepared Bun compile assets (${preparedCssTreeCount} css-tree, ${preparedJsdomCount} jsdom, ${preparedImageGenSkillCount} imagegen skill)`,
-);

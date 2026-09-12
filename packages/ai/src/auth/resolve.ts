@@ -1,6 +1,13 @@
 import type { ProviderEnv } from "../types.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { formatThrownValue } from "../utils/diagnostics.ts";
+import {
+	OAuthRefreshExchangeError,
+	OAuthRefreshStoreError,
+	projectOAuthSlot,
+	refreshOAuthCredential,
+} from "./oauth-refresh.ts";
+import { projectSlot } from "./pool/slots.ts";
 import type {
 	ApiKeyAuth,
 	ApiKeyCredential,
@@ -20,7 +27,25 @@ export interface AuthResolutionOverrides {
 	env?: ProviderEnv;
 	/** Require this much remaining OAuth-token validity; defaults to five minutes. */
 	minOAuthValidityMs?: number;
+	/**
+	 * Resolve against one named slot of a pooled credential. A missing entry or
+	 * slot resolves to undefined rather than falling back to another account or
+	 * ambient env, so a slot-scoped request can never silently switch identities.
+	 */
+	slotName?: string;
 	signal?: AbortSignal;
+}
+
+/**
+ * Prefix of the auth-miss every resolution site raises when a provider has no
+ * usable credential. Consumers key recovery decisions off this exact wording,
+ * so it is a shared constant instead of a literal repeated at each throw site:
+ * rewording one copy would silently disable the other's behavior.
+ */
+export const PROVIDER_NOT_CONFIGURED_PREFIX = "Provider is not configured: ";
+
+export function providerNotConfiguredMessage(providerId: string): string {
+	return `${PROVIDER_NOT_CONFIGURED_PREFIX}${providerId}`;
 }
 
 export class ModelsError extends Error {
@@ -69,11 +94,12 @@ async function resolveProviderAuthWithSignal(
 ): Promise<AuthResult | undefined> {
 	signal.throwIfAborted();
 	const requestAuthContext = overrides?.env ? overlayEnvAuthContext(authContext, overrides.env) : authContext;
+	const apiKey = provider.auth.apiKey;
 
-	if (overrides?.apiKey !== undefined && provider.auth.apiKey) {
+	if (overrides?.apiKey !== undefined && apiKey && !apiKey.ambientOnly) {
 		return resolveApiKey(
 			requestAuthContext,
-			provider.auth.apiKey,
+			apiKey,
 			provider.id,
 			{
 				type: "api_key",
@@ -85,6 +111,29 @@ async function resolveProviderAuthWithSignal(
 	}
 
 	const stored = await readCredential(credentials, provider.id, signal);
+	const slotName = overrides?.slotName;
+	if (slotName !== undefined) {
+		const projected = stored === undefined ? undefined : projectSlot(stored, slotName);
+		if (!projected) return undefined;
+		if (projected.type === "oauth" && provider.auth.oauth) {
+			return resolveStoredOAuth(
+				credentials,
+				provider.id,
+				provider.auth.oauth,
+				projected,
+				requestAuthContext,
+				overrides?.env,
+				signal,
+				overrides?.minOAuthValidityMs,
+				slotName,
+			);
+		}
+		if (projected.type === "api_key" && provider.auth.apiKey) {
+			const credential = overrides?.env ? { ...projected, env: { ...projected.env, ...overrides.env } } : projected;
+			return resolveApiKey(requestAuthContext, provider.auth.apiKey, provider.id, credential, signal);
+		}
+		return undefined;
+	}
 	if (stored) {
 		if (stored.type === "oauth" && provider.auth.oauth) {
 			return resolveStoredOAuth(
@@ -92,6 +141,8 @@ async function resolveProviderAuthWithSignal(
 				provider.id,
 				provider.auth.oauth,
 				stored,
+				requestAuthContext,
+				overrides?.env,
 				signal,
 				overrides?.minOAuthValidityMs,
 			);
@@ -103,66 +154,85 @@ async function resolveProviderAuthWithSignal(
 		return undefined;
 	}
 
+	if (overrides?.apiKey !== undefined && apiKey) {
+		return resolveApiKey(
+			requestAuthContext,
+			apiKey,
+			provider.id,
+			{
+				type: "api_key",
+				key: overrides.apiKey,
+				env: overrides.env,
+			},
+			signal,
+		);
+	}
+
 	// Ambient (env vars, AWS profiles, ADC files).
-	return provider.auth.apiKey
-		? resolveApiKey(requestAuthContext, provider.auth.apiKey, provider.id, undefined, signal)
-		: undefined;
+	const ambientCredential =
+		apiKey?.ambientOnly && overrides?.env ? { type: "api_key" as const, key: "", env: overrides.env } : undefined;
+	return apiKey ? resolveApiKey(requestAuthContext, apiKey, provider.id, ambientCredential, signal) : undefined;
 }
 
 function overlayEnvAuthContext(base: AuthContext, env: ProviderEnv): AuthContext {
 	return {
-		env: async (name) => env[name] || (await base.env(name)),
+		env: async (name) => (env[name] !== undefined ? env[name] : await base.env(name)),
 		fileExists: (path) => base.fileExists(path),
 	};
 }
 
 const DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000;
-const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
+
+/** Maps a shared-refresh failure onto the `ModelsError` codes callers match on. */
+export function oauthRefreshModelsError(error: unknown, providerId: string): ModelsError {
+	if (error instanceof ModelsError) return error;
+	if (error instanceof OAuthRefreshExchangeError) {
+		return new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error.cause });
+	}
+	const cause = error instanceof OAuthRefreshStoreError ? error.cause : error;
+	return new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause });
+}
 
 /**
- * OAuth resolution with double-checked locking: tokens with less than five
- * minutes remaining lock, re-check expiry under the lock, refresh once
- * globally, and persist the rotated credential before release.
+ * OAuth resolution: a token with less than five minutes remaining is refreshed
+ * through `refreshOAuthCredential`, which re-checks the stored value, runs the
+ * exchange outside the store lock, and compare-and-swaps the rotated slot.
  */
 async function resolveStoredOAuth(
 	credentials: CredentialStore,
 	providerId: string,
 	oauth: OAuthAuth,
 	stored: OAuthCredential,
+	authContext: AuthContext,
+	requestEnv: ProviderEnv | undefined,
 	signal: AbortSignal,
 	minOAuthValidityMs?: number,
+	slotName?: string,
 ): Promise<AuthResult | undefined> {
 	const minimumValidityMs = Math.max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, minOAuthValidityMs ?? 0);
 	const expiresSoon = (credential: OAuthCredential) => Date.now() + minimumValidityMs >= credential.expires;
 	let credential = stored;
 
 	if (expiresSoon(credential)) {
-		// Optimistic check said expired; the authoritative check runs under the lock.
 		let post: Credential | undefined;
 		try {
-			post = await credentials.modify(
+			post = await refreshOAuthCredential({
+				credentials,
 				providerId,
-				async (current) => {
-					if (current?.type !== "oauth") return undefined; // logged out meanwhile
-					if (!expiresSoon(current)) return undefined; // another process/request refreshed
-					try {
-						const refreshSignal = AbortSignal.any([
-							signal,
-							AbortSignal.timeout(DEFAULT_OAUTH_REFRESH_TIMEOUT_MS),
-						]);
-						return await oauth.refresh(current, refreshSignal);
-					} catch (error) {
-						throw new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error });
-					}
-				},
-				{ signal },
-			);
+				oauth,
+				stale: credential,
+				slotName,
+				isStale: expiresSoon,
+				signal,
+				owning: true,
+			});
 		} catch (error) {
-			if (error instanceof ModelsError) throw error;
-			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
+			throw oauthRefreshModelsError(error, providerId);
 		}
 		if (post?.type !== "oauth") return undefined; // logged out meanwhile
-		credential = post;
+		const postView = slotName === undefined ? post : projectOAuthSlot(post, slotName);
+		if (!postView) return undefined; // slot removed meanwhile
+		credential = postView;
 		// The normal five-minute window triggers a refresh but does not impose a
 		// provider contract. Explicit callers (such as bearer-token export) do
 		// require the requested minimum after the refresh.
@@ -171,11 +241,38 @@ async function resolveStoredOAuth(
 		}
 	}
 
+	const storedEnv = credentialEnvironment(credential);
+	const effectiveEnv = requestEnv ? { ...storedEnv, ...requestEnv } : storedEnv;
+	const effectiveCredential = effectiveEnv ? { ...credential, env: effectiveEnv } : credential;
+
+	if (oauth.check) {
+		try {
+			if (!(await oauth.check({ ctx: authContext, credential: effectiveCredential, signal }))) return undefined;
+		} catch (error) {
+			throw new ModelsError("auth", `OAuth auth check failed for provider ${providerId}`, { cause: error });
+		}
+	}
+
 	try {
-		return { auth: await oauth.toAuth(credential), source: "OAuth" };
+		return {
+			auth: await oauth.toAuth(effectiveCredential),
+			...(effectiveEnv ? { env: effectiveEnv } : {}),
+			source: "OAuth",
+		};
 	} catch (error) {
 		throw new ModelsError("oauth", `OAuth auth derivation failed for ${providerId}`, { cause: error });
 	}
+}
+
+function credentialEnvironment(credential: OAuthCredential): ProviderEnv | undefined {
+	const value = credential.env;
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const environment: ProviderEnv = {};
+	for (const [name, entry] of Object.entries(value)) {
+		if (typeof entry !== "string") return undefined;
+		environment[name] = entry;
+	}
+	return environment;
 }
 
 async function resolveApiKey(

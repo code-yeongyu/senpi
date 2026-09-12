@@ -20,6 +20,56 @@ import {
 } from "./mux-scrollback-harness.ts";
 
 describe("TUI multiplexer scrollback preservation", () => {
+	it("does not clear scrollback when a non-multiplexer Windows terminal is resized", async () => {
+		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		assert.ok(platformDescriptor);
+		Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+		try {
+			const terminal = new LoggingVirtualTerminal(40, 6);
+			const tui = new TUI(terminal, nonMuxOptions());
+			const component = new StaticComponent();
+			component.lines = ["alpha", "beta", "gamma"];
+			tui.addChild(component);
+
+			tui.start();
+			await terminal.waitForRender();
+			terminal.clearWrites();
+
+			terminal.resize(50, 6);
+			await terminal.waitForRender();
+
+			const writes = terminal.getWrites();
+			assert.ok(writes.includes(SCREEN_CLEAR + HOME), "width change should clear and home the visible screen");
+			assert.strictEqual(
+				countOccurrences(writes, SCROLLBACK_CLEAR),
+				0,
+				"Windows resize must not clear terminal scrollback",
+			);
+			assertFrameBalanced(writes);
+			tui.stop();
+		} finally {
+			Object.defineProperty(process, "platform", platformDescriptor);
+		}
+	});
+
+	it("keeps clearing scrollback for non-Windows non-multiplexer resizes", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 6);
+		const tui = new TUI(terminal, nonMuxOptions());
+		const component = new StaticComponent();
+		component.lines = ["alpha", "beta", "gamma"];
+		tui.addChild(component);
+
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		terminal.resize(50, 6);
+		await terminal.waitForRender();
+
+		assert.strictEqual(countOccurrences(terminal.getWrites(), SCROLLBACK_CLEAR), 1);
+		tui.stop();
+	});
+
 	it("emits a screen clear without clearing scrollback when width changes inside a multiplexer", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 6);
 		const tui = new TUI(terminal, muxOptions());

@@ -176,6 +176,12 @@ A focused visible overlay keeps input ownership across temporary non-overlay UI.
 
 Use `handle.unfocus()` when a visible overlay should stop owning input and let TUI fall back to another visible capturing overlay or the previous focus target. Use `handle.unfocus({ target })` when a specific component should receive input while the overlay stays visible. Passing `{ target: null }` intentionally leaves no focused component until focus is set again.
 
+### Question Overlay and Async Widget
+
+When the agent asks a blocking question (`waitForAnswer: true`), a full-screen overlay appears with a tab for each question and a final Submit tab. Use digits or arrows to choose options, Space to toggle multi-select choices, and Enter to confirm and advance. The Submit tab contains the optional comment editor and accepts partial answers after confirmation; unanswered questions are reported back as unanswered. Esc backs out of an editor or asks for confirmation before discarding a draft.
+
+For async questions (`waitForAnswer: false`), a widget appears above the editor while the agent keeps working: the unanswered count with a countdown, the first unanswered question with its options (and how many more questions wait behind it), and a hint listing every way in. Open the full overlay with Enter on an empty editor, with `/answer`, or with the `app.question.answer` shortcut (default `alt+a`, shown as `option+a` on macOS, rebindable in `keybindings.json`; on macOS the Option-composed glyph of the bound letter also works, so the shortcut needs no terminal settings change). Esc collapses the overlay back to the widget with your draft kept. Typing a reply in the editor and pressing Enter sends it as a comment instead.
+
 ### Overlay Lifecycle
 
 Overlay components are disposed when closed. Don't reuse references - create fresh instances:
@@ -431,7 +437,7 @@ renderResult(result, options, theme, context) {
 
 | Category | Colors |
 |----------|--------|
-| General | `text`, `accent`, `muted`, `dim` |
+| General | `text`, `accent`, `muted`, `dim`, `searchMatchText` |
 | Status | `success`, `error`, `warning` |
 | Borders | `border`, `borderAccent`, `borderMuted` |
 | Messages | `userMessageText`, `customMessageText`, `customMessageLabel` |
@@ -444,7 +450,7 @@ renderResult(result, options, theme, context) {
 
 **Background colors** (`theme.bg(color, text)`):
 
-`selectedBg`, `userMessageBg`, `customMessageBg`, `toolPendingBg`, `toolSuccessBg`, `toolErrorBg`
+`selectedBg`, `searchMatchBg`, `userMessageBg`, `customMessageBg`, `toolPendingBg`, `toolSuccessBg`, `toolErrorBg`
 
 **For Markdown**, use `getMarkdownTheme()`:
 
@@ -472,7 +478,7 @@ interface MyTheme {
 Set `PI_TUI_WRITE_LOG` to capture the raw ANSI stream written to stdout.
 
 ```bash
-PI_TUI_WRITE_LOG=/tmp/tui-ansi.log npx tsx packages/tui/test/chat-simple.ts
+PI_TUI_WRITE_LOG=/tmp/tui-ansi.log bunx tsx packages/tui/test/chat-simple.ts
 ```
 
 ## Performance

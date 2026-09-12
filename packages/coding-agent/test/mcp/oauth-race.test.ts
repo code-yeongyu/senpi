@@ -10,7 +10,10 @@ import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { beginAuthorization, completeAuthorization } from "../../src/core/extensions/builtin/mcp/auth/oauth.ts";
 import { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
 import { McpTokenStore } from "../../src/core/extensions/builtin/mcp/auth/token-store.ts";
+import { assertWorkspaceBuildPrerequisite } from "../support/workspace-build-prerequisite.ts";
 import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const execFileAsync = promisify(execFile);
 const workerPath = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "oauth-race-worker.ts");
@@ -112,6 +115,17 @@ async function runWorkers(agentDir: string, mcpUrl: string, disableLock: boolean
 	return runs.map((run) => JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}") as WorkerResult);
 }
 
+// Single-shot worker: one refresh attempt in a fresh OS process (real
+// cross-process store access), no barrier. The lock-OFF control case uses this
+// so the parent can force the racy interleaving explicitly instead of hoping
+// two concurrent workers collide inside the same scheduling window.
+async function runSingleWorker(agentDir: string, mcpUrl: string, tag: string): Promise<WorkerResult> {
+	const run = await execFileAsync(process.execPath, [workerPath, agentDir, mcpUrl, "-", tag, "1"], {
+		timeout: 20_000,
+	});
+	return JSON.parse(run.stdout.trim().split("\n").pop() ?? "{}") as WorkerResult;
+}
+
 function tokenFingerprint(token: string): string {
 	return createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
@@ -166,11 +180,40 @@ describe("cross-process refresh race", () => {
 		const agentDir = await mkdtemp(join(tmpdir(), "mcp-race-off-"));
 		cleanups.push(() => rm(agentDir, { force: true, recursive: true }));
 		await seedNearExpiryToken(agentDir, fixture.mcpUrl);
+		const store = new McpTokenStore({ agentDir, serverName: "race", serverUrl: fixture.mcpUrl });
+		const staleRecord = store.read();
+		if (staleRecord === undefined) throw new Error("seed did not persist a token record");
 		const before = (await fixture.getLog()).tokenHits;
 
-		const results = await runWorkers(agentDir, fixture.mcpUrl, true);
+		// Deterministically reproduce the interleaving the lock prevents. Without
+		// the lock, worker B can read the store BEFORE worker A's rotated token is
+		// written (a classic lost update), so B presents the already-rotated
+		// refresh token to the IdP. Racing two processes only produces that
+		// interleaving by scheduler luck; here we materialize B's stale view
+		// explicitly between two single-shot workers, so the reuse ALWAYS happens.
+		// Step 1: A refreshes and rotates the family's refresh token.
+		const resultA = await runSingleWorker(agentDir, fixture.mcpUrl, "A");
+		const rotatedRecord = store.read();
+		// Step 2: restore the pre-rotation record — exactly the state a lockless
+		// concurrent B holds — then let B refresh with it. The IdP detects reuse
+		// of the rotated-away token and invalidates the whole token family.
+		await store.update(() => staleRecord);
+		const resultB = await runSingleWorker(agentDir, fixture.mcpUrl, "B");
+
+		// Post-race: even the "winner" is dead. A's rotated token belongs to the
+		// now-revoked family, so its next refresh is rejected terminally.
+		if (rotatedRecord === undefined) throw new Error("worker A did not persist a rotated token record");
+		await store.update(() => ({ ...rotatedRecord, expiresAt: Date.now() + 60_000 }));
+		const postA = await runSingleWorker(agentDir, fixture.mcpUrl, "A-post");
+		// B's terminal invalid_grant cleared the store, so B has no credentials left.
+		const postB = await runSingleWorker(agentDir, fixture.mcpUrl, "B-post");
+		const results: WorkerResult[] = [
+			{ ...resultA, postRaceOk: postA.ok, postRaceKind: postA.kind, postRaceRefreshHash: postA.refreshHash },
+			{ ...resultB, postRaceOk: postB.ok, postRaceKind: postB.kind, postRaceRefreshHash: postB.refreshHash },
+		];
+
 		const log = await fixture.getLog();
-		const stored = new McpTokenStore({ agentDir, serverName: "race", serverUrl: fixture.mcpUrl }).read();
+		const stored = store.read();
 		const postRaceFailureKinds = results.map((result) => result.postRaceKind);
 		const artifact: RaceArtifact = {
 			scenario: "lock-off",

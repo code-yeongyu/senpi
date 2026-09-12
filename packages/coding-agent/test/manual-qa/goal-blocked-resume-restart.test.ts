@@ -14,6 +14,7 @@ import { expect, it } from "vitest";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import { readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
+import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../src/core/messages.ts";
 
 type AnyTool = ToolDefinition<any, any, any>;
 type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
@@ -56,7 +57,14 @@ function makeSession(dir: string, onSelect: (options: string[]) => string | unde
 			getSessionFile: () => join(dir, "session.jsonl"),
 			getSessionDir: () => dir,
 			getSessionId: () => THREAD,
-			getBranch: () => [],
+			getBranch: () =>
+				[0, 1].map(() => ({
+					type: "custom_message",
+					customType: GOAL_CONTINUATION_MESSAGE_TYPE,
+					content: "Continue working toward the active thread goal.",
+					display: false,
+					timestamp: new Date().toISOString(),
+				})),
 		},
 	} as unknown as ExtensionContext;
 	const fire = async (event: string, payload: unknown): Promise<void> => {

@@ -136,7 +136,7 @@ describe("MCP startup race", () => {
 		// --slow-start 800 clears the 250ms startup race window (so attach cannot
 		// settle synchronously) while staying inside connectTimeoutMs, so the
 		// background connect still completes and surfaces tools. This is the cold
-		// lazy analogue of the wedged codegraph server that used to gate the UI.
+		// lazy analogue of a wedged MCP server that used to gate the UI.
 		setConfig(root, {
 			fx: { ...stdioServer(["--tools", "2", "--slow-start", "800"]), lifecycle: "lazy", connectTimeoutMs: 5000 },
 		});

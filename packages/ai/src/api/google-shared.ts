@@ -7,16 +7,18 @@ import type {
 	Context,
 	ImageContent,
 	Model,
+	ModelThinkingLevel,
 	ProviderNativeContent,
 	StopReason,
 	StreamOptions,
 	TextContent,
+	ThinkingLevel,
 	Tool,
 } from "../types.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
-import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 type GoogleApiType = "google-generative-ai" | "google-vertex";
@@ -25,7 +27,30 @@ type GoogleApiType = "google-generative-ai" | "google-vertex";
  * Thinking level for Gemini 3 models.
  * Mirrors Google's ThinkingLevel enum values.
  */
-export type GoogleThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
+export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
+export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
+
+/** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
+export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
+	model: Model<T>,
+	level: ModelThinkingLevel,
+): ResolvedGoogleThinkingLevel {
+	if (level === "off") return "high";
+
+	const mapped = model.thinkingLevelMap?.[level];
+	const resolvedLevel = typeof mapped === "string" ? mapped.toLowerCase() : level;
+	switch (resolvedLevel) {
+		case "minimal":
+		case "low":
+		case "medium":
+		case "high":
+			return resolvedLevel;
+		default:
+			throw new Error(
+				`Unsupported Google thinking level mapping for ${model.provider}/${model.id}: ${level} -> ${String(mapped)}`,
+			);
+	}
+}
 
 /**
  * Determines whether a streamed Gemini `Part` should be treated as "thinking".
@@ -396,17 +421,22 @@ function stripOptional(schema: unknown): unknown {
 export function convertTools(
 	tools: Tool[],
 	useParameters = false,
+	supportsStrictMode = true,
 ): { functionDeclarations: Record<string, unknown>[] }[] | undefined {
 	if (tools.length === 0) return undefined;
 	return [
 		{
-			functionDeclarations: tools.map((tool) => ({
-				name: tool.name,
-				description: tool.description,
-				...(useParameters
-					? { parameters: stripOptional(sanitizeForOpenApi(tool.parameters)) }
-					: { parametersJsonSchema: stripOptional(tool.parameters) }),
-			})),
+			functionDeclarations: tools.map((tool) => {
+				const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+				const parameters = getJsonSchemaToolParameters(tool, strict);
+				return {
+					name: tool.name,
+					description: tool.description,
+					...(useParameters
+						? { parameters: stripOptional(sanitizeForOpenApi(parameters)) }
+						: { parametersJsonSchema: stripOptional(parameters) }),
+				};
+			}),
 		},
 	];
 }
@@ -469,6 +499,7 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.LANGUAGE:
 		case FinishReason.MALFORMED_FUNCTION_CALL:
 		case FinishReason.UNEXPECTED_TOOL_CALL:
+		case FinishReason.TOO_MANY_TOOL_CALLS:
 		case FinishReason.NO_IMAGE:
 			return "error";
 		default: {

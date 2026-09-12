@@ -94,7 +94,7 @@ function shouldPollGitHead(repoDir: string): boolean {
 
 /**
  * Provides git branch and extension statuses - data not otherwise accessible to extensions.
- * Token stats, model info available via ctx.sessionManager and ctx.model.
+ * Context usage on ctx.getContextUsage(), token stats on ctx.sessionManager.getEntries(), model info on ctx.model.
  */
 export class FooterDataProvider {
 	private cwd: string;
@@ -335,10 +335,6 @@ export class FooterDataProvider {
 			};
 			watchFile(this.headWatchFilePath, { interval: 1000 }, this.headWatchFileListener);
 		}
-		if (!this.headWatcher && !pollGitHead) {
-			return;
-		}
-
 		// In reftable repos, branch switches update files in the reftable directory
 		// instead of HEAD. Watch it separately so the footer picks up those changes.
 		const reftableDir = join(this.gitPaths.commonGitDir, "reftable");
@@ -350,13 +346,9 @@ export class FooterDataProvider {
 				},
 				() => this.handleGitWatcherError(),
 			);
-			if (!this.reftableWatcher) {
-				return;
-			}
 
 			const tablesListPath = join(reftableDir, "tables.list");
 			if (existsSync(tablesListPath)) {
-				this.reftableTablesListPath = tablesListPath;
 				this.reftableTablesListWatcher = watchWithErrorHandler(
 					tablesListPath,
 					() => {
@@ -364,11 +356,28 @@ export class FooterDataProvider {
 					},
 					() => this.handleGitWatcherError(),
 				);
-				if (!this.reftableTablesListWatcher) {
-					return;
+				// Polling is the fallback for environments where fs.watch is unusable
+				// (descriptor limits, unsupported filesystems), so it must be armed even
+				// when watcher creation just failed. The path is recorded after the
+				// attempt because a failure synchronously clears watcher state.
+				this.reftableTablesListPath = tablesListPath;
+				let previousTablesListContent: string | undefined;
+				try {
+					previousTablesListContent = readFileSync(tablesListPath, "utf8");
+				} catch {
+					// The file may disappear between existsSync and the first poll.
 				}
 				watchFile(tablesListPath, { interval: 250 }, (current, previous) => {
+					let contentChanged = false;
+					try {
+						const currentContent = readFileSync(tablesListPath, "utf8");
+						contentChanged = previousTablesListContent !== currentContent;
+						previousTablesListContent = currentContent;
+					} catch {
+						contentChanged = true;
+					}
 					if (
+						contentChanged ||
 						current.mtimeMs !== previous.mtimeMs ||
 						current.ctimeMs !== previous.ctimeMs ||
 						current.size !== previous.size

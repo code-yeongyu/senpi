@@ -2,19 +2,17 @@ import type { EvalDetachedCellNotifier, EvalDetachedCellSnapshot } from "./detac
 import { buildDetachedCellNotification } from "./detached-cell-notification.ts";
 
 export interface PendingDetachedNotification {
-	readonly snapshot: () => EvalDetachedCellSnapshot;
+	readonly snapshot: () => EvalDetachedCellSnapshot | Promise<EvalDetachedCellSnapshot>;
 	readonly spillPath: string | undefined;
 }
 
 export class DetachedNotificationQueue {
-	readonly #artifactsDir: string | undefined;
 	readonly #notifier: EvalDetachedCellNotifier | undefined;
 	#pending: PendingDetachedNotification[] = [];
 	#flush: Promise<void> | undefined;
 
-	constructor(notifier: EvalDetachedCellNotifier | undefined, artifactsDir: string | undefined) {
+	constructor(notifier: EvalDetachedCellNotifier | undefined) {
 		this.#notifier = notifier;
-		this.#artifactsDir = artifactsDir;
 	}
 
 	enqueue(notification: PendingDetachedNotification): void {
@@ -32,9 +30,7 @@ export class DetachedNotificationQueue {
 		const flush = Promise.resolve().then(async () => {
 			const pending = this.#pending.splice(0);
 			const notifications = await Promise.all(
-				pending.map(
-					async (item) => await buildDetachedCellNotification(item.snapshot(), item.spillPath, this.#artifactsDir),
-				),
+				pending.map(async (item) => await buildDetachedCellNotification(await item.snapshot(), item.spillPath)),
 			);
 			this.#notifier?.notify(notifications);
 		});

@@ -72,7 +72,9 @@ describe("AgentSession dynamic tool registration", () => {
 			resourceLoader,
 		});
 
-		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash")!;
+		// Eval-only routing keeps `bash` out of the model-visible tool array; it stays
+		// reachable through the registry, which is the path an eval cell uses.
+		const bashTool = session.getRegisteredTool("bash")!;
 		expect(session.systemPrompt).toContain(
 			"You can inspect PI_* environment variables for current model and session details.",
 		);
@@ -85,7 +87,7 @@ describe("AgentSession dynamic tool registration", () => {
 			PI_REASONING_LEVEL: session.thinkingLevel,
 		});
 
-		const optedOutBashTool = session.agent.state.tools.find((tool) => tool.name === "bash_without_session_env")!;
+		const optedOutBashTool = session.getRegisteredTool("bash_without_session_env")!;
 		await optedOutBashTool.execute("bash-no-env", { command: "printf ok" });
 		expect(optedOutEnv).not.toHaveProperty("PI_SESSION_ID");
 		expect(optedOutEnv).not.toHaveProperty("PI_SESSION_FILE");

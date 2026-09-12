@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
+import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const CHILD_TIMEOUT_MS = 60_000;
 

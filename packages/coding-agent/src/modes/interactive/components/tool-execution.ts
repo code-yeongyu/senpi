@@ -1,7 +1,10 @@
 import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
 import type { ToolDef } from "../../../core/tools/index.ts";
+import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { GrokToolRow } from "../grok/tool-row.ts";
+import { theme } from "../theme/theme.ts";
 import { readToolProgress } from "../tool-progress.ts";
+import { keyHint } from "./keybinding-hints.ts";
 import { createBoundedRenderSignature } from "./render-signature.ts";
 import { hasCompletedTodoTasks, TODO_STRIKE_FRAME_INTERVAL_MS, TODO_STRIKE_TOTAL_FRAMES } from "./todo-strike.ts";
 import { ToolExecutionImages } from "./tool-execution-images.ts";
@@ -17,6 +20,25 @@ export interface ToolExecutionOptions {
 export type ToolExecutionPresentation = "classic" | "grok";
 
 const PENDING_RENDER_FRAME_INTERVAL_MS = 80;
+const FALLBACK_PREVIEW_LINES = 10;
+
+function collapseFallbackResult(
+	result: ToolExecutionResult | undefined,
+	showImages: boolean,
+	expanded: boolean,
+): ToolExecutionResult | undefined {
+	if (!result || expanded) return result;
+	const output = getRenderedTextOutput(result, showImages);
+	if (!output) return result;
+	const lines = output.split("\n");
+	if (lines.length <= FALLBACK_PREVIEW_LINES) return result;
+
+	const remaining = lines.length - FALLBACK_PREVIEW_LINES;
+	const text =
+		lines.slice(0, FALLBACK_PREVIEW_LINES).join("\n") +
+		`${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+	return { ...result, content: [{ type: "text", text }] };
+}
 
 export class ToolExecutionComponent extends Container {
 	private readonly identity: ToolExecutionIdentity;
@@ -190,7 +212,11 @@ export class ToolExecutionComponent extends Container {
 			return;
 		}
 		const renderer = this.renderer!;
-		this.renderer!.update(state);
+		const renderState =
+			renderer.hasRendererDefinition && !renderer.hasResultRenderer
+				? { ...state, result: collapseFallbackResult(state.result, state.showImages, state.expanded) }
+				: state;
+		renderer.update(renderState);
 		this.images!.updateOptions({
 			showImages: state.showImages,
 			maxWidthCells: this.imageWidthCells,

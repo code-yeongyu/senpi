@@ -1,10 +1,14 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import modelFallbackExtension from "../../src/core/extensions/builtin/model-fallback/index.ts";
+import { renderFallbackState } from "../../src/core/extensions/builtin/model-fallback/ui.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
 const fallback = "faux/faux-2";
+
+const billingError =
+	'400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}';
 
 function getFallbackCommand(harness: Harness) {
 	const command = harness.getExtensionRunner().getCommand("fallback");
@@ -18,11 +22,19 @@ describe("model fallback host wiring", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	it("uses the first available candidate from the shipped Fable 5 chain", async () => {
+	it("uses the first available candidate from a configured Fable 5 chain", async () => {
 		const harness = await createHarness({
 			provider: "anthropic",
 			models: [{ id: "claude-fable-5" }, { id: "claude-opus-5" }, { id: "claude-opus-4-8" }],
-			settings: { retry: { enabled: true, baseDelayMs: 1, maxRetries: 0 } },
+			// No shipped default exists any more; the chain must be configured explicitly.
+			settings: {
+				retry: {
+					enabled: true,
+					baseDelayMs: 1,
+					maxRetries: 0,
+					fallbackChains: { "claude-fable-5": ["claude-opus-5:xhigh", "claude-opus-4-8:xhigh"] },
+				},
+			},
 		});
 		harnesses.push(harness);
 		harness.setResponses([
@@ -30,7 +42,7 @@ describe("model fallback host wiring", () => {
 			fauxAssistantMessage("recovered"),
 		]);
 
-		await harness.session.prompt("use the default Fable fallback chain");
+		await harness.session.prompt("use the configured Fable fallback chain");
 
 		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
 			{ from: "anthropic/claude-fable-5", to: "anthropic/claude-opus-5" },
@@ -48,8 +60,7 @@ describe("model fallback host wiring", () => {
 
 		expect(harness.settingsManager.getRawFallbackChains()).toBeUndefined();
 		await getFallbackCommand(harness).handler(`${primary} ${fallback}`, context);
-		// The quick-set chain is what must reach the engine; shipped defaults for
-		// other models stay resolved alongside it.
+		// The quick-set chain is what must reach the engine.
 		expect(harness.settingsManager.getRetryFallbackSettings().chains[primary]).toEqual([fallback]);
 
 		harness.setResponses([
@@ -79,6 +90,57 @@ describe("model fallback host wiring", () => {
 			if (previous === undefined) delete process.env.SENPI_NO_FALLBACK;
 			else process.env.SENPI_NO_FALLBACK = previous;
 		}
+	});
+
+	it("exposes refusal pin state and badge semantics through the live menu accessor", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: { retry: { enabled: true, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "refusal", stopDetails: { type: "refusal" } }),
+			fauxAssistantMessage("recovered"),
+		]);
+		await harness.session.prompt("create a refusal fallback");
+		const context = harness.getExtensionRunner().createCommandContext();
+		expect(context.sessionSettings.getFallbackStatus()?.pinned).toBe(true);
+		expect(renderFallbackState(context, harness.settingsManager.getRetryFallbackSettings())).toContain("(pinned)");
+
+		expect(
+			(
+				harness.session as unknown as { _retryFallback: { notifyCompactionApplied(): boolean } }
+			)._retryFallback.notifyCompactionApplied(),
+		).toBe(true);
+		expect(context.sessionSettings.getFallbackStatus()?.pinned).toBe(false);
+		expect(renderFallbackState(context, harness.settingsManager.getRetryFallbackSettings())).not.toContain(
+			"(pinned)",
+		);
+	});
+
+	it("keeps billing pins in the live status and badge after compaction", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 0, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: billingError }),
+			fauxAssistantMessage("recovered"),
+		]);
+		await harness.session.prompt("create a billing fallback");
+		const context = harness.getExtensionRunner().createCommandContext();
+		expect(context.sessionSettings.getFallbackStatus()?.pinned).toBe(true);
+		expect(renderFallbackState(context, harness.settingsManager.getRetryFallbackSettings())).toContain("(pinned)");
+		expect(
+			(
+				harness.session as unknown as { _retryFallback: { notifyCompactionApplied(): boolean } }
+			)._retryFallback.notifyCompactionApplied(),
+		).toBe(false);
+		expect(context.sessionSettings.getFallbackStatus()?.pinned).toBe(true);
+		expect(renderFallbackState(context, harness.settingsManager.getRetryFallbackSettings())).toContain("(pinned)");
 	});
 
 	it("exposes active retry state through the live menu accessor", async () => {

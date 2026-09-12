@@ -106,6 +106,18 @@ describe("Claude Opus 5 prompt preset", () => {
 		expect(preset?.name).toBe("claude-opus-5");
 	});
 
+	it("routes user questions through ask_user_question when it is available", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-opus-5", "anthropic");
+
+		const preset = resolvePreset(model, settings);
+
+		expect(preset?.prompt).toContain("ask_user_question");
+		expect(preset?.prompt).toContain(
+			"ask after doing everything that does not depend on the answer, through ask_user_question when it is available",
+		);
+	});
+
 	it("does not include GPT or Kimi tuning in the claude-opus-5 preset", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };

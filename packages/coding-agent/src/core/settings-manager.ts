@@ -1,16 +1,40 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
-import type { TuiMode as RendererTuiMode, ScrollViewScrollbar } from "@earendil-works/pi-tui";
+import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
+import type {
+	RetryPolicyProfile,
+	RetryStagePolicy,
+	RetryTieredHintStrategy,
+} from "@earendil-works/pi-ai/utils/retry-profile/types";
+import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
+import type { CompactionSettings } from "./compaction-settings-access.ts";
+import {
+	compactionEnabled,
+	compactionKeepRecentTokens,
+	compactionReserveTokens,
+} from "./compaction-settings-access.ts";
+import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import {
+	CredentialStoreBusyError,
+	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
+	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
+	isLockError,
+} from "./lockfile-policy.ts";
+import type { RetryPolicyOverride } from "./retry-fallback/profile-override.ts";
+import { validateRetryProviderOverrides } from "./retry-fallback/profile-override.ts";
 import {
 	type ResolvedHintPolicySettings,
 	type ResolvedRetryFallbackSettings,
@@ -19,93 +43,54 @@ import {
 	resolveHintPolicySettings,
 	resolveRetryFallbackSettings,
 } from "./retry-fallback/settings.ts";
+import {
+	ASK_USER_DEFAULT_TIMEOUT_MINUTES,
+	ASK_USER_MAX_TIMEOUT_MINUTES,
+	ASK_USER_MIN_TIMEOUT_MINUTES,
+	type AskUserSettings,
+	type ImageSettings,
+	type LookAtSettings,
+	type MarkdownSettings,
+	type MermaidRenderingMode,
+	type OpenAISettings,
+	type PromptCacheKeepAliveSettings,
+	type PromptCacheSettings,
+	type ThinkingBudgetsSettings,
+} from "./settings-shapes.ts";
+import type { BranchSummarySettings, TerminalSettings } from "./terminal-settings.ts";
 
-export type { ProviderRetrySettings, RetrySettings } from "./retry-fallback/settings.ts";
+export type * from "./settings-public-types.ts";
 
-export const DEFAULT_STREAM_START_TIMEOUT_MS = 90_000;
+export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
 
-export interface CompactionSettings {
-	enabled?: boolean; // default: true
-	reserveTokens?: number; // default: 16384
-	keepRecentTokens?: number; // default: 20000
-	speculativeEnabled?: boolean; // default: true
-	speculativeFraction?: number; // default: 0.75
-	speculativeCooldownMs?: number; // default: 30000
-	restorationEnabled?: boolean; // default: true
-	restorationMaxItems?: number; // default: 10
-	restorationMaxTokensPerItem?: number; // default: 5000
-	restorationMaxTotalTokens?: number; // default: 50000
-	restorationContextRatio?: number; // default: 0.15
-	idleCompactionEnabled?: boolean; // default: true
-}
-
-export interface BranchSummarySettings {
-	reserveTokens?: number; // default: 16384 (tokens reserved for prompt + LLM response)
-	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
-}
-
 export type TuiMode = RendererTuiMode;
-export interface TerminalSettings {
-	showImages?: boolean; // default: true (only relevant if terminal supports images)
-	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
-	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
-	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
-	// Persistent-terminal tool suite (builtin `terminal` extension) config.
-	defaultCols?: number; // default: 120 (PTY width for new sessions)
-	defaultRows?: number; // default: 40 (PTY height for new sessions)
-	scrollback?: number; // default: 10000 (xterm scrollback lines per session)
-	maxSessions?: number; // default: 32 (concurrent background sessions before LRU-exited pruning)
-	timeoutAction?: "background" | "kill"; // default: "background" (fate of a foreground timeout)
-	notify?: "wake" | "next-turn" | "off"; // default: "wake" (async completion wake behavior)
-	monitorCoalesceWindowMs?: number; // default: 2000 (event batching window)
-	monitorRateLimitMs?: number; // default: 5000 (minimum interval per monitor injection)
-	monitorMaxLinesPerInjection?: number; // default: 50 (bounded monitor event batch)
-	monitorMaxCharsPerInjection?: number; // default: 4096 (bounded monitor event batch)
-	monitorWakeBudget?: number; // default: 5 (consecutive monitor-only wake limit)
+export type FullscreenExitOutput = "transcript" | "resume-hint";
+
+/** Service tier remembered per model; "auto" is an explicit opt-out of an inherited priority tier. */
+export type ModelServiceTier = "auto" | "flex" | "priority";
+
+const THINKING_LEVEL_VALUES: ReadonlySet<string> = new Set<ThinkingLevel>([
+	"off",
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+]);
+
+const MODEL_SERVICE_TIER_VALUES: ReadonlySet<string> = new Set<ModelServiceTier>(["auto", "flex", "priority"]);
+
+/** Opaque per-model memory key. Ids may contain `/` and `:`, so keys are never split back apart. */
+function modelMemoryKey(provider: string, modelId: string): string {
+	return `${provider}/${modelId}`;
 }
 
-export interface PromptCacheKeepAliveSettings {
-	enabled?: boolean; // default: false
-	maxRequestsPerSession?: number; // default: 3
-	maxCostUsdPerSession?: number; // default: 0.05
-	marginSeconds?: number; // default: 60
-}
-
-export interface PromptCacheSettings {
-	cacheAwareTimeouts?: boolean; // default: true (size foreground tool waits by the model's prompt-cache TTL)
-	safetyBufferSeconds?: number; // default: 30 (headroom subtracted from the cache TTL)
-	goalBackstopMaxSeconds?: number; // default: 3570 (maximum Goal monitor continuation backstop)
-	keepAlive?: PromptCacheKeepAliveSettings;
-}
-
-export interface ImageSettings {
-	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
-	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
-	maxHistoricalImages?: number; // default: undefined (preserve existing transport behavior)
-}
-
-export interface LookAtSettings {
-	enabled?: boolean; // default: true
-	models?: string[]; // default: undefined (use the default look-at chain)
-}
-
-export interface ThinkingBudgetsSettings {
-	minimal?: number;
-	low?: number;
-	medium?: number;
-	high?: number;
-}
-
-export type MermaidRenderingMode = "off" | "final" | "streaming";
-
-export interface MarkdownSettings {
-	codeBlockIndent?: string; // default: "  "
-	mermaid?: MermaidRenderingMode; // default: "streaming"
-}
-
-export interface OpenAISettings {
-	serviceTier?: "auto" | "flex" | "priority";
+function readModelMemoryEntry(map: unknown, key: string, allowed: ReadonlySet<string>): string | undefined {
+	if (typeof map !== "object" || map === null || Array.isArray(map)) return undefined;
+	const value = (map as Record<string, unknown>)[key];
+	return typeof value === "string" && allowed.has(value) ? value : undefined;
 }
 
 export interface WarningSettings {
@@ -135,22 +120,30 @@ export type PackageSource =
 			hooks?: string[];
 	  };
 
+export interface ExperimentalSettings {
+	sharedHost?: boolean;
+}
+
 export interface Settings {
 	lastChangelogVersion?: string;
+	changelogSeen?: Record<string, string>;
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: ThinkingLevel;
+	modelThinkingLevels?: Record<string, ThinkingLevel>; // `${provider}/${id}` -> effective thinking level for that model
+	modelLastOnThinkingLevels?: Record<string, ThinkingLevel>; // `${provider}/${id}` -> last non-off thinking level
+	modelServiceTiers?: Record<string, ModelServiceTier>; // `${provider}/${id}` -> last service tier set for that model
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
-	compaction?: CompactionSettings;
+	compaction?: CompactionSettings & { model?: string };
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettingsConfig;
 	hideThinkingBlock?: boolean;
 	smoothStreaming?: boolean; // default: true
 	smoothStreamingFps?: number; // default: 60, clamped to 30-120 when read
-	showCacheMissNotices?: boolean; // default: false - show transcript notices for significant prompt-cache misses
+	showCacheMissNotices?: boolean; // default: false - show prompt-cache miss and compaction cost notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
@@ -176,9 +169,11 @@ export interface Settings {
 	promptCache?: PromptCacheSettings;
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
+	askUser?: AskUserSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
 	enabledModels?: string[]; // Legacy global model narrowing patterns (same format as --models CLI flag)
+	defaultTools?: string[]; // Initial built-in tool selection
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
@@ -194,7 +189,10 @@ export interface Settings {
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	tuiMode?: TuiMode; // default: "regular"
+	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
+	experimental?: ExperimentalSettings;
+	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -232,6 +230,13 @@ function deepMergeSettings(base: Settings, overrides: Settings): Settings {
 	return result;
 }
 
+function resolveAskUserTimeoutMinutes(value: unknown): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		return ASK_USER_DEFAULT_TIMEOUT_MINUTES;
+	}
+	return Math.min(ASK_USER_MAX_TIMEOUT_MINUTES, Math.max(ASK_USER_MIN_TIMEOUT_MINUTES, Math.floor(value)));
+}
+
 function parseTimeoutSetting(value: unknown, settingName: string): number | undefined {
 	const timeoutMs = parseHttpIdleTimeoutMs(value);
 	if (timeoutMs !== undefined) {
@@ -244,6 +249,96 @@ function parseTimeoutSetting(value: unknown, settingName: string): number | unde
 }
 
 export type SettingsScope = "global" | "project";
+export type SettingsFormat = "jsonc" | "json";
+export type SettingsSourceReason = "explicit-jsonc" | "json-only";
+
+export interface SettingsSourceSelection {
+	path: string;
+	format: SettingsFormat;
+	reason: SettingsSourceReason;
+	scope: SettingsScope;
+}
+
+export type SettingsSourceListener = (source: SettingsSourceSelection) => void;
+
+/** Parse JSON or JSONC without changing comment-like text inside strings. */
+export function parseSettingsJson(content: string): Record<string, unknown> {
+	content = stripBom(content);
+	const withoutComments: string[] = [];
+	let inString = false;
+	let escaped = false;
+
+	for (let index = 0; index < content.length; index += 1) {
+		const char = content[index];
+		const next = content[index + 1];
+		if (inString) {
+			withoutComments.push(char);
+			if (escaped) escaped = false;
+			else if (char === "\\") escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') {
+			inString = true;
+			withoutComments.push(char);
+			continue;
+		}
+		if (char === "/" && next === "/") {
+			withoutComments.push(" ", " ");
+			index += 2;
+			while (index < content.length && content[index] !== "\n" && content[index] !== "\r") {
+				withoutComments.push(" ");
+				index += 1;
+			}
+			if (index < content.length) withoutComments.push(content[index]);
+			continue;
+		}
+		if (char === "/" && next === "*") {
+			withoutComments.push(" ", " ");
+			index += 2;
+			let closed = false;
+			for (; index < content.length; index += 1) {
+				if (content[index] === "*" && content[index + 1] === "/") {
+					withoutComments.push(" ", " ");
+					index += 1;
+					closed = true;
+					break;
+				}
+				withoutComments.push(content[index] === "\n" || content[index] === "\r" ? content[index] : " ");
+			}
+			if (!closed) throw new SyntaxError("Unterminated block comment in settings");
+			continue;
+		}
+		withoutComments.push(char);
+	}
+
+	const normalized = withoutComments;
+	inString = false;
+	escaped = false;
+	for (let index = 0; index < normalized.length; index += 1) {
+		const char = normalized[index];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === "\\") escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') {
+			inString = true;
+			continue;
+		}
+		if (char !== ",") continue;
+		let nextIndex = index + 1;
+		while (nextIndex < normalized.length && /\s/.test(normalized[nextIndex])) nextIndex += 1;
+		if (normalized[nextIndex] === "}" || normalized[nextIndex] === "]") normalized[index] = " ";
+	}
+
+	const parsed: unknown = JSON.parse(normalized.join(""));
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+		throw new TypeError("Settings must contain a JSON object");
+	}
+	return parsed as Record<string, unknown>;
+}
 
 const SELF_WRITE_TTL_MS = 15_000;
 const MAX_SELF_WRITES_PER_PATH = 8;
@@ -312,19 +407,47 @@ export function __setSelfWriteTrackerClockForTests(clock: (() => number) | undef
 	selfWriteClock = clock ?? Date.now;
 }
 
-/** Returns the absolute settings path for a filesystem-backed storage scope. */
+function getSettingsDirectory(cwd: string, agentDir: string, scope: SettingsScope, homeDir: string): string {
+	if (scope === "global") return resolvePath(agentDir);
+	const resolvedCwd = resolvePath(cwd);
+	return findNearestParentConfigDir(resolvedCwd, homeDir, CONFIG_DIR_NAME) ?? join(resolvedCwd, CONFIG_DIR_NAME);
+}
+
+/** Resolve the existing settings source, preferring JSONC when both formats exist. */
+export function resolveSettingsSource(
+	cwd: string,
+	agentDir: string,
+	scope: SettingsScope,
+	homeDir: string = homedir(),
+): SettingsSourceSelection | undefined {
+	const directory = getSettingsDirectory(cwd, agentDir, scope, homeDir);
+	const jsoncPath = join(directory, "settings.jsonc");
+	if (existsSync(jsoncPath)) {
+		return {
+			path: jsoncPath,
+			format: "jsonc",
+			reason: "explicit-jsonc",
+			scope,
+		};
+	}
+	const jsonPath = join(directory, "settings.json");
+	if (existsSync(jsonPath)) {
+		return { path: jsonPath, format: "json", reason: "json-only", scope };
+	}
+	return undefined;
+}
+
+/** Returns the selected settings path, or the legacy JSON write target when no source exists. */
 export function getSettingsPath(
 	cwd: string,
 	agentDir: string,
 	scope: SettingsScope,
 	homeDir: string = homedir(),
 ): string {
-	if (scope === "global") {
-		return join(resolvePath(agentDir), "settings.json");
-	}
-	const resolvedCwd = resolvePath(cwd);
-	const projectConfigDir = findNearestParentConfigDir(resolvedCwd, homeDir, CONFIG_DIR_NAME);
-	return join(projectConfigDir ?? join(resolvedCwd, CONFIG_DIR_NAME), "settings.json");
+	return (
+		resolveSettingsSource(cwd, agentDir, scope, homeDir)?.path ??
+		join(getSettingsDirectory(cwd, agentDir, scope, homeDir), "settings.json")
+	);
 }
 
 /** Returns the stable virtual path used to identify in-memory settings storage writes. */
@@ -338,83 +461,111 @@ export interface SettingsManagerCreateOptions {
 
 export interface SettingsStorage {
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void;
+	selectSource?(scope: SettingsScope): SettingsSourceSelection | undefined;
 }
 
 export interface SettingsError {
 	scope: SettingsScope;
+	path?: string;
 	error: Error;
+}
+
+type SettingsPaths = Partial<Record<SettingsScope, string>>;
+
+function toSettingsError(scope: SettingsScope, error: unknown, path?: string): SettingsError {
+	return {
+		scope,
+		...(path ? { path } : {}),
+		error: error instanceof Error ? error : new Error(String(error)),
+	};
 }
 
 export class FileSettingsStorage implements SettingsStorage {
 	private globalSettingsPath: string;
 	private projectSettingsPath: string;
+	private readonly cwd: string;
+	private readonly agentDir: string;
+	private readonly homeDir: string;
 
 	constructor(cwd: string, agentDir: string, homeDir: string = homedir()) {
+		this.cwd = cwd;
+		this.agentDir = agentDir;
+		this.homeDir = homeDir;
 		this.globalSettingsPath = getSettingsPath(cwd, agentDir, "global", homeDir);
 		this.projectSettingsPath = getSettingsPath(cwd, agentDir, "project", homeDir);
 	}
 
-	private acquireLockSyncWithRetry(path: string): () => void {
-		const maxAttempts = 10;
-		const delayMs = 20;
-		let lastError: unknown;
+	selectSource(scope: SettingsScope): SettingsSourceSelection | undefined {
+		const source = resolveSettingsSource(this.cwd, this.agentDir, scope, this.homeDir);
+		const path =
+			source?.path ?? join(getSettingsDirectory(this.cwd, this.agentDir, scope, this.homeDir), "settings.json");
+		if (scope === "global") this.globalSettingsPath = path;
+		else this.projectSettingsPath = path;
+		return source;
+	}
 
-		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+	private acquireLockSyncWithRetry(path: string): () => void {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
 			try {
-				return lockfile.lockSync(path, { realpath: false });
+				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				if (code !== "ELOCKED" || attempt === maxAttempts) {
-					throw error;
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_SYNC_LOCK_BUDGET_MS) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
 				}
-				lastError = error;
-				const start = Date.now();
-				while (Date.now() - start < delayMs) {
-					// Sleep synchronously to avoid changing callers to async.
-				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_SYNC_LOCK_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				const sleeper = new Int32Array(new SharedArrayBuffer(4));
+				Atomics.wait(sleeper, 0, 0, delayMs);
 			}
 		}
-
-		throw (lastError as Error) ?? new Error("Failed to acquire settings lock");
 	}
 
 	withLock(scope: SettingsScope, fn: (current: string | undefined) => string | undefined): void {
 		const path = scope === "global" ? this.globalSettingsPath : this.projectSettingsPath;
 		const dir = dirname(path);
 
-		let release: (() => void) | undefined;
+		// Read without the lock: writers publish atomically via temp+rename below, so
+		// a reader can never observe partial content. Read-only callers therefore skip
+		// lock acquisition entirely (no lock churn, no lock-dir filesystem events).
+		const current = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+		let next = fn(current);
+		if (next === undefined) {
+			return;
+		}
+		// Only create directory when we actually need to write
+		if (!existsSync(dir)) {
+			mkdirSync(dir, { recursive: true });
+		}
+		const release = this.acquireLockSyncWithRetry(path);
 		try {
-			// Only create directory and lock if file exists or we need to write
-			let current: string | undefined;
-			if (existsSync(path)) {
-				release = this.acquireLockSyncWithRetry(path);
-				current = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+			const underLock = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
+			if (underLock !== current) {
+				// Lost a write race: re-merge against the winner's content under the lock.
+				next = fn(underLock);
 			}
-			let next = fn(current);
 			if (next !== undefined) {
-				// Only create directory when we actually need to write
-				if (!existsSync(dir)) {
-					mkdirSync(dir, { recursive: true });
-				}
-				if (!release) {
-					release = this.acquireLockSyncWithRetry(path);
-					if (existsSync(path)) {
-						// Lost the first-write race: re-merge against the winner's content under the lock.
-						next = fn(readFileSync(path, "utf-8"));
-					}
-				}
-				if (next !== undefined) {
-					writeFileSync(path, next, "utf-8");
+				// Publish atomically: write a same-directory temp file, then rename over
+				// the settings path so lock-free readers never see a torn write.
+				const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+				try {
+					writeFileSync(tempPath, next, "utf-8");
 					recordSelfWrite(path, next);
+					renameSync(tempPath, path);
+				} catch (error) {
+					rmSync(tempPath, { force: true });
+					throw error;
 				}
 			}
 		} finally {
-			if (release) {
-				release();
-			}
+			release();
 		}
 	}
 }
@@ -451,6 +602,9 @@ export class SettingsManager {
 	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
 	private writeQueue: Promise<void> = Promise.resolve();
 	private errors: SettingsError[];
+	private settingsPaths: SettingsPaths;
+	private selectedSources = new Map<SettingsScope, SettingsSourceSelection>();
+	private sourceListeners: SettingsSourceListener[] = [];
 
 	private constructor(
 		storage: SettingsStorage,
@@ -460,6 +614,8 @@ export class SettingsManager {
 		projectLoadError: Error | null = null,
 		initialErrors: SettingsError[] = [],
 		projectTrusted = true,
+		initialSources: readonly SettingsSourceSelection[] = [],
+		settingsPaths: SettingsPaths = {},
 	) {
 		this.storage = storage;
 		this.globalSettings = initialGlobal;
@@ -468,6 +624,8 @@ export class SettingsManager {
 		this.globalSettingsLoadError = globalLoadError;
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
+		this.settingsPaths = settingsPaths;
+		for (const source of initialSources) this.selectedSources.set(source.scope, source);
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 	}
 
@@ -484,14 +642,26 @@ export class SettingsManager {
 	/** Create a SettingsManager from an arbitrary storage backend */
 	static fromStorage(storage: SettingsStorage, options: SettingsManagerCreateOptions = {}): SettingsManager {
 		const projectTrusted = options.projectTrusted ?? true;
+		const initialSources: SettingsSourceSelection[] = [];
+		const settingsPaths: SettingsPaths = {};
+		const globalSource = storage.selectSource?.("global");
+		if (globalSource) {
+			initialSources.push(globalSource);
+			settingsPaths.global = globalSource.path;
+		}
 		const globalLoad = SettingsManager.tryLoadFromStorage(storage, "global");
+		const projectSource = projectTrusted ? storage.selectSource?.("project") : undefined;
+		if (projectSource) {
+			initialSources.push(projectSource);
+			settingsPaths.project = projectSource.path;
+		}
 		const projectLoad = SettingsManager.tryLoadFromStorage(storage, "project", projectTrusted);
 		const initialErrors: SettingsError[] = [];
 		if (globalLoad.error) {
-			initialErrors.push({ scope: "global", error: globalLoad.error });
+			initialErrors.push(toSettingsError("global", globalLoad.error, settingsPaths.global));
 		}
 		if (projectLoad.error) {
-			initialErrors.push({ scope: "project", error: projectLoad.error });
+			initialErrors.push(toSettingsError("project", projectLoad.error, settingsPaths.project));
 		}
 
 		return new SettingsManager(
@@ -502,6 +672,8 @@ export class SettingsManager {
 			projectLoad.error,
 			initialErrors,
 			projectTrusted,
+			initialSources,
+			settingsPaths,
 		);
 	}
 
@@ -527,8 +699,7 @@ export class SettingsManager {
 		if (!content) {
 			return {};
 		}
-		const settings = JSON.parse(content);
-		return SettingsManager.migrateSettings(settings);
+		return SettingsManager.migrateSettings(parseSettingsJson(content));
 	}
 
 	private static tryLoadFromStorage(
@@ -537,7 +708,10 @@ export class SettingsManager {
 		projectTrusted = true,
 	): { settings: Settings; error: Error | null } {
 		try {
-			return { settings: SettingsManager.loadFromStorage(storage, scope, projectTrusted), error: null };
+			return {
+				settings: SettingsManager.loadFromStorage(storage, scope, projectTrusted),
+				error: null,
+			};
 		} catch (error) {
 			return { settings: {}, error: error as Error };
 		}
@@ -617,7 +791,7 @@ export class SettingsManager {
 		return (
 			this.projectSettings.promptCache?.goalBackstopMaxSeconds ??
 			this.globalSettings.promptCache?.goalBackstopMaxSeconds ??
-			3570
+			270
 		);
 	}
 
@@ -628,6 +802,14 @@ export class SettingsManager {
 			maxRequestsPerSession: configured?.maxRequestsPerSession ?? 3,
 			maxCostUsdPerSession: configured?.maxCostUsdPerSession ?? 0.05,
 			marginSeconds: configured?.marginSeconds ?? 60,
+		};
+	}
+
+	getAskUserSettings(): { enabled: boolean; timeoutMinutes: number } {
+		const configured = this.settings.askUser;
+		return {
+			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
+			timeoutMinutes: resolveAskUserTimeoutMinutes(configured?.timeoutMinutes),
 		};
 	}
 
@@ -651,6 +833,7 @@ export class SettingsManager {
 			return;
 		}
 
+		this.selectAndPublishSource("project");
 		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project", trusted);
 		this.projectSettings = projectLoad.settings;
 		this.projectSettingsLoadError = projectLoad.error;
@@ -662,6 +845,7 @@ export class SettingsManager {
 
 	async reload(): Promise<void> {
 		await this.writeQueue;
+		this.selectAndPublishSource("global");
 		const globalLoad = SettingsManager.tryLoadFromStorage(this.storage, "global");
 		if (!globalLoad.error) {
 			this.globalSettings = globalLoad.settings;
@@ -676,6 +860,7 @@ export class SettingsManager {
 		this.modifiedProjectFields.clear();
 		this.modifiedProjectNestedFields.clear();
 
+		if (this.projectTrusted) this.selectAndPublishSource("project");
 		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project", this.projectTrusted);
 		if (!projectLoad.error) {
 			this.projectSettings = projectLoad.settings;
@@ -686,6 +871,28 @@ export class SettingsManager {
 		}
 
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
+	}
+
+	getSelectedSettingsSources(): SettingsSourceSelection[] {
+		return [...this.selectedSources.values()].map((source) => ({ ...source }));
+	}
+
+	subscribeToSourceSelection(listener: SettingsSourceListener): () => void {
+		this.sourceListeners.push(listener);
+		return () => {
+			const index = this.sourceListeners.indexOf(listener);
+			if (index !== -1) this.sourceListeners.splice(index, 1);
+		};
+	}
+
+	private selectAndPublishSource(scope: SettingsScope): void {
+		const source = this.storage.selectSource?.(scope);
+		if (!source) {
+			this.selectedSources.delete(scope);
+			return;
+		}
+		this.selectedSources.set(scope, source);
+		for (const listener of this.sourceListeners) listener({ ...source });
 	}
 
 	/** Apply additional overrides on top of current settings */
@@ -723,7 +930,7 @@ export class SettingsManager {
 
 	private recordError(scope: SettingsScope, error: unknown): void {
 		const normalizedError = error instanceof Error ? error : new Error(String(error));
-		this.errors.push({ scope, error: normalizedError });
+		this.errors.push(toSettingsError(scope, normalizedError, this.settingsPaths[scope]));
 	}
 
 	private clearModifiedScope(scope: SettingsScope): void {
@@ -766,9 +973,7 @@ export class SettingsManager {
 		modifiedNestedFields: Map<keyof Settings, Set<string>>,
 	): void {
 		this.storage.withLock(scope, (current) => {
-			const currentFileSettings = current
-				? SettingsManager.migrateSettings(JSON.parse(current) as Record<string, unknown>)
-				: {};
+			const currentFileSettings = current ? SettingsManager.migrateSettings(parseSettingsJson(current)) : {};
 			const mergedSettings: Settings = { ...currentFileSettings };
 			for (const field of modifiedFields) {
 				const value = snapshotSettings[field];
@@ -848,6 +1053,19 @@ export class SettingsManager {
 	setLastChangelogVersion(version: string): void {
 		this.globalSettings.lastChangelogVersion = version;
 		this.markModified("lastChangelogVersion");
+		this.save();
+	}
+
+	getChangelogSeen(source = "engine"): string | undefined {
+		return (
+			this.settings.changelogSeen?.[source] ?? (source === "engine" ? this.settings.lastChangelogVersion : undefined)
+		);
+	}
+
+	setChangelogSeen(source: string, version: string): void {
+		if (!source || this.globalSettings.changelogSeen?.[source] === version) return;
+		this.globalSettings.changelogSeen = { ...(this.globalSettings.changelogSeen ?? {}), [source]: version };
+		this.markModified("changelogSeen", source);
 		this.save();
 	}
 
@@ -931,6 +1149,100 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getAllModelThinkingLevels(): Record<string, ThinkingLevel> {
+		return { ...(this.settings.modelThinkingLevels ?? {}) };
+	}
+
+	/** Thinking level last set for this exact model, or undefined when unknown/invalid on disk. */
+	getModelThinkingLevel(provider: string, modelId: string): ThinkingLevel | undefined {
+		return readModelMemoryEntry(
+			this.settings.modelThinkingLevels,
+			modelMemoryKey(provider, modelId),
+			THINKING_LEVEL_VALUES,
+		) as ThinkingLevel | undefined;
+	}
+
+	/** Remember (or with `undefined`, forget) this model's effective thinking level in GLOBAL settings. */
+	setModelThinkingLevel(
+		provider: string,
+		modelId: string,
+		level: ThinkingLevel | undefined,
+		options: { preserveLastOn?: boolean } = {},
+	): void {
+		const key = modelMemoryKey(provider, modelId);
+		const existing = this.globalSettings.modelThinkingLevels;
+		const map: Record<string, ThinkingLevel> =
+			typeof existing === "object" && existing !== null && !Array.isArray(existing) ? { ...existing } : {};
+		if (level === undefined) {
+			delete map[key];
+		} else {
+			map[key] = level;
+		}
+		this.globalSettings.modelThinkingLevels = map;
+		// Nested key only: concurrent sessions writing OTHER models must survive the merge.
+		this.markModified("modelThinkingLevels", key);
+
+		// `off` is durable effective state, but it must not erase the level `/reasoning on` restores.
+		if (level !== "off" && !options.preserveLastOn) {
+			this.updateModelLastOnThinkingLevel(key, level);
+		}
+		this.save();
+	}
+
+	/** Last non-off thinking level for this exact model, or undefined when unknown/invalid on disk. */
+	getModelLastOnThinkingLevel(provider: string, modelId: string): ThinkingLevel | undefined {
+		const level = readModelMemoryEntry(
+			this.settings.modelLastOnThinkingLevels,
+			modelMemoryKey(provider, modelId),
+			THINKING_LEVEL_VALUES,
+		) as ThinkingLevel | undefined;
+		return level === "off" ? undefined : level;
+	}
+
+	/** Remember (or with `undefined`, forget) this model's last non-off level in GLOBAL settings. */
+	setModelLastOnThinkingLevel(provider: string, modelId: string, level: ThinkingLevel | undefined): void {
+		this.updateModelLastOnThinkingLevel(modelMemoryKey(provider, modelId), level === "off" ? undefined : level);
+		this.save();
+	}
+
+	private updateModelLastOnThinkingLevel(key: string, level: ThinkingLevel | undefined): void {
+		const existing = this.globalSettings.modelLastOnThinkingLevels;
+		const map: Record<string, ThinkingLevel> =
+			typeof existing === "object" && existing !== null && !Array.isArray(existing) ? { ...existing } : {};
+		if (level === undefined) {
+			delete map[key];
+		} else {
+			map[key] = level;
+		}
+		this.globalSettings.modelLastOnThinkingLevels = map;
+		this.markModified("modelLastOnThinkingLevels", key);
+	}
+
+	/** Service tier last set for this exact model, or undefined when unknown/invalid on disk. */
+	getModelServiceTier(provider: string, modelId: string): ModelServiceTier | undefined {
+		return readModelMemoryEntry(
+			this.settings.modelServiceTiers,
+			modelMemoryKey(provider, modelId),
+			MODEL_SERVICE_TIER_VALUES,
+		) as ModelServiceTier | undefined;
+	}
+
+	/** Remember (or with `undefined`, forget) this model's service tier in GLOBAL settings. */
+	setModelServiceTier(provider: string, modelId: string, tier: ModelServiceTier | undefined): void {
+		const key = modelMemoryKey(provider, modelId);
+		const existing = this.globalSettings.modelServiceTiers;
+		const map: Record<string, ModelServiceTier> =
+			typeof existing === "object" && existing !== null && !Array.isArray(existing) ? { ...existing } : {};
+		if (tier === undefined) {
+			delete map[key];
+		} else {
+			map[key] = tier;
+		}
+		this.globalSettings.modelServiceTiers = map;
+		this.markModified("modelServiceTiers", key);
+		this.save();
+	}
+
 	getTransport(): TransportSetting {
 		return this.settings.transport ?? "auto";
 	}
@@ -946,7 +1258,7 @@ export class SettingsManager {
 	}
 
 	getCompactionEnabled(): boolean {
-		return this.settings.compaction?.enabled ?? true;
+		return compactionEnabled(this.settings.compaction);
 	}
 
 	setCompactionEnabled(enabled: boolean): void {
@@ -959,40 +1271,17 @@ export class SettingsManager {
 	}
 
 	getCompactionReserveTokens(): number {
-		return this.settings.compaction?.reserveTokens ?? 16384;
+		return compactionReserveTokens(this.settings.compaction);
 	}
 
 	getCompactionKeepRecentTokens(): number {
-		return this.settings.compaction?.keepRecentTokens ?? 20000;
+		return compactionKeepRecentTokens(this.settings.compaction);
 	}
 
-	getCompactionSettings(): {
-		enabled: boolean;
-		reserveTokens: number;
-		keepRecentTokens: number;
-		speculativeEnabled: boolean;
-		speculativeFraction: number;
-		speculativeCooldownMs: number;
-		restorationEnabled: boolean;
-		restorationMaxItems: number;
-		restorationMaxTokensPerItem: number;
-		restorationMaxTotalTokens: number;
-		restorationContextRatio: number;
-		idleCompactionEnabled: boolean;
-	} {
+	getCompactionSettings(): ResolvedCompactionSettings & { model?: string } {
 		return {
-			enabled: this.getCompactionEnabled(),
-			reserveTokens: this.getCompactionReserveTokens(),
-			keepRecentTokens: this.getCompactionKeepRecentTokens(),
-			speculativeEnabled: this.settings.compaction?.speculativeEnabled ?? true,
-			speculativeFraction: this.settings.compaction?.speculativeFraction ?? 0.75,
-			speculativeCooldownMs: this.settings.compaction?.speculativeCooldownMs ?? 30000,
-			restorationEnabled: this.settings.compaction?.restorationEnabled ?? true,
-			restorationMaxItems: this.settings.compaction?.restorationMaxItems ?? 10,
-			restorationMaxTokensPerItem: this.settings.compaction?.restorationMaxTokensPerItem ?? 5000,
-			restorationMaxTotalTokens: this.settings.compaction?.restorationMaxTotalTokens ?? 50_000,
-			restorationContextRatio: this.settings.compaction?.restorationContextRatio ?? 0.15,
-			idleCompactionEnabled: this.settings.compaction?.idleCompactionEnabled ?? true,
+			...resolveCompactionSettings(this.settings.compaction),
+			model: this.settings.compaction?.model,
 		};
 	}
 
@@ -1020,10 +1309,16 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getRetrySettings(): { enabled: boolean; maxRetries: number; baseDelayMs: number } {
+	getRetrySettings(): {
+		enabled: boolean;
+		maxRetries: number;
+		baseDelayMs: number;
+	} {
 		return {
 			enabled: this.getRetryEnabled(),
-			maxRetries: this.settings.retry?.maxRetries ?? 3,
+			// Derived, not duplicated: the one `retry.maxRetries` key must mean the
+			// same budget on every consumer, so the default tracks the shipped profile.
+			maxRetries: this.settings.retry?.maxRetries ?? SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
 		};
 	}
@@ -1067,7 +1362,10 @@ export class SettingsManager {
 			this.globalSettings.retry = {};
 		}
 		const chains = this.getGlobalFallbackChains();
-		this.globalSettings.retry.fallbackChains = { ...chains, [key]: [...entries] };
+		this.globalSettings.retry.fallbackChains = {
+			...chains,
+			[key]: [...entries],
+		};
 		this.markModified("retry", "fallbackChains");
 		this.save();
 	}
@@ -1131,12 +1429,82 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getProviderRetrySettings(): { timeoutMs?: number; maxRetries?: number; maxRetryDelayMs: number } {
+	getProviderRetrySettings(): {
+		timeoutMs?: number;
+		maxRetries?: number;
+		maxRetryDelayMs: number;
+	} {
 		return {
 			timeoutMs: this.settings.retry?.provider?.timeoutMs,
 			maxRetries: this.settings.retry?.provider?.maxRetries,
 			maxRetryDelayMs: this.settings.retry?.provider?.maxRetryDelayMs ?? 60000,
 		};
+	}
+
+	/**
+	 * Resolve the effective retry profile for a provider. Precedence:
+	 * 1) SENPI_DEFAULT_RETRY_PROFILE is the base.
+	 * 2) A provider-declared retryPolicy replaces the base entirely.
+	 * 3) User global retry.maxRetries / retry.baseDelayMs apply ONLY when the
+	 *    provider declared NO profile (they must not silently re-tune one).
+	 * 4) Validated retry.providers.<id> patches scheduling knobs last.
+	 * 5) retry.enabled === false is a hard gate: resolved turn.enabled is false.
+	 */
+	resolveRetryProfile(provider: { id: string; retryPolicy?: RetryPolicyProfile } | undefined): RetryPolicyProfile {
+		const base = provider?.retryPolicy ?? SENPI_DEFAULT_RETRY_PROFILE;
+		const declared = provider?.retryPolicy !== undefined;
+
+		const turnBackoff = { ...base.turn.backoff };
+		if (!declared) {
+			if (this.settings.retry?.maxRetries !== undefined) {
+				turnBackoff.baseDelayMs = this.settings.retry.baseDelayMs ?? turnBackoff.baseDelayMs;
+			}
+		}
+
+		let turnMaxRetries = base.turn.maxRetries;
+		let turnBaseDelayMs = turnBackoff.baseDelayMs;
+		if (!declared) {
+			if (this.settings.retry?.maxRetries !== undefined) turnMaxRetries = this.settings.retry.maxRetries;
+			if (this.settings.retry?.baseDelayMs !== undefined) turnBaseDelayMs = this.settings.retry.baseDelayMs;
+		}
+
+		const providerOverride = this._resolveRetryProviderOverride(provider?.id);
+		if (providerOverride?.turn?.maxRetries !== undefined) turnMaxRetries = providerOverride.turn.maxRetries;
+		if (providerOverride?.turn?.baseDelayMs !== undefined) turnBaseDelayMs = providerOverride.turn.baseDelayMs;
+
+		const turnEnabled = this.getRetryEnabled() ? (providerOverride?.turn?.enabled ?? base.turn.enabled) : false;
+
+		const tierStrategy: RetryTieredHintStrategy =
+			base.turn.serverHint.mode === "tiered"
+				? base.turn.serverHint.strategy
+				: () => {
+						throw new Error("not tiered");
+					};
+
+		const turn: RetryStagePolicy = {
+			enabled: turnEnabled,
+			maxRetries: turnMaxRetries,
+			backoff: { ...base.turn.backoff, baseDelayMs: turnBaseDelayMs },
+			extractServerHint: base.turn.extractServerHint,
+			serverHint:
+				base.turn.serverHint.mode === "tiered" ? { mode: "tiered", strategy: tierStrategy } : base.turn.serverHint,
+			classify: base.turn.classify,
+		};
+
+		return {
+			id: base.id,
+			providerRequest: base.providerRequest,
+			turn,
+			fallback: base.fallback,
+		};
+	}
+
+	private _resolveRetryProviderOverride(providerId: string | undefined): RetryPolicyOverride | undefined {
+		if (providerId === undefined) return undefined;
+		const raw = this.settings.retry?.providers;
+		if (raw === undefined) return undefined;
+		const { overrides } = validateRetryProviderOverrides(raw, new Set([providerId]));
+		return overrides[providerId];
 	}
 
 	/**
@@ -1176,7 +1544,7 @@ export class SettingsManager {
 	 * accepts the request but never answers is otherwise bounded only by the
 	 * idle timeout (default 5 minutes) — long enough to make a session feel
 	 * permanently stuck. `retry.provider.streamStartTimeoutMs` overrides the
-	 * 90s default (0 disables). The default never exceeds the idle timeout and
+	 * 300s default (0 disables). The default never exceeds the idle timeout and
 	 * is disabled together with a disabled idle guard.
 	 */
 	getAgentStreamStartTimeoutMs(): number | undefined {
@@ -1470,6 +1838,33 @@ export class SettingsManager {
 		return this.settings.thinkingBudgets;
 	}
 
+	getTerminalCapabilityOverrides(): Partial<TerminalCapabilities> {
+		const terminal = this.settings.terminal;
+		const imageSetting = terminal?.images;
+		const imageOverride = imageSetting !== undefined ? imageSetting : envValue("IMAGE_PROTOCOL")?.toLowerCase();
+		const trueColorSetting = terminal?.trueColor;
+		const trueColorOverride = trueColorSetting !== undefined ? trueColorSetting : envValue("TRUE_COLOR");
+		const hyperlinksSetting = terminal?.hyperlinks;
+		const hyperlinksOverride = hyperlinksSetting !== undefined ? hyperlinksSetting : envValue("HYPERLINKS");
+		return {
+			...(imageOverride === "kitty" || imageOverride === "iterm2"
+				? { images: imageOverride }
+				: imageOverride === false || imageOverride === "none" || imageOverride === "0"
+					? { images: null }
+					: {}),
+			...(typeof trueColorOverride === "boolean"
+				? { trueColor: trueColorOverride }
+				: trueColorOverride === "1" || trueColorOverride === "0"
+					? { trueColor: trueColorOverride === "1" }
+					: {}),
+			...(typeof hyperlinksOverride === "boolean"
+				? { hyperlinks: hyperlinksOverride }
+				: hyperlinksOverride === "1" || hyperlinksOverride === "0"
+					? { hyperlinks: hyperlinksOverride === "1" }
+					: {}),
+		};
+	}
+
 	getShowImages(): boolean {
 		return this.settings.terminal?.showImages ?? true;
 	}
@@ -1540,6 +1935,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getFullscreenExitOutput(): FullscreenExitOutput {
+		return this.settings.fullscreenExitOutput === "resume-hint" ? "resume-hint" : "transcript";
+	}
+
+	setFullscreenExitOutput(output: FullscreenExitOutput): void {
+		this.globalSettings.fullscreenExitOutput = output;
+		this.markModified("fullscreenExitOutput");
+		this.save();
+	}
+
 	getFullscreenScrollbar(): ScrollViewScrollbar {
 		const mode = this.settings.fullscreenScrollbar;
 		return mode === "always" || mode === "hidden" ? mode : "auto";
@@ -1548,6 +1953,16 @@ export class SettingsManager {
 	setFullscreenScrollbar(mode: ScrollViewScrollbar): void {
 		this.globalSettings.fullscreenScrollbar = mode;
 		this.markModified("fullscreenScrollbar");
+		this.save();
+	}
+
+	getFullscreenCopyOnSelect(): boolean {
+		return this.settings.fullscreenCopyOnSelect ?? true;
+	}
+
+	setFullscreenCopyOnSelect(enabled: boolean): void {
+		this.globalSettings.fullscreenCopyOnSelect = enabled;
+		this.markModified("fullscreenCopyOnSelect");
 		this.save();
 	}
 
@@ -1598,6 +2013,15 @@ export class SettingsManager {
 		this.globalSettings.favoriteModels = patterns;
 		this.markModified("favoriteModels");
 		this.save();
+	}
+
+	getDefaultTools(): string[] | undefined {
+		const tools = this.settings.defaultTools;
+		return tools ? [...tools] : undefined;
+	}
+
+	getExperimentalSharedHost(): boolean {
+		return this.settings.experimental?.sharedHost === true;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

@@ -182,6 +182,8 @@ function convertLlmMessage(message: Message, messageIndex: number, model: Model<
 			return convertAssistantMessage(message, messageIndex);
 		case "toolResult":
 			return convertToolResultMessage(message, model);
+		case "configurationUpdate":
+			return [];
 	}
 }
 

@@ -91,7 +91,7 @@ describe("Claude SDK OAuth failover", () => {
 			kind: "other",
 			retryable: false,
 		});
-		expect(classifySdkError("connection reset by peer")).toEqual({ kind: "other", retryable: false });
+		expect(classifySdkError("connection reset by peer")).toEqual({ kind: "other", retryable: true });
 	});
 
 	it("walks HRW order after a rate limit, persists the cooldown, and emits failover", async () => {

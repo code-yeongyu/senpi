@@ -14,12 +14,14 @@ function createSseResponse(events: Array<{ event: string; data: string }>): Resp
 
 function createFakeAnthropicClient(response: Response, onCreate?: (params: unknown) => void): Anthropic {
 	return {
-		messages: {
-			create: (params: unknown) => {
-				onCreate?.(params);
-				return {
-					asResponse: async () => response,
-				};
+		beta: {
+			messages: {
+				create: (params: unknown) => {
+					onCreate?.(params);
+					return {
+						asResponse: async () => response,
+					};
+				},
 			},
 		},
 	} as Anthropic;

@@ -6,11 +6,36 @@ import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 
-function jsonResponse(body: unknown, status: number = 200): Response {
+const testCopilotAccessToken = "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;";
+const testCopilotModelsUrl = "https://api.individual.githubcopilot.com/models";
+const fixtureCopilotExtraModelId = "fixture-other-copilot-model";
+
+function githubCopilotCatalogModelIds(): string[] {
+	const ids = githubCopilotProvider()
+		.getModels()
+		.map((model) => model.id);
+	if (ids.length < 2) {
+		throw new Error("github-copilot catalog must contain at least 2 models");
+	}
+	return ids;
+}
+
+function githubCopilotProviderWithFixtureCatalog(modelIds: readonly string[]) {
+	const provider = githubCopilotProvider();
+	const template = provider.getModels()[0];
+	if (!template) {
+		throw new Error("github-copilot catalog is empty");
+	}
+	const models = modelIds.map((id) => ({ ...template, id, name: id }));
+	return { ...provider, getModels: () => models };
+}
+
+function jsonResponse(body: unknown, status: number = 200, headers?: Record<string, string>): Response {
 	return new Response(JSON.stringify(body), {
 		status,
 		headers: {
 			"Content-Type": "application/json",
+			...headers,
 		},
 	});
 }
@@ -26,6 +51,37 @@ function getUrl(input: unknown): string {
 		return input.url;
 	}
 	throw new Error(`Unsupported fetch input: ${String(input)}`);
+}
+
+function stubGitHubCopilotLoginFetch(options: {
+	models: () => Response;
+	policy?: (modelId: string) => Response;
+}): void {
+	const fetchMock = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+		const url = getUrl(input);
+		if (url.endsWith("/login/device/code")) {
+			return jsonResponse({
+				device_code: "device-code",
+				user_code: "ABCD-EFGH",
+				verification_uri: "https://github.com/login/device",
+				interval: 1,
+				expires_in: 900,
+			});
+		}
+		if (url.endsWith("/login/oauth/access_token")) {
+			return jsonResponse({ access_token: "ghu_refresh_token" });
+		}
+		if (url.includes("/copilot_internal/v2/token")) {
+			return jsonResponse({ token: testCopilotAccessToken, expires_at: 9999999999 });
+		}
+		if (url === testCopilotModelsUrl) return options.models();
+		if (url.startsWith(`${testCopilotModelsUrl}/`) && url.endsWith("/policy")) {
+			if (!options.policy) throw new Error(`Unexpected policy request: ${url}`);
+			return options.policy(url.slice(`${testCopilotModelsUrl}/`.length, -"/policy".length));
+		}
+		throw new Error(`Unexpected fetch URL: ${url}`);
+	});
+	vi.stubGlobal("fetch", fetchMock);
 }
 
 function loginGitHubCopilotForTest(options: {
@@ -124,7 +180,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		const store = new InMemoryCredentialStore();
 		await store.modify("github-copilot", async () => ({ ...credentials, type: "oauth" }));
 		const models = createModels({ credentials: store });
-		models.setProvider(githubCopilotProvider());
+		models.setProvider(githubCopilotProviderWithFixtureCatalog(["gpt-4.1", fixtureCopilotExtraModelId]));
 		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
 	});
 
@@ -160,7 +216,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		const store = new InMemoryCredentialStore();
 		await store.modify("github-copilot", async () => ({ ...credentials, type: "oauth" }));
 		const models = createModels({ credentials: store });
-		models.setProvider(githubCopilotProvider());
+		models.setProvider(githubCopilotProviderWithFixtureCatalog(["gpt-4.1", fixtureCopilotExtraModelId]));
 		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
 	});
 
@@ -178,6 +234,37 @@ describe("GitHub Copilot OAuth device flow", () => {
 		);
 
 		expect(credentials.availableModelIds).toEqual([]);
+	});
+
+	it("does not retry model catalog throttling during credential refresh", async () => {
+		let catalogRequestCount = 0;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown): Promise<Response> => {
+				const url = getUrl(input);
+				if (url.includes("/copilot_internal/v2/token")) {
+					return jsonResponse({ token: testCopilotAccessToken, expires_at: 9999999999 });
+				}
+				if (url === testCopilotModelsUrl) {
+					catalogRequestCount += 1;
+					return jsonResponse({ error: "too many requests" }, 429, { "Retry-After": "0" });
+				}
+				throw new Error(`Unexpected fetch URL: ${url}`);
+			}),
+		);
+
+		await expect(
+			githubCopilotOAuth.refresh(
+				{
+					type: "oauth",
+					access: "old-access-token",
+					refresh: "ghu_refresh_token",
+					expires: 0,
+				},
+				neverAbortedSignal,
+			),
+		).rejects.toThrow("429");
+		expect(catalogRequestCount).toBe(1);
 	});
 
 	it("reports device-code details through onDeviceCode", async () => {
@@ -237,6 +324,159 @@ describe("GitHub Copilot OAuth device flow", () => {
 		});
 		await vi.advanceTimersByTimeAsync(1000);
 		await loginPromise;
+	});
+
+	it("updates only known, tool-capable, unconfigured account model policies", async () => {
+		vi.useFakeTimers();
+
+		const knownUnconfiguredId = githubCopilotCatalogModelIds().find((id) => id !== "gpt-4.1" && id !== "gpt-5.4");
+		if (!knownUnconfiguredId) {
+			throw new Error("github-copilot catalog has no id available for the known unconfigured policy model");
+		}
+
+		let catalogRequestCount = 0;
+		const policyModelIds: string[] = [];
+		stubGitHubCopilotLoginFetch({
+			models: () => {
+				catalogRequestCount += 1;
+				return jsonResponse({
+					data: [
+						{
+							id: "gpt-4.1",
+							model_picker_enabled: true,
+							policy: { state: "enabled" },
+							capabilities: { supports: { tool_calls: true } },
+						},
+						{
+							id: knownUnconfiguredId,
+							model_picker_enabled: true,
+							policy: { state: "unconfigured" },
+							capabilities: { supports: { tool_calls: true } },
+						},
+						{
+							id: "remote-only-model",
+							model_picker_enabled: true,
+							policy: { state: "unconfigured" },
+							capabilities: { supports: { tool_calls: true } },
+						},
+						{
+							id: "gpt-5.4",
+							model_picker_enabled: true,
+							policy: { state: "unconfigured" },
+							capabilities: { supports: { tool_calls: false } },
+						},
+					],
+				});
+			},
+			policy: (modelId) => {
+				policyModelIds.push(modelId);
+				return new Response("", { status: 200 });
+			},
+		});
+
+		const loginPromise = loginGitHubCopilotForTest({
+			onDeviceCode: () => {},
+			onPrompt: async () => "",
+		});
+		await vi.advanceTimersByTimeAsync(1000);
+		await loginPromise;
+
+		expect(catalogRequestCount).toBe(1);
+		expect(policyModelIds).toEqual([knownUnconfiguredId]);
+	});
+
+	it("retries a throttled policy update after Retry-After", async () => {
+		vi.useFakeTimers();
+
+		let policyRequestCount = 0;
+		const [knownUnconfiguredId] = githubCopilotCatalogModelIds();
+		stubGitHubCopilotLoginFetch({
+			models: () =>
+				jsonResponse({
+					data: [{ id: knownUnconfiguredId, model_picker_enabled: true, policy: { state: "unconfigured" } }],
+				}),
+			policy: () => {
+				policyRequestCount += 1;
+				return policyRequestCount === 1
+					? jsonResponse({ error: "too many requests" }, 429, { "Retry-After": "1" })
+					: new Response("", { status: 200 });
+			},
+		});
+
+		const loginPromise = loginGitHubCopilotForTest({
+			onDeviceCode: () => {},
+			onPrompt: async () => "",
+		});
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(policyRequestCount).toBe(1);
+		await vi.advanceTimersByTimeAsync(999);
+		expect(policyRequestCount).toBe(1);
+		await vi.advanceTimersByTimeAsync(1);
+		await loginPromise;
+
+		expect(policyRequestCount).toBe(2);
+	});
+
+	it("continues policy updates after a transport failure", async () => {
+		vi.useFakeTimers();
+
+		const modelIds = githubCopilotCatalogModelIds().slice(0, 2);
+		const policyModelIds: string[] = [];
+		stubGitHubCopilotLoginFetch({
+			models: () =>
+				jsonResponse({
+					data: modelIds.map((id) => ({ id, model_picker_enabled: true, policy: { state: "unconfigured" } })),
+				}),
+			policy: (modelId) => {
+				policyModelIds.push(modelId);
+				if (policyModelIds.length === 1) throw new Error("fetch failed");
+				return new Response("", { status: 200 });
+			},
+		});
+
+		const loginPromise = loginGitHubCopilotForTest({
+			onDeviceCode: () => {},
+			onPrompt: async () => "",
+		});
+		await vi.advanceTimersByTimeAsync(1000);
+		await loginPromise;
+
+		expect(policyModelIds).toEqual(modelIds);
+	});
+
+	it("stops policy updates and persists authentication when the retry delay exceeds the login budget", async () => {
+		vi.useFakeTimers();
+
+		const [firstKnownId, secondKnownId] = githubCopilotCatalogModelIds();
+		const policyModelIds: string[] = [];
+		stubGitHubCopilotLoginFetch({
+			models: () =>
+				jsonResponse({
+					data: [
+						{ id: firstKnownId, model_picker_enabled: true, policy: { state: "unconfigured" } },
+						{ id: secondKnownId, model_picker_enabled: true, policy: { state: "unconfigured" } },
+					],
+				}),
+			policy: (modelId) => {
+				policyModelIds.push(modelId);
+				return jsonResponse({ error: "too many requests" }, 429, { "Retry-After": "5" });
+			},
+		});
+
+		const store = new InMemoryCredentialStore();
+		const models = createModels({ credentials: store });
+		models.setProvider(githubCopilotProvider());
+		const loginPromise = models.login("github-copilot", "oauth", {
+			signal: neverAbortedSignal,
+			prompt: async () => "",
+			notify: () => {},
+		});
+
+		await vi.advanceTimersByTimeAsync(1000);
+		const credential = await loginPromise;
+		expect(credential).toMatchObject({ type: "oauth", access: testCopilotAccessToken });
+		expect(policyModelIds).toEqual([firstKnownId]);
+		expect(await store.read("github-copilot")).toEqual(credential);
 	});
 
 	it("rejects a non-http(s) verification_uri before it reaches onDeviceCode", async () => {

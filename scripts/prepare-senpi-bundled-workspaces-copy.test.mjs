@@ -118,6 +118,38 @@ describe("copyPublishDependencies", () => {
 		);
 	});
 
+	it("stages a Bun-compile-safe css-tree without touching the installed source tree", () => {
+		// Given: css-tree resolves its data through createRequire at module scope, which the
+		// compiled binaries built from the published tarball cannot serve from /$bunfs.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-compile-safe-"));
+		const cssTreeSource = join(tempDir, "node_modules", "css-tree");
+		mkdirSync(join(cssTreeSource, "lib"), { recursive: true });
+		mkdirSync(join(cssTreeSource, "data"), { recursive: true });
+		writeJson(join(cssTreeSource, "package.json"), { name: "css-tree", version: "3.2.1", type: "module" });
+		writeFileSync(join(cssTreeSource, "data", "patch.json"), JSON.stringify({ properties: { color: { syntax: "<color>" } } }));
+		const dataPatchSource =
+			"import { createRequire } from 'module';\n\nconst require = createRequire(import.meta.url);\nconst patch = require('../data/patch.json');\n\nexport default patch;\n";
+		writeFileSync(join(cssTreeSource, "lib", "data-patch.js"), dataPatchSource);
+		writeShrinkwrap(tempDir, {
+			"": { dependencies: { "css-tree": "3.2.1" } },
+			"node_modules/css-tree": { version: "3.2.1" },
+		});
+
+		// When
+		copyPublishDependencies(tempDir);
+
+		// Then: the staged copy is compile-safe...
+		const staged = readFileSync(
+			join(tempDir, "packages", "coding-agent", "node_modules", "css-tree", "lib", "data-patch.js"),
+			"utf8",
+		);
+		assert.doesNotMatch(staged, /createRequire/);
+		assert.match(staged, /"color"/);
+
+		// ...and publishing never rewrites the developer's installed dependency.
+		assert.equal(readFileSync(join(cssTreeSource, "lib", "data-patch.js"), "utf8"), dataPatchSource);
+	});
+
 	it("throws when a required publish dependency is not installed", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-missing-"));
 		writeShrinkwrap(tempDir, {

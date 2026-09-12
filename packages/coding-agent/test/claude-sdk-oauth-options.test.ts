@@ -209,6 +209,12 @@ describe("preset-append deprecation warning in buildClaudeSdkOauthQueryOptions",
 });
 
 describe("Claude SDK OAuth query options", () => {
+	it("pins native auto-compaction when provider settings omit compaction preferences", () => {
+		const queryOptions = optionsFor({});
+
+		expect(queryOptions.settings).toEqual({ autoCompactEnabled: true });
+	});
+
 	it("keeps preset-append as the Claude Code preset with the three extracted blocks joined", () => {
 		const cwd = temporaryDirectory();
 		writeFileSync(join(cwd, "AGENTS.md"), "Use the senpi workspace.");

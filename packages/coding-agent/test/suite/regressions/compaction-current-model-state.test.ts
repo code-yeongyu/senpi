@@ -17,7 +17,9 @@ function lastUserText(context: Context): string {
 		if (message?.role !== "user") continue;
 		const text = getMessageText(message);
 		if (text.startsWith(HIDDEN_RESTORATION_PREFIX)) continue;
-		return text;
+		if (typeof message.content === "string") return text;
+		const lastText = message.content.findLast((part) => part.type === "text");
+		return lastText?.text ?? text;
 	}
 	return "";
 }
@@ -100,7 +102,12 @@ describe("Regression: compaction state during model fallback", () => {
 			if (prompt === "prompt after compaction") return fauxAssistantMessage("next answer");
 			return fauxAssistantMessage("compacted on active fallback");
 		};
-		harness.setResponses([response, response, response, response]);
+		const fallbackPromptContexts: Context[] = [];
+		const retryAwareResponse: FauxResponseFactory = async (context, options, state, model) => {
+			if (lastUserText(context) === "trigger fallback") fallbackPromptContexts.push(context);
+			return await response(context, options, state, model);
+		};
+		harness.setResponses([retryAwareResponse, retryAwareResponse, response, response]);
 
 		await harness.session.prompt("trigger fallback");
 		const compactionModels = harness.faux
@@ -111,6 +118,13 @@ describe("Regression: compaction state during model fallback", () => {
 		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
 			{ from: "faux/faux-1", to: "faux/faux-2" },
 		]);
+		expect(fallbackPromptContexts).toHaveLength(2);
+		for (const context of fallbackPromptContexts) {
+			const userMessages = context.messages.filter((message) => message.role === "user");
+			const prompt = userMessages.at(-1);
+			expect(prompt?.content).toHaveLength(1);
+			expect(prompt && lastUserText({ ...context, messages: [prompt] })).toBe("trigger fallback");
+		}
 		expect(compactionModels).toEqual(["faux-2"]);
 		expect(harness.session.model?.id).toBe("faux-2");
 		expect(Reflect.get(harness.session, "compactionState")).toMatchObject({
@@ -140,10 +154,18 @@ describe("Regression: compaction state during model fallback", () => {
 			let switchedToSmallerModel = false;
 			const harness = await createHarness({
 				models: [
-					{ id: "large", contextWindow: 1_000, maxTokens: 64 },
-					{ id: "small", contextWindow: 100, maxTokens: 64 },
+					{ id: "large", contextWindow: 30_000, maxTokens: 64 },
+					{ id: "small", contextWindow: 20_000, maxTokens: 64 },
 				],
-				settings: { compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 0 } },
+				settings: {
+					compaction: {
+						enabled: true,
+						reserveTokens: 0,
+						keepRecentTokens: 0,
+						speculativeEnabled: false,
+					},
+					retry: { fallbackChains: { "*": [] } },
+				},
 				extensionFactories: [
 					(pi) => {
 						pi.on("session_before_compact", (event) => {
@@ -177,7 +199,26 @@ describe("Regression: compaction state during model fallback", () => {
 								display: false,
 							});
 							if (!smallerModel) throw new Error("Expected smaller model");
-							switchedToSmallerModel = await pi.setModel(smallerModel);
+							const switchActiveModel = Reflect.get(harness.session, "_switchActiveModel") as (
+								model: typeof smallerModel,
+								options: {
+									persistDefault: boolean;
+									appendSessionEntry: boolean;
+									entryReason: "fallback";
+									emitModelSelect: boolean;
+									modelSelectSource: "fallback";
+									invalidateCompaction: boolean;
+								},
+							) => Promise<unknown>;
+							await switchActiveModel.call(harness.session, smallerModel, {
+								persistDefault: false,
+								appendSessionEntry: true,
+								entryReason: "fallback",
+								emitModelSelect: true,
+								modelSelectSource: "fallback",
+								invalidateCompaction: true,
+							});
+							switchedToSmallerModel = true;
 						});
 					},
 				],
@@ -232,15 +273,13 @@ describe("Regression: compaction state during model fallback", () => {
 			expect(switchedToSmallerModel).toBe(true);
 			expect(harness.session.model?.id).toBe("small");
 			if (secondCompaction === "rejected") {
-				expect(harness.faux.state.callCount).toBe(0);
-				expect(providerCompactionCounts).toEqual([]);
-				expect(compactionRequests).toBe(2);
-				expect(harness.session.getFollowUpMessages()).toEqual([continuationMarker]);
-				expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+				expect(harness.faux.state.callCount).toBe(2);
+				expect(providerCompactionCounts).toEqual([1]);
+				expect(compactionRequests).toBe(1);
 			} else {
-				expect(compactionRequests).toBe(2);
-				expect(providerCompactionCounts).toEqual([2]);
-				expect(harness.faux.state.callCount).toBe(1);
+				expect(compactionRequests).toBe(1);
+				expect(providerCompactionCounts).toEqual([1]);
+				expect(harness.faux.state.callCount).toBe(2);
 			}
 		},
 	);

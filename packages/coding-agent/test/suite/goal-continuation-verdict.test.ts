@@ -6,6 +6,7 @@ import {
 	GOAL_LENGTH_RECOVERY_LIMIT,
 	GOAL_REPETITION_HASH_STREAK,
 	GOAL_STALL_TOOLLESS_THRESHOLD,
+	GOAL_UNATTENDED_CONTINUATION_LIMIT,
 	GOAL_USER_GRACE_DELAY_MS,
 	hashAssistantText,
 	normalizeAssistantText,
@@ -35,6 +36,7 @@ function makeInput(overrides: Partial<VerdictInput> = {}): VerdictInput {
 		hasPendingMessages: false,
 		path: "immediate",
 		lastStopReason: "stop",
+		lastTurnWasMalformedToolUse: false,
 		consecutiveContinuations: 0,
 		lastContinuationSignature: undefined,
 		currentSignature: "goal-1:1/2:abc123",
@@ -42,6 +44,7 @@ function makeInput(overrides: Partial<VerdictInput> = {}): VerdictInput {
 		recentNormalizedOutputHashes: [],
 		toollessContinuationStreak: 0,
 		continuationPending: false,
+		lastTurnStuckOnContextOverflow: false,
 		...overrides,
 	};
 }
@@ -92,6 +95,32 @@ describe("goal continuation verdict", () => {
 		expect(evaluateGoalContinuation(input)).toEqual({ kind: "deny", reason });
 	});
 
+	it("denies with unattended at the limit on every counted path and admits below it", () => {
+		const atLimit = makeGoal({ unattendedContinuations: GOAL_UNATTENDED_CONTINUATION_LIMIT });
+		for (const path of ["immediate", "userGrace", "sessionStart", "systemRecovery", "providerRecovery"] as const) {
+			expect(evaluateGoalContinuation(makeInput({ goal: atLimit, path }))).toEqual({
+				kind: "deny",
+				reason: "unattended",
+			});
+		}
+		expect(
+			evaluateGoalContinuation(
+				makeInput({ goal: makeGoal({ unattendedContinuations: GOAL_UNATTENDED_CONTINUATION_LIMIT - 1 }) }),
+			),
+		).toMatchObject({ kind: "continue" });
+	});
+
+	it("exempts the monitor-delayed path from the unattended limit", () => {
+		expect(
+			evaluateGoalContinuation(
+				makeInput({
+					goal: makeGoal({ unattendedContinuations: GOAL_UNATTENDED_CONTINUATION_LIMIT }),
+					path: "monitorDelayed",
+				}),
+			),
+		).toMatchObject({ kind: "continue" });
+	});
+
 	it("admits below the continuation cap and denies at the boundary", () => {
 		expect(
 			evaluateGoalContinuation(makeInput({ consecutiveContinuations: GOAL_CONTINUATION_CAP - 1 })),
@@ -135,7 +164,14 @@ describe("goal continuation verdict", () => {
 			lastContinuationSignature: "goal-1:1/2:abc123",
 		});
 
-		for (const path of ["immediate", "monitorDelayed", "userGrace", "sessionStart", "systemRecovery"] as const) {
+		for (const path of [
+			"immediate",
+			"monitorDelayed",
+			"userGrace",
+			"sessionStart",
+			"systemRecovery",
+			"providerRecovery",
+		] as const) {
 			expect(evaluateGoalContinuation({ ...capped, path })).toEqual({ kind: "deny", reason: "cap" });
 		}
 		expect(
@@ -164,6 +200,38 @@ describe("goal continuation verdict", () => {
 				makeInput({ path: "systemRecovery", isIdle: false, lastStopReason: "error", ...overrides }),
 			),
 		).toEqual({ kind: "deny", reason });
+	});
+
+	it("denies with context-overflow on every automatic path when the last turn was stuck on a context overflow", () => {
+		for (const path of [
+			"immediate",
+			"monitorDelayed",
+			"userGrace",
+			"sessionStart",
+			"systemRecovery",
+			"providerRecovery",
+		] as const) {
+			expect(
+				evaluateGoalContinuation(
+					makeInput({ path, isIdle: false, lastStopReason: "error", lastTurnStuckOnContextOverflow: true }),
+				),
+			).toEqual({ kind: "deny", reason: "context-overflow" });
+		}
+	});
+
+	it("admits malformed toolUse only when no tool call was produced", () => {
+		expect(
+			evaluateGoalContinuation(makeInput({ lastStopReason: "toolUse", lastTurnWasMalformedToolUse: true })),
+		).toMatchObject({ kind: "continue" });
+		expect(
+			evaluateGoalContinuation(makeInput({ lastStopReason: "toolUse", lastTurnWasMalformedToolUse: false })),
+		).toEqual({ kind: "deny", reason: "not-eligible" });
+	});
+
+	it("keeps provider recovery eligible while the session is settling", () => {
+		expect(
+			evaluateGoalContinuation(makeInput({ path: "providerRecovery", isIdle: false, lastStopReason: "aborted" })),
+		).toMatchObject({ kind: "continue" });
 	});
 
 	it.each([
@@ -197,6 +265,7 @@ describe("goal continuation verdict", () => {
 		expect(GOAL_STALL_TOOLLESS_THRESHOLD).toBe(3);
 		expect(GOAL_REPETITION_HASH_STREAK).toBe(3);
 		expect(GOAL_LENGTH_RECOVERY_LIMIT).toBe(1);
+		expect(GOAL_UNATTENDED_CONTINUATION_LIMIT).toBe(150);
 		expect(GOAL_USER_GRACE_DELAY_MS).toBe(10_000);
 	});
 });

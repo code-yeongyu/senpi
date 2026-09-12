@@ -12,6 +12,7 @@ import {
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToolPath } from "./path-utils.ts";
+import { appendPostMutateNote, runPostMutate } from "./post-mutate.ts";
 import type { ExecutionToolContext } from "./tool-context.ts";
 
 const replaceEditSchema = Type.Object(
@@ -38,6 +39,13 @@ const editSchema = Type.Object(
 
 export type EditToolInput = Static<typeof editSchema>;
 type LegacyEditToolInput = EditToolInput & { oldText?: unknown; newText?: unknown };
+type SingleEditInput = { oldText: string; newText: string };
+
+function isSingleEditInput(value: unknown): value is SingleEditInput {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const edit = value as Record<string, unknown>;
+	return typeof edit.oldText === "string" && typeof edit.newText === "string";
+}
 
 export interface EditToolDetails {
 	diff: string;
@@ -51,8 +59,14 @@ function prepareEditArguments(input: unknown): EditToolInput {
 	if (typeof args.edits === "string") {
 		try {
 			const parsed: unknown = JSON.parse(args.edits);
-			if (Array.isArray(parsed)) args.edits = parsed;
+			if (Array.isArray(parsed)) {
+				args.edits = parsed;
+			} else if (isSingleEditInput(parsed)) {
+				args.edits = [parsed];
+			}
 		} catch {}
+	} else if (isSingleEditInput(args.edits)) {
+		args.edits = [args.edits];
 	}
 
 	const legacy = args as LegacyEditToolInput;
@@ -86,7 +100,7 @@ export function createEditTool<TContext extends ExecutionToolContext = Execution
 			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
 		parameters: editSchema,
 		prepareArguments: prepareEditArguments,
-		async execute(_toolCallId, input, signal, _onUpdate, { env }) {
+		async execute(_toolCallId, input, signal, _onUpdate, { env, postMutate }) {
 			const { path, edits } = validateEditInput(input);
 			const absolutePath = await resolveToolPath(env, path, signal);
 			return withFileMutationQueue(env, absolutePath, async () => {
@@ -112,12 +126,31 @@ export function createEditTool<TContext extends ExecutionToolContext = Execution
 				if (!writeResult.ok) throw editAccessError(path, writeResult.error);
 				if (signal?.aborted) throw new Error("Operation aborted");
 
-				const diffResult = generateDiffString(baseContent, newContent);
+				const outcome = await runPostMutate(postMutate, { tool: "edit", path: absolutePath, signal });
+				if (signal?.aborted) throw new Error("Operation aborted");
+
+				let committedContent = newContent;
+				let rereadNote: string | undefined;
+				if (outcome.fileMayHaveChanged) {
+					const postMutateRead = await env.readTextFile(absolutePath, signal);
+					// The edit itself already landed, so an unreadable file is the hook's doing, not a
+					// failed edit. Report it as a note rather than an error that misattributes the failure.
+					if (postMutateRead.ok) committedContent = normalizeToLF(stripBom(postMutateRead.value).text);
+					else
+						rereadNote = `postMutate left the file unreadable: ${postMutateRead.error.code}. Reported diff describes the edit before the hook ran.`;
+				}
+
+				const diffResult = generateDiffString(baseContent, committedContent);
+				const text = appendPostMutateNote(
+					`Successfully replaced ${edits.length} block(s) in ${path}.`,
+					outcome.note,
+					rereadNote,
+				);
 				return {
-					content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${path}.` }],
+					content: [{ type: "text", text }],
 					details: {
 						diff: diffResult.diff,
-						patch: generateUnifiedPatch(path, baseContent, newContent),
+						patch: generateUnifiedPatch(path, baseContent, committedContent),
 						firstChangedLine: diffResult.firstChangedLine,
 					},
 				};

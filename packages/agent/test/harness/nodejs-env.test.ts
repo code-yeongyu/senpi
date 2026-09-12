@@ -496,6 +496,77 @@ describe("NodeExecutionEnv", () => {
 		if (!result.ok) expect(result.error).toMatchObject({ code: "aborted" });
 	});
 
+	it.each([
+		["stdout", "harness async stdout failed"],
+		["stdout", { stream: "stdout", failure: true }],
+		["stdout", new Error("harness async stdout failed")],
+		["stderr", "harness async stderr failed"],
+		["stderr", { stream: "stderr", failure: true }],
+		["stderr", new Error("harness async stderr failed")],
+	])("returns %s async onChunk failures without an unhandled rejection (%s)", async (stream, callbackError) => {
+		const root = createTempDir();
+		const env = new NodeExecutionEnv({ cwd: root });
+		let unhandledRejection: unknown;
+		const onUnhandledRejection = (reason: unknown) => {
+			unhandledRejection = reason;
+		};
+		process.once("unhandledRejection", onUnhandledRejection);
+		try {
+			const redirect = stream === "stderr" ? " >&2" : "";
+			const result = await executeShellWithCapture(env, `head -c 100001 /dev/zero | tr '\\0' x${redirect}`, {
+				onChunk: async () => {
+					throw callbackError;
+				},
+			});
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.error.cause).toBe(callbackError);
+			expect(unhandledRejection).toBeUndefined();
+		} finally {
+			process.removeListener("unhandledRejection", onUnhandledRejection);
+		}
+	});
+
+	it.skipIf(process.platform === "win32")("does not crash abort when taskkill is missing", async () => {
+		const root = createTempDir();
+		const pidFile = join(root, "shell.pid");
+		const controller = new AbortController();
+		const env = new NodeExecutionEnv({ cwd: root, shellPath: "/bin/bash" });
+		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		const previousSystemRoot = process.env.SystemRoot;
+		process.env.SystemRoot = "/definitely/missing/windows";
+		Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+
+		let pid: number | undefined;
+		try {
+			const execution = env.exec(`echo $$ > ${toBashSingleQuotedArg(pidFile)}; exec sleep 60`, {
+				abortSignal: controller.signal,
+			});
+			for (let attempt = 0; attempt < 100 && !existsSync(pidFile); attempt++) {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			expect(existsSync(pidFile)).toBe(true);
+
+			controller.abort();
+			pid = Number.parseInt(readFileSync(pidFile, "utf8"), 10);
+			process.kill(pid, "SIGKILL");
+
+			const result = await execution;
+			expect(result).toMatchObject({ ok: false, error: { code: "aborted" } });
+		} finally {
+			if (pid === undefined && existsSync(pidFile)) {
+				pid = Number.parseInt(readFileSync(pidFile, "utf8"), 10);
+			}
+			if (pid !== undefined && Number.isFinite(pid)) {
+				try {
+					process.kill(pid, "SIGKILL");
+				} catch {}
+			}
+			if (previousSystemRoot === undefined) delete process.env.SystemRoot;
+			else process.env.SystemRoot = previousSystemRoot;
+			if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
+		}
+	});
+
 	it("captures large shell output to a full output file through the execution env", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });

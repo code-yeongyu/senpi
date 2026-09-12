@@ -329,6 +329,54 @@ describe("Editor component", () => {
 		});
 	});
 
+	describe("Warp-on-WSL Shift+Enter normalization", () => {
+		it("inserts LF as a newline without submitting at the real Editor boundary", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, {
+				terminalEnvironment: { WARP_SESSION_ID: "session", WSL_INTEROP: "/run/WSL/123_interop" },
+				terminalPlatform: "linux",
+				terminalSocketExists: () => true,
+			});
+			let submitted = false;
+			editor.onSubmit = () => {
+				submitted = true;
+			};
+
+			editor.setText("hello");
+			editor.handleInput("\n");
+
+			assert.strictEqual(editor.getText(), "hello\n");
+			assert.strictEqual(submitted, false);
+		});
+
+		it("keeps CR submission and non-Warp LF behavior unchanged", () => {
+			const warpEditor = new Editor(createTestTUI(), defaultEditorTheme, {
+				terminalEnvironment: { WARP_SESSION_ID: "session", WSL_INTEROP: "/run/WSL/123_interop" },
+				terminalPlatform: "linux",
+				terminalSocketExists: () => true,
+			});
+			let warpSubmitted = "";
+			warpEditor.onSubmit = (text) => {
+				warpSubmitted = text;
+			};
+			warpEditor.setText("warp");
+			warpEditor.handleInput("\r");
+			assert.strictEqual(warpSubmitted, "warp");
+
+			const regularEditor = new Editor(createTestTUI(), defaultEditorTheme, {
+				terminalEnvironment: {},
+				terminalPlatform: "linux",
+			});
+			let regularSubmitted = "";
+			regularEditor.onSubmit = (text) => {
+				regularSubmitted = text;
+			};
+			regularEditor.setText("regular");
+			regularEditor.handleInput("\n");
+			assert.strictEqual(regularSubmitted, "regular");
+			assert.strictEqual(regularEditor.getText(), "");
+		});
+	});
+
 	describe("Backslash+Enter newline workaround", () => {
 		it("submits when the terminal sends LF for plain Enter", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
@@ -2443,16 +2491,16 @@ describe("Editor component", () => {
 			let suggestionCalls = 0;
 
 			editor.setAutocompleteProvider({
-				triggerCharacters: ["$"],
+				triggerCharacters: ["%"],
 				getSuggestions: async (lines, _cursorLine, cursorCol) => {
 					suggestionCalls += 1;
 					const prefix = (lines[0] || "").slice(0, cursorCol);
-					return { items: [{ value: "$skill-name", label: "skill-name" }], prefix };
+					return { items: [{ value: "%skill-name", label: "skill-name" }], prefix };
 				},
 				applyCompletion,
 			});
 
-			editor.handleInput("$");
+			editor.handleInput("%");
 			editor.handleInput("s");
 			editor.handleInput("k");
 
@@ -2469,19 +2517,19 @@ describe("Editor component", () => {
 			let suggestionCalls = 0;
 
 			editor.setAutocompleteProvider({
-				triggerCharacters: ["$"],
-				getSuggestions: async () => ({ items: [{ value: "$skill-name", label: "skill-name" }], prefix: "$" }),
+				triggerCharacters: ["%"],
+				getSuggestions: async () => ({ items: [{ value: "%skill-name", label: "skill-name" }], prefix: "%" }),
 				applyCompletion,
 			});
 			editor.setAutocompleteProvider({
 				getSuggestions: async () => {
 					suggestionCalls += 1;
-					return { items: [{ value: "$skill-name", label: "skill-name" }], prefix: "$" };
+					return { items: [{ value: "%skill-name", label: "skill-name" }], prefix: "%" };
 				},
 				applyCompletion,
 			});
 
-			editor.handleInput("$");
+			editor.handleInput("%");
 			editor.handleInput("s");
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			await flushAutocomplete();

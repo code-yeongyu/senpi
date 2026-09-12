@@ -180,7 +180,9 @@ describe("SubprocessKernel lifecycle", () => {
 		const secondChild = new FakeSubprocess();
 		const children = [firstChild, secondChild];
 		const observed: KernelToHostMessage[] = [];
-		const kernel = createKernel(spawnFrom(children), (message) => observed.push(message));
+		const kernel = createKernel(spawnFrom(children), (message) => {
+			if (message.type !== "ready") observed.push(message);
+		});
 		const firstRun = kernel.run({ cellId: "first", code: "block", timeoutMs: 1_000 });
 		const laterRun = kernel.run({ cellId: "later", code: "next", timeoutMs: 1_000 });
 
@@ -243,14 +245,24 @@ describe("SubprocessKernel lifecycle", () => {
 });
 
 function createKernel(spawn: SubprocessSpawn, onMessage?: (message: KernelToHostMessage) => void): SubprocessKernel {
-	return new SubprocessKernel({
+	let initial: FakeSubprocess | undefined;
+	const readySpawn: SubprocessSpawn = (command, args, options) => {
+		const child = spawn(command, args, options);
+		if (!(child instanceof FakeSubprocess)) throw new Error("expected FakeSubprocess");
+		if (!initial) initial = child;
+		else queueMicrotask(() => child.emitMessage({ type: "ready" }));
+		return child;
+	};
+	const kernel = new SubprocessKernel({
 		command: "ruby",
 		args: ["runner.rb"],
-		spawn,
+		spawn: readySpawn,
 		sessionId: "session-1",
 		connection: { port: 39_001, token: "secret-token" },
 		onMessage,
 	});
+	initial?.emitMessage({ type: "ready" });
+	return kernel;
 }
 
 function spawnFrom(children: FakeSubprocess[]): SubprocessSpawn {

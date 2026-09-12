@@ -6,7 +6,13 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
+import {
+	dropFailedAssistantTurns,
+	type RetryCallbacks,
+	type RetryPolicy,
+	retryAssistantCall,
+	uuidv7,
+} from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	Context,
@@ -17,6 +23,8 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai/compat";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
+import { estimateContextTokens as estimateProviderContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+import { resolveEffectiveReserveTokens } from "../extensions/builtin/compaction/policy.ts";
 import { convertToLlm, filterContextExcludedMessages, isContextExcludedCustomMessage } from "../messages.ts";
 import {
 	buildSessionContext,
@@ -24,26 +32,49 @@ import {
 	type SessionEntry,
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
+import type { CompactionSettings as BaseCompactionSettings } from "./compaction-settings.ts";
+
+export type CompactionSettings = BaseCompactionSettings & {
+	/** Optional "provider/model" override for the compaction summarization model. */
+	model?: string;
+};
+export { DEFAULT_COMPACTION_SETTINGS } from "./compaction-settings.ts";
+
 import {
 	consumeStreamWithIdleTimeout,
 	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-	DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
+	summarizationMaxDurationMs,
 } from "./stream-watchdog.ts";
 import {
-	computeFileLists,
 	contentTextForSummary,
 	createFileOps,
 	extractFileOpsFromMessage,
 	type FileOperations,
-	formatFileOperations,
 	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
 } from "./utils.ts";
 
-type SummarizationStreamFn = StreamFn;
+export type SummarizationStreamFn = StreamFn;
 type SummarizationOptions = SimpleStreamOptions & {
 	readonly env?: Record<string, string>;
 };
+
+function getAnthropicSummarizationFallback(model: Model<any>): readonly { model: string }[] | undefined {
+	if (model.provider !== "anthropic" || model.api !== "anthropic-messages") {
+		return undefined;
+	}
+	const allowedFallbackModels = (model as Model<"anthropic-messages">).compat?.allowedFallbackModels;
+	return allowedFallbackModels?.length
+		? [
+				{
+					model:
+						typeof allowedFallbackModels[0] === "string"
+							? allowedFallbackModels[0]
+							: allowedFallbackModels[0].model,
+				},
+			]
+		: undefined;
+}
 
 // ============================================================================
 // File Operation Tracking
@@ -109,6 +140,27 @@ function getMessageFromEntryForCompaction(entry: SessionEntry): AgentMessage | u
 	return contextMessagesForCompactionEntry(entry)[0];
 }
 
+/** Build an active-context prefix, placing the previous compaction summary before its retained messages. */
+function collectSourceMessages(
+	entries: SessionEntry[],
+	startIndex: number,
+	endIndex: number,
+	previousCompactionIndex: number,
+): AgentMessage[] {
+	const messages: AgentMessage[] = [];
+	if (previousCompactionIndex >= 0) {
+		messages.push(...sessionEntryToContextMessages(entries[previousCompactionIndex]));
+	}
+	for (let i = startIndex; i < endIndex; i++) {
+		// The latest compaction was moved to the front above. Keep older compaction
+		// entries because buildSessionContext retains them in the active provider prefix.
+		if (i !== previousCompactionIndex) {
+			messages.push(...sessionEntryToContextMessages(entries[i]));
+		}
+	}
+	return messages;
+}
+
 /** Result from compact() - SessionManager adds uuid/parentUuid when saving */
 export interface CompactionResult<T = unknown> {
 	summary: string;
@@ -121,7 +173,7 @@ export interface CompactionResult<T = unknown> {
 	details?: T;
 }
 
-function combineUsage(first: Usage, second: Usage): Usage {
+export function combineUsage(first: Usage, second: Usage): Usage {
 	return {
 		input: first.input + second.input,
 		output: first.output + second.output,
@@ -148,35 +200,18 @@ function combineUsage(first: Usage, second: Usage): Usage {
 // Types
 // ============================================================================
 
-export interface CompactionSettings {
-	enabled: boolean;
-	reserveTokens: number;
-	keepRecentTokens: number;
-	speculativeEnabled?: boolean;
-	speculativeFraction?: number;
-	speculativeCooldownMs?: number;
-	restorationEnabled?: boolean;
-	restorationMaxItems?: number;
-	restorationMaxTokensPerItem?: number;
-	restorationMaxTotalTokens?: number;
-	restorationContextRatio?: number;
-	idleCompactionEnabled?: boolean;
+/** Active provider contexts and request settings used to preserve cacheable compaction prefixes. */
+export interface CacheFriendlySummaryOptions {
+	/** Exact provider context prefix containing the history to summarize. */
+	sourceContext?: Context;
+	/** Exact provider context prefix containing a split turn's prefix. */
+	turnPrefixSourceContext?: Context;
+	/** Provider request settings copied from the active agent request path. */
+	requestOptions?: Pick<
+		SimpleStreamOptions,
+		"sessionId" | "onPayload" | "onResponse" | "transport" | "thinkingBudgets" | "maxRetryDelayMs"
+	>;
 }
-
-export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
-	enabled: true,
-	reserveTokens: 16384,
-	keepRecentTokens: 20000,
-	speculativeEnabled: true,
-	speculativeFraction: 0.75,
-	speculativeCooldownMs: 30000,
-	restorationEnabled: true,
-	restorationMaxItems: 10,
-	restorationMaxTokensPerItem: 5000,
-	restorationMaxTotalTokens: 50_000,
-	restorationContextRatio: 0.15,
-	idleCompactionEnabled: true,
-};
 
 // ============================================================================
 // Token calculation
@@ -188,6 +223,20 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
  */
 export function calculateContextTokens(usage: Usage): number {
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+}
+
+/**
+ * Threshold numerator. Prefer the larger of billed usage and the local
+ * transcript estimate, unless billed usage is implausibly larger than the
+ * estimate (Cursor cacheRead spikes of several million vs ~150k local).
+ */
+export function resolveThresholdContextTokens(usageTokens: number, estimateTokens: number): number {
+	const usage = usageTokens > 0 ? usageTokens : 0;
+	const estimate = estimateTokens > 0 ? estimateTokens : 0;
+	if (estimate >= 50_000 && usage > estimate * 8) {
+		return estimate;
+	}
+	return Math.max(usage, estimate);
 }
 
 /**
@@ -230,9 +279,14 @@ export interface ContextUsageEstimate {
 	lastUsageIndex: number | null;
 }
 
-function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; index: number } | undefined {
+function getLastAssistantUsageInfo(
+	messages: AgentMessage[],
+	counted: ReadonlySet<AgentMessage>,
+): { usage: Usage; index: number } | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
-		const usage = getAssistantUsage(messages[i]);
+		const message = messages[i];
+		if (!counted.has(message)) continue;
+		const usage = getAssistantUsage(message);
 		if (usage) return { usage, index: i };
 	}
 	return undefined;
@@ -243,12 +297,17 @@ function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; in
  * If there are messages after the last usage, estimate their tokens with estimateTokens.
  */
 export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
-	const usageInfo = getLastAssistantUsageInfo(messages);
+	// Count the same set the next provider request will carry: convertToLlm drops
+	// failed (error/aborted) assistant turns and their orphaned tool results.
+	// Indices stay relative to the INPUT array because callers read
+	// `messages[lastUsageIndex]` on the array they passed in.
+	const counted = new Set<AgentMessage>(dropFailedAssistantTurns(messages));
+	const usageInfo = getLastAssistantUsageInfo(messages, counted);
 
 	if (!usageInfo) {
 		let estimated = 0;
 		for (const message of messages) {
-			estimated += estimateTokens(message);
+			if (counted.has(message)) estimated += estimateTokens(message);
 		}
 		return {
 			tokens: estimated,
@@ -261,7 +320,7 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 	const usageTokens = calculateContextTokens(usageInfo.usage);
 	let trailingTokens = 0;
 	for (let i = usageInfo.index + 1; i < messages.length; i++) {
-		trailingTokens += estimateTokens(messages[i]);
+		if (counted.has(messages[i])) trailingTokens += estimateTokens(messages[i]);
 	}
 
 	return {
@@ -277,7 +336,7 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
  */
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
 	if (!settings.enabled) return false;
-	return contextTokens > contextWindow - settings.reserveTokens;
+	return contextTokens > contextWindow - resolveEffectiveReserveTokens(contextWindow, settings);
 }
 
 // ============================================================================
@@ -359,6 +418,8 @@ export function estimateTokens(message: AgentMessage): number {
 			chars = message.summary.length;
 			return Math.ceil(chars / 4);
 		}
+		case "configurationUpdate":
+			return 0;
 	}
 }
 
@@ -372,6 +433,7 @@ function isCutPointMessage(message: AgentMessage): boolean {
 		case "compactionSummary":
 			return true;
 		case "toolResult":
+		case "configurationUpdate":
 			return false;
 	}
 	return false;
@@ -387,6 +449,7 @@ function isTurnStartMessage(message: AgentMessage): boolean {
 			return true;
 		case "assistant":
 		case "toolResult":
+		case "configurationUpdate":
 			return false;
 	}
 	return false;
@@ -466,7 +529,11 @@ export function findCutPoint(
 	const cutPoints = findValidCutPoints(entries, startIndex, endIndex);
 
 	if (cutPoints.length === 0) {
-		return { firstKeptEntryIndex: startIndex, turnStartIndex: -1, isSplitTurn: false };
+		return {
+			firstKeptEntryIndex: startIndex,
+			turnStartIndex: -1,
+			isSplitTurn: false,
+		};
 	}
 
 	// Walk backwards from newest, accumulating estimated message sizes
@@ -529,6 +596,13 @@ export function findCutPoint(
 // Summarization
 // ============================================================================
 
+export function getSummarizationFailure(response: AssistantMessage, label: string): string | undefined {
+	if (response.stopReason === "error") return `${label} failed: ${response.errorMessage || "Unknown error"}`;
+	if (response.stopReason === "length")
+		return `${label} failed: generation hit the token cap and the summary is incomplete`;
+	return undefined;
+}
+
 const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
 
 Use this EXACT format:
@@ -562,9 +636,7 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
-const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
-
-Update the existing structured summary with new information. RULES:
+const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summary with new information. RULES:
 - PRESERVE all existing information from the previous summary
 - ADD new progress, decisions, and context from the new messages
 - UPDATE the Progress section: move items from "In Progress" to "Done" when completed
@@ -601,7 +673,15 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
-function createSummarizationOptions(
+const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
+
+${UPDATE_SUMMARIZATION_INSTRUCTIONS}`;
+
+const SOURCE_CONTEXT_UPDATE_SUMMARIZATION_PROMPT = `The messages above contain an existing structured summary of earlier conversation history followed by NEW conversation messages.
+
+${UPDATE_SUMMARIZATION_INSTRUCTIONS}`;
+
+export function createSummarizationOptions(
 	model: Model<any>,
 	maxTokens: number,
 	apiKey: string | undefined,
@@ -611,9 +691,22 @@ function createSummarizationOptions(
 	thinkingLevel: ThinkingLevel | undefined,
 	extraBody?: Record<string, unknown>,
 	sessionId?: string,
+	requestOptions?: CacheFriendlySummaryOptions["requestOptions"],
+	cacheRetention?: SimpleStreamOptions["cacheRetention"],
 ): SummarizationOptions {
-	const options: SummarizationOptions = { maxTokens, signal, apiKey, headers, env, extraBody };
+	const options: SummarizationOptions = {
+		...requestOptions,
+		maxTokens,
+		signal,
+		apiKey,
+		headers,
+		env,
+		extraBody,
+		cacheRetention,
+	};
 	if (sessionId) options.affinitySessionId = sessionId;
+	const refusalFallbacks = getAnthropicSummarizationFallback(model);
+	if (refusalFallbacks) options.refusalFallbacks = refusalFallbacks;
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		options.reasoning = thinkingLevel;
 	}
@@ -634,15 +727,26 @@ export async function completeSummarization(
 	streamFn?: SummarizationStreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	summarizationMaxDurationMsOverride?: number,
 ): Promise<AssistantMessage> {
-	// Summaries are standalone requests, so isolate routing and avoid cache writes that cannot be reused.
+	// Summary requests retain the fork's request-identity split: each request gets a
+	// fresh identity while affinity follows the caller. Cache-friendly callers may
+	// opt into short retention for an exact provider-context prefix.
 	const isolatedOptions: SimpleStreamOptions = {
 		...options,
-		cacheRetention: "none",
+		cacheRetention: options.cacheRetention ?? "none",
 		affinitySessionId: options.affinitySessionId ?? options.sessionId,
 		sessionId: uuidv7(),
 	};
 	const callerSignal = options.signal;
+	// The 120s floor was tuned for healthy summaries; a large session feeds the
+	// summarizer hundreds of thousands of tokens, which legitimately takes longer
+	// on slower providers (#1068). Scale the per-attempt budget with the estimated
+	// input size so compaction cannot deadlock purely on its own wall clock.
+	const maxDurationMs = summarizationMaxDurationMs(
+		estimateProviderContextTokens(context).tokens,
+		summarizationMaxDurationMsOverride,
+	);
 	const produce = async (): Promise<AssistantMessage> => {
 		// Request-local controller: the idle watchdog must be able to tear down a
 		// stalled summarization request without aborting the caller's own signal.
@@ -653,13 +757,16 @@ export async function completeSummarization(
 			else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
 		}
 		try {
-			const requestOptions = { ...isolatedOptions, signal: requestController.signal };
+			const requestOptions = {
+				...isolatedOptions,
+				signal: requestController.signal,
+			};
 			const responseStream = Promise.resolve(
 				streamFn ? streamFn(model, context, requestOptions) : streamSimple(model, context, requestOptions),
 			);
 			await consumeStreamWithIdleTimeout(responseStream, {
 				idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
-				maxDurationMs: DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
+				maxDurationMs,
 				abort: () => requestController.abort(),
 				signal: callerSignal,
 			});
@@ -676,10 +783,16 @@ async function transformSummarySource(
 	previousSummary: string | undefined,
 	transformContext: ((messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>) | undefined,
 	signal: AbortSignal | undefined,
-): Promise<{ readonly messages: AgentMessage[]; readonly previousSummary: string | undefined }> {
+): Promise<{
+	readonly messages: AgentMessage[];
+	readonly previousSummary: string | undefined;
+}> {
 	if (!transformContext) return { messages: currentMessages, previousSummary };
 	if (!previousSummary) {
-		return { messages: await transformContext(currentMessages, signal), previousSummary: undefined };
+		return {
+			messages: await transformContext(currentMessages, signal),
+			previousSummary: undefined,
+		};
 	}
 
 	const timestamps = new Set(currentMessages.map((message) => message.timestamp));
@@ -727,6 +840,8 @@ export async function generateSummary(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	cacheFriendly?: Pick<CacheFriendlySummaryOptions, "sourceContext" | "requestOptions">,
+	summarizationMaxDurationMs?: number,
 ): Promise<string> {
 	return (
 		await generateSummaryWithUsage(
@@ -746,8 +861,46 @@ export async function generateSummary(
 			retry,
 			callbacks,
 			sessionId,
+			cacheFriendly,
+			summarizationMaxDurationMs,
 		)
 	).text;
+}
+
+/** Build a standalone summary request or append its instruction to an existing provider context. */
+export function buildSummarizationContext(promptText: string, sourceContext?: Context): Context {
+	const instructionMessage = {
+		role: "user" as const,
+		content: [{ type: "text" as const, text: promptText }],
+		timestamp: Date.now(),
+	};
+
+	if (sourceContext) {
+		return {
+			...sourceContext,
+			messages: [...sourceContext.messages, instructionMessage],
+		};
+	}
+
+	return {
+		systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
+		messages: [instructionMessage],
+	};
+}
+
+/**
+ * Extra room for provider framing and tokenizer variance omitted by the heuristic context estimate.
+ * This matches the 4096-token margin used when normal simple requests clamp maxTokens to their context window.
+ */
+const CACHE_FRIENDLY_CONTEXT_SAFETY_TOKENS = 4096;
+
+/** Whether the source context leaves room for the requested summary output and provider safety margin. */
+export function cacheFriendlyContextFits(model: Model<any>, context: Context, maxTokens: number): boolean {
+	return (
+		model.contextWindow <= 0 ||
+		estimateProviderContextTokens(context).tokens + maxTokens + CACHE_FRIENDLY_CONTEXT_SAFETY_TOKENS <=
+			model.contextWindow
+	);
 }
 
 /** Generate or update a conversation summary and return its provider usage. */
@@ -768,40 +921,48 @@ export async function generateSummaryWithUsage(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	cacheFriendly?: Pick<CacheFriendlySummaryOptions, "sourceContext" | "requestOptions">,
+	summarizationMaxDurationMs?: number,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
-
-	const transformedSource = await transformSummarySource(currentMessages, previousSummary, transformContext, signal);
+	let sourceContext = cacheFriendly?.sourceContext;
+	let transformedSource = { messages: currentMessages, previousSummary };
+	if (!sourceContext) {
+		transformedSource = await transformSummarySource(currentMessages, previousSummary, transformContext, signal);
+	}
 	const providerPreviousSummary = transformedSource.previousSummary;
-
-	// Use update prompt if we have a previous summary, otherwise initial prompt
-	let basePrompt = providerPreviousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+	let basePrompt = providerPreviousSummary
+		? sourceContext
+			? SOURCE_CONTEXT_UPDATE_SUMMARIZATION_PROMPT
+			: UPDATE_SUMMARIZATION_PROMPT
+		: SUMMARIZATION_PROMPT;
 	if (customInstructions) {
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
-	// Serialize conversation to text so model doesn't try to continue it
-	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(transformedSource.messages);
-	const conversationText = serializeConversation(llmMessages);
+	if (
+		sourceContext &&
+		!cacheFriendlyContextFits(model, buildSummarizationContext(basePrompt, sourceContext), maxTokens)
+	) {
+		sourceContext = undefined;
+		transformedSource = await transformSummarySource(currentMessages, previousSummary, transformContext, signal);
+		basePrompt = transformedSource.previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
+		if (customInstructions) basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
+	}
 
-	// Build the prompt with conversation wrapped in tags
-	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-	if (providerPreviousSummary) {
-		promptText += `<previous-summary>\n${providerPreviousSummary}\n</previous-summary>\n\n`;
+	let promptText = "";
+	if (!sourceContext) {
+		const llmMessages = convertToLlm(transformedSource.messages);
+		const conversationText = serializeConversation(llmMessages);
+		promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+		if (transformedSource.previousSummary) {
+			promptText += `<previous-summary>\n${transformedSource.previousSummary}\n</previous-summary>\n\n`;
+		}
 	}
 	promptText += basePrompt;
-
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
 
 	const completionOptions = createSummarizationOptions(
 		model,
@@ -813,18 +974,23 @@ export async function generateSummaryWithUsage(
 		thinkingLevel,
 		extraBody,
 		sessionId,
+		sourceContext ? cacheFriendly?.requestOptions : undefined,
+		sourceContext ? "short" : undefined,
 	);
 	const response = await completeSummarization(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		buildSummarizationContext(promptText, sourceContext),
 		completionOptions,
 		streamFn,
 		retry,
 		callbacks,
+		summarizationMaxDurationMs,
 	);
 
-	if (response.stopReason === "error") {
-		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
+	const failure = getSummarizationFailure(response, "Summarization");
+	if (failure) throw new Error(failure);
+	if (response.content.some((block) => block.type === "toolCall")) {
+		throw new Error("Summarization attempted to call a tool");
 	}
 
 	const textContent = contentTextForSummary(response.content);
@@ -841,8 +1007,15 @@ export interface CompactionPreparation {
 	firstKeptEntryId: string;
 	/** Messages that will be summarized and discarded */
 	messagesToSummarize: AgentMessage[];
+	/**
+	 * Active-context prefix for the history summary.
+	 * Includes the previous compaction summary before messages retained by that compaction.
+	 */
+	sourceMessages?: AgentMessage[];
 	/** Messages that will be turned into turn prefix summary (if splitting) */
 	turnPrefixMessages: AgentMessage[];
+	/** Active-context prefix through the split-turn prefix, or empty when not splitting. */
+	turnPrefixSourceMessages?: AgentMessage[];
 	/** Whether this is a split turn (cut point in middle of turn) */
 	isSplitTurn: boolean;
 	tokensBefore: number;
@@ -915,6 +1088,8 @@ export function prepareCompaction(
 		if (msg) messagesToSummarize.push(msg);
 	}
 
+	const sourceMessages = collectSourceMessages(pathEntries, boundaryStart, historyEnd, prevCompactionIndex);
+
 	// Messages for turn prefix summary (if splitting a turn)
 	const turnPrefixMessages: AgentMessage[] = [];
 	if (cutPoint.isSplitTurn) {
@@ -923,6 +1098,9 @@ export function prepareCompaction(
 			if (msg) turnPrefixMessages.push(msg);
 		}
 	}
+	const turnPrefixSourceMessages = cutPoint.isSplitTurn
+		? collectSourceMessages(pathEntries, boundaryStart, cutPoint.firstKeptEntryIndex, prevCompactionIndex)
+		: [];
 
 	// A model switch can make an existing summary too large even when no new
 	// messages were added. The retry fallback path explicitly opts into
@@ -944,7 +1122,9 @@ export function prepareCompaction(
 	return {
 		firstKeptEntryId,
 		messagesToSummarize,
+		sourceMessages,
 		turnPrefixMessages,
+		turnPrefixSourceMessages,
 		isSplitTurn: cutPoint.isSplitTurn,
 		tokensBefore,
 		previousSummary,
@@ -957,194 +1137,4 @@ export function prepareCompaction(
 // Main compaction function
 // ============================================================================
 
-const TURN_PREFIX_SUMMARIZATION_PROMPT = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
-
-Summarize the prefix to provide context for the retained suffix:
-
-## Original Request
-[What did the user ask for in this turn?]
-
-## Early Progress
-- [Key decisions and work done in the prefix]
-
-## Context for Suffix
-- [Information needed to understand the retained recent work]
-
-Be concise. Focus on what's needed to understand the kept suffix.`;
-
-/**
- * Generate summaries for compaction using prepared data.
- * Returns CompactionResult - SessionManager adds uuid/parentUuid when saving.
- *
- * @param preparation - Pre-calculated preparation from prepareCompaction()
- * @param customInstructions - Optional custom focus for the summary
- */
-export async function compact(
-	preparation: CompactionPreparation,
-	model: Model<any>,
-	apiKey: string | undefined,
-	headers?: Record<string, string>,
-	customInstructions?: string,
-	signal?: AbortSignal,
-	extraBody?: Record<string, unknown>,
-	thinkingLevel?: ThinkingLevel,
-	streamFn?: StreamFn,
-	env?: Record<string, string>,
-	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
-	retry?: RetryPolicy,
-	callbacks?: RetryCallbacks,
-	sessionId?: string,
-): Promise<CompactionResult> {
-	const {
-		firstKeptEntryId,
-		messagesToSummarize,
-		turnPrefixMessages,
-		isSplitTurn,
-		tokensBefore,
-		previousSummary,
-		fileOps,
-		settings,
-	} = preparation;
-
-	// Generate summaries and merge into one
-	let summary: string;
-	let summaryUsage: Usage;
-
-	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		let historyText = "No prior history.";
-		let historyUsage: Usage | undefined;
-		if (messagesToSummarize.length > 0) {
-			const historyResult = await generateSummaryWithUsage(
-				messagesToSummarize,
-				model,
-				settings.reserveTokens,
-				apiKey,
-				headers,
-				signal,
-				customInstructions,
-				previousSummary,
-				extraBody,
-				thinkingLevel,
-				streamFn,
-				env,
-				transformContext,
-				retry,
-				callbacks,
-				sessionId,
-			);
-			historyText = historyResult.text;
-			historyUsage = historyResult.usage;
-		}
-		const turnPrefixResult = await generateTurnPrefixSummary(
-			turnPrefixMessages,
-			model,
-			settings.reserveTokens,
-			apiKey,
-			headers,
-			env,
-			signal,
-			extraBody,
-			thinkingLevel,
-			streamFn,
-			transformContext,
-			retry,
-			callbacks,
-			sessionId,
-		);
-		// Merge into single summary
-		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
-		summaryUsage = historyUsage ? combineUsage(historyUsage, turnPrefixResult.usage) : turnPrefixResult.usage;
-	} else {
-		// Just generate history summary
-		const result = await generateSummaryWithUsage(
-			messagesToSummarize,
-			model,
-			settings.reserveTokens,
-			apiKey,
-			headers,
-			signal,
-			customInstructions,
-			previousSummary,
-			extraBody,
-			thinkingLevel,
-			streamFn,
-			env,
-			transformContext,
-			retry,
-			callbacks,
-			sessionId,
-		);
-		summary = result.text;
-		summaryUsage = result.usage;
-	}
-
-	// Compute file lists and append to summary
-	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
-	summary += formatFileOperations(readFiles, modifiedFiles);
-
-	if (!firstKeptEntryId) {
-		throw new Error("First kept entry has no UUID - session may need migration");
-	}
-
-	return {
-		summary,
-		firstKeptEntryId,
-		tokensBefore,
-		usage: summaryUsage,
-		details: { readFiles, modifiedFiles } as CompactionDetails,
-	};
-}
-
-/**
- * Generate a summary for a turn prefix (when splitting a turn).
- */
-async function generateTurnPrefixSummary(
-	messages: AgentMessage[],
-	model: Model<any>,
-	reserveTokens: number,
-	apiKey: string | undefined,
-	headers?: Record<string, string>,
-	env?: Record<string, string>,
-	signal?: AbortSignal,
-	extraBody?: Record<string, unknown>,
-	thinkingLevel?: ThinkingLevel,
-	streamFn?: SummarizationStreamFn,
-	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>,
-	retry?: RetryPolicy,
-	callbacks?: RetryCallbacks,
-	sessionId?: string,
-): Promise<{ text: string; usage: Usage }> {
-	const maxTokens = Math.min(
-		Math.floor(0.5 * reserveTokens),
-		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
-	); // Smaller budget for turn prefix
-	const providerMessages = transformContext ? await transformContext(messages, signal) : messages;
-	const llmMessages = convertToLlm(providerMessages);
-	const conversationText = serializeConversation(llmMessages);
-	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
-
-	const response = await completeSummarization(
-		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel, extraBody, sessionId),
-		streamFn,
-		retry,
-		callbacks,
-	);
-
-	if (response.stopReason === "error") {
-		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
-	}
-
-	return {
-		text: contentTextForSummary(response.content),
-		usage: response.usage,
-	};
-}
+export { compact } from "./compaction-execution.ts";

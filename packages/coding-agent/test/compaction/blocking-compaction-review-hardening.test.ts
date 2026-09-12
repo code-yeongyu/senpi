@@ -126,15 +126,26 @@ describe("blocking compaction review hardening", () => {
 	});
 
 	describe("Given the summarization response has no text", () => {
-		it("Then blocking compaction degrades silently as before", async () => {
+		it("Then blocking compaction applies deterministic recovery", async () => {
 			// Given
 			const { beforeAgentStart } = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 9_950 });
 			registrations.push(harness.registration);
 			harness.registration.setResponses([fauxAssistantMessage("", { stopReason: "stop" })]);
 
-			// When / Then
+			// When: required blocking compaction receives an empty generated summary.
 			await expect(beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx)).resolves.toBeUndefined();
+
+			// Then: the safe suffix is applied and the failure provenance is retained.
+			expect(harness.ctx.applyCompaction).toHaveBeenCalledWith(
+				expect.objectContaining({
+					details: expect.objectContaining({
+						origin: "required-compaction-recovery",
+						failureKind: "summarization-empty-summary",
+					}),
+				}),
+				expect.objectContaining({ reason: "extension" }),
+			);
 			expect(errorMessages(harness.endCompaction)).toHaveLength(0);
 		});
 	});

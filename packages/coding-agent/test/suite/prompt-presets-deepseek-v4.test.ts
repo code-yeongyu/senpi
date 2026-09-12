@@ -90,13 +90,15 @@ function hasProSignal(searchable: string): boolean {
 	return /(?:^|[/@:._-])deepseek[._-]v4[._-]pro(?:$|[/@:._-])/.test(searchable);
 }
 
+// The official API retired V4 Flash on 2026-09-10 and serves deepseek-v4-flash
+// with V4.1 Flash; that alias is the V4.1 suite's concern.
 function expectedCatalogPreset(model: Model<Api>): string | undefined {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
 	if (hasFlash0731Signal(searchable)) {
 		return "deepseek-v4-flash-0731";
 	}
 	if (hasFlashSignal(searchable)) {
-		return "deepseek-v4-flash";
+		return model.provider === "deepseek" ? undefined : "deepseek-v4-flash";
 	}
 	if (hasProSignal(searchable)) {
 		return "deepseek-v4-pro";
@@ -209,12 +211,11 @@ describe("DeepSeek V4 prompt presets", () => {
 		// then
 		expect(catalogModelIds).toEqual(
 			expect.arrayContaining([
-				"deepseek/deepseek-v4-flash",
 				"deepseek/deepseek-v4-pro",
 				"openrouter/deepseek/deepseek-v4-flash-0731",
 				"openrouter/deepseek/deepseek-v4-flash",
 				"openrouter/deepseek/deepseek-v4-pro",
-				"opencode/deepseek-v4-flash-free",
+				"opencode/deepseek-v4-flash",
 				"huggingface/deepseek-ai/DeepSeek-V4-Flash",
 				"together/deepseek-ai/DeepSeek-V4-Pro",
 			]),
@@ -286,6 +287,7 @@ describe("DeepSeek V4 rule data", () => {
 			resolvePreset(createModel("kimi-k3", "moonshot"), settings)?.prompt,
 			resolvePreset(createModel("gpt-5.6-sol", "openai"), settings)?.prompt,
 			resolvePreset(createModel("glm-5.2", "zai"), settings)?.prompt,
+			resolvePreset(createModel("deepseek-flash", "deepseek"), settings)?.prompt,
 		];
 
 		// then

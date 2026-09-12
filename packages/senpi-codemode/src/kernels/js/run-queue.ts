@@ -7,8 +7,13 @@ export interface PendingJavaScriptRun {
 	readonly input: JavaScriptRunInput;
 	readonly resolve: (message: ResultMessage) => void;
 	readonly reject: (error: Error) => void;
+	readonly settlement: Promise<ResultMessage>;
 	startedAtMs: number | null;
 	settled: boolean;
+	/** Host-composed result that wins over whatever the worker reports once an interrupt is in flight. */
+	interruptResult: ResultMessage | null;
+	interruptAck: PromiseWithResolvers<void> | null;
+	settledByWorker: boolean;
 }
 
 export class JavaScriptRunQueue {
@@ -24,9 +29,19 @@ export class JavaScriptRunQueue {
 	}
 
 	enqueue(input: JavaScriptRunInput): Promise<ResultMessage> {
-		return new Promise((resolve, reject) => {
-			this.#queue.push({ input, resolve, reject, startedAtMs: null, settled: false });
+		const { promise, resolve, reject } = Promise.withResolvers<ResultMessage>();
+		this.#queue.push({
+			input,
+			resolve,
+			reject,
+			settlement: promise,
+			startedAtMs: null,
+			settled: false,
+			interruptResult: null,
+			interruptAck: null,
+			settledByWorker: false,
 		});
+		return promise;
 	}
 
 	startNext(startedAtMs: number): PendingJavaScriptRun | null {
@@ -64,7 +79,7 @@ export class JavaScriptRunQueue {
 	settleAll(message: string): void {
 		const active = this.#active;
 		this.#active = null;
-		if (active) this.settle(active, stoppedResult(active.input.cellId, message));
+		if (active) this.settle(active, active.interruptResult ?? stoppedResult(active.input.cellId, message));
 		for (const queued of this.#queue.splice(0)) this.settle(queued, stoppedResult(queued.input.cellId, message));
 	}
 

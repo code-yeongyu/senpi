@@ -52,7 +52,7 @@ describe("eval error-mode timeout names kernel state", () => {
 
 		expect(outcome.status).toBe("rejected");
 		expect(outcome.reason?.name).toBe("TimeoutError");
-		expect(outcome.reason?.message).toContain("Cell timed out after 1000ms");
+		expect(outcome.reason?.message).toContain("1s run budget");
 		expect(outcome.reason?.message).toMatch(/remains running|preserved|survived/i);
 		expect(outcome.reason?.message).not.toMatch(/lost/i);
 	});
@@ -67,7 +67,7 @@ describe("eval error-mode timeout names kernel state", () => {
 
 		expect(outcome.status).toBe("rejected");
 		expect(outcome.reason?.name).toBe("TimeoutError");
-		expect(outcome.reason?.message).toContain("Cell timed out after 1000ms");
+		expect(outcome.reason?.message).toContain("1s run budget");
 		expect(outcome.reason?.message).toMatch(/lost|restarted|recreated/i);
 		expect(outcome.reason?.message).not.toMatch(/preserved|remains running/i);
 	});

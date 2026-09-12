@@ -104,7 +104,7 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 export interface OpenAICodexResponsesOptions extends StreamOptions {
 	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: CodexReasoningSummaryInput;
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
 	textVerbosity?: "low" | "medium" | "high";
 	toolChoice?: "auto" | "none" | "required";
 }
@@ -123,7 +123,7 @@ interface RequestBody {
 	parallel_tool_calls?: boolean;
 	temperature?: number;
 	reasoning?: ReturnType<typeof buildCodexReasoning>;
-	service_tier?: ResponseCreateParamsStreaming["service_tier"];
+	service_tier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
 	text?: { verbosity?: string };
 	include?: string[];
 	prompt_cache_key?: string;
@@ -528,7 +528,11 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
-	const base = buildBaseOptions(model, context, options, apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, apiKey),
+		toolChoice: options?.toolChoice,
+		serviceTier: options?.serviceTier,
+	} satisfies OpenAICodexResponsesOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort =
 		clampedReasoning === "off"
@@ -569,13 +573,19 @@ function buildRequestBody(
 		requestedReasoningEffort !== undefined && requestedReasoningEffort !== "none" && reasoningEffort !== null;
 	const supportsStrictMode = model.compat?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
-	const toolPlacement = splitDeferredTools(context, model.compat?.supportsToolSearch ?? false);
+	const deferredToolsMode = model.compat?.supportsAdditionalTools
+		? "additional-tools"
+		: model.compat?.supportsToolSearch
+			? "tool-search"
+			: undefined;
+	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		includeSystemPrompt: false,
 		preserveThinking: reasoningRequested,
 		preserveTextSignatures: true,
 		grammarToolInputProperties,
 		deferredTools: toolPlacement.deferred,
+		deferredToolsMode,
 		toolOptions: {
 			strict: null,
 			supportsStrictMode,
@@ -601,7 +611,7 @@ function buildRequestBody(
 	}
 
 	if (options?.serviceTier !== undefined) {
-		body.service_tier = options.serviceTier;
+		body.service_tier = options.serviceTier as ResponseCreateParamsStreaming["service_tier"];
 	}
 
 	if (toolPlacement.immediate.length > 0) {
@@ -627,12 +637,13 @@ function buildRequestBody(
 
 function getServiceTierCostMultiplier(
 	model: Pick<Model<"openai-codex-responses">, "id">,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
 ): number {
 	switch (serviceTier) {
 		case "flex":
 			return 0.5;
 		case "priority":
+		case "fast":
 			return model.id === "gpt-5.5" ? 2.5 : 2;
 		default:
 			return 1;
@@ -641,7 +652,7 @@ function getServiceTierCostMultiplier(
 
 function applyServiceTierPricing(
 	usage: Usage,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
 	model: Pick<Model<"openai-codex-responses">, "id">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
@@ -655,10 +666,13 @@ function applyServiceTierPricing(
 }
 
 function resolveCodexServiceTier(
-	responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
-	requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
-): ResponseCreateParamsStreaming["service_tier"] | undefined {
-	if (responseServiceTier === "default" && (requestServiceTier === "flex" || requestServiceTier === "priority")) {
+	responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+	requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
+): ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined {
+	if (
+		responseServiceTier === "default" &&
+		(requestServiceTier === "flex" || requestServiceTier === "priority" || requestServiceTier === "fast")
+	) {
 		return requestServiceTier;
 	}
 	return responseServiceTier ?? requestServiceTier;
@@ -691,7 +705,7 @@ async function processStream(
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal)), output, stream, model, {
+	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal), output), output, stream, model, {
 		serviceTier: options?.serviceTier,
 		grammarToolInputProperties,
 		resolveServiceTier: resolveCodexServiceTier,
@@ -769,7 +783,10 @@ function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
 	return error instanceof CodexApiError && error.code === WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE;
 }
 
-async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): AsyncGenerator<ResponseStreamEvent> {
+async function* mapCodexEvents(
+	events: AsyncIterable<Record<string, unknown>>,
+	output: AssistantMessage,
+): AsyncGenerator<ResponseStreamEvent> {
 	for await (const event of events) {
 		const type = typeof event.type === "string" ? event.type : undefined;
 		if (!type) continue;
@@ -800,7 +817,10 @@ async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): 
 		}
 
 		if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {
-			const response = (event as { response?: { status?: string } }).response;
+			const response = (event as { response?: { status?: unknown; end_turn?: unknown } }).response;
+			if (typeof response?.end_turn === "boolean") {
+				output.endTurn = response.end_turn;
+			}
 			const normalizedResponse = response
 				? { ...response, status: normalizeCodexStatus(response.status) }
 				: response;
@@ -1537,7 +1557,7 @@ async function processWebSocketStream(
 				socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
 				await processResponsesStream(
 					startWebSocketOutputOnFirstEvent(
-						mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs)),
+						mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs), output),
 						onStart,
 					),
 					output,

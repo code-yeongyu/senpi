@@ -1,6 +1,6 @@
 # packages/coding-agent/src/core/dynamic-prompt
 
-Fork-introduced system-prompt assembler. Replaces upstream's static `buildSystemPrompt()` with a layered builder: identity → intent gate → exploration → parallel-tools → verification → tool reference → policies → style → optional per-model tuning. Every preset under `extensions/builtin/prompt-preset/` ultimately calls into this builder. See `changes.md` for the full evolution.
+Fork-introduced system-prompt assembler. Replaces upstream's static `buildSystemPrompt()` with a layered builder: identity → intent gate → working-task → verification → tool reference → policies → style → optional per-model tuning. Every preset under `extensions/builtin/prompt-preset/` ultimately calls into this builder. See `changes.md` for the full evolution.
 
 ## FILES
 
@@ -10,13 +10,12 @@ dynamic-prompt/
 ├── index.ts                # Public re-exports
 ├── types.ts                # AvailableTool
 ├── identity.ts             # buildIdentitySection() — senpi neutral identity
-├── intent-gate.ts          # buildIntentGate() — Phase 0 routing line
-├── exploration.ts          # buildExplorationSection() — "read the code first" discipline
-├── parallel-tools.ts       # buildParallelToolsSection() — fan-out grep/ls/read in parallel
+├── intent-gate.ts          # buildIntentGate() — routing line with declared stop condition + intent-family rules
+├── working-task.ts         # buildWorkingTaskSection() — parallel waves, exploration stops, one-plan commitment
 ├── verification.ts         # buildVerificationSection() — V1/V2/V3 verification tiers
 ├── tool-categorization.ts  # categorizeTools() + getToolsPromptDisplay()
 ├── tool-section.ts         # CATEGORY_ORDER + CATEGORY_LABELS for rendering
-├── policies.ts             # Hard blocks + anti-patterns injected into every prompt
+├── policies.ts             # Hard blocks injected into every prompt
 ├── style.ts                # buildStyleSection() — output formatting + length norms
 └── changes.md              # Dense fork tracker (dated sections)
 ```
@@ -27,7 +26,7 @@ dynamic-prompt/
 |------|------|
 | Change senpi identity | `identity.ts` |
 | Add/modify intent classification | `intent-gate.ts` — the forced verbalization line |
-| Change parallel-tool guidance | `parallel-tools.ts` |
+| Change parallel-tool/exploration guidance | `working-task.ts` |
 | Add new "Don't do X" rule | `policies.ts` |
 | Tune verification tier definitions | `verification.ts` |
 | Add/remove a tool category | `types.ts` (`AvailableTool["category"]`) + `tool-categorization.ts` + `tool-section.ts` |
@@ -37,16 +36,15 @@ dynamic-prompt/
 ## SECTION ORDER (assembled in `build.ts`)
 
 1. **Identity** — senpi-neutral hero line
-2. **Intent gate** — forced `I read this as [intent] - [plan].` routing line
-3. **Exploration** — "read code before claiming"
-4. **Parallel tools** — fan-out heuristics
-5. **Verification** — V1/V2/V3 tiers
-6. **Tool reference** — categorized snippets + guidelines from registered tools
-7. **Policies** — hard blocks + anti-patterns
-8. **Style** — output formatting
-9. **Optional `tuningSection`** — per-model preset addendum (appended last)
+2. **Intent gate** — forced `I read this as [intent] - [plan]. I'll stop when [...]` routing line + intent-family rules
+3. **Working the task** — parallel waves, read-before-claim, exploration stops, one-plan commitment
+4. **Verification** — V1/V2/V3 tiers + claim audit
+5. **Tool reference** — categorized snippets + guidelines from registered tools
+6. **Policies** — hard blocks
+7. **Style** — execution stance + output formatting
+8. **Optional `tuningSection`** — per-model preset addendum (appended last)
 
-When `corePrompt` is set, sections 1–8 are replaced by the override's output (the rendered tool section is handed to it via `DynamicPromptCoreContext`); tuning, context files, skills, and date/cwd assembly are unchanged.
+When `corePrompt` is set, sections 1–7 are replaced by the override's output (the rendered tool section is handed to it via `DynamicPromptCoreContext`); tuning, context files, skills, and date/cwd assembly are unchanged.
 
 ## CONVENTIONS
 

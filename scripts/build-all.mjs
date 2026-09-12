@@ -8,17 +8,19 @@
 // uses whichever package manager actually invoked the parent (detected via
 // $npm_execpath), and strips the cross-PM env keys before spawning so the
 // output of `npm run build` / `pnpm run build` / `bun run build` all stay
-// clean.
+// clean. Detection and spawning are shared with run-workspaces.mjs through
+// package-manager.mjs.
 //
 // Usage: node scripts/build-all.mjs [--pm npm|bun|pnpm]
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { cleanEnv, detectPackageManager, spawnPackageManager, SUPPORTED_PACKAGE_MANAGERS } from "./package-manager.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = dirname(__dirname);
-const SUPPORTED_PMS = new Set(["npm", "bun", "pnpm"]);
+const SUPPORTED_PMS = new Set(SUPPORTED_PACKAGE_MANAGERS);
 
 export const BUILD_PHASES = [
 	["packages/tui", "packages/pty", "packages/telemetry", "packages/protocol"],
@@ -52,73 +54,11 @@ export function parseArgs(argv) {
 	return { pm };
 }
 
-export function detectPackageManager(env = process.env, forcedPm) {
-	if (forcedPm) return { cmd: forcedPm, execpath: undefined };
-
-	const execpath = env.npm_execpath;
-	const userAgent = env.npm_config_user_agent ?? "";
-
-	if (execpath && /bun/i.test(execpath)) return { cmd: "bun", execpath };
-	if (userAgent.startsWith("bun/")) return { cmd: "bun", execpath: undefined };
-	if (execpath && /pnpm/i.test(execpath)) return { cmd: "pnpm", execpath };
-	if (userAgent.startsWith("pnpm/")) return { cmd: "pnpm", execpath: undefined };
-	if (execpath) return { cmd: "npm", execpath };
-	return { cmd: "npm", execpath: undefined };
-}
-
-export function cleanEnv(envSource = process.env) {
-	// pnpm exports every .npmrc key as a lowercased npm_config_* env var and
-	// normalizes dashes to underscores. When the parent is pnpm and the
-	// child is npm (e.g. one of these builds still shells out to npm
-	// internally), npm warns for each unknown key. Strip the keys that
-	// only pnpm understands before spawning children so the build output
-	// stays clean regardless of PM.
-	const PNPM_ONLY_KEYS = new Set([
-		"node_linker",
-		"link_workspace_packages",
-		"prefer_workspace_packages",
-		"verify_deps_before_run",
-		"_jsr_registry",
-		"npm_globalconfig",
-	]);
-	const env = { ...envSource };
-	for (const key of Object.keys(env)) {
-		const lower = key.toLowerCase();
-		if (!lower.startsWith("npm_config_")) continue;
-		const stripped = lower.slice("npm_config_".length);
-		if (PNPM_ONLY_KEYS.has(stripped)) delete env[key];
-	}
-	return env;
-}
-
-function spawnPmAsync(pm, args, cwd, env) {
-	// bun's execpath is a native binary so we invoke it directly.
-	// npm's and pnpm's execpaths are .js / .cjs entry points that have to
-	// be loaded through the current Node runtime, unless they are native binaries (like pnpm.exe).
-	let command = pm.cmd;
-	let spawnArgs = args;
-	if (pm.execpath && (pm.cmd === "bun" || !/\.[cm]?js$/i.test(pm.execpath))) {
-		command = pm.execpath;
-	} else if (pm.execpath) {
-		command = process.execPath;
-		spawnArgs = [pm.execpath, ...args];
-	}
-
-	return new Promise((resolve) => {
-		const child = spawn(command, spawnArgs, { cwd, stdio: "inherit", env, shell: false });
-		child.on("error", (error) => {
-			console.error(`\n[build-all] failed to spawn ${pm.cmd}: ${error.message}`);
-			resolve(1);
-		});
-		child.on("close", (status) => resolve(status ?? 1));
-	});
-}
-
 async function runBuild(pm, cwd) {
 	const env = cleanEnv();
 	const rel = cwd.replace(`${root}/`, "");
 	console.log(`[build-all] building ${rel}`);
-	const status = await spawnPmAsync(pm, ["run", "build"], cwd, env);
+	const status = await spawnPackageManager(pm, ["run", "build"], { cwd, env, label: "build-all" });
 	return { rel, status };
 }
 

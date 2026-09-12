@@ -1,13 +1,18 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import type { ThinkingSelection } from "@earendil-works/pi-ai";
+import { type Api, type Message, type Model, modelsAreEqual, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import { estimateTokens } from "./compaction/compaction.ts";
+import { createSessionCursorExecBridge } from "./cursor-exec-bridge-session.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
-import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
+import { ModelUsabilityBudgetError } from "./extensions/builtin/compaction/model-usability-budget.ts";
+import { planResumeSlice } from "./extensions/builtin/compaction/resume-slice.ts";
+import { type ServiceTier, supportsServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { convertToLlmForTransport, TRANSPORT_IMAGE_BUDGET_BYTES } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
@@ -16,6 +21,7 @@ import {
 	getModelNarrowingPatterns,
 	type InitialModelProvenance,
 	resolveModelScope,
+	resolveStoredModelReference,
 } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
@@ -32,6 +38,7 @@ import {
 	createFindTool,
 	createGrepTool,
 	createLsTool,
+	createPowerShellTool,
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
@@ -63,10 +70,22 @@ export interface CreateAgentSessionOptions {
 	initialModelProvenance?: InitialModelProvenance;
 	/** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
 	thinkingLevel?: ThinkingLevel;
+	/** Provenance for a pre-resolved CLI/scoped/legacy selector. */
+	thinkingSelection?: ThinkingSelection;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
-	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+	scopedModels?: Array<{
+		model: Model<any>;
+		thinkingLevel?: ThinkingLevel;
+		thinkingSelection?: ThinkingSelection;
+		serviceTier?: ServiceTier;
+	}>;
 	/** Favorite models for Ctrl+P cycling. */
-	favoriteModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier }>;
+	favoriteModels?: Array<{
+		model: Model<any>;
+		thinkingLevel?: ThinkingLevel;
+		thinkingSelection?: ThinkingSelection;
+		serviceTier?: ServiceTier;
+	}>;
 
 	/**
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
@@ -79,9 +98,11 @@ export interface CreateAgentSessionOptions {
 	/**
 	 * Optional allowlist of tool names.
 	 *
-	 * When omitted, pi enables the default built-in tools (read, bash, edit, write)
-	 * and leaves extension/custom tools enabled unless `noTools` changes that default.
-	 * When provided, only the listed tool names are enabled.
+	 * When omitted, pi uses the `defaultTools` setting for the initial built-in
+	 * selection when configured. Otherwise it enables the default built-in tools
+	 * (read, bash, edit, write). Extension/custom tools remain enabled unless
+	 * `noTools` changes that default. When provided, only the listed tool names are
+	 * enabled.
 	 */
 	tools?: string[];
 	/** Optional denylist of tool names to disable. Applies after `tools` when both are provided. */
@@ -138,6 +159,7 @@ export {
 	createFindTool,
 	createGrepTool,
 	createLsTool,
+	createPowerShellTool,
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
@@ -217,7 +239,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const modelRuntime =
 		options.modelRuntime ??
 		options.modelRegistry?.modelRuntime ??
-		(await ModelRuntime.create({ credentials: authStorage, modelsPath }));
+		(await ModelRuntime.create({ credentials: authStorage, modelsPath, agentDir }));
 	const modelRegistry = options.modelRegistry ?? new ModelRegistry(modelRuntime, authStorage);
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
@@ -244,13 +266,30 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	let model = options.model;
 	let initialModelProvenance = options.initialModelProvenance;
+	let initialResolvedThinkingLevel: ThinkingLevel | undefined;
+	let initialThinkingSelection = options.thinkingSelection;
 	let modelFallbackMessage: string | undefined;
+
+	if (model) {
+		const resolved = resolveStoredModelReference(model.provider, model.id, modelRuntime);
+		if (resolved?.thinkingSelection) {
+			model = resolved.model;
+			initialResolvedThinkingLevel = resolved.thinkingLevel;
+			initialThinkingSelection ??= resolved.thinkingSelection;
+		}
+	}
 
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && existingSession.model) {
-		const restoredModel = modelRuntime.getModel(existingSession.model.provider, existingSession.model.modelId);
-		if (restoredModel && modelRuntime.hasConfiguredAuth(restoredModel.provider)) {
-			model = restoredModel;
+		const restored = resolveStoredModelReference(
+			existingSession.model.provider,
+			existingSession.model.modelId,
+			modelRuntime,
+		);
+		if (restored && modelRuntime.hasConfiguredAuth(restored.model.provider)) {
+			model = restored.model;
+			initialResolvedThinkingLevel = restored.thinkingLevel;
+			initialThinkingSelection = restored.thinkingSelection;
 		}
 		if (!model) {
 			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
@@ -265,10 +304,19 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			defaultProvider: settingsManager.getDefaultProvider(),
 			defaultModelId: settingsManager.getDefaultModel(),
 			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+			modelThinkingLevels: settingsManager.getAllModelThinkingLevels(),
 			modelRuntime,
 		});
 		model = result.model;
 		initialModelProvenance = result.provenance;
+		const selectedModel = model;
+		const scopedSelection = selectedModel
+			? scopedModels.find(
+					(entry) => entry.model.provider === selectedModel.provider && entry.model.id === selectedModel.id,
+				)
+			: undefined;
+		initialResolvedThinkingLevel = scopedSelection?.thinkingLevel ?? result.thinkingLevel;
+		initialThinkingSelection = scopedSelection?.thinkingSelection ?? result.thinkingSelection;
 		if (!model) {
 			modelFallbackMessage = formatNoModelsAvailableMessage();
 		} else if (modelFallbackMessage) {
@@ -276,36 +324,61 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 	}
 
-	let thinkingLevel = options.thinkingLevel;
+	let thinkingLevel = options.thinkingLevel ?? initialResolvedThinkingLevel;
+	let thinkingSelection =
+		options.thinkingSelection ??
+		(options.thinkingLevel !== undefined
+			? { level: options.thinkingLevel, source: "explicit" as const }
+			: undefined) ??
+		initialThinkingSelection;
 
-	// If session has data, restore thinking level from it
-	if (thinkingLevel === undefined && hasExistingSession) {
-		thinkingLevel = hasThinkingEntry
-			? (existingSession.thinkingLevel as ThinkingLevel)
-			: (settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL);
+	// An exact-session thinking entry wins over settings unless a real legacy alias already
+	// selected a level. Old entries have no provenance, including Cursor's synthetic off.
+	if (thinkingLevel === undefined && hasExistingSession && hasThinkingEntry) {
+		thinkingLevel = existingSession.thinkingLevel as ThinkingLevel;
+		thinkingSelection = existingSession.thinkingSelection;
 	}
-
-	// Fall back to settings default
+	if (thinkingLevel === undefined && model) {
+		const remembered = settingsManager.getModelThinkingLevel(model.provider, model.id);
+		if (remembered !== undefined) {
+			thinkingLevel = remembered;
+			thinkingSelection = { level: remembered, source: "explicit" };
+		}
+	}
 	if (thinkingLevel === undefined) {
-		thinkingLevel = settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
+		const configuredDefault = settingsManager.getDefaultThinkingLevel();
+		if (configuredDefault !== undefined) {
+			thinkingLevel = configuredDefault;
+			thinkingSelection = { level: configuredDefault, source: "explicit" };
+		} else {
+			thinkingLevel = DEFAULT_THINKING_LEVEL;
+		}
 	}
 
-	// Clamp to model capabilities
+	// Clamp to model capabilities without inventing provenance for a defaulted level.
 	if (!model) {
 		thinkingLevel = "off";
 	} else {
 		thinkingLevel = clampThinkingLevelToModel(thinkingLevel, model);
 	}
+	if (thinkingSelection) thinkingSelection = { ...thinkingSelection, level: thinkingLevel };
 
 	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
+	const configuredDefaultToolNames = settingsManager.getDefaultTools();
+	const sessionDefaultToolNames =
+		options.tools === undefined && options.noTools === undefined ? configuredDefaultToolNames : undefined;
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
-	const initialActiveToolNames: string[] = (
-		options.tools ? [...options.tools] : options.noTools ? [] : defaultActiveToolNames
+	const initialActiveToolNames = (
+		options.tools ?? (options.noTools ? [] : (configuredDefaultToolNames ?? defaultActiveToolNames))
 	).filter((name) => !excludedToolNameSet?.has(name));
 
 	let agent: Agent;
+	const reasoningBaseline = existingSession.configurationUpdate
+		? (sessionManager.getBranch().find((entry) => entry.type === "thinking_level_change")?.thinkingLevel ??
+			thinkingLevel)
+		: undefined;
 
 	// Read blockImages per request so a mid-session settings change takes effect.
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] =>
@@ -317,12 +390,33 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	// The session (and its tool registry) is constructed after the Agent, so the Cursor exec
+	// bridge and the request-tier resolver below reach it through this late-bound ref.
+	const sessionRef: { current?: AgentSession } = {};
+
+	// The `service_tier` a request carries when the caller did not pin one. The session's
+	// effective tier is the single source: a `-fast` catalog variant, a scoped `:priority` pin, or
+	// session fast mode all land here, so an SDK/embedded session honors the tier without the
+	// interactive service-tier extension being loaded (its payload hook only fills a missing
+	// field and stays consistent). A request for another model (title/branch summaries) falls
+	// back to that model's own catalog tier. Only the OpenAI Responses family accepts the field.
+	const resolveRequestServiceTier = (requestModel: Model<Api>): ServiceTier | undefined => {
+		if (!supportsServiceTier(requestModel.api)) return undefined;
+		const session = sessionRef.current;
+		const activeModel = session?.model;
+		if (session && activeModel && modelsAreEqual(activeModel, requestModel)) {
+			return session.effectiveServiceTier;
+		}
+		return modelRuntime.getCompatibilityRequestConfig(requestModel).serviceTier;
+	};
 
 	agent = new Agent({
 		initialState: {
 			systemPrompt: "",
 			model,
 			thinkingLevel,
+			thinkingSelection,
+			reasoningBaseline,
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
@@ -336,11 +430,24 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const headerRunner = extensionRunnerRef.current;
+			// A provider-declared profile owns the transport retry budget: a disabled
+			// providerRequest stage sends 0 so user retry.provider.* cannot hand it a
+			// hidden second budget. Providers without a declared profile keep the
+			// user's retry.provider.maxRetries transport knob exactly as before.
+			const declaredPolicy = model.provider ? modelRuntime.getProvider(model.provider)?.retryPolicy : undefined;
+			const profileMaxRetries =
+				declaredPolicy === undefined
+					? providerRetrySettings.maxRetries
+					: declaredPolicy.providerRequest.enabled
+						? declaredPolicy.providerRequest.maxRetries
+						: 0;
+			const serviceTier = options?.serviceTier ?? resolveRequestServiceTier(model);
 			return modelRuntime.streamSimple(model, context, {
 				...options,
+				...(serviceTier !== undefined ? { serviceTier } : {}),
 				timeoutMs,
 				websocketConnectTimeoutMs,
-				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
+				maxRetries: options?.maxRetries ?? profileMaxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 				transformHeaders: async (requestHeaders) => {
 					const headers = mergeProviderAttributionHeaders(
@@ -386,20 +493,24 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		timeoutMs: settingsManager.getAgentStreamIdleTimeoutMs(),
 		streamStartTimeoutMs: settingsManager.getAgentStreamStartTimeoutMs(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
+		cursorExecHandlers: (runSignal: AbortSignal) => createSessionCursorExecBridge(sessionRef, () => agent, runSignal),
 	});
+	// Agent core accepts the field in AgentState but older constructors may not copy it
+	// from initialState; assign the separately computed provenance explicitly.
+	agent.state.thinkingSelection = thinkingSelection;
 
 	// Restore messages if session has existing data
 	if (hasExistingSession) {
 		agent.state.messages = existingSession.messages;
 		if (!hasThinkingEntry) {
-			sessionManager.appendThinkingLevelChange(thinkingLevel);
+			sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection);
 		}
 	} else {
 		// Save initial model and thinking level for new sessions so they can be restored on resume
 		if (model) {
 			sessionManager.appendModelChange(model.provider, model.id);
 		}
-		sessionManager.appendThinkingLevelChange(thinkingLevel);
+		sessionManager.appendThinkingLevelChange(thinkingLevel, thinkingSelection);
 	}
 
 	const sessionStartEvent = initialModelProvenance
@@ -422,12 +533,42 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRuntime,
 		modelRegistry,
 		initialActiveToolNames,
+		defaultToolNames: sessionDefaultToolNames,
 		allowedToolNames,
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
 	});
+	const liveContextTokens = hasExistingSession
+		? existingSession.messages.reduce((total, message) => total + estimateTokens(message), 0)
+		: 0;
+	try {
+		session.assertModelUsable(
+			undefined,
+			liveContextTokens,
+			hasExistingSession ? { includeSpeculationLead: false, admission: "resume" } : { admission: "start" },
+		);
+	} catch (error) {
+		if (
+			!hasExistingSession ||
+			!(error instanceof ModelUsabilityBudgetError) ||
+			!session.settingsManager.getCompactionEnabled()
+		) {
+			throw error;
+		}
+		if (error.projection.liveContextTokens > error.projection.contextWindow) {
+			const plan = planResumeSlice({
+				entries: session.sessionManager.getBranch(),
+				projection: error.projection,
+			});
+			if (!plan) throw error;
+			session.applyResumeSlice(plan);
+		} else {
+			session.admitResumeCompactionRequired(error.projection);
+		}
+	}
+	sessionRef.current = session;
 	const extensionsResult = resourceLoader.getExtensions();
 
 	return {

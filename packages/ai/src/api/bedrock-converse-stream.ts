@@ -24,7 +24,7 @@ import {
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
-import type { DocumentType } from "@smithy/types";
+import type { DocumentType, HttpResponse } from "@smithy/types";
 import { HttpProxyAgent } from "http-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { calculateCost } from "../models.ts";
@@ -36,6 +36,7 @@ import type {
 	ImageContent,
 	Model,
 	ProviderEnv,
+	ProviderResponse,
 	SimpleStreamOptions,
 	StopReason,
 	StreamFunction,
@@ -62,7 +63,7 @@ import {
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
-import { resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
+import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
 	applyExtraBody,
@@ -111,9 +112,17 @@ export interface BedrockOptions extends StreamOptions {
 	bearerToken?: string;
 }
 
-type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
+type Block = (TextContent | ThinkingContent | ToolCall) & {
+	index?: number;
+	partialJson?: string;
+	/** Scratch buffer for encrypted reasoning deltas, joined into `thinkingSignature`. */
+	redactedChunks?: Uint8Array[];
+};
 
 const EMPTY_TEXT_PLACEHOLDER = "<empty>";
+
+/** Matches the placeholder the Anthropic API path uses for redacted thinking. */
+const REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]";
 
 export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
@@ -236,7 +245,14 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		let responseRequestId: string | undefined;
 
 		try {
+			const supportsStrictMode = model.compat?.supportsStrictMode ?? false;
 			const client = new BedrockRuntimeClient(config);
+			let observedRawResponse = false;
+			if (options.onResponse) {
+				addResponseHeadersMiddleware(client, options.onResponse, model, () => {
+					observedRawResponse = true;
+				});
+			}
 			const customHeaders = providerHeadersToRecord(options.headers);
 			if (customHeaders && Object.keys(customHeaders).length > 0) {
 				addCustomHeadersMiddleware(client, customHeaders);
@@ -254,7 +270,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 					...(inferenceMaxTokens !== undefined && { maxTokens: inferenceMaxTokens }),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
-				toolConfig: convertToolConfig(context.tools, options.toolChoice, model.compat?.supportsStrictMode ?? false),
+				toolConfig: convertToolConfig(context.tools, options.toolChoice, supportsStrictMode),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
 			};
@@ -267,7 +283,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 
 			const response = await client.send(command, { abortSignal: options.signal });
 			responseRequestId = normalizeDiagnosticValue(response.$metadata.requestId);
-			if (response.$metadata.httpStatusCode !== undefined) {
+			if (!observedRawResponse && response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
 				if (response.$metadata.requestId) {
 					responseHeaders["x-amzn-requestid"] = response.$metadata.requestId;
@@ -320,13 +336,13 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
 
+			// A stream can settle without stopping every block, so finalize here too.
+			for (const block of output.content) finalizeStreamingBlock(block as Block);
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {
-				delete (block as Block).index;
-				// partialJson is only a streaming scratch buffer; never persist it.
-				delete (block as Block).partialJson;
+				finalizeStreamingBlock(block as Block);
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
@@ -481,12 +497,52 @@ function addCustomHeadersMiddleware(client: BedrockRuntimeClient, headers: Recor
 	);
 }
 
+function isSmithyHttpResponse(response: unknown): response is HttpResponse {
+	if (!response || typeof response !== "object") return false;
+	const candidate = response as Partial<HttpResponse>;
+	return typeof candidate.statusCode === "number" && !!candidate.headers && typeof candidate.headers === "object";
+}
+
+function toProviderResponse(response: unknown): ProviderResponse | undefined {
+	if (!isSmithyHttpResponse(response)) return undefined;
+	return { status: response.statusCode, headers: { ...response.headers } };
+}
+
+/**
+ * Bedrock's modeled `$metadata` only preserves selected HTTP metadata (for example
+ * requestId), so custom gateway headers are otherwise lost before callers see
+ * `onResponse`. Capture the raw Smithy HTTP response at the deserialize step,
+ * after the SDK receives the response but before the event stream is consumed.
+ */
+function addResponseHeadersMiddleware(
+	client: BedrockRuntimeClient,
+	onResponse: NonNullable<BedrockOptions["onResponse"]>,
+	model: Model<"bedrock-converse-stream">,
+	onObserved: () => void,
+): void {
+	client.middlewareStack.add(
+		(next) => async (args) => {
+			const result = await next(args);
+			const providerResponse = toProviderResponse(result.response);
+			if (providerResponse) {
+				onObserved();
+				await onResponse(providerResponse, model);
+			}
+			return result;
+		},
+		{ step: "deserialize", name: "pi-ai-response-headers" },
+	);
+}
+
 export const streamSimple: StreamFunction<"bedrock-converse-stream", SimpleStreamOptions> = (
 	model: Model<"bedrock-converse-stream">,
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	const base = buildBaseOptions(model, context, options, undefined);
+	const base = {
+		...buildBaseOptions(model, context, options, undefined),
+		toolChoice: options?.toolChoice,
+	} satisfies BedrockOptions;
 	if (!options?.reasoning) {
 		return stream(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);
 	}
@@ -602,12 +658,54 @@ function handleContentBlockDelta(
 					partial: output,
 				});
 			}
-			if (delta.reasoningContent.signature) {
+			// `thinkingSignature` holds either an Anthropic signature or an opaque redacted
+			// payload, never both: mixing them would corrupt whichever arrived first.
+			if (delta.reasoningContent.signature && !thinkingBlock.redacted) {
 				thinkingBlock.thinkingSignature =
 					(thinkingBlock.thinkingSignature || "") + delta.reasoningContent.signature;
 			}
+			if (delta.reasoningContent.redactedContent?.length) {
+				// Encrypted reasoning from non-Anthropic models on Bedrock (e.g. OpenAI GPT-5.6).
+				// The payload is opaque, so keep it verbatim in `thinkingSignature` the way the
+				// Anthropic path stores redacted thinking, and replay it on the next turn.
+				if (!thinkingBlock.redacted) {
+					thinkingBlock.redacted = true;
+					thinkingBlock.thinkingSignature = "";
+					thinkingBlock.thinking += REDACTED_THINKING_PLACEHOLDER;
+					stream.push({
+						type: "thinking_delta",
+						contentIndex: thinkingIndex,
+						delta: REDACTED_THINKING_PLACEHOLDER,
+						partial: output,
+					});
+				}
+				thinkingBlock.redactedChunks ??= [];
+				thinkingBlock.redactedChunks.push(delta.reasoningContent.redactedContent);
+			}
 		}
 	}
+}
+
+/**
+ * Encodes buffered encrypted reasoning into `thinkingSignature` and drops the scratch
+ * buffer, which must never reach a persisted message: `Uint8Array` serializes to an
+ * index-keyed object roughly ten times the size of the base64 payload.
+ */
+function flushRedactedContent(block: Block): void {
+	if (block.type !== "thinking" || !block.redactedChunks) return;
+	block.thinkingSignature = bytesToBase64(block.redactedChunks);
+	delete block.redactedChunks;
+}
+
+/**
+ * Strips every streaming scratch field. Runs from the terminal paths as well as
+ * `contentBlockStop`, because a stream can settle without stopping each block.
+ */
+function finalizeStreamingBlock(block: Block): void {
+	delete block.index;
+	// partialJson is only a streaming scratch buffer; never persist it.
+	delete block.partialJson;
+	flushRedactedContent(block);
 }
 
 function handleMetadata(
@@ -641,6 +739,7 @@ function handleContentBlockStop(
 			stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: output });
 			break;
 		case "thinking":
+			flushRedactedContent(block);
 			stream.push({ type: "thinking_end", contentIndex: index, content: block.thinking, partial: output });
 			break;
 		case "toolCall":
@@ -800,6 +899,20 @@ function createRequiredTextBlock(text: string): ContentBlock.TextMember {
 	return createNonBlankTextBlock(text) ?? { text: EMPTY_TEXT_PLACEHOLDER };
 }
 
+function sanitizeBedrockDocument(value: DocumentType): DocumentType {
+	if (Array.isArray(value)) {
+		return value.map(sanitizeBedrockDocument);
+	}
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value)
+				.filter(([key]) => key.length > 0)
+				.map(([key, nestedValue]) => [key, sanitizeBedrockDocument(nestedValue)]),
+		);
+	}
+	return value;
+}
+
 function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
 	const result: ToolResultContentBlock[] = [];
 	for (const c of content) {
@@ -874,10 +987,19 @@ function convertMessages(
 						}
 						case "toolCall":
 							contentBlocks.push({
-								toolUse: { toolUseId: c.id, name: c.name, input: c.arguments },
+								toolUse: { toolUseId: c.id, name: c.name, input: sanitizeBedrockDocument(c.arguments) },
 							});
 							break;
 						case "thinking": {
+							// Encrypted reasoning is opaque: replay the stored payload as the
+							// `redactedContent` member instead of lowering it to reasoning text.
+							if (c.redacted) {
+								const redactedContent = decodeRedactedContent(c.thinkingSignature);
+								if (redactedContent?.length) {
+									contentBlocks.push({ reasoningContent: { redactedContent } });
+								}
+								continue;
+							}
 							// Skip empty thinking blocks
 							const thinking = sanitizeSurrogates(c.thinking);
 							if (thinking.trim().length === 0) continue;
@@ -995,7 +1117,7 @@ function convertToolConfig(
 			toolSpec: {
 				name: tool.name,
 				description: tool.description,
-				inputSchema: { json: toDocumentType(tool.parameters) },
+				inputSchema: { json: toDocumentType(getJsonSchemaToolParameters(tool, strict)) },
 				...(strict === true ? { strict: true } : {}),
 			},
 		};
@@ -1182,11 +1304,43 @@ function createImageBlock(mimeType: string, data: string) {
 			throw new Error(`Unknown image type: ${mimeType}`);
 	}
 
+	return { source: { bytes: base64ToBytes(data) }, format };
+}
+
+function base64ToBytes(data: string): Uint8Array {
 	const binaryString = atob(data);
 	const bytes = new Uint8Array(binaryString.length);
 	for (let i = 0; i < binaryString.length; i++) {
 		bytes[i] = binaryString.charCodeAt(i);
 	}
+	return bytes;
+}
 
-	return { source: { bytes }, format };
+/**
+ * Decodes a stored redacted payload. The AWS SDK hands the blob over as bytes, but a
+ * persisted session carries it as base64. A hand-edited or externally produced session
+ * can hold a signature that is not base64; drop that block instead of failing the
+ * whole request.
+ */
+function decodeRedactedContent(signature: string | undefined): Uint8Array | undefined {
+	if (!signature) return undefined;
+	try {
+		return base64ToBytes(signature);
+	} catch {
+		return undefined;
+	}
+}
+
+function bytesToBase64(chunks: Uint8Array[]): string {
+	// Encrypted reasoning runs to tens of KB, so build the binary string in slices
+	// rather than one concatenation per byte. The window stays under the engine's
+	// argument-count limit for spread calls.
+	const WINDOW = 0x8000;
+	let binary = "";
+	for (const chunk of chunks) {
+		for (let i = 0; i < chunk.length; i += WINDOW) {
+			binary += String.fromCharCode(...chunk.subarray(i, i + WINDOW));
+		}
+	}
+	return btoa(binary);
 }

@@ -1,5 +1,5 @@
 import { IdleTimeout, type IdleTimeoutOptions, type TimeoutPauseHandle } from "../timeouts/idle-timeout.ts";
-import type { EvalKernel } from "./types.ts";
+import type { EvalKernel, KernelInterruptHandle } from "./types.ts";
 
 const INTERRUPT_DELIVERY_GRACE_MS = 100;
 
@@ -13,14 +13,27 @@ export const defaultTimeoutFactory: EvalTimeoutFactory = {
 	},
 };
 
+export interface CellIdleWatchdogOptions {
+	readonly timeoutMs: number;
+	/** Caps how long a host-bridge pause may suspend the idle watchdog (the foreground window for a detaching cell). */
+	readonly maxPauseGraceMs: number;
+	readonly onTimeout: (error: Error) => void;
+}
+
 export interface CellExecutionOptions {
 	readonly callerSignal: AbortSignal;
 	readonly cellId: string;
-	readonly timeoutMs: number;
+	/** Interactive calls detach at this idle watchdog; a call that never detaches is bounded by its deadlines alone. */
+	readonly idle?: CellIdleWatchdogOptions;
 	readonly timeoutFactory: EvalTimeoutFactory;
-	readonly onTimeout: (error: Error) => void;
 	readonly onAbort: (error: Error) => void;
 }
+
+const NO_WATCHDOG: TimeoutPauseHandle & { dispose(): void } = {
+	pause(): void {},
+	resume(): void {},
+	dispose(): void {},
+};
 
 export class CellExecution {
 	readonly #callerSignal: AbortSignal;
@@ -43,11 +56,16 @@ export class CellExecution {
 		this.#detachedPromise = new Promise<void>((resolve) => {
 			this.#resolveDetached = resolve;
 		});
-		this.#watchdog = options.timeoutFactory.create({
-			cellId: options.cellId,
-			timeoutMs: options.timeoutMs,
-			onTimeout: ({ error }) => options.onTimeout(error),
-		});
+		const idle = options.idle;
+		this.#watchdog =
+			idle === undefined
+				? NO_WATCHDOG
+				: options.timeoutFactory.create({
+						cellId: options.cellId,
+						timeoutMs: idle.timeoutMs,
+						maxPauseGraceMs: idle.maxPauseGraceMs,
+						onTimeout: ({ error }) => idle.onTimeout(error),
+					});
 		this.#callerSignal.addEventListener("abort", this.#handleCallerAbort, {
 			once: true,
 		});
@@ -97,7 +115,8 @@ export class CellExecution {
 		this.#abort(this.#callerSignal.reason);
 	};
 
-	interruptStateRetained: Promise<boolean> | undefined;
+	/** Resolves with the kernel's interrupt handle once the abort reached it; undefined when no kernel was bound. */
+	interruptHandle: Promise<KernelInterruptHandle> | undefined;
 
 	#abort(reason: unknown): void {
 		if (!this.#active) return;
@@ -111,15 +130,12 @@ export class CellExecution {
 			return;
 		}
 		this.#interruptDeadline = setTimeout(() => this.#settleAbort(error), INTERRUPT_DELIVERY_GRACE_MS);
-		void Promise.resolve()
-			.then(async () => {
-				const handle = await kernel.interrupt(error.message);
-				this.interruptStateRetained = handle?.stateRetained;
-			})
-			.then(
-				() => this.#settleAbort(error),
-				(interruptError: unknown) => this.#settleAbort(interruptError),
-			);
+		const handle = Promise.resolve().then(async () => await kernel.interrupt(error.message));
+		this.interruptHandle = handle;
+		void handle.then(
+			() => this.#settleAbort(error),
+			(interruptError: unknown) => this.#settleAbort(interruptError),
+		);
 	}
 
 	#settleAbort(reason: unknown): void {

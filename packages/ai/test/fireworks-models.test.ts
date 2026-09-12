@@ -37,14 +37,14 @@ describe("Fireworks models", () => {
 		});
 	});
 
-	it("registers the Fire Pass turbo router model", () => {
+	it("registers the Fire Pass fast router model", () => {
 		const model = getModels("fireworks").find(
-			(candidate) => candidate.id.startsWith("accounts/fireworks/routers/") && candidate.id.endsWith("-turbo"),
+			(candidate) => candidate.id === "accounts/fireworks/routers/kimi-k3-fast",
 		);
 
 		expect(model).toBeDefined();
-		expect(model?.api).toBe("anthropic-messages");
-		expect(model?.baseUrl).toBe("https://api.fireworks.ai/inference");
+		expect(model?.api).toBe("openai-completions");
+		expect(model?.baseUrl).toBe("https://api.fireworks.ai/inference/v1");
 		expect(model?.input).toEqual(["text", "image"]);
 	});
 

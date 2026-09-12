@@ -19,6 +19,12 @@ export const TRACK_WINDOW = 64;
 /** Consecutive byte-identical (tool + canonical args) calls before the firm reminder fires. */
 export const IDENTICAL_RUN_THRESHOLD = 3;
 
+/** Admitted identical-loop reminders ignored before the next same call is blocked. */
+export const IDENTICAL_BLOCK_NOTICE_THRESHOLD = 2;
+
+/** Loop-guard-owned blocked calls before the active turn is interrupted. */
+export const IDENTICAL_HARD_STOP_BLOCK_THRESHOLD = 3;
+
 /** Consecutive same-tool calls with near-identical args before the caution fires. */
 export const SIMILAR_RUN_THRESHOLD = 5;
 

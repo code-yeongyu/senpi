@@ -85,4 +85,16 @@ export const INPUT_TIPS = [
 		bindings: [],
 		render: () => "Drag and drop files into the terminal to add their paths to your prompt.",
 	},
+	{
+		id: "answer-agent-question",
+		bindings: [],
+		render: () =>
+			"When the agent asks you a question, pick options with digits or arrows, press Enter to advance, and use the final Submit tab for a comment or partial answers; anything unanswered is reported back as unanswered.",
+	},
+	{
+		id: "open-pending-question",
+		bindings: ["app.question.answer"],
+		render: (keys) =>
+			`A question parked above the editor while the agent works shows what it asks; open it with Enter on an empty editor, /answer, or ${keys("app.question.answer")}.`,
+	},
 ] satisfies readonly TipDefinition[];

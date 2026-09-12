@@ -9,3 +9,5 @@ export const RESERVED_SCHEMA_TOOL = "__schema__" as const;
 export const TIMEOUT_PAUSE_OP = "timeout-pause" as const;
 /** Canonical oh-my-pi eval-timeout resume operation. */
 export const TIMEOUT_RESUME_OP = "timeout-resume" as const;
+/** Status op the JS worker emits the moment it receives `interrupt`; proves its event loop is not blocked. */
+export const INTERRUPT_ACK_OP = "interrupt-ack" as const;

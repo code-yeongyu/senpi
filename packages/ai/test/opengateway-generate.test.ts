@@ -83,6 +83,7 @@ describe("fetchOpenGatewayModels", () => {
 		expect(models).toHaveLength(1);
 		expect(models[0]?.name).toBe("Kimi K3 Ultrafast");
 		expect(models[0]?.reasoning).toBe(true);
+		expect(models[0]?.contextWindow).toBe(262144);
 		expect(models[0]?.maxTokens).toBe(131072);
 	});
 

@@ -48,8 +48,9 @@ export interface AuthOperationOptions {
 }
 
 /**
- * App-owned credential storage, keyed by `Provider.id`, one credential per
- * provider. `modify` is the only write path, so every mutation is a
+ * App-owned credential storage, keyed by `Provider.id`, one entry per
+ * provider; an entry may pool sibling slots under `accounts` while its flat
+ * fields remain a valid credential. `modify` is the only write path, so every mutation is a
  * serialized read-modify-write; `Models.getAuth()` runs OAuth refresh inside
  * `modify` so concurrent requests cannot double-refresh a rotated token. The
  * app persists a credential after login via
@@ -146,6 +147,13 @@ export type AuthEvent =
 	  }
 	| { type: "progress"; message: string };
 
+/** Secret-free receipt emitted only after the account write succeeds. */
+export interface AccountLoginReceipt {
+	readonly providerId: string;
+	readonly name: string;
+	readonly origin: "generated" | "provider";
+}
+
 /**
  * Login interaction callbacks serving both api-key and OAuth flows.
  *
@@ -155,13 +163,15 @@ export type AuthEvent =
  */
 export interface AuthInteraction {
 	signal?: AbortSignal;
+	/** Absent for provider-owned envelopes without one unambiguous new slot ID. */
+	onAccountCommitted?(receipt: AccountLoginReceipt): void;
 
 	prompt(prompt: AuthPrompt): Promise<string>;
 	notify(event: AuthEvent): void;
 }
 
 /** Normalized interaction passed to provider login implementations. */
-export type ProviderAuthInteraction = AuthInteraction & { signal: AbortSignal };
+export type ProviderAuthInteraction = Omit<AuthInteraction, "onAccountCommitted"> & { signal: AbortSignal };
 
 /**
  * Api-key auth: stored key/provider env plus ambient sources (env vars, AWS
@@ -170,6 +180,9 @@ export type ProviderAuthInteraction = AuthInteraction & { signal: AbortSignal };
 export interface ApiKeyAuth {
 	/** Display name, e.g. "Anthropic API key". */
 	name: string;
+
+	/** Ambient compatibility adapter that must not outrank a stored OAuth credential. */
+	ambientOnly?: boolean;
 
 	/** Interactive setup (prompt for key/provider env). Absent = ambient-only. */
 	login?(interaction: ProviderAuthInteraction): Promise<ApiKeyCredential>;

@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { findAltScreenSearchMatches } from "../src/alt-screen-search.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
@@ -17,6 +18,21 @@ import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
+
+class InputOverlay {
+	focused = false;
+	inputs: string[] = [];
+
+	handleInput(data: string): void {
+		this.inputs.push(data);
+	}
+
+	render(): string[] {
+		return ["overlay"];
+	}
+
+	invalidate(): void {}
+}
 
 class RecordingTerminal extends VirtualTerminal {
 	readonly events: Array<{ type: "write"; data: string } | { type: "start" } | { type: "stop" }> = [];
@@ -209,8 +225,9 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
-	it("invokes the right-click paste handler only on Windows", () => {
+	it("invokes the right-click paste handler only on Windows outside VS Code", () => {
 		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		const termProgram = process.env.TERM_PROGRAM;
 		assert.ok(platformDescriptor);
 		const terminal = new VirtualTerminal();
 		let pasteCount = 0;
@@ -221,17 +238,25 @@ describe("TuiAltScreen", () => {
 		});
 		try {
 			Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
+			delete process.env.TERM_PROGRAM;
 			tui.start();
 			terminal.sendInput("\x1b[<2;1;1M");
 			terminal.sendInput("\x1b[<2;1;1m");
 			assert.strictEqual(pasteCount, 1);
 
+			process.env.TERM_PROGRAM = "vscode";
+			terminal.sendInput("\x1b[<2;1;1M");
+			assert.strictEqual(pasteCount, 1);
+
 			Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
+			delete process.env.TERM_PROGRAM;
 			terminal.sendInput("\x1b[<2;1;1M");
 			assert.strictEqual(pasteCount, 1);
 		} finally {
 			tui.stop();
 			Object.defineProperty(process, "platform", platformDescriptor);
+			if (termProgram === undefined) delete process.env.TERM_PROGRAM;
+			else process.env.TERM_PROGRAM = termProgram;
 		}
 	});
 
@@ -379,6 +404,105 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("searches normalized rendered transcript text across rows", () => {
+		assert.deepStrictEqual(findAltScreenSearchMatches(["alpha QUICK", "brown fox"], "quick brown"), [
+			{
+				segments: [
+					{ row: 0, startCol: 6, endCol: 11 },
+					{ row: 1, startCol: 0, endCol: 5 },
+				],
+			},
+		]);
+	});
+
+	it("uses configured styles for current and non-current search matches", async () => {
+		const terminal = new RecordingTerminal(60, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			searchMatchStyle: (text) => `\x1b[41m${text}\x1b[49m`,
+			searchCurrentMatchStyle: (text) => `\x1b[42m${text}\x1b[49m`,
+		});
+		tui.addChild(new Text("needle first\nmiddle\nneedle second\nend", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+
+		assert.ok(
+			terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[42mneedle\x1b[49m")),
+		);
+		assert.ok(
+			terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[41mneedle\x1b[49m")),
+		);
+		tui.stop();
+	});
+
+	it("searches the transcript with Ctrl+Shift+F and restores editor focus on close", async () => {
+		const terminal = new RecordingTerminal(60, 8);
+		const tui = new TuiAltScreen(terminal);
+		const transcriptText = new Text(
+			Array.from({ length: 12 }, (_, index) => {
+				if (index === 4) return "line 5 needle one";
+				if (index === 9) return "line 10 needle two";
+				return `line ${index + 1}`;
+			}).join("\n"),
+			0,
+			0,
+		);
+		const transcript = new ScrollView(transcriptText, { follow: "end", primary: true });
+		const editorInputs: string[] = [];
+		const editor = {
+			focused: false,
+			render: () => ["editor"],
+			invalidate: () => {},
+			handleInput: (data: string) => editorInputs.push(data),
+		};
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: transcript, basis: 0, grow: 1, minSize: 1 },
+				{ component: editor, basis: 1, shrink: 0 },
+			]),
+		);
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[102;6u");
+		terminal.sendInput("needle");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.isFollowingEnd, false);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("line 10 needle two")));
+		assert.deepStrictEqual(editorInputs, []);
+		assert.ok(
+			terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[1;7mneedle\x1b[22;27m")),
+		);
+
+		for (let index = 0; index < 6; index++) terminal.sendInput("\x1b[<64;1;4M");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, 0);
+		assert.ok(terminal.getViewport().some((line) => line.includes("> needle")));
+
+		terminal.sendInput("\x07");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("1/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("line 5 needle one")));
+
+		terminal.sendInput("\x1b[103;6u");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript") && line.includes("2/2")));
+		assert.ok(terminal.getViewport().some((line) => line.includes("line 10 needle two")));
+
+		terminal.sendInput("\x1b");
+		terminal.sendInput("x");
+		await terminal.waitForRender();
+		assert.ok(!terminal.getViewport().some((line) => line.includes("Find transcript")));
+		assert.deepStrictEqual(editorInputs, ["x"]);
+
+		tui.stop();
+	});
+
 	it("scrolls the transcript by half a page with custom bindings", async () => {
 		const originalKeybindings = getKeybindings();
 		const terminal = new VirtualTerminal(20, 10);
@@ -400,6 +524,35 @@ describe("TuiAltScreen", () => {
 			assert.strictEqual(tui.viewportTop, 15);
 
 			terminal.sendInput("\x04");
+			await terminal.waitForRender();
+			assert.strictEqual(tui.viewportTop, 20);
+		} finally {
+			tui.stop();
+			setKeybindings(originalKeybindings);
+		}
+	});
+
+	it("scrolls the transcript by one line with custom bindings", async () => {
+		const originalKeybindings = getKeybindings();
+		const terminal = new VirtualTerminal(20, 10);
+		const tui = new TuiAltScreen(terminal);
+		setKeybindings(
+			new KeybindingsManager(TUI_KEYBINDINGS, {
+				"tui.altScreen.lineUp": "ctrl+y",
+				"tui.altScreen.lineDown": "ctrl+e",
+			}),
+		);
+		try {
+			tui.addChild(new Text(Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+			tui.start();
+			await terminal.waitForRender();
+			assert.strictEqual(tui.viewportTop, 20);
+
+			terminal.sendInput("\x19");
+			await terminal.waitForRender();
+			assert.strictEqual(tui.viewportTop, 19);
+
+			terminal.sendInput("\x05");
 			await terminal.waitForRender();
 			assert.strictEqual(tui.viewportTop, 20);
 		} finally {
@@ -746,7 +899,7 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
-	it("opens an OSC 8 hyperlink on click but not on drag", async () => {
+	it("opens an OSC 8 hyperlink with specific or generic release codes, but not on drag", async () => {
 		const terminal = new RecordingTerminal(20, 3);
 		const openedUrls: string[] = [];
 		const tui = new TuiAltScreen(terminal, undefined, undefined, {
@@ -766,7 +919,7 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 
 		terminal.sendInput("\x1b[<0;2;1M");
-		terminal.sendInput("\x1b[<0;2;1m");
+		terminal.sendInput("\x1b[<3;2;1m");
 		await terminal.waitForRender();
 		assert.deepStrictEqual(openedUrls, [url]);
 
@@ -789,16 +942,16 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("selects visible text with the mouse and copies it with OSC 52", async () => {
+	it("selects visible text with the mouse and copies it with OSC 52 after a generic release", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
-		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.addChild(new Text("\x1b[1mal\x1b[0mpha\nbeta\ngamma\ndelta", 0, 0));
 		tui.start();
 		await terminal.waitForRender();
 
 		terminal.sendInput("\x1b[<0;1;1M");
 		terminal.sendInput("\x1b[<32;4;2M");
-		terminal.sendInput("\x1b[<0;4;2m");
+		terminal.sendInput("\x1b[<3;4;2m");
 		await terminal.waitForRender();
 
 		const expectedClipboardSequence = `\x1b]52;c;${Buffer.from("alpha\nbeta").toString("base64")}\x07`;
@@ -811,10 +964,122 @@ describe("TuiAltScreen", () => {
 		);
 		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[7m")));
 		assert.ok(
-			terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[7m\x1b[0m\x1b[7m")),
-			"selection inverse must be reapplied after layout segment resets",
+			terminal.events.some((event) => event.type === "write" && event.data.includes("al\x1b[0m\x1b[7mpha")),
+			"selection inverse must be reapplied after a reset inside the selection",
 		);
 		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("uses an injected copySelection handler instead of OSC 52 and reports success", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+		assert.ok(
+			terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")),
+			"must not emit OSC 52 when a copySelection handler is provided",
+		);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("leaves selections visible without copying when copyOnSelect is disabled", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, []);
+		assert.strictEqual(tui.hasActiveSelection(), true);
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[7m")));
+		assert.ok(terminal.getViewport().every((line) => !line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("copies an active selection programmatically", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.hasActiveSelection(), false);
+		assert.strictEqual(await tui.copyActiveSelectionToClipboard(), false);
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+		assert.strictEqual(tui.hasActiveSelection(), true);
+
+		copied.length = 0;
+		assert.strictEqual(await tui.copyActiveSelectionToClipboard(), true);
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("flashes an error when the injected copySelection handler fails", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copySelection: async () => false,
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.ok(terminal.getViewport().some((line) => line.includes("Copy failed")));
+		assert.ok(
+			terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")),
+			"must not emit OSC 52 when a copySelection handler is provided",
+		);
 
 		tui.stop();
 	});
@@ -833,6 +1098,35 @@ describe("TuiAltScreen", () => {
 
 		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("foo\x1b[27m")));
 		tui.stop();
+	});
+
+	it("coalesces slash and hyphen separated segments for double-click word selection", async () => {
+		for (const { line, needle } of [
+			{ line: "extensions/starline/fixed-editor/compositor.ts", needle: "starline" },
+			{ line: "earendil-works/pi-tui", needle: "works" },
+		]) {
+			const copied: string[] = [];
+			const terminal = new RecordingTerminal(80, 1);
+			const tui = new TuiAltScreen(terminal, undefined, undefined, {
+				copySelection: async (text) => {
+					copied.push(text);
+					return true;
+				},
+			});
+			tui.addChild(new Text(line, 0, 0));
+			tui.start();
+			await terminal.waitForRender();
+
+			const oneBasedClickColumn = line.indexOf(needle) + 1;
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1M`);
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1m`);
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1M`);
+			terminal.sendInput(`\x1b[<0;${oneBasedClickColumn};1m`);
+			await terminal.waitForRender();
+
+			assert.deepStrictEqual(copied, [line]);
+			tui.stop();
+		}
 	});
 
 	it("highlights a complete whitespace segment during a word drag", async () => {
@@ -891,15 +1185,22 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("ignores orphan selection events and cancels an active selection on focus loss", async () => {
+	it("does not repaint idle or zero-width selections on focus loss", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
 		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
 		tui.start();
 		await terminal.waitForRender();
 
+		const writeCount = () => terminal.events.filter((event) => event.type === "write").length;
 		const clipboardWriteCount = () =>
 			terminal.events.filter((event) => event.type === "write" && event.data.includes("\x1b]52;c;")).length;
+
+		const idleWriteCount = writeCount();
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		await terminal.waitForRender();
+		assert.strictEqual(writeCount(), idleWriteCount);
 
 		// A completed click leaves a zero-width anchor, but later orphaned drag/release events must not extend it.
 		terminal.sendInput("\x1b[<0;1;1M");
@@ -909,10 +1210,14 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 		assert.strictEqual(clipboardWriteCount(), 0);
 
-		// Losing focus also cancels a press whose matching release never arrived.
-		terminal.sendInput("\x1b[<0;1;1M");
+		// Losing focus after a press without a drag cancels the press without repainting.
+		terminal.sendInput("\x1b[<0;1;3M");
+		await terminal.waitForRender();
+		const pressedWriteCount = writeCount();
 		terminal.sendInput("\x1b[O");
 		terminal.sendInput("\x1b[I");
+		await terminal.waitForRender();
+		assert.strictEqual(writeCount(), pressedWriteCount);
 		terminal.sendInput("\x1b[<32;4;2M");
 		terminal.sendInput("\x1b[<0;4;2m");
 		await terminal.waitForRender();
@@ -921,6 +1226,66 @@ describe("TuiAltScreen", () => {
 
 		tui.stop();
 		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[?1004l")));
+	});
+
+	it("clears an active visible selection on focus loss and ignores orphan events", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		await terminal.waitForRender();
+		const focusLossEventCount = terminal.events.length;
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		await terminal.waitForRender();
+		const focusLossWrites = terminal.events
+			.slice(focusLossEventCount)
+			.filter((event): event is { type: "write"; data: string } => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		assert.ok(focusLossWrites.includes("alpha"));
+		assert.ok(focusLossWrites.includes("beta"));
+		assert.ok(!focusLossWrites.includes("\x1b[7m"));
+
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")));
+		tui.stop();
+	});
+
+	it("retains a completed visible selection across focus changes", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		const completedWriteCount = terminal.events.filter((event) => event.type === "write").length;
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		await terminal.waitForRender();
+		assert.strictEqual(terminal.events.filter((event) => event.type === "write").length, completedWriteCount);
+
+		const redrawEventCount = terminal.events.length;
+		tui.renderNow(true);
+		const redrawWrites = terminal.events
+			.slice(redrawEventCount)
+			.filter((event): event is { type: "write"; data: string } => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		assert.ok(redrawWrites.includes("alpha"));
+		assert.ok(redrawWrites.includes("beta"));
+		assert.ok(redrawWrites.includes("\x1b[7m"));
+		tui.stop();
 	});
 
 	it("stacks flash messages and collapses them as they expire", async () => {
@@ -1063,5 +1428,83 @@ describe("TuiAltScreen", () => {
 			assert.ok(restoreEvent.data.includes("sixth"));
 			assert.ok(restoreEvent.data.indexOf("first") < restoreEvent.data.indexOf("sixth"));
 		}
+	});
+
+	it("gives wheel and viewport keys to a focused overlay", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		const overlay = new InputOverlay();
+		tui.start();
+		await terminal.waitForRender();
+		const topBefore = tui.viewportTop;
+		const handle = tui.showOverlay(overlay);
+		await terminal.waitForRender();
+		assert.strictEqual(overlay.focused, true);
+
+		const wheel = "\x1b[<64;10;3M";
+		const keys = ["\x1b[5~", "\x1b[6~", "\x1bOH", "\x1bOF", wheel];
+		for (const key of keys) terminal.sendInput(key);
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(overlay.inputs, keys);
+		assert.strictEqual(tui.viewportTop, topBefore);
+
+		handle.hide();
+		await terminal.waitForRender();
+		terminal.sendInput("\x1b[5~");
+		await terminal.waitForRender();
+		assert.ok(tui.viewportTop < topBefore);
+		tui.stop();
+	});
+
+	it("keeps viewport scrolling when an overlay is not focused", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal);
+		const editor = new InputOverlay();
+		tui.addChild(new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+		const topBefore = tui.viewportTop;
+
+		const hidden = tui.showOverlay(new InputOverlay());
+		hidden.setHidden(true);
+		const nonCapturing = new InputOverlay();
+		tui.showOverlay(nonCapturing, { nonCapturing: true });
+		const unfocused = new InputOverlay();
+		const unfocusedHandle = tui.showOverlay(unfocused);
+		unfocusedHandle.unfocus();
+		await terminal.waitForRender();
+		assert.strictEqual(nonCapturing.focused, false);
+		assert.strictEqual(unfocused.focused, false);
+
+		terminal.sendInput("\x1b[5~");
+		terminal.sendInput("\x1b[<64;10;3M");
+		await terminal.waitForRender();
+		assert.ok(tui.viewportTop < topBefore);
+		assert.deepStrictEqual(nonCapturing.inputs, []);
+		assert.deepStrictEqual(unfocused.inputs, []);
+		tui.stop();
+	});
+
+	it("keeps viewport scrolling while transcript search is focused", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+		const topBefore = tui.viewportTop;
+
+		terminal.sendInput("\x1b[102;6u");
+		await terminal.waitForRender();
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript")));
+
+		terminal.sendInput("\x1b[5~");
+		terminal.sendInput("\x1b[<64;1;4M");
+		await terminal.waitForRender();
+		assert.ok(tui.viewportTop < topBefore);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Find transcript")));
+		tui.stop();
 	});
 });

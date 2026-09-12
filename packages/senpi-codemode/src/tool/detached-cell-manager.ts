@@ -1,6 +1,13 @@
 import type { AgentToolResult } from "@code-yeongyu/senpi";
-import { DEFAULT_HARD_LIMIT_SECONDS } from "../config/settings.ts";
-import { SENPI_CODEMODE_WAKE_SOURCE, type WakeSourceState } from "../extension/wake-source-state.ts";
+import { DEFAULT_HARD_LIMIT_SECONDS, DEFAULT_RUN_BUDGET_SECONDS } from "../config/settings.ts";
+import type { WakeSourceState } from "../extension/wake-source-state.ts";
+import { type CellDeadlineExpiry, CellDeadlines } from "./cell-deadlines.ts";
+import type {
+	EvalDetachedCellManagerOptions,
+	EvalDetachedCellSnapshot,
+	EvalDetachedCellState,
+	EvalDetachedCellStatusEntry,
+} from "./detached-cell-contract.ts";
 import { detachedNotificationSpillPath } from "./detached-cell-notification.ts";
 import { currentDetachedResult, detachedErrorResult, snapshotDetachedCell } from "./detached-cell-snapshot.ts";
 import {
@@ -8,10 +15,18 @@ import {
 	allowsDetachedCellTransition,
 	detachedCellIsActive,
 } from "./detached-cell-state.ts";
+import { detachedStatusEntries, detachedWakeSourceState } from "./detached-cell-status.ts";
 import { DetachedNotificationQueue } from "./detached-notification-queue.ts";
 import type { EvalKernel, EvalLanguage, EvalToolDetails, EvalToolInput } from "./types.ts";
 
-export type EvalDetachedCellState = "running" | "detached" | "completed" | "failed" | "cancelled";
+export type {
+	EvalDetachedCellManagerOptions,
+	EvalDetachedCellNotification,
+	EvalDetachedCellNotifier,
+	EvalDetachedCellSnapshot,
+	EvalDetachedCellState,
+	EvalDetachedCellStatusEntry,
+} from "./detached-cell-contract.ts";
 
 type LiveResultProvider = () => AgentToolResult<EvalToolDetails>;
 
@@ -26,58 +41,20 @@ type ManagedCell = {
 	wasDetached: boolean;
 	kernel: EvalKernel | undefined;
 	stateRetained: boolean | undefined;
+	interruptNote: string | undefined;
+	/** Holds the completion notification until the interrupt has reported whether kernel state survived. */
+	interruptOutcome: PromiseWithResolvers<void> | undefined;
 	liveResult: LiveResultProvider | undefined;
 	terminalResult: AgentToolResult<EvalToolDetails> | undefined;
 	notificationQueued: boolean;
-	hardLimitSeconds: number;
-	hardLimitTimer: ReturnType<typeof setTimeout> | undefined;
+	readonly deadlines: CellDeadlines;
+	readonly hardLimitSeconds: number;
+	readonly runBudgetSeconds: number;
 	hardLimited: boolean;
-	onHardLimit: ((error: Error) => void) | undefined;
+	runBudgetExhausted: boolean;
+	/** Foreground killer: the still-awaited CellExecution owns interrupting and rejecting its own call; bound from creation so a deadline firing during kernel boot still ends it. */
+	onKill: ((error: Error) => void) | undefined;
 };
-
-export interface EvalDetachedCellSnapshot {
-	readonly cellId: string;
-	readonly language: EvalLanguage;
-	readonly state: EvalDetachedCellState;
-	readonly outputTail: string;
-	readonly result: AgentToolResult<EvalToolDetails>;
-	readonly stateRetained: boolean | undefined;
-	/** Set only when the wall-clock kill deadline ended this cell. */
-	readonly hardLimitSeconds?: number;
-}
-
-export interface EvalDetachedCellNotification {
-	readonly cellId: string;
-	readonly content: string;
-}
-
-export interface EvalDetachedCellNotifier {
-	notify(cells: readonly EvalDetachedCellNotification[]): void;
-}
-
-export interface EvalDetachedCellStatusEntry {
-	readonly cellId: string;
-	readonly language: EvalLanguage;
-	readonly summary?: string;
-	readonly startedAtMs: number;
-}
-
-export interface EvalDetachedCellManagerOptions {
-	readonly artifactsDir?: string;
-	readonly notifier?: EvalDetachedCellNotifier;
-	/** Wall-clock kill deadline in seconds; defaults to the bash-parity 1800s. */
-	readonly hardLimitSeconds?: number;
-	readonly onStatusChange?: (entries: readonly EvalDetachedCellStatusEntry[]) => void;
-	/** Receives a full per-source liveness snapshot on every detached-cell transition; used by the goal builtin. */
-	readonly onWakeSourceState?: (state: WakeSourceState) => void;
-	readonly now?: () => number;
-}
-
-export function hardLimitError(cellId: string, hardLimitSeconds: number): Error {
-	const error = new Error(`Eval cell ${cellId} was killed at the ${hardLimitSeconds}s hard limit.`);
-	error.name = "TimeoutError";
-	return error;
-}
 
 export class EvalDetachedCellManager {
 	readonly #artifactsDir: string | undefined;
@@ -88,22 +65,27 @@ export class EvalDetachedCellManager {
 	readonly #notificationQueue: DetachedNotificationQueue;
 	readonly #now: () => number;
 	readonly #hardLimitSeconds: number;
+	readonly #runBudgetSeconds: number;
 
 	constructor(options: EvalDetachedCellManagerOptions = {}) {
 		this.#artifactsDir = options.artifactsDir;
 		this.#onStatusChange = options.onStatusChange;
 		this.#onWakeSourceState = options.onWakeSourceState;
-		this.#notificationQueue = new DetachedNotificationQueue(options.notifier, options.artifactsDir);
+		this.#notificationQueue = new DetachedNotificationQueue(options.notifier);
 		this.#now = options.now ?? Date.now;
 		this.#hardLimitSeconds = options.hardLimitSeconds ?? DEFAULT_HARD_LIMIT_SECONDS;
+		this.#runBudgetSeconds = options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS;
 	}
 
-	create(cellId: string, input: EvalToolInput): ManagedCell {
+	create(cellId: string, input: EvalToolInput, onKill?: (error: Error) => void): ManagedCell {
 		const existing = this.#cells.get(cellId);
 		if (existing !== undefined) {
 			if (detachedCellIsActive(existing.state)) throw activeDetachedCellReuseError(existing);
 			this.#cells.delete(cellId);
 		}
+		// An explicit longer per-call timeout raises the deadline, mirroring bash keeping explicit timeouts.
+		const hardLimitSeconds = Math.max(this.#hardLimitSeconds, input.timeout ?? 0);
+		const runBudgetSeconds = input.timeout ?? this.#runBudgetSeconds;
 		const cell: ManagedCell = {
 			cellId,
 			input,
@@ -114,18 +96,28 @@ export class EvalDetachedCellManager {
 			wasDetached: false,
 			kernel: undefined,
 			stateRetained: undefined,
+			interruptNote: undefined,
+			interruptOutcome: undefined,
 			liveResult: undefined,
 			terminalResult: undefined,
 			notificationQueued: false,
-			// An explicit longer per-call timeout raises the deadline, mirroring bash keeping explicit timeouts.
-			hardLimitSeconds: Math.max(this.#hardLimitSeconds, input.timeout ?? 0),
-			hardLimitTimer: undefined,
+			deadlines: new CellDeadlines({
+				cellId,
+				hardLimitSeconds,
+				runBudgetSeconds,
+				onExpire: (expiry) => {
+					const managed = this.#cells.get(cellId);
+					if (managed !== undefined) void this.#expireDeadline(managed, expiry);
+				},
+			}),
+			hardLimitSeconds,
+			runBudgetSeconds,
 			hardLimited: false,
-			onHardLimit: undefined,
+			runBudgetExhausted: false,
+			onKill,
 			terminal: Promise.withResolvers<EvalDetachedCellSnapshot>(),
 		};
 		this.#cells.set(cellId, cell);
-		this.#armHardLimit(cell);
 		return cell;
 	}
 
@@ -133,14 +125,22 @@ export class EvalDetachedCellManager {
 		cell: ManagedCell,
 		kernel: EvalKernel,
 		liveResult: LiveResultProvider,
-		/** Foreground killer: the still-awaited CellExecution owns interrupting and rejecting its own call. */
-		onHardLimit?: (error: Error) => void,
+		onKill?: (error: Error) => void,
 	): void {
 		if (cell.state !== "running") return;
-		cell.onHardLimit = onHardLimit;
+		cell.onKill = onKill ?? cell.onKill;
 		cell.kernel = kernel;
 		cell.liveResult = liveResult;
 		cell.canDetach = true;
+	}
+
+	/** A host bridge call is in flight for this cell; its run budget stops charging until {@link resume}. */
+	pause(cell: ManagedCell): void {
+		cell.deadlines.pause();
+	}
+
+	resume(cell: ManagedCell): void {
+		cell.deadlines.resume();
 	}
 
 	detach(cell: ManagedCell): boolean {
@@ -162,13 +162,7 @@ export class EvalDetachedCellManager {
 
 	async stop(cellId: string, reason = "Stopped detached eval cell"): Promise<EvalDetachedCellSnapshot> {
 		const cell = this.#get(cellId);
-		if (cell.state === "detached") {
-			const claimed = this.#settle(cell, "cancelled", currentDetachedResult(cell));
-			if (claimed && cell.kernel !== undefined) {
-				const handle = await cell.kernel.interrupt(reason);
-				cell.stateRetained = await handle.stateRetained;
-			}
-		}
+		if (cell.state === "detached") await this.#cancel(cell, reason);
 		return this.#snapshot(cell);
 	}
 
@@ -209,7 +203,7 @@ export class EvalDetachedCellManager {
 		result: AgentToolResult<EvalToolDetails>,
 	): boolean {
 		if (!allowsDetachedCellTransition(cell.state, state)) return false;
-		this.#clearHardLimit(cell);
+		cell.deadlines.clear();
 		cell.state = state;
 		cell.terminalResult = result;
 		cell.liveResult = undefined;
@@ -221,7 +215,10 @@ export class EvalDetachedCellManager {
 			if (!cell.notificationQueued) {
 				cell.notificationQueued = true;
 				this.#notificationQueue.enqueue({
-					snapshot: () => this.#snapshot(cell),
+					snapshot: async () => {
+						await cell.interruptOutcome?.promise;
+						return this.#snapshot(cell);
+					},
 					spillPath: cell.spillPath,
 				});
 			}
@@ -229,61 +226,43 @@ export class EvalDetachedCellManager {
 		return true;
 	}
 
-	#armHardLimit(cell: ManagedCell): void {
-		const timer = setTimeout(() => void this.#expireHardLimit(cell), cell.hardLimitSeconds * 1_000);
-		timer.unref?.();
-		cell.hardLimitTimer = timer;
-	}
-
-	#clearHardLimit(cell: ManagedCell): void {
-		if (cell.hardLimitTimer === undefined) return;
-		clearTimeout(cell.hardLimitTimer);
-		cell.hardLimitTimer = undefined;
-	}
-
 	/**
-	 * The wall-clock kill deadline. Unlike the idle watchdog it is never paused by a bridge tool call and
-	 * survives detach, so it is the only bound a detached cell has.
+	 * A kill deadline fired (see {@link CellDeadlines}). A foreground cell is killed through the
+	 * CellExecution that still awaits it; a detached cell is cancelled here, which interrupts its kernel.
 	 */
-	async #expireHardLimit(cell: ManagedCell): Promise<void> {
+	async #expireDeadline(cell: ManagedCell, expiry: CellDeadlineExpiry): Promise<void> {
 		if (!detachedCellIsActive(cell.state)) return;
-		const foreground = cell.state === "running" && cell.onHardLimit !== undefined;
-		cell.hardLimited = true;
-		const error = hardLimitError(cell.cellId, cell.hardLimitSeconds);
-		if (!this.#settle(cell, "cancelled", currentDetachedResult(cell))) return;
+		const foreground = cell.state === "running" && cell.onKill !== undefined;
+		cell.hardLimited = expiry.kind === "hard-limit";
+		cell.runBudgetExhausted = expiry.kind === "run-budget";
 		if (foreground) {
-			cell.onHardLimit?.(error);
+			if (this.#settle(cell, "cancelled", currentDetachedResult(cell))) cell.onKill?.(expiry.error);
 			return;
 		}
-		if (cell.kernel === undefined) return;
-		const handle = await cell.kernel.interrupt(error.message);
-		cell.stateRetained = await handle.stateRetained;
+		await this.#cancel(cell, expiry.error.message);
+	}
+
+	async #cancel(cell: ManagedCell, reason: string): Promise<void> {
+		const outcome = Promise.withResolvers<void>();
+		cell.interruptOutcome = outcome;
+		try {
+			if (!this.#settle(cell, "cancelled", currentDetachedResult(cell)) || cell.kernel === undefined) return;
+			const handle = await cell.kernel.interrupt(reason);
+			cell.interruptNote = handle.note;
+			cell.stateRetained = await handle.stateRetained;
+		} finally {
+			outcome.resolve();
+		}
 	}
 
 	#emitStatus(): void {
 		const liveCells = [...this.#detachedByLanguage.values()];
-		this.#onStatusChange?.(
-			liveCells.map((cell) => ({
-				cellId: cell.cellId,
-				language: cell.input.language,
-				startedAtMs: cell.startedAtMs,
-				...(cell.input.summary === undefined ? {} : { summary: cell.input.summary }),
-			})),
-		);
+		this.#onStatusChange?.(detachedStatusEntries(liveCells));
 		this.#emitWakeSourceState(liveCells);
 	}
 
 	#emitWakeSourceState(liveCells: readonly ManagedCell[]): void {
-		this.#onWakeSourceState?.({
-			source: SENPI_CODEMODE_WAKE_SOURCE,
-			activeCount: liveCells.length,
-			items: liveCells.map((cell) => ({
-				id: cell.cellId,
-				description:
-					cell.input.summary === undefined || cell.input.summary.length === 0 ? cell.cellId : cell.input.summary,
-				startedAtMs: cell.startedAtMs,
-			})),
-		});
+		this.#onWakeSourceState?.(detachedWakeSourceState(liveCells));
 	}
 
 	#snapshot(cell: ManagedCell): EvalDetachedCellSnapshot {

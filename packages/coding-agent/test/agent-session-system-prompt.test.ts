@@ -56,7 +56,14 @@ describe("AgentSession CLI system prompt overrides", () => {
 			appendSystemPrompt: ["First CLI append.", "Second CLI append."],
 		});
 
-		expect(session.systemPrompt).toBe("CLI override system prompt.\n\nFirst CLI append.\n\nSecond CLI append.");
+		// The eval-only routing guidance is appended after the override because it is
+		// operational fact, not prompt content: without it the model cannot learn the
+		// `tool.<name>(...)` form for tools it can no longer call directly. The override
+		// still fully replaces the GENERATED base prompt, which is what this pins.
+		expect(
+			session.systemPrompt.startsWith("CLI override system prompt.\n\nFirst CLI append.\n\nSecond CLI append."),
+		).toBe(true);
+		expect(session.systemPrompt).not.toContain("You are senpi, a coding agent.");
 
 		session.dispose();
 	});
@@ -68,7 +75,7 @@ describe("AgentSession CLI system prompt overrides", () => {
 
 		expect(session.systemPrompt).toContain("You are senpi, a coding agent.");
 		expect(session.systemPrompt).toContain("Current working directory:");
-		expect(session.systemPrompt.endsWith("\n\nFirst CLI append.\n\nSecond CLI append.")).toBe(true);
+		expect(session.systemPrompt).toContain("\n\nFirst CLI append.\n\nSecond CLI append.");
 
 		session.dispose();
 	});

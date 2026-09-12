@@ -138,13 +138,14 @@ describe("eval hard limit", () => {
 		expect(recorder.notices[0]?.content).not.toContain("hard limit");
 	});
 
-	it("lets an explicit longer timeout raise the effective hard limit", async () => {
+	it("lets an explicit longer timeout raise the effective hard limit, even for a bridge-parked cell", async () => {
 		vi.useFakeTimers();
 		const manager = new EvalDetachedCellManager({ hardLimitSeconds: 2 });
 		const kernel = new FakeKernel([]);
 		const cell = manager.create("explicit-cell", input({ timeout: 5 }));
 		manager.markRunning(cell, kernel, liveResultFor("long by request"));
 		manager.detach(cell);
+		manager.pause(cell);
 
 		await vi.advanceTimersByTimeAsync(4_999);
 		expect(kernel.interrupts).toEqual([]);
@@ -153,6 +154,7 @@ describe("eval hard limit", () => {
 
 		expect(kernel.interrupts).toHaveLength(1);
 		expect(manager.peek("explicit-cell").hardLimitSeconds).toBe(5);
+		expect(manager.peek("explicit-cell").runBudgetSeconds).toBeUndefined();
 	});
 
 	it("delivers the hard-limit notice through the real eval tool path", async () => {

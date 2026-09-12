@@ -27,16 +27,22 @@ const EVENTS = new Set([
 	"speculative_stale",
 	"speculative_invalidated",
 	"idle_trigger",
+	"idle_applied",
 	"blocking_started",
 	"warm_consumed",
 	"core_route_generated",
 	"skip_cap",
 	"skip_breaker",
+	"skip_cursor_mid_turn",
 	"threshold_trigger",
 	"hard_limit_trigger",
+	"grace_deferred",
+	"breaker_deterministic_fallback",
 	"emergency_prune",
 	"ineffective_counted",
 	"summary_failed",
+	"remote_aborted",
+	"blocking_aborted",
 ]);
 
 export type CompactionLoggerEvent =
@@ -49,12 +55,18 @@ export type CompactionLoggerEvent =
 	| "core_route_generated"
 	| "skip_cap"
 	| "skip_breaker"
+	| "skip_cursor_mid_turn"
 	| "threshold_trigger"
 	| "hard_limit_trigger"
+	| "grace_deferred"
+	| "breaker_deterministic_fallback"
 	| "emergency_prune"
 	| "ineffective_counted"
 	| "idle_trigger"
-	| "summary_failed";
+	| "idle_applied"
+	| "summary_failed"
+	| "remote_aborted"
+	| "blocking_aborted";
 
 export interface CompactionLoggerData {
 	origin?: string;

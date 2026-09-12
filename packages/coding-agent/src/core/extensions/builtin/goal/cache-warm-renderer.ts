@@ -4,6 +4,7 @@ import {
 	formatCacheTtl,
 	formatSavedUsd,
 	formatWakeDuration,
+	formatWakeTimestamp,
 	formatWarmTokenCount,
 	type GoalCacheWarmupEntryData,
 } from "./cache-warm.ts";
@@ -40,13 +41,15 @@ function validIteration(value: number | undefined): number | undefined {
 function whyLine(data: GoalCacheWarmupEntryData): string {
 	switch (data.phase) {
 		case "scheduled": {
-			const expected = `Continuation expected ${formatExpectedWake(data.dueAtMs, data.delayMs)}`;
+			// The wait is not a cache-warm timer: it lets the live wake sources
+			// deliver, and the timed wake is only the stall backstop.
+			const backstop = `Stall backstop ${formatExpectedWake(data.dueAtMs, data.delayMs)}`;
 			if (data.cache?.ttlSeconds === undefined) {
-				return `${expected} - the monitor wakes the goal the moment decisive output lands.`;
+				return `${backstop} - the goal resumes as soon as a wake source delivers.`;
 			}
 			return data.delayMs < data.cache.ttlSeconds * 1000
-				? `${expected} - the timed wake stays inside the ${formatCacheTtl(data.cache.ttlSeconds)} prompt-cache TTL.`
-				: `${expected} - the prompt-cache TTL may elapse before the timed wake.`;
+				? `${backstop} - the goal resumes as soon as a wake source delivers, inside the ${formatCacheTtl(data.cache.ttlSeconds)} prompt-cache TTL.`
+				: `${backstop} - the goal resumes as soon as a wake source delivers; the ${formatCacheTtl(data.cache.ttlSeconds)} prompt-cache TTL may elapse first.`;
 		}
 		case "resumed":
 			return "Woke on schedule to keep pursuing the goal.";
@@ -55,8 +58,7 @@ function whyLine(data: GoalCacheWarmupEntryData): string {
 
 function formatExpectedWake(dueAtMs: number | undefined, elapsedMs: number): string {
 	if (dueAtMs === undefined || !Number.isFinite(dueAtMs)) return `waited ${formatWakeDuration(elapsedMs)}`;
-	const timestamp = new Date(dueAtMs).toISOString().slice(0, 16).replace("T", " ");
-	return `ready ${timestamp} UTC (${formatWakeDuration(elapsedMs)})`;
+	return `ready ${formatWakeTimestamp(dueAtMs)} (${formatWakeDuration(elapsedMs)})`;
 }
 
 function expandedLine(data: GoalCacheWarmupEntryData): string {

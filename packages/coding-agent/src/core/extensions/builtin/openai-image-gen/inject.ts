@@ -1,3 +1,4 @@
+import { DEFAULT_IMAGE_MODEL } from "../imagegen/params.ts";
 import { GENERATE_IMAGE_TOOL_NAME } from "../imagegen/tool.ts";
 
 /** Which image-generation surface owns the current request. */
@@ -32,9 +33,11 @@ function isGenerateImageFunctionTool(tool: unknown): boolean {
  *
  * Native entries are always removed first, so a payload that already carries one
  * (a replayed request, a second injector, a dated tool variant) can never end up
- * with duplicates and never leaks to a backend that does not implement it. When
- * nothing changes the ORIGINAL payload reference is returned, because payload
- * hooks chain and an unconditional copy would defeat identity checks downstream.
+ * with duplicates and never leaks to a backend that does not implement it. The
+ * injected entry pins `model`: without it the Responses API falls back to
+ * gpt-image-1. When nothing changes the ORIGINAL payload reference is returned,
+ * because payload hooks chain and an unconditional copy would defeat identity
+ * checks downstream.
  */
 export function applyImageGenerationTools(payload: unknown, mode: ImageGenMode): unknown {
 	if (!isRecord(payload)) return payload;
@@ -50,5 +53,5 @@ export function applyImageGenerationTools(payload: unknown, mode: ImageGenMode):
 		return removed ? { ...payload, tools: kept } : payload;
 	}
 
-	return { ...payload, tools: [...kept, { type: NATIVE_IMAGE_GEN_TOOL_TYPE }] };
+	return { ...payload, tools: [...kept, { type: NATIVE_IMAGE_GEN_TOOL_TYPE, model: DEFAULT_IMAGE_MODEL }] };
 }

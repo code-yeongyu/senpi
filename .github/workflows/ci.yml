@@ -17,12 +17,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install system dependencies
@@ -65,12 +65,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install system dependencies
@@ -100,19 +100,87 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  hooks-trust-storage-windows:
+    name: Hooks trust storage (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run hooks trust-storage regressions
+        run: npx vitest run test/suite/hooks-trust.test.ts test/suite/hooks-trust-storage-errors.test.ts test/suite/hooks-trust-storage-release-errors.test.ts test/suite/hooks-trust-storage-aba.test.ts
+        working-directory: packages/coding-agent
+
+  rpc-windows:
+    name: RPC named pipes (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      # Each suite runs in its own process; lifecycle failures are not retried in-process.
+      - name: Run RPC host ensure tests
+        run: bunx vitest run test/rpc-host-ensure.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Run RPC host lifecycle tests
+        run: bunx vitest run test/rpc-host-lifecycle.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Run RPC socket transport tests
+        run: bunx vitest run test/rpc-socket-transport.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Run app-server daemon tests
+        run: bunx vitest run test/suite/app-server-daemon.test.ts
+        working-directory: packages/coding-agent
+
   test-workspaces:
     name: Test (workspaces + scripts)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
 
       - name: Install system dependencies
         run: |
@@ -130,17 +198,25 @@ jobs:
       - name: Script tests
         run: npm run test:scripts
 
+      # The same script tests launched by bun: scripts/run-workspaces.test.mjs drives the
+      # workspace runner with whichever package manager started the run, so this step is
+      # the CI proof that root `bun run <script>` fans out through bun, not npm.
+      - name: Script tests (bun)
+        run: bun run test:scripts
+
+      # The workspace runner is the same code path root `npm run test` / `bun run test` use.
       - name: Workspace tests (all but coding-agent)
         timeout-minutes: 25
         run: >
-          npm run test
+          node scripts/run-workspaces.mjs
+          --if-present
           --workspace packages/agent
           --workspace packages/ai
           --workspace packages/pty
           --workspace packages/senpi-codemode
           --workspace packages/server
           --workspace packages/tui
-          --if-present
+          test
 
       - name: Workflow summary
         if: always()
@@ -156,7 +232,14 @@ jobs:
   # so the required-status contract is unchanged while the work runs in parallel.
   check-and-test:
     name: Check and test
-    needs: [check, test-coding-agent, test-workspaces]
+    needs:
+      [
+        check,
+        test-coding-agent,
+        hooks-trust-storage-windows,
+        rpc-windows,
+        test-workspaces,
+      ]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -181,6 +264,8 @@ jobs:
             echo "## Check and test (fan-in)"
             echo "- check: ${{ needs.check.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
+            echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -194,12 +279,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies
@@ -214,7 +299,7 @@ jobs:
 
       - name: Terminal extension + shell resolution tests
         shell: bash
-        run: npx vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts
+        run: npx vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts test/suite/regressions/issue-1229-win-fswatch-noncanonical-abort.test.ts
         working-directory: packages/coding-agent
 
   inspector-handoff:
@@ -227,12 +312,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies

@@ -50,6 +50,12 @@ All server notifications use the current Codex envelope and include `emittedAtMs
 before, between, and after correlated responses, except where a method explicitly guarantees response-before-notification
 ordering below.
 
+## Provider account display names
+
+`account/providerAccounts/read` returns secret-free account descriptors with `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Clients should render `displayName (name)` when present and the ID alone otherwise. Pins, removal, and comparisons must continue using immutable `name`, not the display label. Rename/clear operations are available through Senpi's account slash commands; no new app-server mutation method is introduced.
+
+`displayName` is stored NFC-normalized with internal whitespace collapsed and is at most 32 terminal columns wide, so a client can render it inline without measuring; it is unique per provider under a fold of case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes.
+
 ## Protocol Provenance
 
 The raw TypeScript fixture is pinned to Codex git
@@ -495,6 +501,20 @@ for matching command approvals in the same thread. If no subscriber is attached,
 no-subscriber reason. When a turn ends, pending approvals for that thread are cancelled and `serverRequest/resolved` is
 emitted.
 
+### User Input Requests
+
+When the question tool runs, the server sends `item/tool/requestUserInput` to subscribers of the thread. Fields include
+`threadId`, `turnId`, `itemId`, `questions` (each with `id`, `header`, `question`, `options`, `multiSelect`),
+`waitForAnswer`, and `timeoutMs`. `autoResolutionMs` is always `null` (deprecated). Additive fields `multiSelect`,
+`waitForAnswer`, and `timeoutMs` extend the generated `ToolRequestUserInputParams` shape.
+
+Respond with `item/tool/requestUserInput/answered` carrying `answers` (a map of question id to `{ answers: string[] }`)
+and an optional `comment`. The first responder wins; later responses are rejected.
+
+Draft updates are sent as `item/tool/userInputProgress` client notifications. Each progress frame resets the idle timer.
+The server emits `serverRequest/resolved` when the question resolves (answered, timed_out, cancelled, or
+comment-submitted). Pending requests are replayed to new subscribers and cancelled on `agent_end`.
+
 ## Multi-Session Semantics
 
 Each app-server process can keep multiple loaded threads. `thread/start`, `thread/resume`, and `thread/fork` load a
@@ -537,8 +557,8 @@ timestamps, paths, and tokens, and preserves frame order, array order, and notif
 From `packages/coding-agent`, build the pinned Codex oracle once, then run the available handshake scenario:
 
 ```bash
-node scripts/qa-app-server/differential/build-oracle.mjs
-node scripts/qa-app-server/differential/run.mjs --scenario handshake
+bun scripts/qa-app-server/differential/build-oracle.mjs
+bun scripts/qa-app-server/differential/run.mjs --scenario handshake
 ```
 
 The build uses `/Users/yeongyu/local-workspaces/codex/codex-rs/Cargo.toml` and writes the binary under that checkout's

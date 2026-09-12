@@ -82,10 +82,9 @@ export function comparePackageVersions(leftVersion: string, rightVersion: string
 
 export function isNewerPackageVersion(candidateVersion: string, currentVersion: string): boolean {
 	const comparison = comparePackageVersions(candidateVersion, currentVersion);
-	if (comparison !== undefined) {
-		return comparison > 0;
-	}
-	return candidateVersion.trim() !== currentVersion.trim();
+	// Unparseable pairs (e.g. branded build labels) are never "newer": an update
+	// we cannot order is not one we can advertise.
+	return comparison !== undefined && comparison > 0;
 }
 
 export function getReleaseChangelogUrl(version: string): string {

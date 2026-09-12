@@ -108,12 +108,11 @@ describe("blocking compaction network-failure degradation", () => {
 			harness.registration.setResponses([fauxAssistantMessage("never reached")]);
 
 			// When / Then: SummaryGenerationError keeps its degrade-to-unavailable
-			// contract, with no error message on the compaction feedback.
+			// contract, and the concrete reason is surfaced on the compaction feedback
+			// (issue #765) instead of the bare generic message.
 			await expect(beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx)).resolves.toBeUndefined();
-			const callsWithError = harness.endCompaction.mock.calls.filter(
-				(call) => typeof call[0]?.errorMessage === "string",
-			);
-			expect(callsWithError).toHaveLength(0);
+			const messages = harness.endCompaction.mock.calls.map((call) => call[0]?.errorMessage);
+			expect(messages).toContain("Compaction did not apply: unavailable");
 		});
 	});
 });

@@ -1,7 +1,14 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
-import { type AuthResolutionOverrides, ModelsError, resolveProviderAuth } from "./auth/resolve.ts";
+import { appendLoginSlot, removeSlot } from "./auth/pool/slots.ts";
+import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
+import {
+	type AuthResolutionOverrides,
+	ModelsError,
+	providerNotConfiguredMessage,
+	resolveProviderAuth,
+} from "./auth/resolve.ts";
 import type {
 	AuthCheck,
 	AuthContext,
@@ -30,11 +37,18 @@ import type {
 	ProviderRequestOptions,
 	ProviderStreams,
 	SimpleStreamOptions,
+	ThinkingLevelMap,
 	Usage,
 } from "./types.ts";
 import { operationSignal, raceWithAbortSignal } from "./utils/abort.ts";
+import type { RetryPolicyProfile } from "./utils/retry-profile/types.ts";
 
-export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
+export {
+	ModelsError,
+	type ModelsErrorCode,
+	PROVIDER_NOT_CONFIGURED_PREFIX,
+	providerNotConfiguredMessage,
+} from "./auth/resolve.ts";
 
 export interface ModelsPublication {
 	/** Provider-selected persisted catalog. Omit to leave storage unchanged; null deletes it. */
@@ -100,6 +114,8 @@ export interface Provider<TApi extends Api = Api> {
 
 	readonly baseUrl?: string;
 	readonly headers?: ProviderHeaders;
+	/** Omitting it means the shipped senpi default profile applies. */
+	readonly retryPolicy?: RetryPolicyProfile;
 
 	/**
 	 * Required: at least one of `apiKey`/`oauth`. Every provider has auth
@@ -198,7 +214,7 @@ export interface Models {
 	login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential>;
 
 	/** Remove the stored credential for a provider. */
-	logout(providerId: string, options?: AuthOperationOptions): Promise<void>;
+	logout(providerId: string, options?: AuthOperationOptions & { slotId?: string }): Promise<void>;
 
 	stream<TApi extends Api>(
 		model: Model<TApi>,
@@ -412,7 +428,13 @@ class ModelsImpl implements MutableModels {
 					if (credentialError !== undefined) throw credentialError;
 					if (!allowNetwork || signal.aborted) return;
 
-					const credential = await this.resolveRefreshCredential(provider, storedCredential, signal);
+					const credential = await resolveRefreshCredential(
+						provider,
+						this.credentials,
+						this.authContext,
+						storedCredential,
+						signal,
+					);
 					if (!credential) return;
 					await this.runProviderRefreshPhase(provider, credential, true, options.force, generation, signal);
 				})();
@@ -443,35 +465,6 @@ class ModelsImpl implements MutableModels {
 		}
 
 		return { aborted: callerSignal.aborted, errors: new Map(errors) };
-	}
-
-	private async resolveRefreshCredential(
-		provider: Provider,
-		stored: Credential | undefined,
-		signal: AbortSignal,
-	): Promise<Credential | undefined> {
-		if (stored?.type === "oauth") {
-			const oauth = provider.auth.oauth;
-			if (!oauth) return undefined;
-			if (Date.now() < stored.expires) return stored;
-			if (signal.aborted) return undefined;
-			const post = await this.credentials.modify(
-				provider.id,
-				async (current) => {
-					if (current?.type !== "oauth" || Date.now() < current.expires) return undefined;
-					return oauth.refresh(current, signal);
-				},
-				{ signal },
-			);
-			return post?.type === "oauth" ? post : undefined;
-		}
-
-		const apiKey = provider.auth.apiKey;
-		if (!apiKey) return undefined;
-		const credential = stored?.type === "api_key" ? stored : undefined;
-		const result = await apiKey.resolve({ ctx: this.authContext, credential, signal });
-		if (!result) return undefined;
-		return { type: "api_key", key: result.auth.apiKey, env: result.env };
 	}
 
 	private async readCredential(providerId: string, signal: AbortSignal): Promise<Credential | undefined> {
@@ -586,8 +579,11 @@ class ModelsImpl implements MutableModels {
 		if (!method?.login) {
 			throw new ModelsError("auth", `${provider.name} does not support ${type} login`);
 		}
-		const loginOperation: Promise<Credential> = method.login({ ...interaction, signal });
+		const { onAccountCommitted, ...providerInteraction } = interaction;
+		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal });
 		const credential = await raceWithAbortSignal(loginOperation, signal);
+		let committedName: string | undefined;
+		let committedOrigin: "generated" | "provider" | undefined;
 		let mutationStarted = false;
 		let markMutationStarted: (() => void) | undefined;
 		const started = new Promise<void>((resolve) => {
@@ -595,10 +591,13 @@ class ModelsImpl implements MutableModels {
 		});
 		const mutation = this.credentials.modify(
 			providerId,
-			async () => {
+			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return credential;
+				return appendLoginSlot(current, credential, (name, origin) => {
+					committedName = name;
+					committedOrigin = origin;
+				});
 			},
 			{ signal },
 		);
@@ -626,13 +625,26 @@ class ModelsImpl implements MutableModels {
 			signal.throwIfAborted();
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
 		}
+		if (committedName !== undefined && committedOrigin !== undefined) {
+			onAccountCommitted?.({ providerId, name: committedName, origin: committedOrigin });
+		}
 		return credential;
 	}
 
-	async logout(providerId: string, options?: AuthOperationOptions): Promise<void> {
+	async logout(providerId: string, options?: AuthOperationOptions & { slotId?: string }): Promise<void> {
 		const signal = operationSignal(options?.signal);
 		signal.throwIfAborted();
 		try {
+			if (options?.slotId !== undefined) {
+				const current = await this.credentials.read(providerId, { signal });
+				const next = removeSlot(current, options.slotId);
+				if (next === undefined) {
+					await this.credentials.delete(providerId, { signal });
+					return;
+				}
+				await this.credentials.modify(providerId, async () => next, { signal });
+				return;
+			}
 			await this.credentials.delete(providerId, { signal });
 		} catch (error) {
 			signal.throwIfAborted();
@@ -662,7 +674,7 @@ class ModelsImpl implements MutableModels {
 			signal: options?.signal,
 		});
 		if (!resolution) {
-			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
+			throw new ModelsError("auth", providerNotConfiguredMessage(model.provider));
 		}
 		const auth = resolution.auth;
 
@@ -757,12 +769,20 @@ export interface CreateProviderOptions<TApi extends Api = Api> {
 	name?: string;
 	baseUrl?: string;
 	headers?: ProviderHeaders;
+	/** Omitting it means the shipped senpi default profile applies. */
+	retryPolicy?: RetryPolicyProfile;
 	/** Required — every provider has auth semantics, even ambient/keyless ones. */
 	auth: ProviderAuth;
 	/** Static baseline model list (empty for purely dynamic providers). */
 	models: readonly Model<TApi>[];
 	/** Fetch a dynamic model overlay. createProvider restores and publishes it transactionally. */
 	fetchModels?: (context: RefreshModelsContext) => Promise<readonly Model<TApi>[]>;
+	/**
+	 * Optional transform applied to restored stored models before publication,
+	 * letting a provider migrate an old catalog shape without a network refresh.
+	 * A throwing transform publishes the stored list unchanged.
+	 */
+	restoreModels?: (models: readonly Model<TApi>[]) => readonly Model<TApi>[];
 	filterModels?: (models: readonly Model<TApi>[], credential: Credential | undefined) => readonly Model<TApi>[];
 	/** Single implementation, or map keyed by `model.api` for mixed-API providers. */
 	api: ProviderStreams | Partial<Record<TApi, ProviderStreams>>;
@@ -811,14 +831,22 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 		name: input.name ?? input.id,
 		baseUrl: input.baseUrl,
 		headers: input.headers,
+		retryPolicy: input.retryPolicy,
 		auth: input.auth,
 		getModels: currentModels,
 		refreshModels: fetchModels
 			? async (context) => {
 					if (context.stored) {
-						const restored = context.stored.models
+						let restored = context.stored.models
 							.filter((model) => model.provider === input.id)
 							.map((model) => model as Model<TApi>);
+						if (input.restoreModels) {
+							try {
+								restored = [...input.restoreModels(restored)];
+							} catch {
+								// The stored list is the last usable catalog; publish it unchanged.
+							}
+						}
 						if (
 							!(await context.publish({
 								update: () => {
@@ -913,12 +941,36 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 }
 
 const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const OPENAI_THINKING_APIS: Api[] = [
+	"openai-completions",
+	"openai-responses",
+	"azure-openai-responses",
+	"openai-codex-responses",
+];
+const GPT_6_ASTRA_THINKING_LEVEL_MAP: ThinkingLevelMap = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+	max: "max",
+};
+
+/** Infer documented OpenAI reasoning controls only when generated metadata is absent. */
+export function inferOpenAIThinkingLevelMap<TApi extends Api>(model: Model<TApi>): ThinkingLevelMap | undefined {
+	if (model.thinkingLevelMap !== undefined) return model.thinkingLevelMap;
+	if (OPENAI_THINKING_APIS.includes(model.api) && matchesModelFamily(model.id, "gpt-6-astra")) {
+		return GPT_6_ASTRA_THINKING_LEVEL_MAP;
+	}
+	return undefined;
+}
 
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
 
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
-		const mapped = model.thinkingLevelMap?.[level];
+		const mapped = inferOpenAIThinkingLevelMap(model)?.[level];
 		if (mapped === null) return false;
 		if (level === "xhigh") return supportsXhigh(model);
 		if (level === "max") return supportsMax(model);
@@ -955,7 +1007,7 @@ export function clampThinkingLevel<TApi extends Api>(
  * that ship a reasoning model without generated catalog metadata still surface the tier.
  */
 export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
-	const mapped = model.thinkingLevelMap?.xhigh;
+	const mapped = inferOpenAIThinkingLevelMap(model)?.xhigh;
 	if (mapped === null) return false;
 	if (mapped !== undefined) return true;
 	if (model.thinkingLevelMap !== undefined) return false;
@@ -970,6 +1022,7 @@ const XHIGH_MODEL_IDS = [
 	"gpt-5.6-luna",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
+	"gpt-6-astra",
 	"deepseek-v4-pro",
 	"deepseek-v4-flash",
 	"opus-4-6",
@@ -1007,7 +1060,7 @@ function supportsXhighModelId(modelId: string): boolean {
  * are inferred from the id.
  */
 export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
-	const mapped = model.thinkingLevelMap?.max;
+	const mapped = inferOpenAIThinkingLevelMap(model)?.max;
 	if (mapped === null) return false;
 	if (mapped !== undefined) return true;
 	if (model.thinkingLevelMap !== undefined) return false;
@@ -1023,7 +1076,7 @@ const OPENAI_MAX_APIS: Api[] = [
 ];
 
 /** Model family that accepts native `max` effort on OpenAI-compatible APIs. */
-const GPT_56_SOL_ID = "gpt-5.6-sol";
+const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra"];
 
 const MAX_MODEL_IDS = [
 	"opus-4-6",
@@ -1039,7 +1092,8 @@ const MAX_MODEL_IDS = [
 
 function supportsMaxModel<TApi extends Api>(model: Model<TApi>): boolean {
 	if (!model.reasoning) return false;
-	if (OPENAI_MAX_APIS.includes(model.api) && matchesModelFamily(model.id, GPT_56_SOL_ID)) return true;
+	if (OPENAI_MAX_APIS.includes(model.api) && OPENAI_MAX_MODEL_IDS.some((id) => matchesModelFamily(model.id, id)))
+		return true;
 	return MAX_MODEL_IDS.some((id) => matchesModelFamily(model.id, id));
 }
 

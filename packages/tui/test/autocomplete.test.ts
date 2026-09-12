@@ -264,6 +264,42 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(!values?.includes("@../outside/nested/deeper/zzz.ts"));
 		});
 
+		test("ranks shallower same-score @ matches before deeper matches", async () => {
+			setupFolder(baseDir, {
+				dirs: ["scope/aaa/venv/lib/python3.12/site-packages/pkg/core/profile", "scope/projects"],
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			const line = "@scope/pro";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.strictEqual(values[0], "@scope/projects/");
+			assert.ok(values.includes("@scope/aaa/venv/lib/python3.12/site-packages/pkg/core/profile/"));
+		});
+
+		test("includes scoped direct children when recursive @ matches are flooded", async () => {
+			const floodedDirs = Array.from(
+				{ length: 250 },
+				(_, index) =>
+					`scope/a${String(index + 1).padStart(3, "0")}/venv/lib/python3.12/site-packages/pkg/core/profile`,
+			);
+			setupFolder(baseDir, {
+				dirs: ["scope/projects", ...floodedDirs],
+			});
+
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			const line = "@scope/pro";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.strictEqual(values[0], "@scope/projects/");
+			assert.ok(
+				values.some((value) => value.includes("/profile/")),
+				"Should keep deep fuzzy matches after direct children",
+			);
+		});
+
 		test("quotes paths with spaces for @ suggestions", async () => {
 			setupFolder(baseDir, {
 				dirs: ["my folder"],
@@ -537,6 +573,36 @@ describe("CombinedAutocompleteProvider", () => {
 
 			const applied = provider.applyCompletion([line], 0, cursorCol, item!, result!.prefix);
 			assert.strictEqual(applied.lines[0], '"my folder/test.txt"');
+		});
+	});
+
+	describe("dollar skill token boundaries", () => {
+		const provider = new CombinedAutocompleteProvider(
+			[{ name: "skill:commit", description: "Commit changes" }],
+			"/tmp",
+		);
+
+		it("offers a skill after ordinary prompt text at a token boundary", async () => {
+			const line = "text $com";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			assert.ok(result, "Expected a dollar skill suggestion");
+			if (!result) return;
+			assert.strictEqual(result.prefix, "$com");
+			assert.deepStrictEqual(
+				result.items.map((item) => item.value),
+				["$commit"],
+			);
+
+			const applied = provider.applyCompletion([line], 0, line.length, result.items[0]!, result.prefix);
+			assert.strictEqual(applied.lines[0], "text $commit ");
+			assert.strictEqual(applied.cursorCol, "text $commit ".length);
+		});
+
+		it("does not hijack shell-like dollar syntax or complete prose words", async () => {
+			assert.strictEqual(await getSuggestions(provider, ["text $HOME"], 0, 10), null);
+			assert.strictEqual(await getSuggestions(provider, ["echo $1"], 0, 7), null);
+			assert.strictEqual(await getSuggestions(provider, ["please use $commit"], 0, 18), null);
 		});
 	});
 });

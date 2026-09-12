@@ -1,4 +1,5 @@
 import type { ContinuityReason } from "./session-observability.ts";
+import { sentHashPrefixDigest } from "./session-sync.ts";
 
 export type ContinuityEntrySnapshot = {
 	sdkSessionId: string;
@@ -18,11 +19,16 @@ export type ContinuityBindingSnapshot = {
 	sdkSessionId: string;
 	sentCount: number;
 	sentHashes: readonly string[];
+	sentPrefixHash?: string;
 	lastAssistantUuid: string | null;
 	accountName: string;
 	modelId: string;
 	systemPromptHash: string;
 	toolsetHash: string;
+	/** Sent-stream digest of a turn that was pushed but never answered (retry checkpoint). */
+	unansweredTurnDigest?: string;
+	/** False until the SDK acknowledged the id; a resume/fork of an unconfirmed id is never attempted. */
+	sdkSessionIdConfirmed?: boolean;
 };
 
 export type ContinuityDecisionInput = {
@@ -33,6 +39,8 @@ export type ContinuityDecisionInput = {
 	modelId: string;
 	fingerprint: { systemPromptHash: string; toolsetHash: string };
 	transcriptAvailable: boolean;
+	/** false only on the config-dir lane, whose per-account credential roots cannot share a transcript root, so cross-account resume is impossible there. */
+	crossAccountResumeSupported: boolean;
 	idleExpired?: boolean;
 };
 
@@ -46,8 +54,6 @@ export type ContinuityDecision =
 const PENDING_FORK_REASONS: Readonly<Record<string, ContinuityReason>> = {
 	assistant_rewritten: "assistant_rewritten",
 	compaction: "tainted_compaction",
-	fork: "tainted_fork",
-	abort: "tainted_abort",
 };
 
 function commonPrefixLength(left: readonly string[], right: readonly string[]): number {
@@ -86,19 +92,109 @@ function forkOrFlatten(
 	};
 }
 
-function identityDrift(input: ContinuityDecisionInput, entry: ContinuityEntrySnapshot): ContinuityReason | null {
+function identityDrift(
+	input: ContinuityDecisionInput,
+	entry: Pick<ContinuityEntrySnapshot, "accountName" | "modelId" | "systemPromptHash" | "toolsetHash">,
+): ContinuityReason | null {
 	if (entry.accountName !== input.accountName) return "account_changed";
 	if (entry.modelId !== input.modelId) return "model_changed";
-	if (entry.systemPromptHash !== input.fingerprint.systemPromptHash) return "options_changed";
-	if (entry.toolsetHash !== input.fingerprint.toolsetHash) return "options_changed";
+	if (entry.systemPromptHash !== input.fingerprint.systemPromptHash) return "system_prompt_changed";
+	if (entry.toolsetHash !== input.fingerprint.toolsetHash) return "toolset_changed";
 	return null;
+}
+
+/**
+ * Same-turn retry after a stream-start timeout: the abandoned attempt already
+ * appended its user message to the lineage, so re-attaching would append it a
+ * SECOND time and re-bill the whole conversation. Forking at the pre-turn
+ * assistant boundary rewinds past the un-answered message, so the retry's
+ * request byte-layout matches the failed attempt's (prefix cache read).
+ * Requires the FULL current turn to hash-match the checkpoint, so a different
+ * turn falls through to the ordinary branches below.
+ */
+function retryCheckpointDecision(
+	input: ContinuityDecisionInput,
+	binding: ContinuityBindingSnapshot,
+): ContinuityDecision | undefined {
+	if (binding.unansweredTurnDigest === undefined) return undefined;
+	if (sentHashPrefixDigest(input.currentHashes, input.currentHashes.length) !== binding.unansweredTurnDigest) {
+		return undefined;
+	}
+	if (input.currentHashes.length < binding.sentCount) return undefined;
+	const prefixMatches =
+		binding.sentPrefixHash !== undefined
+			? sentHashPrefixDigest(input.currentHashes, binding.sentCount) === binding.sentPrefixHash
+			: commonPrefixLength(binding.sentHashes, input.currentHashes) === binding.sentCount;
+	if (!prefixMatches) return undefined;
+	if (!binding.lastAssistantUuid) return { kind: "flatten", reason: "timeout_retry" };
+	return {
+		kind: "fork",
+		sdkSessionId: binding.sdkSessionId,
+		atUuid: binding.lastAssistantUuid,
+		from: binding.sentCount,
+		reason: "timeout_retry",
+	};
+}
+
+/**
+ * A binding whose SDK id was minted locally and never acknowledged (no init, no
+ * replay echo before the attempt failed) must not be resumed: Claude Code
+ * answers "No conversation found with session ID" and every retry would mint
+ * another dead id (oh-my-openagent#7562). Cold-seed instead.
+ */
+function withoutUnconfirmedResume(
+	decision: ContinuityDecision,
+	binding: ContinuityBindingSnapshot,
+): ContinuityDecision {
+	if (binding.sdkSessionIdConfirmed !== false) return decision;
+	if (decision.kind === "reattach" || decision.kind === "fork") {
+		return { kind: "flatten", reason: "session_unconfirmed" };
+	}
+	return decision;
 }
 
 function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBindingSnapshot): ContinuityDecision {
 	if (!input.transcriptAvailable) return { kind: "flatten", reason: "transcript_missing" };
+	const drift = identityDrift(input, binding);
+	// Model identity drift fails closed: the persisted identity no longer matches the turn.
+	// Account drift flattens only on the config-dir lane, whose per-account roots cannot
+	// share a transcript; on shared-root lanes it falls through like prompt/toolset drift
+	// (senpi#1432), so the retry checkpoint forks a same-turn failover at the pre-turn
+	// boundary and a matching prefix reattaches with reason account_changed.
+	if (drift === "model_changed") return { kind: "flatten", reason: drift };
+	if (drift === "account_changed" && !input.crossAccountResumeSupported)
+		return { kind: "flatten", reason: "cross_root_unsupported" };
+	// Prompt/toolset drift instead reattaches like the live path
+	// (oh-my-openagent#7884) - a restart has no live query, so the resume builds a
+	// fresh query carrying the CURRENT options and hooks, and flattening would
+	// re-send the whole conversation for drift the SDK applies per-query anyway.
+	const retry = retryCheckpointDecision(input, binding);
+	if (retry) return retry;
+	if (binding.sentPrefixHash !== undefined) {
+		const prefixMatches =
+			input.currentHashes.length >= binding.sentCount &&
+			sentHashPrefixDigest(input.currentHashes, binding.sentCount) === binding.sentPrefixHash;
+		if (prefixMatches) {
+			return {
+				kind: "reattach",
+				sdkSessionId: binding.sdkSessionId,
+				from: binding.sentCount,
+				reason: drift ?? "registry_miss",
+			};
+		}
+		return {
+			kind: "flatten",
+			reason: input.currentHashes.length < binding.sentCount ? "history_rolled_back" : "sent_stream_diverged",
+		};
+	}
 	const shared = commonPrefixLength(binding.sentHashes, input.currentHashes);
 	if (shared === binding.sentCount) {
-		return { kind: "reattach", sdkSessionId: binding.sdkSessionId, from: binding.sentCount, reason: "registry_miss" };
+		return {
+			kind: "reattach",
+			sdkSessionId: binding.sdkSessionId,
+			from: binding.sentCount,
+			reason: drift ?? "registry_miss",
+		};
 	}
 	if (!binding.lastAssistantUuid) return { kind: "flatten", reason: "registry_miss" };
 	return {
@@ -110,43 +206,10 @@ function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBi
 	};
 }
 
-export type FailoverLane = "oauth-slots" | "ambient" | "config-dir";
-
-export type FailoverContinuityInput = {
-	authLane: FailoverLane;
-	crossAccountResumeSupported: boolean;
-	entry: { sdkSessionId: string; sentCount: number; lastAssistantUuid: string | null };
-};
-
-/**
- * The config-dir lane keeps each account's credentials inside its own
- * CLAUDE_CONFIG_DIR, and no official SDK API moves a transcript across roots, so
- * its failover is the one declared residual that must still flatten.
- */
-export function decideFailoverContinuity(input: FailoverContinuityInput): ContinuityDecision {
-	const { entry } = input;
-	if (input.authLane === "config-dir") return { kind: "flatten", reason: "cross_root_unsupported" };
-	if (input.crossAccountResumeSupported) {
-		return {
-			kind: "reattach",
-			sdkSessionId: entry.sdkSessionId,
-			from: entry.sentCount,
-			reason: "account_changed",
-		};
-	}
-	if (!entry.lastAssistantUuid) return { kind: "flatten", reason: "branch_boundary_unavailable" };
-	return {
-		kind: "fork",
-		sdkSessionId: entry.sdkSessionId,
-		atUuid: entry.lastAssistantUuid,
-		from: entry.sentCount,
-		reason: "account_changed",
-	};
-}
-
 /**
  * Resume-first: a live session is never abandoned for a flattened re-send. Only a
- * missing transcript or an unrecoverable boundary reaches `flatten`; every other
+ * missing transcript, an unrecoverable boundary, a model identity drift, or account
+ * drift on the config-dir lane on a persisted binding reaches `flatten`; every other
  * divergence resolves to `fork` (same lineage, new branch) or `reattach` (same
  * session, new query).
  */
@@ -154,7 +217,7 @@ export function decideNativeContinuity(input: ContinuityDecisionInput): Continui
 	const { entry, binding } = input;
 	if (!entry) {
 		if (!binding) return { kind: "bootstrap" };
-		return decideFromBinding(input, binding);
+		return withoutUnconfirmedResume(decideFromBinding(input, binding), binding);
 	}
 
 	const divergence = entry.pendingForkReason ?? entry.taintedReason;

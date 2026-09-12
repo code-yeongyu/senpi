@@ -1,6 +1,6 @@
 # builtin/permission-system
 
-Builtin extension #1. Full port of opencode's permission flow. Loads preset/rule policy from CLI (`--permission-preset`, `--permission tool=action`), settings (`permissionPreset`, `permission`), and per-session approvals. Defaults to the `full-access` preset, persists "always allow" decisions, blocks denied calls with a structured error, and supports parser-aware patterns (bash command prefixes, file path globs for read/write/edit/apply_patch). **JSONL storage shape is a contract — migration required to change it.**
+Builtin extension #3. Full port of opencode's permission flow. Loads preset/rule policy from CLI (`--permission-preset`, `--permission tool=action`), settings (`permissionPreset`, `permission`), and per-session approvals. Defaults to the `full-access` preset, persists "always allow" decisions, blocks denied calls with a structured error, and supports parser-aware patterns (bash command prefixes, file path globs for read/write/edit/apply_patch). **JSONL storage shape is a contract — migration required to change it.**
 
 ## FILES
 

@@ -1,0 +1,33 @@
+name: Compiled session worker
+
+on:
+  pull_request:
+    paths:
+      - packages/coding-agent/src/modes/rpc/session-worker-client.ts
+      - scripts/session-worker-compile.test.ts
+      - .github/workflows/session-worker-compile.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  relocated-worker:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Compile and relocate the production worker client
+        run: bun test scripts/session-worker-compile.test.ts

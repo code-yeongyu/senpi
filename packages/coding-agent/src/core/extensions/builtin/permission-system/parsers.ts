@@ -1,7 +1,10 @@
+import { dirname, resolve } from "node:path";
+import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
 import { extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
+import { setApprovedMonitorParent } from "../terminal/monitor-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
 export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always">;
@@ -138,7 +141,22 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 
 	registry.register("bash", parseBashLikePermission("command"));
 	registry.register("bash_input", parseBashLikePermission("input"));
-	registry.register("monitor", parseBashLikePermission("command"));
+	registry.register("monitor", (toolName, input, cwd) => {
+		const path = getString(input, "path");
+		if (path) {
+			// This runs on the host main thread: the parent identity must be derived without open(2)
+			// (realpath opens directories and blocks forever on a wedged autofs trigger). Registration
+			// performs the authoritative access check and re-derives the parent the same way.
+			setApprovedMonitorParent(input, realpathWithoutOpen(dirname(resolve(cwd, path))));
+			return withExternalDirectoryRequests(
+				[{ permission: "read", patterns: [path], always: [path] }],
+				[path],
+				cwd,
+				"file",
+			);
+		}
+		return parseBashLikePermission("command")(toolName, input, cwd);
+	});
 
 	const editParser: ToolPermissionParser = () => {
 		return [fallbackPermissionRequest("edit")];

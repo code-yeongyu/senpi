@@ -72,6 +72,7 @@ export const COMPLETIONS_COMPAT = {
 	chatTemplateArgs: {},
 	zaiToolStream: false,
 	supportsThinkingTokenBudget: false,
+	thinkingTokenBudgetField: undefined,
 	supportsStrictMode: true,
 	supportsOpenAIGrammarTools: false,
 	toolSchemaFlavor: undefined,
@@ -80,15 +81,23 @@ export const COMPLETIONS_COMPAT = {
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",
 	supportsPromptCacheKey: false,
+	supportsMaxOutputTokens: true,
 	supportsLongCacheRetention: true,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "toolCallFormat" | "deferredToolsMode" | "toolSchemaFlavor"
+	| "cacheControlFormat"
+	| "toolCallFormat"
+	| "deferredToolsMode"
+	| "toolSchemaFlavor"
+	| "thinkingTokenBudgetField"
+	| "vllmPriority"
+	| "veniceParameters"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 	toolSchemaFlavor?: OpenAICompletionsCompat["toolSchemaFlavor"];
+	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
 };
 
 export function makeModel<TApi extends Api>(api: TApi, provider: Model<TApi>["provider"], id: string): Model<TApi> {

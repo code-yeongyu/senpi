@@ -1,11 +1,15 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { delimiter, join } from "path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	detectInstallMethod,
+	findNodePackageDir,
+	getExportTemplateDir,
+	getInteractiveAssetsDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
+	getThemesDir,
 	getUpdateInstruction,
 } from "../src/config.ts";
 
@@ -148,6 +152,19 @@ function createFakeBunScript(bunBin: string): string {
 	const escapedBunBin = bunBin.replaceAll("'", "'\\''");
 	return `#!/bin/sh\nif [ "$1" = "pm" ] && [ "$2" = "bin" ] && [ "$3" = "-g" ]; then\n\tprintf '%s\\n' '${escapedBunBin}'\n\texit 0\nfi\nexit 1\n`;
 }
+
+describe("findNodePackageDir", () => {
+	test("skips binary metadata copied into dist", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-package-dir-"));
+		const distDir = join(tempDir, "dist");
+		const bundleDir = join(distDir, "bundle");
+		mkdirSync(bundleDir, { recursive: true });
+		writeFileSync(join(tempDir, "package.json"), "{}");
+		writeFileSync(join(distDir, "package.json"), "{}");
+
+		expect(findNodePackageDir(bundleDir)).toBe(tempDir);
+	});
+});
 
 describe("detectInstallMethod", () => {
 	test("detects pnpm from Windows .pnpm install paths", () => {
@@ -468,5 +485,81 @@ describe("detectInstallMethod", () => {
 		expect(getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent")).toContain(
 			"the install path is not writable",
 		);
+	});
+});
+
+describe("shipped asset directories", () => {
+	test("#given a PACKAGE_DIR root that ships no themes #when resolving the themes dir #then the running install answers", () => {
+		// given: the shape of a Bun-binary tree that embeds this CLI - a flat theme/ and no src|dist layout
+		tempDir = mkdtempSync(join(tmpdir(), "pi-foreign-package-dir-"));
+		mkdirSync(join(tempDir, "theme"), { recursive: true });
+		writeFileSync(join(tempDir, "theme", "dark.json"), "{}");
+		process.env.PI_PACKAGE_DIR = tempDir;
+
+		// when
+		const themesDir = getThemesDir();
+
+		// then
+		expect(existsSync(join(themesDir, "dark.json"))).toBe(true);
+	});
+
+	test("#given a PACKAGE_DIR root that ships the themes #when resolving the themes dir #then the override wins", () => {
+		// given
+		tempDir = mkdtempSync(join(tmpdir(), "pi-relocated-package-dir-"));
+		const relocated = join(tempDir, "dist", "modes", "interactive", "theme");
+		mkdirSync(relocated, { recursive: true });
+		writeFileSync(join(relocated, "dark.json"), "{}");
+		process.env.PI_PACKAGE_DIR = tempDir;
+
+		// when + then
+		expect(getThemesDir()).toBe(relocated);
+	});
+
+	test("#given a PACKAGE_DIR root that ships no export template #when resolving the template dir #then the running install answers", () => {
+		// given
+		tempDir = mkdtempSync(join(tmpdir(), "pi-foreign-package-dir-"));
+		process.env.PI_PACKAGE_DIR = tempDir;
+
+		// when
+		const templateDir = getExportTemplateDir();
+
+		// then
+		expect(existsSync(join(templateDir, "template.html"))).toBe(true);
+	});
+
+	test("#given a PACKAGE_DIR root that ships the export template #when resolving the template dir #then the override wins", () => {
+		// given
+		tempDir = mkdtempSync(join(tmpdir(), "pi-relocated-package-dir-"));
+		const relocated = join(tempDir, "dist", "core", "export-html");
+		mkdirSync(relocated, { recursive: true });
+		writeFileSync(join(relocated, "template.html"), "<!doctype html>");
+		process.env.PI_PACKAGE_DIR = tempDir;
+
+		// when + then
+		expect(getExportTemplateDir()).toBe(relocated);
+	});
+
+	test("#given a PACKAGE_DIR root that ships no interactive assets #when resolving the assets dir #then the running install answers", () => {
+		// given
+		tempDir = mkdtempSync(join(tmpdir(), "pi-foreign-package-dir-"));
+		process.env.PI_PACKAGE_DIR = tempDir;
+
+		// when
+		const assetsDir = getInteractiveAssetsDir();
+
+		// then
+		expect(existsSync(join(assetsDir, "clankolas.png"))).toBe(true);
+	});
+
+	test("#given a PACKAGE_DIR root that ships the interactive assets #when resolving the assets dir #then the override wins", () => {
+		// given
+		tempDir = mkdtempSync(join(tmpdir(), "pi-relocated-package-dir-"));
+		const relocated = join(tempDir, "dist", "modes", "interactive", "assets");
+		mkdirSync(relocated, { recursive: true });
+		writeFileSync(join(relocated, "clankolas.png"), "");
+		process.env.PI_PACKAGE_DIR = tempDir;
+
+		// when + then
+		expect(getInteractiveAssetsDir()).toBe(relocated);
 	});
 });

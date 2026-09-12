@@ -74,5 +74,9 @@ export function buildHelpMarkdown(input: { extensionCommands: SlashCommandInfo[]
 		buildKeybindingTables(),
 		"## Commands",
 		commandLines.join("\n"),
+		"## Account display names",
+		"Use `/gpt-account rename <id> <display name...>`, `/claude-account rename <id> <display name...>`, or `/account <provider> rename <id> <display name...>`. Use `clear-name <id>` on the same command to remove the label.",
+		"Labels display as `displayName (id)`; pins, removal, refresh and session affinity always use the unchanged ID. Labels are Unicode-normalized (NFC) with internal whitespace collapsed, limited to 32 terminal columns, must contain at least one visible character, and cannot contain control or formatting characters. Two labels that render identically cannot coexist in one provider: comparison folds case, compatibility forms, invisible code points, and Cyrillic lookalikes. Environment accounts cannot be renamed.",
+		"`/gpt-account add` offers an optional display name after saving the account, when Senpi generated the account ID itself. The Claude lane asks for the account name through its own login prompt, so it never asks twice. Leave it blank or cancel to keep the successful login without a label. Legacy accounts display only their ID.",
 	].join("\n\n");
 }

@@ -13,6 +13,68 @@ afterEach(() => {
 });
 
 describe("strict model generation", () => {
+	it("omits reasoning metadata for unsupported GLM-5.3 variants in generated output", () => {
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-glm-5-3-"));
+		temporaryRoots.push(fixtureRoot);
+		const isolatedPackageRoot = join(fixtureRoot, "package");
+		mkdirSync(isolatedPackageRoot);
+		for (const entry of ["package.json", "scripts", "src"]) {
+			cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
+		}
+		const outputDir = join(fixtureRoot, "output");
+		const preloadPath = join(fixtureRoot, "mock-models.mjs");
+		const unsupportedVariants = ["glm-5.3-turbo", "glm-5.3-xl", "glm-5.3-anything-else"];
+		const sourceModels = Object.fromEntries(
+			unsupportedVariants.map((id) => [
+				id,
+				{
+					id,
+					name: id,
+					tool_call: true,
+					reasoning: true,
+					reasoning_options: [{ type: "effort", values: ["low", "high", "max"] }],
+				},
+			]),
+		);
+		const catalog = {
+			"zai-coding-plan": { models: sourceModels },
+			"zhipuai-coding-plan": { models: sourceModels },
+		};
+		writeFileSync(
+			preloadPath,
+			`const modelsDev = ${JSON.stringify(catalog)};\n` +
+				`globalThis.fetch = async (input) => {\n` +
+				`  const url = String(input);\n` +
+				`  if (url === "https://models.dev/api.json") return new Response(JSON.stringify(modelsDev), { status: 200 });\n` +
+				`  if (url === "https://openrouter.ai/api/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  if (url === "https://ai-gateway.vercel.sh/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  if (url === "https://apis.opengateway.ai/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
+				`};\n`,
+		);
+
+		const result = spawnSync(
+			process.execPath,
+			[
+				"--import",
+				pathToFileURL(preloadPath).href,
+				"scripts/generate-models.ts",
+				"--json-only",
+				"--json-output",
+				outputDir,
+			],
+			{ cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 },
+		);
+
+		expect(result.status).toBe(0);
+		const generated = JSON.parse(readFileSync(join(outputDir, "providers", "zai.json"), "utf8"));
+		for (const id of unsupportedVariants) {
+			expect(generated[id]).toBeDefined();
+			expect(generated[id].thinkingLevelMap).toBeUndefined();
+			expect(generated[id].compat?.supportsReasoningEffort).not.toBe(true);
+		}
+	});
+
 	it("fails before mutating generated data when an Individual model loses tool support", () => {
 		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-"));
 		temporaryRoots.push(fixtureRoot);
@@ -25,6 +87,7 @@ describe("strict model generation", () => {
 		const modelIds = [
 			"deepseek-v4-flash-0731",
 			"deepseek-v4-pro",
+			"deepseek-v4-pro-0813",
 			"glm-5.2",
 			"qwen3.6-flash",
 			"qwen3.7-max",

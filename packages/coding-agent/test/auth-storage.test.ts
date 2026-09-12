@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CredentialStore, createModels, type Provider } from "@earendil-works/pi-ai";
@@ -137,6 +137,22 @@ describe("AuthStorage", () => {
 		await expect(second).resolves.toEqual({ type: "api_key", key: "new" });
 		expect(lockSpy).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
+	});
+
+	test.skipIf(process.platform === "win32")("creates new auth files with owner-only permissions", () => {
+		AuthStorage.create(authJsonPath);
+
+		expect(statSync(authJsonPath).mode & 0o777).toBe(0o600);
+	});
+
+	test.skipIf(process.platform === "win32")("preserves the mode of an existing auth file", async () => {
+		writeAuthJson({ anthropic: { type: "api_key", key: "old" } });
+		chmodSync(authJsonPath, 0o660);
+		const storage = AuthStorage.create(authJsonPath);
+
+		await storage.modify("anthropic", async () => ({ type: "api_key", key: "new" }));
+
+		expect(statSync(authJsonPath).mode & 0o777).toBe(0o660);
 	});
 
 	test("modify persists a credential while preserving unrelated external edits", async () => {
@@ -531,5 +547,74 @@ describe("AuthStorage", () => {
 		writeFileSync(authJsonPath, "{invalid-json", "utf8");
 		await expect(storage.modify("openai", async () => ({ type: "api_key", key: "new" }))).rejects.toThrow();
 		expect(readFileSync(authJsonPath, "utf8")).toBe("{invalid-json");
+	});
+});
+
+describe("poisoned managed-sentinel pool slot migration", () => {
+	const sentinel = "claude-sdk-oauth-managed";
+
+	function poisonedPool(): Record<string, unknown> {
+		return {
+			type: "oauth",
+			access: sentinel,
+			refresh: sentinel,
+			expires: 4_102_444_800_000,
+			pinned: "login-2",
+			accounts: [
+				{ name: "default", access: "real-access", refresh: "real-refresh", expires: 1, source: "login" },
+				{ name: "login-2", access: sentinel, refresh: sentinel, expires: 4_102_444_800_000, source: "login" },
+			],
+		};
+	}
+
+	const tempDir = join(tmpdir(), `pi-test-auth-storage-sentinel-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const poisonedPath = join(tempDir, "auth.json");
+
+	beforeEach(() => {
+		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
+		mkdirSync(tempDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
+	});
+
+	test("a poisoned pool is healed on read and the repair is written back once", async () => {
+		writeFileSync(poisonedPath, JSON.stringify({ "claude-sdk-oauth": poisonedPool() }, null, 2));
+		const storage = AuthStorage.create(poisonedPath);
+
+		const credential = (await storage.read("claude-sdk-oauth")) as unknown as {
+			accounts: Array<{ name: string; access: string; refresh: string }>;
+			pinned?: string;
+		};
+		expect(credential.accounts.map((slot) => slot.name)).toEqual(["default"]);
+		expect(credential.pinned).toBeUndefined();
+
+		// The on-disk bytes no longer carry the poisoned entry, so every later
+		// process - including a rotation reader - starts from a clean pool.
+		const onDisk = JSON.parse(readFileSync(poisonedPath, "utf8")) as Record<
+			string,
+			{ accounts: Array<{ name: string }>; pinned?: string }
+		>;
+		expect(onDisk["claude-sdk-oauth"].accounts.map((slot) => slot.name)).toEqual(["default"]);
+		expect(onDisk["claude-sdk-oauth"].pinned).toBeUndefined();
+	});
+
+	test("a clean pool is never rewritten", async () => {
+		const clean = {
+			type: "oauth",
+			access: sentinel,
+			refresh: sentinel,
+			expires: 4_102_444_800_000,
+			accounts: [
+				{ name: "default", access: "real-access", refresh: "real-refresh", expires: 1, source: "login" },
+				{ name: "work", access: "work-access", refresh: "work-refresh", expires: 1, source: "login" },
+			],
+		};
+		const before = JSON.stringify({ "claude-sdk-oauth": clean }, null, 2);
+		writeFileSync(poisonedPath, before);
+		const storage = AuthStorage.create(poisonedPath);
+		await storage.read("claude-sdk-oauth");
+		expect(readFileSync(poisonedPath, "utf8")).toBe(before);
 	});
 });

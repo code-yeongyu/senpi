@@ -6,14 +6,15 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
 	type Api,
 	type AuthOperationOptions,
+	getCursorVariantAlias,
 	type KnownProvider,
 	type Model,
 	modelsAreEqual,
+	type ThinkingSelection,
 } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
-import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -33,16 +34,18 @@ export interface AvailableModelsSource {
 type ModelScopeSource = ModelRuntime | ModelRegistry | AvailableModelsSource;
 
 /** Default model IDs for each known provider */
-export const defaultModelPerProvider: Record<KnownProvider, string> = {
+export const defaultModelPerProvider: Record<string, string> = {
 	"alibaba-token-plan": "qwen3.7-max",
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
 	"ant-ling": "Ring-2.6-1T",
 	anthropic: "claude-opus-4-8",
-	openai: "gpt-5.5",
+	openai: "gpt-5.6-sol",
 	"azure-openai-responses": "gpt-5.4",
-	"openai-codex": "gpt-5.5",
+	"openai-codex": "gpt-5.6-sol",
 	ollama: "qwen3.5:397b",
-	radius: "auto",
+	// Cursor ships no models until its chat protocol is ported; "auto" matches
+	// the Cursor agent's native model auto-selection once models exist.
+	cursor: "auto",
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
@@ -53,9 +56,9 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	opengateway: "moonshotai/kimi-k3",
 	xai: "grok-4.5",
 	groq: "openai/gpt-oss-120b",
-	cerebras: "zai-glm-4.7",
-	zai: "glm-5.2",
-	"zai-coding-cn": "glm-5.2",
+	cerebras: "gpt-oss-120b",
+	zai: "glm-5.3",
+	"zai-coding-cn": "glm-5.3",
 	mistral: "devstral-medium-latest",
 	minimax: "MiniMax-M2.7",
 	"minimax-cn": "MiniMax-M2.7",
@@ -64,6 +67,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	huggingface: "moonshotai/Kimi-K2.6",
 	fireworks: "accounts/fireworks/models/kimi-k2p6",
 	together: "moonshotai/Kimi-K2.6",
+	venice: "z-ai-glm-5-3",
 	baseten: "zai-org/GLM-5.2",
 	opencode: "kimi-k2.6",
 	"opencode-go": "kimi-k2.6",
@@ -83,6 +87,8 @@ export interface ScopedModel {
 	model: Model<Api>;
 	/** Thinking level if explicitly specified in pattern (e.g., "model:high"), undefined otherwise */
 	thinkingLevel?: ThinkingLevel;
+	/** Provenance for an explicit decorator or projected legacy Cursor variant. */
+	thinkingSelection?: ThinkingSelection;
 	/** Service tier selected by configuration or caller-provided scoped model metadata. */
 	serviceTier?: ServiceTier;
 }
@@ -160,6 +166,81 @@ export function findExactModelReferenceMatch(
  * Try to match a pattern to a model from the available models list.
  * Returns the matched model or undefined if no match found.
  */
+const CURSOR_PROVIDER_IDS = new Set(["cursor", "cursor-cli-oauth"]);
+const CURSOR_ALIAS_LEVEL_TOKENS = ["minimal", "low", "medium", "high", "extra-high", "xhigh", "max", "none"];
+
+interface ResolvedModelReference {
+	model: Model<Api>;
+	thinkingLevel?: ThinkingLevel;
+	thinkingSelection?: ThinkingSelection;
+}
+
+function legacySelection(legacyVariantId: string): ThinkingSelection | undefined {
+	const alias = getCursorVariantAlias(legacyVariantId);
+	if (!alias?.level) return undefined;
+	return { level: alias.level, source: "legacy-variant", legacyVariantId };
+}
+
+function resolveLegacyCursorReference(
+	modelReference: string,
+	availableModels: readonly Model<Api>[],
+): ResolvedModelReference | undefined {
+	const trimmed = modelReference.trim();
+	if (!trimmed) return undefined;
+	const slashIndex = trimmed.indexOf("/");
+	const explicitProvider = slashIndex === -1 ? undefined : trimmed.slice(0, slashIndex);
+	const legacyVariantId = slashIndex === -1 ? trimmed : trimmed.slice(slashIndex + 1);
+	const alias = getCursorVariantAlias(legacyVariantId);
+	if (!alias) return undefined;
+
+	const candidates = availableModels.filter(
+		(model) =>
+			CURSOR_PROVIDER_IDS.has(model.provider) &&
+			(!explicitProvider || model.provider.toLowerCase() === explicitProvider.toLowerCase()) &&
+			model.id === alias.targetId,
+	);
+	if (candidates.length !== 1) return undefined;
+	const thinkingSelection = legacySelection(legacyVariantId);
+	return {
+		model: candidates[0],
+		thinkingLevel: thinkingSelection?.level,
+		thinkingSelection,
+	};
+}
+
+function cursorLegacyAliasesForModel(model: Model<Api>): string[] {
+	if (!CURSOR_PROVIDER_IDS.has(model.provider)) return [];
+	const targetId = model.id;
+	const baseId = targetId.endsWith("-thinking") ? targetId.slice(0, -9) : targetId;
+	const candidates = new Set<string>([targetId, `${baseId}-thinking`, `${baseId}-fast`]);
+	for (const level of CURSOR_ALIAS_LEVEL_TOKENS) {
+		candidates.add(`${baseId}-${level}`);
+		candidates.add(`${baseId}-thinking-${level}`);
+		candidates.add(`${baseId}-${level}-thinking`);
+		candidates.add(`${targetId}-${level}`);
+	}
+	return [...candidates].filter((candidate) => getCursorVariantAlias(candidate)?.targetId === targetId);
+}
+
+export function resolveStoredModelReference(
+	provider: string,
+	modelId: string,
+	modelSource: { getModel(provider: string, modelId: string): Model<Api> | undefined },
+): ResolvedModelReference | undefined {
+	if (CURSOR_PROVIDER_IDS.has(provider)) {
+		const alias = getCursorVariantAlias(modelId);
+		if (alias) {
+			const model = modelSource.getModel(provider, alias.targetId);
+			if (model) {
+				const thinkingSelection = legacySelection(modelId);
+				return { model, thinkingLevel: thinkingSelection?.level, thinkingSelection };
+			}
+		}
+	}
+	const direct = modelSource.getModel(provider, modelId);
+	return direct ? { model: direct } : undefined;
+}
+
 function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Model<Api> | undefined {
 	const exactMatch = findExactModelReferenceMatch(modelPattern, availableModels);
 	if (exactMatch) {
@@ -195,6 +276,7 @@ function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Mod
 export interface ParsedModelResult {
 	model: Model<Api> | undefined;
 	thinkingLevel?: ThinkingLevel;
+	thinkingSelection?: ThinkingSelection;
 	serviceTier?: ServiceTier;
 	warning: string | undefined;
 }
@@ -215,16 +297,30 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 	};
 }
 
+const SERVICE_TIER_VALUES: readonly ServiceTier[] = ["auto", "flex", "priority"];
+
+function isServiceTier(value: string): value is ServiceTier {
+	return (SERVICE_TIER_VALUES as readonly string[]).includes(value);
+}
+
 /**
- * Parse a pattern to extract model and thinking level.
+ * Parse a pattern to extract model, thinking level, and service tier.
  * Handles models with colons in their IDs (e.g., OpenRouter's :exacto suffix).
  *
+ * Grammar: `<model-pattern>[:<auto|flex|priority>][:<thinking-level>]`
+ *
  * Algorithm:
- * 1. Try to match full pattern as a model
- * 2. If found, return it with "off" thinking level
- * 3. If not found and has colons, split on last colon:
- *    - If suffix is valid thinking level, use it and recurse on prefix
- *    - If suffix is invalid, warn and recurse on prefix with "off"
+ * 1. Try to match the FULL pattern as a model (mandatory first step: real model ids
+ *    contain colons, and one may even end in a decorator-looking segment)
+ * 2. If found, return it with no decorators
+ * 3. If not found and the pattern has colons, split on the last colon and consume
+ *    recognized decorators right-to-left:
+ *    - valid thinking level -> use it and recurse on the prefix
+ *    - valid service tier -> use it and recurse on the prefix
+ *    - anything else -> warn and recurse on the prefix without decorators
+ *
+ * A decorator parsed further right never overrides one parsed further left, so the
+ * leftmost occurrence (the grammar's slot order) wins.
  *
  * @internal Exported for testing
  */
@@ -233,9 +329,19 @@ export function parseModelPattern(
 	availableModels: Model<Api>[],
 	options?: { allowInvalidThinkingLevelFallback?: boolean },
 ): ParsedModelResult {
+	const legacyMatch = resolveLegacyCursorReference(pattern, availableModels);
+	if (legacyMatch) {
+		return { ...legacyMatch, serviceTier: undefined, warning: undefined };
+	}
 	const fullMatch = tryMatchModel(pattern, availableModels);
 	if (fullMatch) {
-		return { model: fullMatch, thinkingLevel: undefined, serviceTier: undefined, warning: undefined };
+		return {
+			model: fullMatch,
+			thinkingLevel: undefined,
+			thinkingSelection: undefined,
+			serviceTier: undefined,
+			warning: undefined,
+		};
 	}
 
 	const lastColonIndex = pattern.lastIndexOf(":");
@@ -249,10 +355,24 @@ export function parseModelPattern(
 	if (isValidThinkingLevel(suffix)) {
 		const result = parseModelPattern(prefix, availableModels, options);
 		if (result.model) {
+			const thinkingLevel = result.warning ? undefined : (result.thinkingLevel ?? suffix);
 			return {
 				model: result.model,
-				thinkingLevel: result.warning ? undefined : suffix,
+				thinkingLevel,
+				thinkingSelection: thinkingLevel ? { level: thinkingLevel, source: "explicit" } : undefined,
 				serviceTier: result.serviceTier,
+				warning: result.warning,
+			};
+		}
+		return result;
+	} else if (isServiceTier(suffix)) {
+		const result = parseModelPattern(prefix, availableModels, options);
+		if (result.model) {
+			return {
+				model: result.model,
+				thinkingLevel: result.thinkingLevel,
+				thinkingSelection: result.thinkingSelection,
+				serviceTier: result.warning ? undefined : (result.serviceTier ?? suffix),
 				warning: result.warning,
 			};
 		}
@@ -268,6 +388,7 @@ export function parseModelPattern(
 			return {
 				model: result.model,
 				thinkingLevel: undefined,
+				thinkingSelection: undefined,
 				serviceTier: result.serviceTier,
 				warning: `Invalid thinking level "${suffix}" in pattern "${pattern}". Using default instead.`,
 			};
@@ -294,9 +415,28 @@ export interface ModelScopeDiagnostic {
 	pattern: string;
 }
 
+/**
+ * Per-stored-pattern ownership record.
+ *
+ * `ownedIds` lists every canonical `provider/id` the pattern resolved to in the CURRENT
+ * registry snapshot, after first-pattern-wins dedupe (a model already claimed by an
+ * earlier pattern is not reported again). Unresolved patterns are reported with an empty
+ * `ownedIds` and `unresolved: true` rather than being dropped.
+ */
+export interface PatternResolution {
+	pattern: string;
+	ownedIds: string[];
+	thinkingLevel?: ThinkingLevel;
+	serviceTier?: ServiceTier;
+	unresolved: boolean;
+	isGlob: boolean;
+}
+
 export interface ResolveModelScopeResult {
 	scopedModels: ScopedModel[];
 	diagnostics: ModelScopeDiagnostic[];
+	/** Additive: per-pattern ownership metadata for favorites persistence. */
+	patternResolutions: PatternResolution[];
 }
 
 export function resolveModelScopeFromModels(
@@ -306,62 +446,123 @@ export function resolveModelScopeFromModels(
 	const availableModels = [...models];
 	const scopedModels: ScopedModel[] = [];
 	const diagnostics: ModelScopeDiagnostic[] = [];
+	const patternResolutions: PatternResolution[] = [];
+	const claimedIds = new Set<string>();
+	const canonicalId = (model: Model<Api>): string => `${model.provider}/${model.id}`;
+
+	const addScoped = (entry: ScopedModel): string | undefined => {
+		const id = canonicalId(entry.model);
+		if (claimedIds.has(id)) return undefined;
+		claimedIds.add(id);
+		scopedModels.push(entry);
+		return id;
+	};
 
 	for (const pattern of patterns) {
-		if (pattern.includes("*") || pattern.includes("?") || pattern.includes("[")) {
-			const colonIdx = pattern.lastIndexOf(":");
+		const isGlob = pattern.includes("*") || pattern.includes("?") || pattern.includes("[");
+		if (isGlob) {
 			let globPattern = pattern;
 			let thinkingLevel: ThinkingLevel | undefined;
-
-			if (colonIdx !== -1) {
-				const suffix = pattern.substring(colonIdx + 1);
-				if (isValidThinkingLevel(suffix)) {
-					thinkingLevel = suffix;
-					globPattern = pattern.substring(0, colonIdx);
-				}
+			let serviceTier: ServiceTier | undefined;
+			for (;;) {
+				const colonIdx = globPattern.lastIndexOf(":");
+				if (colonIdx === -1) break;
+				const suffix = globPattern.substring(colonIdx + 1);
+				if (thinkingLevel === undefined && isValidThinkingLevel(suffix)) thinkingLevel = suffix;
+				else if (serviceTier === undefined && isServiceTier(suffix)) serviceTier = suffix;
+				else break;
+				globPattern = globPattern.substring(0, colonIdx);
 			}
 
 			const exactMatch = findExactModelReferenceMatch(globPattern, availableModels);
 			if (exactMatch) {
-				if (!scopedModels.find((sm) => modelsAreEqual(sm.model, exactMatch))) {
-					scopedModels.push({ model: exactMatch, thinkingLevel });
-				}
+				const thinkingSelection = thinkingLevel ? { level: thinkingLevel, source: "explicit" as const } : undefined;
+				const owned = addScoped({ model: exactMatch, thinkingLevel, thinkingSelection, serviceTier });
+				patternResolutions.push({
+					pattern,
+					ownedIds: owned ? [owned] : [],
+					thinkingLevel,
+					serviceTier,
+					unresolved: false,
+					isGlob: true,
+				});
 				continue;
 			}
 
-			const isCanonicalPattern = globPattern.includes("/");
-			const matchingModels = availableModels.filter((m) => {
-				const fullId = `${m.provider}/${m.id}`;
-				return (
-					minimatch(fullId, globPattern, { nocase: true }) ||
-					(!isCanonicalPattern && minimatch(m.id, globPattern, { nocase: true }))
-				);
-			});
+			const canonicalPattern = globPattern.includes("/");
+			const matches = (provider: string, id: string): boolean =>
+				minimatch(`${provider}/${id}`, globPattern, { nocase: true }) ||
+				(!canonicalPattern && minimatch(id, globPattern, { nocase: true }));
+			const projections = new Map<
+				string,
+				{ model: Model<Api>; aliases: Array<{ id: string; selection?: ThinkingSelection }> }
+			>();
+			for (const model of availableModels) {
+				const id = canonicalId(model);
+				if (matches(model.provider, model.id)) {
+					projections.set(id, { model, aliases: [] });
+				}
+				for (const aliasId of cursorLegacyAliasesForModel(model)) {
+					if (!matches(model.provider, aliasId)) continue;
+					const projection = projections.get(id) ?? { model, aliases: [] };
+					projection.aliases.push({ id: aliasId, selection: legacySelection(aliasId) });
+					projections.set(id, projection);
+				}
+			}
 
-			if (matchingModels.length === 0) {
+			if (projections.size === 0) {
 				diagnostics.push({
 					type: "warning",
 					code: "no-match",
 					message: `No models match pattern "${pattern}"`,
 					pattern,
 				});
+				patternResolutions.push({
+					pattern,
+					ownedIds: [],
+					thinkingLevel,
+					serviceTier,
+					unresolved: true,
+					isGlob: true,
+				});
 				continue;
 			}
 
-			for (const model of matchingModels) {
-				if (!scopedModels.find((sm) => modelsAreEqual(sm.model, model))) {
-					scopedModels.push({ model, thinkingLevel });
+			const ownedIds: string[] = [];
+			for (const { model, aliases } of projections.values()) {
+				let thinkingSelection: ThinkingSelection | undefined;
+				let projectedLevel = thinkingLevel;
+				if (thinkingLevel !== undefined) {
+					thinkingSelection = { level: thinkingLevel, source: "explicit" };
+				} else {
+					const selections = aliases.flatMap((alias) => (alias.selection ? [alias.selection] : []));
+					const levels = new Set(selections.map((selection) => selection.level));
+					if (levels.size === 1 && selections.length > 0) {
+						thinkingSelection = [...selections].sort((a, b) =>
+							(a.legacyVariantId ?? "").localeCompare(b.legacyVariantId ?? ""),
+						)[0];
+						projectedLevel = thinkingSelection.level;
+					}
 				}
+				const owned = addScoped({ model, thinkingLevel: projectedLevel, thinkingSelection, serviceTier });
+				if (owned) ownedIds.push(owned);
 			}
+			patternResolutions.push({
+				pattern,
+				ownedIds,
+				thinkingLevel,
+				serviceTier,
+				unresolved: false,
+				isGlob: true,
+			});
 			continue;
 		}
 
-		const { model, thinkingLevel, serviceTier, warning } = parseModelPattern(pattern, availableModels);
-
-		if (warning) {
-			diagnostics.push({ type: "warning", code: "invalid-thinking-level", message: warning, pattern });
-		}
-
+		const { model, thinkingLevel, thinkingSelection, serviceTier, warning } = parseModelPattern(
+			pattern,
+			availableModels,
+		);
+		if (warning) diagnostics.push({ type: "warning", code: "invalid-thinking-level", message: warning, pattern });
 		if (!model) {
 			diagnostics.push({
 				type: "warning",
@@ -369,15 +570,28 @@ export function resolveModelScopeFromModels(
 				message: `No models match pattern "${pattern}"`,
 				pattern,
 			});
+			patternResolutions.push({
+				pattern,
+				ownedIds: [],
+				thinkingLevel,
+				serviceTier,
+				unresolved: true,
+				isGlob: false,
+			});
 			continue;
 		}
-
-		if (!scopedModels.find((sm) => modelsAreEqual(sm.model, model))) {
-			scopedModels.push({ model, thinkingLevel, serviceTier });
-		}
+		const owned = addScoped({ model, thinkingLevel, thinkingSelection, serviceTier });
+		patternResolutions.push({
+			pattern,
+			ownedIds: owned ? [owned] : [],
+			thinkingLevel,
+			serviceTier,
+			unresolved: false,
+			isGlob: false,
+		});
 	}
 
-	return { scopedModels, diagnostics };
+	return { scopedModels, diagnostics, patternResolutions };
 }
 
 export interface ResolveModelScopeOptions extends AuthOperationOptions {
@@ -411,6 +625,7 @@ export async function resolveModelScope(
 export interface ResolveCliModelResult {
 	model: Model<Api> | undefined;
 	thinkingLevel?: ThinkingLevel;
+	thinkingSelection?: ThinkingSelection;
 	serviceTier?: ServiceTier;
 	warning: string | undefined;
 	error: string | undefined;
@@ -536,7 +751,7 @@ export function resolveCliModel(options: {
 	}
 
 	const candidates = provider ? availableModels.filter((m) => m.provider === provider) : availableModels;
-	const { model, thinkingLevel, serviceTier, warning } = parseModelPattern(pattern, candidates, {
+	const { model, thinkingLevel, thinkingSelection, serviceTier, warning } = parseModelPattern(pattern, candidates, {
 		allowInvalidThinkingLevelFallback: false,
 	});
 
@@ -563,7 +778,7 @@ export function resolveCliModel(options: {
 				}
 			}
 		}
-		return { model, thinkingLevel, serviceTier, warning, error: undefined };
+		return { model, thinkingLevel, thinkingSelection, serviceTier, warning, error: undefined };
 	}
 
 	if (inferredProvider) {
@@ -637,7 +852,9 @@ export type InitialModelProvenance = "cli" | "scoped" | "settings" | "provider-d
 
 export interface InitialModelResult {
 	model: Model<Api> | undefined;
-	thinkingLevel: ThinkingLevel;
+	/** Present only when the selected CLI/scoped pattern explicitly pinned a level. */
+	thinkingLevel: ThinkingLevel | undefined;
+	thinkingSelection?: ThinkingSelection;
 	fallbackMessage: string | undefined;
 	provenance: InitialModelProvenance;
 }
@@ -658,21 +875,12 @@ export async function findInitialModel(options: {
 	defaultProvider?: string;
 	defaultModelId?: string;
 	defaultThinkingLevel?: ThinkingLevel;
+	modelThinkingLevels?: Record<string, ThinkingLevel>;
 	modelRuntime: ModelRuntime;
 }): Promise<InitialModelResult> {
-	const {
-		cliProvider,
-		cliModel,
-		scopedModels,
-		isContinuing,
-		defaultProvider,
-		defaultModelId,
-		defaultThinkingLevel,
-		modelRuntime,
-	} = options;
+	const { cliProvider, cliModel, scopedModels, isContinuing, defaultProvider, defaultModelId, modelRuntime } = options;
 
 	let model: Model<Api> | undefined;
-	let thinkingLevel: ThinkingLevel = DEFAULT_THINKING_LEVEL;
 
 	// 1. CLI args take priority
 	if (cliProvider && cliModel) {
@@ -688,7 +896,8 @@ export async function findInitialModel(options: {
 		if (resolved.model) {
 			return {
 				model: resolved.model,
-				thinkingLevel: DEFAULT_THINKING_LEVEL,
+				thinkingLevel: resolved.thinkingLevel,
+				thinkingSelection: resolved.thinkingSelection,
 				fallbackMessage: undefined,
 				provenance: "cli",
 			};
@@ -697,9 +906,12 @@ export async function findInitialModel(options: {
 
 	// 2. Use first model from scoped models (skip if continuing/resuming)
 	if (scopedModels.length > 0 && !isContinuing) {
+		const scopedModel = scopedModels[0];
+		const perModel = options.modelThinkingLevels?.[`${scopedModel.model.provider}/${scopedModel.model.id}`];
 		return {
 			model: scopedModels[0].model,
-			thinkingLevel: scopedModels[0].thinkingLevel ?? defaultThinkingLevel ?? DEFAULT_THINKING_LEVEL,
+			thinkingLevel: perModel ?? scopedModels[0].thinkingLevel,
+			thinkingSelection: scopedModels[0].thinkingSelection,
 			fallbackMessage: undefined,
 			provenance: "scoped",
 		};
@@ -707,13 +919,16 @@ export async function findInitialModel(options: {
 
 	// 3. Try saved default from settings if auth is configured.
 	if (defaultProvider && defaultModelId) {
-		const found = modelRuntime.getModel(defaultProvider, defaultModelId);
-		if (found && modelRuntime.hasConfiguredAuth(found.provider)) {
-			model = found;
-			if (defaultThinkingLevel) {
-				thinkingLevel = defaultThinkingLevel;
-			}
-			return { model, thinkingLevel, fallbackMessage: undefined, provenance: "settings" };
+		const resolved = resolveStoredModelReference(defaultProvider, defaultModelId, modelRuntime);
+		if (resolved && modelRuntime.hasConfiguredAuth(resolved.model.provider)) {
+			model = resolved.model;
+			return {
+				model,
+				thinkingLevel: resolved.thinkingLevel,
+				thinkingSelection: resolved.thinkingSelection,
+				fallbackMessage: undefined,
+				provenance: "settings",
+			};
 		}
 	}
 
@@ -733,7 +948,7 @@ export async function findInitialModel(options: {
 			if (match) {
 				return {
 					model: match,
-					thinkingLevel: DEFAULT_THINKING_LEVEL,
+					thinkingLevel: undefined,
 					fallbackMessage: undefined,
 					provenance: "provider-default",
 				};
@@ -743,7 +958,7 @@ export async function findInitialModel(options: {
 		// If no default found, use first available
 		return {
 			model: availableModels[0],
-			thinkingLevel: DEFAULT_THINKING_LEVEL,
+			thinkingLevel: undefined,
 			fallbackMessage: undefined,
 			provenance: "first-available",
 		};
@@ -752,7 +967,7 @@ export async function findInitialModel(options: {
 	// 5. No model found
 	return {
 		model: undefined,
-		thinkingLevel: DEFAULT_THINKING_LEVEL,
+		thinkingLevel: undefined,
 		fallbackMessage: undefined,
 		provenance: "first-available",
 	};
@@ -767,8 +982,13 @@ export async function restoreModelFromSession(
 	currentModel: Model<Api> | undefined,
 	shouldPrintMessages: boolean,
 	modelRuntime: ModelRuntime,
-): Promise<{ model: Model<Api> | undefined; fallbackMessage: string | undefined }> {
-	const restoredModel = modelRuntime.getModel(savedProvider, savedModelId);
+): Promise<{
+	model: Model<Api> | undefined;
+	thinkingSelection?: ThinkingSelection;
+	fallbackMessage: string | undefined;
+}> {
+	const restored = resolveStoredModelReference(savedProvider, savedModelId, modelRuntime);
+	const restoredModel = restored?.model;
 
 	// Check if restored model exists and still has auth configured
 	const hasConfiguredAuth = restoredModel ? modelRuntime.hasConfiguredAuth(restoredModel.provider) : false;
@@ -777,7 +997,7 @@ export async function restoreModelFromSession(
 		if (shouldPrintMessages) {
 			console.log(chalk.dim(`Restored model: ${savedProvider}/${savedModelId}`));
 		}
-		return { model: restoredModel, fallbackMessage: undefined };
+		return { model: restoredModel, thinkingSelection: restored.thinkingSelection, fallbackMessage: undefined };
 	}
 
 	// Model not found or no API key - fall back

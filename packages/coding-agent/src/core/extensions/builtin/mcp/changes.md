@@ -1,5 +1,22 @@
 # mcp Extension Changes
 
+## Explicit pgrep match-all pattern for process-tree collection (2026-08-12)
+
+### What changed
+- `process-tree.ts` now passes `.` as the positional match-all pattern to `pgrep -P`.
+- `killPids` now skips any non-positive or PID-1 entry before signaling, as defense in depth against a broken or substituted discovery executable returning a catastrophic target.
+- `test/suite/regressions/issue-823-mcp-pgrep-pattern.test.ts` places a deterministic fake `pgrep` first on PATH and proves unrelated PIDs are excluded, and that PID 1 is never signaled even when discovery returns it.
+- `test/mcp/transport.test.ts` uses the same explicit pattern in its child-PID helper.
+
+### Why
+- Some `pgrep` implementations interpret `pgrep -P <parent>` without a positional pattern as a broad process query. The explicit `.` keeps collection limited to the requested parent on macOS and Linux.
+
+### Why extension system couldn't handle this alone
+- MCP stdio shutdown owns the private descendant-collection helper; an external extension cannot change the process tree selected before shutdown.
+
+### Expected merge conflict zones
+- LOW: `process-tree.ts` `childPids`; `test/mcp/transport.test.ts` test-only child discovery helper.
+
 ## Anthropic native deferral delegated to shared tool search (2026-08-11)
 
 ### What changed
@@ -523,3 +540,21 @@ loader's auto-activation of newly registered tools.
   `@modelcontextprotocol/sdk` dependency.
 - NONE for `extensions/types.ts` (untouched); `builtin/mcp/` itself does not
   exist upstream.
+
+## Non-blocking reconnect on hot reload (2026-08-20)
+
+### What changed
+
+- The `session_start` handler still starts `attach()` immediately, but when `event.reason === "reload"` it no longer awaits it; errors keep flowing through `wrapAsync` -> the extension error sink. `startup`/omitted reasons await exactly as before.
+
+### Why
+
+- Hot reload awaits every `session_start` handler; MCP reconnect measured ~260ms per reload on the critical path. Attach is single-flight (`attachPromise` + `McpService` attach queue) and `before_agent_start` already awaits `attachPromise`, so tools are still connected before any agent turn needs them.
+
+### Why an extension could not handle it
+
+- The handler lives in this builtin; only it can decide not to await its own reconnect.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` `session_start` registration block; new `test/suite/mcp-reload-deferral.test.ts`.

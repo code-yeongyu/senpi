@@ -24,12 +24,16 @@ function createModel(id: string): Model<Api> {
 	};
 }
 
-function buildPrompt(presetName: PromptPresetName, modelId: string): string {
+function buildPrompt(
+	presetName: PromptPresetName,
+	modelId: string,
+	selectedTools: readonly string[] = ["eval", "monitor", "read", "bash"],
+): string {
 	const settings: PromptPresetSettings = { promptPreset: presetName };
 	const preset = resolvePreset(createModel(modelId), settings, {
 		cwd: "/repo",
-		selectedTools: ["eval", "read", "bash"],
-		toolSnippets: { eval: "Run one persistent code cell." },
+		selectedTools: [...selectedTools],
+		toolSnippets: Object.fromEntries(selectedTools.map((name) => [name, `${name} snippet`])),
 		promptGuidelines: [],
 		contextFiles: [],
 		skills: [],
@@ -62,9 +66,8 @@ function occurrences(haystack: string, needle: string): number {
 
 const EXPECTED_CONCERN: Record<Gpt56ExecutionRuleId, Gpt56ExecutionConcern> = {
 	"eval-first-routing": "tool-orchestration",
-	"parallel-batching": "tool-orchestration",
-	"over-call-bias": "tool-orchestration",
-	"in-kernel-reduction": "tool-orchestration",
+	"evidence-comparison": "tool-orchestration",
+	"perceived-state-loop": "tool-orchestration",
 	"stay-direct-exceptions": "tool-orchestration",
 	delegation: "delegation",
 	"todo-granularity": "todo-discipline",
@@ -75,9 +78,8 @@ const EXPECTED_CONCERN: Record<Gpt56ExecutionRuleId, Gpt56ExecutionConcern> = {
 
 const EXPECTED_SECTION: Record<Gpt56ExecutionRuleId, string> = {
 	"eval-first-routing": "Working the Task",
-	"parallel-batching": "Working the Task",
-	"over-call-bias": "Working the Task",
-	"in-kernel-reduction": "Working the Task",
+	"evidence-comparison": "Working the Task",
+	"perceived-state-loop": "Working the Task",
 	"stay-direct-exceptions": "Working the Task",
 	delegation: "Working the Task",
 	"todo-granularity": "Working the Task",
@@ -101,7 +103,7 @@ describe("GPT-5.6 execution discipline", () => {
 			expect(rule.directive).not.toMatch(/\p{Extended_Pictographic}/u);
 		}
 		const orchestration = GPT56_EXECUTION_RULES.filter((rule) => rule.concern === "tool-orchestration");
-		expect(orchestration.length).toBeGreaterThanOrEqual(5);
+		expect(orchestration.length).toBe(4);
 	});
 
 	it("renders every directive exactly once, at its point of use in the core", () => {
@@ -118,6 +120,15 @@ describe("GPT-5.6 execution discipline", () => {
 		}
 	});
 
+	it("leaves the wait-as-subscription stance to the eval tool description", () => {
+		// given
+		const prompt = buildPrompt("gpt-5.6", "gpt-5.6-sol", ["eval", "monitor", "read"]);
+
+		// then
+		expect(GPT56_EXECUTION_RULES.map((rule) => rule.id)).not.toContain("monitor-subscribe");
+		expect(prompt).not.toMatch(/register monitor with a filter/i);
+	});
+
 	it("keeps the shared GPT code-execution routing bridge at the orchestration point of use", () => {
 		// given
 		const prompt = buildPrompt("gpt-5.6", "gpt-5.6-terra");
@@ -127,6 +138,14 @@ describe("GPT-5.6 execution discipline", () => {
 		// then
 		expect(occurrences(prompt, bridge)).toBe(1);
 		expect(sections.get("Working the Task")).toContain(bridge);
+	});
+
+	it("routes a narrow question through request_user_input when it is available", () => {
+		const prompt = buildPrompt("gpt-5.6", "gpt-5.6-sol");
+
+		expect(prompt).toContain("request_user_input");
+		expect(prompt).toContain("one narrow question through request_user_input when it is available, then stop.");
+		expect(prompt).not.toContain("one narrow question, then stop.");
 	});
 
 	it("drops the anti-test default that contradicts the test-first directive", () => {

@@ -13,8 +13,10 @@ import {
 	getInterpreterAvailability,
 	type InterpreterAvailability,
 } from "../interpreters/detect.ts";
+import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
-import type { EnabledEvalLanguages, EvalLanguage } from "../tool/types.ts";
+import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
+import { jsRuntimeInfo, runtimesFromAvailability } from "./runtime-info.ts";
 import {
 	type CodemodeSessionManager,
 	type CreateCodemodeSessionManagerOptions,
@@ -39,6 +41,7 @@ export type SessionRuntime = {
 	readonly parallelPoolWidth: number;
 	readonly manager: CodemodeSessionManager;
 	readonly enabledLanguages: EnabledEvalLanguages;
+	readonly runtimes: EvalRuntimes;
 	readonly settings: ResolvedCodemodeSettings;
 	readonly artifactsDir: string;
 	readonly executeTool: AgentExecuteTool;
@@ -64,11 +67,13 @@ export async function createRuntime(
 	const executeTool = createExecuteTool(pi, activeTools);
 	const create = options.createSessionManager ?? createCodemodeSessionManager;
 	const sessionId = sessionIdFrom(event);
+	const sessionEnv = sessionEnvironmentFrom(ctx);
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
 	const manager = await create({
 		sessionId,
 		cwd: ctx.cwd,
+		sessionEnv,
 		settings,
 		availability,
 		artifactsDir: artifacts.dir,
@@ -82,6 +87,7 @@ export async function createRuntime(
 		parallelPoolWidth,
 		manager,
 		enabledLanguages,
+		runtimes: runtimesFromAvailability(availability, jsRuntimeInfo()),
 		settings,
 		artifactsDir: artifacts.dir,
 		executeTool,

@@ -19,6 +19,7 @@ import {
 	JSON_TREE_SCALAR_LEN_EXPANDED,
 	renderJsonTreeLines,
 } from "./json-tree.ts";
+import { formatRuntimeBadge } from "./runtime-label.ts";
 import { codePointPrefix, formatDuration, renderToolCallWidget } from "./tool-widgets.ts";
 import type {
 	EvalCellResult,
@@ -69,12 +70,36 @@ const TOOL_CALL_PREVIEW_COUNT = 5;
 const TOOL_CALL_COLLAPSED_VISUAL_LINES = 4;
 const TOOL_CALL_COLLAPSED_ERROR_CODE_POINTS = 512;
 const TOOL_ERROR_OMISSION_MARKER = "[tool error omitted]";
+const LIVE_ELAPSED_TICK_MS = 1_000;
 
 class PlainTextComponent implements EvalRenderComponent {
 	#blocks: readonly RenderBlock[] = [];
+	#ticker: ReturnType<typeof setInterval> | undefined;
 
 	setBlocks(blocks: readonly RenderBlock[]): void {
 		this.#blocks = blocks;
+	}
+
+	/**
+	 * The host only animates tool rows for streaming args, `task`, and results carrying
+	 * `details.progress`; an eval row matches none of them, so nothing repaints it between
+	 * update events. While a cell is non-terminal this drives the repaint itself so the
+	 * header's elapsed time advances, and it emits no tool updates or RPC traffic.
+	 */
+	syncLiveTicker(isLive: boolean, invalidate: () => void): void {
+		if (!isLive) {
+			this.stopLiveTicker();
+			return;
+		}
+		if (this.#ticker !== undefined) return;
+		this.#ticker = setInterval(invalidate, LIVE_ELAPSED_TICK_MS);
+		this.#ticker.unref?.();
+	}
+
+	stopLiveTicker(): void {
+		if (this.#ticker === undefined) return;
+		clearInterval(this.#ticker);
+		this.#ticker = undefined;
 	}
 
 	render(width: number): string[] {
@@ -107,6 +132,16 @@ function componentFor(context: RenderContext | ResultRenderContext): PlainTextCo
 	const existing = context.lastComponent;
 	if (existing instanceof PlainTextComponent) return existing;
 	return new PlainTextComponent();
+}
+
+/** Render-time clock; tests inject a fixed value so elapsed output never depends on wall time. */
+function renderNow(context: RenderContext | ResultRenderContext): number {
+	const injected: unknown = Reflect.get(context, "now");
+	return typeof injected === "number" && Number.isFinite(injected) ? injected : Date.now();
+}
+
+function hasLiveCell(details: EvalToolDetails | undefined): boolean {
+	return (details?.cells ?? []).some((cell) => isLiveCellStatus(cell.status) && cell.startedAt !== undefined);
 }
 
 function style(theme: Theme | undefined, color: ThemeColor, text: string): string {
@@ -187,13 +222,21 @@ type RenderEnvironment = {
 	readonly spinnerFrame: number | undefined;
 	readonly width: number;
 	readonly meta: TruncationMeta | undefined;
+	/** Render-time clock, injected so elapsed time is deterministic under test. */
+	readonly now: number;
 };
-type CellBadges = { readonly reset: boolean; readonly timeout: number | undefined };
+type CellBadges = {
+	readonly reset: boolean;
+	readonly timeout: number | undefined;
+	readonly throughput: CellThroughput | undefined;
+};
+type CellThroughput = { readonly calls: number; readonly wallDurationMs: number | undefined };
 type PrefixStyle = { readonly prefix: string; readonly continuation: string; readonly color: ThemeColor };
 type DetailedRenderContext = {
 	readonly environment: RenderEnvironment;
 	readonly args: EvalToolRequest;
 	readonly showImageFallback: boolean;
+	readonly isFinal: boolean;
 };
 
 function assertNever(value: never): never {
@@ -225,6 +268,10 @@ function spinner(frame: number | undefined): string {
 	return SPINNER_FRAMES.at((frame ?? 0) % SPINNER_FRAMES.length) ?? SPINNER_FRAMES[0];
 }
 
+function isLiveCellStatus(status: CellStatus): boolean {
+	return status === "pending" || status === "running" || status === "detached";
+}
+
 function cellPresentation(status: CellStatus, spinnerFrame: number | undefined): StatusPresentation {
 	switch (status) {
 		case "pending":
@@ -253,10 +300,22 @@ function renderPrefixed(text: string, environment: RenderEnvironment, prefixStyl
 	);
 }
 
+// A running cell only receives updates on output/status events, so a stored duration
+// freezes between them. Non-terminal cells therefore derive elapsed time from the
+// render-time clock; terminal cells keep their settled duration verbatim.
+function cellElapsedMs(cell: EvalCellResult, environment: RenderEnvironment): number | undefined {
+	if (!isLiveCellStatus(cell.status) || cell.startedAt === undefined) return cell.durationMs;
+	return Math.max(0, environment.now - cell.startedAt);
+}
+
 function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string {
 	const presentation = cellPresentation(cell.status, environment.spinnerFrame);
-	let header = `eval ${cell.language} ${presentation.label} ${presentation.icon}`;
-	if (cell.durationMs !== undefined) header += ` · ${formatDuration(cell.durationMs)}`;
+	const runtimeBadge = cell.runtime === undefined ? "" : ` (${formatRuntimeBadge(cell.language, cell.runtime)})`;
+	let header = `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
+	const throughputBadge = badges.throughput === undefined ? undefined : formatThroughputBadge(badges.throughput);
+	if (throughputBadge !== undefined) header += ` · ${throughputBadge}`;
+	const elapsedMs = badges.throughput?.wallDurationMs ?? cellElapsedMs(cell, environment);
+	if (elapsedMs !== undefined) header += ` · ${formatDuration(elapsedMs)}`;
 	if (badges.reset) header += " · reset";
 	if (badges.timeout !== undefined) header += ` · timeout ${badges.timeout}s`;
 	return style(environment.theme, presentation.color, header);
@@ -281,6 +340,22 @@ function eventNumber(value: unknown): number {
 
 function plural(count: number, singular: string, pluralNoun: string): string {
 	return `${count} ${count === 1 ? singular : pluralNoun}`;
+}
+
+function formatCallsPerSecond(calls: number, wallDurationMs: number | undefined): string {
+	const seconds = typeof wallDurationMs === "number" && Number.isFinite(wallDurationMs) ? wallDurationMs / 1_000 : 0;
+	if (seconds <= 0) return "n/a calls/s";
+	return `${(calls / seconds).toFixed(2)} calls/s`;
+}
+
+// A cell that issued no tool calls has no throughput to report: emitting
+// "0 calls · 0.00 calls/s" is noise, so the whole badge is dropped instead.
+function formatThroughputBadge(throughput: CellThroughput): string | undefined {
+	if (throughput.calls <= 0) return undefined;
+	return `${plural(throughput.calls, "call", "calls")} · ${formatCallsPerSecond(
+		throughput.calls,
+		throughput.wallDurationMs,
+	)}`;
 }
 
 function statusIcon(op: string): string {
@@ -613,9 +688,17 @@ function renderDetailedLines(
 	const cells = details.cells ?? [];
 	for (const [index, cell] of cells.entries()) {
 		const run = isEvalRunInput(context.args) ? context.args : undefined;
+		const throughput =
+			context.isFinal &&
+			cells.length === 1 &&
+			cell.status === "complete" &&
+			typeof details.toolCallCount === "number"
+				? { calls: details.toolCallCount, wallDurationMs: details.wallDurationMs }
+				: undefined;
 		const badges = {
 			reset: index === 0 && run?.reset === true,
 			timeout: index === 0 ? run?.timeout : undefined,
+			throughput,
 		};
 		appendLines(lines, renderCell(cell, context.environment, badges));
 		if (index < cells.length - 1) lines.push("");
@@ -747,18 +830,25 @@ function resultHeader(
 			color = "error";
 			break;
 	}
-	return style(theme, color, `eval ${details?.language ?? "?"} ${status}`);
+	const runtimeBadge =
+		details?.runtime === undefined ? "" : ` (${formatRuntimeBadge(details.language, details.runtime)})`;
+	return style(theme, color, `eval ${details?.language ?? "?"}${runtimeBadge} ${status}`);
 }
 
 function resultMetadata(
 	details: EvalToolDetails | undefined,
 	options: ToolRenderResultOptions,
 	theme: Theme | undefined,
+	status: "running" | "done" | "error",
 ): RenderBlock[] {
 	const metadata: string[] = [];
 	if (details?.phase) metadata.push(`phase ${details.phase}`);
-	if (!options.isPartial && typeof details?.durationMs === "number")
-		metadata.push(`took ${formatDuration(details.durationMs)}`);
+	const elapsedMs = details?.wallDurationMs ?? details?.durationMs;
+	if (!options.isPartial && typeof elapsedMs === "number") metadata.push(`took ${formatDuration(elapsedMs)}`);
+	if (status === "done" && typeof details?.toolCallCount === "number") {
+		const badge = formatThroughputBadge({ calls: details.toolCallCount, wallDurationMs: details.wallDurationMs });
+		if (badge !== undefined) metadata.push(badge);
+	}
 	if (metadata.length === 0) return [];
 	return [{ kind: "text", text: style(theme, "muted", metadata.join(" | ")) }];
 }
@@ -805,6 +895,7 @@ export function renderEvalCall(
 					spinnerFrame: context.spinnerFrame,
 					width,
 					meta: undefined,
+					now: renderNow(context),
 				};
 				const cell: EvalCellResult = {
 					index: 0,
@@ -814,7 +905,11 @@ export function renderEvalCall(
 					output: "",
 					status: context.spinnerFrame === undefined ? "pending" : "running",
 				};
-				return renderCell(cell, environment, { reset: args.reset === true, timeout: args.timeout });
+				return renderCell(cell, environment, {
+					reset: args.reset === true,
+					timeout: args.timeout,
+					throughput: undefined,
+				});
 			},
 		},
 	]);
@@ -831,6 +926,7 @@ export function renderEvalResult(
 	const details = result.details;
 	const expanded = options.expanded || context.expanded;
 	const imageProtocol = context.imageProtocol ?? null;
+	component.syncLiveTicker(hasLiveCell(details), context.invalidate);
 	if (details?.cells !== undefined && details.cells.length > 0) {
 		const blocks: RenderBlock[] = [
 			{
@@ -843,9 +939,11 @@ export function renderEvalResult(
 							spinnerFrame: context.spinnerFrame,
 							width,
 							meta: details.meta,
+							now: renderNow(context),
 						},
 						args: context.args,
 						showImageFallback: context.showImages && imageProtocol === null,
+						isFinal: !options.isPartial,
 					}),
 			},
 		];
@@ -862,7 +960,7 @@ export function renderEvalResult(
 		...(details?.summary === undefined
 			? []
 			: [{ kind: "text" as const, text: style(theme, "muted", details.summary) }]),
-		...resultMetadata(details, options, theme),
+		...resultMetadata(details, options, theme, status),
 		{ kind: "blank" },
 	];
 	const rawOutput = textOutput(result, context.showImages && imageProtocol === null);
@@ -893,6 +991,7 @@ export function renderEvalResult(
 						spinnerFrame: context.spinnerFrame,
 						width,
 						meta: details?.meta,
+						now: renderNow(context),
 					};
 					return [
 						...renderStatusEvents(nonAgentEvents, environment),
@@ -914,6 +1013,7 @@ export function renderEvalResult(
 						spinnerFrame: context.spinnerFrame,
 						width,
 						meta: details?.meta,
+						now: renderNow(context),
 					}),
 			},
 		);

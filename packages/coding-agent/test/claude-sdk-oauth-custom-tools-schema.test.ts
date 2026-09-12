@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { denyCustomToolExecution } from "../src/core/extensions/builtin/claude-sdk-oauth/custom-tools.ts";
 import { jsonSchemaToZodShape } from "../src/core/extensions/builtin/claude-sdk-oauth/custom-tools-schema.ts";
+import { TOOL_EXECUTION_DENIED_MESSAGE } from "../src/core/extensions/builtin/claude-sdk-oauth/tools.ts";
 
 describe("jsonSchemaToZodShape", () => {
 	it("converts TypeBox-style object schemas with required/optional fields", () => {
@@ -47,6 +48,7 @@ describe("custom tool advertisement", () => {
 	it("deny handler always refuses execution with the denial message", async () => {
 		const result = await denyCustomToolExecution();
 		expect(result.isError).toBe(true);
-		expect(result.content[0]?.text).toContain("unavailable");
+		expect(result.content[0]?.text).toBe(TOOL_EXECUTION_DENIED_MESSAGE);
+		expect(result.content[0]?.text).toContain("not a failure");
 	});
 });

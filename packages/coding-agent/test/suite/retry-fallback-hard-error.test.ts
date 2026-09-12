@@ -1,10 +1,13 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { getToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import type { SelectorCooldowns } from "../../src/core/retry-fallback/cooldown.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
 const fallback = "faux/faux-2";
+const claudePrimary = "claude-sdk-oauth/faux-1";
+const claudeFallback = "claude-sdk-oauth/faux-2";
 const insufficientQuota = "billing error: insufficient_quota";
 const toolSchemaRejection =
 	'500 server_error: Invalid request: tools.function.parameters.type is required and must be "object"';
@@ -18,6 +21,12 @@ function cooldownsFor(harness: Harness): SelectorCooldowns {
 	if (!cooldowns) throw new Error("Expected retry fallback cooldowns");
 	return cooldowns;
 }
+
+const testToolSearchRuntime = {
+	getAllTools: () => [],
+	getActiveTools: () => [],
+	setActiveTools: () => {},
+} as const;
 
 describe("retry fallback hard errors", () => {
 	const harnesses: Harness[] = [];
@@ -84,6 +93,29 @@ describe("retry fallback hard errors", () => {
 
 		expect(harness.eventsOfType("retry_fallback_succeeded")).toEqual([]);
 		expect(harness.eventsOfType("auto_retry_end").filter((event) => event.success)).toEqual([]);
+	});
+
+	it("emits fallback exhaustion when a hard-error chain has no next candidate", async () => {
+		const harness = await createHarness({
+			settings: { retry: { enabled: true, baseDelayMs: 1 } },
+		});
+		harnesses.push(harness);
+		const internals = harness.session as unknown as {
+			_retryFallback: { exhaustedChainKey: string; tryFallback: () => Promise<boolean> };
+			_handleRetryableError: (
+				message: ReturnType<typeof fauxAssistantMessage>,
+				options: { hardErrorFallback: boolean },
+			) => Promise<string>;
+		};
+		Object.defineProperty(internals._retryFallback, "exhaustedChainKey", { value: primary, configurable: true });
+		internals._retryFallback.tryFallback = async () => false;
+
+		await internals._handleRetryableError(
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: insufficientQuota }),
+			{ hardErrorFallback: true },
+		);
+
+		expect(harness.eventsOfType("retry_fallback_exhausted")).toMatchObject([{ chainKey: primary }]);
 	});
 
 	it("settles an insufficient-quota error without a configured fallback", async () => {
@@ -183,6 +215,178 @@ describe("retry fallback hard errors", () => {
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
 
+	it("retries a provider stream stall on the same model via the shared transient budget", async () => {
+		// A stall is a provider-AGNOSTIC class: it consumes the ordinary shared
+		// retry budget for every provider - the Claude SDK lane included - and
+		// must never be swallowed by a Claude-specific remint branch.
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 2, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		const timeout = "Provider stream start timed out after 90000ms";
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: timeout }),
+			fauxAssistantMessage("recovered after stall"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+	});
+
+	it("does not hop providers on a bare invalid_request from the Claude SDK lane", async () => {
+		const harness = await createHarness({
+			provider: "claude-sdk-oauth",
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 1,
+					baseDelayMs: 1,
+					fallbackChains: { [claudePrimary]: [claudeFallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_request" }),
+			fauxAssistantMessage("recovered after invalid_request"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+	});
+
+	it("a bare invalid_request from any other provider still hops the configured fallback chain", async () => {
+		// The same wording outside the Claude SDK lane is an ordinary hard error:
+		// only the Claude-SDK-specific quirks are remint-only.
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 1,
+					baseDelayMs: 1,
+					fallbackChains: { [primary]: [fallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_request" }),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
+			{ from: primary, to: fallback, chainKey: primary, reason: "hard-error" },
+		]);
+	});
+
+	it("retries a Claude SDK session lock on the same model instead of hopping providers", async () => {
+		const harness = await createHarness({
+			provider: "claude-sdk-oauth",
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 2,
+					baseDelayMs: 1,
+					fallbackChains: { [claudePrimary]: [claudeFallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		const lock = "Lock file is already being held";
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: lock }),
+			fauxAssistantMessage("recovered after lock"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
+	});
+
+	it("does not hop providers when a Claude SDK session lock exhausts same-model retries", async () => {
+		const harness = await createHarness({
+			provider: "claude-sdk-oauth",
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 1,
+					baseDelayMs: 1,
+					fallbackChains: { [claudePrimary]: [claudeFallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		const lock = "Lock file is already being held";
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: lock }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: lock }),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+	});
+
+	it("does not switch providers on a Claude SDK lane auth miss", async () => {
+		const harness = await createHarness({
+			provider: "claude-sdk-oauth",
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: {
+					enabled: true,
+					baseDelayMs: 1,
+					fallbackChains: { [claudePrimary]: [claudeFallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		const authMiss = "Provider is not configured: claude-sdk-oauth";
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: authMiss })]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.session.state.messages.at(-1)).toMatchObject({ errorMessage: authMiss });
+	});
+
+	it("still hops the fallback chain on another provider's auth miss", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: { retry: { enabled: true, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } } },
+		});
+		harnesses.push(harness);
+		const authMiss = "Provider is not configured: faux";
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: authMiss }),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2"]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
+			{ from: primary, to: fallback, chainKey: primary, reason: "hard-error" },
+		]);
+	});
+
 	it("does not treat an aborted response as a hard-error fallback", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }, { id: "faux-2" }],
@@ -198,5 +402,64 @@ describe("retry fallback hard errors", () => {
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+	});
+	it("retries a native tool-search 400 once on the same model with injection disabled", async () => {
+		// A hard 400 whose request carried native injection must recover in place:
+		// the adapter is already disabled for the session, so the same model can
+		// succeed on the next attempt and the fallback chain is not the recovery.
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 3, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		getToolSearchService(testToolSearchRuntime).noteNativeInjectionFailure("native tool-search 400");
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "invalid_request_error: Tool reference 'mcp__925c__memory' not found in available tools",
+			}),
+			fauxAssistantMessage("recovered in place"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1"]);
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		expect(harness.eventsOfType("auto_retry_start")).toHaveLength(1);
+		// No model switch means no fallback lifecycle events; the recovery is a plain same-model retry.
+		expect(harness.eventsOfType("retry_fallback_succeeded")).toEqual([]);
+		expect(harness.session.state.messages.at(-1)).toMatchObject({ role: "assistant" });
+	});
+
+	it("falls back normally when the same model 400s again after the native recovery", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			settings: {
+				retry: { enabled: true, maxRetries: 3, baseDelayMs: 60_000, fallbackChains: { [primary]: [fallback] } },
+			},
+		});
+		harnesses.push(harness);
+		getToolSearchService(testToolSearchRuntime).noteNativeInjectionFailure("native tool-search 400");
+		harness.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "invalid_request_error: Tool reference 'mcp__925c__memory' not found in available tools",
+			}),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid_request_error: still rejected" }),
+			fauxAssistantMessage("fallback answer"),
+		]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1", "faux-2"]);
+		expect(
+			harness.events
+				.filter((event) => event.type === "retry_fallback_applied")
+				.map((event) => (event.type === "retry_fallback_applied" ? event.reason : "")),
+		).toEqual(["hard-error"]);
+		expect(harness.eventsOfType("auto_retry_start")).toHaveLength(2);
 	});
 });

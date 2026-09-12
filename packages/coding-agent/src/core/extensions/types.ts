@@ -81,10 +81,13 @@ import type {
 	GrepToolInput,
 	LsToolDetails,
 	LsToolInput,
+	PowerShellToolDetails,
+	PowerShellToolInput,
 	ReadToolDetails,
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
@@ -97,6 +100,7 @@ export type ServiceTier = "auto" | "flex" | "priority";
 export type CompactionReason = "manual" | "threshold" | "overflow" | "pre_prompt" | "branch" | "extension";
 export type CompactionRejectionCause =
 	| "cancelled-by-extension"
+	| "external-owner"
 	| "would-overflow"
 	| "circuit-breaker"
 	| "per-turn-cap"
@@ -138,6 +142,29 @@ export interface WorkingIndicatorOptions {
 export type AutocompleteProviderFactory = (current: AutocompleteProvider) => AutocompleteProvider;
 export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent;
 
+/** Canonical multi-question prompt shown through ExtensionUIContext.question. */
+export interface QuestionRequest {
+	requestId: string;
+	questions: Array<{
+		id: string;
+		header: string;
+		question: string;
+		options: Array<{ label: string; description?: string }>;
+		multiSelect: boolean;
+	}>;
+	waitForAnswer: boolean;
+	timeoutMs: number;
+}
+
+/** Outcome of ExtensionUIContext.question. */
+export interface QuestionResponse {
+	status: "answered" | "comment-submitted" | "timed_out" | "cancelled" | "orphaned-after-restart" | "unavailable";
+	answers: Record<string, { selected: string[]; text?: string }>;
+	comment?: string;
+	unanswered: string[];
+	autoResolvedAfterMs?: number;
+}
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
@@ -151,6 +178,17 @@ export interface ExtensionUIContext {
 
 	/** Show a text input dialog. */
 	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+
+	/**
+	 * Show a multi-question prompt and resolve with the user's answers, comment, cancel, or timeout.
+	 * Optional so hand-built contexts and modes that do not implement it remain valid.
+	 */
+	question?(
+		request: QuestionRequest,
+		opts?: ExtensionUIDialogOptions & {
+			onProgress?: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
+		},
+	): Promise<QuestionResponse>;
 
 	/** Show a notification to the user. */
 	notify(message: string, type?: "info" | "warning" | "error"): void;
@@ -191,8 +229,8 @@ export interface ExtensionUIContext {
 	/** Set a custom footer component, or undefined to restore the built-in footer.
 	 *
 	 * The factory receives a FooterDataProvider for data not otherwise accessible:
-	 * git branch and extension statuses from setStatus(). Token stats, model info,
-	 * etc. are available via ctx.sessionManager and ctx.model.
+	 * git branch and extension statuses from setStatus(). Context usage is on
+	 * ctx.getContextUsage(), token stats on ctx.sessionManager.getEntries(), model info on ctx.model.
 	 */
 	setFooter(
 		factory:
@@ -421,6 +459,13 @@ export interface ExtensionContext {
 	model: Model<any> | undefined;
 	/** Current service tier for the active model (from -fast suffix or scoped model config) */
 	serviceTier: ServiceTier | undefined;
+	/**
+	 * The tier the session's requests carry right now: `serviceTier`, promoted to `"priority"`
+	 * while session fast mode is on. Hosts that spawn delegated sessions read this to inherit the
+	 * parent's effective execution tier. Optional so hand-built contexts stay valid; readers fall
+	 * back to `serviceTier`.
+	 */
+	effectiveServiceTier?: ServiceTier | undefined;
 	/** Models scoped to this session. Empty when all available models are usable. */
 	scopedModels: readonly ScopedModel[];
 	/** Current thinking level, when provided by the session runtime. */
@@ -473,6 +518,8 @@ export interface ExtensionContext {
 	};
 	/** Get resolved look-at settings from global/project/user overrides. */
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
+	/** Get resolved ask-user settings from global/project overrides and --no-ask-user. */
+	getAskUserSettings?(): { enabled: boolean; timeoutMinutes: number };
 	/** Get resolved image settings from global/project/user overrides. */
 	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
@@ -496,6 +543,14 @@ export interface ExtensionContext {
 	applyCompaction(precomputed: CompactionResult, options: ApplyCompactionOptions): Promise<ApplyCompactionResult>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * Get the current base system-prompt construction options, including any
+	 * user overrides (`customPrompt` from --system-prompt, `appendSystemPrompt`
+	 * from --append-system-prompt). Optional on the base context for
+	 * compatibility with hand-built contexts; the senpi runner always binds it,
+	 * and it stays required on ExtensionCommandContext.
+	 */
+	getSystemPromptOptions?(): BuildSystemPromptOptions;
 	/** Get hook source paths currently visible to the builtin hooks extension. */
 	getLoadedHookSources?(): LoadedHookSources;
 	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
@@ -523,7 +578,6 @@ export interface ProviderRequestPreparation {
 export interface ExtensionCommandContext extends ExtensionContext {
 	/** Get the current base system-prompt construction options. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
-
 	/** Wait for the agent to finish streaming */
 	waitForIdle(): Promise<void>;
 
@@ -545,6 +599,18 @@ export interface ExtensionCommandContext extends ExtensionContext {
 		targetId: string,
 		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 	): Promise<{ cancelled: boolean }>;
+
+	/**
+	 * Replace an assistant response with an edited copy: the leaf moves to the entry's parent and the
+	 * copy (text only; tool calls and thinking are dropped) is appended as the new leaf. Pass the leaf
+	 * you last observed as `expectedLeafId` to be refused instead of overwriting a moved session.
+	 * Rejects with the same typed errors as `AgentSession.editAssistantMessage`.
+	 */
+	editAssistantMessage(
+		entryId: string,
+		text: string,
+		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+	): Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
 
 	/** Switch to a different session file. */
 	switchSession(
@@ -569,7 +635,7 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): Promise<void>;
 }
 
@@ -890,6 +956,21 @@ export interface SessionCompactRejectedEvent {
 	willRetry: false;
 }
 
+/** Fired after context compaction fails or is aborted */
+export interface SessionCompactFailedEvent {
+	type: "session_compact_failed";
+	/** What triggered the compaction: manual /compact, the context threshold, or context overflow recovery */
+	reason: "manual" | "threshold" | "overflow";
+	/** Error text when compaction failed for a non-abort reason. */
+	errorMessage?: string;
+	/** True when compaction was cancelled or aborted. */
+	aborted: boolean;
+	/** True when the aborted turn would have been retried after this compaction (overflow recovery) */
+	willRetry: boolean;
+	/** True when the failing compaction content came from a session_before_compact handler. */
+	fromExtension: boolean;
+}
+
 /** Fired before an extension runtime is torn down due to quit, reload, or session replacement. */
 export interface SessionShutdownEvent {
 	type: "session_shutdown";
@@ -949,6 +1030,7 @@ export type SessionEvent =
 	| SessionBeforeReloadEvent
 	| SessionBeforeCompactEvent
 	| SessionCompactEvent
+	| SessionCompactFailedEvent
 	| SessionShutdownEvent
 	| SessionAbortEvent
 	| SessionExtensionsRemovedEvent
@@ -1019,12 +1101,30 @@ export interface AgentEndEvent {
 	/** Whether the session will automatically retry or fall back after this end event. */
 	willRetry?: boolean;
 	/** Present when the host can attribute the abort to a user action or internal operation. */
-	abortSource?: "user" | "system";
+	abortSource?: "user" | "system" | "provider";
 }
 
 /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
 export interface AgentSettledEvent {
 	type: "agent_settled";
+}
+
+export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom" | "question";
+
+/** Fired when Pi starts waiting on a blocking user-facing extension UI prompt. */
+export interface UIPromptStartEvent {
+	type: "ui_prompt_start";
+	reason: "ui_prompt";
+	kind: UIPromptKind;
+	title?: string;
+}
+
+/** Fired when Pi is no longer waiting on a blocking user-facing extension UI prompt. */
+export interface UIPromptEndEvent {
+	type: "ui_prompt_end";
+	reason: "ui_prompt";
+	kind: UIPromptKind;
+	title?: string;
 }
 
 /** Fired at the start of each turn */
@@ -1195,6 +1295,11 @@ export interface BashToolCallEvent extends ToolCallEventBase {
 	input: BashToolInput;
 }
 
+export interface PowerShellToolCallEvent extends ToolCallEventBase {
+	toolName: "powershell";
+	input: PowerShellToolInput;
+}
+
 export interface ReadToolCallEvent extends ToolCallEventBase {
 	toolName: "read";
 	input: ReadToolInput;
@@ -1238,6 +1343,8 @@ export interface CustomToolCallEvent extends ToolCallEventBase {
  */
 export type ToolCallEvent =
 	| BashToolCallEvent
+	| PowerShellToolCallEvent
+	| PowerShellToolCallEvent
 	| ReadToolCallEvent
 	| EditToolCallEvent
 	| WriteToolCallEvent
@@ -1259,6 +1366,11 @@ interface ToolResultEventBase {
 export interface BashToolResultEvent extends ToolResultEventBase {
 	toolName: "bash";
 	details: BashToolDetails | undefined;
+}
+
+export interface PowerShellToolResultEvent extends ToolResultEventBase {
+	toolName: "powershell";
+	details: PowerShellToolDetails | undefined;
 }
 
 export interface ReadToolResultEvent extends ToolResultEventBase {
@@ -1299,6 +1411,8 @@ export interface CustomToolResultEvent extends ToolResultEventBase {
 /** Fired after a tool executes. Can modify result. */
 export type ToolResultEvent =
 	| BashToolResultEvent
+	| PowerShellToolResultEvent
+	| PowerShellToolResultEvent
 	| ReadToolResultEvent
 	| EditToolResultEvent
 	| WriteToolResultEvent
@@ -1310,6 +1424,9 @@ export type ToolResultEvent =
 // Type guards for ToolResultEvent
 export function isBashToolResult(e: ToolResultEvent): e is BashToolResultEvent {
 	return e.toolName === "bash";
+}
+export function isPowerShellToolResult(e: ToolResultEvent): e is PowerShellToolResultEvent {
+	return e.toolName === "powershell";
 }
 export function isReadToolResult(e: ToolResultEvent): e is ReadToolResultEvent {
 	return e.toolName === "read";
@@ -1351,6 +1468,8 @@ export function isLsToolResult(e: ToolResultEvent): e is LsToolResultEvent {
  * CustomToolCallEvent.toolName is `string` which overlaps with all literals.
  */
 export function isToolCallEventType(toolName: "bash", event: ToolCallEvent): event is BashToolCallEvent;
+export function isToolCallEventType(toolName: "powershell", event: ToolCallEvent): event is PowerShellToolCallEvent;
+export function isToolCallEventType(toolName: "powershell", event: ToolCallEvent): event is PowerShellToolCallEvent;
 export function isToolCallEventType(toolName: "read", event: ToolCallEvent): event is ReadToolCallEvent;
 export function isToolCallEventType(toolName: "edit", event: ToolCallEvent): event is EditToolCallEvent;
 export function isToolCallEventType(toolName: "write", event: ToolCallEvent): event is WriteToolCallEvent;
@@ -1378,6 +1497,8 @@ export type ExtensionEvent =
 	| AgentStartEvent
 	| AgentEndEvent
 	| AgentSettledEvent
+	| UIPromptStartEvent
+	| UIPromptEndEvent
 	| TurnStartEvent
 	| TurnEndEvent
 	| MessageStartEvent
@@ -1571,6 +1692,8 @@ export interface ExtensionAPI {
 
 	/** Absolute cwd of the session this extension instance was loaded for. */
 	readonly cwd: string;
+	/** Effective shared-host capability for registration-time extension decisions. */
+	readonly sharedHostEnabled: boolean;
 
 	// =========================================================================
 	// Event Subscription
@@ -1594,6 +1717,7 @@ export interface ExtensionAPI {
 		handler: ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>,
 	): void;
 	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): void;
+	on(event: "session_compact_failed", handler: ExtensionHandler<SessionCompactFailedEvent>): void;
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): void;
 	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): void;
 	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): void;
@@ -1610,6 +1734,8 @@ export interface ExtensionAPI {
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
 	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): void;
+	on(event: "ui_prompt_start", handler: ExtensionHandler<UIPromptStartEvent>): void;
+	on(event: "ui_prompt_end", handler: ExtensionHandler<UIPromptEndEvent>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
 	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
 	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
@@ -1676,11 +1802,17 @@ export interface ExtensionAPI {
 	/** Register a CLI flag. */
 	registerFlag(
 		name: string,
-		options: {
-			description?: string;
-			type: "boolean" | "string";
-			default?: boolean | string;
-		},
+		options:
+			| {
+					description?: string;
+					type: "boolean";
+					default?: boolean;
+			  }
+			| {
+					description?: string;
+					type: "string";
+					default?: string;
+			  },
 	): void;
 
 	/** Get the value of a registered CLI flag. */
@@ -1699,6 +1831,9 @@ export interface ExtensionAPI {
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
 
+	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
+	registerReadClassifier(classifier: ReadClassifier): () => void;
+
 	// =========================================================================
 	// Actions
 	// =========================================================================
@@ -1712,10 +1847,11 @@ export interface ExtensionAPI {
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
@@ -1763,13 +1899,19 @@ export interface ExtensionAPI {
 	// Model and Thinking Level
 	// =========================================================================
 
-	/** Set the current model. Returns false if no API key available. */
+	/**
+	 * Set the model for the current session without changing the configured default for new sessions.
+	 * Returns false if authentication is not configured for the model's provider.
+	 */
 	setModel(model: Model<any>): Promise<boolean>;
 
 	/** Get current thinking level. */
 	getThinkingLevel(): ThinkingLevel;
 
-	/** Set thinking level (clamped to model capabilities). */
+	/**
+	 * Set the thinking level (clamped to model capabilities) for the current session without changing the configured default
+	 * for new sessions.
+	 */
 	setThinkingLevel(level: ThinkingLevel): void;
 
 	/**
@@ -1933,6 +2075,14 @@ export interface ProviderConfig {
 		/** Legacy synchronous credential-dependent model projection. */
 		modifyModels?(models: Model<Api>[], credentials: OAuthCredentials): Model<Api>[];
 	};
+	/**
+	 * Deterministic usability gate for implicit fallback expansion. Return `false`
+	 * while this lane is guaranteed to refuse unattended execution (for example an
+	 * unacknowledged approval gate); the provider stays registered and explicitly
+	 * selectable, but bare-family fallback expansion skips it. Re-evaluated on
+	 * every expansion, so a settings change takes effect without re-registration.
+	 */
+	fallbackEligible?(): boolean;
 }
 
 /** Configuration for a model within a provider. */
@@ -2015,7 +2165,7 @@ export type SendMessageHandler = <T = unknown>(
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
-	options?: { deliverAs?: "steer" | "followUp" },
+	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
 ) => void;
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
@@ -2187,6 +2337,8 @@ export interface ExtensionActions {
 export interface ExtensionContextActions {
 	getModel: () => Model<any> | undefined;
 	getServiceTier: () => ServiceTier | undefined;
+	/** Effective request tier (fast mode included). Defaults to `getServiceTier` when omitted. */
+	getEffectiveServiceTier?: () => ServiceTier | undefined;
 	getScopedModels: () => readonly ScopedModel[];
 	getAgentDir?: () => string;
 	isIdle: () => boolean;
@@ -2208,6 +2360,7 @@ export interface ExtensionContextActions {
 		marginSeconds: number;
 	};
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
+	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
@@ -2253,6 +2406,11 @@ export interface ExtensionCommandContextActions {
 		targetId: string,
 		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 	) => Promise<{ cancelled: boolean }>;
+	editAssistantMessage: (
+		entryId: string,
+		text: string,
+		options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+	) => Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
 	switchSession: (
 		sessionPath: string,
 		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },

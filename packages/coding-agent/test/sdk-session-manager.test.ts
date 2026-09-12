@@ -120,12 +120,14 @@ describe("createAgentSession session manager defaults", () => {
 			"You can inspect PI_* environment variables for current model and session details.",
 		);
 
-		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
+		// Eval-only routing keeps `bash` out of the model-visible tool array, so the tool
+		// is fetched from the registry it is still reachable through.
+		const bashTool = session.getRegisteredTool("bash");
 		expect(bashTool).toBeTruthy();
 		const result = await bashTool!.execute("test", {
 			command: `printf '%s\\n' "$PI_SESSION_ID" "$PI_SESSION_FILE" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"`,
 		});
-		const output = result.content
+		const output = (result.content as Array<{ type: string; text?: string }>)
 			.filter((item): item is { type: "text"; text: string } => item.type === "text")
 			.map((item) => item.text)
 			.join("");

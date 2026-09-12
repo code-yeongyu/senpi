@@ -173,6 +173,7 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 			modelId: "claude-test",
 			fingerprint: { toolsetHash: "tools-v1", systemPromptHash: "prompt-v1" },
 			transcriptAvailable: true,
+			crossAccountResumeSupported: true,
 		});
 
 		expect(getSession("provider-switch")).toBeUndefined();
@@ -228,6 +229,7 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 			modelId: entry.modelId,
 			fingerprint: { systemPromptHash: entry.systemPromptHash, toolsetHash: entry.toolsetHash },
 			transcriptAvailable: true,
+			crossAccountResumeSupported: true,
 		});
 
 		expect(decision).toMatchObject({ kind: "fork", reason: "assistant_rewritten" });
@@ -262,30 +264,28 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 			modelId: "claude-test",
 			fingerprint: configFingerprint({ maxThinkingTokens: 8_192 }, resident, "oauth-slots", "default"),
 			transcriptAvailable: true,
+			crossAccountResumeSupported: true,
 		});
 
-		expect(decision).toMatchObject({ kind: "reattach", reason: "options_changed" });
+		expect(decision).toMatchObject({ kind: "reattach", reason: "toolset_changed" });
 		expect(decision.kind).not.toBe("flatten");
 	});
 
-	it("records a compaction fork boundary idempotently", async () => {
+	it("records a compaction fork boundary only when compaction was accepted", async () => {
 		const extension = fakeExtension();
 		registerSessionRegistry(extension.api);
 		createEntry("compact-session");
 
-		await emitTwice(extension, "session_compact", { type: "session_compact" }, "compact-session");
+		await emitTwice(extension, "session_compact", { type: "session_compact", accepted: false }, "compact-session");
+		expect(getSession("compact-session")).toMatchObject({ pendingForkReason: null });
 
+		for (const rejectedEvent of [{ type: "session_compact" }, { type: "session_compact", accepted: undefined }]) {
+			await emitTwice(extension, "session_compact", rejectedEvent, "compact-session");
+			expect(getSession("compact-session")).toMatchObject({ pendingForkReason: null });
+		}
+
+		await emitTwice(extension, "session_compact", { type: "session_compact", accepted: true }, "compact-session");
 		expect(getSession("compact-session")).toMatchObject({ pendingForkReason: "compaction" });
-	});
-
-	it("records a fork boundary before fork idempotently", async () => {
-		const extension = fakeExtension();
-		registerSessionRegistry(extension.api);
-		createEntry("fork-session");
-
-		await emitTwice(extension, "session_before_fork", { type: "session_before_fork" }, "fork-session");
-
-		expect(getSession("fork-session")).toMatchObject({ pendingForkReason: "fork" });
 	});
 
 	it("records tree branch boundaries without tainting", async () => {
@@ -345,7 +345,6 @@ describe("Claude SDK OAuth session registry lifecycle wiring", () => {
 		claudeSdkOauthExtension(extension.api);
 
 		expect(extension.handlers.get("session_compact")).toHaveLength(1);
-		expect(extension.handlers.get("session_before_fork")).toHaveLength(1);
 		expect(extension.handlers.get("session_tree")).toHaveLength(1);
 		expect(extension.handlers.get("model_select")).toHaveLength(1);
 		expect(extension.handlers.get("thinking_level_select")).toHaveLength(1);

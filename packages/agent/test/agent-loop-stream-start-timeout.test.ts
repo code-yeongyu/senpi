@@ -6,7 +6,7 @@ import {
 	type Model,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { agentLoop } from "../src/agent-loop.ts";
+import { agentLoop, StreamStartTimeoutError } from "../src/agent-loop.ts";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage } from "../src/types.ts";
 
 /**
@@ -149,6 +149,9 @@ function findAssistant(messages: AgentMessage[]): AssistantMessage | undefined {
 }
 
 describe("agent loop stream-start timeout", () => {
+	it("names the setting that controls the stream-start timeout", () => {
+		expect(new StreamStartTimeoutError(123).message).toContain("retry.provider.streamStartTimeoutMs");
+	});
 	it("fails fast when the provider stream never emits a first event", async () => {
 		const config: AgentLoopConfig = {
 			model: createModel(),
@@ -166,7 +169,8 @@ describe("agent loop stream-start timeout", () => {
 		const { messages } = await collectAgentEvents(stream);
 		const assistantMessage = findAssistant(messages);
 		expect(assistantMessage?.stopReason).toBe("error");
-		expect(assistantMessage?.errorMessage).toBe("Provider stream start timed out after 20ms");
+		expect(assistantMessage?.errorMessage).toContain("Provider stream start timed out after 20ms");
+		expect(assistantMessage?.errorMessage).toContain("retry.provider.streamStartTimeoutMs");
 		expect(requestSignal?.aborted).toBe(true);
 		expect(String(requestSignal?.reason)).toContain("Provider stream start timed out after 20ms");
 	});

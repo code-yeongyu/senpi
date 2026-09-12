@@ -37,8 +37,8 @@ class WiringPi {
 	async executeTool(): Promise<never> {
 		throw new Error("nested tool execution was not expected");
 	}
-	sendUserMessage(content: string): void {
-		this.messages.push(content);
+	sendMessage(message: { customType: string; content: string; display: boolean }): void {
+		this.messages.push(message.content);
 	}
 	async emit(event: string, payload: unknown, ctx: ExtensionContext): Promise<void> {
 		for (const entry of this.handlers.filter((handler) => handler.event === event)) await entry.handler(payload, ctx);
@@ -102,6 +102,7 @@ function wiringContext(cwd: string, mode: "tui" | "rpc", calls: StatusCall[], th
 	};
 	ui.theme = theme;
 	const sessionManager = Object.create(null);
+	sessionManager.getSessionId = (): string => "status-wiring-test-session";
 	sessionManager.getSessionFile = (): string => join(artifactsRoot, `${crypto.randomUUID()}.jsonl`);
 	return { ...base, cwd, mode, hasUI: true, ui, sessionManager };
 }

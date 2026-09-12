@@ -25,6 +25,7 @@ function createModel(id: string, provider: string, api: Api = "anthropic-message
 
 function hasFable5CatalogSignal(model: Model<Api>): boolean {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
+	if (/claude-fable-5[-.]1(?:$|[/@._:-])/.test(searchable)) return false;
 	return /(?:^|[/@._-])claude-fable-5(?:$|[/@._:-])/.test(searchable);
 }
 
@@ -40,6 +41,10 @@ describe("Claude Fable 5 prompt preset", () => {
 		"eu.anthropic.claude-fable-5",
 		"global.anthropic.claude-fable-5",
 		"Claude Fable 5",
+		"claude-mythos-5",
+		"anthropic/claude-mythos-5",
+		"claude-mythos-5-thinking",
+		"Claude Mythos 5",
 	])("resolves %s to the claude-fable-5 preset", (modelId) => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
@@ -53,20 +58,23 @@ describe("Claude Fable 5 prompt preset", () => {
 		expect(preset?.prompt).toContain("You are senpi");
 	});
 
-	it.each(["claude-opus-4-8", "~anthropic/claude-fable-latest", "some-fable-compatible-router"])(
-		"does not route %s to the claude-fable-5 preset",
-		(modelId) => {
-			// given
-			const settings: PromptPresetSettings = { promptPreset: "auto" };
-			const model = createModel(modelId, "anthropic");
+	it.each([
+		"claude-opus-4-8",
+		"claude-fable-5-1",
+		"claude-mythos-5-1",
+		"~anthropic/claude-fable-latest",
+		"some-fable-compatible-router",
+	])("does not route %s to the claude-fable-5 preset", (modelId) => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel(modelId, "anthropic");
 
-			// when
-			const presetName = resolvePresetName(model, settings);
+		// when
+		const presetName = resolvePresetName(model, settings);
 
-			// then
-			expect(presetName).not.toBe("claude-fable-5");
-		},
-	);
+		// then
+		expect(presetName).not.toBe("claude-fable-5");
+	});
 
 	it("allows settings.json to force claude-fable-5 regardless of model id", () => {
 		// given
@@ -78,6 +86,18 @@ describe("Claude Fable 5 prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("claude-fable-5");
+	});
+
+	it("routes user questions through ask_user_question when it is available", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-fable-5", "anthropic");
+
+		const preset = resolvePreset(model, settings);
+
+		expect(preset?.prompt).toContain("ask_user_question");
+		expect(preset?.prompt).toContain(
+			"then ask, through ask_user_question when it is available (waitForAnswer true when the next step depends on the answer), and end the turn",
+		);
 	});
 
 	it("keeps every shared test-discipline rule after the dieted core rewrite", () => {

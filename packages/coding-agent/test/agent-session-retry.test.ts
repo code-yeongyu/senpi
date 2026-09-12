@@ -107,7 +107,13 @@ describe("AgentSession retry", () => {
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 		const modelRegistry = await createAuthenticatedModelRegistry(authStorage, tempDir);
-		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries, baseDelayMs: 1 } });
+		// Tombstone the shipped `"*"` lane: these cases measure the retry budget
+		// itself, and a fallback hop would restart that budget on the next rung
+		// (the per-rung budget is existing, deliberate behaviour - see
+		// retry-fallback-engine "spends a fresh retry budget on every rung").
+		settingsManager.applyOverrides({
+			retry: { enabled: true, maxRetries, baseDelayMs: 1, fallbackChains: { "*": [] } },
+		});
 
 		session = new AgentSession({
 			agent,

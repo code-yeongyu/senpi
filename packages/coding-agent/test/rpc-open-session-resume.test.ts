@@ -7,6 +7,7 @@ import type {
 	CreateAgentSessionRuntimeResult,
 } from "../src/core/agent-session-runtime.ts";
 import type { SessionManager } from "../src/core/session-manager.ts";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import {
@@ -42,6 +43,7 @@ interface CapturedFactoryCall {
 
 function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFactory {
 	return async (options) => {
+		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		calls.push({
 			cwd: options.cwd,
 			launchProfile: options.launchProfile as Readonly<RpcSessionLaunchProfile> | undefined,
@@ -50,6 +52,7 @@ function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFac
 		return {
 			session: {
 				sessionManager: options.sessionManager,
+				agentDir: options.agentDir,
 				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},

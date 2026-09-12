@@ -27,10 +27,12 @@
  *
  * | Command          | Params                                                                                          | Success data                                    | Notes |
  * | ---------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------- | ----- |
- * | `get_protocol_info` | -                                                                                             | `{ protocolVersion: 1, capabilities: ["multi_session"], mode: "classic"|"multi" }` | Answered in BOTH modes; side-effect-free; THE capability probe. |
- * | `open_session`    | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState }`         | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there); `provider`/`modelId` applied only on create (resume restores the session's model); params form the immutable launch profile (D8). |
- * | `close_session`   | `sessionId`                                                                                    | `{}`                                            | Aborts active work, awaits agent idle + settled persistence, flushes queued events, detaches subscriptions; its response is the LAST record tagged with that handle — no events after (test-pinned). |
+ * | `get_protocol_info` | -                                                                                             | `{ protocolVersion: 1, serverVersion, capabilities, mode: "classic"|"multi" }` | Answered in BOTH modes; side-effect-free capability probe. |
+ * | `open_session`    | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: boolean }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there); `provider`/`modelId` applied only on create (resume restores the session's model); params form the immutable launch profile (D8). |
+ * | `close_session`   | `sessionId`                                                                                    | `{}`                                            | Aborts active work and awaits teardown for the host grace window, then force-releases; the first closer's response is the LAST record tagged with that handle, while concurrent closes join and receive targeted success responses. |
  * | `list_sessions`   | -                                                                                               | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries with their status. |
+ * | `get_steering_messages` / `get_follow_up_messages` / `clear_queue` | queue read or clear parameters | host-authoritative queue values | Interactive attach clients must not read bootstrap queues. |
+ * | `abort_branch_summary` / `record_bash_result` / `set_label` | narrow mutation payloads | `{}` | Routes interactive runtime mutations to the owning host session. |
  * | every existing command | + `sessionId` (REQUIRED in multi mode)                                                      | unchanged                                       | Routed to that session. |
  *
  * Identities (D6): response-level `sessionId` = opaque routing handle, unique per
@@ -79,7 +81,7 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { toJsonEvent } from "../json-event.ts";
 import { createRpcConnectionHandler, type RpcConnectionSink } from "./connection-handler.ts";
 import { parseClientCapabilities } from "./custom-capability.ts";
-import { attachJsonlLineReader } from "./jsonl.ts";
+import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "./jsonl.ts";
 
 // Re-export types for consumers
 export type {
@@ -172,9 +174,26 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	process.stdin.on("end", onInputEnd);
 
 	detachInput = (() => {
-		const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
-			void handleInputLine(line);
-		});
+		const detachJsonl = attachJsonlLineReader(
+			process.stdin,
+			(line) => {
+				void handleInputLine(line);
+			},
+			{
+				maxLineLength: MAX_RPC_LINE_CHARACTERS,
+				onOversizedLine: () => {
+					writeRawStdout(
+						serializeJsonLine({
+							type: "response",
+							command: "parse",
+							success: false,
+							error: `RPC input line exceeds ${MAX_RPC_LINE_CHARACTERS} characters.`,
+						}),
+					);
+					void waitForRawStdoutBackpressure();
+				},
+			},
+		);
 		return () => {
 			detachJsonl();
 			process.stdin.off("end", onInputEnd);

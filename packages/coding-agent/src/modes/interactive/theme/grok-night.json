@@ -40,6 +40,8 @@
 
 		"selectedBg": "selected",
 		"scrollbarThumb": "#3a3a4a",
+		"searchMatchBg": "#3a3a4a",
+		"searchMatchText": "#d4d4d4",
 		"userMessageBg": "altRow",
 		"userMessageText": "gnFg",
 		"customMessageBg": "highlight",

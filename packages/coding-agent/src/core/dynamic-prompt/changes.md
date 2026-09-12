@@ -1,5 +1,77 @@
 # changes.md — dynamic-prompt
 
+## Observe edits and perceived results in the shared core (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/working-task.ts`: the parallel-wave paragraph adds "Edits and result-dependent calls go one at a time, each compared with the state you meant to produce; when the result must be seen rather than read, render after each change and look before the next." Rendered fallback core: 1600 -> 1632 o200k tokens.
+
+### Why
+
+- The wave rule covered reads only; nothing in the fallback core said that edits are sequential and observed, or that visual results are looked at after each change. Same 2026-09-09 census as the prompt-preset entry (batch-hidden evidence, 24% screenshot rate after frontend edits). Kept to one sentence because the eval-selected presets carry the full rule set.
+
+## Conditional delegation rule + compaction mechanism in the shared core (2026-09-03)
+
+### What changed
+
+- `working-task.ts`: one sentence appended to the one-plan paragraph - "When a delegation tool is available, hand sizeable independent tracks to subagents and keep working while they run; keep work you can finish in a few calls yourself." Conditional wording, inert without a delegation tool.
+- `style.ts`: the context-limits sentence gains its mechanism - "the harness compacts context automatically" - per claude.md's context-awareness guidance (tell the model the harness compacts so it does not wrap up early).
+- Rendered fallback (no tools): +39 o200k tokens.
+
+### Why
+
+- Both rules lived only in the full-core presets (fable-5/5.1, gpt-5.6) and as per-preset copies of the compaction line in every Opus 4.x tuning. The 2026-09-03 preset parity audit (`extensions/builtin/prompt-preset/changes.md`) gives each rule one home here so the thin Claude/GLM/Kimi presets and the fallback carry them once, and the per-preset duplicates are deleted.
+
+### Why extension system couldn't handle this
+
+- Core prompt assembly; the fallback text is core-owned.
+
+### Expected merge conflict zones
+
+- `working-task.ts` / `style.ts` wording. Resolution: keep the one-sentence delegation rule and the mechanism clause.
+
+## Universal-fallback diet: dieted core sections aligned with per-model preset lessons (2026-09-02)
+
+### What changed
+
+- `intent-gate.ts`: the routing line now carries a declared observable stop condition ("I'll stop when …"), matching the binding stop contract already proven in the claude-fable-5 / claude-opus-5 / gpt-5.6 / kimi-k3 / grok-4.6 presets — stated calmly, without all-caps emphasis (Kimi guidance: caps directives cause overthinking). The six-row Surface Form table and five-bullet request-classification list are compressed into the three intent-family decision rules the dieted presets converged on (information / judgment / change). Scope-fidelity ("never quietly narrow, widen, or swap") and routine-judgment-call rules moved here from nowhere — they existed only in presets before. `### Turn-Local Intent Reset` and `### Context-Completion Gate` subheadings folded into one closing paragraph.
+- `working-task.ts` (new): merges `parallel-tools.ts` + `exploration.ts` into one `## Working the Task` section (both files deleted) and adds the one-plan commitment rule ("make one reasonable plan and execute it; reopen only on contradictory evidence") — the highest-value cross-family convergence point from the K2.6/K3 overthinking guidance that the fallback lacked entirely.
+- `verification.ts`: the closing paragraph adopts the claim-audit rule from the fable-5 preset ("audit each claim against a tool result from this session") — replaces the weaker "Reporting clean output without running the validator is a violation" sentence.
+- `policies.ts`: `### Anti-Patterns` merged into `### Hard Blocks` — the split duplicated one concern across two headings ("never suppress" vs "do not delete failing tests"); each pair is now one line, matching the presets' `## Hard Limits` shape. The "never speculate" line merged into "never present unread code as verified fact".
+- `style.ts`: rules the dieted presets all carry but the fallback lacked: end-of-turn last-paragraph check (promise-about-undone-work means do it now), blocked-part handling (finish independent parts, name the blocker), surgical-edit preference, reader-grounded final summary (complete sentences, outcome first), and context-limit continuation. "Bullets only for genuinely list-shaped content" reframed positively; "match the user's tone, profanity included" dropped the trailing clause (tone-matching already covers it).
+
+### Why
+
+The fallback serves genuinely unknown/new models — every named family routes to a preset. Study of all per-model prompting guides (claude.md, fable-5/5.1, opus-4.7/4.8, gpt-5.2–5.6, kimi.md) plus the five dieted presets showed the fallback carried structures every diet had removed (routing table, classification taxonomy, split subsections, duplicated policies) while missing the behaviors every preset restated (stop condition, one-plan commitment, claim audit, last-paragraph check, blocked-part handling, context continuation). Guides agree on the direction: minimal outcome-first prompts beat process-heavy stacks (GPT-5.6 evals: 10–15% score gain at 41–66% fewer tokens); positive decision rules beat prohibition stacks (Kimi/Claude); tables and label taxonomies are scaffolding that does not route. Net token cost of the rewrite: +6 tokens (1,484 → 1,490 o200k tokens on the rendered default core) for eleven added behaviors and four removed redundancies.
+
+### Why extension system couldn't handle this
+
+Core prompt assembly; presets override it per-model but the fallback text itself is core-owned.
+
+### Expected merge conflict zones
+
+- `build.ts` section list (exploration/parallel-tools imports removed, working-task added). Resolution: keep the merged `working-task.ts` section; re-apply upstream section additions on top.
+- `intent-gate.ts` wording. Resolution: keep the three-family decision rules + stop-condition routing line.
+
+## User overrides exposed on `_baseSystemPromptOptions` (2026-08-17)
+
+### What changed
+
+- `agent-session.ts`: `_rebuildSystemPrompt()` now records the loader's user overrides on `_baseSystemPromptOptions` — `customPrompt` (the `--system-prompt` / SDK override) and `appendSystemPrompt` (CLI appends pre-joined with `\n\n`). The field type is widened with those two upstream `BuildSystemPromptOptions` members; `buildDynamicSystemPrompt()` ignores them, so the generated prompt is byte-identical when no overrides exist.
+- The options flow into `before_agent_start` / `model_select` events and the `ctx.getSystemPromptOptions()` getter, letting prompt-preset yield to user overrides (see `extensions/builtin/prompt-preset/changes.md`).
+
+### Why
+
+- The 2026-07-18 restoration made the base prompt honor loader overrides, but extensions could not tell an override-carrying base from a generated one, so presets clobbered user prompts — which is why the CLI wiring was disconnected on 2026-07-19. Exposing the facts on the options closes that loop.
+
+### Why extension system couldn't handle this
+
+- Same as the 2026-07-18 entry: base prompt assembly is core-owned; only the core knows whether the base came from a user override.
+
+### Expected merge conflict zones
+
+- `agent-session.ts` `_rebuildSystemPrompt()` tail and the `_baseSystemPromptOptions` declaration. Resolution: keep the two override fields populated alongside whatever upstream adds.
+
 ## Test-discipline rules: prose-pinning prohibition + behavior wording (2026-08-03)
 
 ### What changed

@@ -1,6 +1,17 @@
 // Core TUI interfaces and classes
 
+import type { CellDimensions, ImageDimensions } from "./terminal-image.ts";
+import { calculateImageCellSize } from "./terminal-image.ts";
+
 export { Marked, type Token, type Tokens } from "marked";
+// Fullscreen transcript search
+export {
+	AltScreenSearchComponent,
+	type AltScreenSearchMatch,
+	type AltScreenSearchSegment,
+	findAltScreenSearchMatches,
+	getAltScreenSearchMatchKey,
+} from "./alt-screen-search.ts";
 // Autocomplete support
 export {
 	type AutocompleteItem,
@@ -30,7 +41,12 @@ export {
 	type MarkdownTheme,
 	resetMarkdownHighlightCallCount,
 } from "./components/markdown.ts";
-export { ScrollView, type ScrollViewOptions, type ScrollViewScrollbar } from "./components/scroll-view.ts";
+export {
+	ScrollView,
+	type ScrollViewOptions,
+	type ScrollViewScrollbar,
+	type ScrollViewScrollToOptions,
+} from "./components/scroll-view.ts";
 export {
 	type SelectItem,
 	SelectList,
@@ -55,6 +71,18 @@ export {
 export type { EditorComponent } from "./editor-component.ts";
 // Fuzzy matching
 export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
+// Atomic image markers (ids only - never image bytes)
+export {
+	type EditorImageState,
+	formatImageMarker,
+	IMAGE_MARKER_REGEX,
+	IMAGE_MARKER_SINGLE,
+	type ImageMarkerCanonicalization,
+	ImageMarkerRegistry,
+	type ImageMarkerRemoval,
+	imageMarkerId,
+	isImageMarker,
+} from "./image-markers.ts";
 // Keybindings
 export {
 	getKeybindings,
@@ -94,6 +122,13 @@ export {
 	type TerminalColorScheme,
 } from "./terminal-colors.ts";
 // Terminal image support
+export function calculateImageRows(
+	imageDimensions: ImageDimensions,
+	targetWidthCells: number,
+	cellDimensions: CellDimensions = { widthPx: 9, heightPx: 18 },
+): number {
+	return calculateImageCellSize(imageDimensions, targetWidthCells, undefined, cellDimensions).rows;
+}
 export {
 	allocateImageId,
 	buildKittyPlaceholderRow,
@@ -120,6 +155,7 @@ export {
 	renderImage,
 	resetCapabilitiesCache,
 	setCapabilities,
+	setCapabilityOverrides,
 	setCellDimensions,
 	type TerminalCapabilities,
 	type TmuxPassthroughState,

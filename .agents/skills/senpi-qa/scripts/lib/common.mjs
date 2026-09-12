@@ -69,6 +69,48 @@ export function realAuthPath() {
 const sandboxes = new Set();
 
 /**
+ * Inherited variables that must never cross into a QA sandbox. A branded parent
+ * session (the omo launcher) exports SENPI_BRAND plus <envPrefix>_* overrides
+ * such as OMO_CODING_AGENT_DIR; the CLI resolves settings brand-prefix-first
+ * (brandEnvNames in src/core/brand.ts), so those overrides silently outrank the
+ * SENPI_* pins below and the "isolated" CLI reads the REAL agent dir.
+ * SENPI_RUNTIME is a bun-runtime opt-in that would lie to a node-spawned CLI,
+ * PI_PROMPT_CACHE_SAFE_WAIT_SECONDS steers cache timing, and PI_SESSION_FILE /
+ * PI_SESSION_ID point at the parent session's live transcript.
+ */
+const SCRUBBED_SESSION_ENV = [
+	"SENPI_BRAND",
+	"SENPI_RUNTIME",
+	"PI_PROMPT_CACHE_SAFE_WAIT_SECONDS",
+	"PI_SESSION_FILE",
+	"PI_SESSION_ID",
+];
+
+/** envPrefix of the inherited brand profile, if any (mirrors parseBrandProfile's fallback). */
+function brandEnvPrefix(raw) {
+	try {
+		const profile = JSON.parse(raw);
+		const prefix = profile?.envPrefix ?? profile?.name;
+		return typeof prefix === "string" && prefix.trim() ? prefix.trim().toUpperCase() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Remove inherited brand/session steering vars from a spawned-CLI env; returns the scrubbed names. */
+export function scrubSandboxEnv(env) {
+	const scrubbed = [];
+	const prefix = brandEnvPrefix(env.SENPI_BRAND);
+	for (const name of Object.keys(env)) {
+		if (SCRUBBED_SESSION_ENV.includes(name) || (prefix !== undefined && name.startsWith(`${prefix}_`))) {
+			delete env[name];
+			scrubbed.push(name);
+		}
+	}
+	return scrubbed;
+}
+
+/**
  * Create an isolated agent/session sandbox so QA never touches the real ~/.senpi.
  * Returns { dir, agentDir, sessionDir, cwd, env, cleanup }.
  * `env` is meant to be merged into spawn options (it already includes offline flags).
@@ -80,8 +122,9 @@ export function makeSandbox(label = "senpi-qa") {
 	const cwd = join(dir, "work");
 	for (const d of [agentDir, sessionDir, cwd]) mkdirSync(d, { recursive: true });
 
-	const env = {
-		...process.env,
+	const env = { ...process.env };
+	scrubSandboxEnv(env);
+	Object.assign(env, {
 		[ENV_AGENT_DIR]: agentDir,
 		[ENV_SESSION_DIR]: sessionDir,
 		// Keep QA hermetic and quiet: no startup network, no telemetry.
@@ -95,7 +138,7 @@ export function makeSandbox(label = "senpi-qa") {
 		// Never let an interactive pager/editor hang a captured run.
 		PAGER: "cat",
 		GIT_PAGER: "cat",
-	};
+	});
 
 	const box = {
 		dir,
@@ -260,6 +303,9 @@ export function dateStamp(d = new Date()) {
 
 /** Create (and return) local-ignore/qa-evidence/<date>-<slug>/ under the repo root. */
 export function evidenceDir(slug) {
+	if (typeof slug !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)) {
+		throw new Error("Evidence slug must be a single safe path segment.");
+	}
 	const dir = join(repoRoot(), "local-ignore", "qa-evidence", `${dateStamp()}-${slug}`);
 	mkdirSync(dir, { recursive: true });
 	return dir;
@@ -348,6 +394,35 @@ async function selfCheck() {
 			box.env.SENPI_OMO_LOCAL_UPDATE === "0",
 		box.dir,
 	);
+
+	// A branded parent session (the omo launcher) exports SENPI_BRAND plus
+	// <envPrefix>_* overrides and session-steering vars; none may cross into a sandbox.
+	const leakedFixture = {
+		SENPI_BRAND: JSON.stringify({ name: "OmO", configDir: ".omo", envPrefix: "OMO", userAgent: "omo" }),
+		OMO_CODING_AGENT_DIR: "/tmp/qa-real-agent",
+		OMO_NATIVE: "1",
+		SENPI_RUNTIME: "bun",
+		PI_PROMPT_CACHE_SAFE_WAIT_SECONDS: "270",
+		PI_SESSION_FILE: "/tmp/qa-real-session.jsonl",
+		PI_SESSION_ID: "qa-real-session",
+	};
+	const savedFixture = new Map();
+	for (const [key, value] of Object.entries(leakedFixture)) {
+		savedFixture.set(key, process.env[key]);
+		process.env[key] = value;
+	}
+	const leakedBox = makeSandbox("self-check-leak");
+	for (const [key, value] of savedFixture) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+	checks.ok(
+		"sandbox scrubs inherited brand/session env",
+		Object.keys(leakedFixture).every((key) => leakedBox.env[key] === undefined) &&
+			leakedBox.env[ENV_AGENT_DIR] === leakedBox.agentDir,
+		`scrubbed=${Object.keys(leakedFixture).filter((key) => leakedBox.env[key] === undefined).length}/${Object.keys(leakedFixture).length}`,
+	);
+	leakedBox.cleanup();
 
 	const guard = guardRealAuth();
 	checks.ok("real auth snapshot taken", true, guard.before ? `sha256=${guard.before.slice(0, 12)}…` : "absent");

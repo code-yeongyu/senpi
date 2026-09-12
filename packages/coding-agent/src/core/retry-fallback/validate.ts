@@ -64,7 +64,7 @@ export function validateFallbackChains(chains: unknown, registry: FallbackModelR
 			// role syntax, so it keeps the message that tells the user what to write.
 			warnings.push(`Fallback chain key "${key}" must use a provider/model selector; roles are unsupported.`);
 		}
-		if (hasWildcard) warnings.push(`Fallback chain key "${key}" cannot contain wildcards.`);
+		if (hasWildcard && key !== "*") warnings.push(`Fallback chain key "${key}" cannot contain wildcards.`);
 
 		const parsedKey = hasProvider && !hasWildcard ? parseFallbackSelector(key, models) : undefined;
 		const keyModel = parsedKey ? registry.find(parsedKey.provider, parsedKey.id) : undefined;

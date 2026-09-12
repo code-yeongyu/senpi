@@ -12,6 +12,724 @@
 
 ### Removed
 
+## [2026.9.12-2] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.11] - 2026-09-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The eval tool instructions now tell callers to emit large text in bounded chunks or through offset-based file reads, and to treat a truncation notice as incomplete data that must be recovered from the full-output path instead of being read as the whole result ([#1600](https://github.com/code-yeongyu/senpi/pull/1600)).
+
+### Fixed
+
+- Column-capped eval output now preserves a recoverable full-output artifact, so a cell whose output is clipped by a narrow terminal column cap still exposes the complete text through the artifact path ([#1600](https://github.com/code-yeongyu/senpi/pull/1600)).
+
+### Removed
+
+## [2026.9.10-2] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.10] - 2026-09-10
+
+### Breaking Changes
+
+- The eval `timeout` argument is now the cell's run budget (a kill deadline for the cell's own execution time) instead of the interactive detach budget; interactive calls detach at `cellTimeoutSeconds` capped by `foregroundWindowSeconds` regardless of `timeout`, and print/json calls are bounded by the run budget instead of a `cellTimeoutSeconds` idle kill.
+
+### Added
+
+- Every eval cell carries a run budget (`runBudgetSeconds`, default 300s, env `SENPI_CODEMODE_RUN_BUDGET_SECONDS`, per-call `timeout`) that charges only its own execution time, is paused while a host tool call is in flight, keeps counting after detach, and kills the cell through the cooperative interrupt path with a result or notification that names the exhausted budget and the kernel-state outcome.
+
+### Changed
+
+- The eval tool schema and description state the configured run budget, detach point, and hard limit, and say that a killed JavaScript cell that cannot settle restarts its kernel and loses every global.
+
+### Fixed
+
+### Removed
+
+## [2026.9.9-2] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The eval tool description teaches cell mechanics only (batch independent calls, real code, failures kept verbatim, truncated output re-read) and drops the "default execution surface / never a chain / distilled facts only" wording; routing lives in the model's prompt preset.
+
+### Fixed
+
+### Removed
+
+## [2026.9.7-2] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The JS kernel's shell capture now pins the worker's environment view for `Bun.spawnSync` as well as `Bun.spawn`, so a cell calling it without an explicit `env` sees the session's `PI_*` values instead of the inherited OS environ.
+- Eval kernels and every child they spawn now see the active session's `PI_*` environment (`PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`) exactly as bash-tool children do: inherited `PI_*` values are dropped before the session values are applied, so subprocesses such as `omo-agent-toolkit ulw-loop` resolve the same session as the `bash` tool instead of a cwd-global one.
+- JavaScript eval cells no longer lose their completion value when a nested function, callback, or try/catch helper contains `return`: the cell wrapper now skips last-expression capture only for a genuine top-level `return`, and a property named `return` no longer primes the statement scanner as the keyword (#1439).
+- Eval output truncation notices now name the real cause: a width-clamped line reports `N line(s) clamped to M columns (… dropped)`, a byte-capped tail reports the actual cap, and a notice never presents the output's own size as a limit.
+
+### Removed
+
+## [2026.9.7] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.6] - 2026-09-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The Bun eval description now tells the model to shell out through `Bun.$` or `Bun.spawn` and never `Bun.spawnSync`, because a synchronous child blocks the worker and a stop or timeout then loses every variable.
+- JavaScript eval cells now interrupt cooperatively: `stop` and kernel timeouts first ask the worker to settle the cell (pending bridge `tool.*` calls are rejected, `Bun.spawn` children are killed) and keep the worker VM and its globals when the cell settles within a 2 s grace; only an unsettled cell restarts the worker.
+
+### Fixed
+
+- `eval({ action: "stop" })` no longer hangs when the JavaScript worker is blocked in a synchronous call such as `Bun.spawnSync`: worker termination is bounded by a 3 s deadline, a fresh worker replaces the blocked one, and the cell output names the blocked synchronous call.
+- `Bun.$` commands run from a JavaScript cell no longer inherit the TUI's terminal as stdin (a stdin reader such as `cat`, an ssh or git credential prompt, or a keychain prompt blocked the cell forever); the shell wrapper isolates stdin while a cell is active without changing output, exit codes, `cwd`, `env`, or explicit stdin redirects.
+- Stop results and detached-cell completion notifications report the real interrupt outcome (variables preserved, worker restarted, or outcome unknown) instead of a hardcoded per-language note.
+
+### Removed
+
+## [2026.9.5-3] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.5-2] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The GPT eval dialect now routes a wait or a long run through `tool.monitor` inside the cell (the subscription line precedes the detach note, and the `## Tool Guidelines` line says so when `monitor` is reachable), so a GPT model no longer reads "long cells detach" as the way to wait on a `--watch`.
+
+### Fixed
+
+### Removed
+
+## [2026.9.5] - 2026-09-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.4-3] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The package `test` script runs `vitest run test/` instead of `npx tsx …/vitest/dist/cli.js`, matching every other workspace package. The old form spawned npm and tsx to reach the vitest CLI that is already a direct dependency.
+### Fixed
+
+### Removed
+
+## [2026.9.4-2] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+- `foregroundWindowSeconds` codemode setting (default `60`, env `SENPI_CODEMODE_FOREGROUND_SECONDS`): the longest an interactive `eval` call blocks the turn before the cell detaches. A larger `timeout` now frees the turn at this window while the cell keeps running to the hard limit, instead of blocking the agent loop for the whole `timeout`.
+
+### Changed
+
+- The Bun kernel line of the `eval` description now names `new Bun.WebView()` as the headless browser and states when to reach for it (a page that needs JS, a login, or a screenshot) instead of `curl` or a browser CLI. The line previously advertised `Bun.*` builtins generically, so sessions on a Bun kernel resolved page work to `curl`/`fetch` and never discovered the in-process browser. Node kernels are unchanged.
+- The `eval` tool description is dieted a second time: the `Fields:` list now defers to the parameter schema (its single home), the detach guidance is one paragraph, and helper lines keep every signature with fewer words. gpt/codex dialect 1,489 -> 1,087 o200k tokens (description + guidelines); claude 1,173, kimi 1,190, default 1,189. Also fixes the fused `jl` handle form in the all-languages render.
+
+- The `eval` tool description is dieted from ~2002 to ~1588 tokens (codex dialect): the three reuse-chain JSON examples, the `<workflow>` graph prose, the repeated state-persistence rules, and the per-dialect wait-doctrine clause are removed or folded; every helper signature and dialect routing is kept. The workflow block's fused `handle=True{ handle: true }` is fixed into per-language correct forms.
+
+### Fixed
+
+### Removed
+
+## [2026.9.4] - 2026-09-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.3-2] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- JavaScript eval cells no longer leak child-process output onto the host terminal under Bun: `Bun.$` commands awaited without `.quiet()`/`.text()` and `Bun.spawn` children with the default stderr now route their output into the cell's stdout/stderr streams instead of the inherited fd 1/2 that the interactive TUI owns.
+
+### Removed
+
+## [2026.9.3] - 2026-09-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-4] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2-3] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The eval prompt's JS runtime line is now runtime-aware: on a bun kernel it names `Bun <version>` and
+  `Bun.*` builtins, and only while the bundled `bun-1-4` skill is active it adds a MUST READ pointer to
+  that skill's absolute path before the first js cell; node kernels keep the Node.js worker wording.
+  `activeBunSkillPath()` exposes the same gate the `resources_discover` contribution uses.
+- The bundled `bun-1-4` skill description is rewritten as a fact-framed MUST READ notice with
+  English-only copy (Korean trigger words removed; the `Bun.stringWidth` example no longer uses Hangul).
+
+### Fixed
+
+- Compiled binaries now contribute the bundled `bun-1-4` skill by resolving the codemode sidecar shipped next to the executable, and a missing skill is reported on stderr so it can no longer corrupt the RPC protocol stream on stdout.
+
+### Removed
+
+## [2026.9.2-2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.2] - 2026-09-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.31] - 2026-08-31
+
+### Breaking Changes
+
+### Added
+
+- The codemode extension now bundles the `bun-1-4` skill and contributes it via `resources_discover` only
+  when the js eval kernel itself runs bun >= 1.4 (`process.versions.bun`); node-kernel sessions never
+  receive the skill, regardless of any bun binary on PATH.
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-3] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30-2] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.30] - 2026-08-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The eval prompt's dependency-graph section is now `<workflow>` and states its contract directly:
+  define the workflow spec in code, one node per logically distinct step, rather than hand-authoring
+  the graph as a single opaque call.
+
+### Fixed
+
+- The JavaScript kernel persistence transform no longer truncates declarations whose multi-line
+  initializers contain interior `//` comments (previously emitted unparseable code such as
+  `globalThis["jobs"] = {;`, failing cells with `Unexpected token ';'. Expected a property name.`),
+  and no longer re-evaluates comment-bearing initializers when persisting bindings — such
+  declarations are kept verbatim and their bindings persisted by reference.
+- Last-expression capture no longer inserts `return` before continuation lines (`else`/`catch`/`finally`
+  clauses and leading-`.`/operator method-chain lines), and now scans template literals (including
+  nested templates in interpolations), regexes, and comments with the same literal-aware scanner as
+  the persistence transform — fixing `return else …`, `return .replace(…)`, and mid-argument
+  `return )` corruption of valid cells.
+- Last-expression capture now follows real ASI statement semantics: a parenthesized/bracketed/template
+  line after a closed block starts a new statement (echo restored), expressions split after a trailing
+  operator or `await` stay one statement, tagged templates split across lines invoke the tag, regexes
+  directly after a control-structure condition no longer desync the scanner, and labeled final
+  statements are left uncaptured instead of emitting invalid `return label: …`.
+- Destructuring patterns carrying interior line comments now persist their bindings, and declarations
+  with a dangling trailing comma are left untransformed so the original syntax error surfaces instead
+  of being silently "repaired".
+- Rewritten destructuring assignments are emitted with a leading defensive semicolon so they can no
+  longer ASI-merge into a preceding unterminated expression statement as a bogus call
+  (`foo()\n({…} = …)` previously became `foo()({…} = …)`).
+
+### Removed
+
+## [2026.8.29] - 2026-08-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.28-2] - 2026-08-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.28] - 2026-08-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- JavaScript and Python eval kernels resolve worker and prelude assets from the executable sidecar in Bun-compiled distributions instead of passing unusable `$bunfs` paths to `Worker` and `python3`.
+
+### Removed
+
+## [2026.8.27] - 2026-08-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Eval tool description examples are now a JS-first mixed set: set up once in JavaScript, fan out batched `Promise.all` session-tool calls in the next cell, then hop to Python when the JS kernel is busy with a detached cell. The detach paragraph now states in the same sentence that another language can continue.
+
+### Fixed
+
+- An explicit `timeout` no longer silently disables detach for interactive `eval` cells. Previously `timeout` was both the detach budget and the hard-limit extension with no cap, so a call like `timeout: 7000` (intended to keep a long detached cell alive) blocked the agent loop for ~2h before the hard limit killed it. The detach point is now capped at the foreground window; `on_timeout: "error"` (and print/json) keep `timeout` as the unclamped deadline, and the hard-limit extension (`max(hardLimitSeconds, timeout)`) is unchanged.
+- Detached-eval same-language busy errors now name each idle enabled kernel and tell the agent to continue the step there (`continue this step in an idle kernel: js`), instead of only pointing at peek and the output tail. A busy Python kernel no longer reads as "eval is unavailable", which previously sent agents to `bash`+`python3` while JavaScript (or another idle kernel) was free. Single-language sessions and fully-busy sessions omit the idle-kernel claim.
+- JavaScript eval cells now persist only top-level declarations, including destructuring bindings and uninitialized variables, without rewriting declaration-shaped text inside literals or comments.
+- Eval completion and detached-cell handling retain explicit lifecycle observability: nested tool counts, wall/kernel timing, detach state, `peek`, `stop`, hard limits, and crash recovery remain bounded and machine-readable for hosts and telemetry consumers.
+
+### Removed
+
+## [2026.8.26-2] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.26] - 2026-08-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.25] - 2026-08-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.24] - 2026-08-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Detached eval cell overflow notices now point at the absolute spill file path (`…/local/detached-eval-<id>.log`) instead of a `local://detached-eval-<id>.log` URI. `local://` is resolved only by the in-cell kernel helpers, not by the agent `read` tool, so following the old notice failed with `ENOENT …/local:/detached-eval-<id>.log`. This restores the documented contract that spill notices carry plain absolute paths.
+
+### Removed
+
+## [2026.8.23] - 2026-08-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Detached eval cell completion notices no longer enter the user-input steering queue. They were delivered via `sendUserMessage`, so hosts projecting that queue (e.g. the OmO desktop composer) rendered the raw `<system-reminder>Detached eval cell …</system-reminder>` notice under the STEERING heading as if the user had typed and queued it. Notices now deliver via `sendMessage` with `customType: "senpi-codemode:notification"` and `display: false` — model-visible, never painted as user input — matching the terminal and monitor notification contract.
+
+### Removed
+
+## [2026.8.22-2] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+- Eval headers now display the kernel runtime identity, e.g. `eval py (3.14.7, ~/.venv/bin/python3)` and `eval js (node 26.7.0, /opt/…/bin/node)`; the same `runtime` info rides `EvalToolDetails` and its `cells` so RPC consumers receive it, interpreter detection resolves absolute executable paths from PATH, and the eval prompt host line names the JS runtime (`node`/`bun` with version).
+
+### Changed
+
+- Running eval cell headers now tick their elapsed time in real time (`eval py running · 13s`) instead of freezing between kernel update events; the renderer derives elapsed time from a render-time clock while a cell is pending/running/detached and repaints once per second, while settled cells keep their exact final duration. `EvalCellResult` gains an additive `startedAt` so RPC consumers can compute the same live value.
+
+### Fixed
+
+- A host tool call from inside an eval cell no longer suspends the cell's timeout indefinitely. The idle watchdog previously cleared its timer for the entire duration of a bridge call, so a call that never returned (e.g. an awaited `dag-wait`) left the cell pending — and the agent loop parked, queueing user messages invisibly — until the 1800s hard limit. The pause is now bounded by a max pause grace (default 600s, floored at the cell's own `timeout`): a long bridge call such as a 5-minute build still runs to completion, but a stuck one now trips the cell's `on_timeout` handling and releases the loop.
+
+### Removed
+
+## [2026.8.22] - 2026-08-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Ruby and Julia eval cells now wait for the subprocess `ready` signal before execution timeouts begin, so interpreter startup under load cannot time out a state-setting cell and silently restart the kernel before the next cell runs.
+
+### Removed
+
+## [2026.8.21-3] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.21-2] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `js` eval cells now accept `local://` paths in `read()` and `write()` like every other kernel. The session manager computed the session local root only after its `language === "js"` early return, so the JavaScript kernel was constructed without `localRoots` or `artifactsDir` and every `local://` helper call failed with `Protocol paths are not supported by write()`, even though the JavaScript prelude documents `local://` as the session local root. `py`/`rb`/`jl` behavior is unchanged.
+
+### Removed
+
+## [2026.8.21] - 2026-08-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20-2] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.20] - 2026-08-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.19] - 2026-08-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.18-3] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Eval cells that initiated no tool calls no longer render a `0 calls · 0.00 calls/s`
+  throughput badge; the footer shows only the elapsed time. Positive call counts are
+  unchanged.
+
+### Removed
+
+## [2026.8.18-2] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.18] - 2026-08-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.17] - 2026-08-17
+
+### Breaking Changes
+
+### Added
+
+- Show exact nested tool-call count and calls-per-second in completed eval TUI headers, using true wall-clock elapsed time for both the visible duration and throughput denominator while preserving kernel-reported timing separately ([#916](https://github.com/code-yeongyu/senpi/pull/916)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.16] - 2026-08-16
+
+### Breaking Changes
+
+### Added
+
+- Published one versioned `senpi.eval.execution` event per settled eval cell: the in-process bus receives bounded rich call details, while the external RPC projection exposes only byte-capped timing/count metadata for safe OMO analytics; total wall time, kernel runtime, pending calls, exact aggregate totals, and overflow accounting are reported separately ([#897](https://github.com/code-yeongyu/senpi/pull/897)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.8.14] - 2026-08-14
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.8.13-2] - 2026-08-13
 
 ### Breaking Changes

@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-protocol",
-	"version": "2026.8.13-2",
+	"version": "2026.9.12-2",
 	"description": "Transport-neutral CBOR protocol for remote pi sessions",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -17,7 +17,7 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsc -p tsconfig.build.json",
+		"build": "tsgo -p tsconfig.build.json",
 		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
@@ -39,10 +39,10 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"typebox": "1.3.7"
+		"typebox": "1.3.18"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
 	}
 }

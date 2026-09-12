@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { resetContinuationStreak } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { ExtensionContext } from "../../src/core/extensions/types.ts";
 import {
@@ -26,10 +27,10 @@ async function createStallHarness(threadId: string, monitorsActive = true): Prom
 	const notices: string[] = [];
 	const harness = createGoalHarness();
 	const ctx = await makeGoalContext(notices, threadId);
+	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	await harness.tools
 		.get("create_goal")
 		?.execute("create", { objective: "Keep monitoring" }, undefined, undefined, ctx);
-	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	if (monitorsActive) {
 		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 		await harness.events.flush();
@@ -76,7 +77,7 @@ async function runContinuationCycle(
 async function runMonitorContinuationCycle(harness: GoalHarness, ctx: ExtensionContext): Promise<void> {
 	await runContinuationCycle(harness, ctx);
 	const delayedDeliveryRecorded = waitForSentCount(harness, harness.sent.length + 1);
-	await vi.advanceTimersByTimeAsync(240_000);
+	await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 	await delayedDeliveryRecorded;
 }
 

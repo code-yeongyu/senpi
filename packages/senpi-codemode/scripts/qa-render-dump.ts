@@ -107,6 +107,7 @@ const details: EvalToolDetails = {
 	language: "py",
 	...(fixture === "success" ? { summary: "load config" } : {}),
 	durationMs: fixture === "success" ? 1_250 : 900,
+	...(fixture === "success" ? { wallDurationMs: 2_000, toolCallCount: 3 } : {}),
 	toolCalls:
 		fixture === "success"
 			? [

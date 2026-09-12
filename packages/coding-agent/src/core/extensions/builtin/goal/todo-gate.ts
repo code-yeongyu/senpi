@@ -25,8 +25,8 @@ export function openTodoCompletionError(openTasks: readonly string[]): string {
 	const suffix = openTasks.length > MAX_LISTED_TASKS ? ` and ${openTasks.length - MAX_LISTED_TASKS} more` : "";
 	return (
 		`cannot mark the goal complete: ${openTasks.length} open todo task(s) remain: ${listed}${suffix}. ` +
-		"Finish each task and mark it done, or drop tasks that are genuinely no longer needed, " +
-		"then run the completion audit again and retry update_goal."
+		"Do the remaining work, or drop the tasks that are genuinely no longer needed - closing an unfinished task " +
+		"to clear this gate reports a completion that did not happen. Then run the completion audit again and retry update_goal."
 	);
 }
 

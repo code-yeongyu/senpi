@@ -50,6 +50,7 @@ const FG_COLORS = {
 	thinkingXhigh: "#2c2c2c",
 	thinkingMax: "#2d2d2d",
 	bashMode: "#2e2e2e",
+	searchMatchText: "#2f2f2f",
 } satisfies Record<ThemeColor, string>;
 
 const BG_COLORS = {

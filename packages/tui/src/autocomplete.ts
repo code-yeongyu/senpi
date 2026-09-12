@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
+import { getDollarInvocationContext, getDollarInvocationSuggestions } from "./dollar-invocation-autocomplete.ts";
 import { getSlashCommandSuggestions } from "./slash-command-autocomplete.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
@@ -127,6 +128,7 @@ async function walkDirectoryWithFd(
 	query: string,
 	maxResults: number,
 	signal: AbortSignal,
+	maxDepth?: number,
 ): Promise<Array<{ path: string; isDirectory: boolean }>> {
 	const args = [
 		"--base-directory",
@@ -146,6 +148,10 @@ async function walkDirectoryWithFd(
 		"--exclude",
 		".git/**",
 	];
+
+	if (maxDepth !== undefined) {
+		args.push("--max-depth", String(maxDepth));
+	}
 
 	if (toDisplayPath(query).includes("/")) {
 		args.push("--full-path");
@@ -305,6 +311,20 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
+		const dollarContext = getDollarInvocationContext(textBeforeCursor, cursorLine, this.commands);
+		if (dollarContext) {
+			const suggestions = getDollarInvocationSuggestions(
+				this.commands,
+				dollarContext.query,
+				dollarContext.skillsOnly,
+			);
+			if (suggestions.length === 0) return null;
+			return {
+				items: suggestions,
+				prefix: dollarContext.prefix,
+			};
+		}
+
 		if (!options.force && textBeforeCursor.startsWith("/")) {
 			const spaceIndex = textBeforeCursor.indexOf(" ");
 
@@ -391,6 +411,17 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const hasTrailingQuoteInItem = item.value.endsWith('"');
 		const adjustedAfterCursor =
 			isQuotedPrefix && hasTrailingQuoteInItem && hasLeadingQuoteAfterCursor ? afterCursor.slice(1) : afterCursor;
+
+		if (prefix.startsWith("$") && (item.value.startsWith("/") || item.value.startsWith("$"))) {
+			const newLine = `${beforePrefix}${item.value} ${adjustedAfterCursor}`;
+			const newLines = [...lines];
+			newLines[cursorLine] = newLine;
+			return {
+				lines: newLines,
+				cursorLine,
+				cursorCol: beforePrefix.length + item.value.length + 1,
+			};
+		}
 
 		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path).
 		// Skill commands may also appear after an already-known leading skill command.
@@ -739,6 +770,18 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		return score;
 	}
 
+	private async getBaseDirSuggestions(
+		baseDir: string,
+		query: string,
+		signal: AbortSignal,
+	): Promise<Array<{ path: string; isDirectory: boolean }>> {
+		if (!this.fdPath || signal.aborted) {
+			return [];
+		}
+
+		return await walkDirectoryWithFd(baseDir, this.fdPath, query, 100, signal, 1);
+	}
+
 	// Fuzzy file search using fd (fast, respects .gitignore)
 	private async getFuzzyFileSuggestions(
 		query: string,
@@ -752,7 +795,17 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			const scopedQuery = this.resolveScopedFuzzyQuery(query);
 			const fdBaseDir = scopedQuery?.baseDir ?? this.basePath;
 			const fdQuery = scopedQuery?.query ?? query;
-			const entries = await walkDirectoryWithFd(fdBaseDir, this.fdPath, fdQuery, 100, options.signal);
+			const baseDirEntries = await this.getBaseDirSuggestions(fdBaseDir, fdQuery, options.signal);
+			const recursiveEntries = await walkDirectoryWithFd(fdBaseDir, this.fdPath, fdQuery, 100, options.signal);
+			const seenPaths = new Set(baseDirEntries.map((entry) => entry.path));
+			const entries = [
+				...baseDirEntries,
+				...recursiveEntries.filter((entry) => {
+					if (seenPaths.has(entry.path)) return false;
+					seenPaths.add(entry.path);
+					return true;
+				}),
+			];
 			if (options.signal.aborted) {
 				return [];
 			}
@@ -764,7 +817,20 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				}))
 				.filter((entry) => entry.score > 0);
 
-			scoredEntries.sort((a, b) => b.score - a.score);
+			scoredEntries.sort((a, b) => {
+				const scoreDiff = b.score - a.score;
+				if (scoreDiff !== 0) return scoreDiff;
+
+				const aDepth = toDisplayPath(a.path).split("/").filter(Boolean).length;
+				const bDepth = toDisplayPath(b.path).split("/").filter(Boolean).length;
+				const depthDiff = aDepth - bDepth;
+				if (depthDiff !== 0) return depthDiff;
+
+				const lengthDiff = a.path.length - b.path.length;
+				if (lengthDiff !== 0) return lengthDiff;
+
+				return a.path.localeCompare(b.path);
+			});
 			const topEntries = scoredEntries.slice(0, 20);
 
 			const suggestions: AutocompleteItem[] = [];

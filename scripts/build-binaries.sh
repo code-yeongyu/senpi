@@ -165,48 +165,8 @@ else
     PLATFORMS=(darwin-arm64 darwin-x64 linux-x64 linux-arm64 windows-x64 windows-arm64)
 fi
 
-for platform in "${PLATFORMS[@]}"; do
-    echo "Building for $platform..."
-    bun_target="bun-$platform"
-    if [[ "$platform" == *-x64 ]]; then
-        bun_target="${bun_target}-baseline"
-    fi
-
-    # Bun compiled executables only embed worker scripts when they are passed as
-    # explicit build entrypoints. The runtime can still use new URL(...), but the
-    # worker must be present in the compiled executable.
-    #
-    # Disable cwd bunfig.toml autoload so project preload scripts cannot crash the
-    # standalone binary before pi starts (see #7684).
-    if [[ "$platform" == windows-* ]]; then
-        bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --target="$bun_target" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts ../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js --outfile "$OUTPUT_DIR/$platform/pi.exe"
-    else
-        bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --target="$bun_target" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts ../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js --outfile "$OUTPUT_DIR/$platform/pi"
-        if [[ "$platform" == darwin-* ]] && command -v codesign >/dev/null 2>&1; then
-            codesign --remove-signature "$OUTPUT_DIR/$platform/pi" 2>/dev/null || true
-            codesign --force --sign - "$OUTPUT_DIR/$platform/pi"
-        fi
-    fi
-done
-
-echo "==> Creating release archives..."
-
-# Copy shared files to each platform directory
-for platform in "${PLATFORMS[@]}"; do
-    cp package.json "$OUTPUT_DIR/$platform/"
-    cp README.md "$OUTPUT_DIR/$platform/"
-    cp CHANGELOG.md "$OUTPUT_DIR/$platform/"
-    cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm "$OUTPUT_DIR/$platform/"
-    mkdir -p "$OUTPUT_DIR/$platform/theme"
-    cp dist/modes/interactive/theme/*.json "$OUTPUT_DIR/$platform/theme/"
-    mkdir -p "$OUTPUT_DIR/$platform/assets"
-    cp dist/modes/interactive/assets/* "$OUTPUT_DIR/$platform/assets/"
-    cp -r dist/core/export-html "$OUTPUT_DIR/$platform/"
-    cp -r docs "$OUTPUT_DIR/$platform/"
-    cp -r examples "$OUTPUT_DIR/$platform/"
-    node "../../scripts/copy-codemode-sidecar.mjs" "$OUTPUT_DIR/$platform"
-
-    case "$platform" in
+set_clipboard_target() {
+    case "$1" in
         darwin-arm64)
             clipboard_native_package="clipboard-darwin-arm64"
             clipboard_native_file="clipboard.darwin-arm64.node"
@@ -232,9 +192,52 @@ for platform in "${PLATFORMS[@]}"; do
             clipboard_native_file="clipboard.win32-arm64-msvc.node"
             ;;
     esac
+}
+
+for platform in "${PLATFORMS[@]}"; do
+    echo "Building for $platform..."
+    bun_target="bun-$platform"
+    if [[ "$platform" == *-x64 ]]; then
+        bun_target="${bun_target}-baseline"
+    fi
+
+    # Bun compiled executables only embed worker scripts when they are passed as
+    # explicit build entrypoints. The runtime can still use new URL(...), but the
+    # worker must be present in the compiled executable.
+    #
+    # Disable cwd bunfig.toml autoload so project preload scripts cannot crash the
+    # standalone binary before pi starts (see #7684).
+    if [[ "$platform" == windows-* ]]; then
+        bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/utils/image-resize-worker.ts ../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js --outfile "$OUTPUT_DIR/$platform/pi.exe"
+    else
+        bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --minify --keep-names --target="$bun_target" ./dist/bun/cli.js ./src/modes/rpc/session-worker.ts ./src/utils/image-resize-worker.ts ../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js --outfile "$OUTPUT_DIR/$platform/pi"
+        if [[ "$platform" == darwin-* ]] && command -v codesign >/dev/null 2>&1; then
+            codesign --remove-signature "$OUTPUT_DIR/$platform/pi" 2>/dev/null || true
+            codesign --force --sign - "$OUTPUT_DIR/$platform/pi"
+        fi
+    fi
+done
+
+echo "==> Creating release archives..."
+
+# Copy shared files to each platform directory
+for platform in "${PLATFORMS[@]}"; do
+    cp package.json "$OUTPUT_DIR/$platform/"
+    cp README.md "$OUTPUT_DIR/$platform/"
+    cp CHANGELOG.md "$OUTPUT_DIR/$platform/"
+    cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm "$OUTPUT_DIR/$platform/"
+    mkdir -p "$OUTPUT_DIR/$platform/theme"
+    cp dist/modes/interactive/theme/*.json "$OUTPUT_DIR/$platform/theme/"
+    mkdir -p "$OUTPUT_DIR/$platform/assets"
+    cp dist/modes/interactive/assets/* "$OUTPUT_DIR/$platform/assets/"
+    cp -r dist/core/export-html "$OUTPUT_DIR/$platform/"
+    cp -r docs "$OUTPUT_DIR/$platform/"
+    cp -r examples "$OUTPUT_DIR/$platform/"
+    node "../../scripts/copy-codemode-sidecar.mjs" "$OUTPUT_DIR/$platform"
+
+    set_clipboard_target "$platform"
     mkdir -p "$OUTPUT_DIR/$platform/node_modules/@mariozechner"
     cp -r ../../node_modules/@mariozechner/clipboard "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
-    cp -r ../../node_modules/@mariozechner/$clipboard_native_package "$OUTPUT_DIR/$platform/node_modules/@mariozechner/"
     cp "../../node_modules/@mariozechner/$clipboard_native_package/$clipboard_native_file" \
         "$OUTPUT_DIR/$platform/node_modules/@mariozechner/clipboard/"
 

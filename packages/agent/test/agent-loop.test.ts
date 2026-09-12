@@ -73,6 +73,26 @@ class HangingAssistantStream extends EventStream<AssistantMessageEvent, Assistan
 	}
 }
 
+class RejectingReturnAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
+	constructor() {
+		super(
+			(event) => event.type === "done" || event.type === "error",
+			(event) => {
+				if (event.type === "done") return event.message;
+				if (event.type === "error") return event.error;
+				throw new Error("Unexpected event type");
+			},
+		);
+	}
+
+	override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+		return {
+			next: () => new Promise<IteratorResult<AssistantMessageEvent>>(() => {}),
+			return: () => Promise.reject(new Error("StreamStartTimeoutError")),
+		};
+	}
+}
+
 async function collectAgentEvents(
 	stream: AsyncIterable<AgentEvent> & { result(): Promise<AgentMessage[]> },
 	timeoutMs = 100,
@@ -616,6 +636,47 @@ describe("agentLoop with AgentMessage", () => {
 			"turn_end",
 			"agent_end",
 		]);
+	});
+
+	it("should handle a rejected stream cleanup during stream start timeout", async () => {
+		const unhandledRejections: unknown[] = [];
+		const onUnhandledRejection = (error: unknown) => unhandledRejections.push(error);
+		const context: AgentContext = { systemPrompt: "You are helpful.", messages: [], tools: [] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 20,
+		};
+
+		process.on("unhandledRejection", onUnhandledRejection);
+		try {
+			const stream = agentLoop(
+				[createUserMessage("Hello")],
+				context,
+				config,
+				undefined,
+				() => new RejectingReturnAssistantStream(),
+			);
+			const { events, messages } = await collectAgentEvents(stream, 500);
+			const assistantMessage = messages.find((message): message is AssistantMessage => message.role === "assistant");
+			expect(assistantMessage?.stopReason).toBe("error");
+			expect(assistantMessage?.errorMessage).toContain("Provider stream start timed out after 20ms");
+			expect(assistantMessage?.errorMessage).toContain("retry.provider.streamStartTimeoutMs");
+			expect(events.map((event) => event.type)).toEqual([
+				"agent_start",
+				"turn_start",
+				"message_start",
+				"message_end",
+				"message_start",
+				"message_end",
+				"turn_end",
+				"agent_end",
+			]);
+			await new Promise<void>((resolve) => queueMicrotask(resolve));
+			expect(unhandledRejections).toEqual([]);
+		} finally {
+			process.off("unhandledRejection", onUnhandledRejection);
+		}
 	});
 
 	it("should fail the turn when provider stream stays idle past timeoutMs", async () => {
@@ -2032,11 +2093,13 @@ describe("agentLoop with AgentMessage", () => {
 			tools: [tool],
 		};
 		let convertedSecondTurnSystemPrompt = "";
+		let prepareCalls = 0;
 		let prepared = false;
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: identityConverter,
 			prepareNextTurn: async ({ context: currentContext }) => {
+				prepareCalls++;
 				if (prepared) return undefined;
 				prepared = true;
 				return {
@@ -2082,6 +2145,7 @@ describe("agentLoop with AgentMessage", () => {
 		}
 
 		expect(llmCalls).toBe(2);
+		expect(prepareCalls).toBe(2);
 		expect(convertedSecondTurnSystemPrompt).toBe("second prompt");
 	});
 

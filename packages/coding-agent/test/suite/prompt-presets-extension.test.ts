@@ -160,7 +160,11 @@ describe("prompt preset resolver", () => {
 		const model = createModel(id, provider, api);
 
 		// when
-		const preset = resolvePreset(model, settings);
+		// `monitor` is selected so the tool-gated execution directives render for the sweep below.
+		const preset = resolvePreset(model, settings, {
+			selectedTools: ["eval", "monitor", "read", "bash"],
+			toolSnippets: { eval: "eval snippet", monitor: "monitor snippet", read: "read snippet", bash: "bash snippet" },
+		});
 
 		// then
 		expect(preset?.name).toBe("gpt-5.6");
@@ -415,8 +419,7 @@ describe("prompt preset resolver", () => {
 		const activePrompt = fallbackPrompt();
 		expect(activePrompt).toContain("You are senpi");
 		expect(activePrompt).toContain("## Intent Gate");
-		expect(activePrompt).toContain("## Parallel Tool Calls");
-		expect(activePrompt).toContain("## Exploration");
+		expect(activePrompt).toContain("## Working the Task");
 		expect(activePrompt).toContain("## Verification");
 		expect(activePrompt).toContain("## Available Tools");
 		expect(activePrompt).toContain("Current working directory: /repo");

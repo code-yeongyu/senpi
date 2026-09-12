@@ -11,3 +11,7 @@ export type * from "./terminal.ts";
 export type * from "./thread.ts";
 export type * from "./thread-parity.ts";
 export type * from "./turn.ts";
+export type ToolRequestUserInputParams =
+	import("./generated/v2/ToolRequestUserInputParams.ts").ToolRequestUserInputParams;
+export type ToolRequestUserInputResponse =
+	import("./generated/v2/ToolRequestUserInputResponse.ts").ToolRequestUserInputResponse;
