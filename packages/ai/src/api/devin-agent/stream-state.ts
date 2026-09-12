@@ -9,12 +9,25 @@
 
 import type { AssistantMessage, ToolCall } from "../../types.ts";
 import type { AssistantMessageEventStream } from "../../utils/event-stream.ts";
+import { parseStreamingJson } from "../../utils/json-parse.ts";
 import { type GetChatMessageResponse, StopReason } from "./gen/cascade_pb.ts";
+
+export interface DevinToolCallState {
+	contentIndex: number;
+	/** Raw JSON accumulated across chunks; the content block holds the parsed view. */
+	argumentsJson: string;
+}
 
 export interface DevinStreamState {
 	textIndex: number | undefined;
 	thinkingIndex: number | undefined;
-	toolCalls: Map<string, { contentIndex: number }>;
+	toolCalls: Map<string, DevinToolCallState>;
+	/** Chunks after the first arrive without an id; they belong to this call. */
+	activeToolCallId: string | undefined;
+}
+
+export function createDevinStreamState(): DevinStreamState {
+	return { textIndex: undefined, thinkingIndex: undefined, toolCalls: new Map(), activeToolCallId: undefined };
 }
 
 export function applyDevinResponse(
@@ -85,33 +98,29 @@ function appendToolCall(
 ): void {
 	if (state.textIndex !== undefined) closeText(output, events, state);
 	if (state.thinkingIndex !== undefined) closeThinking(output, events, state);
-	const existing = state.toolCalls.get(call.id);
-	if (existing !== undefined) {
-		const open = output.content[existing.contentIndex];
-		if (open?.type === "toolCall" && call.argumentsJson) {
-			open.arguments = parseArguments(call.argumentsJson, open.arguments);
-			events.push({
-				type: "toolcall_delta",
-				contentIndex: existing.contentIndex,
-				delta: call.argumentsJson,
-				partial: output,
-			});
-		}
-		return;
+	const toolCallId = call.id || state.activeToolCallId;
+	if (!toolCallId) return;
+	state.activeToolCallId = toolCallId;
+	let entry = state.toolCalls.get(toolCallId);
+	if (entry === undefined) {
+		const block: ToolCall = { type: "toolCall", id: toolCallId, name: call.name, arguments: {} };
+		output.content.push(block);
+		entry = { contentIndex: output.content.length - 1, argumentsJson: "" };
+		state.toolCalls.set(toolCallId, entry);
+		events.push({ type: "toolcall_start", contentIndex: entry.contentIndex, partial: output });
 	}
-	const block: ToolCall = {
-		type: "toolCall",
-		id: call.id,
-		name: call.name,
-		arguments: parseArguments(call.argumentsJson, {}),
-	};
-	output.content.push(block);
-	const contentIndex = output.content.length - 1;
-	state.toolCalls.set(call.id, { contentIndex });
-	events.push({ type: "toolcall_start", contentIndex, partial: output });
-	if (call.argumentsJson) {
-		events.push({ type: "toolcall_delta", contentIndex, delta: call.argumentsJson, partial: output });
-	}
+	const block = output.content[entry.contentIndex];
+	if (block?.type !== "toolCall") return;
+	if (call.name) block.name = call.name;
+	if (!call.argumentsJson) return;
+	// A chunk either repeats everything so far plus new bytes, or carries only the new bytes.
+	const accumulated = call.argumentsJson.startsWith(entry.argumentsJson)
+		? call.argumentsJson
+		: entry.argumentsJson + call.argumentsJson;
+	const delta = accumulated.slice(entry.argumentsJson.length);
+	entry.argumentsJson = accumulated;
+	block.arguments = parseStreamingJson(accumulated);
+	if (delta) events.push({ type: "toolcall_delta", contentIndex: entry.contentIndex, delta, partial: output });
 }
 
 function closeText(output: AssistantMessage, events: AssistantMessageEventStream, state: DevinStreamState): void {
@@ -156,17 +165,5 @@ function mapStopReason(reason: StopReason): AssistantMessage["stopReason"] {
 			return "error";
 		default:
 			return "stop";
-	}
-}
-
-function parseArguments(json: string, fallback: Record<string, unknown>): Record<string, unknown> {
-	if (!json) return fallback;
-	try {
-		const parsed = JSON.parse(json) as unknown;
-		return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-			? (parsed as Record<string, unknown>)
-			: fallback;
-	} catch {
-		return fallback;
 	}
 }
