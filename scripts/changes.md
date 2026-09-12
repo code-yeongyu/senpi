@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-12 - Registry planning and concurrent-main release recovery
+
+### What changed
+
+- `scripts/publish.mjs` selects its ordered publish targets from the shared owned-registry mapping and uses `scripts/npm-registry.mjs` for registry lookups. `scripts/calver.mjs` uses the same names and treats first-publish 404 responses as an empty baseline. Private-only server, chord, and sqlite workspaces remain excluded; explicitly rewritten source-private packages retain their fork registry names.
+- `scripts/release.mjs` throws command failures to its caller and handles fatal errors at the CLI boundary, allowing `syncRemoteMainBeforePush` to recover from a non-ancestor result instead of exiting before its merge.
+
+### Why
+
+- Release 34688541952 completed its tests but failed when main advanced during preparation: the ancestry probe exited before the existing merge recovery could run. The planner also queried private senpi-server and stale upstream names rather than the fork publish set.
+
+### Why an extension could not handle it
+
+- `scripts/publish.mjs` and `scripts/release.mjs` run before publication, outside the runtime extension system.
+
+### Expected merge conflict zones
+
+- `scripts/publish.mjs` package selection and registry query helper; `scripts/release.mjs` command error handling and CLI entry point.
+
 ## 2026-09-12 - Binary build script drops the `--min-release-age=0` native install clause
 
 ### What changed
