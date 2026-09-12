@@ -30,7 +30,7 @@ cell grid. Prefixes encode role:
 - `release.mjs`: CalVer release composing `calver.mjs` and
   `release-{packages,artifacts,changelog,git,test-gate}.mjs`. Preflight: on `main`, clean tree
   (dry-run warns), valid CalVer; `--dry-run` previews every command and file write.
-- `publish.mjs`: publishes seven fork-owned packages (`senpi-ai`, `senpi-agent-core`, `senpi-tui`,
+- `publish.mjs`: publishes eight fork-owned packages (`senpi-chord`, `senpi-ai`, `senpi-agent-core`, `senpi-tui`,
   `senpi-pty`, `senpi-telemetry`, `senpi-codemode`, `senpi`); sources stay `private`, copied to
   temporary public manifests under the fork scope (`@code-yeongyu/senpi-server` stays excluded).
   Provenance requires GitHub Actions (`publish-command.mjs` throws outside it);
