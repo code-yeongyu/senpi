@@ -37,6 +37,7 @@
 ### Fixed
 
 - Column-capped eval output now preserves a recoverable full-output artifact, so a cell whose output is clipped by a narrow terminal column cap still exposes the complete text through the artifact path ([#1600](https://github.com/code-yeongyu/senpi/pull/1600)).
+- The eval schema now explains that runs require an explicit language, and invalid language values produce a distinct error from an omitted language; `peek` and `stop` remain language-free ([#1395](https://github.com/code-yeongyu/senpi/issues/1395)).
 
 ### Removed
 

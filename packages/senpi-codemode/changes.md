@@ -1,5 +1,16 @@
 # senpi-codemode fork changes
 
+## 2026-09-05 - Explain eval's run-only language requirement
+
+- The live and exported eval schemas describe `language` as required for runs,
+  with no default kernel, while keeping it optional for `peek` and `stop`.
+- Request parsing distinguishes an omitted language from an unsupported value
+  and lists the supported language identifiers for invalid values.
+- The README documents explicit language selection for runs and language-free
+  `peek`/`stop` requests.
+- Regression: `test/eval-request-language.test.ts` covers distinct diagnostics,
+  omitted run languages, and language-free control requests. Fixes #1395.
+
 ## 2026-09-11 - Column-capped eval output keeps a recovery artifact
 
 ### What changed

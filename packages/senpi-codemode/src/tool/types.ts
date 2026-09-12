@@ -19,6 +19,9 @@ export function enabledLanguageList(enabled: EnabledEvalLanguages): EvalLanguage
 
 export const EVAL_SUMMARY_MAX_LENGTH = 80;
 
+const LANGUAGE_FIELD_DESCRIPTION =
+	"REQUIRED for run. Choose a kernel explicitly; there is no default. Omit for peek/stop.";
+
 /** The deadlines the schema teaches the model; every number comes from the resolved settings. */
 export interface EvalDeadlineSeconds {
 	readonly runBudgetSeconds: number;
@@ -90,7 +93,9 @@ function evalInputProperties<Language extends TSchema>(languageSchema: Language,
 
 const fullEvalInputSchema = Type.Object(
 	evalInputProperties(
-		Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")]),
+		Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")], {
+			description: LANGUAGE_FIELD_DESCRIPTION,
+		}),
 		defaultEvalDeadlineSeconds,
 	),
 );
@@ -106,8 +111,11 @@ export function createEvalInputSchema(
 	if (languages.length === 0) throw new Error("eval requires at least one enabled language");
 	const languageSchema =
 		languages.length === 1
-			? Type.Union([Type.Literal(languages[0])])
-			: Type.Union(languages.map((item) => Type.Literal(item)));
+			? Type.Union([Type.Literal(languages[0])], { description: LANGUAGE_FIELD_DESCRIPTION })
+			: Type.Union(
+					languages.map((item) => Type.Literal(item)),
+					{ description: LANGUAGE_FIELD_DESCRIPTION },
+				);
 	return Type.Unsafe<EvalToolRequest>(Type.Object(evalInputProperties(languageSchema, deadlines))) as EvalInputSchema;
 }
 export type EvalKernelResult = Extract<KernelToHostMessage, { type: "result" }>;

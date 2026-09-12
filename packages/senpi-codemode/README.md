@@ -54,6 +54,12 @@ task-tool names are known.
 A missing optional interpreter removes that language from the session's `eval`
 schema; it is not an installation failure.
 
+Every `eval` run must explicitly select an enabled `language` (`js`, `py`, `rb`,
+or `jl`); there is no default kernel, even when only one language is enabled.
+Omitting `action` means `run`, so it also requires `language`. Control requests
+with `action: "peek"` or `action: "stop"` use `cell_id` and do not require a
+language.
+
 ### Session environment
 
 Every kernel starts with the active session's `PI_*` environment — `PI_SESSION_ID`,
