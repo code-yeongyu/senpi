@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
@@ -31,6 +32,17 @@ export class FileHookStateStorage implements HookStateStorage {
 		const agentDir = options.agentDir ?? getAgentDir();
 		this.globalStatePath = join(agentDir, "hooks-state.json");
 		this.projectStatePath = join(options.cwd, CONFIG_DIR_NAME, "hooks-state.json");
+	}
+
+	/** Writers publish atomic snapshots. Missing or invalid snapshots authorize nothing. */
+	async readAsync(scope: HookTrustStorageScope): Promise<HookTrustState> {
+		const path = statePathForScope(scope, this.globalStatePath, this.projectStatePath);
+		try {
+			return readHookTrustStateJson(await readFile(path, "utf8"));
+		} catch (error) {
+			if (errorCode(error) === "ENOENT") return emptyHookTrustState();
+			throw error;
+		}
 	}
 
 	read(scope: HookTrustStorageScope): HookTrustState {

@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added the `Notification` hook event to builtin hooks v1 for live and resumed ask-user question settlements, so timeouts and answers can trigger trusted user-defined commands while hooks is enabled (for example desktop or mobile push on `ask-user-timeout`). Notification matchers are ignored; cancellation does not notify, and asynchronous configuration/trust reads and command execution do not delay settlement.
+
 ### Changed
 
 ### Fixed

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createEventBus } from "../../src/core/event-bus.ts";
 import { formatUserMessage } from "../../src/core/extensions/builtin/ask-user/format.ts";
 import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.ts";
 import type { QuestionRequest, QuestionResponse } from "../../src/core/extensions/builtin/ask-user/schema.ts";
@@ -79,6 +80,7 @@ function install(sessionManager: SessionManager) {
 	const received = Promise.withResolvers<string>();
 	const handlers = new Map<string, StartHandler[]>();
 	const pi = {
+		events: createEventBus(),
 		registerFlag() {},
 		registerCommand() {},
 		registerTool() {},
