@@ -92,6 +92,25 @@
 
 ## PR #1304 review fixes: shared auth-miss prefix, login merge, sentinel repair (2026-09-10)
 
+## 2026-09-11 - Normalize canonical tool-result image data URLs before provider serialization
+
+### What changed
+
+- `api/transform-messages.ts`: canonical `data:${mimeType};base64,` prefixes on tool-result image blocks are stripped back to raw base64 at the shared message-normalization boundary. Raw base64 and mismatched/arbitrary data URLs remain unchanged.
+- `test/issue-1260-tool-result-image-data-url.test.ts`: covers raw base64 and already-prefixed canonical image data through the Responses serializer and pins exactly one wire prefix.
+
+### Why
+
+- Issue #1260: `ImageContent.data` is an internal raw-base64 contract, but tool results can arrive already prefixed. Passing that value through made Responses adapters prepend a second data-URL prefix and emit an invalid `image_url`.
+
+### Why an extension could not handle it
+
+- This is the shared provider-normalization boundary used before protocol serializers. Fixing one provider or extension would leave the malformed internal representation visible to other adapters.
+
+### Expected merge conflict zones
+
+- LOW: `api/transform-messages.ts` around tool-result media normalization and `downgradeUnsupportedImages()`.
+
 ### What changed
 
 - `packages/ai/src/auth/resolve.ts`: `PROVIDER_NOT_CONFIGURED_PREFIX` / `providerNotConfiguredMessage()` export the exact auth-miss wording every resolution site throws; `packages/ai/src/models.ts` re-exports both and throws through the helper. Consumers keying recovery decisions off that message (the coding-agent session layer and the credential-pool classifier) can never drift from the throw sites.
