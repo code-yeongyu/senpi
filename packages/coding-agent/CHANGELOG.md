@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added the `Notification` hook event to builtin hooks v1 and fire it for ask-user question settlements, so question timeouts and answers can trigger user-defined hook commands (for example desktop or mobile push on `ask-user-timeout`).
+
 ### Changed
 
 ### Fixed
