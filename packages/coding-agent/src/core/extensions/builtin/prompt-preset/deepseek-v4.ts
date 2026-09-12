@@ -22,9 +22,11 @@ export type DeepseekV4RuleId =
 	| "todo-discipline"
 	| "missing-info"
 	| "settled-reading"
-	| "reasoning-aim";
+	| "reasoning-aim"
+	| "delegate-separable-work"
+	| "load-matching-skills";
 
-export type DeepseekV4Concern = "harness-contract" | "todo" | "grounding" | "deliberation";
+export type DeepseekV4Concern = "harness-contract" | "todo" | "grounding" | "deliberation" | "subagent-delegation" | "skill-utilization";
 
 export type DeepseekV4PresetName = "deepseek-v4-flash" | "deepseek-v4-flash-0731" | "deepseek-v4-pro";
 
@@ -73,6 +75,20 @@ export const DEEPSEEK_V4_RULES: readonly DeepseekV4Rule[] = [
 		presets: ["deepseek-v4-pro"],
 		directive:
 			"Aim extended reasoning at the problem - the code, the design, the failure - and end it in an action. When reasoning stalls on a missing fact, stop deliberating and fetch the fact; a cheap read beats a long internal debate. Deliver a conclusion and a recommendation, not a survey of options.",
+	},
+	{
+		id: "delegate-separable-work",
+		concern: "subagent-delegation",
+		presets: ALL_PRESETS,
+		directive:
+			"At task intake, partition the work into the local critical path and separable workstreams. A bounded workstream that does not depend on the parent's in-progress edits is a `task` call: spawn it before local implementation, and submit independent workstreams in one batch. Keep only trivial lookups and tightly coupled edits local. Delegation is complete only after every child result has been read and its evidence integrated into the parent answer.",
+	},
+	{
+		id: "load-matching-skills",
+		concern: "skill-utilization",
+		presets: ALL_PRESETS,
+		directive:
+			"Before the first non-discovery action, compare the task with every visible skill description. For each loose match, read that skill's listed `SKILL.md` and follow it; when matching work is delegated, include the skill name in `load_skills`. Proceed without a skill only after this scan finds no match - recognizing a match without loading it does not complete the gate.",
 	},
 ];
 
