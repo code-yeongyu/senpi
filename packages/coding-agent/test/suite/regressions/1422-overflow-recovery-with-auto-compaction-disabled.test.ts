@@ -102,7 +102,7 @@ describe("#1422 overflow recovery with auto-compaction disabled", () => {
 		//#then - overflow recovery compacts and retries even though threshold compaction is disabled
 		expect(recovered).toBe(true);
 		expect(runAutoCompaction).toHaveBeenCalledTimes(1);
-		expect(runAutoCompaction).toHaveBeenCalledWith("overflow", true);
+		expect(runAutoCompaction).toHaveBeenCalledWith("overflow", true, {});
 	});
 
 	it("recovers end to end: the provider rejects the context, one compaction runs, the retry succeeds", async () => {

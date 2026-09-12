@@ -81,7 +81,7 @@ describe("compaction threshold with small provider usage over a large transcript
 
 		const runAutoCompaction = stubRunAutoCompaction(harness);
 		await checkCompaction(harness);
-		expect(runAutoCompaction).toHaveBeenCalledWith("threshold", false);
+		expect(runAutoCompaction).toHaveBeenCalledWith("threshold", false, {});
 	});
 
 	it("does not compact when both provider usage and the transcript estimate sit below the threshold", async () => {
@@ -105,6 +105,6 @@ describe("compaction threshold with small provider usage over a large transcript
 
 		const runAutoCompaction = stubRunAutoCompaction(harness);
 		await checkCompaction(harness);
-		expect(runAutoCompaction).toHaveBeenCalledWith("threshold", false);
+		expect(runAutoCompaction).toHaveBeenCalledWith("threshold", false, {});
 	});
 });
