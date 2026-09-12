@@ -148,13 +148,12 @@ import {
 	waitForPromptDisposition,
 } from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
+import { matchesAskUserAnswerKey } from "./components/ask-user-answer-key.ts";
 import {
 	ASK_USER_WIDGET_KEY,
 	AskUserAsyncWidget,
 	buildCommentResponse,
 	buildTimedOutResponse,
-	matchesAskUserAnswerKey,
-	unansweredIds,
 } from "./components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "./components/ask-user-question.ts";
 import type { QuestionDraft } from "./components/ask-user-question-state.ts";
@@ -3935,7 +3934,8 @@ export class InteractiveMode {
 		this.setExtensionWidget(ASK_USER_WIDGET_KEY, (tui) => {
 			const startedAt = Date.now();
 			return new AskUserAsyncWidget({
-				unanswered: unansweredIds(state.request, state.draft).length,
+				request: state.request,
+				draft: state.draft,
 				timeoutMs: state.timeoutMs,
 				tui,
 				onExpire: () => state.finish(buildTimedOutResponse(state.request, state.draft, Date.now() - startedAt)),

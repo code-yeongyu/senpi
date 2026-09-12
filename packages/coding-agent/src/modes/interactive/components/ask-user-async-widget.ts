@@ -1,87 +1,26 @@
 /**
- * Collapsed one-line widget for a pending async (waitForAnswer=false)
- * question: it sits above the editor, shows the unanswered count and the
- * idle countdown, and names the shortcut that expands the full
- * AskUserQuestionComponent. The response-building helpers here are pure so
- * interactive-mode can turn ordinary composer text into the comment answer.
+ * Collapsed widget for a pending async (waitForAnswer=false) question: it
+ * sits above the editor and shows the unanswered count with the idle
+ * countdown, the first unanswered question with its options, and every way
+ * into the full AskUserQuestionComponent. The response-building helpers here
+ * are pure so interactive-mode can turn ordinary composer text into the
+ * comment answer.
  */
 
-import {
-	Container,
-	decodeKittyPrintable,
-	getKeybindings,
-	type KeybindingsManager,
-	type KeyId,
-	Text,
-	type TUI,
-} from "@earendil-works/pi-tui";
+import { Container, Text, TruncatedText, type TUI } from "@earendil-works/pi-tui";
 import type { QuestionRequest, QuestionResponse } from "../../../core/extensions/types.ts";
 import { theme } from "../theme/theme.ts";
+import { ASK_USER_ANSWER_KEYBINDING } from "./ask-user-answer-key.ts";
 import { formatCountdownLabel, type QuestionDraft } from "./ask-user-question-state.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
 import { keyText } from "./keybinding-hints.ts";
 
 /** Widget slot key used with `setWidget`; one pending async question at a time. */
 export const ASK_USER_WIDGET_KEY = "ask-user";
-/** Keybinding action (default `alt+a`, rebindable in keybindings.json) that expands the pending question. */
-export const ASK_USER_ANSWER_KEYBINDING = "app.question.answer";
-/**
- * What each letter key types on a US-layout macOS keyboard while Option is
- * held and the terminal lets Option compose characters instead of sending
- * Alt (the default in Terminal.app, iTerm2, Ghostty and kitty), as
- * `[Option+letter, Option+Shift+letter]`. Accepting the glyphs of the bound
- * `alt+<letter>` chords keeps the advertised shortcut working without a
- * terminal-settings detour; other platforms never see Option this way, so
- * they keep treating the glyphs as text. The dead keys `e`, `i`, `n` and `u`
- * compose with the next keystroke instead of typing a glyph, so a binding on
- * one of them needs the terminal's Option-as-Meta setting.
- */
-const DARWIN_OPTION_GLYPHS: Readonly<Record<string, readonly [string, string]>> = {
-	a: ["å", "Å"],
-	b: ["∫", "ı"],
-	c: ["ç", "Ç"],
-	d: ["∂", "Î"],
-	f: ["ƒ", "Ï"],
-	g: ["©", "˝"],
-	h: ["˙", "Ó"],
-	j: ["∆", "Ô"],
-	k: ["˚", "\uf8ff"],
-	l: ["¬", "Ò"],
-	m: ["µ", "Â"],
-	o: ["ø", "Ø"],
-	p: ["π", "∏"],
-	q: ["œ", "Œ"],
-	r: ["®", "‰"],
-	s: ["ß", "Í"],
-	t: ["†", "ˇ"],
-	v: ["√", "◊"],
-	w: ["∑", "„"],
-	x: ["≈", "˛"],
-	y: ["¥", "Á"],
-	z: ["Ω", "¸"],
-};
 
-/** Glyphs the bound `alt+<letter>` chords type on darwin when Option composes. */
-export function darwinOptionGlyphs(keys: readonly KeyId[]): ReadonlySet<string> {
-	const glyphs = new Set<string>();
-	for (const key of keys) {
-		const letter = /^alt\+([a-z])$/i.exec(key)?.[1]?.toLowerCase();
-		if (letter === undefined) continue;
-		for (const glyph of DARWIN_OPTION_GLYPHS[letter] ?? []) glyphs.add(glyph);
-	}
-	return glyphs;
-}
+type Question = QuestionRequest["questions"][number];
 
-/** True when `data` is the editor input that expands the pending question on `platform`. */
-export function matchesAskUserAnswerKey(
-	data: string,
-	platform: NodeJS.Platform = process.platform,
-	keybindings: KeybindingsManager = getKeybindings(),
-): boolean {
-	if (keybindings.matches(data, ASK_USER_ANSWER_KEYBINDING)) return true;
-	if (platform !== "darwin") return false;
-	return darwinOptionGlyphs(keybindings.getKeys(ASK_USER_ANSWER_KEYBINDING)).has(decodeKittyPrintable(data) ?? data);
-}
+const INDENT = "  ";
 
 function hasAnswer(answer: QuestionResponse["answers"][string] | undefined): boolean {
 	if (!answer) return false;
@@ -124,6 +63,31 @@ export function buildTimedOutResponse(
 	};
 }
 
+export function renderStatusLine(unanswered: number, countdownLabel: string): string {
+	const countdown = countdownLabel === "" ? "" : theme.fg("muted", ` · ${countdownLabel}`);
+	return (
+		theme.fg("accent", theme.bold("?")) + theme.fg("text", ` Question pending (${unanswered} unanswered)`) + countdown
+	);
+}
+
+export function renderQuestionLine(question: Question): string {
+	return (
+		INDENT +
+		theme.fg("text", theme.bold(question.header)) +
+		theme.fg("muted", " — ") +
+		theme.fg("text", question.question)
+	);
+}
+
+export function renderOptionsLine(question: Question, remaining: number): string {
+	const parts = question.options.map(
+		(option, index) => theme.fg("dim", `${index + 1}`) + theme.fg("muted", ` ${option.label}`),
+	);
+	parts.push(theme.fg("muted", "own answer"));
+	if (remaining > 0) parts.push(theme.fg("muted", `+${remaining} more question${remaining === 1 ? "" : "s"}`));
+	return INDENT + parts.join(theme.fg("muted", " · "));
+}
+
 /** Hint naming every way into the pending question; the shortcut segment follows the effective binding. */
 export function renderAnswerHint(): string {
 	const shortcut = keyText(ASK_USER_ANSWER_KEYBINDING);
@@ -131,19 +95,9 @@ export function renderAnswerHint(): string {
 	return theme.fg("dim", shortcut) + theme.fg("muted", " to answer, or just type your reply");
 }
 
-export function renderAsyncQuestionLine(unanswered: number, countdownLabel: string): string {
-	const countdown = countdownLabel === "" ? "" : theme.fg("muted", ` · ${countdownLabel}`);
-	return (
-		theme.fg("accent", theme.bold("?")) +
-		theme.fg("text", ` Question pending (${unanswered} unanswered)`) +
-		theme.fg("muted", " - ") +
-		renderAnswerHint() +
-		countdown
-	);
-}
-
 export interface AskUserAsyncWidgetOptions {
-	unanswered: number;
+	request: QuestionRequest;
+	draft: QuestionDraft;
 	/** Idle countdown shown in the line; 0 disables it. */
 	timeoutMs: number;
 	tui?: TUI;
@@ -151,15 +105,15 @@ export interface AskUserAsyncWidgetOptions {
 }
 
 export class AskUserAsyncWidget extends Container {
-	private readonly line = new Text("", 1, 0);
+	private readonly request: QuestionRequest;
+	private readonly draft: QuestionDraft;
 	private readonly countdown: CountdownTimer | undefined;
-	private unanswered: number;
 	private countdownLabel = "";
 
 	constructor(options: AskUserAsyncWidgetOptions) {
 		super();
-		this.unanswered = options.unanswered;
-		this.addChild(this.line);
+		this.request = options.request;
+		this.draft = options.draft;
 		if (options.timeoutMs > 0) {
 			this.countdown = new CountdownTimer(
 				options.timeoutMs,
@@ -174,16 +128,20 @@ export class AskUserAsyncWidget extends Container {
 		this.update();
 	}
 
-	setUnanswered(count: number): void {
-		this.unanswered = count;
-		this.update();
-	}
-
 	dispose(): void {
 		this.countdown?.dispose();
+		super.dispose();
 	}
 
 	private update(): void {
-		this.line.setText(renderAsyncQuestionLine(this.unanswered, this.countdownLabel));
+		const pending = unansweredIds(this.request, this.draft);
+		const shown = this.request.questions.find((question) => question.id === pending[0]);
+		this.clear();
+		this.addChild(new Text(renderStatusLine(pending.length, this.countdownLabel), 1, 0));
+		if (shown) {
+			this.addChild(new TruncatedText(renderQuestionLine(shown), 1, 0));
+			this.addChild(new TruncatedText(renderOptionsLine(shown, pending.length - 1), 1, 0));
+		}
+		this.addChild(new Text(INDENT + renderAnswerHint(), 1, 0));
 	}
 }

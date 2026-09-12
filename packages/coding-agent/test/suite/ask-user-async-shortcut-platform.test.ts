@@ -2,10 +2,8 @@ import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { QuestionRequest } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
-import {
-	ASK_USER_WIDGET_KEY,
-	matchesAskUserAnswerKey,
-} from "../../src/modes/interactive/components/ask-user-async-widget.ts";
+import { matchesAskUserAnswerKey } from "../../src/modes/interactive/components/ask-user-answer-key.ts";
+import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "../../src/modes/interactive/components/ask-user-question.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../src/utils/ansi.ts";
