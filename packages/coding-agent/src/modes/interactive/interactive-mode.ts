@@ -2966,7 +2966,7 @@ export class InteractiveMode {
 			return;
 		}
 		const intervalMs = largeSessionWorkingStatusInterval(
-			this.sessionManager.getEntries().length,
+			this.sessionManager.getEntryCount(),
 			DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS,
 			LARGE_SESSION_WORKING_STATUS_MESSAGE_INTERVAL_MS,
 		);
@@ -3140,7 +3140,7 @@ export class InteractiveMode {
 		if (this.workingIndicatorOptions !== undefined) {
 			return this.workingIndicatorOptions;
 		}
-		const sessionEntryCount = this.sessionManager.getEntries().length;
+		const sessionEntryCount = this.sessionManager.getEntryCount();
 		return {
 			frames: theme.getColorMode() === "truecolor" ? ["•"] : [theme.fg("accent", "•"), theme.fg("muted", "◦")],
 			intervalMs: largeSessionWorkingStatusInterval(
@@ -5439,7 +5439,7 @@ export class InteractiveMode {
 
 	private showRetryStatusIndicatorWithCadence(event: { attempt: number; maxAttempts: number; delayMs: number }): void {
 		const refreshIntervalMs = largeSessionWorkingStatusInterval(
-			this.sessionManager.getEntries().length,
+			this.sessionManager.getEntryCount(),
 			DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS,
 			LARGE_SESSION_RETRY_STATUS_REFRESH_INTERVAL_MS,
 		);
