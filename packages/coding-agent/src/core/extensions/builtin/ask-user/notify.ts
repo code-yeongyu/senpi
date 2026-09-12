@@ -13,7 +13,7 @@ import { formatResultText } from "./format.ts";
 import type { QuestionRequest, QuestionResponse } from "./schema.ts";
 
 export async function emitAskUserNotification(
-	pi: ExtensionAPI,
+	pi: Pick<ExtensionAPI, "sendMessage">,
 	ctx: ExtensionContext,
 	request: QuestionRequest,
 	response: QuestionResponse,

@@ -121,7 +121,7 @@ describe("builtin hooks Notification event", () => {
 			const sent: unknown[] = [];
 			const timedOutResponse: QuestionResponse = timedOut;
 			await emitAskUserNotification(
-				{ sendMessage: ((message: unknown) => void sent.push(message)) as never },
+				{ sendMessage: (message: unknown) => void sent.push(message) },
 				ctx,
 				{
 					questions: [
