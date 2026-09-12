@@ -1,4 +1,4 @@
-## 2026-09-12 - Working/retry status cadence reads the O(1) entry count
+## 2026-09-12 - Working/retry status cadence reads the O(1) entry count (senpi#1635)
 
 ### What changed
 

@@ -1,6 +1,6 @@
 # changes
 
-## 2026-09-12 - O(1) full-history entry count on SessionManager
+## 2026-09-12 - O(1) full-history entry count on SessionManager (senpi#1635)
 
 ### What changed
 
