@@ -154,6 +154,8 @@
 
 ### Fixed
 
+- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
+
 - An idle question timeout is broadcast to RPC clients as `question_resolved{outcome:"timed_out"}` instead of `cancelled`, matching the timeout text the model already received in the tool result and the framed notice. The ask-user extension's idle timer is the authoritative one and now hands its outcome to the question bridge it aborts.
 
 - Re-opening an existing session file over RPC (`open_session` with a `sessionPath` that exists) now starts the session as a resume instead of a plain startup, so a question left dangling by a crashed host is re-presented once when the client has a question UI, or delivered once as an orphaned-after-restart user message when it has not - the same behaviour interactive `/resume` already had. Newly created sessions still start as `startup`.
