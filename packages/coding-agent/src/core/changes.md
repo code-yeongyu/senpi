@@ -1,5 +1,34 @@
 # changes
 
+## 2026-09-12 - `app.question.answer` keybinding and `/answer` command for the async ask-user widget (senpi#1623)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: new `AppKeybindings` id `app.question.answer`
+  (`defaultKeys: "alt+a"`, "Open the pending question"), so the chord that expands a pending async
+  question is configurable in `keybindings.json` and visible to `/hotkeys` and the hint system.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts`: registers the `/answer`
+  command ("Open the pending question") so it is listed and autocompleted; in TUI mode interactive-mode's
+  text dispatch handles it first (the `/keybindings` pattern), outside the TUI it notifies that the
+  command belongs to the TUI.
+
+### Why
+
+- The shortcut lived as a constant in the interactive widget and could not be rebound when another
+  keymap claimed Option/Alt+A; `/answer` gives a chord-free path that every terminal delivers.
+
+### Why an extension could not handle it
+
+- Keybinding ids are declared once in `KEYBINDINGS` and merged into the `pi-tui` `Keybindings`
+  augmentation; an extension cannot add an app-level id that `KeybindingsManager`, `/hotkeys` and
+  `keyText` resolve. The `/answer` command is registered through the extension API, but its TUI
+  behavior (mounting the overlay) is interactive-mode state that no extension hook reaches.
+
+### Expected merge conflict zones
+
+- LOW: the `AppKeybindings` interface and `KEYBINDINGS` table in `keybindings.ts` (fork-only ids sit
+  beside upstream ones); the ask-user extension is fork-only.
+
 ## 2026-09-12 - Cursor admission never deletes a turn (senpi#1603)
 
 ### What changed
