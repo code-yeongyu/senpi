@@ -1,5 +1,5 @@
-import { statSync } from "node:fs";
 import { getAgentDir } from "../../../../config.ts";
+import { getFileContentRevision } from "../../../../utils/paths.ts";
 import { getSettingsPath, type Settings, SettingsManager } from "../../../settings-manager.ts";
 import type { SettingSource } from "./sdk-boundary.ts";
 
@@ -167,12 +167,7 @@ export function loadClaudeSdkOauthProviderSettings(
 }
 
 function settingsFingerprint(path: string): string {
-	try {
-		const stat = statSync(path);
-		return `${stat.mtimeMs}:${stat.size}`;
-	} catch {
-		return "missing";
-	}
+	return getFileContentRevision(path) ?? "missing";
 }
 
 let cachedClaudeSdkOauthManager: { cwd: string; key: string; manager: SettingsManager } | undefined;
@@ -180,7 +175,7 @@ let cachedClaudeSdkOauthManager: { cwd: string; key: string; manager: SettingsMa
 /** Load settings from Senpi's configured global and project settings.json paths. */
 export function loadClaudeSdkOauthProviderSettingsFromDisk(cwd: string): ClaudeSdkOauthProviderSettings {
 	// fallbackEligible() calls this per candidate probe; cache the manager by
-	// (cwd, settings mtime+size) and re-apply env live to avoid locked disk reads.
+	// (cwd, settings content revision) and re-apply env live to avoid locked disk reads.
 	const agentDir = getAgentDir();
 	const key = `${cwd}|${settingsFingerprint(getSettingsPath(cwd, agentDir, "global"))}|${settingsFingerprint(
 		getSettingsPath(cwd, agentDir, "project"),

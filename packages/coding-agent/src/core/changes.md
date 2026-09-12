@@ -18,6 +18,112 @@
 
 - `packages/coding-agent/src/core/sdk.ts`: initial thinking selection precedence and existing-session message restoration. Preserve the original reasoning baseline and append-only history semantics.
 
+## 2026-09-12 - `app.question.answer` keybinding and `/answer` command for the async ask-user widget (senpi#1623)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: new `AppKeybindings` id `app.question.answer`
+  (`defaultKeys: "alt+a"`, "Open the pending question"), so the chord that expands a pending async
+  question is configurable in `keybindings.json` and visible to `/hotkeys` and the hint system.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts`: registers the `/answer`
+  command ("Open the pending question") so it is listed and autocompleted; in TUI mode interactive-mode's
+  text dispatch handles it first (the `/keybindings` pattern), outside the TUI it notifies that the
+  command belongs to the TUI.
+
+### Why
+
+- The shortcut lived as a constant in the interactive widget and could not be rebound when another
+  keymap claimed Option/Alt+A; `/answer` gives a chord-free path that every terminal delivers.
+
+### Why an extension could not handle it
+
+- Keybinding ids are declared once in `KEYBINDINGS` and merged into the `pi-tui` `Keybindings`
+  augmentation; an extension cannot add an app-level id that `KeybindingsManager`, `/hotkeys` and
+  `keyText` resolve. The `/answer` command is registered through the extension API, but its TUI
+  behavior (mounting the overlay) is interactive-mode state that no extension hook reaches.
+
+### Expected merge conflict zones
+
+- LOW: the `AppKeybindings` interface and `KEYBINDINGS` table in `keybindings.ts` (fork-only ids sit
+  beside upstream ones); the ask-user extension is fork-only.
+
+## 2026-09-12 - Cursor admission never deletes a turn (senpi#1603)
+
+### What changed
+
+- `packages/coding-agent/src/core/cursor-history-admission.ts` (new): owns Cursor request admission - the per-tool-result grapheme cap, blanking the oldest tool result bodies against an explicit byte budget, and `cursorAdmissionBudgetBytes` (effective context window x 4 chars per token, matching `core/compaction` `estimateTokens`). `admitCursorHistory` reports `blankedToolResults`, `bytesBefore`, `bytesAfter` and `overBudget`; `truncateToolResultBodies` stays as the positional entry point.
+- `packages/coding-agent/src/core/agent-session.ts`: the admission pass moved out of this file and the old names are re-exported from it. The third pass, which deleted the oldest whole turns when blanking was not enough, is gone: an over-budget history is admitted as-is. The `transformContext` closure now applies the observed Cursor ceiling to the live model (`cursor_context_window_observed`), derives the budget from `model.contextWindow`, and logs `cursor_admission_truncated` / `cursor_admission_over_budget`. `_wouldCompactionOverflow` sizes its simulated Cursor context with the same window-derived budget.
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`: catalog entries materialize `contextWindow` through `resolveCursorContextWindow`.
+- Tests: `packages/coding-agent/test/suite/regressions/1603-cursor-history-budget.test.ts` (new) and the rewritten aggregate cases in `packages/coding-agent/test/suite/regressions/1043-cursor-toolresult-truncate.test.ts`, which now pass explicit budgets and assert that bodies shrink while messages do not.
+
+### Why
+
+- Admission enforced a fixed 50,000-byte cap that had nothing to do with the model window, and measured it over both the prompt blobs and Cursor's display copies of the same conversation. A 1M-token model therefore admitted roughly 6K tokens, and a tool-free history - where there is no body to blank - lost its oldest turns outright, so a codeword or instruction from the first turn was gone before the model ever saw it.
+- Cursor rebuilds the conversation each hop, so the pass cannot compact mid-run; the correct answer to an oversized history is to admit it and let the existing 0-token `resource_exhausted` overflow path compact with the session's own policy.
+
+### Why an extension could not handle it
+
+- The pass runs inside `AgentSession`'s installed `transformContext` and feeds the same session-owned compaction and context-usage accounting; an extension context hook cannot see the model window admission is budgeting against, and cannot mutate the live model.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` - the constants block above the class and the `transformContext` closure inside `_installAgentNextTurnRefresh`.
+- LOW: the new `packages/coding-agent/src/core/cursor-history-admission.ts`.
+- LOW: the `contextWindow` line in `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`.
+## 2026-09-12 - Bind session-write grants to live writers (senpi#1612)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-write-reservation.ts` adds a live-writer registry
+  (`registerSessionWriter`, `unregisterSessionWriter`, `liveSessionWritePaths`) that holds owners
+  weakly, prunes collected ones on enumeration, and reports the current session file of every live
+  persisted writer.
+- `packages/coding-agent/src/core/session-manager.ts` registers every persisted manager in its
+  constructor, and splits `newSession()` into `_resetToNewSession()` (state reset and header, no
+  path work) plus the path allocation. `_setSessionFile()` now resets in place for a missing or
+  empty explicit file instead of allocating and reserving a second path it immediately discards.
+- `packages/coding-agent/src/core/agent-session-runtime.ts` unregisters the replaced session
+  manager after `teardownCurrent()` disposes it, so a superseded session file has no live writer.
+- `packages/coding-agent/test/suite/regressions/1612-session-manager-single-reservation.test.ts`
+  pins that opening a missing or zero-byte session file reserves exactly that one path.
+
+### Why
+
+- Under the shared RPC host every reservation was permanent, so a long-lived session died at the
+  64-path worker budget with `session_path_in_use`, and each explicit open burned two grants
+  instead of one. Ownership now follows the writer that actually exists.
+
+### Why an extension could not handle it
+
+- `SessionManager` and the runtime replacement path own session-file writes below the extension
+  boundary; the grant is taken synchronously before any extension observes the new session.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-manager.ts` around `newSession()` / `_setSessionFile()`.
+- LOW: the `teardownCurrent()` tail in `agent-session-runtime.ts` and the reservation module.
+
+## 2026-09-11 - Batch persisted entry hydration after resident-string eviction (senpi#1407)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-entry-materializer.ts` batches missing resident-string recovery for an ordered materialization pass and performs one authoritative JSONL load.
+- `packages/coding-agent/src/core/session-manager.ts` uses the batch helper for `getEntries()` and `getBranch()` while preserving cache identity, branch order, and message-entry position tracking.
+- `packages/coding-agent/test/session-manager/session-mirror-budget.test.ts` proves that an evicted multi-entry read restores all payloads after one full-history parse.
+
+### Why
+
+- Image-heavy resumed sessions could parse the complete JSONL once per evicted large string, turning a bounded resident cache miss into repeated full-history I/O and JSON parsing.
+
+### Why an extension could not handle it
+
+- Resident-string materialization and session branch/cache views are owned by `SessionManager` below the extension boundary.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/session-manager.ts` materialization and branch/read caches.
+- LOW: new `packages/coding-agent/src/core/session-entry-materializer.ts` and the resident-mirror regression test.
+
 ## 2026-09-11 - Resolve branded changelog sources (senpi#1583)
 
 ### What changed
@@ -36,6 +142,29 @@
 ### Expected merge conflict zones
 
 - LOW: the changelog source resolver and its config imports.
+
+## 2026-09-11 - Keep remote catalog sources clean under the static validation gate
+
+### What changed
+
+- `packages/coding-agent/src/core/remote-catalog-merge.ts` is aligned with the repository's
+  enforced Biome formatting.
+- `packages/coding-agent/src/core/remote-catalog-provider.ts` is aligned with the repository's
+  enforced import ordering and formatting.
+
+### Why
+
+- The repository-wide static gate must validate these shared runtime sources without formatter
+  drift; the change preserves their behavior and removes only pre-existing formatting violations.
+
+### Why an extension could not handle it
+
+- These are core model-catalog runtime modules checked directly by the repository static gate;
+  extensions cannot alter their source formatting or import graph.
+
+### Expected merge conflict zones
+
+- LOW around the remote catalog merge and provider imports.
 
 ## 2026-09-11 - Keep static model capabilities authoritative over remote catalog refreshes (senpi#1527)
 
@@ -78,6 +207,24 @@
 
 - MEDIUM: `packages/coding-agent/src/core/remote-catalog-provider.ts` refresh publication and provider wrapper.
 - LOW: new `packages/coding-agent/src/core/remote-catalog-merge.ts` and the colocated remote catalog regression tests.
+
+## 2026-09-11 - Detect auth changes by content rather than mtime
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts` uses SHA-256 file-content revisions for shared reload detection and coalescing.
+
+### Why
+
+- Rapid rewrites may retain the same filesystem mtime and size, so metadata-only revisions can return stale credentials.
+
+### Why an extension could not handle it
+
+- The shared auth snapshot and reload-coalescing state are owned by core storage before provider extensions read them.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/auth-storage.ts` revision reads around reload and cache adoption.
 
 ## 2026-09-10 - Atomic account display-name metadata with shape-keyed sentinel guard (senpi#1495)
 

@@ -1,5 +1,110 @@
 # changes
 
+## 2026-09-12 - Release session-write grants a worker no longer holds (senpi#1612)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-path-reservations.ts` is the new owner of canonical
+  path ownership: it grants, counts, reconciles against a worker's live writers, and reports
+  `granted` / `conflict` / `limit` with the wire code each denial maps to.
+- `packages/coding-agent/src/modes/rpc/worker-session-registry.ts` reconciles a fully open entry on
+  every snapshot (releasing superseded paths and re-keying the entry), reconciles once more before
+  denying a full budget, exposes `reservationCount(handle)`, and only maps an opening spelling to a
+  grant that is still held. Opening, closing and quarantined entries keep every path until exit.
+- `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts` carries `liveSessionPaths` on
+  `WorkerSnapshot` and names the wait-signal codes (`WORKER_CREDIT_CODES`, `SessionWriteGrant`).
+- `packages/coding-agent/src/modes/rpc/session-worker.ts` publishes those live paths and delegates
+  its blocking host exchanges to the new
+  `packages/coding-agent/src/modes/rpc/session-worker-credit.ts`, which reports an exhausted budget
+  as `session_reservation_limit` and a held path as `session_path_in_use`.
+- `packages/coding-agent/src/modes/rpc/session-worker-client.ts` gains the `reconcile` callback,
+  answers a reservation with the host's grant, and encodes wait signals through the new
+  `packages/coding-agent/src/modes/rpc/session-worker-signals.ts`.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` and `session-registry.ts` add the
+  `session_reservation_limit` error code; `packages/coding-agent/docs/rpc.md` documents the
+  release-on-supersede semantics and the new code.
+- `packages/coding-agent/test/suite/regressions/1612-rpc-session-grant-release.test.ts` pins 70
+  consecutive `new_session` commands on one worker, the superseded path reopening in a new worker,
+  the budget-versus-conflict denial codes, and the live-writer registry.
+
+### Why
+
+- Grants were held for a worker's whole lifetime, so a long-lived session died at the 64-path cap
+  with `session_path_in_use` and its earlier session files stayed unopenable for the host's life.
+
+### Why an extension could not handle it
+
+- Path grants, worker snapshots and the shared host's reservation budget live in the RPC transport
+  layer, above the worker isolate an extension runs in.
+
+### Expected merge conflict zones
+
+- MEDIUM: `worker-session-registry.ts` reserve/attach bookkeeping.
+- LOW: the `session-worker.ts` credit exchange, the client's `receive` switch, and the
+  `WorkerSnapshot` shape.
+
+## 2026-09-12 - Keep a live host whose identity probe is starved
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` registers a spawned host whose process
+  identity stayed unreadable with a guard-less pidfile (`processStartTime: null`) instead of
+  throwing and terminating the child, and the unhurried second read now honors the injected test
+  probe so the starved-probe path is reachable without a Windows runner.
+- `matchesPidFileOrUnknown` maps `ProcessIdentityUnreadableError` to "not ours" for the reuse
+  decision, so an observation gap starts a fresh host instead of failing the whole ensure.
+- `packages/coding-agent/test/rpc-host-ensure.test.ts` pins the registration, the guard-less
+  reuse path, and the restart from a guard-less pidfile.
+
+### Why
+
+- Every win32 identity attempt spawns `powershell.exe` with `Get-CimInstance` under a 1s timeout.
+  On a loaded runner all attempts time out, so a healthy host that had already bound its pipe was
+  refused and killed with `started but its process identity stayed unreadable`. The comment above
+  that throw already stated the intended behavior - keep the healthy host - while the code did the
+  opposite; this is the CI failure observed on the `RPC named pipes (Windows)` job.
+
+### Why an extension could not handle it
+
+- Host registration and ownership probing run inside the RPC supervisor before any extension is
+  loaded.
+
+### Expected merge conflict zones
+
+- LOW around the `startHost` identity block and `ensureHostLocked`'s ownership call in
+  `host-ensure.ts`.
+
+## 2026-09-11 - Preserve shared hosts across transient empty identity probes
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` now reaches the compatible endpoint
+  decision before consulting an ownership identity probe, so concurrent callers can reuse a
+  healthy shared host even when the platform probe is temporarily unavailable.
+- `packages/coding-agent/test/rpc-host-identity-regression.test.ts` records the live-PID
+  observation-gap and compatible-endpoint reuse contracts.
+- The regression diagnostics distinguish compatible reuse from ownership probing, and retain the
+  original readiness/cleanup evidence instead of replacing it with a termination side effect.
+- The existing-host probe installs its named-pipe error listener before sending the Windows
+  handshake, so a pipe removed during idle exit is observed as an absent endpoint instead of
+  escaping as an unhandled `ENOENT`.
+
+### Why
+
+- Windows named-pipe startup could misclassify a live shared host after an empty or unavailable
+  process identity observation, then enter replacement startup and terminate the valid host. A
+  second ensure after idle exit could also race the pipe removal and fail before it could start
+  a fresh host.
+
+### Why an extension could not handle it
+
+- Endpoint ownership, compatibility probing, and host replacement are RPC supervisor operations
+  that execute before extension code is available.
+
+### Expected merge conflict zones
+
+- LOW around `host-ensure.ts` endpoint compatibility and ownership probe ordering.
+
 ## 2026-09-11 - Partial ask-user responses resolve with unanswered ids
 
 ### What changed

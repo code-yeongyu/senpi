@@ -1,5 +1,24 @@
 # claude-sdk-oauth
 
+## 2026-09-11 - Detect same-tick settings rewrites
+
+### What changed
+
+- `settings.ts`: the cached provider-settings loader now keys its manager cache on a SHA-256 content revision rather than `mtimeMs:size`, so a rewrite made within one filesystem mtime tick is observed.
+
+### Why
+
+- Linux filesystems can preserve the same mtime for two rapid writes, leaving the loader with stale provider settings despite its re-read contract.
+
+### Why an extension could not handle it
+
+- The cache and its invalidation key are owned by this provider extension's settings loader.
+
+### Expected merge conflict zones
+
+- LOW: `settings.ts` around `settingsFingerprint`.
+
+
 ## 2026-09-10 - Optional Claude account display names (senpi#1495)
 
 ### What changed

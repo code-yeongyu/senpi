@@ -6,6 +6,69 @@
 
 ### Added
 
+- Added two chord-free ways to open a pending async ask-user question: Enter on an empty editor and the `/answer` command (which reports `No question is pending.` when there is nothing to open), so the question stays reachable when a terminal, multiplexer or another keymap swallows the shortcut.
+- Added the `app.question.answer` keybinding (default `alt+a`, `option+a` on macOS): the async ask-user shortcut can now be rebound in `keybindings.json`, is listed in `/hotkeys` and `docs/keybindings.md`, and the widget hint follows the configured chord (fixes #1623).
+
+### Changed
+
+- The async ask-user widget above the editor now shows the pending question itself: the first unanswered question with its options (and how many more wait behind it), one truncated line each, moving on to the next unanswered question when a partial draft collapses; on macOS the Option-composed glyph accepted for the shortcut follows the bound letter instead of being fixed to `å`/`Å`.
+
+### Fixed
+
+- Resuming a GPT-6 Astra session restores a supported surviving configuration effort when missing ancestry makes the original thinking selection unreachable, instead of replacing it with remembered startup defaults. Explicit overrides and later thinking selections still win, and the resumed inline configuration agrees with the selected effort ([#1596](https://github.com/code-yeongyu/senpi/pull/1596) by [@rlaope](https://github.com/rlaope)).
+
+### Removed
+
+## [2026.9.12-2] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed Cursor requests losing whole conversation turns: admission enforced a fixed 50 KB aggregate cap and deleted the oldest turns when blanking tool results was not enough, so a 1M-token model kept roughly 6K tokens of history and an early instruction could disappear before the model saw it. The aggregate budget now follows the model context window (measured over what Cursor actually replays to the model), only tool result bodies are shrunk, and a history that still exceeds the budget is sent as-is for the existing overflow-to-compaction path to handle ([#1603](https://github.com/code-yeongyu/senpi/issues/1603)).
+- Fixed a long-lived RPC session dying with `session_path_in_use` after 64 session replacements: session-write grants are now bound to the writers that still exist, so a replaced session file is released as soon as the worker reports its new one. A superseded path can be reopened in a new worker instead of staying blocked for the host's lifetime, opening an explicit session file no longer burns a second phantom grant, and an exhausted per-worker budget is reported as the distinct `session_reservation_limit` (fixes #1612).
+
+- Fixed the async ask-user widget's advertised `option+a` shortcut doing nothing in macOS terminals that let Option compose characters (the Terminal.app, iTerm2, Ghostty and kitty defaults): on macOS the composed `å`/`Å` glyphs now expand the pending question too, `alt+a` keeps working everywhere, and other platforms keep treating those glyphs as text (fixes #1620).
+
+### Removed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+- Added Devin router models: a Cascade model router such as `adaptive` is resolved through `AssignModel` before every turn, and the assigned model uid plus its assignment JWT ride on the chat request, so the server-side router picks the model instead of the request failing on the router uid.
+- Added inline images on Devin turns: images attached to a user prompt or returned by a tool now travel in the Cascade request instead of being dropped to text.
+
+### Changed
+
+- Devin model discovery now announces the Devin CLI's dev-channel `chisel` identity and requests every native display slot, filters the internal quick-review and default-only slots, marks server-side routers, and reads the account's context window, output cap, cost and image/tool support from the catalog the way the released client does. The bundled seed now lists the plan-available SWE-2 effort lanes (`swe-2-high`, `swe-2-max`, `swe-2-low`, `swe-2-high-lite`) beside SWE-1.6; the bare `swe-2` uid, which Cascade rejects with `permission_denied`, is gone.
+
+### Fixed
+
+- Fixed Devin chat failing with `Devin request failed (HTTP 404): {"detail":"Not Found"}` after a successful login: the OAuth login host (`api.devin.ai`) was overlaid onto the Cascade model host, so every `GetChatMessage` was posted to the REST API instead of `server.codeium.com` (fixes #1615).
+- Fixed Devin turns being rejected with an opaque `invalid_argument` once they reached the right host: the transport now mints the account's user JWT through `GetUserJwt` before every turn and follows the API host that call names, presents the released Devin CLI identity (`devin-cli` / `chisel` 3000.6.2) instead of a dev-channel one, carries the user JWT on the correct protobuf field (it was serialized as `force_team_id`), sends UUID-shaped conversation, execution and message ids instead of raw strings, and uses the released CLI completion configuration (a temperature of exactly 0 is refused by Cascade and is now clamped).
+- Fixed Devin tool calls losing their id mid-stream: Cascade sends the id only on the first argument chunk, and later chunks were opened as separate nameless tool calls, so file reads, shell commands and edits never executed. Chunks now merge into one call whose arguments accumulate across frames.
+- Fixed Devin rejections being reported as an empty successful turn: a Connect error trailer (`invalid_argument`, `permission_denied`, ...) now terminates the turn as an error carrying the server's code and message.
+- Fixed Devin model discovery answering HTTP 415: the unary `GetCliModelConfigs` call now sends a bare `application/proto` body like the CLI instead of a Connect streaming frame.
+
+### Removed
+
+## [2026.9.11] - 2026-09-11
+
+### Breaking Changes
+
+### Added
+
+- Added the Devin (Cognition) Cascade model transport: after signing in with Devin OAuth you can select a Devin model and stream completions through the native `devin-agent` Connect/protobuf protocol, with text, thinking, tool calls, usage and stop reasons mapped natively, plus credential-scoped model discovery that keeps the bundled seed when discovery is unavailable (fixes #1604).
+
+- Added Devin (Cognition) OAuth login: sign in through Devin's CLI authorization flow (PKCE S256, loopback callback on `127.0.0.1:59653`, state validated before the code is spent) and senpi stores the issued CLI token with its JWT-derived expiry (fixes #1601).
+
 - Branded builds can provide an absolute changelog path and authored version, with source-isolated seen-version tracking and interactive changelog rendering; engine changelog notifications retain their existing link rewriting and install telemetry behavior (fixes #1583).
 
 - Added the `deepseek-v4-1-flash` prompt preset for DeepSeek V4.1 Flash: it resolves every published id shape (`deepseek-flash`, `deepseek-v4.1-flash`, `deepseek/deepseek-v4.1-flash`, `deepseek-ai/DeepSeek-V4.1-Flash`, fireworks' `deepseek-v4p1-flash`, venice's `deepseek-v4-1-flash`) and the official DeepSeek provider's retired `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` aliases, which the DeepSeek API now serves with V4.1 Flash; the same alias on any other provider keeps the V4 Flash preset. The preset carries the shared core and the eval-routing stance only - none of the V4 Flash repair rules, which were written against V4-Flash-0731 transcripts and do not apply to the re-trained model ([#1574](https://github.com/code-yeongyu/senpi/issues/1574))
@@ -13,12 +76,19 @@
 
 ### Changed
 
-- `update_goal` with status `blocked` is now rejected while a live resumption channel (monitor, background session, detached eval cell, child task, or pending question) can still deliver, and again until the same blocker has survived three goal turns since the goal became active or the user last spoke; the goal continuation prompt states both rules, declares retries unbounded, and requires the completion audit to match verification scope to requirement scope. `create_goal` now carries a decision rule for work that outlives the turn instead of "only when explicitly requested".
+- The goal continuation prompt and the `update_goal` tool description now spell out when a goal may be marked blocked: never while a live resumption channel (monitor, background session, detached eval cell, child task, or pending question) can still deliver, and not until the same blocker has survived three goal turns since the goal became active or the user last spoke. Both surfaces declare retries unbounded and require the completion audit to match verification scope to requirement scope, and `create_goal` now carries a decision rule for work that outlives the turn instead of "only when explicitly requested". The transition itself stays model-controlled: `update_goal` enforces only that a `blocked` call carries a reason, so a model that judges the audit passed is never mechanically refused.
 - The GPT-6 Astra preset drops its three-attempt failure cap for an unbounded-retry rule that widens the source on an empty lookup, ends a turn only when a pending handle will wake the session, requires a named next step to be taken in the same turn, and defaults its question tool to the non-blocking mode.
 
 ### Fixed
 
-- Resuming a GPT-6 Astra session restores a supported surviving configuration effort when missing ancestry makes the original thinking selection unreachable, instead of replacing it with remembered startup defaults. Explicit overrides and later thinking selections still win, and the resumed inline configuration agrees with the selected effort ([#1596](https://github.com/code-yeongyu/senpi/pull/1596) by [@rlaope](https://github.com/rlaope)).
+- Image-heavy `/resume` sessions no longer reparse the complete JSONL once per evicted resident string; one ordered materialization pass performs one authoritative history load while preserving transcript contents and branch state ([#1407](https://github.com/code-yeongyu/senpi/issues/1407))
+
+- A shared RPC host is no longer torn down because its own process-identity probe was starved. A host we spawned that is alive and answering its socket is registered with a guard-less pidfile, and a record without an identity guard reads as unknown ownership everywhere, so it can neither claim a host nor authorize a signal; a later ensure that cannot verify it simply starts a fresh host. On a loaded Windows machine, where every `Get-CimInstance` attempt can exceed its timeout, session start no longer fails with `started but its process identity stayed unreadable`.
+
+- Windows RPC host ownership checks no longer treat a temporarily empty process-identity probe
+  for a live PID as evidence that the shared host is dead. Compatible endpoints are reused before
+  ownership probing, preventing concurrent callers from replacing a healthy named-pipe host
+  during a transient Windows CIM observation gap.
 
 - The ask-user overlay now uses plain Enter to confirm and advance through question tabs, keeps multi-select choices intact when confirming, provides an explicit Submit tab for optional comments and partial answers, prevents editor focus traps, and reports partial answers without requiring a comment ([#1573](https://github.com/code-yeongyu/senpi/issues/1573))
 
@@ -30,6 +100,10 @@
 - A provider-owned login pool is merged onto the stored pool at commit time instead of overwriting it with the pre-browser-flow snapshot, so a sibling account's rotated refresh token and rate-limit block survive another account's interactive login.
 - The Claude SDK lane's session-lock and bare `invalid_request` remint, and its `Provider is not configured:` fallback exclusion, are scoped to that provider: provider-agnostic stream stalls keep consuming the shared same-model retry budget and still escalate to the configured fallback chain, and another provider's auth miss or `invalid_request` still hops the chain.
 - OAuth login no longer paints two live `>` prompts when the browser callback finishes before the paste-code field is submitted, and an interleaved waiting or info step replaces (never duplicates) the live `(to cancel)`/`(to close)` hint row.
+- A Windows RPC reuse probe registers its socket error listener before it writes the named-pipe handshake, so a pipe an idle host removed while the probe was in flight is observed as "no existing host" and the caller starts a fresh one, instead of the `ENOENT` escaping the probe and failing the session start ([#1593](https://github.com/code-yeongyu/senpi/pull/1593)).
+- A terminal provider policy rejection now blocks the active goal instead of queuing automatic recoveries that cannot succeed, and the unstructured Codex diagnostic (`This request was blocked by our safety systems`) is trusted only when the message carries the Codex responses api id, so a provider-agnostic "Provider is not configured" style refusal from another provider or gateway keeps its ordinary provider and system recovery; the api id is pinned against the shipped model catalog so renaming it there cannot silently disarm the guard ([#1520](https://github.com/code-yeongyu/senpi/issues/1520) by [@rlaope](https://github.com/rlaope)).
+- A persisted Claude SDK binding whose prompt or toolset drifted after a stream-start timeout now forks the stored session at its last assistant UUID instead of flattening megabytes of transcript into a fresh request, and the timeout and a bare `invalid_request` remint the same model instead of hard-hopping onto an unauthenticated gateway route ([#1304](https://github.com/code-yeongyu/senpi/pull/1304) by [@eddieparc](https://github.com/eddieparc)).
+- Auth and cached provider-settings reload detection now uses file content revisions instead of filesystem mtimes, so two rewrites inside one filesystem timestamp tick are still observed and the session picks up the newer credentials deterministically.
 
 ### Removed
 
@@ -42,8 +116,6 @@
 ### Changed
 
 ### Fixed
-
-- A provider-agnostic "Provider is not configured" style refusal no longer ends a goal as a Codex policy rejection. The gate now requires the Codex responses api id, so another provider or gateway emitting the same sentence keeps provider and system recovery instead of blocking the goal; the api id is pinned against the shipped model catalog so renaming it there cannot silently disarm the guard ([#1520](https://github.com/code-yeongyu/senpi/issues/1520))
 
 - A bare `.` submitted on a session that already has messages no longer renders as a user message in the TUI. It stays the manual-continue shortcut the session delivers as a hidden continuation, so nothing is painted for it while idle or while steering an active turn; a `.` on an empty session and a `.` carrying image attachments remain ordinary user input ([#1569](https://github.com/code-yeongyu/senpi/issues/1569))
 

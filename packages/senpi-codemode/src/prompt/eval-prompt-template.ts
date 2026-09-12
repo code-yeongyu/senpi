@@ -1,7 +1,7 @@
 export const EVAL_PROMPT_TEMPLATE = `Run one step of code in a persistent kernel.
 
 <instruction>
-**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls{{#if spawns}}, tool calls and \`task\` subagents{{else}} and tool calls{{/if}}: define helpers and clients once and reuse them instead of re-importing or re-reading. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
+**One eval call = one cell = one logical step.** Top-level names persist per language across eval calls{{#if spawns}}, tool calls and \`task\` subagents{{else}} and tool calls{{/if}}: define helpers and clients once and reuse them instead of re-importing or re-reading. For large text, use bounded chunks or write it to a file and read it with offsets; treat truncation notices as incomplete data and follow the full-output path. Rebuild state only after \`reset\`, a kernel restart, or a \`NameError\`/\`ReferenceError\`, and check a sentinel variable first so a re-run cannot duplicate side effects.
 
 {{#if styleClaude}}<eval_first_batching>
 Batch a step's independent calls in one cell with \`parallel(thunks)\`; write real code around them - loops, branches, joins, a try/except per risky item - and keep every failed or missing item in the result verbatim; re-read truncated output before deciding.

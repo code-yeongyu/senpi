@@ -2,9 +2,11 @@ import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "../host-sdk.ts";
 import { formatMiddleElisionMarker } from "./output-meta.ts";
+import { TailBuffer, truncateHeadBytes } from "./streaming-output-buffer.ts";
 
 export { artifactNotice, formatMiddleElisionMarker, resolveSessionArtifactsDir } from "./output-meta.ts";
-export { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail };
+export { truncateHeadBytes, truncateTailBytes } from "./streaming-output-buffer.ts";
+export { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TailBuffer, truncateTail };
 
 export const ARTIFACT_DEFAULT_HEAD_BYTES = 3 * 1024 * 1024;
 
@@ -31,11 +33,6 @@ export interface OutputSinkOptions {
 	readonly chunkThrottleMs?: number;
 }
 
-interface ByteSlice {
-	readonly text: string;
-	readonly bytes: number;
-}
-
 function countNewlines(text: string): number {
 	let count = 0;
 	let cursor = text.indexOf("\n");
@@ -48,60 +45,6 @@ function countNewlines(text: string): number {
 
 function lineCount(text: string): number {
 	return text.length === 0 ? 0 : countNewlines(text) + 1;
-}
-
-function truncateHeadBytes(text: string, maxBytes: number): ByteSlice {
-	if (maxBytes <= 0) return { text: "", bytes: 0 };
-	const buffer = Buffer.from(text, "utf8");
-	if (buffer.length <= maxBytes) return { text, bytes: buffer.length };
-	let end = maxBytes;
-	while (end > 0 && (buffer[end] & 0xc0) === 0x80) end--;
-	const slice = buffer.subarray(0, end);
-	return { text: slice.toString("utf8"), bytes: slice.length };
-}
-
-function truncateTailBytes(text: string, maxBytes: number): ByteSlice {
-	if (maxBytes <= 0) return { text: "", bytes: 0 };
-	const buffer = Buffer.from(text, "utf8");
-	if (buffer.length <= maxBytes) return { text, bytes: buffer.length };
-	let start = buffer.length - maxBytes;
-	while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start++;
-	const slice = buffer.subarray(start);
-	return { text: slice.toString("utf8"), bytes: slice.length };
-}
-
-export class TailBuffer {
-	readonly #maxBytes: number;
-	#text = "";
-	#bytes = 0;
-
-	constructor(maxBytes: number) {
-		this.#maxBytes = Math.max(0, Math.floor(maxBytes));
-	}
-
-	append(text: string): void {
-		if (text.length === 0) return;
-		if (this.#maxBytes === 0) {
-			this.#text = "";
-			this.#bytes = 0;
-			return;
-		}
-		const incomingBytes = Buffer.byteLength(text, "utf8");
-		const next =
-			incomingBytes >= this.#maxBytes
-				? truncateTailBytes(text, this.#maxBytes)
-				: truncateTailBytes(this.#text + text, this.#maxBytes);
-		this.#text = next.text;
-		this.#bytes = next.bytes;
-	}
-
-	text(): string {
-		return this.#text;
-	}
-
-	bytes(): number {
-		return this.#bytes;
-	}
 }
 
 export class OutputSink {
@@ -146,8 +89,10 @@ export class OutputSink {
 		this.#totalBytes += rawBytes;
 		this.#totalNewlines += countNewlines(chunk);
 		this.#sawData = true;
-		this.#mirrorRaw(chunk);
-		this.#retain(this.#maxColumns > 0 ? this.#clampColumns(chunk) : chunk);
+		const droppedBefore = this.#columnDroppedBytes;
+		const retained = this.#maxColumns > 0 ? this.#clampColumns(chunk) : chunk;
+		this.#mirrorRaw(chunk, this.#columnDroppedBytes > droppedBefore);
+		this.#retain(retained);
 	}
 
 	dump(notice?: string): Promise<OutputSummary> {
@@ -167,13 +112,13 @@ export class OutputSink {
 		this.#pendingChunk += chunk;
 	}
 
-	#mirrorRaw(chunk: string): void {
+	#mirrorRaw(chunk: string, columnCapDropped: boolean): void {
 		if (this.#artifactPath === undefined) return;
 		if (this.#file !== undefined) {
 			this.#file.write(chunk);
 			return;
 		}
-		if (this.#totalBytes <= this.#spillThreshold) {
+		if (!columnCapDropped && this.#totalBytes <= this.#spillThreshold) {
 			this.#beforeSpill += chunk;
 			return;
 		}

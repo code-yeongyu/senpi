@@ -14,6 +14,7 @@ export * from "./api/anthropic-messages.lazy.ts";
 export * from "./api/azure-openai-responses.lazy.ts";
 export * from "./api/bedrock-converse-stream.lazy.ts";
 export * from "./api/cursor-agent.lazy.ts";
+export * from "./api/devin-agent.lazy.ts";
 export * from "./api/google-generative-ai.lazy.ts";
 export * from "./api/google-vertex.lazy.ts";
 export * from "./api/mistral-conversations.lazy.ts";
@@ -39,6 +40,7 @@ import { anthropicMessagesApi } from "./api/anthropic-messages.lazy.ts";
 import { azureOpenAIResponsesApi } from "./api/azure-openai-responses.lazy.ts";
 import { bedrockConverseStreamApi } from "./api/bedrock-converse-stream.lazy.ts";
 import { cursorAgentApi } from "./api/cursor-agent.lazy.ts";
+import { devinAgentApi } from "./api/devin-agent.lazy.ts";
 import { googleGenerativeAIApi } from "./api/google-generative-ai.lazy.ts";
 import { googleVertexApi } from "./api/google-vertex.lazy.ts";
 import { mistralConversationsApi } from "./api/mistral-conversations.lazy.ts";
@@ -125,6 +127,7 @@ const BUILTIN_APIS: [Api, ProviderStreams][] = [
 	["openai-responses", openAIResponsesApi()],
 	["openai-codex-responses", openAICodexResponsesApi()],
 	["cursor-agent", cursorAgentApi()],
+	["devin-agent", devinAgentApi()],
 	["azure-openai-responses", azureOpenAIResponsesApi()],
 	["google-generative-ai", googleGenerativeAIApi()],
 	["google-vertex", googleVertexApi()],

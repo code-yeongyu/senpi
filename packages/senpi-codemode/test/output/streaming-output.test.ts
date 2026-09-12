@@ -98,6 +98,76 @@ describe("OutputSink", () => {
 		expect(summary.totalBytes).toBe(Buffer.byteLength("abcdefgh\nnext", "utf8"));
 	});
 
+	it("mirrors raw output when a column cap truncates before spill", async () => {
+		// Given
+		const dir = await createTempDir();
+		const artifactPath = join(dir, "column-cap.log");
+		const input = `${"x".repeat(50)}\n`;
+		const sink = new OutputSink({
+			artifactPath,
+			spillThreshold: 50 * 1024,
+			maxColumns: 8,
+		});
+
+		// When
+		sink.push(input);
+		const summary = await sink.dump();
+
+		// Then
+		expect(summary.output).toBe("xxxxxxxx…\n");
+		expect(summary.truncated).toBe(true);
+		expect(summary.columnTruncatedLines).toBe(1);
+		expect(summary.columnDroppedBytes).toBe(42);
+		expect(summary.artifactId).toBe(artifactPath);
+		expect(await readFile(artifactPath, "utf8")).toBe(input);
+	});
+
+	it("preserves split UTF-8 output in the column-cap artifact", async () => {
+		// Given
+		const dir = await createTempDir();
+		const artifactPath = join(dir, "column-cap-utf8.log");
+		const input = `${"가".repeat(20)}\n`;
+		const sink = new OutputSink({
+			artifactPath,
+			spillThreshold: 50 * 1024,
+			maxColumns: 8,
+		});
+
+		// When
+		sink.push(input.slice(0, 7));
+		sink.push(input.slice(7));
+		const summary = await sink.dump();
+
+		// Then
+		expect(summary.truncated).toBe(true);
+		expect(summary.columnTruncatedLines).toBe(1);
+		expect(summary.columnDroppedBytes).toBeGreaterThan(0);
+		expect(summary.output).not.toContain("\ufffd");
+		expect(await readFile(artifactPath, "utf8")).toBe(input);
+	});
+
+	it("mirrors a narrow column-cap loss below the ellipsis size", async () => {
+		// Given
+		const dir = await createTempDir();
+		const artifactPath = join(dir, "column-cap-narrow-gap.log");
+		const input = `${"x".repeat(770)}\n`;
+		const sink = new OutputSink({
+			artifactPath,
+			spillThreshold: 50 * 1024,
+			maxColumns: 768,
+		});
+
+		// When
+		sink.push(input);
+		const summary = await sink.dump();
+
+		// Then
+		expect(summary.truncated).toBe(true);
+		expect(summary.columnDroppedBytes).toBe(2);
+		expect(summary.artifactId).toBe(artifactPath);
+		expect(await readFile(artifactPath, "utf8")).toBe(input);
+	});
+
 	it("flushes throttled chunks without dropping preview data", async () => {
 		// Given
 		vi.spyOn(Date, "now").mockReturnValue(100_000);

@@ -1,12 +1,8 @@
 import type { Api, Model, ModelsStoreEntry, Provider } from "@earendil-works/pi-ai";
 import { VERSION } from "../config.ts";
-import {
-	mergeRemoteCatalogModels,
-	parseRemoteCatalog,
-	type RemoteCatalogConflict,
-} from "./remote-catalog-merge.ts";
 import { fetchWithRetry } from "../utils/management-http.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { mergeRemoteCatalogModels, parseRemoteCatalog, type RemoteCatalogConflict } from "./remote-catalog-merge.ts";
 
 const DEFAULT_CATALOG_BASE_URL = "https://pi.dev";
 const REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS = 4_000;

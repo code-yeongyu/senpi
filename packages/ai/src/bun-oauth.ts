@@ -1,5 +1,6 @@
 import { anthropicOAuth } from "./auth/oauth/anthropic.ts";
 import { cursorOAuth } from "./auth/oauth/cursor.ts";
+import { devinOAuth } from "./auth/oauth/devin.ts";
 import { githubCopilotOAuth } from "./auth/oauth/github-copilot.ts";
 import { kimiCodingOAuth } from "./auth/oauth/kimi-coding.ts";
 import { registerBundledOAuthFlowLoaders } from "./auth/oauth/load.ts";
@@ -18,6 +19,7 @@ export function registerBunOAuthFlows(): void {
 		kimiCoding: () => kimiCodingOAuth,
 		xai: () => xaiOAuth,
 		cursor: () => cursorOAuth,
+		devin: () => devinOAuth,
 		radius: createRadiusOAuth,
 	});
 }

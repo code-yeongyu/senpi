@@ -10,6 +10,42 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.9.12-2] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.11] - 2026-09-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Complete skill hints for `$` tokens at valid prompt boundaries while preserving literal shell variables such as `$HOME` and `$1` ([#1575](https://github.com/code-yeongyu/senpi/issues/1575)).
 - Keep dollar skill autocomplete active on multiline drafts and follow-up input while streaming ([#1590](https://github.com/code-yeongyu/senpi/issues/1590)).
 

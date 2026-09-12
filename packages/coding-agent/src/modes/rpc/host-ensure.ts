@@ -154,13 +154,13 @@ async function ensureHostLocked(
 ): Promise<EnsuredHost> {
 	const pidFile = await readPidFile(paths);
 	const protocol = await probeProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
-	const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
-	const pidMatches = pidFile ? await processMatchesPidFile(pidFile, probe) : false;
 	if (isCompatible(protocol)) {
 		// A compatible socket is attachable even when another client surface
 		// started it. Only hosts we spawned are eligible for lifecycle management.
 		return { pid: pidFile?.pid ?? 0, socket, reused: true };
 	}
+	const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
+	const pidMatches = pidFile ? await matchesPidFileOrUnknown(pidFile, probe) : false;
 	if (protocol && !pidMatches) {
 		throw new Error(`RPC socket ${socket} is owned by an unmanaged host`);
 	}
@@ -225,16 +225,16 @@ async function startHost(
 		]);
 		// UNKNOWN identity on a live child: the probe was starved, not the host. Give the CIM table
 		// one unhurried read (the per-attempt win32 default is 1s, which a loaded runner exceeds on
-		// every attempt) before deciding. Without an identity the pidfile cannot carry an ownership
-		// guard, so a healthy host must still be kept rather than torn down for an unreadable probe.
-		const processStartTime =
-			observedStartTime ?? (await readProcessStartTime(child.pid, process.platform, 15_000).catch(() => undefined));
-		if (processStartTime === undefined) {
-			throw new Error(
-				`RPC socket host pid ${child.pid} started but its process identity stayed unreadable; refusing to register an unguarded pidfile`,
-			);
-		}
-		pidFile = { pid: child.pid, processStartTime };
+		// every attempt) before deciding.
+		const unhurriedProbe = testOptions?.readProcessStartTime
+			? testOptions.readProcessStartTime
+			: (pid: number) => readProcessStartTime(pid, process.platform, 15_000);
+		const processStartTime = observedStartTime ?? (await unhurriedProbe(child.pid).catch(() => undefined));
+		// Still unreadable: the host is ours, alive, and about to prove itself on the socket, so it is
+		// registered WITHOUT an ownership guard instead of being torn down for a starved probe. A
+		// guard-less record never claims ownership and never authorizes a signal - every later caller
+		// reads it as unknown - so the worst case is a fresh host next time, not a killed healthy one.
+		pidFile = { pid: child.pid, processStartTime: processStartTime ?? null };
 		await testOptions?.beforePidFileWrite?.();
 		await writeFile(paths.pidFile, `${JSON.stringify(pidFile)}\n`, { mode: 0o600 });
 		child.unref();
@@ -303,6 +303,23 @@ async function startHost(
 	// appeared while readiness was being checked. Never unlink an endpoint we
 	// cannot prove this start owned.
 	throw new Error(diagnostic);
+}
+
+/**
+ * Ownership for the reuse decision. An identity we cannot read proves nothing: it can neither
+ * claim the host nor authorize a kill, so it reads as "not ours" and the caller starts fresh
+ * rather than failing the whole ensure on an observation gap.
+ */
+async function matchesPidFileOrUnknown(
+	pidFile: DaemonPidFile,
+	probe: (pid: number) => Promise<string | undefined>,
+): Promise<boolean> {
+	try {
+		return await processMatchesPidFile(pidFile, probe);
+	} catch (error: unknown) {
+		if (error instanceof ProcessIdentityUnreadableError) return false;
+		throw error;
+	}
 }
 
 async function stopSpawnedChild(
@@ -440,7 +457,6 @@ async function probeProtocolInfo(socketPath: string, timeoutMs: number): Promise
 	}
 	return new Promise((resolveProbe) => {
 		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
-		if (secret) sendSocketHandshake(socket, secret);
 		let buffer = "";
 		let settled = false;
 		const finish = (value?: ProtocolInfo): void => {
@@ -462,6 +478,11 @@ async function probeProtocolInfo(socketPath: string, timeoutMs: number): Promise
 		});
 		socket.once("error", () => finish());
 		socket.once("close", () => finish());
+		// Register the error listener before sending the Windows named-pipe handshake.
+		// When an idle host has already removed its pipe, the handshake write can
+		// surface ENOENT immediately; without the listener this probe escapes instead
+		// of becoming the expected "no existing host" result for the next ensure.
+		if (secret) sendSocketHandshake(socket, secret);
 	});
 }
 

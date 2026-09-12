@@ -20,6 +20,26 @@
 
 - LOW: brand profile parsing, changelog settings accessors, and the config-reload routine settings key list.
 
+## 2026-09-11 - Make file reload detection independent of mtime granularity
+
+### What changed
+
+- `src/core/auth-storage.ts` now compares SHA-256 file-content revisions when deciding whether a shared auth snapshot is current.
+- `src/utils/paths.ts` owns the shared SHA-256 file-content revision helper used by the reload and settings caches.
+- Cursor CLI OAuth and Claude SDK OAuth settings caches use the same content revision helper instead of `mtimeMs:size`.
+
+### Why
+
+- Linux can retain one mtime for rapid rewrites, so mtime-based cache keys returned stale credentials or provider settings.
+
+### Why an extension could not handle it
+
+- Auth reload state is core-owned; provider settings cache invalidation is owned by the provider loaders.
+
+### Expected merge conflict zones
+
+- LOW: `core/auth-storage.ts`, `utils/paths.ts`, and provider `settings.ts` cache keys.
+
 ## 2026-09-10 - Restrict GPT-6 Astra high-reasoning warning to max
 
 ### What changed

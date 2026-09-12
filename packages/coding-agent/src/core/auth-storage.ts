@@ -32,7 +32,7 @@ import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
-import { getFileRevision, normalizePath } from "../utils/paths.ts";
+import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import {
 	CredentialStoreBusyError,
@@ -401,7 +401,7 @@ export class AuthStorage implements CredentialStore {
 			sharedAuthFileReadState = { authPath, readState: this.readState };
 		}
 		if (authPath) {
-			const revision = getFileRevision(authPath);
+			const revision = getFileContentRevision(authPath);
 			if (revision !== undefined && revision === this.readState.revision) return;
 		}
 		this.reload();
@@ -460,7 +460,7 @@ export class AuthStorage implements CredentialStore {
 				data = parsed.data;
 				// A written repair invalidates the revision read before it; leaving it
 				// unset makes the next reader re-read instead of trusting a stale stamp.
-				revision = parsed.repaired || !this.authPath ? undefined : getFileRevision(this.authPath);
+				revision = parsed.repaired || !this.authPath ? undefined : getFileContentRevision(this.authPath);
 				return parsed.repaired
 					? { result: undefined, next: JSON.stringify(parsed.data, null, 2) }
 					: { result: undefined };
@@ -564,7 +564,7 @@ export class AuthStorage implements CredentialStore {
 	private async reloadFromStorageAsync(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		return this.storage.withLockAsync(async (content) => {
 			const parsed = this.parseStorageContent(content);
-			const revision = parsed.repaired || !this.authPath ? undefined : getFileRevision(this.authPath);
+			const revision = parsed.repaired || !this.authPath ? undefined : getFileContentRevision(this.authPath);
 			this.updateReadState(parsed.data, revision);
 			return parsed.repaired
 				? { result: parsed.data, next: JSON.stringify(parsed.data, null, 2) }
@@ -583,7 +583,7 @@ export class AuthStorage implements CredentialStore {
 				return this.readState.data;
 			}
 		}
-		const revision = getFileRevision(this.authPath);
+		const revision = getFileContentRevision(this.authPath);
 		if (revision !== undefined && revision === this.readState.revision) return this.readState.data;
 		if (!this.readState.reload) {
 			const controller = new AbortController();
@@ -645,7 +645,7 @@ export class AuthStorage implements CredentialStore {
 			const next = await fn(currentData[provider]);
 			if (next === undefined) {
 				latestData = currentData;
-				revision = this.authPath ? getFileRevision(this.authPath) : undefined;
+				revision = this.authPath ? getFileContentRevision(this.authPath) : undefined;
 				return { result: currentData[provider] };
 			}
 

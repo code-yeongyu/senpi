@@ -9,11 +9,22 @@ import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import type {
 	HostToSessionWorker,
 	SessionWorkerToHost,
+	SessionWriteGrant,
 	WorkerDisplay,
 	WorkerSnapshot,
 } from "./session-worker-protocol.ts";
 
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
+import { acknowledge, acknowledgeGrant, respondDisplay } from "./session-worker-signals.ts";
+
+/** Lifecycle hooks the owning registry installs on every worker it allocates. */
+export interface SessionWorkerCallbacks {
+	reserve: (path: string) => SessionWriteGrant;
+	/** Every snapshot republishes which paths this worker still writes. */
+	reconcile: (livePaths: readonly string[]) => void;
+	exit: () => void;
+	failure: (error: string) => void;
+}
 
 /** Bun wrapper builders define the worker entry name relative to their explicit --root. */
 declare const SENPI_RPC_SESSION_WORKER_ENTRY: string | undefined;
@@ -47,13 +58,9 @@ export class SessionWorkerClient {
 	private readonly controls = new Set<"display" | "cancel_ui">();
 	private latestDisplay?: Extract<HostToSessionWorker, { type: "display" }>;
 
-	private readonly callbacks: {
-		reserve: (path: string) => boolean;
-		exit: () => void;
-		failure: (error: string) => void;
-	};
+	private readonly callbacks: SessionWorkerCallbacks;
 
-	constructor(callbacks: { reserve: (path: string) => boolean; exit: () => void; failure: (error: string) => void }) {
+	constructor(callbacks: SessionWorkerCallbacks) {
 		this.callbacks = callbacks;
 		this.exited = new Promise((resolve) => {
 			this.worker.once("exit", () => {
@@ -159,24 +166,9 @@ export class SessionWorkerClient {
 		this.worker.postMessage(message);
 	}
 
-	private acknowledge(signal: SharedArrayBuffer, granted: boolean): void {
-		const state = new Int32Array(signal);
-		Atomics.store(state, 0, granted ? 1 : 2);
-		Atomics.notify(state, 0);
-	}
-
-	private respondDisplay(signal: SharedArrayBuffer): void {
-		const display = this.display();
-		const values = new Float64Array(signal);
-		values[1] = display.width;
-		values[2] = display.revision;
-		Atomics.store(new Int32Array(signal), 1, display.rendered ? 1 : 0);
-		this.acknowledge(signal, true);
-	}
-
 	private receive(message: SessionWorkerToHost): void {
 		if (this.stopped) {
-			if ("signal" in message) this.acknowledge(message.signal, false);
+			if ("signal" in message) acknowledge(message.signal, false);
 			return;
 		}
 		switch (message.type) {
@@ -187,11 +179,12 @@ export class SessionWorkerClient {
 				return;
 			}
 			case "reserve":
-				this.acknowledge(message.signal, !this.stopped && this.callbacks.reserve(message.path));
+				acknowledgeGrant(message.signal, this.callbacks.reserve(message.path));
 				return;
 			case "snapshot":
 				this.snapshot = message.snapshot;
-				this.acknowledge(message.signal, !this.stopped);
+				this.callbacks.reconcile(message.snapshot.liveSessionPaths);
+				acknowledge(message.signal, true);
 				if (message.settled) for (const listener of [...this.listeners]) listener();
 				return;
 			case "control_done": {
@@ -207,12 +200,14 @@ export class SessionWorkerClient {
 				const writer = this.writer;
 				const sessionId = this.sessionId;
 				if (!writer || !sessionId || this.stopped) {
-					this.acknowledge(message.signal, false);
+					acknowledge(message.signal, false);
 					return;
 				}
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
-				if (message.snapshot) this.snapshot = message.snapshot;
-				else if (this.snapshot)
+				if (message.snapshot) {
+					this.snapshot = message.snapshot;
+					this.callbacks.reconcile(message.snapshot.liveSessionPaths);
+				} else if (this.snapshot)
 					this.snapshot = {
 						...this.snapshot,
 						...message.activity,
@@ -220,7 +215,7 @@ export class SessionWorkerClient {
 					};
 				const enqueue = () => {
 					if (!writer.enqueue(sessionId, message.record)) {
-						this.acknowledge(message.signal, false);
+						acknowledge(message.signal, false);
 						this.fail("session_output_overflow_or_closed");
 						return Promise.reject(new Error("session_output_overflow_or_closed"));
 					}
@@ -229,9 +224,9 @@ export class SessionWorkerClient {
 				const consumed =
 					message.connection === undefined ? enqueue() : writer.withConnection(message.connection, enqueue);
 				void consumed.then(
-					() => this.acknowledge(message.signal, true),
+					() => acknowledge(message.signal, true),
 					(cause: unknown) => {
-						this.acknowledge(message.signal, false);
+						acknowledge(message.signal, false);
 						this.fail(cause instanceof Error ? cause.message : String(cause));
 					},
 				);
@@ -240,11 +235,11 @@ export class SessionWorkerClient {
 			case "width":
 				this.options.sharedWidth?.setWidth(message.connection, message.width);
 				this.options.sharedWidth?.onChange?.();
-				this.respondDisplay(message.signal);
+				respondDisplay(message.signal, this.display());
 				return;
 			case "capabilities":
 				this.options.sharedWidth?.setCapabilities?.(message.connection, message.capabilities);
-				this.respondDisplay(message.signal);
+				respondDisplay(message.signal, this.display());
 				return;
 			case "request_close":
 				this.requestClose?.();

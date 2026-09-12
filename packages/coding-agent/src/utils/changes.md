@@ -18,6 +18,24 @@
 
 - LOW: changelog header parsing and version comparison helpers.
 
+## 2026-09-11 - Add content revisions for file-backed caches
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts` adds a SHA-256 file-content revision helper for auth and provider-settings caches.
+
+### Why
+
+- A content change must invalidate a cache even when the filesystem reports unchanged mtime and size.
+
+### Why an extension could not handle it
+
+- The revision primitive is shared by core auth storage and provider settings loaders.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/utils/paths.ts` file-revision helpers.
+
 ## Canonical identity resolves through the native realpath (2026-09-07)
 
 ### What changed

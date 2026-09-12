@@ -1,5 +1,53 @@
 # changes
 
+## 2026-09-12 - Read a guard-less pidfile as unknown ownership
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/daemon/process.ts`: `DaemonPidFile.processStartTime`
+  accepts `null` for a record written while the identity probe was starved, `parseDaemonPidFile`
+  round-trips it, and `processMatchesPidFile` answers only the liveness half for such a record - a
+  pid that is gone is `false`, a live one raises `ProcessIdentityUnreadableError`.
+
+### Why
+
+- The RPC host registration needs a way to record a live host it cannot fingerprint. Without a
+  representable "no guard" state the supervisor had to choose between killing a healthy host and
+  writing a record that later callers would mistake for proven ownership; the null guard makes the
+  unknown explicit so no caller can signal a pid it never verified.
+
+### Why an extension could not handle it
+
+- The pidfile contract is consumed by daemon and RPC supervisor code that runs before extensions
+  load.
+
+### Expected merge conflict zones
+
+- LOW around the `DaemonPidFile` shape and the head of `processMatchesPidFile`.
+
+## 2026-09-11 - Treat live processes with temporarily absent identity as observable gaps
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/daemon/process.ts`: `processMatchesPidFile`
+  now checks process liveness when a platform identity probe returns no identity. A live PID
+  remains an observation failure within the bounded probe budget instead of being treated as a
+  dead or replaced process.
+
+### Why
+
+- Windows CIM queries can transiently return an empty result for a process that is still alive.
+  Treating that result as a PID mismatch lets concurrent RPC host startup reclaim a healthy host.
+
+### Why an extension could not handle it
+
+- The process identity reader is the ownership boundary used by daemon and RPC lifecycle code;
+  extensions cannot safely alter its result after a host has been classified.
+
+### Expected merge conflict zones
+
+- LOW around `daemon/process.ts` process identity probe classification.
+
 ## 2026-09-11 - Partial ask-user responses resolve with unanswered ids
 
 ### What changed
