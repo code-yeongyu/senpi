@@ -48,6 +48,7 @@ import {
 	kStreamingLastParseLen,
 	kStreamingPartialJson,
 } from "../utils/block-symbols.ts";
+import { recordCursorContextLimit } from "../utils/cursor-context-limit.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
@@ -940,6 +941,9 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 
 				const onConversationCheckpoint = (checkpoint: ConversationStateStructure) => {
 					attemptSawCheckpoint = true;
+					// The server states this model's real ceiling here; the catalog only
+					// guesses it. The first checkpoint of a conversation reports 0.
+					recordCursorContextLimit(model.id, checkpoint.tokenDetails?.maxTokens);
 					conversationStateCache.set(conversationId!, checkpoint);
 				};
 				const healthFailThresholdMs =
