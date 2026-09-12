@@ -35,3 +35,21 @@
 ### Expected merge conflict zones
 
 - The `build` script in packages/client/package.json.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/client/package.json`: fork CalVer `2026.9.12`, `@earendil-works/chord` at `^2026.9.12`, `@earendil-works/pi-protocol` pinned caret-less to `2026.9.12`, `typecheck` via `tsc` instead of `tsgo`, `vitest 4.1.11`; upstream's Chord dependency was adopted.
+
+### Why
+
+- The client publishes in the fork's CalVer lockstep and must resolve the protocol workspace exactly.
+
+### Why an extension could not handle it
+
+- Manifest ranges are consumed by the package manager, not by runtime code.
+
+### Expected merge conflict zones
+
+- LOW: `version`, `dependencies` and `scripts.typecheck` lines on upstream release bumps.

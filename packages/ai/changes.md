@@ -1228,3 +1228,23 @@ These failures are in upstream `packages/ai` live integration tests, not in the 
 ### Expected merge conflict zones
 
 - Generated ZAI provider catalog entries and the model generator's reference-cost selection.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/ai/package.json`: fork CalVer `2026.9.12` and `private: true`; held pins `openai 6.26.0` and `@anthropic-ai/sdk 0.123.0` instead of upstream's `6.40.0`/`0.124.0`; fork-only runtime deps `@bufbuild/protobuf`, `@smithy/types`, `yaml`; the `./auth/pool/*` and `./node/provider-scope` export subpaths; `tsx`-driven generator scripts, a `build` that does not regenerate models, `build:offline`/`dev`/`dev:tsc`, Node `>=24.0.0`, `@types/node 26.2.0`, `vitest 4.1.11`. Upstream's `typebox 1.3.27` and the rest of the D-Q bumps were adopted.
+- `packages/ai/scripts/generate-models.ts`: the fork generator with its overlays (Venice, OpenGateway, Kimi coding stable rows, ZAI GLM-5.2 and Kimi K3 thinking maps, xAI thinking maps, Bedrock strict-mode ids, OpenAI priority-tier and Codex `additional_tools` sets, GPT-6 Astra 600k context, documented OpenAI input caps applied after context windows, `isPrunableModelShard` shard pruning, OpenRouter reasoning metadata) plus upstream's new provider metadata handling (DeepSeek Flash, Fireworks, Mistral GLM-5.2, OpenRouter affinity, Codex Off effort, GPT-5.4 Codex retirement, OpenCode header).
+
+### Why
+
+- The fork publishes its own catalog (extra providers, seven thinking levels, Astra context sizing, fast/priority clones) from upstream's model data; the generator is where those overlays live, and the manifest carries the fork's held SDK pins and export map.
+
+### Why an extension could not handle it
+
+- Catalog generation runs at build time and the manifest's exports/pins are resolved by the package manager; neither is reachable from runtime extension hooks.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/ai/scripts/generate-models.ts` provider blocks (OpenAI, xAI, Fireworks, Mistral, OpenRouter) whenever upstream reshapes a provider's metadata.
+- MEDIUM: `packages/ai/package.json` `dependencies` and `exports` on every upstream dependency bump.

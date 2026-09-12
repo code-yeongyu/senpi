@@ -136,3 +136,23 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - MEDIUM: `src/protocol.ts`, in `ExactKeys` manifests and assistant/tool-call
   conversion switches.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/server/package.json`: stays `@code-yeongyu/senpi-server 2026.9.12` (`senpi` keyword, `code-yeongyu/senpi` repository, `private: true`), `tsc` for `dev`/`typecheck`, `@earendil-works/chord`/`pi-agent-core`/`pi-protocol` at `^2026.9.12` plus the fork's `@earendil-works/pi-ai` runtime dependency, `vitest 4.1.11`.
+- `packages/server/src/testing/client.ts`: upstream service-addressed test client with the fork `(chunk: Buffer)` typing on the socket data handler.
+- `packages/server/src/transports/unix/listener.ts`: upstream `ServerListener` with `.bind-` ownership and stale-socket cleanup, with the fork `(chunk: Buffer)` typing on the socket data handler.
+
+### Why
+
+- The server publishes under the fork name and lockstep, and the fork's `@types/node 26.2.0` requires explicit `Buffer` typing on socket chunks.
+
+### Why an extension could not handle it
+
+- Manifest identity and transport source typing are compile-time concerns of the server package.
+
+### Expected merge conflict zones
+
+- LOW: `socket.on("data", ...)` handlers in both source files; `packages/server/package.json` name/version/dependency lines.

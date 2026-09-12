@@ -386,3 +386,21 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: package-command rows in `printHelp()`.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/coding-agent/src/cli/config-selector.ts`: the startup selector builds the fork `TUI` (not upstream's `TuiMainScreen`) on a `ProcessTerminal({ onExternalStdoutWrite: appendHiddenTuiStdout })` and drops the `agentDir` log-directory argument, while taking upstream's `getShowHardwareCursor()` and `setClearOnShrink(getClearOnShrink())` wiring.
+
+### Why
+
+- The fork renderer owns its log directory and routes stray stdout into the hidden TUI log; the startup selector must match `createStartupTui` so both startup paths behave the same.
+
+### Why an extension could not handle it
+
+- The selector runs before any session or extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the `new TUI(...)`/`new ProcessTerminal(...)` construction in `showConfigSelector`.

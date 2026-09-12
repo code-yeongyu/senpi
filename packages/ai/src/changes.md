@@ -4073,3 +4073,35 @@ Detection has to happen inside the Anthropic SSE loop while the stream is still 
 ### Expected merge conflict zones
 
 - `packages/ai/src/api/anthropic-messages.ts`: the `content_block_start` fallback receipt branch.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: fork adapter body (adaptive/xhigh/disabled-thinking model markers, mid-conversation output config and thinking-binding betas, unsigned-thinking fallback, tool-pair sanitizing and unavailable-tool demotion, Cloudflare base URL, retry-after hints, session resource cleanup, video input filtering) with upstream's `sessionAffinityFormat` folded into the fork's `getAnthropicCompat` (`openrouter` -> `x-session-id`, otherwise `x-session-affinity`).
+- `packages/ai/src/api/mistral-conversations.ts`: fork prompt-mode/thinking-replay handling (`preserveThinking`, `applyExtraBody` with `MISTRAL_RESERVED_BODY_KEYS`, `configurationUpdate` skipped) unioned with upstream's `reasoning_effort` for `mistral-medium-*` and GLM-5.2.
+- `packages/ai/src/api/openai-codex-responses.ts`: fork Codex adapter (WebSocket fallback state and debug stats, stale previous-response recovery, account-id extraction, wire identity, retry hints, `buildCodexReasoning` helper in `openai-codex-responses/reasoning.ts`) extended so a reasoning model whose `thinkingLevelMap.off !== null` sends `{ effort: off ?? "none" }` when no effort is requested (upstream Codex Off behavior).
+- `packages/ai/src/api/openai-responses-shared.ts`: fork `configurationUpdate` positioning, context provenance stamping, freeform/custom tool deltas (`CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL`), reasoning-signature parsing and native image-generation reconciliation, plus upstream's delete-undefined `errorMessage` on terminal messages.
+- `packages/ai/src/api/openai-responses.ts`: fork Responses adapter (session WebSocket cache with TTL, `responses_websockets` beta, web-search sources include, Cloudflare/native endpoint detection, client auth resolution, unsupported native tool sanitizing, `clampMaxForOpenAI`, seven-level thinking map inference) over upstream's base.
+- `packages/ai/src/index.ts`: keeps the fork barrel additions (Cursor agent helpers and types, `warmPromptCache`, auth headers, context provenance, Cursor catalog/capabilities/selection, env API keys, tool-call middleware and recovery parsers, `dropFailedAssistantTurns`, `estimateContextTokens`, prompt-cache TTL helpers, server-fallback receipts, stop details, tool-pair repair, visible text, wire identity).
+- `packages/ai/src/models.ts`: fork credential pool (`appendLoginSlot`/`removeSlot`, `resolveRefreshCredential` module, `logout` with `slotId`), `PROVIDER_NOT_CONFIGURED_PREFIX`/`providerNotConfiguredMessage`, per-model `retryPolicy` profile, `ThinkingLevelMap` re-export; upstream's `streamDeferred` split was adopted.
+- `packages/ai/src/providers/cloudflare-ai-gateway.ts`: the gateway catalog also mirrors `CLOUDFLARE_WORKERS_AI_MODELS` under `workers-ai/<id>` on the compat base URL.
+- `packages/ai/src/providers/faux.ts`: fork faux provider extras (`ProviderNativeContent` blocks, `abortSource`/`stopDetails` on synthesized messages, `schedulerHook`, `getCallLog` with cloned context/options, `configurationUpdate` skipped).
+- `packages/ai/src/types.ts`: fork type surface (`cursor-agent`/`devin-agent` APIs, `openai-images`, extra known providers incl. `venice`/`opengateway`/`cursor`/`ollama`, `ThinkingSelection`, `max` thinking level, `ProviderRequestMetadata` third argument to `onPayload`, `abortServerSideFallback`, `affinitySessionId`, `streamKind`, `supportsAdditionalTools` compat) plus upstream's `sessionAffinityFormat` on `AnthropicMessagesCompat`.
+- `packages/ai/src/utils/event-stream.ts`: fork `EventStream` (`fail()` rejecting waiters and the final promise, array-backed queue with compaction, `queue` snapshot getter, `trackLocalWork`/`hasPendingLocalWork`) over upstream's FIFO queue.
+- `packages/ai/src/utils/retry.ts`: fork classifiers (credit exhaustion and request-shape rejections non-retryable; credential-store lock contention, Cloudflare 522, model-request-rejected wording, Anthropic pairing errors and Claude SDK lock contention retryable) and `retryDelayMs` with `+/-10%` jitter through the injectable `random` before the safe-integer guard and the `maxAgentDelayMs` cap (D-M).
+- `packages/ai/src/utils/uuid.ts`: `fillRandomBytes` falls back to `Math.random` when `globalThis.crypto` is unavailable; `formatUuid` split out; upstream timestamp support retained.
+
+### Why
+
+- These files carry the fork's provider behavior (Astra thinking ladder, Codex WebSocket fallbacks, Cursor/Devin agents, credential pools, prompt-cache provenance, retry classification with jitter) that upstream does not ship; the sync keeps them and folds upstream's affinity, Codex Off and `errorMessage` fixes into the fork shapes.
+
+### Why an extension could not handle it
+
+- Request payload construction, stream event queues, retry classification, the public type union and the package barrel are inside the AI library; extensions consume them and cannot rewrite them.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/ai/src/api/anthropic-messages.ts` (`getAnthropicCompat`, beta header list, `buildParams`), `packages/ai/src/api/openai-responses.ts` and `openai-codex-responses.ts` request builders, `packages/ai/src/types.ts` option interfaces, `packages/ai/src/index.ts` export list.
+- MEDIUM: `retryDelayMs`/`NON_RETRYABLE_PROVIDER_ERROR_PATTERN` in `utils/retry.ts`; `EventStream` iterator in `utils/event-stream.ts`; `usesReasoningEffort` in `mistral-conversations.ts`; `models.ts` auth resolution.
+- LOW: `providers/faux.ts` option types; `providers/cloudflare-ai-gateway.ts` model list; `utils/uuid.ts` byte source.

@@ -57,3 +57,21 @@
 
 - SQLite entry decoding and session schema compatibility.
 
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/session-backends/sqlite-node/package.json`: keeps the fork name `@earendil-works/pi-storage-sqlite-node` at `0.83.0` (excluded from the CalVer lockstep by `scripts/sync-versions.js`), `private: true`, `@earendil-works/pi-ai`/`pi-agent-core` at `^2026.9.12`, `vitest`/`@vitest/coverage-v8 4.1.11`; upstream's simplified sqlite model and build script were adopted (Q-A).
+
+### Why
+
+- The backend is unpublished in the fork and must resolve the fork's internal workspace ranges.
+
+### Why an extension could not handle it
+
+- Manifest fields are resolved by the package manager.
+
+### Expected merge conflict zones
+
+- LOW: `name`, `version` and dependency lines on upstream release bumps.
