@@ -74,6 +74,7 @@ import type {
 	ToolCallEventResult,
 	ToolResultEvent,
 	ToolResultEventResult,
+	UIPromptKind,
 	UserBashEvent,
 	UserBashEventResult,
 } from "./types.ts";
@@ -251,6 +252,12 @@ export type NavigateTreeHandler = (
 	options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 ) => Promise<{ cancelled: boolean }>;
 
+export type EditAssistantMessageHandler = (
+	entryId: string,
+	text: string,
+	options?: { summarize?: boolean; customInstructions?: string; expectedLeafId?: string },
+) => Promise<{ cancelled: boolean; unchanged?: boolean; entryId?: string }>;
+
 export type SwitchSessionHandler = (
 	sessionPath: string,
 	options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
@@ -377,6 +384,7 @@ export class ExtensionRunner {
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private getServiceTier: () => ServiceTier | undefined = () => undefined;
+	private getEffectiveServiceTier: () => ServiceTier | undefined = () => this.getServiceTier();
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private isIdleFn: () => boolean = () => true;
 	private isProjectTrustedFn: () => boolean = () => true;
@@ -393,12 +401,16 @@ export class ExtensionRunner {
 		keepRecentTokens: 20000,
 	});
 	private getPromptCacheSafeWaitSecondsFn: () => number | undefined = () => undefined;
-	private getPromptCacheGoalBackstopMaxSecondsFn: () => number = () => 3570;
+	private getPromptCacheGoalBackstopMaxSecondsFn: () => number = () => 270;
 	private getPromptCacheKeepAliveSettingsFn: NonNullable<ExtensionContextActions["getPromptCacheKeepAliveSettings"]> =
 		() => ({ enabled: false, maxRequestsPerSession: 3, maxCostUsdPerSession: 0.05, marginSeconds: 60 });
 	private getLookAtSettingsFn: ExtensionContextActions["getLookAtSettings"] = () => ({
 		enabled: true,
 		models: undefined,
+	});
+	private getAskUserSettingsFn: () => { enabled: boolean; timeoutMinutes: number } = () => ({
+		enabled: true,
+		timeoutMinutes: 30,
 	});
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
 		autoResize: true,
@@ -430,6 +442,7 @@ export class ExtensionRunner {
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
+	private editAssistantMessageHandler: EditAssistantMessageHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler | undefined;
 	private reloadRequestPromise: Promise<void> | undefined;
@@ -439,6 +452,8 @@ export class ExtensionRunner {
 	private staleMessage: string | undefined;
 	private toolHookLifecycleObserver: ExtensionToolHookLifecycleObserver | undefined;
 	private nextToolHookRunIndex = 0;
+	private uiPromptDepth = 0;
+	private activeUIPrompt: { kind: UIPromptKind; title?: string } | undefined;
 
 	constructor(
 		extensions: Extension[],
@@ -491,6 +506,7 @@ export class ExtensionRunner {
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
 		this.getServiceTier = contextActions.getServiceTier;
+		this.getEffectiveServiceTier = contextActions.getEffectiveServiceTier ?? contextActions.getServiceTier;
 		this.getScopedModels = contextActions.getScopedModels;
 		this.isIdleFn = contextActions.isIdle;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
@@ -509,6 +525,7 @@ export class ExtensionRunner {
 		if (contextActions.getPromptCacheKeepAliveSettings)
 			this.getPromptCacheKeepAliveSettingsFn = contextActions.getPromptCacheKeepAliveSettings;
 		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
+		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
@@ -588,6 +605,7 @@ export class ExtensionRunner {
 			this.newSessionHandler = actions.newSession;
 			this.forkHandler = actions.fork;
 			this.navigateTreeHandler = actions.navigateTree;
+			this.editAssistantMessageHandler = actions.editAssistantMessage;
 			this.switchSessionHandler = actions.switchSession;
 			this.reloadHandler = actions.reload;
 			return;
@@ -597,6 +615,7 @@ export class ExtensionRunner {
 		this.newSessionHandler = async () => ({ cancelled: false });
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
+		this.editAssistantMessageHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = undefined;
 	}
@@ -612,12 +631,63 @@ export class ExtensionRunner {
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print"): void {
-		this.uiContext = uiContext ?? noOpUIContext;
+		this.uiContext = uiContext ? this.wrapUIPromptContext(uiContext) : noOpUIContext;
 		this.mode = mode;
 	}
 
 	setToolHookLifecycleObserver(observer?: ExtensionToolHookLifecycleObserver): void {
 		this.toolHookLifecycleObserver = observer;
+	}
+
+	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
+		const questionFn = ui.question;
+		return {
+			...ui,
+			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
+			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
+			input: (title, placeholder, opts) =>
+				this.withUIPrompt("input", title, () => ui.input(title, placeholder, opts)),
+			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
+			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
+			...(questionFn
+				? {
+						question: (request, opts) =>
+							this.withUIPrompt("question", request.questions[0]?.header, () => questionFn(request, opts)),
+					}
+				: {}),
+		};
+	}
+
+	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
+		const outerPrompt = this.uiPromptDepth++ === 0;
+		if (outerPrompt) {
+			this.activeUIPrompt = { kind, title };
+			this.emitUIPromptEvent({ type: "ui_prompt_start", reason: "ui_prompt", kind, ...(title ? { title } : {}) });
+		}
+		const finish = () => {
+			if (--this.uiPromptDepth > 0) return;
+			this.uiPromptDepth = 0;
+			const prompt = this.activeUIPrompt ?? { kind, title };
+			this.activeUIPrompt = undefined;
+			this.emitUIPromptEvent({
+				type: "ui_prompt_end",
+				reason: "ui_prompt",
+				kind: prompt.kind,
+				...(prompt.title ? { title: prompt.title } : {}),
+			});
+		};
+		try {
+			return run().finally(finish);
+		} catch (err) {
+			finish();
+			throw err;
+		}
+	}
+
+	private emitUIPromptEvent(event: Extract<RunnerEmitEvent, { type: "ui_prompt_start" | "ui_prompt_end" }>): void {
+		queueMicrotask(() => {
+			void this.emit(event);
+		});
 	}
 
 	getUIContext(): ExtensionUIContext {
@@ -664,6 +734,14 @@ export class ExtensionRunner {
 		return this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
 			handler(data as ExtensionRpcEvent);
 		});
+	}
+
+	/**
+	 * Subscribe to a raw bus channel. Used by the session to observe activity
+	 * signals extensions publish about work that outlives a turn (`wake_source_state`).
+	 */
+	onBusEvent(channel: string, handler: (data: unknown) => void): () => void {
+		return this.eventBus.on(channel, handler);
 	}
 
 	/** Get extension-declared MCP servers (first declaration per name wins). */
@@ -1000,6 +1078,7 @@ export class ExtensionRunner {
 		const runner = this;
 		const getModel = this.getModel;
 		const getServiceTier = this.getServiceTier;
+		const getEffectiveServiceTier = this.getEffectiveServiceTier;
 		const getScopedModels = this.getScopedModels;
 		let compactionSignal: AbortSignal | undefined;
 		return {
@@ -1038,6 +1117,10 @@ export class ExtensionRunner {
 			get serviceTier() {
 				runner.assertActive();
 				return getServiceTier();
+			},
+			get effectiveServiceTier() {
+				runner.assertActive();
+				return getEffectiveServiceTier();
 			},
 			get scopedModels() {
 				runner.assertActive();
@@ -1108,6 +1191,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getLookAtSettingsFn();
 			},
+			getAskUserSettings: () => {
+				runner.assertActive();
+				return runner.getAskUserSettingsFn();
+			},
 			getImageSettings: () => {
 				runner.assertActive();
 				return runner.getImageSettingsFn();
@@ -1149,6 +1236,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			getSystemPromptOptions: () => {
+				runner.assertActive();
+				return runner.getSystemPromptOptionsFn();
+			},
 			getLoadedHookSources: () => {
 				runner.assertActive();
 				return runner.getLoadedHookSourcesFn();
@@ -1168,10 +1259,6 @@ export class ExtensionRunner {
 			{},
 			Object.getOwnPropertyDescriptors(this.createContext()),
 		) as ExtensionCommandContext;
-		context.getSystemPromptOptions = () => {
-			this.assertActive();
-			return this.getSystemPromptOptionsFn();
-		};
 		context.waitForIdle = () => {
 			this.assertActive();
 			return this.waitForIdleFn();
@@ -1187,6 +1274,10 @@ export class ExtensionRunner {
 		context.navigateTree = (targetId, options) => {
 			this.assertActive();
 			return this.navigateTreeHandler(targetId, options);
+		};
+		context.editAssistantMessage = (entryId, text, options) => {
+			this.assertActive();
+			return this.editAssistantMessageHandler(entryId, text, options);
 		};
 		context.switchSession = (sessionPath, options) => {
 			this.assertActive();

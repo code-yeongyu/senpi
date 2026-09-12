@@ -47,10 +47,13 @@ class FakePi {
 	async executeTool(): Promise<never> {
 		throw new Error("nested tool execution was not expected");
 	}
-	sendUserMessage(content: string, options?: { readonly deliverAs?: "steer" | "followUp" }): void {
-		this.messages.push(content);
-		this.deliveries.push({ content, deliverAs: options?.deliverAs });
-		this.#nextMessage.resolve(content);
+	sendMessage(
+		message: { customType: string; content: string; display: boolean },
+		options?: { readonly deliverAs?: "steer" | "followUp" },
+	): void {
+		this.messages.push(message.content);
+		this.deliveries.push({ content: message.content, deliverAs: options?.deliverAs });
+		this.#nextMessage.resolve(message.content);
 	}
 	nextMessage(): Promise<string> {
 		return this.#nextMessage.promise;
@@ -140,6 +143,7 @@ function extensionContext(cwd = process.cwd()): ExtensionContext {
 		cwd,
 		sessionManager: {
 			...base.sessionManager,
+			getSessionId: () => "extension-test-session",
 			getSessionFile: () => join(extensionArtifactsRoot, `${crypto.randomUUID()}.jsonl`),
 		},
 	};
@@ -229,7 +233,7 @@ describe("senpi-codemode extension factory", () => {
 		}
 	});
 
-	it("exposes agent()/output()/<dag> in the registered description when the task tool is active", async () => {
+	it("exposes agent()/output()/<workflow> in the registered description when the task tool is active", async () => {
 		// Given a session where the `task` tool is registered alongside eval
 		const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-spawns-"));
 		await mkdir(join(cwd, ".senpi"), { recursive: true });
@@ -252,14 +256,14 @@ describe("senpi-codemode extension factory", () => {
 			if (!tool) throw new Error("eval tool was not registered");
 			expect(tool.description).toContain("agent(");
 			expect(tool.description).toContain("output(");
-			expect(tool.description).toContain("<dag>");
+			expect(tool.description).toContain("<workflow>");
 		} finally {
 			await emit(pi, "session_shutdown", {}, ctx);
 			await rm(cwd, { recursive: true, force: true });
 		}
 	});
 
-	it("omits agent()/output()/<dag> from the registered description when no task tool is active", async () => {
+	it("omits agent()/output()/<workflow> from the registered description when no task tool is active", async () => {
 		// Given a session with no `task` tool registered
 		const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-nospawns-"));
 		await mkdir(join(cwd, ".senpi"), { recursive: true });
@@ -280,7 +284,7 @@ describe("senpi-codemode extension factory", () => {
 			const tool = pi.registeredTool;
 			if (!tool) throw new Error("eval tool was not registered");
 			expect(tool.description).not.toContain("agent(");
-			expect(tool.description).not.toContain("<dag>");
+			expect(tool.description).not.toContain("<workflow>");
 		} finally {
 			await emit(pi, "session_shutdown", {}, ctx);
 			await rm(cwd, { recursive: true, force: true });
@@ -306,7 +310,7 @@ describe("senpi-codemode extension factory", () => {
 				wait: expect.stringContaining("eval"),
 			});
 			expect(tool.description).toContain("<gpt_eval_dialect>");
-			expect(tool.description).toContain("detach on timeout");
+			expect(tool.description).toContain("detach on their own");
 		} finally {
 			await emit(pi, "session_shutdown", {}, ctx);
 			await rm(cwd, { recursive: true, force: true });
@@ -477,13 +481,13 @@ describe("senpi-codemode extension lifecycle", () => {
 		const notification = pi.nextMessage();
 		const run = tool.execute(
 			"notified-detached",
-			{ language: "js", code: "await pending()", timeout: 1, on_timeout: "detach", summary: "notified detached" },
+			{ language: "js", code: "await pending()", on_timeout: "detach", summary: "notified detached" },
 			undefined,
 			undefined,
 			ctx,
 		);
 		await manager.runStarted.promise;
-		await vi.advanceTimersByTimeAsync(1_000);
+		await vi.advanceTimersByTimeAsync(30_000);
 		await run;
 
 		manager.runControllers[0]?.abort(new Error("kernel crashed"));

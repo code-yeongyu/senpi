@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -73,5 +73,39 @@ describe("ProjectTrustStore", () => {
 				process.env.HOME = originalHome;
 			}
 		}
+	});
+
+	it("does not honour a legacy entry keyed by a path-collapsing resolution", () => {
+		// Given a workspace reachable only through a symlinked parent whose link target
+		// walks back up, so a path-collapsing resolver and the kernel disagree about
+		// which directory the cwd actually is.
+		const outside = join(tempDir, "outside");
+		mkdirSync(join(outside, "subdir"), { recursive: true });
+		mkdirSync(join(outside, "workspace"), { recursive: true });
+		const inside = join(tempDir, "inside");
+		mkdirSync(inside, { recursive: true });
+		symlinkSync(join(outside, "subdir"), join(inside, "jump"), "dir");
+		symlinkSync("jump/..", join(inside, "entry"), "dir");
+		const reachedThroughSymlink = join(inside, "entry", "workspace");
+
+		// And a trust store that already contains a TRUE decision under the key a
+		// path-collapsing resolver would have produced for it (the pre-fix key).
+		const collapsedKey = join(inside, "workspace");
+		writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [collapsedKey]: true }, null, 2), "utf-8");
+
+		// When the store is consulted for that workspace
+		const store = new ProjectTrustStore(agentDir);
+		const decision = store.get(reachedThroughSymlink);
+
+		// Then the stale key must NOT grant trust. The kernel resolves the workspace
+		// to a different directory, so the legacy entry no longer applies and the
+		// user is asked again rather than silently inheriting a decision that was
+		// recorded against a location this path does not occupy.
+		expect(decision).not.toBe(true);
+		// Control: the same store DOES honour a decision keyed by the real location,
+		// so this assertion can fail rather than passing on a lookup that never matches.
+		const realKey = realpathSync.native(reachedThroughSymlink);
+		writeFileSync(join(agentDir, "trust.json"), JSON.stringify({ [realKey]: true }, null, 2), "utf-8");
+		expect(new ProjectTrustStore(agentDir).get(reachedThroughSymlink)).toBe(true);
 	});
 });

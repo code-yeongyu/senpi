@@ -16,6 +16,7 @@ type EventListener = (data: unknown) => void;
 interface ToolResultLike {
 	content: Array<{ type: string; text?: string }>;
 	isError?: boolean;
+	details?: { bash_id?: string };
 }
 
 interface ToolLike {
@@ -121,14 +122,10 @@ function createRunner(): FakeRunner {
 	};
 }
 
-function firstText(result: ToolResultLike | undefined): string {
-	return result?.content.find((block) => block.type === "text")?.text ?? "";
-}
-
 function extractBashId(result: ToolResultLike | undefined): string {
-	const match = /ID: (bash_\d+)/.exec(firstText(result));
-	if (!match?.[1]) throw new Error(`No bash id in tool result: ${firstText(result)}`);
-	return match[1];
+	const bashId = result?.details?.bash_id;
+	if (!bashId) throw new Error(`No bash id in tool result details: ${JSON.stringify(result?.details)}`);
+	return bashId;
 }
 
 function makeContext(cwd: string, sessionId: string): ExtensionContext {

@@ -8,7 +8,14 @@
 // process-heavy stacks by ~10-15% in OpenAI's evals at 41-66% fewer tokens;
 // trim repeated rules, generic language, and examples that do not change
 // behavior; keep outcomes, success criteria, stopping conditions, constraints,
-// tool routing, and output shape). Every behavior of the previous prompt is
+// tool routing, and output shape). 2026-09-09: the eval rules moved from
+// "one code cell per multi-call step" to a dependency decision plus
+// state-oriented verification (`eval-first-routing`, `evidence-comparison`,
+// `perceived-state-loop`), after a 5,187-session census found the "assumed
+// instead of observed" failures clustered where a batch hid its own evidence;
+// Codex's own Sol/Astra templates draw the same line (batch independent reads,
+// inspect every result, keep edits and adaptive follow-ups sequential, verify
+// frontend work with screenshots across viewports). Every behavior of the previous prompt is
 // preserved - verified by a probe audit over rendered before/after prompts
 // (changes.md, 2026-07-25 entry): the Hephaestus autonomous-deep-worker
 // stance (implement-don't-propose, Manual QA Gate, failure recovery with the
@@ -53,9 +60,8 @@ import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
 
 export type Gpt56ExecutionRuleId =
 	| "eval-first-routing"
-	| "parallel-batching"
-	| "over-call-bias"
-	| "in-kernel-reduction"
+	| "evidence-comparison"
+	| "perceived-state-loop"
 	| "stay-direct-exceptions"
 	| "delegation"
 	| "todo-granularity"
@@ -78,16 +84,13 @@ export interface Gpt56ExecutionRule {
 }
 
 const EVAL_FIRST_ROUTING =
-	"WHEN a code-execution tool is available, EVERY multi-call step whose calls can be planned up front, and for which no stay-direct case below applies, is ONE code cell, NEVER a chain of single calls: before writing it, enumerate every read, search, symbol lookup, and command that step could need, and mark which of them are independent.";
+	"When a code-execution tool is available, batch the independent reads, searches, symbol lookups, and commands of a step in one cell: enumerate them first, dispatch them together with the runtime's parallel helper, and inspect every result; an extra read-only call in that wave costs almost nothing, while acting on a stale assumption costs the whole turn. Edits, side-effecting commands, approvals, waits, and any call whose input is another call's result stay sequential, one action observed before the next.";
 
-const PARALLEL_BATCHING =
-	"Dispatch every independent item of that plan inside the same cell AT ONCE - fan out with the runtime's parallel helper over files, directories, searches, symbols, and shell commands, as wide as the step allows - and keep sequential only the calls whose input is another call's result.";
+const EVIDENCE_COMPARISON =
+	"Before running a cell, name the state it should produce; when it returns, compare the returned evidence with that state and check that a mutating cell changed nothing beyond it. A result that hides a failed item or a truncated tail is not evidence.";
 
-const OVER_CALL_BIAS =
-	"Bias hard toward over-calling read-only work in that one wave: pull in everything even loosely relevant now instead of serially later, and when uncertain whether a read is worth making, make it - an extra read inside a batched cell costs almost nothing, while acting on a stale assumption costs the whole turn. Side-effecting or approval-gated calls never ride along.";
-
-const IN_KERNEL_REDUCTION =
-	"Write real code around those calls - comprehensions, filters, joins, ranking, dedup, aggregation, each risky call guarded - and return the distilled facts the step needs instead of raw dumps.";
+const PERCEIVED_STATE_LOOP =
+	"A result that must be seen rather than read - a page, a component, an image, a 3D scene, a layout - gets one change, a render or screenshot, a look, then the next change; a 3D scene is checked from several angles and a page at desktop and mobile widths. Compare what you see with the reference or the stated intent; ask only where two readings of that intent diverge.";
 
 const STAY_DIRECT_EXCEPTIONS =
 	"Call tools directly instead when one call is enough, the output is already small, each result decides the next call, semantic judgment sits between calls, or the action needs approval - and after two failed cell strategies for the same fact, or an empty or suspiciously narrow result, fall back to direct calls and one or two meaningful alternatives before concluding nothing exists.";
@@ -109,9 +112,8 @@ const LSP_SYMBOL_ROUTING =
 
 export const GPT56_EXECUTION_RULES = [
 	{ id: "eval-first-routing", concern: "tool-orchestration", directive: EVAL_FIRST_ROUTING },
-	{ id: "parallel-batching", concern: "tool-orchestration", directive: PARALLEL_BATCHING },
-	{ id: "over-call-bias", concern: "tool-orchestration", directive: OVER_CALL_BIAS },
-	{ id: "in-kernel-reduction", concern: "tool-orchestration", directive: IN_KERNEL_REDUCTION },
+	{ id: "evidence-comparison", concern: "tool-orchestration", directive: EVIDENCE_COMPARISON },
+	{ id: "perceived-state-loop", concern: "tool-orchestration", directive: PERCEIVED_STATE_LOOP },
 	{ id: "stay-direct-exceptions", concern: "tool-orchestration", directive: STAY_DIRECT_EXCEPTIONS },
 	{ id: "delegation", concern: "delegation", directive: DELEGATION },
 	{ id: "todo-granularity", concern: "todo-discipline", directive: TODO_GRANULARITY },
@@ -133,7 +135,7 @@ That line is your preamble; it commits you to finish the named work this turn, a
 
 Implement, don't propose. Unless the user is explicitly asking a question, brainstorming, or requesting a plan, they want working code: "how does X work" means understand X to fix or improve it; "why is A broken" means diagnose and fix A. Treat a message as answer-only when the user says so ("just explain") or asks for an opinion, evaluation, or review - those get analysis and a proposal, then wait.
 
-Make in-scope changes and run non-destructive validation without asking. Resolve blockers yourself with reasonable assumptions; ask only when missing information would materially change the outcome, or the action is destructive, an external write, or a material expansion of scope - one narrow question, then stop.
+Make in-scope changes and run non-destructive validation without asking. Resolve blockers yourself with reasonable assumptions; ask only when missing information would materially change the outcome, or the action is destructive, an external write, or a material expansion of scope - one narrow question through request_user_input when it is available, then stop.
 
 If the user's plan seems flawed, say so concisely, propose the alternative, and ask which to proceed with - never silently override. Status requests are not stop signals: give the update, keep working. Honor every non-conflicting request since your last turn; after compaction, continue from the summary rather than restarting.
 
@@ -145,7 +147,7 @@ The workspace is shared with the user and other agents. Never revert or modify c
 
 Todo discipline: for any non-trivial task (2+ steps, uncertain scope, or multiple items), start with \`todo\`: atomic items named by their deliverable ("edit \`foo.ts\` to add X"). ${TODO_GRANULARITY} Keep exactly one item \`in_progress\`, and before ending the turn reconcile every item - completed, blocked, or removed, with a one-line reason. Trivial single-step asks need none.
 
-Tool orchestration: resolve the request in the fewest useful tool loops, without letting loop minimization outrank correctness or required evidence. ${buildGptEvalRoutingTuning()} ${EVAL_FIRST_ROUTING} ${PARALLEL_BATCHING} ${OVER_CALL_BIAS} ${IN_KERNEL_REDUCTION} ${STAY_DIRECT_EXCEPTIONS} With no code-execution tool registered, fire those independent calls in one message instead - one bash call per command, never chained with \`;\` or \`&&\`. Never fill parameters with placeholders. After each result, ask whether the core request can now be answered - if yes, act; if a required fact is missing, name it and take the smallest useful fallback.
+Tool orchestration: resolve the request in the fewest useful tool loops, without letting loop minimization outrank correctness or required evidence. ${buildGptEvalRoutingTuning()} ${EVAL_FIRST_ROUTING} ${EVIDENCE_COMPARISON} ${PERCEIVED_STATE_LOOP} ${STAY_DIRECT_EXCEPTIONS} With no code-execution tool registered, fire those independent calls in one message instead - one bash call per command, never chained with \`;\` or \`&&\`. Never fill parameters with placeholders. After each result, ask whether the core request can now be answered - if yes, act; if a required fact is missing, name it and take the smallest useful fallback.
 
 Never speculate about code you have not read - memory of file contents is unreliable, so re-read before claiming or editing. ${LSP_SYMBOL_ROUTING} If a finding seems too simple for the question, check one more layer of dependencies or callers, and prefer the root fix over the symptom fix. Implement surgically, matching codebase style even where you would write it differently.
 

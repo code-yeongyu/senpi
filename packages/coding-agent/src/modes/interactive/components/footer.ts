@@ -1,7 +1,11 @@
+import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { AgentSession } from "../../../core/agent-session.ts";
+import type { Credential } from "@earendil-works/pi-ai";
+import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
+import { accountLabel, listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
+import { type Component, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import type { InteractiveSession } from "../interactive-host-runtime.ts";
 import { theme } from "../theme/theme.ts";
 import { type FooterSegment, planFooterLayout } from "./footer-layout.ts";
 
@@ -34,6 +38,35 @@ export function formatTokens(count: number): string {
 	return `${Math.round(n / 1_000_000_000)}B`;
 }
 
+/**
+ * Mirrors the provider-shown-only-when->1 rule for accounts: the active account
+ * name appears only when the provider actually pools more than one slot. The
+ * pick shown is the pin when present, else the session's HRW winner - the same
+ * hash the rotation engine uses, so the footer names the slot that will serve.
+ */
+export function accountFooterSuffix(credential: Credential | undefined, sessionId: string): string {
+	const slots = listSlots(credential);
+	if (slots.length < 2) return "";
+	const pinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
+	const pinnedSlot = slots.find((slot) => slot.name === pinned);
+	if (pinnedSlot) return `@${footerAccountLabel(pinnedSlot)}`;
+	const winner = rendezvousOrder(sessionId, slots, (input) =>
+		createHash("sha256").update(input).digest().readBigUInt64BE(0),
+	)[0];
+	return winner === undefined ? "" : `@${footerAccountLabel(winner)}`;
+}
+
+/**
+ * Widest account label the provider segment carries. A label wider than this
+ * is truncated with an ellipsis here rather than pushing the whole provider
+ * segment past the layout budget, which would drop the account indicator.
+ */
+const ACCOUNT_FOOTER_MAX_COLUMNS = 24;
+
+function footerAccountLabel(slot: { name: string; displayName?: string }): string {
+	return truncateToWidth(accountLabel(slot), ACCOUNT_FOOTER_MAX_COLUMNS, "…");
+}
+
 /** Format with up to 1 decimal place, dropping trailing `.0`. */
 function trim1(n: number): string {
 	const s = n.toFixed(1);
@@ -54,20 +87,35 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
 }
 
+/** One coloured run of the right side, in render order. */
+type RightSideRun = { readonly text: string; readonly color: "muted" | "warning" | "accent" | "dim" };
+
 /**
  * Color the right side of the footer: (provider) muted, model accent, :thinking dim.
- * The text is the plain (uncolored) right-aligned segment from the layout pass.
+ *
+ * The runs come from the values that produced the text, never from re-parsing
+ * the rendered string: an account display name may legally contain `)` or `:`,
+ * and a regex over the rendered segment would then colour the provider prefix
+ * as the model, or cut the model id into a "thinking level".
+ *
+ * `plain` is the rendered segment, which the layout pass may have truncated at
+ * the tail (and whose truncation can append reset sequences); each run is
+ * clipped to the visible text that survived, so a run boundary can never cut
+ * an escape sequence in half.
  */
-function colorRightSide(text: string): string {
+function colorRightSide(runs: readonly RightSideRun[], plain: string): string {
+	const text = stripTerminalSequences(plain);
 	if (!text) return "";
-	const providerMatch = text.match(/^\(([^)]+)\) (.*)$/);
-	const afterProvider = providerMatch ? providerMatch[2] : text;
-	const providerPrefix = providerMatch ? theme.fg("muted", `(${providerMatch[1]}) `) : "";
-	const fastPrefix = afterProvider.startsWith(FAST_MODE_INDICATOR) ? theme.fg("warning", FAST_MODE_INDICATOR) : "";
-	const body = fastPrefix ? afterProvider.slice(FAST_MODE_INDICATOR.length) : afterProvider;
-	const thinkingMatch = body.match(/^(.+):([^:]+)$/);
-	if (!thinkingMatch) return providerPrefix + fastPrefix + theme.fg("accent", body);
-	return `${providerPrefix}${fastPrefix}${theme.fg("accent", thinkingMatch[1])}${theme.fg("dim", `:${thinkingMatch[2]}`)}`;
+	let offset = 0;
+	let colored = "";
+	for (const run of runs) {
+		if (offset >= text.length) break;
+		const visible = text.slice(offset, offset + run.text.length);
+		if (visible.length === 0) break;
+		colored += theme.fg(run.color, visible);
+		offset += visible.length;
+	}
+	return colored;
 }
 
 /**
@@ -75,21 +123,31 @@ function colorRightSide(text: string): string {
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
  */
 export class FooterComponent implements Component {
-	private session: AgentSession;
+	private session: InteractiveSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private autoCompactEnabled = true;
+	private compactionDelegated = false;
 
-	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
+	constructor(session: InteractiveSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
 		this.footerData = footerData;
 	}
 
-	setSession(session: AgentSession): void {
+	setSession(session: InteractiveSession): void {
 		this.session = session;
 	}
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
+	}
+
+	/**
+	 * Marks the context meter while an external owner (the Claude Agent SDK)
+	 * manages compaction natively, so a saturated meter reads as delegated
+	 * rather than stalled.
+	 */
+	setCompactionDelegated(delegated: boolean): void {
+		this.compactionDelegated = delegated;
 	}
 
 	/**
@@ -165,17 +223,24 @@ export class FooterComponent implements Component {
 		}
 
 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const ctxDisplay =
+		const delegationIndicator = this.compactionDelegated ? " (SDK)" : "";
+		const ctxBase =
 			contextPercent === "?"
 				? `${contextTokens}/${formatTokens(contextWindow)} (?)${autoIndicator}`
 				: `${contextTokens}/${formatTokens(contextWindow)} (${contextPercent}%)${autoIndicator}`;
-		const ctxColored =
+		const colorCtx = (text: string): string =>
 			contextPercentValue > 90
-				? theme.fg("error", ctxDisplay)
+				? theme.fg("error", text)
 				: contextPercentValue > 70
-					? theme.fg("warning", ctxDisplay)
-					: theme.fg("muted", ctxDisplay);
-		const tail: FooterSegment = { plain: ctxDisplay, colored: ctxColored };
+					? theme.fg("warning", text)
+					: theme.fg("muted", text);
+		// The delegation marker stays muted even when the saturated meter is
+		// error/warning tinted: SDK-owned compaction is expected state, not alarm.
+		const makeTail = (withMarker: boolean): FooterSegment => ({
+			plain: withMarker ? `${ctxBase}${delegationIndicator}` : ctxBase,
+			colored: withMarker ? `${colorCtx(ctxBase)}${theme.fg("muted", delegationIndicator)}` : colorCtx(ctxBase),
+		});
+		let tail: FooterSegment = makeTail(delegationIndicator !== "");
 
 		// Model label pinned to the right edge; the provider prefix stays only when
 		// the full line fits.
@@ -186,25 +251,63 @@ export class FooterComponent implements Component {
 			const thinkingLevel = state.thinkingLevel || "off";
 			minimalRight = thinkingLevel === "off" ? `${minimalRight}:off` : `${minimalRight}:${thinkingLevel}`;
 		}
-		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(minimalRight) };
+		const thinkingSuffix = state.model?.reasoning ? `:${state.thinkingLevel || "off"}` : "";
+		const modelRuns: RightSideRun[] = [
+			...(fastIndicator ? [{ text: fastIndicator, color: "warning" as const }] : []),
+			{ text: modelName, color: "accent" as const },
+			...(thinkingSuffix ? [{ text: thinkingSuffix, color: "dim" as const }] : []),
+		];
+		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(modelRuns, minimalRight) };
+		let accountSuffix = "";
+		if (state.model) {
+			try {
+				accountSuffix = accountFooterSuffix(
+					this.session.modelRegistry.authStorage.get(state.model.provider),
+					this.session.sessionManager.getSessionId(),
+				);
+			} catch {
+				// The footer must render even when credential storage is unreadable.
+			}
+		}
 		const providerPrefix =
-			this.footerData.getAvailableProviderCount() > 1 && state.model ? `(${state.model.provider}) ` : "";
+			(this.footerData.getAvailableProviderCount() > 1 || accountSuffix !== "") && state.model
+				? `(${state.model.provider}${accountSuffix}) `
+				: "";
 		const full: FooterSegment | undefined = providerPrefix
-			? { plain: `${providerPrefix}${minimalRight}`, colored: colorRightSide(`${providerPrefix}${minimalRight}`) }
+			? {
+					plain: `${providerPrefix}${minimalRight}`,
+					colored: colorRightSide(
+						[{ text: providerPrefix, color: "muted" }, ...modelRuns],
+						`${providerPrefix}${minimalRight}`,
+					),
+				}
 			: undefined;
 
 		const marker: FooterSegment = { plain: "…", colored: theme.fg("dim", "…") };
-		const plan = planFooterLayout({
-			width,
-			anchor,
-			pwdIndex,
-			middle,
-			tail,
-			right: { minimal, full },
-			separator,
-			minPadding: 2,
-			ellipsisMarker: marker,
-		});
+		const planWithTail = (tailSegment: FooterSegment) =>
+			planFooterLayout({
+				width,
+				anchor,
+				pwdIndex,
+				middle,
+				tail: tailSegment,
+				right: { minimal, full },
+				separator,
+				minPadding: 2,
+				ellipsisMarker: marker,
+			});
+		let plan = planWithTail(tail);
+		// Head elision keeps the string tail, so at narrow widths it can leave a
+		// chopped marker fragment like "…SDK)". Render the complete marker or drop
+		// it entirely — never a fragment.
+		if (
+			delegationIndicator !== "" &&
+			plan.kind === "left-elided" &&
+			!plan.leftPlain.includes(delegationIndicator.trimStart())
+		) {
+			tail = makeTail(false);
+			plan = planWithTail(tail);
+		}
 
 		const joinSegments = (segments: readonly FooterSegment[]): { colored: string; width: number } => ({
 			colored: segments.map((segment) => segment.colored).join(sepColored),
@@ -238,7 +341,7 @@ export class FooterComponent implements Component {
 			left = { colored: theme.fg("muted", plan.leftPlain), width: visibleWidth(plan.leftPlain) };
 		} else {
 			left = { colored: "", width: 0 };
-			right = { plain: plan.rightPlain, colored: colorRightSide(plan.rightPlain) };
+			right = { plain: plan.rightPlain, colored: colorRightSide(modelRuns, plan.rightPlain) };
 		}
 
 		const rightWidth = visibleWidth(right.plain);

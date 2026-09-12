@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { registerFauxProvider } from "@earendil-works/pi-ai";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
-	hardCap,
 	incrementAccepted,
 	incrementIneffective,
 	shouldRejectByCap,
@@ -16,7 +15,8 @@ import {
 import { migrateSessionEntries, parseSessionEntries, type SessionEntry } from "../../src/core/session-manager.ts";
 
 const FORMER_SOFT_CAP = 3;
-const EXPECTED_HARD_CAP = 10;
+const FORMER_ABSOLUTE_CAP = 10;
+const LONG_LIVED_SESSION_ACCEPTED = 10_000;
 
 function acceptN(state: CompactionExtensionState, n: number): CompactionExtensionState {
 	let next = state;
@@ -59,7 +59,7 @@ beforeAll(() => {
 	perTurnFixtureEntries = entries.filter((entry): entry is SessionEntry => entry.type !== "session");
 });
 
-describe("compaction absolute cap", () => {
+describe("compaction admission accounting", () => {
 	describe("Given the former per-turn soft cap of 3 accepted compactions this turn", () => {
 		describe("When a 4th required compaction is checked in the same turn", () => {
 			it("Then it is admitted instead of fatally ending the turn", () => {
@@ -89,7 +89,7 @@ describe("compaction absolute cap", () => {
 		});
 	});
 
-	describe("Given accepted compactions below the absolute cap", () => {
+	describe("Given successful compactions before a turn reset", () => {
 		describe("When the turn ends and resetTurnCounter is applied", () => {
 			it("Then admission is open before and after the reset", () => {
 				const registration = registerFauxProvider();
@@ -107,20 +107,27 @@ describe("compaction absolute cap", () => {
 		});
 	});
 
-	describe("Given accepted compactions reach the absolute cap across provider turns", () => {
-		it("Then every further compaction is rejected, even after a turn reset", () => {
-			expect(hardCap).toBe(EXPECTED_HARD_CAP);
-
+	describe("Given accepted compactions exceed the former absolute cap across provider turns", () => {
+		it("Then successful compactions remain admitted in a long-lived session", () => {
 			let state = createInitialState();
-			for (let accepted = 0; accepted < EXPECTED_HARD_CAP; accepted++) {
+			for (let accepted = 0; accepted < FORMER_ABSOLUTE_CAP; accepted++) {
 				state = incrementAccepted(state);
 				state = resetTurnCounter(state, `turn-${accepted}`);
 			}
 
 			expect(state.acceptedThisTurn).toBe(0);
-			expect(state.acceptedAbsolute).toBe(EXPECTED_HARD_CAP);
-			expect(shouldRejectByCap(state)).toEqual({ cancel: true });
-			expect(shouldRejectByCap(resetTurnCounter(state, "turn-final"))).toEqual({ cancel: true });
+			expect(state.acceptedAbsolute).toBe(FORMER_ABSOLUTE_CAP);
+			expect(shouldRejectByCap(state)).toEqual({ cancel: false });
+
+			for (let accepted = FORMER_ABSOLUTE_CAP; accepted < LONG_LIVED_SESSION_ACCEPTED; accepted++) {
+				state = incrementAccepted(state);
+				state = resetTurnCounter(state, `turn-${accepted}`);
+			}
+
+			expect(state.acceptedThisTurn).toBe(0);
+			expect(state.acceptedAbsolute).toBe(LONG_LIVED_SESSION_ACCEPTED);
+			expect(shouldRejectByCap(state)).toEqual({ cancel: false });
+			expect(shouldRejectByCap(resetTurnCounter(state, "turn-final"))).toEqual({ cancel: false });
 		});
 	});
 

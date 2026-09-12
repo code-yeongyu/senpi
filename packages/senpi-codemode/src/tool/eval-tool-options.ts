@@ -5,11 +5,13 @@ import type { ResolvedCodemodeSettings } from "../config/settings.ts";
 import type { EvalExecutionTracker } from "../extension/session-manager.ts";
 import type { EvalTimeoutFactory } from "./cell-execution.ts";
 import type { EvalDetachedCellManager } from "./detached-cell-manager.ts";
+import type { EvalExecutionEventPayload } from "./eval-execution-event.ts";
 import type { EvalImageResizer } from "./image.ts";
 import type {
 	EnabledEvalLanguages,
 	EvalInputSchema,
 	EvalKernelManager,
+	EvalRuntimes,
 	EvalToolDetails,
 	EvalToolInput,
 	ExecuteTool,
@@ -18,9 +20,20 @@ import type {
 export interface CreateEvalToolOptions {
 	readonly enabledLanguages: EnabledEvalLanguages;
 	readonly kernelManager: EvalKernelManager;
+	/** Idle time an interactive (detach-behavior) call blocks the agent loop before the cell detaches. */
 	readonly cellTimeoutSeconds: number;
+	/**
+	 * Caps `cellTimeoutSeconds` and the bridge-parked grace for interactive calls. Defaults to
+	 * {@link DEFAULT_FOREGROUND_WINDOW_SECONDS}. Does not affect the kill deadlines.
+	 */
+	readonly foregroundWindowSeconds?: number;
 	/** Wall-clock kill deadline applied to every cell; only used when this factory creates its own manager. */
 	readonly hardLimitSeconds?: number;
+	/**
+	 * Kill deadline for a cell's own execution time (host tool calls excluded); a per-call `timeout`
+	 * replaces it. Rendered into the tool schema and description; also seeds a self-created manager.
+	 */
+	readonly runBudgetSeconds?: number;
 	readonly executeTool: ExecuteTool;
 	readonly listTools?: () => readonly EvalSchemaToolInfo[];
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
@@ -29,13 +42,20 @@ export interface CreateEvalToolOptions {
 	readonly imageResizer?: EvalImageResizer;
 	readonly executionTracker?: EvalExecutionTracker;
 	readonly cellManager?: EvalDetachedCellManager;
+	readonly onCellSettled?: (payload: EvalExecutionEventPayload) => void;
 	readonly timeoutFactory?: EvalTimeoutFactory;
 	readonly proxyExecutor?: (params: EvalToolInput, signal?: AbortSignal) => Promise<AgentToolResult<EvalToolDetails>>;
 	readonly renderers?: Pick<ToolDefinition<EvalInputSchema, EvalToolDetails>, "renderCall" | "renderResult">;
 	readonly spawns?: boolean;
+	/** Whether the session registry exposes the monitor tool through eval. */
+	readonly monitor?: boolean;
 	readonly spawnDefaultAgent?: string;
 	readonly modelId?: string;
 	readonly hostLine?: string;
+	/** Display identity of each language's runtime, shown in headers and details; `js` also selects the prompt's runtime line. */
+	readonly runtimes?: EvalRuntimes;
+	/** Absolute path of the active bun-1-4 skill; the prompt names it as MUST READ on a bun kernel. */
+	readonly bunSkillPath?: string;
 }
 
 export interface EvalCellInvocation {

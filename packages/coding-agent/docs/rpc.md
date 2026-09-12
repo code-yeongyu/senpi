@@ -1,10 +1,26 @@
 # RPC Mode
 
+Shared-host clients may advertise the `rendered_components` capability to receive factory-rendered widget, header, and footer records. In a shared session, component rendering uses the minimum width reported by currently attached connections, defaulting to 80 when none report a width; disconnected connections no longer contribute.
+
+The shared Unix socket host uses `<agentDir>/rpc-host-daemon/host.pid` and `settings.json` as its ownership state. Clients attach to a compatible existing host regardless of which client surface started it; only incompatible unmanaged owners are refused.
+
 RPC mode enables headless operation of the coding agent via a JSON protocol over stdin/stdout. This is useful for embedding the agent in other applications, IDEs, or custom UIs.
 
 **Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
 
+## Account display names
+
+`get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.
+
+Use `/account <provider> rename <id> <display name...>` or the corresponding `/gpt-account` and `/claude-account` commands to name saved accounts; `clear-name <id>` removes only the label. `/gpt-account add` offers optional naming after login is saved, and only when Senpi generated the account ID itself; the Claude lane names accounts through its own login prompt and never asks twice. Blank input or cancellation keeps that login usable. Environment accounts cannot be renamed.
+
+A label is stored NFC-normalized with internal whitespace collapsed, must contain at least one visible character, and may not exceed 32 terminal columns (measured in grapheme clusters, so CJK and emoji count two columns each). Uniqueness within a provider folds case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes, so two labels that render identically are refused.
+
 ## Starting RPC Mode
+
+### RPC client lifecycle
+
+`RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
 
 ```bash
 senpi --mode rpc [options]
@@ -31,6 +47,33 @@ Rebranded distributions read the equivalent variable under their configured envi
 `extension_events` opts the client into generic extension-owned event records; clients that omit it
 retain the previous wire stream unchanged.
 
+#### media_placeholders
+
+A client that advertises `media_placeholders` in `set_client_info` tells the host it does not want
+inline media bytes on the wire. For that connection the host replaces every image block inside a
+tool result (`ToolResultMessage.content` and `tool_execution_end.result.content`, including the
+entries carried by `get_entries`, `get_messages`, `get_tree`, `open_session` state and attach-time
+snapshot replay) with an `image_ref` placeholder:
+
+```json
+{
+  "type": "image_ref",
+  "mimeType": "image/png",
+  "byteLength": 553000,
+  "ref": {"toolCallId": "call_abc123", "contentIndex": 1}
+}
+```
+
+`byteLength` is the decoded size of the omitted payload. The original block is fetched on demand with
+[`get_media`](#get_media) using the `ref`. User-authored images (`prompt`/`steer`/`follow_up`
+`images`) are never replaced.
+
+A connection that does not advertise the capability receives byte-identical output to before. The
+capability is advertised by the host in `get_protocol_info.capabilities` in both classic and
+multi-session mode, but the transform itself is applied only by the multi-session host: classic
+single-connection stdio mode never rewrites its output, so a stdio client always receives inline
+media even if it names the capability. `get_media` is answered in both modes.
+
 ## Multi-session mode (D1 wire protocol)
 
 Multi-session mode lets one `senpi --mode rpc` process serve several independent conversations concurrently over the same stdio JSONL stream. Classic single-session mode is byte-identical to today; the only additive classic-mode behavior is that `get_protocol_info` is answered.
@@ -38,19 +81,216 @@ Multi-session mode lets one `senpi --mode rpc` process serve several independent
 ### Starting multi-session mode
 
 ```bash
+# Shared JSONL over stdio (legacy multi-session host)
 senpi --mode rpc --multi-session [options]
+
+# One shared host over a local socket; each accepted connection has its own JSONL feed
+senpi --mode rpc --listen unix:///tmp/senpi-rpc.sock [options]
+senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 ```
 
+`--listen unix://` selects the default per-agent socket path. Unix abstract socket names may be supplied as
+`unix://@name` where supported by the host platform. Socket mode accepts concurrent connections while retaining one
+process-global session registry.
+
+On Windows, listeners and clients deterministically map the logical socket path to
+`\\.\pipe\senpi-rpc-<sha256[:32]>`. Callers keep using the same `unix://` CLI value; the logical path remains the
+ownership and settings identity, and callers never construct the pipe name themselves.
+
+Socket event visibility is attachment-scoped for session content: each connection receives agent output only from sessions
+attached to that connection, with every record tagged by its routing `sessionId`. Content-free lifecycle records
+(`agent_start`, `agent_settled`, `agent_idle`, `session_opened`, and `session_closed`) are broadcast to all registered
+connections, including the supervisor's unattached observer, so host lifecycle accounting remains accurate without exposing
+session content. Correlated responses and dialog extension UI
+requests (select, confirm, input, and editor) are requester-only; other extension UI state records go to the session's
+attached connections. To observe a foreign session, open it by its existing
+`sessionPath`; the host attaches that connection during `open_session`.
+
+### Client information and rendered components
+
+Clients may send `set_client_info` with `{ sessionId, width, capabilities? }`. Advertising `rendered_components` registers
+that connection to receive factory-rendered `setWidget`, `setHeader`, and `setFooter` records. Those records are filtered
+per connection; array/undefined widget records and dialog requests retain their existing delivery semantics. Width is
+shared per session using the minimum of attached clients, and a closed or dropped connection no longer contributes its
+width or capability registration. Snapshot replay preserves rendered-component provenance and applies the same capability
+filter to late joiners; a client that registers `rendered_components` while a snapshot is active receives its retained
+factory-rendered records. On a shared socket host, `rendered_components` is registration-only: it is never inherited from the host environment and must be sent in `set_client_info` for each client connection. Registration applies to the sessions attached by that connection; closing one session removes only that session's width and capability association, while socket disposal removes all associations. Clients must re-register `width` and `capabilities` after every reconnect. When the last
+capable connection leaves a still-attached binding, live component renderers and footer data providers are disposed but
+their factories are retained; a later capable connection recreates and re-renders them.
+
+### Session auto-titling
+
+Auto-generated session titles are on by default only for interactive launches. RPC hosts opt in with
+`--auto-title-sessions`:
+
+```bash
+senpi --mode rpc --multi-session --auto-title-sessions
+```
+
+With the flag, every session the host opens (classic or multi-session) generates a title from its first user prompt and
+publishes it to clients through the existing `session_info_changed` event; no new command or event is involved. Sessions
+resumed with existing context messages are never retitled, with or without the flag.
+
 Startup: `senpi --mode rpc --multi-session` → NO default session is constructed (no default `AgentSessionRuntime`, no default extension/watcher load). Classic `senpi --mode rpc` is byte-identical to today. Mode is fixed at process start; there is no runtime transition.
+
+### Interactive sessions and shared-host opt-out
+
+Interactive launches use the shared RPC host by default when a persisted session is available. A cold start takes approximately 1.3 seconds on the first launch; warm attachment to an existing compatible host is fast. To use the local runtime directly for a launch, set `SENPI_DISABLE_SHARED_HOST=1`. This uses the same local fallback runtime and does not change RPC socket behavior for other clients.
+
+### Session replacement
+
+A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier clients can wait on.
+
+#### Replacement identity event
+
+When `new_session`, `switch_session`, or `fork` swaps the live session - including replacements an extension drives, which a client never issued - every attached connection receives:
+
+```json
+{ "type": "session_replaced", "durableSessionId": "…", "sessionFile": "…", "cwd": "…", "sessionName": "…" }
+```
+
+The command response reports only `{ cancelled }`, so this event is the only push channel carrying the new identity. The identity is `durableSessionId`, never `sessionId`: top-level `sessionId` is reserved for the per-connection routing handle that multi-session hosts tag every record with, and that tag is applied last, so reusing the key would overwrite the identity the event exists to deliver. Classic mode emits the event untagged.
+
+### Shared host lifecycle (cold start + idle exit)
+
+The lifecycle supervisor is also available to bundled/rebranded runtimes through the hidden internal launch route `--internal-rpc-host-supervisor`. This route is wire-invisible and intended only for desktop launchers: it receives the public socket, ownership directory, and the runtime command/arguments to wrap, then runs the same `host-lifecycle.ts` implementation used by `ensureHost()`. Normal CLI modes do not use or advertise this route. Compiled standalone binaries also re-enter themselves through this route automatically: a bun executable always boots its embedded entrypoint, so the script-path re-entry used under a JS runtime would be parsed as CLI arguments (`Unknown option: --socket`) and the host could never start.
+
+On win32 the supervisor's internal hop lives under `<agentDir>/rpc-host-daemon/internal-<uuid>`, and that directory is created recursively. Before allocating the internal hop or spawning a child, the supervisor ensures `<publicSocket>.secret` exists, creating its parent directories and a 32-byte secret with mode `0600` when needed. An existing valid secret, including one written by `ensureHost()`, is reused unchanged. Direct launch therefore works on a fresh profile without caller-side secret provisioning. Provisioning failures identify the bootstrap step and secret path; the public endpoint still requires the secret handshake before forwarding RPC traffic.
+
+Hosts started through `ensureHost()` are wrapped by a lifecycle supervisor that owns the public socket and spawns the
+real RPC host on a private internal hop. The policy lives in `<agentDir>/rpc-host-daemon/settings.json`:
+
+```json
+{ "socket": "…/rpc.sock", "capabilities": ["extension_events", "custom_unsupported"], "coldStart": "transient", "idleExitMs": 900000 }
+```
+
+- `coldStart` — `transient` (default): the host exists for the current login session and idle-exits. `persistent`:
+  no idle exit; the host stays until it is stopped or dies.
+- `idleExitMs` — idle-exit window in milliseconds, default `900000` (15 minutes).
+
+Environment overrides beat the file, and invalid values fall through to the next source: `SENPI_RPC_HOST_COLD_START`
+(`transient`|`persistent`) and `SENPI_RPC_HOST_IDLE_EXIT_MS` (positive integer milliseconds).
+
+The host exits only after the window elapses with NO attached client connections and NO active turns — continuously.
+Any connection or agent turn resets the window, so a busy host never exits, and the exit itself is clean: the RPC host
+receives SIGTERM first, flushes pending output, removes its socket, and the supervisor then removes `host.pid` and
+`settings.json` (the stderr log stays for diagnostics). After an idle exit, the next `ensureHost()` transparently
+starts a fresh host. `get_protocol_info` over the public socket behaves exactly as before; the supervisor is
+wire-transparent.
+
+The RPC host can never outlive its supervisor. It is spawned with an extra inherited pipe on fd 3 whose write end the
+supervisor holds and never writes to; the kernel closes that end whenever the supervisor dies — including `SIGKILL`, an
+OOM kill, or a crash, where no signal handler runs — so the host reads EOF, shuts down cleanly and removes its private
+internal directory. The supervisor also exports `SENPI_RPC_HOST_WATCH_PPID` as a polling fallback. Both bindings are
+set only by the supervisor: a host started any other way (plain `senpi --mode rpc --listen …`, embedders, hand-started
+hosts) sees neither variable and is unaffected. A host whose supervisor is alive is never touched by this binding.
+
+### Shared host occupancy (idle eviction, session cap, empty-host exit)
+
+Every CLI shared-host session owns a worker isolate and a complete runtime. Memory depends on its extensions and
+session contents; isolates do not provide process-fatal OOM containment. The host enforces these occupancy bounds:
+
+- **Idle eviction**: a session with no routed command and no session-owned work for
+  `SENPI_RPC_SESSION_IDLE_EVICTION_MS` (default 30 minutes) is closed through the exact `close_session` sequence
+  (abort → waitForIdle → dispose, all attachments drained, path reservation released) and every attached connection
+  receives that handle's `session_closed` broadcast plus a final `close_session` response record. "Session-owned
+  work" is the complete activity contract, not just a streaming turn: an agent run, a running bash command,
+  background terminal jobs and any other published wake source (terminal monitors, loop-guard holds), compaction,
+  and barrier-held session work all defer eviction, and the idle clock restarts when that work settles. An evicted
+  session resumes like any other: the next `open_session` with the same `sessionPath` reopens it.
+- **Worker capacity**: at most 20 workers may be preparing, open, closing, or quarantined together. Admission beyond
+  this bound fails explicitly with `open_failed: too_many_sessions`; it never evicts another session or starts an OS
+  process as a fallback. This is a new externally visible bound for CLI shared mode, which previously admitted
+  unlimited logical sessions. It applies to new worker allocation, not attachments: a known canonical path or
+  original opening spelling joins its already-bound owner without allocating a worker, even at capacity. An
+  unknown path/alias still needs a preparation worker slot. In-process SDK registries using an injected runtime
+  factory retain their existing behavior.
+- **Empty-host exit**: when the registry holds zero sessions AND no client is connected, continuously for
+  `SENPI_RPC_HOST_EMPTY_EXIT_MS` (default 15 minutes), the host exits through its clean shutdown path (flush, socket
+  removal), for stdio and `--listen` hosts alike. A connected client counts as occupancy even with no session open,
+  so the host never drops a live socket under itself. Supervised hosts stay clean either way: a supervisor reads a
+  child exit of 0 without a signal as an intentional idle stop and exits 0 with the same cleanup, not as a crash.
+
+Values are positive integers; invalid values fall through to the defaults. These lifecycle windows run inside the host process,
+so they hold even for embedders and hand-started hosts that have no supervisor.
+
+### Worker ownership and flow control
+
+The main host owns transport, attachments and canonical reservations. Workers canonicalize caller-supplied paths;
+main does not synchronously traverse those paths. An open prepares a path, obtains the main host's exclusive grant,
+and only then constructs its session writer and runtime. A conflicting alias attaches to an open owner or fails
+explicitly before opening another writer.
+
+SessionManager writes, switches, forks, new sessions and imports obtain the same grant before writer creation or
+append-side normalization. A grant is bound to a LIVE writer, not to the worker's lifetime: every snapshot a fully
+open worker publishes names the session files its live session writers still own, and the host releases each granted
+path that list (and the worker's current session path) no longer names. A session replaced by `new_session`,
+`switch_session`, a fork or an import therefore frees its previous file as soon as the replacement is published:
+another `open_session` for that superseded path opens its own worker instead of attaching or failing, and the
+previous opening spelling stops resolving to the replaced owner. Each worker may reserve at most 64 live paths
+at once; a request past that budget first reconciles against the latest snapshot and only then fails with
+`session_reservation_limit`, which is distinct from `session_path_in_use` (another owner holds the path). Only a
+fully open entry reconciles. An entry that is opening, closing or quarantined keeps every acquired path, because a
+worker stuck in a syscall can still be writing a path it can no longer report. Close or an opening deadline requests
+worker termination, but does not release reservations or worker capacity until the actual exit event. A syscall that cannot yet be interrupted can therefore keep an entry
+internally quarantined after the routing handle has closed. `list_sessions` continues to publish `closing`, not a
+new status: existing clients must not mistake a quarantined worker for a live reattach target. Retry the path only
+after that entry disappears.
+
+Each worker accepts at most 64 ordinary pending requests totaling 16 MiB, plus four reserved interrupt/UI-response
+slots totaling 1 MiB. Prepare, commit and bind share one 30-second opening budget starting with worker allocation;
+they do not each reset that budget. Interrupt requests have a five-second deadline. Ordinary commands remain bounded
+by count and bytes without imposing a new timeout on long-running commands. The desktop's 60-second open/readmission
+window is a separate client-side wait: the host normally reports its earlier 30-second failure within that window,
+but a slow transport can delay delivery. Neither timeout proves worker exit or permits concurrent reopening.
+Display updates coalesce to one pending update and one latest value; UI cancellation and close have separate control
+messages. IPC output and snapshots are limited to 16 MiB per record, with one acknowledged record at a time. Credit
+returns after the session's destinations consume their output, not merely on IPC receipt. A five-second credit
+failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
+unbounded queue. Socket queues retain their existing independent overflow/disconnect behavior, and a socket peer that
+stops reading is cut before it can consume that credit budget: a write the peer has not accepted within 4 seconds
+(`DEFAULT_STALL_MS`, below the 5-second worker deadline) is treated like a byte overflow — that connection receives one
+`overflow` record with `error: "stalled, resync required"`, is closed, and must reconnect and resynchronize — while the
+session keeps running and its other destinations keep receiving output. A failed or cut connection never withholds a
+session's credit and never fails the shared host writer; only the stdio lane can. The default stdio
+queue is bounded at 64 MiB or 4096 records, with reserved terminal-failure records and one control-overflow notice.
+Close admission counts both queued output and pending close replies (including their serialized bytes) before
+releasing an attachment or waiting for teardown. An admitted first closer reserves its lifecycle and terminal reply;
+admitted joiners follow those records in FIFO order. Excess closes are not admitted and do not release ownership.
+One bounded `overflow` record with `command: "close_session"` and
+`error: "rpc_close_output_overflow, resync required"` reports the saturation episode instead of retaining a reply
+or promise for each rejected request. Over sockets, this notice goes only to the requester whose close was rejected;
+each connection may have at most one outstanding notice, released when its sink consumes it. After socket-only drain,
+a subsequent saturation episode on the same connection can report a new notice without reconnecting. A healthy peer is not
+told to resynchronize, and a newly affected or reconnected peer receives its own notice. Stdio retains one notice per
+episode. Clients receiving a notice must stop issuing closes, drain output, and resynchronize unacknowledged requests; the notice is not a successful close acknowledgment. Admission resumes as capacity becomes available.
+Canonical reservations and worker capacity remain held until native exit, including after close-output overflow.
+
+The classic handler, extension UI bridge, renderer callbacks and provider scope run inside the owning worker; only
+plain data crosses IPC. Inline `main()` extension factories cannot be cloned and are rejected in shared mode: use
+file-backed extensions. Classic single-session RPC remains in-process. Standalone Bun builds must embed
+`src/modes/rpc/session-worker.ts` as an explicit entrypoint; Node bundles must ship `session-worker.js` beside the
+chunk containing its worker client. Third-party/rebranded Bun wrappers must pass the published
+`dist/modes/rpc/session-worker.js` as an additional compile entry, set an explicit `--root`, and set
+`--define=SENPI_RPC_SESSION_WORKER_ENTRY='"./<worker-path-relative-to-root>"'`. The define is a build-time
+contract, not an environment variable. Its path must match Bun's embedded entry name, not the source machine's
+absolute path or the runtime working directory. The client resolves it against its compiled `import.meta.url`
+before constructing the Worker: Bun 1.4.0 resolves a bare relative Worker string against the real cwd instead
+of the embedded filesystem. Verify the relocated wrapper on the wrapper's supported Bun version and platform
+by opening two shared sessions;
+a standalone Senpi smoke does not verify a wrapper's different compile graph.
+
+Workers isolate JavaScript event loops, not OS processes: they do not promise syscall cancellation, process-fatal OOM
+containment, or containment of arbitrary native code. They are not an extension sandbox.
 
 ### D1 normative table (multi-session mode)
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
-| `get_protocol_info` | - | `{ protocolVersion: 1, capabilities: ["multi_session"], mode: "classic"\|"multi" }` | Answered in BOTH modes; side-effect-free; THE capability probe. |
-| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). |
-| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence, flushes queued events, detaches subscriptions; its response is the LAST record tagged with that handle — no events after (test-pinned). |
-| `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries with their status. |
+| `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi" }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session` plus the negotiated launch capabilities. |
+| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. |
+| `close_session` | `sessionId` | `{}` | Aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
+| `list_sessions` | - | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status }] }` | Includes `opening`/`closing` entries. Internally quarantined workers remain externally `closing` until exit. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
 
 ### Identities (D6)
@@ -63,11 +303,13 @@ In the response `error` field, machine-matchable:
 
 - `unknown_session`
 - `session_closing`
-- `session_path_in_use`
+- `session_path_in_use` (path held by an opening, closing, or quarantined owner; a fully-open current owner is attached instead, and a path a live owner has superseded is released rather than held)
+- `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
 - `invalid_path` (relative `sessionPath`/`cwd`)
 - `open_failed: <detail>`
+- `media_not_found` (`get_media` for an unknown `toolCallId`, or a `contentIndex` that does not point at an image block)
 
 ### Tagging
 
@@ -79,7 +321,7 @@ Strict FIFO per session; one total stdout order; cross-session order unspecified
 
 ### Duplicate/idempotency
 
-Duplicate `open_session` while a path reservation is held → `session_path_in_use`. `close_session` on unknown/already-closed → `unknown_session` error. Request `id`s are client-owned; the server echoes them without dedup.
+Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle); while held by an `opening`/`closing` entry (including internal quarantine) → `session_path_in_use`. A path whose owner has already replaced it with another session file is no longer held: that open allocates a new worker and resumes the file. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
 
 ## Protocol Overview
 
@@ -97,6 +339,9 @@ This matters for clients:
 - Split records on `\n` only
 - Accept optional `\r\n` input by stripping a trailing `\r`
 - Do not use generic line readers that treat Unicode separators as newlines
+- Send JSON objects only; valid JSON primitives and arrays receive a parse-style error response
+- Keep each encoded input record at or below 16,777,216 characters. Oversized records receive one parse-style error,
+  are discarded through the next LF, and do not desynchronize following records
 
 In particular, Node `readline` is not protocol-compliant for RPC mode because it also splits on `U+2028` and `U+2029`, which are valid inside JSON strings.
 
@@ -136,16 +381,22 @@ Queued prompts cannot include `thinkingLevel`; wait for the current turn to comp
 
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
 
-**Input expansion**: Skill commands (`/skill:name`) and prompt templates (`/template`) are expanded before sending/queueing.
+**Input expansion**: Leading skill tokens (`/skill:name`, `$name`, or `$skill:name`), inline explicit
+desktop skill tokens (`$skill:name`), and prompt templates (`/template`) are expanded before
+sending/queueing. Bare inline dollar text remains literal.
 
 Response:
 ```json
-{"id": "req-1", "type": "response", "command": "prompt", "success": true}
+{"id": "req-1", "type": "response", "command": "prompt", "success": true, "data": { "disposition": "started" }}
 ```
+
+The prompt success response carries `data.disposition` (`"started"` | `"queued"` | `"handled"`), captured from the host session's own disposition callback so proxied clients can resolve optimistic-echo contracts exactly like the local path. Older hosts omit `data`; clients must then degrade to canonical-only rendering (treat the echo as rejected). The response is emitted before the user `message_start` event on the same connection, and disposition callbacks registered through the client run synchronously inside response-frame dispatch — never through the resolved promise's microtask.
 
 `success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
 
 The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
+The `message` field for `prompt`, `steer`, and `follow_up` is limited to 1,000,000 characters;
+image payloads are not counted toward this text limit.
 
 #### steer
 
@@ -193,7 +444,7 @@ See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up mess
 
 #### abort
 
-Abort the current agent operation.
+Abort the current operation and wait for the session to become idle before responding.
 
 ```json
 {"type": "abort"}
@@ -203,6 +454,29 @@ Response:
 ```json
 {"type": "response", "command": "abort", "success": true}
 ```
+
+#### clear_queue
+
+Remove queued steering and follow-up messages and return their text.
+
+```json
+{"type": "clear_queue"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "clear_queue",
+  "success": true,
+  "data": {
+    "steering": ["Change direction"],
+    "followUp": ["Summarize when finished"]
+  }
+}
+```
+
+To implement interactive Esc behavior, send `clear_queue` before `abort`, then restore the returned text in the client editor. `abort` continues queued messages when they remain in the session.
 
 #### new_session
 
@@ -246,6 +520,8 @@ Response:
   "data": {
     "model": {...},
     "thinkingLevel": "medium",
+    "serviceTier": "priority",
+    "fastMode": true,
     "isStreaming": false,
     "isCompacting": false,
     "steeringMode": "all",
@@ -261,6 +537,8 @@ Response:
 ```
 
 The `model` field is a full [Model](#model) object or `null`. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
+
+`serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
 #### get_messages
 
@@ -281,6 +559,51 @@ Response:
 ```
 
 Messages are `AgentMessage` objects (see [Message Types](#message-types)).
+
+#### get_media
+
+Fetch one media block that was omitted for a [`media_placeholders`](#media_placeholders) client. The
+parameters are exactly the placeholder's `ref`.
+
+```json
+{"type": "get_media", "toolCallId": "call_abc123", "contentIndex": 1}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_media",
+  "success": true,
+  "data": {
+    "toolCallId": "call_abc123",
+    "contentIndex": 1,
+    "content": {"type": "image", "data": "<base64>", "mimeType": "image/png"}
+  }
+}
+```
+
+`content` is the original `ImageContent` block, byte-for-byte. `contentIndex` indexes the tool
+result's `content` array. The host looks the tool call up in the durable session entries first (so a
+block stays fetchable after the live message window moved on), then in the current messages for a
+result that has not been persisted yet.
+
+When the tool call is unknown, the index is out of range, or the index points at a non-image block,
+the response fails with `error` and `errorCode` both set to `media_not_found`:
+
+```json
+{
+  "type": "response",
+  "command": "get_media",
+  "success": false,
+  "error": "media_not_found",
+  "errorCode": "media_not_found"
+}
+```
+
+The command is answered in classic and multi-session mode alike; in multi-session mode it takes the
+usual `sessionId` envelope. It is answerable regardless of whether the connection advertised
+`media_placeholders`.
 
 ### Model
 
@@ -365,8 +688,18 @@ Response:
 {"type": "response", "command": "set_thinking_level", "success": true}
 ```
 
-Pass `"scope": "turn"` to change only the current session level without rewriting the global default. The command
-returns an error when the active model cannot apply the requested level.
+Pass `"scope": "turn"` to change only the current session level without rewriting the model's remembered level. The
+command returns an error when the active model cannot apply the requested level, and a rejected request leaves the
+session level unchanged — a failed `set_thinking_level` never mutates state.
+
+```json
+{
+  "type": "response",
+  "command": "set_thinking_level",
+  "success": false,
+  "error": "Thinking level low is not supported by the active model."
+}
+```
 
 #### cycle_thinking_level
 
@@ -405,6 +738,67 @@ Response:
   }
 }
 ```
+
+### Fast mode
+
+#### set_fast_mode
+
+Turn fast mode (the OpenAI Codex `priority` service tier) on or off for the active model. The choice is remembered
+per model, so a later session on the same model starts the same way; `enabled: false` records an explicit `"auto"`
+so it also overrides a tier inherited from the model catalog.
+
+```json
+{"type": "set_fast_mode", "enabled": true}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "set_fast_mode",
+  "success": true,
+  "data": {
+    "enabled": true,
+    "serviceTier": "priority",
+    "provider": "openai-codex",
+    "modelId": "gpt-5.6-sol"
+  }
+}
+```
+
+`serviceTier` is the tier just recorded for the model (`"priority"` on, `"auto"` off). `provider`/`modelId` identify
+the model the preference was stored under: a `-fast` catalog variant and its base model share one entry, so the
+reported id can be the base model rather than the model that was active.
+
+The command returns an error instead of a silent no-op when the request cannot be applied:
+
+| Situation | `error` |
+|-----------|---------|
+| Active model is not an OpenAI Codex model | `Fast mode is only available for OpenAI Codex models.` |
+| `enabled: false` while the model selection pins `:priority` | `Fast mode is fixed by the active model selection's priority tier.` |
+| `enabled` is not a boolean | `set_fast_mode requires a boolean 'enabled' field.` |
+
+A successful call emits a [`service_tier_changed`](#service_tier_changed) event.
+
+#### get_fast_mode
+
+Read the current fast-mode state.
+
+```json
+{"type": "get_fast_mode"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_fast_mode",
+  "success": true,
+  "data": {"enabled": true, "serviceTier": "priority"}
+}
+```
+
+`serviceTier` is `null` when no tier applies. It matches `get_state.serviceTier`.
 
 ### Queue Modes
 
@@ -485,7 +879,7 @@ Response:
 
 #### set_auto_compaction
 
-Enable or disable automatic compaction when context is nearly full.
+Enable or disable automatic compaction when context is nearly full for this session only. The persisted `compaction.enabled` setting is left untouched, and `get_state` reports the effective value. Disabling it stops proactive threshold compaction; a provider-rejected context overflow still triggers the one-shot compact-and-retry recovery.
 
 ```json
 {"type": "set_auto_compaction", "enabled": true}
@@ -672,8 +1066,10 @@ Response:
 Load a different session file. Can be cancelled by a `session_before_switch` extension event handler.
 
 ```json
-{"type": "switch_session", "sessionPath": "/path/to/session.jsonl"}
+{"type": "switch_session", "sessionPath": "/path/to/session.jsonl", "cwdOverride": "/path/to/project"}
 ```
+
+`cwdOverride` is optional. When supplied, the replacement session and its cwd-bound settings and runtime state are rebuilt for that directory instead of using the session file's stored cwd. The host also resolves `projectTrusted` from its saved project trust store for the replacement cwd; an absent or false decision keeps project-scoped settings and resources disabled.
 
 Response:
 ```json
@@ -712,6 +1108,37 @@ If an extension cancelled the fork:
   "data": {"text": "The original prompt text...", "cancelled": true}
 }
 ```
+
+#### edit_assistant_message
+
+Replace an assistant response with an edited copy. The session leaf moves to the target entry's parent and the edited copy is appended there as the new leaf, so the original response and everything after it stay in the file on an abandoned branch. The copy keeps only the new text (tool calls and thinking blocks are dropped; `stopReason` is `stop`) and preserves the original's model, provider and usage. Emits `session_before_tree` (cancellable) and `session_tree` like tree navigation.
+
+```json
+{"type": "edit_assistant_message", "entryId": "abc123", "text": "The corrected answer.", "expectedLeafId": "def456"}
+```
+
+- `expectedLeafId` (optional): the leaf you last observed (from `get_tree`, `get_entries`, or the `entry_appended` stream). When the session's current leaf differs, the command fails with `errorCode: "stale_leaf"` before anything is written - this is how a client with a stale view is refused instead of overwriting a conversation another client moved. The check runs before the unchanged comparison, so identical text still reports `stale_leaf` from a stale client.
+- `summarize` / `customInstructions` (optional): summarize the abandoned branch like `navigate_tree`. With a summary, the edited copy's parent is the new `branch_summary` entry (its id is returned as `summaryEntryId`).
+
+Response:
+
+```json
+{"type": "response", "command": "edit_assistant_message", "success": true, "data": {"outcome": "edited", "entry": {"type": "message", "id": "ghi789", "parentId": "u1", "message": {"role": "assistant", "content": [{"type": "text", "text": "The corrected answer."}]}}, "leafId": "ghi789"}}
+```
+
+Other outcomes: `{"outcome": "unchanged", "leafId": "..."}` when the text matches the original (nothing written) and `{"outcome": "cancelled", "leafId": "...", "aborted": true}` when an extension cancelled the navigation or the summary was aborted.
+
+Failures carry a typed `errorCode`:
+
+| `errorCode` | Meaning |
+|-------------|---------|
+| `streaming` | A response is in flight; retry once the turn ends |
+| `not_found` | No entry with that id |
+| `not_assistant` | The entry is not an assistant message |
+| `empty` | The replacement text is blank |
+| `stale_leaf` | `expectedLeafId` no longer matches the session leaf |
+
+Message identity: RPC mode emits `entry_appended` right after every persisted `message_end`, carrying the full session entry (`entry.id`, `entry.parentId`, `entry.message`). Clients should record `entry.id` from that stream as the identity of each rendered message instead of inferring it by position, and pass it as `entryId` here.
 
 #### clone
 
@@ -865,7 +1292,8 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### get_commands
 
-Get available commands (extension commands, prompt templates, and skills). These can be invoked via the `prompt` command by prefixing with `/`.
+Get the ordered command surface (extension commands, prompt templates, and skills). Extension and prompt rows are
+invoked through `prompt` with `/name`; skill rows use `$name` or the compatibility form `/skill:name`.
 
 ```json
 {"type": "get_commands"}
@@ -879,17 +1307,18 @@ Response:
   "success": true,
   "data": {
     "commands": [
-      {"name": "session-name", "description": "Set or clear session name", "source": "extension", "sourceInfo": {"path": "/home/user/.senpi/agent/extensions/session.ts", "source": "auto", "scope": "user", "origin": "top-level"}},
-      {"name": "fix-tests", "description": "Fix failing tests", "source": "prompt", "sourceInfo": {"path": "/home/user/myproject/.senpi/prompts/fix-tests.md", "source": "auto", "scope": "project", "origin": "top-level"}},
-      {"name": "skill:brave-search", "description": "Web search via Brave API", "source": "skill", "sourceInfo": {"path": "/home/user/.senpi/agent/skills/brave-search/SKILL.md", "source": "auto", "scope": "user", "origin": "top-level"}}
+      {"name": "session-name", "description": "Set or clear session name", "source": "extension", "syntax": "slash", "sourceInfo": {"path": "/home/user/.senpi/agent/extensions/session.ts", "source": "auto", "scope": "user", "origin": "top-level"}},
+      {"name": "fix-tests", "description": "Fix failing tests", "source": "prompt", "syntax": "slash", "sourceInfo": {"path": "/home/user/myproject/.senpi/prompts/fix-tests.md", "source": "auto", "scope": "project", "origin": "top-level"}},
+      {"name": "skill:brave-search", "description": "Web search via Brave API", "source": "skill", "syntax": "dollar", "sourceInfo": {"path": "/home/user/.senpi/agent/skills/brave-search/SKILL.md", "source": "auto", "scope": "user", "origin": "top-level"}}
     ]
   }
 }
 ```
 
 Each command has:
-- `name`: Command name (invoke with `/name`)
+- `name`: Command identity without its leading invocation marker
 - `description`: Human-readable description (optional for extension commands)
+- `syntax`: Canonical marker clients should insert (`"slash"` for extension/prompt rows, `"dollar"` for skills)
 - `source`: What kind of command:
   - `"extension"`: Registered via `pi.registerCommand()` in an extension
   - `"prompt"`: Loaded from a prompt template `.md` file
@@ -1015,7 +1444,46 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `summarization_retry_finished` | Summarization retry loop completes |
 | `extension_error` | Extension threw an error |
 | `extension_event` | Capability-gated extension-owned event (`extension_events` clients only) |
+| `commands_changed` | Ordered command/skill candidate snapshot changed |
+| `command_invocation` | Accepted extension-command or prompt-template invocation metadata |
+| `skill_invocation` | Ordered explicit skill metadata after prompt expansion |
 | `loaded_surfaces_changed` | Loaded skills, extensions, or MCP inventory changed; re-read `get_commands` and `get_loaded_surfaces` |
+| `model_changed` | Active model changed (any source), with the thinking level in force afterwards |
+| `service_tier_changed` | Effective service tier or fast-mode state changed |
+
+Event types are additive: a client that does not recognise a type must ignore that record rather than fail. `model_changed`
+and `service_tier_changed` were added after the initial protocol and are safe to ignore.
+
+### model_changed
+
+Emitted after the session's active model changed, whatever caused it: a `set_model` or `cycle_model` command, a slash
+command, a retry fallback, or a session restore.
+
+```json
+{
+  "type": "model_changed",
+  "model": {"provider": "openai-codex", "id": "gpt-5.6-sol", "...": "..."},
+  "thinkingLevel": "xhigh",
+  "source": "cycle"
+}
+```
+
+`model` is a full [Model](#model) object. `thinkingLevel` is the level in force **after** the switch — each model
+remembers its own level, so this is that model's restored level (clamped to what it supports), not the level the
+previous model was using. `source` is one of `"set"`, `"cycle"`, `"restore"`, `"fallback"`, or `"fallback-revert"`.
+
+Clients that previously inferred the active model from `entry_appended` records can consume this instead.
+
+### service_tier_changed
+
+Emitted when the tier requests would carry, or the fast-mode indicator, changes — a `set_fast_mode` command, the
+`/fast` slash command, or a model switch that resolves a different tier.
+
+```json
+{"type": "service_tier_changed", "tier": "priority", "fastMode": true}
+```
+
+`tier` is omitted when no tier applies. The pair matches `get_state.serviceTier` / `get_state.fastMode`.
 
 ### extension_event
 
@@ -1036,6 +1504,30 @@ Emitted when an extension calls `pi.rpc.emit(name, data)` and the client adverti
 `name` is extension-owned and `data` is opaque to Senpi. Consumers should validate the payload for
 the specific event name before applying it. In multi-session mode the record also includes the
 routing `sessionId`; delivery preserves the owning session and per-session event order.
+
+The terminal builtin emits `terminal_monitor_state` on this path whenever the active monitor set
+changes. `data` is `{ activeCount, monitors }`, where each monitor entry has `id`, `description`,
+`paused`, and `startedAtMs`. The matching in-process `pi.events` channel is unchanged and is not
+forwarded. Clients receive the wire record only when they advertise the `extension_events`
+capability:
+
+```json
+{
+  "type": "extension_event",
+  "name": "terminal_monitor_state",
+  "data": {
+    "activeCount": 1,
+    "monitors": [
+      {
+        "id": "bash_1",
+        "description": "watch checks",
+        "paused": false,
+        "startedAtMs": 1710000000000
+      }
+    ]
+  }
+}
+```
 
 ### agent_start
 
@@ -1097,6 +1589,14 @@ Emitted during streaming of assistant messages. Contains a delta event without a
 ```json
 {
   "type": "message_update",
+  "usage": {
+    "input": 100,
+    "output": 1,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "totalTokens": 101,
+    "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}
+  },
   "assistantMessageEvent": {
     "type": "text_delta",
     "contentIndex": 0,
@@ -1115,23 +1615,32 @@ The `assistantMessageEvent` field contains one of these delta types:
 | `thinking_start` | Thinking block started |
 | `thinking_delta` | Thinking content chunk |
 | `thinking_end` | Thinking block ended |
-| `toolcall_start` | Tool call started |
+| `toolcall_start` | Tool call started (includes `id` and `toolName`) |
 | `toolcall_delta` | Tool call arguments chunk |
 | `toolcall_end` | Tool call ended (includes full `toolCall` object) |
 
 Example streaming a text response:
 ```json
-{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0}}
-{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
-{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world"}}
-{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello world"}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_start","contentIndex":0}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello"}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world"}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello world"}}
+```
+
+The top-level `usage` field contains the latest cumulative provider-reported usage. It may remain
+zero until completion when a provider does not report usage during streaming.
+
+Example starting a tool call:
+```json
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"toolcall_start","contentIndex":1,"id":"call_abc123","toolName":"write"}}
 ```
 
 `message_update` intentionally omits the former cumulative `message` field and
 `assistantMessageEvent.partial`. Clients that need a live partial message must assemble it
 from `message_start` and subsequent events using `contentIndex`. Treat `message_end.message`
-as authoritative. For tool calls, buffer `toolcall_delta.delta`; `toolcall_end.toolCall`
-contains the completed call.
+as authoritative. For tool calls, `toolcall_start` provides the call `id` and `toolName`;
+buffer `toolcall_delta.delta` for arguments. `toolcall_end.toolCall` contains the completed
+call.
 
 ### bash_execution_update
 
@@ -1306,6 +1815,66 @@ For branch summaries, `source` is `"branchSummary"` and no `reason` is present.
 }
 ```
 
+### skill_invocation
+
+Emitted once after one or more explicit skill tokens are expanded. `skills` preserves invocation order.
+`syntax` reports the token form that selected the skill; `path` is the resolved `SKILL.md` path.
+
+```json
+{
+  "type": "skill_invocation",
+  "skills": [
+    {
+      "name": "debugging",
+      "path": "/project/.agents/skills/debugging/SKILL.md",
+      "syntax": "dollar"
+    },
+    {
+      "name": "review",
+      "path": "/project/.agents/skills/review/SKILL.md",
+      "syntax": "slash"
+    }
+  ]
+}
+```
+
+In multi-session mode the normal routing `sessionId` is added. This event does not mutate loaded
+surfaces; clients continue to use `loaded_surfaces_changed` plus `get_loaded_surfaces` for MCP reveal.
+
+### commands_changed
+
+Emitted whenever a post-bind runtime reload changes the ordered command surface. The initial surface is available
+through `get_commands` and does not emit this invalidation event. The `commands` payload has the same shape and
+ordering as `get_commands`; identical snapshots are not re-emitted.
+
+```json
+{
+  "type": "commands_changed",
+  "commands": [
+    {"name": "session-name", "source": "extension", "syntax": "slash", "sourceInfo": {"path": "/project/extensions/session.ts", "source": "auto", "scope": "project", "origin": "top-level"}},
+    {"name": "skill:debugging", "source": "skill", "syntax": "dollar", "sourceInfo": {"path": "/project/.agents/skills/debugging/SKILL.md", "source": "auto", "scope": "project", "origin": "top-level"}}
+  ]
+}
+```
+
+### command_invocation
+
+Emitted exactly once after the session resolves an extension command, or after a prompt template survives extension
+input interception and prompt acceptance. Unknown, transformed, or rejected commands do not produce this event;
+skills continue to use `skill_invocation`.
+
+```json
+{
+  "type": "command_invocation",
+  "command": {
+    "name": "session-name",
+    "source": "extension",
+    "syntax": "slash",
+    "sourceInfo": {"path": "/project/extensions/session.ts", "source": "auto", "scope": "project", "origin": "top-level"}
+  }
+}
+```
+
 ### loaded_surfaces_changed
 
 Emitted without a request id when the loaded skill, extension, or MCP inventory changes. The event carries no inventory payload; clients re-read `get_commands` for skills and `get_loaded_surfaces` for extensions/MCP, mirroring the app-server `skills/changed` invalidation model.
@@ -1327,20 +1896,51 @@ Emitted when an extension throws an error.
 }
 ```
 
+## OAuth login
+
+Logins are fire-command-then-subscribe: the command answers as soon as the flow has started, and the URL plus the terminal result arrive as events.
+
+- `login_start` `{provider}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt.
+- `auth_login_url` `{provider, url}`: the URL (or device-code verification URL) the user must open.
+- `auth_login_end` `{provider, success, error?}`: exactly one per login; `error` is a non-secret message.
+- `login_cancel` `{provider}`: aborts the in-flight login; the client then sees `auth_login_end` with `success: false`.
+
+Some providers need input mid-flow (a pasted authorization code, a text or secret value, a choice between accounts). Those prompts reuse the extension UI dialog channel described in the next section:
+
+- `text`, `secret`, and `manual_code` prompts arrive as an `extension_ui_request` with `method: "input"`. `title` is the provider's prompt message and `placeholder` is present when the provider supplied one.
+- `select` prompts arrive with `method: "select"`; `options` holds the option labels.
+
+Answer with `extension_ui_response` `{id, value}`. For `select`, `value` is the chosen label and is mapped back to the option id in-process. Sending `{id, cancelled: true}` cancels the login, and `auth_login_end` reports `success: false` with `error: "Login cancelled"`.
+
+A client that never answers loses nothing. The browser/callback completion path still finishes the login, and the pending request is released when the login ends or is cancelled, so an open dialog never blocks completion. Secrets don't cross the wire in either direction: only the prompt message, placeholder, and labels are emitted, and the answer is consumed in-process and never echoed.
+
+Example exchange (Anthropic, user pastes the code instead of finishing in the browser):
+
+```jsonl
+{"id": "login-1", "type": "login_start", "provider": "anthropic"}
+{"id": "login-1", "type": "response", "command": "login_start", "success": true}
+{"type": "auth_login_url", "provider": "anthropic", "url": "https://claude.ai/oauth/authorize?..."}
+{"type": "extension_ui_request", "id": "uuid-7", "method": "input", "title": "Complete login in your browser, or paste the authorization code / redirect URL here:", "placeholder": "http://localhost:53692/callback"}
+{"type": "extension_ui_response", "id": "uuid-7", "value": "<pasted code>"}
+{"type": "auth_login_end", "provider": "anthropic", "success": true}
+```
+
+If the user completes the flow in the browser instead, the same `extension_ui_request` is emitted, no response is needed, and `auth_login_end` arrives on its own.
+
 ## Extension UI Protocol
 
 Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()`, etc. In RPC mode, these are translated into a request/response sub-protocol on top of the base command/event flow.
 
 There are two categories of extension UI methods:
 
-- **Dialog methods** (`select`, `confirm`, `input`, `editor`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
-- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
+- **Dialog methods** (`select`, `confirm`, `input`, `editor`, `question`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
+- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setHeader`, `setFooter`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
 
-If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The client does not need to track timeouts.
+If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The host owns the timer and clients mirror the `remainingMs` value from each request or update event.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
-- `setWorkingMessage()`, `setWorkingIndicator()`, `setFooter()`, `setHeader()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops
+- `setWorkingMessage()`, `setWorkingIndicator()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops. `setFooter()` and `setHeader()` render factory components for clients advertising `rendered_components`.
 - `getEditorText()` returns `""`
 - `getToolsExpanded()` returns `false`
 - `pasteToEditor()` delegates to `setEditorText()` (no paste/collapse handling)
@@ -1467,7 +2067,22 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
 }
 ```
 
-Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Only string arrays are supported in RPC mode; component factories are ignored.
+Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Component factories are rendered by the host using the attached client's terminal width.
+
+#### setHeader / setFooter
+
+Set or clear the extension header or footer using rendered text lines. Clients that do not understand these additive methods ignore them.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-10",
+  "method": "setHeader",
+  "widgetLines": ["Header line"]
+}
+```
+
+Omit `widgetLines` to restore the built-in surface. Attached clients send `set_client_info` with their terminal width after attach and on resize; hosts default to width 80 when no width is supplied.
 
 #### setTitle
 
@@ -1494,6 +2109,62 @@ Set the text in the input editor. Fire-and-forget.
   "text": "prefilled text for the user"
 }
 ```
+
+#### question
+
+Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions are broadcast to all attached connections, not just the requester. Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-q1",
+  "method": "question",
+  "requestId": "ask-user-1",
+  "toolCallId": "call_abc123",
+  "waitForAnswer": true,
+  "questions": [
+    {
+      "id": "q1",
+      "header": "Database",
+      "question": "Which database should I use?",
+      "options": [
+        { "label": "PostgreSQL", "description": "Relational" },
+        { "label": "SQLite", "description": "Embedded" }
+      ],
+      "multiSelect": false
+    }
+  ],
+  "timeout": 1800000,
+  "askedAtMs": 1718000000000,
+  "deadlineAtMs": 1718001800000,
+  "remainingMs": 1799500
+}
+```
+
+Expected response: `extension_ui_response` with `answers` (a map of question id to `{ selected: string[], text?: string }`) and an optional `comment`. Partial answers are allowed: unanswered question ids are reported back to the model. Send `cancelled: true` to dismiss.
+
+While the question is open, the client may send `extension_ui_progress` frames with draft `answers` and `comment`. Each progress frame resets the idle timer; the host emits `question_updated` with the refreshed `deadlineAtMs` and `remainingMs`.
+
+When the question resolves (answered, comment-submitted, timed_out, or cancelled), the host broadcasts `question_resolved` to all connections:
+
+```json
+{
+  "type": "question_resolved",
+  "id": "uuid-q1",
+  "requestId": "ask-user-1",
+  "toolCallId": "call_abc123",
+  "outcome": "answered",
+  "answers": { "q1": { "selected": ["PostgreSQL"] } },
+  "comment": "",
+  "unanswered": []
+}
+```
+
+A late answer after resolution receives a `question_already_resolved` error.
+
+`RpcSessionState.pendingQuestions` (returned by `open_session` and `get_state`) lists any questions still waiting for an answer. Connections that attach after the question was asked receive the pending record immediately.
+
+Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
 
 ### Extension UI Responses (stdin)
 

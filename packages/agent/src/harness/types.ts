@@ -171,7 +171,7 @@ export class ExecutionError extends Error {
 	/** Backend-independent error code. */
 	public code: ExecutionErrorCode;
 
-	constructor(code: ExecutionErrorCode, message: string, cause?: Error) {
+	constructor(code: ExecutionErrorCode, message: string, cause?: unknown) {
 		super(message, cause === undefined ? undefined : { cause });
 		this.name = "ExecutionError";
 		this.code = code;
@@ -301,9 +301,9 @@ export interface ShellExecOptions {
 	/** Abort signal used to terminate the command. Defaults to no abort signal. */
 	abortSignal?: AbortSignal;
 	/** Called with stdout chunks as they are produced. */
-	onStdout?: (chunk: string) => void;
+	onStdout?: (chunk: string) => void | PromiseLike<void>;
 	/** Called with stderr chunks as they are produced. */
-	onStderr?: (chunk: string) => void;
+	onStderr?: (chunk: string) => void | PromiseLike<void>;
 }
 
 /** Shell execution capability used by the harness. */

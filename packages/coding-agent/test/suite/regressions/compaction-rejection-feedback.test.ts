@@ -94,8 +94,7 @@ describe("Regression: manual /compact silent rejection", () => {
 					pi.on("session_before_compact", async () => ({
 						cancel: true,
 						rejectionCause: "per-turn-cap" as const,
-						reason:
-							"the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.",
+						reason: "pr875-cap-reason",
 					}));
 				},
 			],
@@ -109,9 +108,7 @@ describe("Regression: manual /compact silent rejection", () => {
 		expect(compactionEnd).toBeDefined();
 		expect(compactionEnd?.accepted).toBe(false);
 		expect(compactionEnd?.rejectionCause).toBe("per-turn-cap");
-		expect(compactionEnd?.errorMessage ?? "").toContain(
-			"the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.",
-		);
+		expect(compactionEnd?.errorMessage ?? "").toContain("pr875-cap-reason");
 	});
 });
 

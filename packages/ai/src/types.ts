@@ -2,6 +2,8 @@ import type { TelemetryContext } from "@earendil-works/pi-telemetry";
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
+import type { CursorAgentOptions } from "./api/cursor-agent/types.ts";
+import type { DevinAgentOptions } from "./api/devin-agent/types.ts";
 import type { GoogleOptions } from "./api/google-generative-ai.ts";
 import type { GoogleVertexOptions } from "./api/google-vertex.ts";
 import type { MistralOptions } from "./api/mistral-conversations.ts";
@@ -10,12 +12,19 @@ import type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 import type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 import type { PiMessagesOptions } from "./api/pi-messages.ts";
 import type { Model } from "./model.ts";
-import type { SessionAffinityFormat } from "./openai-responses-compat.ts";
+import type {
+	OpenAIResponsesCompat as BaseOpenAIResponsesCompat,
+	SessionAffinityFormat,
+} from "./openai-responses-compat.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
 export type { Model } from "./model.ts";
-export type { OpenAIResponsesCompat, SessionAffinityFormat } from "./openai-responses-compat.ts";
+export type { SessionAffinityFormat } from "./openai-responses-compat.ts";
+export type OpenAIResponsesCompat = BaseOpenAIResponsesCompat & {
+	/** Whether the model supports message-anchored `additional_tools` input items. Default: false. */
+	supportsAdditionalTools?: boolean;
+};
 export type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
 export type KnownApi =
@@ -24,6 +33,8 @@ export type KnownApi =
 	| "openai-responses"
 	| "azure-openai-responses"
 	| "openai-codex-responses"
+	| "cursor-agent"
+	| "devin-agent"
 	| "anthropic-messages"
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
@@ -47,6 +58,7 @@ export type KnownProvider =
 	| "azure-openai-responses"
 	| "openai-codex"
 	| "ollama"
+	| "cursor"
 	| "radius"
 	| "nvidia"
 	| "deepseek"
@@ -79,15 +91,29 @@ export type KnownProvider =
 	| "xiaomi"
 	| "xiaomi-token-plan-cn"
 	| "xiaomi-token-plan-ams"
-	| "xiaomi-token-plan-sgp";
+	| "xiaomi-token-plan-sgp"
+	| "venice";
 export type ProviderId = KnownProvider | string;
 
-export type KnownImagesProvider = "openrouter";
+export type KnownImagesProvider = "openai" | "openrouter";
 
 export type ImagesProviderId = KnownImagesProvider | string;
 
+export type ToolChoice = "auto" | "none";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
+
+/**
+ * Provenance-bearing thinking selection. Distinct from the always-materialized
+ * effective level: a selection exists only when the user (or a legacy variant
+ * alias) explicitly chose a level. See .omo/plans/cursor-reasoning-levels.md §4.1.
+ */
+export interface ThinkingSelection {
+	readonly level: ModelThinkingLevel;
+	readonly source: "explicit" | "legacy-variant";
+	/** Required when source is "legacy-variant": the exact allowlisted original variant id. */
+	readonly legacyVariantId?: string;
+}
 export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
 export type ChatTemplateKwargValue =
 	| string
@@ -95,9 +121,12 @@ export type ChatTemplateKwargValue =
 	| boolean
 	| null
 	| {
-			$var: "thinking.enabled" | "thinking.effort";
+			$var: "thinking.enabled" | "thinking.effort" | "thinking.budget";
 			omitWhenOff?: boolean;
 	  };
+
+/** Top-level request field used to cap reasoning tokens on OpenAI-compatible servers. */
+export type ThinkingTokenBudgetField = "thinking_token_budget" | "thinking_budget" | "thinking_budget_tokens";
 
 /** Token budgets for each thinking level (token-based providers only) */
 export interface ThinkingBudgets {
@@ -279,6 +308,8 @@ export interface ApiOptionsMap {
 	"openai-completions": OpenAICompletionsOptions;
 	"openai-responses": OpenAIResponsesOptions;
 	"openai-codex-responses": OpenAICodexResponsesOptions;
+	"cursor-agent": CursorAgentOptions;
+	"devin-agent": DevinAgentOptions;
 	"azure-openai-responses": AzureOpenAIResponsesOptions;
 	"google-generative-ai": GoogleOptions;
 	"google-vertex": GoogleVertexOptions;
@@ -338,14 +369,40 @@ export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<Images
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;
 
+export interface AnthropicAllowedFallbackModel {
+	provider: ProviderId;
+	model: string;
+	cost: ModelCost;
+}
+
+export type AnthropicRefusalFallback = "default" | readonly { model: string }[];
+
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
+	/** Provider-neutral tool selection for simple requests. When omitted, adapters use provider-specific behavior. */
+	toolChoice?: ToolChoice;
 	reasoning?: ThinkingLevel;
+	/**
+	 * Provenance-bearing thinking selection. Providers that need to distinguish
+	 * an explicit user choice from the always-materialized effective level read
+	 * this; `reasoning` remains the normalized effective level for everyone.
+	 */
+	thinkingSelection?: ThinkingSelection;
+	/** Anthropic server-side fallback for eligible refusal stop reasons. Anthropic providers only. */
+	refusalFallbacks?: AnthropicRefusalFallback;
 	/** Ask a capable provider to return a durable handle and continue the request asynchronously. */
 	deferred?: boolean | { window?: "15m" | "1h" | "24h" };
 	/** Custom token budgets for thinking levels (token-based providers only) */
 	thinkingBudgets?: ThinkingBudgets;
+	/**
+	 * Requested processing tier for providers that price and schedule by tier (OpenAI Responses and
+	 * the ChatGPT Codex backend send it as `service_tier`). Adapters without the concept ignore it.
+	 */
+	serviceTier?: ServiceTierPreference;
 }
+
+/** Tier preferences a caller can express; providers map `"auto"` to their default lane. */
+export type ServiceTierPreference = "auto" | "flex" | "priority";
 
 // Generic StreamFunction with typed options.
 //
@@ -415,6 +472,8 @@ export interface ToolCall {
 	/** Error explaining why an incomplete tool call could not be recovered. */
 	errorMessage?: string;
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
+	/** OpenAI Responses namespace for calls to dynamically loaded or namespaced tools. */
+	namespace?: string;
 }
 
 /**
@@ -488,6 +547,14 @@ export interface UserMessage {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
+/** A durable Responses configuration change projected into the message stream. */
+export interface ConfigurationUpdateMessage {
+	role: "configurationUpdate";
+	content: (TextContent | ImageContent)[];
+	effort: string;
+	timestamp: number;
+}
+
 export interface AssistantMessage {
 	role: "assistant";
 	content: (TextContent | ThinkingContent | ToolCall | ProviderNativeContent)[];
@@ -496,13 +563,22 @@ export interface AssistantMessage {
 	model: string;
 	responseModel?: string; // Concrete `chunk.model` when different from the requested `model` (e.g. OpenRouter `auto` -> `anthropic/...`)
 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
+	/** Exact provider-native effort level used for this response. Absent for legacy or unmanaged responses. */
+	providerThinkingLevel?: string;
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;
 	stopReason: StopReason;
 	stopDetails?: AssistantStopDetails;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
+	/** Explicit owner for an abort initiated by the provider retry watchdog. */
+	abortSource?: "provider";
 	rawStopReason?: string;
+	/**
+	 * Provider indication of whether the model explicitly ended its turn.
+	 * Preserved for debugging and does not currently affect agent control flow.
+	 */
+	endTurn?: boolean;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
@@ -524,7 +600,7 @@ export interface ToolResultMessage<TDetails = any> {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
-export type Message = UserMessage | AssistantMessage | ToolResultMessage;
+export type Message = UserMessage | AssistantMessage | ToolResultMessage | ConfigurationUpdateMessage;
 
 export type ImagesInputContent = TextContent | ImageContent;
 export type ImagesOutputContent = TextContent | ImageContent;
@@ -542,6 +618,8 @@ export interface AssistantImages {
 	output: ImagesOutputContent[];
 	responseId?: string;
 	usage?: Usage;
+	/** Background the provider reports for the returned images; unset when it reports `auto` or nothing. */
+	background?: "transparent" | "opaque";
 	stopReason: ImagesStopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds
@@ -657,17 +735,33 @@ export interface OpenAICompletionsCompat {
 		| "ant-ling";
 	/** Whether the provider accepts explicit disabled-thinking markers when thinking is off. Default: true. */
 	supportsDisabledThinking?: boolean;
-	/** Kwargs to send as `chat_template_kwargs` when `thinkingFormat` is `chat-template`. Use `{ "$var": "thinking.enabled" }` or `{ "$var": "thinking.effort" }` for pi-controlled thinking values. */
+	/** Kwargs to send as `chat_template_kwargs` when `thinkingFormat` is `chat-template`. Use `{ "$var": "thinking.enabled" }`, `{ "$var": "thinking.effort" }`, or `{ "$var": "thinking.budget" }` for pi-controlled thinking values. */
 	chatTemplateKwargs?: Record<string, ChatTemplateKwargValue>;
-	/** Arguments to send as `chat_template_args` when `thinkingFormat` is `baseten`. Use `{ "$var": "thinking.enabled" }` or `{ "$var": "thinking.effort" }` for pi-controlled thinking values. */
+	/** Arguments to send as `chat_template_args` when `thinkingFormat` is `baseten`. Use `{ "$var": "thinking.enabled" }`, `{ "$var": "thinking.effort" }`, or `{ "$var": "thinking.budget" }` for pi-controlled thinking values. */
 	chatTemplateArgs?: Record<string, ChatTemplateKwargValue>;
 	/** OpenRouter-compatible routing preferences sent as the `provider` request field. */
 	openRouterRouting?: OpenRouterRouting;
+	/**
+	 * Sent as the top-level `venice_parameters` request field on Venice models.
+	 * Venice's request schema is `additionalProperties: false`, so the object
+	 * can only be shaped here — user-supplied `extraBody` can still override it.
+	 * `include_venice_system_prompt: false` stops Venice from prepending its
+	 * own default system prompt ahead of the caller's.
+	 */
+	veniceParameters?: { include_venice_system_prompt?: boolean };
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */
 	vercelGatewayRouting?: VercelGatewayRouting;
 	/** Whether z.ai supports top-level `tool_stream: true` for streaming tool call deltas. Default: false. */
 	zaiToolStream?: boolean;
-	/** Whether the provider supports top-level `thinking_token_budget` to cap reasoning tokens (vLLM). Reasoning and the answer share `max_tokens` on these endpoints, so without a budget a reasoning-heavy turn can consume the whole response and emit no answer. Default: false. */
+	/**
+	 * Top-level request field used to cap reasoning tokens from `thinkingBudgets`.
+	 * Reasoning and the answer share `max_tokens` on these endpoints, so without a budget a
+	 * reasoning-heavy turn can consume the whole response and emit no answer.
+	 * `"thinking_token_budget"` is vLLM, `"thinking_budget"` is Qwen/DashScope/SGLang,
+	 * `"thinking_budget_tokens"` is llama.cpp. Off by default; not set on the generated catalog.
+	 */
+	thinkingTokenBudgetField?: ThinkingTokenBudgetField;
+	/** Alias for `thinkingTokenBudgetField: "thinking_token_budget"` (vLLM). Prefer `thinkingTokenBudgetField`. Default: false. */
 	supportsThinkingTokenBudget?: boolean;
 	/** Whether the provider supports OpenAI custom tools with Lark/regex grammar formats. When false, grammar-constrained tools fall back to normal function tools. Default: false; the generated model catalog enables it for capable models. */
 	supportsOpenAIGrammarTools?: boolean;
@@ -696,6 +790,15 @@ export interface OpenAICompletionsCompat {
 	supportsPromptCacheKey?: boolean;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
+	supportsMaxOutputTokens?: boolean;
+	/**
+	 * vLLM scheduler priority sent as the top-level `priority` request field (lower values are
+	 * handled earlier; server default 0). Only meaningful when vLLM runs with
+	 * `--scheduling-policy priority`; useful for keeping background/batch work from stalling
+	 * interactive sessions. Off by default; not set on the generated catalog.
+	 */
+	vllmPriority?: number;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
@@ -760,6 +863,8 @@ export interface AnthropicMessagesCompat {
 	allowEmptySignature?: boolean;
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
+	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
+	supportsMidConvoEffort?: boolean;
 	/**
 	 * How to replay thinking blocks that have no usable Anthropic signature.
 	 * `"text"` demotes them to text; `"empty-signature"` preserves Anthropic's
@@ -768,6 +873,12 @@ export interface AnthropicMessagesCompat {
 	 * `"empty-signature"`.
 	 */
 	unsignedThinkingReplay?: "text" | "empty-signature";
+	/**
+	 * Model ids Anthropic accepts in `fallbacks` for server-side refusal fallback.
+	 * When absent or empty, callers must omit `fallbacks`; Anthropic rejects the
+	 * field for models with no permitted fallback targets.
+	 */
+	allowedFallbackModels?: Array<AnthropicAllowedFallbackModel | string>;
 	/**
 	 * Whether the provider supports deferred tools loaded by `tool_reference`
 	 * blocks in tool results. Default: true for first-party Anthropic models
@@ -895,9 +1006,15 @@ export interface ModelCost extends ModelCostRates {
 	tiers?: ModelCostTier[];
 }
 
+export interface ImagesModelCost extends ModelCost {
+	/** $/million image input tokens (reference and edit inputs). Falls back to `input` when absent. */
+	imageInput?: number;
+}
+
 export interface ImagesModel<TApi extends ImagesApi>
-	extends Omit<Model<Api>, "api" | "provider" | "reasoning" | "contextWindow" | "maxTokens" | "compat"> {
+	extends Omit<Model<Api>, "api" | "provider" | "reasoning" | "contextWindow" | "maxTokens" | "compat" | "cost"> {
 	api: TApi;
 	provider: ImagesProviderId;
 	output: ("text" | "image")[];
+	cost: ImagesModelCost;
 }

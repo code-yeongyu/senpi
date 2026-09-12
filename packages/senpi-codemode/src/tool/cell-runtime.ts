@@ -1,7 +1,8 @@
 import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import type { EvalToolCallMetric } from "./call-capture.ts";
 import { type EvalImageResizer, EvalOutputCollector, type EvalOutputResult } from "./image.ts";
-import type { EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
+import type { EvalRuntimeInfo, EvalStatusEvent, EvalToolDetails, EvalToolInput } from "./types.ts";
 
 type KernelResult = Extract<KernelToHostMessage, { type: "result" }>;
 type DisplayMessage = Extract<KernelToHostMessage, { type: "display" }>;
@@ -9,14 +10,18 @@ type ToolCall = EvalToolDetails["toolCalls"] extends readonly (infer Item)[] ? I
 
 export interface CellState {
 	readonly input: EvalToolInput;
+	readonly runtime?: EvalRuntimeInfo;
+	readonly startedAt: number;
 	readonly signal: AbortSignal;
 	readonly onUpdate: AgentToolUpdateCallback<EvalToolDetails> | undefined;
 	readonly toolCalls: ToolCall[];
+	readonly toolCallMetrics: EvalToolCallMetric[];
 	readonly pendingBridgeCalls: Promise<void>[];
 	readonly statusEvents: EvalStatusEvent[];
 	active: boolean;
 	output: string;
 	phase: string | undefined;
+	error: string | undefined;
 	durationMs: number;
 	status: "pending" | "running" | "complete" | "error";
 }
@@ -70,6 +75,7 @@ export class CellResultBuilder {
 			if (result.valueRepr) this.#output.push(`${result.valueRepr}\n`);
 			this.#state.status = "complete";
 		} else {
+			this.#state.error = result.error.message;
 			this.#output.push(`${result.error.message}\n`);
 			this.#state.status = "error";
 		}
@@ -77,6 +83,7 @@ export class CellResultBuilder {
 	}
 
 	async finalizeCancellation(error: Error): Promise<AgentToolResult<EvalToolDetails>> {
+		this.#state.error = error.message;
 		this.#output.push(`${error.message}\n`);
 		this.#state.status = "error";
 		return await this.#finish(true);
@@ -119,8 +126,11 @@ export class CellResultBuilder {
 		return {
 			language: this.#state.input.language,
 			languages: [this.#state.input.language],
+			...(this.#state.runtime === undefined ? {} : { runtime: this.#state.runtime }),
 			...(this.#state.input.summary === undefined ? {} : { summary: this.#state.input.summary }),
 			durationMs: this.#state.durationMs,
+			wallDurationMs: Math.max(0, Date.now() - this.#state.startedAt),
+			toolCallCount: this.#state.toolCallMetrics.length,
 			toolCalls: [...this.#state.toolCalls],
 			truncated: output?.truncated ?? false,
 			...(isError ? { isError: true } : {}),
@@ -131,9 +141,11 @@ export class CellResultBuilder {
 					...(this.#state.input.summary === undefined ? {} : { summary: this.#state.input.summary }),
 					code: this.#state.input.code,
 					language: this.#state.input.language,
+					...(this.#state.runtime === undefined ? {} : { runtime: this.#state.runtime }),
 					output: this.#state.output,
 					status: this.#state.status,
 					durationMs: this.#state.durationMs,
+					startedAt: this.#state.startedAt,
 					...(statusEvents === undefined ? {} : { statusEvents }),
 					...(output?.hasMarkdown ? { hasMarkdown: true } : {}),
 				},

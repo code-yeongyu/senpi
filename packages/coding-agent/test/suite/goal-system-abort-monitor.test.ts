@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { readGoal, recordContinuationDelivered } from "../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
 import {
@@ -24,8 +25,8 @@ describe("goal state after a system-owned abort", () => {
 			const harness = createGoalHarness();
 			const { tools, handlers, sent, events } = harness;
 			const ctx = await makeGoalContext(notices, "thread-system-abort-monitor");
-			await tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
 			await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+			await tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
 			events.emit("terminal_monitor_state", { activeCount: 1 });
 			await events.flush();
 			await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -47,7 +48,11 @@ describe("goal state after a system-owned abort", () => {
 			expect(sent).toHaveLength(0);
 			expect(events.emitted).toContainEqual({
 				channel: "goal_continuation_scheduled",
-				data: expect.objectContaining({ activeMonitorCount: 1, delayMs: 240_000, iteration: 1 }),
+				data: expect.objectContaining({
+					activeMonitorCount: 1,
+					delayMs: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+					iteration: 1,
+				}),
 			});
 		},
 	);

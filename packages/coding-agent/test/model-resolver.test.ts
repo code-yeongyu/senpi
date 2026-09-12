@@ -1,5 +1,6 @@
 import type { KnownProvider, Model } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, test, vi } from "vitest";
 import {
 	defaultModelPerProvider,
@@ -696,26 +697,38 @@ describe("resolveCliModel", () => {
 
 describe("default model selection", () => {
 	test("openai defaults track current models", () => {
-		expect(defaultModelPerProvider.openai).toBe("gpt-5.5");
-		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.5");
+		expect(defaultModelPerProvider.openai).toBe("gpt-5.6-sol");
+		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.6-sol");
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
-		expect(defaultModelPerProvider.zai).toBe("glm-5.2");
-		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.2");
+		expect(defaultModelPerProvider.zai).toBe("glm-5.3");
+		expect(defaultModelPerProvider["zai-coding-cn"]).toBe("glm-5.3");
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");
 		expect(defaultModelPerProvider["minimax-cn"]).toBe("MiniMax-M2.7");
-		expect(defaultModelPerProvider.cerebras).toBe("zai-glm-4.7");
+		expect(defaultModelPerProvider.cerebras).toBe("gpt-oss-120b");
 		expect(defaultModelPerProvider["ant-ling"]).toBe("Ring-2.6-1T");
 	});
 
 	test("every bundled provider default resolves in its catalog", () => {
 		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			if (provider === "radius" || provider === "ollama") continue;
+			// radius/ollama are dynamic catalogs; cursor is authentication-only until
+			// its chat protocol is ported.
+			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
 			const defaultModelId = defaultModelPerProvider[provider];
 			const modelIds = getModels(provider).map((model) => model.id);
 			expect(modelIds.length, `${provider} should expose a bundled catalog`).toBeGreaterThan(0);
 			expect(modelIds, `${provider} should include its default ${defaultModelId}`).toContain(defaultModelId);
+		}
+	});
+
+	test("built-in defaults exist in generated provider catalogs", () => {
+		for (const provider of getBuiltinProviders()) {
+			const defaultId = defaultModelPerProvider[provider];
+			expect(
+				getBuiltinModels(provider).some((model) => model.id === defaultId),
+				`${provider} default ${defaultId} should exist in its generated catalog`,
+			).toBe(true);
 		}
 	});
 
@@ -725,6 +738,10 @@ describe("default model selection", () => {
 
 	test("ollama defaults to its current coding model", () => {
 		expect(defaultModelPerProvider.ollama).toBe("qwen3.5:397b");
+	});
+
+	test("xai default tracks current model", () => {
+		expect(defaultModelPerProvider.xai).toBe("grok-4.5");
 	});
 
 	test("qwen token plan individual default tracks current model", () => {
@@ -746,6 +763,71 @@ describe("default model selection", () => {
 
 		expect(result.model?.provider).toBe("openrouter");
 		expect(result.model?.id).toBe("openai/ghost-model");
+	});
+
+	test("findInitialModel returns a CLI model suffix as an explicit thinking level", async () => {
+		const registry = {
+			getModels: () => allModels,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const inherited = await findInitialModel({
+			cliProvider: "anthropic",
+			cliModel: "claude-sonnet-4-5",
+			scopedModels: [],
+			isContinuing: false,
+			modelRuntime: registry,
+		});
+		const pinned = await findInitialModel({
+			cliProvider: "anthropic",
+			cliModel: "claude-sonnet-4-5:high",
+			scopedModels: [],
+			isContinuing: false,
+			modelRuntime: registry,
+		});
+
+		expect(inherited.thinkingLevel).toBeUndefined();
+		expect(pinned.thinkingLevel).toBe("high");
+	});
+
+	test("findInitialModel returns thinking only for an explicit scoped pattern level", async () => {
+		const registry = {
+			getAvailableSnapshot: () => allModels,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const inherited = await findInitialModel({
+			scopedModels: [{ model: mockModels[0] }],
+			isContinuing: false,
+			defaultThinkingLevel: "low",
+			modelRuntime: registry,
+		});
+		const pinned = await findInitialModel({
+			scopedModels: [{ model: mockModels[0], thinkingLevel: "high" }],
+			isContinuing: false,
+			defaultThinkingLevel: "low",
+			modelRuntime: registry,
+		});
+
+		expect(inherited.thinkingLevel).toBeUndefined();
+		expect(pinned.thinkingLevel).toBe("high");
+	});
+
+	test("findInitialModel does not promote the global default to an explicit settings level", async () => {
+		const registry = {
+			getModel: (provider: string, modelId: string) =>
+				allModels.find((candidate) => candidate.provider === provider && candidate.id === modelId),
+			hasConfiguredAuth: () => true,
+		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
+
+		const result = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: mockModels[0].provider,
+			defaultModelId: mockModels[0].id,
+			defaultThinkingLevel: "low",
+			modelRuntime: registry,
+		});
+
+		expect(result.thinkingLevel).toBeUndefined();
 	});
 
 	test("findInitialModel selects ai-gateway default when available", async () => {
@@ -792,7 +874,7 @@ describe("default model selection", () => {
 
 		expect(result.provenance).toBe("provider-default");
 		expect(result.model?.provider).toBe("zai");
-		expect(result.model?.id).toBe("glm-5.2");
+		expect(result.model?.id).toBe("glm-5.3");
 	});
 
 	test("findInitialModel ignores an unauthenticated saved default", async () => {
@@ -849,8 +931,8 @@ describe("default model selection", () => {
 		};
 		const custom: Model<"anthropic-messages"> = {
 			...openAiDefault,
-			id: "custom-model",
-			provider: "custom",
+			id: "grok-4.5",
+			provider: "xai",
 		};
 		const runtime = {
 			getModels: () => [openAiDefault, custom],
@@ -875,8 +957,8 @@ describe("default model selection", () => {
 		const settings = await findInitialModel({
 			scopedModels: [],
 			isContinuing: false,
-			defaultProvider: "custom",
-			defaultModelId: "custom-model",
+			defaultProvider: "xai",
+			defaultModelId: "grok-4.5",
 			modelRuntime: runtime,
 		});
 		const providerDefault = await findInitialModel({
@@ -886,7 +968,7 @@ describe("default model selection", () => {
 		});
 		const firstAvailableRuntime = {
 			...runtime,
-			getAvailable: async () => [custom],
+			getAvailable: async () => [openAiDefault],
 		} as unknown as Parameters<typeof findInitialModel>[0]["modelRuntime"];
 		const firstAvailable = await findInitialModel({
 			scopedModels: [],

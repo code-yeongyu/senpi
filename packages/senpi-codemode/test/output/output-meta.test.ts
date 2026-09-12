@@ -26,6 +26,46 @@ describe("output metadata", () => {
 		expect(warning).toBe("[Showing lines 8-10 of 10 (5B limit). Full output: /tmp/full.log]");
 	});
 
+	it("reports dropped bytes instead of a limit when no byte cap is known", () => {
+		// Given
+		const meta = {
+			direction: "tail",
+			truncatedBy: "bytes",
+			totalLines: 2,
+			totalBytes: 2_000,
+			outputLines: 2,
+			outputBytes: 772,
+			shownRange: { start: 1, end: 2 },
+		} satisfies TruncationMeta;
+
+		// When
+		const warning = formatTruncationWarning(meta);
+
+		// Then
+		expect(warning).toBe("[Showing lines 1-2 of 2 (1.2KB dropped)]");
+	});
+
+	it("names the column clamp when lines were cut to a width", () => {
+		// Given
+		const meta = {
+			direction: "tail",
+			truncatedBy: "columns",
+			totalLines: 2,
+			totalBytes: 2_000,
+			outputLines: 2,
+			outputBytes: 772,
+			maxColumns: 768,
+			columnTruncatedLines: 1,
+			shownRange: { start: 1, end: 2 },
+		} satisfies TruncationMeta;
+
+		// When
+		const warning = formatTruncationWarning(meta);
+
+		// Then
+		expect(warning).toBe("[Showing lines 1-2 of 2; 1 line clamped to 768 columns (1.2KB dropped)]");
+	});
+
 	it("formats a middle-elision warning", () => {
 		// Given
 		const meta = {

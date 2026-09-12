@@ -102,18 +102,30 @@ export function pasteMarkerId(segment: string): number | undefined {
 	return match ? Number.parseInt(match[1]!, 10) : undefined;
 }
 
-export function segmentWithPasteMarkers(
+/** Segments `text` treating every literal in `validMarkers` as a single atomic segment. */
+export function segmentWithMarkers(
 	text: string,
 	baseSegmenter: Intl.Segmenter,
 	validMarkers: ReadonlySet<string>,
 ): Iterable<Intl.SegmentData> {
-	if (validMarkers.size === 0 || !text.includes("[paste #")) return baseSegmenter.segment(text);
+	if (validMarkers.size === 0) return baseSegmenter.segment(text);
 
-	const markers: Array<{ start: number; end: number }> = [];
-	for (const match of text.matchAll(PASTE_MARKER_REGEX)) {
-		if (validMarkers.has(match[0])) markers.push({ start: match.index, end: match.index + match[0].length });
+	const found: Array<{ start: number; end: number }> = [];
+	for (const marker of validMarkers) {
+		const start = text.indexOf(marker);
+		if (start === -1) continue;
+		found.push({ start, end: start + marker.length });
 	}
-	if (markers.length === 0) return baseSegmenter.segment(text);
+	if (found.length === 0) return baseSegmenter.segment(text);
+	found.sort((a, b) => a.start - b.start || b.end - a.end);
+
+	// Nested/overlapping literals would desync the single-pass walk below; keep the outermost.
+	const markers: Array<{ start: number; end: number }> = [];
+	for (const range of found) {
+		const previous = markers[markers.length - 1];
+		if (previous && range.start < previous.end) continue;
+		markers.push(range);
+	}
 
 	const result: Intl.SegmentData[] = [];
 	let markerIndex = 0;
@@ -127,6 +139,15 @@ export function segmentWithPasteMarkers(
 		}
 	}
 	return result;
+}
+
+/** Backward-compatible wrapper: paste markers are just one atomic marker set. */
+export function segmentWithPasteMarkers(
+	text: string,
+	baseSegmenter: Intl.Segmenter,
+	validMarkers: ReadonlySet<string>,
+): Iterable<Intl.SegmentData> {
+	return segmentWithMarkers(text, baseSegmenter, validMarkers);
 }
 
 export class PasteMarkerRegistry {

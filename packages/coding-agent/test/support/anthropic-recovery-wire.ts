@@ -106,7 +106,7 @@ export async function startAnthropicServer(scenario: Scenario) {
 	let closeEventCount = 0;
 
 	const server = createServer(async (request, response) => {
-		if (request.method !== "POST" || request.url !== "/v1/messages") {
+		if (request.method !== "POST" || new URL(request.url ?? "", "http://127.0.0.1").pathname !== "/v1/messages") {
 			response.writeHead(404).end();
 			return;
 		}

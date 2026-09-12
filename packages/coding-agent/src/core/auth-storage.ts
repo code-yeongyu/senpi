@@ -3,7 +3,6 @@
  * Provider auth orchestration belongs to ModelRuntime and pi-ai Models.
  */
 
-import { setTimeout as sleep } from "node:timers/promises";
 import type {
 	ApiKeyCredential,
 	AuthEvent,
@@ -18,16 +17,55 @@ import type {
 	OAuthLoginCallbacks,
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey } from "@earendil-works/pi-ai";
+import {
+	appendLoginSlot,
+	type CredentialSlot,
+	listSlots,
+	type PooledCredential,
+	removeSlot,
+	repairManagedSentinelSlots,
+	upsertSlot,
+} from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { raceWithAbortSignal } from "../utils/abort.ts";
-import { getFileRevision, normalizePath } from "../utils/paths.ts";
+import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
+import { stripBom } from "../utils/text.ts";
+import {
+	CredentialStoreBusyError,
+	FILE_STORAGE_LOCK_OPTIONS,
+	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
+	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
+	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
+	isLockError,
+} from "./lockfile-policy.ts";
 import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
 
 type AuthStorageData = Record<string, Credential>;
+
+/**
+ * Heals pools poisoned by a shipped build that stored a provider-owned pool's
+ * flat sentinel as a generated `login-N` slot. Such a slot resolves to sentinel
+ * material, fails the provider's auth `check`, and hard-errors every request
+ * whose affinity picks it - deterministically, for the lifetime of the entry -
+ * so it is dropped the moment auth.json is read and the repair is written back
+ * once by the mutable store.
+ */
+function repairPoisonedPoolSlots(data: AuthStorageData): { data: AuthStorageData; repaired: boolean } {
+	let repaired: AuthStorageData | undefined;
+	for (const [providerId, credential] of Object.entries(data)) {
+		if (typeof credential !== "object" || credential === null) continue;
+		const healed = repairManagedSentinelSlots(providerId, credential);
+		if (!healed) continue;
+		repaired ??= { ...data };
+		repaired[providerId] = healed;
+	}
+	return repaired ? { data: repaired, repaired: true } : { data, repaired: false };
+}
 
 export type AuthCredential = Credential;
 export type { ApiKeyCredential, OAuthCredential };
@@ -46,6 +84,7 @@ type LockResult<T> = {
 	next?: string;
 };
 
+// The mode applies only on creation so administrator-managed modes and ACLs remain intact.
 const AUTH_FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
 
 type AuthFileReload = {
@@ -87,35 +126,31 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	private ensureFileExists(): void {
 		if (!existsSync(this.authPath)) {
 			writeFileSync(this.authPath, "{}", AUTH_FILE_WRITE_OPTIONS);
-			chmodSync(this.authPath, 0o600);
 		}
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
-		const maxAttempts = 10;
-		const delayMs = 20;
-		let lastError: unknown;
-
-		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+		const startedAt = Date.now();
+		let attempt = 0;
+		while (true) {
 			try {
-				return lockfile.lockSync(path, { realpath: false });
+				return lockfile.lockSync(path, { ...FILE_STORAGE_LOCK_OPTIONS, retries: 0 });
 			} catch (error) {
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				if (code !== "ELOCKED" || attempt === maxAttempts) {
-					throw error;
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_SYNC_LOCK_BUDGET_MS) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
 				}
-				lastError = error;
-				const start = Date.now();
-				while (Date.now() - start < delayMs) {
-					// Sleep synchronously to avoid changing callers to async.
-				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_SYNC_LOCK_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				const sleeper = new Int32Array(new SharedArrayBuffer(4));
+				Atomics.wait(sleeper, 0, 0, delayMs);
 			}
 		}
-
-		throw (lastError as Error) ?? new Error("Failed to acquire auth storage lock");
 	}
 
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T {
@@ -129,7 +164,6 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			const { result, next } = fn(current);
 			if (next !== undefined) {
 				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
 			}
 			return result;
 		} finally {
@@ -143,40 +177,39 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		signal: AbortSignal | undefined,
 		onCompromised: (error: Error) => void,
 	): Promise<() => Promise<void>> {
-		const staleMs = 30_000;
-		const maxDelayMs = 2_000;
-		const deadline = Date.now() + staleMs;
-		let retry = 0;
+		signal?.throwIfAborted();
+		const startedAt = Date.now();
+		let attempt = 0;
+		// The retry loop stays here rather than delegating to proper-lockfile's own
+		// `retries`, so an abort is observed between attempts instead of after the
+		// whole budget, and `onCompromised` is rebound per attempt.
 		while (true) {
-			signal?.throwIfAborted();
-			let release: (() => Promise<void>) | undefined;
 			try {
-				release = await lockfile.lock(this.authPath, {
-					realpath: false,
+				const release = await lockfile.lock(this.authPath, {
+					...FILE_STORAGE_LOCK_OPTIONS,
 					retries: 0,
-					stale: staleMs,
 					onCompromised,
 				});
+				if (signal?.aborted) {
+					await release();
+					signal.throwIfAborted();
+				}
+				return release;
 			} catch (error) {
 				signal?.throwIfAborted();
-				const code =
-					typeof error === "object" && error !== null && "code" in error
-						? String((error as { code?: unknown }).code)
-						: undefined;
-				const remainingMs = deadline - Date.now();
-				if (code !== "ELOCKED" || remainingMs <= 0) throw error;
-				const baseDelayMs = Math.min(10 * 2 ** retry, maxDelayMs / 2);
-				retry++;
-				const delayMs = Math.min(Math.round(baseDelayMs * (1 + Math.random())), remainingMs);
-				if (signal) await sleep(delayMs, undefined, { signal });
-				else await sleep(delayMs);
-				continue;
+				if (!isLockError(error)) throw error;
+				const waitedMs = Date.now() - startedAt;
+				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
+					throw new CredentialStoreBusyError(this.authPath, waitedMs, error);
+				}
+				const delayMs = Math.min(
+					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
+					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
+					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+				);
+				attempt++;
+				await raceWithAbortSignal(new Promise<void>((resolve) => setTimeout(resolve, delayMs)), signal);
 			}
-			if (signal?.aborted) {
-				await release();
-				signal.throwIfAborted();
-			}
-			return release;
 		}
 	}
 
@@ -211,7 +244,6 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			options?.signal?.throwIfAborted();
 			if (next !== undefined) {
 				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
 			}
 			throwIfCompromised();
 			return result;
@@ -240,7 +272,7 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 
 		let parsed: unknown;
 		try {
-			parsed = JSON.parse(readFileSync(this.authPath, "utf-8"));
+			parsed = JSON.parse(stripBom(readFileSync(this.authPath, "utf-8")));
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 				this.data = {};
@@ -278,7 +310,7 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 			throw new Error(`Invalid auth.json credential for provider "${providerId}"`);
 		}
 
-		this.data = parsed as AuthStorageData;
+		this.data = repairPoisonedPoolSlots(parsed as AuthStorageData).data;
 		return this.data;
 	}
 
@@ -369,7 +401,7 @@ export class AuthStorage implements CredentialStore {
 			sharedAuthFileReadState = { authPath, readState: this.readState };
 		}
 		if (authPath) {
-			const revision = getFileRevision(authPath);
+			const revision = getFileContentRevision(authPath);
 			if (revision !== undefined && revision === this.readState.revision) return;
 		}
 		this.reload();
@@ -378,6 +410,10 @@ export class AuthStorage implements CredentialStore {
 	static create(authPath: string = join(getAgentDir(), "auth.json")): AuthStorage {
 		const normalizedAuthPath = normalizePath(authPath);
 		return new AuthStorage(new FileAuthStorageBackend(normalizedAuthPath), normalizedAuthPath);
+	}
+
+	getStoragePath(): string | undefined {
+		return this.authPath;
 	}
 
 	static fromStorage(storage: AuthStorageBackend): AuthStorage {
@@ -391,10 +427,15 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	private parseStorageData(content: string | undefined): AuthStorageData {
+		return this.parseStorageContent(content).data;
+	}
+
+	/** Reports whether the parse had to heal poisoned pool slots, so a load can write the repair back once. */
+	private parseStorageContent(content: string | undefined): { data: AuthStorageData; repaired: boolean } {
 		if (!content) {
-			return {};
+			return { data: {}, repaired: false };
 		}
-		return JSON.parse(content) as AuthStorageData;
+		return repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData);
 	}
 
 	private recordError(error: unknown): void {
@@ -411,15 +452,20 @@ export class AuthStorage implements CredentialStore {
 	 * Reload credentials from storage.
 	 */
 	reload(): void {
-		let content: string | undefined;
+		let data: AuthStorageData = {};
 		let revision: string | undefined;
 		try {
 			this.storage.withLock((current) => {
-				content = current;
-				revision = this.authPath ? getFileRevision(this.authPath) : undefined;
-				return { result: undefined };
+				const parsed = this.parseStorageContent(current);
+				data = parsed.data;
+				// A written repair invalidates the revision read before it; leaving it
+				// unset makes the next reader re-read instead of trusting a stale stamp.
+				revision = parsed.repaired || !this.authPath ? undefined : getFileContentRevision(this.authPath);
+				return parsed.repaired
+					? { result: undefined, next: JSON.stringify(parsed.data, null, 2) }
+					: { result: undefined };
 			});
-			this.updateReadState(this.parseStorageData(content), revision);
+			this.updateReadState(data, revision);
 		} catch (error) {
 			// Preserve the last valid in-memory snapshot.
 			this.recordError(error instanceof Error ? error : new Error(String(error)));
@@ -446,7 +492,9 @@ export class AuthStorage implements CredentialStore {
 
 	set(provider: string, credential: Credential): void {
 		this.storage.withLock((content) => {
-			const nextData = { ...this.parseStorageData(content), [provider]: credential };
+			const currentData = this.parseStorageData(content);
+			const next = appendLoginSlot(currentData[provider], credential);
+			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
@@ -456,6 +504,32 @@ export class AuthStorage implements CredentialStore {
 		this.storage.withLock((content) => {
 			const nextData = { ...this.parseStorageData(content) };
 			delete nextData[provider];
+			this.data = nextData;
+			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
+		});
+	}
+
+	listSlots(provider: string): CredentialSlot[] {
+		return listSlots(this.data[provider] as PooledCredential | undefined);
+	}
+
+	setSlot(provider: string, slot: CredentialSlot): void {
+		this.storage.withLock((content) => {
+			const currentData = this.parseStorageData(content);
+			const next = upsertSlot(currentData[provider] as PooledCredential | undefined, slot);
+			const nextData = { ...currentData, [provider]: next };
+			this.data = nextData;
+			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
+		});
+	}
+
+	removeSlot(provider: string, name: string): void {
+		this.storage.withLock((content) => {
+			const currentData = this.parseStorageData(content);
+			const next = removeSlot(currentData[provider] as PooledCredential | undefined, name);
+			const nextData = { ...currentData };
+			if (next === undefined) delete nextData[provider];
+			else nextData[provider] = next;
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
@@ -489,20 +563,27 @@ export class AuthStorage implements CredentialStore {
 
 	private async reloadFromStorageAsync(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		return this.storage.withLockAsync(async (content) => {
-			const currentData = this.parseStorageData(content);
-			const revision = this.authPath ? getFileRevision(this.authPath) : undefined;
-			this.updateReadState(currentData, revision);
-			return { result: currentData };
+			const parsed = this.parseStorageContent(content);
+			const revision = parsed.repaired || !this.authPath ? undefined : getFileContentRevision(this.authPath);
+			this.updateReadState(parsed.data, revision);
+			return parsed.repaired
+				? { result: parsed.data, next: JSON.stringify(parsed.data, null, 2) }
+				: { result: parsed.data };
 		}, options);
 	}
 
 	private async readLatestData(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		options?.signal?.throwIfAborted();
 		if (!this.authPath) {
-			const reload = this.reloadFromStorageAsync(options);
-			return options?.signal ? reload : reload.catch(() => this.readState.data);
+			try {
+				return await this.reloadFromStorageAsync(options);
+			} catch (error) {
+				options?.signal?.throwIfAborted();
+				this.recordError(error);
+				return this.readState.data;
+			}
 		}
-		const revision = getFileRevision(this.authPath);
+		const revision = getFileContentRevision(this.authPath);
 		if (revision !== undefined && revision === this.readState.revision) return this.readState.data;
 		if (!this.readState.reload) {
 			const controller = new AbortController();
@@ -526,8 +607,12 @@ export class AuthStorage implements CredentialStore {
 		const reload = this.readState.reload;
 		reload.readers++;
 		try {
-			const result = raceWithAbortSignal(reload.promise, options?.signal);
-			return options?.signal ? await result : await result.catch(() => this.readState.data);
+			try {
+				return await raceWithAbortSignal(reload.promise, options?.signal);
+			} catch {
+				options?.signal?.throwIfAborted();
+				return this.readState.data;
+			}
 		} finally {
 			reload.readers--;
 			if (reload.readers === 0 && this.readState.reload === reload) {
@@ -560,7 +645,7 @@ export class AuthStorage implements CredentialStore {
 			const next = await fn(currentData[provider]);
 			if (next === undefined) {
 				latestData = currentData;
-				revision = this.authPath ? getFileRevision(this.authPath) : undefined;
+				revision = this.authPath ? getFileContentRevision(this.authPath) : undefined;
 				return { result: currentData[provider] };
 			}
 
@@ -706,7 +791,7 @@ export function readStoredCredential(
 	authPath: string = join(getAgentDir(), "auth.json"),
 ): Credential | undefined {
 	try {
-		const data = JSON.parse(readFileSync(normalizePath(authPath), "utf-8")) as AuthStorageData;
+		const data = JSON.parse(stripBom(readFileSync(normalizePath(authPath), "utf-8"))) as AuthStorageData;
 		return data[providerId];
 	} catch {
 		return undefined;

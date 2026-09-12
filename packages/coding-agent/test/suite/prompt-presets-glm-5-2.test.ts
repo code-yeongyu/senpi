@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import { GLM5_TUNING } from "../../src/core/extensions/builtin/prompt-preset/glm-5.ts";
 import {
 	type PromptPresetSettings,
 	resolvePreset,
@@ -44,9 +45,7 @@ describe("GLM 5.2 prompt preset", () => {
 
 			// then
 			expect(preset?.name).toBe("glm-5.2");
-			expect(preset?.prompt).toContain("running on GLM 5.2");
-			expect(preset?.prompt).toContain("absolute certainty");
-			expect(preset?.prompt).toContain("todo");
+			expect(preset?.prompt).toContain(GLM5_TUNING);
 			expect(preset?.prompt).not.toContain("apply_patch");
 		},
 	);
@@ -66,6 +65,14 @@ describe("GLM 5.2 prompt preset", () => {
 		},
 	);
 
+	it("routes user questions through ask_user_question when it is available", () => {
+		expect(GLM5_TUNING).toContain("ask_user_question");
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const preset = resolvePreset(createModel("glm-5.2", "openrouter", "openai-responses"), settings);
+
+		expect(preset?.prompt).toContain("ask_user_question");
+	});
+
 	it("allows settings.json to force glm-5.2 regardless of model id", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "glm-5.2" };
@@ -76,7 +83,7 @@ describe("GLM 5.2 prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("glm-5.2");
-		expect(preset?.prompt).toContain("running on GLM 5.2");
+		expect(preset?.prompt).toContain(GLM5_TUNING);
 	});
 
 	it("returns glm-5.2 preset for every GLM 5.2 built-in catalog model", () => {

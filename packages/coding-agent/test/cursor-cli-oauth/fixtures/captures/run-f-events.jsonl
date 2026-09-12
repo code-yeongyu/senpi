@@ -1,0 +1,272 @@
+4.050 {"type":"system","subtype":"init","apiKeySource":"login","cwd":"/private/tmp/cursor-p-qa","session_id":"945e230a-00f1-4837-b295-63c632694975","model":"GPT-5.5 272K Low","permissionMode":"default"}
+4.050 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"Write exactly 12 numbered lines, each a distinct 10-word fact about rivers."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975"}
+8.968 {"type":"thinking","subtype":"delta","text":"**Considering format for river facts**\n\nIt","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819145}
+8.970 {"type":"thinking","subtype":"delta","text":" sounds","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819147}
+8.970 {"type":"thinking","subtype":"delta","text":" like","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819147}
+8.970 {"type":"thinking","subtype":"delta","text":" I","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819147}
+8.971 {"type":"thinking","subtype":"delta","text":" need","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819147}
+8.973 {"type":"thinking","subtype":"delta","text":" to","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819150}
+8.982 {"type":"thinking","subtype":"delta","text":" provide","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819159}
+8.988 {"type":"thinking","subtype":"delta","text":" answers","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819164}
+8.994 {"type":"thinking","subtype":"delta","text":" in","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819170}
+9.136 {"type":"thinking","subtype":"delta","text":" English","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819312}
+9.137 {"type":"thinking","subtype":"delta","text":",","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819313}
+9.139 {"type":"thinking","subtype":"delta","text":" even","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819314}
+9.142 {"type":"thinking","subtype":"delta","text":" though","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819316}
+9.142 {"type":"thinking","subtype":"delta","text":" it","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819316}
+9.142 {"type":"thinking","subtype":"delta","text":" seems","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819316}
+9.142 {"type":"thinking","subtype":"delta","text":" the","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819317}
+9.142 {"type":"thinking","subtype":"delta","text":" user","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819317}
+9.142 {"type":"thinking","subtype":"delta","text":" might","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819317}
+9.142 {"type":"thinking","subtype":"delta","text":" prefer","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819317}
+9.142 {"type":"thinking","subtype":"delta","text":" Korean","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819318}
+9.142 {"type":"thinking","subtype":"delta","text":".","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819318}
+9.142 {"type":"thinking","subtype":"delta","text":" I'll","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819318}
+9.142 {"type":"thinking","subtype":"delta","text":" create","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819318}
+9.143 {"type":"thinking","subtype":"delta","text":" a","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819318}
+9.143 {"type":"thinking","subtype":"delta","text":" list","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819320}
+9.143 {"type":"thinking","subtype":"delta","text":" with","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819320}
+9.144 {"type":"thinking","subtype":"delta","text":" exactly","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819321}
+9.159 {"type":"thinking","subtype":"delta","text":" 12","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819335}
+9.165 {"type":"thinking","subtype":"delta","text":" distinct","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819342}
+9.174 {"type":"thinking","subtype":"delta","text":" lines","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819350}
+9.180 {"type":"thinking","subtype":"delta","text":".","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819356}
+9.187 {"type":"thinking","subtype":"delta","text":" Each","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819363}
+9.195 {"type":"thinking","subtype":"delta","text":" line","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819371}
+9.200 {"type":"thinking","subtype":"delta","text":" will","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819377}
+9.207 {"type":"thinking","subtype":"delta","text":" have","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819383}
+9.216 {"type":"thinking","subtype":"delta","text":" a","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819392}
+9.223 {"type":"thinking","subtype":"delta","text":" fact","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819400}
+9.230 {"type":"thinking","subtype":"delta","text":" about","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819406}
+9.238 {"type":"thinking","subtype":"delta","text":" rivers","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819414}
+9.246 {"type":"thinking","subtype":"delta","text":",","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819422}
+9.253 {"type":"thinking","subtype":"delta","text":" with","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819429}
+9.313 {"type":"thinking","subtype":"delta","text":" each","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819489}
+9.313 {"type":"thinking","subtype":"delta","text":" fact","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819489}
+9.313 {"type":"thinking","subtype":"delta","text":" being","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819489}
+9.313 {"type":"thinking","subtype":"delta","text":" exactly","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819489}
+9.313 {"type":"thinking","subtype":"delta","text":" 10","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819489}
+9.313 {"type":"thinking","subtype":"delta","text":" words","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819490}
+9.313 {"type":"thinking","subtype":"delta","text":" long","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819490}
+9.314 {"type":"thinking","subtype":"delta","text":".","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819491}
+9.324 {"type":"thinking","subtype":"delta","text":" I","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819500}
+9.329 {"type":"thinking","subtype":"delta","text":" should","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819505}
+9.335 {"type":"thinking","subtype":"delta","text":" ensure","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819512}
+9.343 {"type":"thinking","subtype":"delta","text":" that","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819520}
+9.353 {"type":"thinking","subtype":"delta","text":" the","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819530}
+9.359 {"type":"thinking","subtype":"delta","text":" number","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819536}
+9.365 {"type":"thinking","subtype":"delta","text":" at","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819542}
+9.372 {"type":"thinking","subtype":"delta","text":" the","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819549}
+9.379 {"type":"thinking","subtype":"delta","text":" beginning","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819556}
+9.385 {"type":"thinking","subtype":"delta","text":" doesn","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819562}
+9.394 {"type":"thinking","subtype":"delta","text":"’t","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819570}
+9.405 {"type":"thinking","subtype":"delta","text":" count","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819582}
+9.406 {"type":"thinking","subtype":"delta","text":" as","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819582}
+9.412 {"type":"thinking","subtype":"delta","text":" part","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819588}
+9.418 {"type":"thinking","subtype":"delta","text":" of","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819595}
+9.426 {"type":"thinking","subtype":"delta","text":" the","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819603}
+9.439 {"type":"thinking","subtype":"delta","text":" 10","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819615}
+9.446 {"type":"thinking","subtype":"delta","text":" words","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819622}
+9.453 {"type":"thinking","subtype":"delta","text":".","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819630}
+9.461 {"type":"thinking","subtype":"delta","text":" It's","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819638}
+9.468 {"type":"thinking","subtype":"delta","text":" crucial","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819644}
+9.474 {"type":"thinking","subtype":"delta","text":" to","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819651}
+9.479 {"type":"thinking","subtype":"delta","text":" follow","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819656}
+9.484 {"type":"thinking","subtype":"delta","text":" these","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819660}
+9.501 {"type":"thinking","subtype":"delta","text":" constraints","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819677}
+9.501 {"type":"thinking","subtype":"delta","text":" exactly","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819677}
+9.507 {"type":"thinking","subtype":"delta","text":"!","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819683}
+9.513 {"type":"thinking","subtype":"delta","text":" Let's","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819689}
+9.521 {"type":"thinking","subtype":"delta","text":" get","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819697}
+9.529 {"type":"thinking","subtype":"delta","text":" started","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819706}
+9.541 {"type":"thinking","subtype":"delta","text":"!","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819718}
+9.561 {"type":"thinking","subtype":"completed","session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819737}
+9.569 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"1"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819746}
+9.570 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819746}
+9.572 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Rivers"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819749}
+9.574 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" transport"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819751}
+9.576 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" sediment"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819753}
+9.577 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819754}
+9.578 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" nutrients"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819754}
+9.583 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819759}
+9.587 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819763}
+9.590 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" freshwater"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819767}
+9.591 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" across"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819767}
+9.595 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" landscapes"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819772}
+9.599 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" toward"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819775}
+9.600 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" oceans"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819776}
+9.601 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819778}
+9.603 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"2"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819779}
+9.606 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819782}
+9.607 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Many"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819784}
+9.609 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" civilizations"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819785}
+9.612 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" flour"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819789}
+9.612 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ished"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819789}
+9.615 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" beside"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819791}
+9.618 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" rivers"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819794}
+9.620 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" because"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819796}
+9.621 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" floods"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819798}
+9.628 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" enriched"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819804}
+9.628 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" nearby"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819804}
+9.628 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" soils"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819804}
+9.628 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819805}
+9.630 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"3"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819806}
+9.633 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819810}
+9.634 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" River"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819811}
+9.642 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" currents"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819819}
+9.646 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" carve"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819822}
+9.646 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" valleys"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819822}
+9.646 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819822}
+9.655 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" can"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819832}
+9.657 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"y"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819833}
+9.657 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ons"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819833}
+9.697 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819873}
+9.708 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" flood"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819884}
+9.715 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"pl"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819891}
+9.722 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ains"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819898}
+9.722 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819898}
+9.756 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819932}
+9.767 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" del"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819943}
+9.770 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"tas"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819947}
+9.774 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" over"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819950}
+9.777 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" time"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819953}
+9.780 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819957}
+9.780 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"4"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819957}
+9.812 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958819988}
+9.873 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" The"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820049}
+9.880 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Nile"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820056}
+9.924 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" is"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820101}
+9.981 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" often"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820158}
+10.098 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" considered"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820274}
+10.098 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Earth's"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820274}
+10.098 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" longest"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820274}
+10.098 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" river"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820275}
+10.129 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" by"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820305}
+10.129 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" measurements"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820305}
+10.129 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820305}
+10.129 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"5"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820305}
+10.153 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820329}
+10.211 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Rivers"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820387}
+10.222 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" provide"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820399}
+10.228 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" habitat"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820405}
+10.230 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" for"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820407}
+10.230 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" fish"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820407}
+10.265 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820442}
+10.278 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" insects"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820454}
+10.283 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820459}
+10.283 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" birds"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820460}
+10.283 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820460}
+10.321 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820497}
+10.330 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" amphib"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820507}
+10.338 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ians"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820515}
+10.338 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820515}
+10.338 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"6"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820515}
+10.378 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820554}
+10.435 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Gl"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820611}
+10.442 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ac"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820619}
+10.444 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"iers"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820621}
+10.489 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820665}
+10.500 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" springs"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820676}
+10.502 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820679}
+10.505 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" rainfall"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820681}
+10.505 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820681}
+10.543 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820719}
+10.554 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" snow"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820730}
+10.557 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"m"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820733}
+10.602 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"elt"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820779}
+10.657 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" can"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820834}
+10.667 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" all"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820843}
+10.709 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" feed"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820885}
+10.720 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" rivers"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820896}
+10.725 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820901}
+10.725 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"7"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820902}
+10.763 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820940}
+10.781 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" A"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820958}
+10.781 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" river"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820958}
+10.820 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"'s"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958820997}
+10.875 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" watershed"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821051}
+10.929 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" includes"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821105}
+10.985 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" land"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821161}
+11.045 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" draining"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821222}
+11.100 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" into"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821277}
+11.155 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" its"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821332}
+11.167 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" channel"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821343}
+11.169 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" system"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821345}
+11.173 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821350}
+11.173 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"8"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821350}
+11.210 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821386}
+11.269 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" D"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821446}
+11.324 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ams"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821500}
+11.337 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" alter"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821513}
+11.345 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" river"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821521}
+11.345 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" flow"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821521}
+11.379 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821556}
+11.436 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" sediment"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821612}
+11.449 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" movement"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821625}
+11.449 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821625}
+11.490 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821666}
+11.547 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" aquatic"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821723}
+11.607 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" migration"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821783}
+11.617 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" routes"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821793}
+11.621 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821797}
+11.621 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"9"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821797}
+11.660 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821837}
+11.719 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Me"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821895}
+11.728 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"andering"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821904}
+11.773 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" rivers"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958821949}
+11.830 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" shift"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822006}
+11.844 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" sideways"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822020}
+11.886 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" as"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822062}
+11.941 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" erosion"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822117}
+11.998 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822174}
+12.066 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" deposition"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822242}
+12.112 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" reshape"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822288}
+12.122 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" banks"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822299}
+12.127 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822303}
+12.127 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"10"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822304}
+12.167 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822344}
+12.224 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Est"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822401}
+12.235 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"u"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822412}
+12.283 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"aries"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822459}
+12.294 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" form"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822470}
+12.341 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" where"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822518}
+12.351 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" rivers"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822528}
+12.401 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" meet"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822577}
+12.409 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" oceans"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822585}
+12.461 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822637}
+12.512 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" mix"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822688}
+12.570 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" with"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822747}
+12.580 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" seaw"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822756}
+12.582 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ater"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822758}
+12.588 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822764}
+12.588 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"11"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822764}
+12.627 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822803}
+12.685 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Seasonal"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822861}
+12.743 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" mon"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822920}
+12.753 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"so"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822929}
+12.757 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ons"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822934}
+12.799 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" can"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822975}
+12.809 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" dramatically"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822986}
+12.812 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" increase"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958822989}
+12.855 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" river"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823031}
+12.868 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" discharge"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823045}
+12.868 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823045}
+12.912 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" flood"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823088}
+12.936 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" risk"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823113}
+12.936 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823113}
+12.936 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"12"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823113}
+12.969 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823145}
+12.979 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Healthy"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823156}
+13.026 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" rivers"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823201}
+13.080 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" filter"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823256}
+13.183 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" pollutants"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823359}
+13.183 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" naturally"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823359}
+13.197 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" through"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823373}
+13.205 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" wetlands"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823382}
+13.251 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823428}
+13.262 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" rip"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823438}
+13.268 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"arian"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823444}
+13.270 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" vegetation"}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823447}
+13.276 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975","timestamp_ms":1786958823452}
+14.052 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"1. Rivers transport sediment, nutrients, and freshwater across landscapes toward oceans.\n2. Many civilizations flourished beside rivers because floods enriched nearby soils.\n3. River currents carve valleys, canyons, floodplains, and deltas over time.\n4. The Nile is often considered Earth's longest river by measurements.\n5. Rivers provide habitat for fish, insects, birds, and amphibians.\n6. Glaciers, springs, rainfall, and snowmelt can all feed rivers.\n7. A river's watershed includes land draining into its channel system.\n8. Dams alter river flow, sediment movement, and aquatic migration routes.\n9. Meandering rivers shift sideways as erosion and deposition reshape banks.\n10. Estuaries form where rivers meet oceans and mix with seawater.\n11. Seasonal monsoons can dramatically increase river discharge and flood risk.\n12. Healthy rivers filter pollutants naturally through wetlands and riparian vegetation."}]},"session_id":"945e230a-00f1-4837-b295-63c632694975"}
+14.052 {"type":"result","subtype":"success","duration_ms":10002,"duration_api_ms":10002,"is_error":false,"result":"1. Rivers transport sediment, nutrients, and freshwater across landscapes toward oceans.\n2. Many civilizations flourished beside rivers because floods enriched nearby soils.\n3. River currents carve valleys, canyons, floodplains, and deltas over time.\n4. The Nile is often considered Earth's longest river by measurements.\n5. Rivers provide habitat for fish, insects, birds, and amphibians.\n6. Glaciers, springs, rainfall, and snowmelt can all feed rivers.\n7. A river's watershed includes land draining into its channel system.\n8. Dams alter river flow, sediment movement, and aquatic migration routes.\n9. Meandering rivers shift sideways as erosion and deposition reshape banks.\n10. Estuaries form where rivers meet oceans and mix with seawater.\n11. Seasonal monsoons can dramatically increase river discharge and flood risk.\n12. Healthy rivers filter pollutants naturally through wetlands and riparian vegetation.","session_id":"945e230a-00f1-4837-b295-63c632694975","request_id":"0dc7bb97-1f4a-4d73-b65d-42a138210c97","usage":{"inputTokens":24105,"outputTokens":244,"cacheReadTokens":0,"cacheWriteTokens":0}}

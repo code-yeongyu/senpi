@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { SessionStreamingError } from "../../../src/core/edited-assistant-message.ts";
 import { userMsg } from "../../utilities.ts";
 import { createHarness } from "../harness.ts";
 
@@ -24,8 +25,10 @@ describe("tree navigation during an active response", () => {
 			]);
 			await harness.session.prompt("second");
 
-			expect(navigationResult).toEqual(
-				new Error("Wait for the current response to finish before navigating the session tree."),
+			expect(navigationResult).toBeInstanceOf(SessionStreamingError);
+			expect((navigationResult as SessionStreamingError).code).toBe("streaming");
+			expect((navigationResult as Error).message).toBe(
+				"Wait for the current response to finish before navigating the session tree.",
 			);
 			expect(leafUnchanged).toBe(true);
 		} finally {

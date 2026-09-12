@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import type { Context, ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import type { Context, Message } from "@earendil-works/pi-ai";
+import { appendSdkContentBlocks } from "./content-blocks.ts";
 import type { ClaudeSdkOauthAuthLane } from "./options.ts";
-import type { Base64ImageSource, ContentBlockParam, Options } from "./sdk-boundary.ts";
+import type { ContentBlockParam, Options } from "./sdk-boundary.ts";
 import type { ClaudeSdkOauthSessionEntry } from "./session-registry.ts";
 import { HOST_TOOL_POLICY_FINGERPRINT, mapPiToolNameToSdk } from "./tools.ts";
 
@@ -42,15 +43,42 @@ export function sessionSyncDigest(value: unknown): string {
 	return digest(value);
 }
 
-export function sentMessages(context: Context): SentMessage[] {
-	const messages = context.messages.filter(
-		(message): message is SentMessage => message.role === "user" || message.role === "toolResult",
-	);
-	return messages;
+/**
+ * A user message with no content blocks carries nothing to transmit and is
+ * transient: it is present for a single provider call and gone by the next.
+ * Hashing one shifts every later index, so the following turn reports
+ * `sent_stream_diverged` and re-sends the whole history even though the
+ * conversation never changed. Tool results are never filtered - an empty tool
+ * result is a real observation, and its id and name stay hash-significant.
+ */
+function isContentlessUserMessage(message: SentMessage): boolean {
+	if (message.role !== "user") return false;
+	// Only a literal zero-block array is content-less. Whitespace-only text and
+	// explicit empty-text blocks still emit transport blocks, so they must stay
+	// hash-significant to keep divergence detection fail-closed.
+	return Array.isArray(message.content) && message.content.length === 0;
 }
 
+export function sentMessages(context: Context): SentMessage[] {
+	return context.messages.filter(isTransmittedMessage);
+}
+
+/**
+ * The one selection rule for "message the provider was sent". Branch-derived and
+ * context-derived hashes MUST share it: a content-less user message that only one
+ * side skips shifts every later index and reports a false divergence.
+ */
+export function isTransmittedMessage(message: { role: string }): message is SentMessage {
+	if (message.role !== "user" && message.role !== "toolResult") return false;
+	return !isContentlessUserMessage(message as SentMessage);
+}
+
+/**
+ * Applies the transmitted-message rule itself, so no caller can produce a hash
+ * list that disagrees with another caller's by forgetting the filter.
+ */
 export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
-	const hashes = messages.map((message) =>
+	const hashes = messages.filter(isTransmittedMessage).map((message) =>
 		digest(
 			message.role === "user"
 				? { role: message.role, content: message.content }
@@ -65,7 +93,7 @@ export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
 	return hashes;
 }
 
-function prefixDigest(hashes: readonly string[], count = hashes.length): string {
+export function sentHashPrefixDigest(hashes: readonly string[], count = hashes.length): string {
 	return digest(hashes.slice(0, count));
 }
 
@@ -79,17 +107,19 @@ export function recordSyncedStream(entry: ClaudeSdkOauthSessionEntry, hashes: re
 	const copy = [...hashes];
 	sentHashesByEntry.set(entry, copy);
 	entry.sentCount = copy.length;
-	entry.syncedPrefixHash = prefixDigest(copy);
+	entry.syncedPrefixHash = sentHashPrefixDigest(copy);
 	entry.branchInfo = null;
 }
 
-const GENERATED_DATE_LINE = /\nCurrent date: \d{4}-\d{2}-\d{2}(?=\nCurrent working directory: [^\n]*$)/;
+const GENERATED_DATE_LINE = /\nCurrent date: \d{4}-\d{2}-\d{2}(?=\nCurrent working directory: [^\n]*)/;
 
 /**
  * The generated date line advances at UTC midnight while the conversation is
  * unchanged; hashing it verbatim retires a live session at midnight for no
- * semantic reason. Only that exact terminal line is neutralized - cwd and every
- * other prompt region stay fail-closed.
+ * semantic reason. Only that exact date-plus-cwd pair is neutralized - cwd and
+ * every other prompt region stay fail-closed. Extension appends legitimately
+ * follow the cwd line (oh-my-openagent#7884), so the pair is matched wherever
+ * it appears, not only at the end of the prompt.
  */
 function fingerprintSystemPrompt(systemPrompt: Options["systemPrompt"]): unknown {
 	if (typeof systemPrompt !== "string") return systemPrompt ?? null;
@@ -120,6 +150,7 @@ export function configFingerprint(
 			authLane,
 			accountName,
 			permissionMode: options.permissionMode,
+			// Bump HOST_TOOL_POLICY_FINGERPRINT in tools.ts when denial copy or hooks change.
 			hostToolPolicy: HOST_TOOL_POLICY_FINGERPRINT,
 			settingSources: options.settingSources,
 			extraArgs: options.extraArgs,
@@ -129,25 +160,15 @@ export function configFingerprint(
 	};
 }
 
-function appendContent(blocks: ContentBlockParam[], content: string | readonly (TextContent | ImageContent)[]): void {
-	if (typeof content === "string") {
-		blocks.push({ type: "text", text: content });
+function appendContent(blocks: ContentBlockParam[], content: string | readonly unknown[]): void {
+	// The delta path has always transmitted a whole-content empty string as an
+	// empty text block; keep that wire shape so resident sessions see the same
+	// payload as before the shared mapper (prompt-bridge intentionally skips it).
+	if (content === "") {
+		blocks.push({ type: "text", text: "" });
 		return;
 	}
-	for (const block of content) {
-		blocks.push(
-			block.type === "text"
-				? { type: "text", text: block.text }
-				: {
-						type: "image",
-						source: {
-							type: "base64",
-							media_type: block.mimeType as Base64ImageSource["media_type"],
-							data: block.data,
-						},
-					},
-		);
-	}
+	appendSdkContentBlocks(blocks, content);
 }
 
 export function buildDeltaPromptBlocks(

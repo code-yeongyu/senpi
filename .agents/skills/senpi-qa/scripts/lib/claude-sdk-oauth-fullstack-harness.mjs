@@ -9,6 +9,7 @@
  */
 
 import { createServer } from "node:http";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { guardRealAuth, makeSandbox, repoRoot, track } from "./common.mjs";
@@ -69,6 +70,13 @@ async function startLoopbackServer(onRequest, holdRelease) {
 					response.end(sse);
 					return;
 				}
+				if (hold.stall === true) {
+					// Stream-start stall: headers flushed above, first SSE event withheld
+					// until release — the client stream-start watchdog must fire.
+					response.flushHeaders();
+					void hold.release.then(() => response.end(sse));
+					return;
+				}
 				// Stream the opening events so the turn is genuinely in flight, tell the
 				// phase it may act now, and finish only when it releases the hold.
 				const { head, tail } = splitSseBody(sse);
@@ -113,6 +121,23 @@ export async function bootHermeticStack({ sandboxLabel = "claude-sdk-fullstack-p
 	);
 
 	seedProbeAgentDir(box.agentDir);
+	// Post-#969 the ambient lane is opt-in AND the SDK subprocess validates its own
+	// credential store, so seed the sandbox CLAUDE_CONFIG_DIR with a dummy OAuth blob
+	// in the exact shape `claude auth status` accepts.
+	const claudeConfigDir = join(box.dir, "claude-config");
+	mkdirSync(claudeConfigDir, { recursive: true, mode: 0o700 });
+	writeFileSync(
+		join(claudeConfigDir, ".credentials.json"),
+		JSON.stringify({
+			claudeAiOauth: {
+				accessToken: "fullstack-probe-dummy-access",
+				refreshToken: "fullstack-probe-dummy-refresh",
+				expiresAt: 4102444800000,
+				scopes: ["user:inference", "user:profile", "user:sessions:claude_code"],
+			},
+		}),
+		{ mode: 0o600 },
+	);
 	// The ambient auth lane hands the probe's own environment to the Claude Code
 	// subprocess, so inherited credentials and proxies are scrubbed BEFORE the
 	// hermetic pins are applied, and the result is asserted below.
@@ -126,10 +151,11 @@ export async function bootHermeticStack({ sandboxLabel = "claude-sdk-fullstack-p
 		PI_TELEMETRY: "0",
 		ANTHROPIC_BASE_URL: baseUrl,
 		ANTHROPIC_API_KEY: "fullstack-probe-dummy-key",
+		SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION: "ambient",
+		SENPI_CLAUDE_SDK_OAUTH_ENABLED: "1",
 		CLAUDE_CONFIG_DIR: join(box.dir, "claude-config"),
 		CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
 		CLAUDE_CODE_DISABLE_TELEMETRY: "1",
-		SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION: "ambient",
 		NO_PROXY: "127.0.0.1,localhost",
 		no_proxy: "127.0.0.1,localhost",
 	});
@@ -216,6 +242,21 @@ export async function bootHermeticStack({ sandboxLabel = "claude-sdk-fullstack-p
 			let releaseHold;
 			pendingHold = {
 				inFlight: onInFlight,
+				release: new Promise((resolve) => {
+					releaseHold = resolve;
+				}),
+			};
+			return () => releaseHold?.();
+		},
+		/**
+		 * Stalls the NEXT loopback response after headers: the first SSE event is
+		 * never written until release(), so the client stream-start watchdog fires.
+		 * issue #723 timeout-retry probe. Release with the returned function.
+		 */
+		stallNextResponse() {
+			let releaseHold;
+			pendingHold = {
+				stall: true,
 				release: new Promise((resolve) => {
 					releaseHold = resolve;
 				}),

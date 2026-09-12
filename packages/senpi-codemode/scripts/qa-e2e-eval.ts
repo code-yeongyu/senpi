@@ -17,8 +17,9 @@ class QaScenarioError extends Error {
 }
 
 async function main(): Promise<void> {
-	const suppliedAgentDir = process.env.SENPI_CODING_AGENT_DIR;
-	const agentDir = suppliedAgentDir ?? (await mkdtemp(join(tmpdir(), "senpi-codemode-agent-")));
+	// A live Senpi or branded launcher exports its real agent directory to child commands.
+	// Cleanup below must own every path it removes, so inherited runtime state is never scratch space.
+	const agentDir = await mkdtemp(join(tmpdir(), "senpi-codemode-agent-"));
 	const settingsJson = settingsJsonFromArgs();
 	const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-e2e-"));
 	await mkdir(agentDir, { recursive: true });

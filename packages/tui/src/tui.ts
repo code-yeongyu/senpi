@@ -27,6 +27,23 @@ import { consumeTmuxFocusEvent, DISABLE_FOCUS_REPORTING, ENABLE_FOCUS_REPORTING 
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
+const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
+
+function writeBounded(terminal: Terminal, data: string): void {
+	for (let offset = 0; offset < data.length; offset += MAX_RENDER_WRITE_CHARS) {
+		let end = Math.min(data.length, offset + MAX_RENDER_WRITE_CHARS);
+		if (
+			end < data.length &&
+			data.charCodeAt(end - 1) >= 0xd800 &&
+			data.charCodeAt(end - 1) <= 0xdbff &&
+			data.charCodeAt(end) >= 0xdc00 &&
+			data.charCodeAt(end) <= 0xdfff
+		)
+			end--;
+		if (end === offset) end++;
+		terminal.write(data.slice(offset, end));
+	}
+}
 
 interface KittyImageHeader {
 	ids: number[];
@@ -904,6 +921,13 @@ export abstract class TuiBase extends Container {
 		return this.overlayStack.some((o) => this.isOverlayVisible(o));
 	}
 
+	/** Check if the focused component is a visible overlay */
+	protected isOverlayFocused(): boolean {
+		return this.overlayStack.some(
+			(entry) => entry.component === this.focusedComponent && this.isOverlayVisible(entry),
+		);
+	}
+
 	/** Check if an overlay entry is currently visible */
 	private isOverlayVisible(entry: OverlayStackEntry): boolean {
 		if (entry.hidden) return false;
@@ -1146,13 +1170,18 @@ export abstract class TuiBase extends Container {
 	}
 
 	private handleTerminalInput(data: string): void {
-		const focus = consumeTmuxFocusEvent(data);
-		if (focus.event !== null) {
-			resetCapabilitiesCache();
-			this.invalidate();
-			this.requestRender(true);
-			if (focus.data.length === 0) return;
-			data = focus.data;
+		// Fullscreen renderers own focus events so they can clear only an active drag selection
+		// without forcing idle or completed-selection repaints. Main-screen mode still uses focus
+		// changes to refresh terminal capabilities after returning to a multiplexer pane.
+		if (this.mode !== "fullscreen") {
+			const focus = consumeTmuxFocusEvent(data);
+			if (focus.event !== null) {
+				resetCapabilitiesCache();
+				this.invalidate();
+				this.requestRender(true);
+				if (focus.data.length === 0) return;
+				data = focus.data;
+			}
 		}
 		if (this.consumeOsc11BackgroundResponse(data)) {
 			return;
@@ -1789,7 +1818,7 @@ export abstract class TuiBase extends Container {
 
 		const finalCursorRow = plan.viewportTop + finalPaintedScreenRow;
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
-		this.terminal.write(buffer);
+		writeBounded(this.terminal, buffer);
 
 		this.cursorRow = Math.max(0, newLines.length - 1);
 		this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
@@ -1828,7 +1857,7 @@ export abstract class TuiBase extends Container {
 		}
 
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, bufferLength - 1);
-		this.terminal.write(buffer);
+		writeBounded(this.terminal, buffer);
 
 		this.cursorRow = Math.max(0, newLines.length - 1);
 		this.maxLinesRendered = newLines.length;
@@ -1867,7 +1896,7 @@ export abstract class TuiBase extends Container {
 
 		const finalCursorRow = viewportTop + Math.max(0, height - 1);
 		buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
-		this.terminal.write(buffer);
+		writeBounded(this.terminal, buffer);
 
 		this.muxViewportRepaintCount += 1;
 		this.cursorRow = Math.max(0, newLines.length - 1);
@@ -2020,7 +2049,7 @@ export abstract class TuiBase extends Container {
 			if (clear) {
 				buffer += this.deleteKittyImages(this.previousKittyImageIds);
 				buffer += "\x1b[2J\x1b[H";
-				if (clearScrollback && !preserveMuxScrollback) {
+				if (clearScrollback && !preserveMuxScrollback && process.platform !== "win32") {
 					buffer += "\x1b[3J";
 				}
 			} else {
@@ -2045,7 +2074,7 @@ export abstract class TuiBase extends Container {
 			}
 			const finalCursorRow = Math.max(0, newLines.length - 1);
 			buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
-			this.terminal.write(buffer);
+			writeBounded(this.terminal, buffer);
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			// Reset max lines when clearing, otherwise track growth
 			if (clear) {
@@ -2195,7 +2224,7 @@ export abstract class TuiBase extends Container {
 					buffer += `\x1b[${moveBack}A`;
 				}
 				buffer = this.finishFrame(buffer, cursorPos, newLines.length, targetRow);
-				this.terminal.write(buffer);
+				writeBounded(this.terminal, buffer);
 				this.cursorRow = targetRow;
 			} else {
 				this.positionHardwareCursor(cursorPos, newLines.length);
@@ -2263,6 +2292,30 @@ export abstract class TuiBase extends Container {
 			}
 
 			if (viewportTop !== prevViewportTop) {
+				// Content grew above the viewport (e.g. Ctrl+O expanding several tool
+				// blocks at once). Repainting only the visible rows would drop the
+				// inserted above-viewport rows from scrollback while marking them painted,
+				// so fall back to the canonical replay / mux dispatch used by the
+				// firstVisibleChanged === -1 path, which re-emits the full transcript.
+				if (lineCountDelta !== 0) {
+					if (preserveMuxScrollback) {
+						if (!this.renderMuxViewportRepaint(newLines, rawLines, cursorPos, width, height, viewportTop)) {
+							fullRender(true, false);
+						}
+					} else {
+						this.renderScrollbackReplay(
+							newLines,
+							rawLines,
+							cursorPos,
+							width,
+							height,
+							prevViewportTop,
+							hardwareCursorRow,
+						);
+					}
+					return;
+				}
+
 				const previousViewportBottom = Math.min(this.previousLines.length - 1, prevViewportTop + height - 1);
 				let buffer = TUI.FRAME_BEGIN;
 				buffer += this.deleteChangedKittyImages(prevViewportTop, previousViewportBottom);
@@ -2280,7 +2333,7 @@ export abstract class TuiBase extends Container {
 
 				const finalCursorRow = viewportTop + Math.max(0, height - 1);
 				buffer = this.finishFrame(buffer, cursorPos, newLines.length, finalCursorRow);
-				this.terminal.write(buffer);
+				writeBounded(this.terminal, buffer);
 
 				this.cursorRow = Math.max(0, newLines.length - 1);
 				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
@@ -2443,7 +2496,7 @@ export abstract class TuiBase extends Container {
 		}
 
 		// Write entire buffer at once
-		this.terminal.write(buffer);
+		writeBounded(this.terminal, buffer);
 
 		// Track cursor position for next render
 		// cursorRow tracks end of content (for viewport calculation)

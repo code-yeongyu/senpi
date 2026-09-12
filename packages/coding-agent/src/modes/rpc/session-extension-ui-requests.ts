@@ -25,6 +25,11 @@ export class SessionExtensionUiRequests {
 		return true;
 	}
 
+	cancelAll(): void {
+		for (const [id, request] of this.pending) request.resolve({ type: "extension_ui_response", id, cancelled: true });
+		this.pending.clear();
+	}
+
 	close(): void {
 		for (const request of this.pending.values()) {
 			request.reject(new Error("Extension UI request cancelled: session closed"));

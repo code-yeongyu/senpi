@@ -31,7 +31,7 @@ for file in $STAGED_FILES; do
       RUN_PM_VERIFY=1
       break
       ;;
-    scripts/build-all.mjs|scripts/create-bin-stubs.mjs|scripts/verify-package-managers.mjs)
+    scripts/build-all.mjs|scripts/package-manager.mjs|scripts/create-bin-stubs.mjs|scripts/verify-package-managers.mjs)
       RUN_PM_VERIFY=1
       break
       ;;

@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type {
 	ModelChangeEntry,
+	ModelChangeRejectedEntry,
 	SessionEntry,
 	SessionMessageEntry,
 	SessionTreeNode,
@@ -94,6 +95,20 @@ function modelChange(id: string, parentId: string | null): ModelChangeEntry {
 		timestamp: new Date().toISOString(),
 		provider: "anthropic",
 		modelId: "claude-sonnet-4",
+	};
+}
+
+function modelChangeRejected(id: string, parentId: string | null): ModelChangeRejectedEntry {
+	return {
+		type: "model_change_rejected",
+		id,
+		parentId,
+		timestamp: new Date().toISOString(),
+		provider: "faux",
+		modelId: "too-small",
+		reason: "context-budget",
+		detail:
+			'Model "faux/too-small" cannot switch: ... Compact the session, then revalidate and retry the model switch.',
 	};
 }
 
@@ -265,6 +280,7 @@ describe("TreeSelectorComponent", () => {
 			const plain = plainLines.join("\n");
 			expect(plain).toContain("branch");
 			expect(plain).toContain("copy");
+			expect(plain).toContain("edit");
 			expect(plain).toContain("filters");
 			expect(plain).toContain("cycle");
 			expect(plain).toContain("label time");
@@ -292,6 +308,79 @@ describe("TreeSelectorComponent", () => {
 			selector.handleInput("\x18");
 
 			expect(copied).toBe(message);
+		});
+	});
+
+	describe("edit message", () => {
+		function createEditSelector(entries: SessionEntry[], currentLeafId: string) {
+			const selected: string[] = [];
+			const edited: string[] = [];
+			const selector = new TreeSelectorComponent(
+				buildTree(entries),
+				currentLeafId,
+				24,
+				(entryId) => selected.push(entryId),
+				() => {},
+			);
+			selector.onEditMessage = (entryId) => edited.push(entryId);
+			return { selector, selected, edited };
+		}
+
+		test("requests an assistant edit with ctrl+e instead of navigating", () => {
+			const { selector, selected, edited } = createEditSelector(
+				[userMessage("user-1", null, "hello"), assistantMessage("asst-1", "user-1", "The answer is 41.")],
+				"asst-1",
+			);
+
+			selector.handleInput("\x05");
+
+			expect(edited).toEqual(["asst-1"]);
+			expect(selected).toEqual([]);
+		});
+
+		test("falls back to the select flow when ctrl+e targets a user message", () => {
+			const { selector, selected, edited } = createEditSelector(
+				[userMessage("user-1", null, "hello"), assistantMessage("asst-1", "user-1", "hi")],
+				"asst-1",
+			);
+			selector.handleInput("\x1b[A"); // up: select user-1
+			expect(selector.getTreeList().getSelectedNode()?.entry.id).toBe("user-1");
+
+			selector.handleInput("\x05");
+
+			expect(selected).toEqual(["user-1"]);
+			expect(edited).toEqual([]);
+		});
+
+		test("ignores ctrl+e on entries that are not messages", () => {
+			const { selector, selected, edited } = createEditSelector(
+				[
+					userMessage("user-1", null, "hello"),
+					modelChange("model-1", "user-1"),
+					assistantMessage("asst-1", "model-1", "hi"),
+				],
+				"asst-1",
+			);
+			selector.handleInput("\x01"); // ctrl+a: show all entries
+			selector.handleInput("\x1b[A"); // up: select model-1
+			expect(selector.getTreeList().getSelectedNode()?.entry.id).toBe("model-1");
+
+			selector.handleInput("\x05");
+
+			expect(selected).toEqual([]);
+			expect(edited).toEqual([]);
+		});
+
+		test("keeps enter on an assistant message as plain navigation", () => {
+			const { selector, selected, edited } = createEditSelector(
+				[userMessage("user-1", null, "hello"), assistantMessage("asst-1", "user-1", "hi")],
+				"asst-1",
+			);
+
+			selector.handleInput("\r");
+
+			expect(selected).toEqual(["asst-1"]);
+			expect(edited).toEqual([]);
 		});
 	});
 
@@ -697,6 +786,70 @@ describe("TreeSelectorComponent", () => {
 
 			selector.handleInput(DOWN); // user-3a → asst-3a (not user-3b)
 			expect(list.getSelectedNode()?.entry.id).toBe("asst-3a");
+		});
+	});
+
+	// https://github.com/code-yeongyu/senpi/issues/1526
+	describe("refused model switch entries", () => {
+		const DOWN = "\x1b[B";
+		const entries = [
+			userMessage("user-1", null, "hello"),
+			assistantMessage("asst-1", "user-1", "hi"),
+			modelChangeRejected("refused-1", "asst-1"),
+		];
+
+		test("renders the refusal with its model and reason instead of a blank row", () => {
+			const selector = new TreeSelectorComponent(
+				buildTree(entries),
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+				undefined,
+				undefined,
+				"all",
+			);
+
+			const rendered = stripVTControlCharacters(selector.getTreeList().render(200).join("\n"));
+
+			expect(rendered).toContain("[model rejected: too-small (context-budget)]");
+		});
+
+		test("keeps the refusal out of the default view like every other bookkeeping entry", () => {
+			const selector = new TreeSelectorComponent(
+				buildTree(entries),
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+			);
+			const list = selector.getTreeList();
+
+			const visible = new Set<string>();
+			for (let i = 0; i < entries.length + 2; i++) {
+				visible.add(list.getSelectedNode()?.entry.id ?? "");
+				selector.handleInput(DOWN);
+			}
+
+			expect([...visible].sort()).toEqual(["asst-1", "user-1"]);
+		});
+
+		test("finds the refusal by search text", () => {
+			const selector = new TreeSelectorComponent(
+				buildTree(entries),
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+				undefined,
+				undefined,
+				"all",
+			);
+			const list = selector.getTreeList();
+
+			selector.handleInput("rejected");
+
+			expect(list.getSelectedNode()?.entry.id).toBe("refused-1");
 		});
 	});
 });

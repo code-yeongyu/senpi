@@ -1,5 +1,350 @@
 # Local fork changes
 
+## 2026-09-11 - Make file reload detection independent of mtime granularity
+
+### What changed
+
+- `src/utils/paths.ts` adds a SHA-256 file-content revision helper.
+- `src/core/auth-storage.ts` uses content revisions for shared auth reload coalescing.
+- The Cursor CLI OAuth and Claude SDK OAuth settings caches use content revisions instead of `mtimeMs:size`.
+- The package changelog records the runtime fix.
+
+### Why
+
+- Two rapid rewrites can share an mtime on Linux, causing auth readers or cached provider settings to retain stale data. Content revisions preserve the cache optimization while making change detection deterministic.
+
+### Why this lives in the fork
+
+- These are Senpi's auth and provider settings runtime paths and their fork-specific reload behavior.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/utils/paths.ts`, `src/core/auth-storage.ts`, and the two provider settings loaders.
+
+## 2026-09-10 - Use native TypeScript builds for omob performance
+
+### What changed
+
+- packages/coding-agent/package.json: build uses tsgo for the emitted workspace build.
+
+### Why
+
+- The native compiler reduces omob build time without changing runtime JavaScript.
+
+### Why this lives in the fork
+
+- The package build manifest owns the compiler used by the fork's release pipeline.
+
+### Expected merge conflict zones
+
+- The `build` script in packages/coding-agent/package.json.
+
+## 2026-09-04 - Restore the @anthropic-ai/sdk 0.123.0 pin the R4b merge dropped
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/sdk` 0.120.0 -> 0.123.0, restoring the declaration the 2026-09-03 upstream sync carried before the R4b re-integration reverted it; `09e23825a` resyncs the root lockfile and the generated publish/install locks to the restored pin.
+
+### Why
+
+- The synced lockfiles and the `.npmrc` `min-release-age-exclude[]=@anthropic-ai/sdk` entry assume 0.123.0, so the reverted manifest left `npm ci` resolving a manifest/lockfile mismatch.
+
+### Why an extension could not handle it
+
+- Dependency resolution happens from the package manifest during install, before any runtime or extension code loads.
+
+### Expected merge conflict zones
+
+- LOW: the `@anthropic-ai/sdk` line in `packages/coding-agent/package.json` and the generated `publish-deps.lock.json` / `install-lock` entries.
+
+## 2026-09-03 - Bump @anthropic-ai/claude-agent-sdk to 0.3.259
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.241 -> 0.3.259. Regenerated the coding-agent publish dependency closure, install lock, Claude Agent SDK platform lock, and root lockfiles from the refreshed pin.
+- `bun.lock`: besides the SDK entries, `bun install` also catches the workspace package versions up from `2026.9.2-4` to `2026.9.3`. The release commit `240fff144` bumped every workspace `package.json` and the npm locks but never regenerated `bun.lock`, so the tracked Bun lockfile was already stale on main; this PR records the state `bun install` produces from the current manifests and adds no dependency beyond the SDK's own optional platform packages.
+
+### Why
+
+- SDK 0.3.241 bundles Claude Code 2.1.241, which the API rejects for `claude-fable-5-1` (`version 2.1.251 or newer is required`). 0.3.259 bundles Claude Code 2.1.259 and satisfies that floor.
+
+### Why an extension could not handle it
+
+- The bundled Claude Code binary is selected by the package pin and install graph before any extension loads. `CLAUDE_CODE_EXECUTABLE` is only a session-local workaround.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/package.json` and the generated publish/install/platform locks.
+
+## 2026-09-02 - RPC host lifecycle teardown treats a timed-out probe as unknown, not alive
+
+- `test/rpc-host-lifecycle.test.ts` decides Windows process liveness with the production `processIsLive(pid)` (`kill(pid, 0)`) instead of trusting the PowerShell CIM probe's `timedOut` flag. A loaded `windows-latest` runner could time the 10s CIM probe out for a supervisor that had genuinely idle-exited; `terminateSupervisor()` then rethrew the `Stop-Process` failure (`starts a fresh host transparently on the next ensure after an idle exit`), and `waitForHostExit()` spun to its deadline and threw `did not exit within Nms`. A timed-out probe means the state is unknown, so it is re-decided by `kill(pid, 0)` (`ESRCH` -> gone, `EPERM` -> alive); a process that is really still alive still rethrows / still keeps waiting.
+
+## 2026-09-01 - Acknowledge RPC abort before quiesce
+
+- The RPC `abort` command now acknowledges immediately after dispatching the abort signal, while observing quiesce failures through the existing `rpc_error` event path.
+
+- `abort_bash` and `abort_retry` remain unchanged because they synchronously dispatch their abort actions and do not await session quiescence.
+
+
+## 2026-08-30 - Make interactive-host entry-parity tests rules-hermetic
+
+- The spawned RPC host in `test/interactive-host-runtime.test.ts` now sets `PI_RULES_DISABLED=1`, so the rules extension's asynchronous `pi-rules.scan` custom entry can no longer race the host-vs-local entry parity assertions (flaky `transports setup mutations to the authoritative host before rebind` on CI shard 1/3).
+- The tree-navigation regression now asserts navigation through its real contract: `SessionManager.branch()` is a memory-only leaf-pointer move, so the test proves the host applied it by checking that the next host append (`session_info`) lands as a root entry. The old persisted-leaf-changed assertion only ever passed when the rules extension's async scan entry happened to append after the branch, which was the flake.
+
+## 2026-08-29 - GLM-5.3 default and prompt preset
+
+- Use GLM-5.3 as the Z.AI global and China default, with the matching built-in prompt preset from current main.
+
+## Cursor CLI OAuth tool-frame suppression boundary (2026-08-29)
+
+- Suppress Cursor CLI tool protocol frames without creating assistant text, while still closing the preceding text segment and resetting cumulative-snapshot tracking so post-tool prose is not lost.
+## Credential rotation and fallback parity fixes (2026-08-28)
+
+- Preserve dotted bare model IDs in fallback tombstone matching, admit policy-only credential slots, avoid consuming half-open leases during runtime preflight, and isolate service-created credential pool state under the requested agent directory.
+
+
+## Shared RPC attachment lifecycle (2026-08-28)
+
+- Socket RPC dispatch remains re-entrant so extension UI responses can resolve in-flight commands.
+- Shared-path session attachments retain one runtime binding and only emit terminal closure on the final attachment.
+- Per-connection attachment ownership now preserves duplicate-open counts and waits for in-flight opens before disconnect cleanup.
+- The exported open-session response and protocol table expose `attached`, and synchronous prompt transport failures report failed preflight.
+
+
+## Bun-compiled runtime assets (2026-08-27)
+
+### What changed
+
+- Bun-compiled coding-agent binaries now embed the imagegen bundled skill through the builtin's file-asset import; Node distributions continue to use the copied `dist` asset.
+
+### Why
+
+- Copying the skill into `dist` does not add it to Bun's compile graph, so compiled binaries lost the skill while emitting a missing-skill diagnostic.
+
+### Why an extension could not handle it
+
+- The compiled asset graph and builtin resource path are established by the package build and extension implementation before an extension can provide resources.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts` and its asset declaration.
+
+
+## @anthropic-ai/sdk peer alignment (2026-08-26)
+
+### What changed
+
+- `packages/coding-agent/package.json` bumps `@anthropic-ai/sdk` `0.91.1` -> `0.120.0` so the pin satisfies the `@anthropic-ai/claude-agent-sdk@0.3.241` peer range (`>=0.93.0`).
+
+### Why
+
+- Eliminates the install-time `incorrect peer dependency` warning users reported; audited additive-only API surface changes.
+
+### Why this lives in the fork
+
+- The exact-version pin set is fork-owned dependency policy.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/package.json` dependency pins during upstream syncs.
+
+## Package identity re-diverges from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/package.json` keeps the senpi identity: `@code-yeongyu/senpi`, calver
+  `2026.8.24`, `.senpi` configDir, the `senpi` bin alongside `pi`, and the fork rpc-entry export path.
+- `packages/coding-agent/install-lock/package.json` keeps `@code-yeongyu/senpi-install`, the senpi
+  dependency pin, `rimraf` 6.1.3, and `@hono/node-server`.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- Name/version/bin/exports blocks of both manifests on every upstream release.
+
+## Release dependency refresh and lock regeneration (2026-08-24)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.238 -> 0.3.241, `@aws-sdk/client-bedrock-runtime` 3.1115.0 -> 3.1116.0, and `typebox` 1.3.16 -> 1.3.18.
+- The coding-agent publish dependency closure, install lock, and Claude Agent SDK platform lock were regenerated from the refreshed exact pins.
+
+### Why
+
+- These are the compatible dependency updates selected for the 2026.8.24 release. The generated locks are part of the published package contract and must match the manifest exactly.
+- The Discord-reported Bun 1.4 redirect cleanup failure is already fixed in the same release line by feature-detecting `body.dump()` and falling back to argument-free stream destruction.
+
+### Why an extension could not handle it
+
+- Package resolution and the redirect response-body cleanup helper both execute below the extension interception surface.
+
+### Expected merge conflict zones
+
+- HIGH: `package.json` and the generated publish/install/platform locks.
+- LOW: the redirect response-body compatibility helper and its regression test.
+
+## 2026-08-25 — Attach compatible shared RPC hosts
+
+`ensureHost` now attaches to any compatible RPC socket, including a host started by another client surface, while retaining typed refusal for incompatible unmanaged owners. Hosts senpi starts continue to use canonical `host.pid` and `settings.json` state; attached hosts are not lifecycle-managed.
+
+## models.json schema accepts the video input modality (2026-08-23)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-config-schema.ts`: the `input` unions of `ModelDefinitionSchema` and `ModelOverrideSchema` now accept `video` in addition to `text` and `image`.
+- `packages/coding-agent/test/suite/regressions/0002-models-json-video-input.test.ts`: failing-first regression covering `models[]` acceptance, `modelOverrides` acceptance, and continued `audio` rejection (`audio` exists nowhere in the runtime type).
+- `packages/coding-agent/CHANGELOG.md`: [Unreleased] entry referencing PR #1087.
+
+### Why
+
+- The fork types `Model.input` as `("text" | "image" | "video")[]` (`packages/ai/src/model.ts`) and ships builtin `kimi-coding` k3 declaring `["text","image","video"]`, but the user-facing models.json schema was never extended when video support landed. Any user provider declaring video failed validation, and `ModelConfig.loadSync` rejects the entire file on any schema error — unregistering every user-defined provider and surfacing only a misleading fallback-chain "roles are unsupported" warning downstream. Upstream pi-mono is consistently `text|image` in both the type and the schema, so this gap is fork-introduced; this change closes it on the schema side only. The all-or-nothing rejection semantics and the fallback-warning wording are deliberately untouched (separate design concerns).
+
+### Why an extension could not handle it
+
+- The schema is the load-time gate for every user provider; extensions run after `ModelConfig` has already accepted or rejected the file.
+
+### Expected merge conflict zones
+
+- LOW: two single-line unions in `model-config-schema.ts`; upstream has not touched this schema since the fork split it from `model-config.ts`.
+
+## Coding-agent dependency refresh and generated install-lock update (2026-08-20)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@anthropic-ai/claude-agent-sdk` 0.3.220 -> 0.3.238, `@aws-sdk/client-bedrock-runtime` 3.1112.0 -> 3.1115.0, `@smithy/node-http-handler` 4.11.2 -> 4.11.3, `grok-mermaid` 0.2.2 -> 0.2.3, `highlight.js` 11.11.1 -> 11.12.0, `marked` 18.0.7 -> 18.0.10, `minimatch` 10.2.5 -> 10.2.6, `undici` 8.9.0 -> 8.10.0, `ws` 8.21.1 -> 8.21.3, `typebox` 1.3.8 -> 1.3.16, and `jsdom` 29.1.1 -> 30.0.1 with `@types/jsdom` 28.0.3 -> 30.0.0; the overrides block follows the root on `@hono/node-server` 2.1.1 and `rimraf` 6.1.3. Removed the unused `@mistralai/mistralai` dependency and the unused `@types/ms` devDependency. `@anthropic-ai/sdk` stays at 0.91.1, and `openai` stays at 6.26.0 and `signal-exit` at 3.0.7 as deliberate pins.
+- `packages/coding-agent/install-lock/package.json` and `packages/coding-agent/install-lock/package-lock.json`: regenerated from the refreshed root lock.
+- `packages/coding-agent/publish-deps.lock.json`: regenerated shrinkwrap for the same tree.
+- `packages/coding-agent/test/mermaid.test.ts`: the two tests covering the partial-render warning path now use input that still warns under grok-mermaid 0.2.3, which learned to render the `:::className` node syntax the old fixtures relied on failing.
+- `packages/coding-agent/test/suite/claude-sdk-oauth-naming.test.ts`: asserts the upstream package name without pinning its version, since the naming boundary is the subject of the test.
+
+### Why
+
+- jsdom 30 ships no bundled types, so `@types/jsdom` stays and moves in lockstep; the bun-compile asset patch in `scripts/prepare-bun-compile-assets.mjs` still matches both jsdom internals it rewrites, and the `build:binary` `xhr-sync-worker.js` entry still resolves. `@mistralai/mistralai` and `@types/ms` had zero source references here, and the remaining import-less dependencies stay declared because pi-ai and pi-tui are bundled into this package and their runtime dependencies must resolve from it. The two test edits track real upstream behavior changes rather than relaxing an assertion: both still exercise the same production branches.
+
+### Why an extension could not handle it
+
+- The dependency set, the generated install-lock, and the published shrinkwrap are resolved by npm and by repository tooling before the extension runtime loads, and the bundled-dependency contract is a packaging property of this package.
+
+### Expected merge conflict zones
+
+- HIGH: the `dependencies` block in `packages/coding-agent/package.json` and the two generated lock artifacts, which upstream regenerates on every release.
+- LOW: the two test fixtures, which only move when the corresponding upstream package changes behavior.
+
+## Repository-wide changes.md audit backfill for package manifests and configs (2026-08-17)
+
+### What changed
+
+- Backfill from the repository-wide changes.md audit (pin 914cf147, tag v0.84.2): records the package-root manifest and config deltas. Runtime deltas under `src/` are tracked by their nearest nested changes.md files, and the TypeScript toolchain migration rationale is in the 2026-08-02 entry.
+- `packages/coding-agent/package.json`: fork identity - renamed to `@code-yeongyu/senpi` with `private: true`, CalVer versioning, `piConfig` name `senpi` with config dir `.senpi`, the `senpi` bin, the fork repository URL, and Node `>=24`. Build scripts run `tsc` (TypeScript 7.0.2) and emit `dist/senpi`; `build:binary` builds the `../pty` workspace first, runs `prepare-bun-compile-assets.mjs`, and compiles with Bun `--compile-autoload-package-json --minify --keep-names` plus the embedded jsdom worker. Asset staging copies css-tree, mdn-data, and source-map-js into `dist/node_modules`, stages the codemode sidecar, TUI native prebuilds, PTY natives, and the imagegen skill, and adds the `qa:app-server` runner. Dependencies are the exact-pinned fork runtime set (Claude/Anthropic/Bedrock/Mistral/OpenAI SDKs, MCP, jsdom, marked, turndown, readability, proxy agents, OpenTelemetry, zod, and more) plus the five-workspace `bundledDependencies` list, the `@hono/node-server` override, and `npm-shrinkwrap.json` removed from `files`.
+- `packages/coding-agent/install-lock/package.json`: renamed to `@code-yeongyu/senpi-install`, versioned in CalVer, depends on the matching `@code-yeongyu/senpi` version, adds the `@hono/node-server` override, and requires Node `>=24`.
+- `packages/coding-agent/tsconfig.build.json`: added `@earendil-works/pi-pty` and `pi-pty/*` path mappings to the PTY workspace's `dist` declarations, and excluded `src/modes/app-server/protocol/generated/**` so the vendored Codex protocol types stay out of the build program and dist output.
+- `packages/coding-agent/tsconfig.examples.json`: examples resolve the SDK through the fork identity - the `@earendil-works/pi-coding-agent` and `/hooks` aliases were replaced by `@code-yeongyu/senpi` pointing at `./src/index.ts`.
+- `packages/coding-agent/vitest.config.ts`: a global `./test/setup.ts` setup file quarantines `SENPI_CODING_AGENT_DIR` (and clears `PI_RULES_*` variables) so suites never write faux-provider session JSONLs into the developer's real agent directory; when `CI` or `GITHUB_ACTIONS` is set, the forks pool is capped at two workers with a 20-second teardown so subprocess-heavy MCP, PTY, and app-server suites do not oversubscribe 4-vCPU runners or hang pool shutdown (measured 1364s single-fork, dominated by per-file import cost); resolve aliases map `@earendil-works/pi-ai/node/provider-scope` and `@earendil-works/pi-pty` to the sibling workspace sources.
+
+### Why
+
+- These are the package-root halves of fork changes whose runtime halves are recorded under `src/`. Without this record, a naive upstream merge would restore the upstream package identity, `tsgo` scripts, caret-pinned upstream workspace ranges, an untyped CI vitest pool, and example aliases that no longer resolve.
+- The vitest setup and pool cap encode two measured failures: leaked session writes permanently polluting real transcript directories, and unreaped subprocess children hanging the whole test step on constrained runners.
+
+### Why an extension could not handle it
+
+- Package manifests, TypeScript project configurations, and the Vitest harness are build and test infrastructure loaded before the coding-agent runtime or any extension exists.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/package.json` scripts, dependencies, and bundling whenever upstream re-versions or reshapes packaging.
+- MEDIUM: `packages/coding-agent/vitest.config.ts` pool, setup, and alias sections, and `packages/coding-agent/tsconfig.build.json` path and exclude lists.
+- LOW: `packages/coding-agent/tsconfig.examples.json` alias map and `packages/coding-agent/install-lock/package.json` identity and engines lines.
+
+## 2026-08-17 — Dollar invocation and RPC contract regression suites ([PR #909](https://github.com/code-yeongyu/senpi/pull/909))
+
+### What changed
+
+- Added focused RPC suites for ordered `commands_changed` snapshots, actual post-interception
+  `command_invocation` events, bounded prompt/steer/follow-up text, and `skill_invocation`
+  delivery without MCP inventory drift.
+- Added classic and multi-session malformed-command regressions plus JSONL record-cap,
+  discard-through-LF resynchronization, and worst-case escaped-message coverage.
+- Expanded the #308 skill-composition suite to cover dollar/slash ordering, unknown and
+  duplicate tokens, ordinary dollar text, indentation preservation, token-discovery bounds,
+  the five-skill expansion cap, and queued steering/follow-up behavior.
+- Added TUI autocomplete/editor regressions for mixed dollar candidates and real trigger input.
+
+### Why this lives in the fork
+
+Senpi owns the dollar composer syntax, typed JSONL event contract, and OmO Desktop compatibility
+surface. Upstream does not expose these exact candidate or invocation events, so a naive merge
+would otherwise drop the only regression coverage for the fork contract.
+
+### Expected merge-conflict zones
+
+- `test/rpc-command-invocation.test.ts`, `test/rpc-commands-changed.test.ts`,
+  `test/rpc-input-validation.test.ts`, `test/rpc-jsonl.test.ts`, `test/rpc-multi-session-input.test.ts`,
+  `test/rpc-loaded-surfaces.test.ts`, and `test/suite/regressions/5868-rpc-unknown-command-id.test.ts`
+  resolve to `ours`; port upstream additions into the retained suites.
+- `test/suite/regressions/308-skill-composition.test.ts` resolves case by case while preserving
+  every dollar/slash, indentation, cap, and queueing assertion.
+- TUI dollar autocomplete tests resolve to `ours` unless upstream adds equivalent `$` behavior.
+
+## 2026-08-16 — Dual JSONC/JSON settings coverage
+
+### What changed
+
+- Added deterministic settings-manager coverage for JSONC comments/trailing commas, JSONC-over-JSON precedence, JSON-only compatibility, write-target preservation, and reload reselection.
+- Added real connection-handler coverage for the `settings_source_selected` RPC record, focused interactive notice coverage, and config-reload coverage for valid JSONC edits.
+
+### Why this lives in the fork
+
+- The fork owns the source-selection event and interactive/config-reload integration around the upstream-derived settings manager.
+
+### Why an extension could not do this
+
+- The tests pin pre-extension settings parsing, persistence, host event delivery, and built-in reload behavior.
+
+### Expected merge-conflict zones
+
+- `test/settings-manager.test.ts`, `test/suite/harness.ts`, and `test/suite/config-reload-extension.test.ts`; the two focused source-event tests are additive files.
+
+## 2026-08-14 — RPC stream regression suites for multi-session compaction
+
+### What changed
+
+- `test/rpc-multi-session-events.test.ts` gained the coverage for the multi-session
+  event writer's per-session compaction and single-flight drain: a 1000-update
+  stalled-writer load case that asserts no assistant transition is lost and the
+  retained bytes stay far below the sum of the cumulative records, latest-wins
+  coalescing keyed by `toolCallId` in occurrence order, barrier isolation, and
+  the seal/late-enqueue contract.
+- `test/rpc-event-coalescing.test.ts` gained two characterization pins for the
+  CLASSIC single-session path: every delta survives same-tick batching into one
+  raw write, and immediate barriers keep event/UI-request/response ordering.
+  Both were proven to bite under their own targeted mutation.
+- The behavior these suites cover is described in `src/modes/rpc/changes.md`
+  (2026-08-14 entry); this entry exists so the package-level log records the
+  test surface that guards it.
+
+### Why this lives in the fork
+
+The compaction and single-flight drain are fork-specific: upstream writes every
+record straight through, so these suites have no upstream counterpart and would
+be dropped by a naive merge resolution.
+
+### Expected merge-conflict zones
+
+`test/rpc-multi-session-events.test.ts` and `test/rpc-event-coalescing.test.ts`
+resolve to `ours`. If upstream adds cases to either file, port them INTO these
+suites rather than replacing them - deleting the compaction or classic-pin cases
+silently removes the only guard against reintroducing the O(n^2) wire
+amplification or dropping classic per-event backpressure.
+
 ## 2026-08-12 — Distinguish external-editor launch failures
 
 ### What changed

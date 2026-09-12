@@ -113,6 +113,18 @@ describe("Kimi K3 prompt preset", () => {
 		expect(preset?.name).toBe("kimi-k3");
 	});
 
+	it("routes user questions through ask_user_question when it is available", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("kimi-k3", "moonshotai", "anthropic-messages");
+
+		const preset = resolvePreset(model, settings);
+
+		expect(preset?.prompt).toContain("ask_user_question");
+		expect(preset?.prompt).toContain(
+			"ask the one specific question that unblocks the rest, through ask_user_question when it is available",
+		);
+	});
+
 	it("does not include GPT tuning in the kimi-k3 preset", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };

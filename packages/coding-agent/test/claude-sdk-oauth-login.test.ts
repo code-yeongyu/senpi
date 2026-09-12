@@ -2,6 +2,7 @@ import type { OAuthAuth } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { listAccounts, SENTINEL_OAUTH_FIELDS } from "../src/core/extensions/builtin/claude-sdk-oauth/accounts.ts";
 import { createOAuthConfig } from "../src/core/extensions/builtin/claude-sdk-oauth/oauth-login.ts";
+import { authContext } from "./support/claude-sdk-oauth-provider.ts";
 
 function fakeFlow(credential: { access: string; refresh: string; expires: number }): OAuthAuth {
 	return {
@@ -100,5 +101,24 @@ describe("claude-sdk-oauth oauth login config", () => {
 		const config = createOAuthConfig({ readCurrent: async () => undefined, loginFlow: fakeFlow(fresh) });
 		const credential = await config.login({});
 		expect(await config.refreshToken(credential)).toBe(credential);
+	});
+
+	it("check accepts a concrete oauth slot projected by credential rotation", async () => {
+		const config = createOAuthConfig({ readCurrent: async () => undefined, loginFlow: fakeFlow(fresh) });
+
+		const check = await config.check({
+			ctx: authContext(),
+			credential: { type: "oauth", access: "slot-access", refresh: "slot-refresh", expires: Date.now() + 60_000 },
+		});
+
+		expect(check).toEqual({ source: "Claude SDK OAuth", type: "oauth" });
+	});
+
+	it("check still rejects a projected sentinel that names no account", async () => {
+		const config = createOAuthConfig({ readCurrent: async () => undefined, loginFlow: fakeFlow(fresh) });
+
+		const check = await config.check({ ctx: authContext(), credential: { type: "oauth", ...SENTINEL_OAUTH_FIELDS } });
+
+		expect(check).toBeUndefined();
 	});
 });

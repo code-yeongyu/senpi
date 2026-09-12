@@ -26,7 +26,10 @@ Per-feature fixtures establish a **behavioral contract** between each subsystem 
 | 12 | `warm-start/` | `speculative-then-blocking.jsonl` | Speculative compaction followed by a blocking compaction | 6 |
 | 13 | `ineffective-cap/` | `low-yield-run.jsonl` | Three accepted low-yield compactions in one turn | 5 |
 | 14 | `idle-trigger/` | `over-threshold-at-idle.jsonl` | Turn end with context over the threshold, exercises the proactive idle compaction trigger | 3 |
+| 15 | `model-usability/` | `switch-budget-projection.jsonl` | Model-switch budget projection: usable window, live-context shortfall, per-family safety margin | 5 |
 
 ## Validation
 
 Every fixture round-trips through `parseSessionEntries` and `migrateSessionEntries` from `packages/coding-agent/src/core/session-manager.ts`. All fixtures use v1 format (no id/parentId) so migration adds tree structure automatically. No fixture exceeds 100 entries; context-size scenarios achieve scale via large content rather than entry count.
+
+`model-usability/` carries its projection inputs (system prompt, tool schemas, candidate model geometry) in a `model-usability-budget` custom entry, because `projectModelUsabilityBudget` is evaluated against a candidate model rather than replayed from messages alone; its live-context tokens still come from the fixture's last assistant usage block.

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { serializeByKey } from "../../../session-sidecar-store.ts";
 import { GoalAlreadyExistsError, GoalNotFoundError } from "./errors.ts";
 import { encodedThreadId, goalFilePath, readGoalFile, writeGoalFile } from "./persistence.ts";
 import { transitionGoalStatus } from "./transitions.ts";
@@ -15,23 +16,6 @@ import type {
 import { resolveTokenBudget, validateObjective, validateTokenBudget } from "./validation.ts";
 
 export { goalFilePath };
-
-const goalMutationTails = new Map<string, Promise<void>>();
-
-function enqueueGoalMutation<T>(ref: GoalStoreRef, mutation: () => Promise<T>): Promise<T> {
-	const key = goalFilePath(ref);
-	const previous = goalMutationTails.get(key) ?? Promise.resolve();
-	const run = previous.then(mutation);
-	const tail = run.then(
-		() => undefined,
-		() => undefined,
-	);
-	goalMutationTails.set(key, tail);
-	void tail.then(() => {
-		if (goalMutationTails.get(key) === tail) goalMutationTails.delete(key);
-	});
-	return run;
-}
 
 export function goalHistoryFilePath(ref: GoalStoreRef): string {
 	return join(ref.baseDir, `${encodedThreadId(ref)}.history.jsonl`);
@@ -50,11 +34,11 @@ export async function readGoal(ref: GoalStoreRef): Promise<Goal | null> {
 }
 
 export async function writeGoal(ref: GoalStoreRef, goal: Goal | null): Promise<void> {
-	await enqueueGoalMutation(ref, () => writeGoalFile(ref, goal));
+	await serializeByKey(goalFilePath(ref), () => writeGoalFile(ref, goal));
 }
 
 export async function createGoal(ref: GoalStoreRef, objective: string, tokenBudget?: number): Promise<Goal> {
-	return enqueueGoalMutation(ref, async () => {
+	return serializeByKey(goalFilePath(ref), async () => {
 		const validatedObjective = validateObjective(objective, objectiveFullTextFileName(ref));
 		const current = await readGoalFile(ref);
 		if (current !== null && current.status !== "complete") {
@@ -71,6 +55,7 @@ export async function createGoal(ref: GoalStoreRef, objective: string, tokenBudg
 			tokensUsed: 0,
 			timeUsedSeconds: 0,
 			consecutiveContinuations: 0,
+			unattendedContinuations: 0,
 			createdAt: now,
 			updatedAt: now,
 			lastStartedAt: now,
@@ -86,7 +71,7 @@ export async function updateGoal(
 	update: GoalUpdate,
 	source: GoalUpdateSource = "model",
 ): Promise<Goal> {
-	return enqueueGoalMutation(ref, async () => {
+	return serializeByKey(goalFilePath(ref), async () => {
 		const current = await readGoalFile(ref);
 		if (!current) throw new GoalNotFoundError("cannot update goal: no goal exists");
 
@@ -112,6 +97,7 @@ export async function updateGoal(
 				tokensUsed: 0,
 				timeUsedSeconds: 0,
 				consecutiveContinuations: 0,
+				unattendedContinuations: 0,
 				createdAt: now,
 				updatedAt: now,
 				...(tokenBudget === undefined ? {} : { tokenBudget }),
@@ -132,6 +118,7 @@ export async function updateGoal(
 		);
 		if (next.status !== current.status) {
 			next.consecutiveContinuations = 0;
+			next.unattendedContinuations = 0;
 			delete next.lastContinuationSignature;
 		}
 		if (tokenBudget === undefined) delete next.tokenBudget;
@@ -155,7 +142,7 @@ async function writeFullObjectiveText(ref: GoalStoreRef, objective: string): Pro
 }
 
 export async function clearGoal(ref: GoalStoreRef): Promise<boolean> {
-	return enqueueGoalMutation(ref, async () => {
+	return serializeByKey(goalFilePath(ref), async () => {
 		const hadGoal = (await readGoalFile(ref)) !== null;
 		await writeGoalFile(ref, null);
 		return hadGoal;
@@ -169,7 +156,7 @@ export async function accountGoalUsage(
 	mode: GoalAccountingMode = "active",
 	expectedGoalId?: string,
 ): Promise<Goal | null> {
-	return enqueueGoalMutation(ref, async () => {
+	return serializeByKey(goalFilePath(ref), async () => {
 		const goal = await readGoalFile(ref);
 		if (!goal || (expectedGoalId !== undefined && goal.id !== expectedGoalId) || !canAccountGoalUsage(goal, mode)) {
 			return goal;
@@ -189,13 +176,15 @@ export async function recordContinuationDelivered(
 	ref: GoalStoreRef,
 	signature: string,
 	expectedGoalId?: string,
+	options: { countUnattended?: boolean } = {},
 ): Promise<Goal | null> {
-	return enqueueGoalMutation(ref, async () => {
+	return serializeByKey(goalFilePath(ref), async () => {
 		const goal = await readGoalFile(ref);
 		if (!goal || (expectedGoalId !== undefined && goal.id !== expectedGoalId)) return null;
 		const next: Goal = {
 			...goal,
 			consecutiveContinuations: (goal.consecutiveContinuations ?? 0) + 1,
+			unattendedContinuations: (goal.unattendedContinuations ?? 0) + (options.countUnattended === false ? 0 : 1),
 			lastContinuationSignature: signature,
 		};
 		await writeGoalFile(ref, next);
@@ -203,11 +192,15 @@ export async function recordContinuationDelivered(
 	});
 }
 
-export async function resetContinuationStreak(ref: GoalStoreRef): Promise<Goal | null> {
-	return enqueueGoalMutation(ref, async () => {
+export async function resetContinuationStreak(
+	ref: GoalStoreRef,
+	options: { unattended?: boolean } = {},
+): Promise<Goal | null> {
+	return serializeByKey(goalFilePath(ref), async () => {
 		const goal = await readGoalFile(ref);
 		if (!goal) return goal;
 		const next: Goal = { ...goal, consecutiveContinuations: 0 };
+		if (options.unattended === true) next.unattendedContinuations = 0;
 		delete next.lastContinuationSignature;
 		await writeGoalFile(ref, next);
 		return next;

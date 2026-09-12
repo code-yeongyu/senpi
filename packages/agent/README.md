@@ -6,6 +6,9 @@ Stateful agent with tool execution and event streaming. Built on `@earendil-work
 
 ```bash
 npm install @earendil-works/pi-agent-core
+
+# Bun alternative
+bun add @earendil-works/pi-agent-core
 ```
 
 ### SQLite session backends

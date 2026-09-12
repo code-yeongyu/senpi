@@ -1,6 +1,6 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, existsSync } from "node:fs";
 import {
 	access,
 	appendFile,
@@ -250,17 +250,83 @@ function getShellEnv(
 	};
 }
 
+/**
+ * Ordered `taskkill` launchers to try, most reliable first.
+ *
+ * `spawn("taskkill", ...)` relies on a PATH lookup, so any session whose PATH lost
+ * `%SystemRoot%\System32` (a POSIX-style PATH inherited from a Git Bash/MSYS launcher,
+ * a truncated user PATH, a locked-down service account) fails to resolve it. A broken PATH
+ * must not cost us the process-tree kill, so every absolute System32 location that actually
+ * exists is tried before the bare PATH-resolved name.
+ */
+export function windowsTaskkillCandidates(env: NodeJS.ProcessEnv = process.env): string[] {
+	// A bare `SystemDrive` is drive-relative ("C:"), so anchor it before joining.
+	const systemDrive = env.SystemDrive ? `${env.SystemDrive}\\` : undefined;
+	const roots = [env.SystemRoot, env.SYSTEMROOT, env.windir, systemDrive && join(systemDrive, "Windows")];
+	const candidates: string[] = [];
+	for (const root of roots) {
+		if (!root) continue;
+		// Sysnative reaches the real 64-bit System32 from a 32-bit process, where System32
+		// is redirected to SysWOW64.
+		for (const systemDir of ["System32", "Sysnative"]) {
+			const absolute = join(root, systemDir, "taskkill.exe");
+			if (!candidates.includes(absolute) && existsSync(absolute)) candidates.push(absolute);
+		}
+	}
+	candidates.push("taskkill.exe");
+	return candidates;
+}
+
+function killProcessDirectly(pid: number): void {
+	try {
+		process.kill(pid);
+	} catch {
+		// Process already dead.
+	}
+}
+
+/** Upper bound on how long a teardown may block waiting for `taskkill` to finish. */
+const TASKKILL_TIMEOUT_MS = 5_000;
+
+function taskkillHandledTree(pid: number, taskkillPath: string): boolean {
+	try {
+		const result = spawnSync(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
+			stdio: "ignore",
+			windowsHide: true,
+			timeout: TASKKILL_TIMEOUT_MS,
+		});
+		// `error` means the launcher never started (ENOENT, EACCES); a null status means
+		// the timeout killed it. Any real taskkill exit code counts as handled.
+		return result.error === undefined && result.status !== null;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Kill a process and all its children on Windows via `taskkill /T`.
+ *
+ * Synchronous on purpose. A caller that tears down and exits in the same tick would never
+ * observe an asynchronous killer's `error` event, leaving the target alive. `spawnSync`
+ * also reports a failed executable lookup on its returned `error` field instead of
+ * emitting it, so a PATH without `%SystemRoot%\System32` can no longer surface as an
+ * uncaught `spawn taskkill ENOENT`.
+ *
+ * The direct `process.kill` at the end is a degraded last resort reached only when no
+ * `taskkill.exe` can be launched at all. It maps to `TerminateProcess`, which does not
+ * touch descendants; nothing in-process can walk a Windows process tree without an
+ * external tool, so this still beats leaving the whole tree running.
+ */
+export function killWindowsProcessTree(pid: number, taskkillPaths = windowsTaskkillCandidates()): void {
+	for (const taskkillPath of taskkillPaths) {
+		if (taskkillHandledTree(pid, taskkillPath)) return;
+	}
+	killProcessDirectly(pid);
+}
+
 function killProcessTree(pid: number): void {
 	if (process.platform === "win32") {
-		try {
-			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
-				stdio: "ignore",
-				detached: true,
-				windowsHide: true,
-			});
-		} catch {
-			// Ignore errors.
-		}
+		killWindowsProcessTree(pid);
 		return;
 	}
 
@@ -344,6 +410,8 @@ function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 	});
 }
 
+const NORMAL_CALLBACK_SETTLEMENT_TIMEOUT_MS = 5_000;
+
 export class NodeExecutionEnv implements ExecutionEnv {
 	cwd: string;
 	private shellPath?: string;
@@ -395,6 +463,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			let settled = false;
 			let timedOut = false;
 			let callbackError: ExecutionError | undefined;
+			const callbackPromises = new Set<Promise<void>>();
 			let child: ReturnType<typeof spawn> | undefined;
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -457,29 +526,57 @@ export class NodeExecutionEnv implements ExecutionEnv {
 
 			child.stdout?.setEncoding("utf8");
 			child.stderr?.setEncoding("utf8");
-			child.stdout?.on("data", (chunk: string) => {
-				stdout += chunk;
-				try {
-					options?.onStdout?.(chunk);
-				} catch (error) {
-					const cause = toError(error);
-					callbackError = new ExecutionError("callback_error", cause.message, cause);
-					onAbort();
-				}
-			});
-			child.stderr?.on("data", (chunk: string) => {
-				stderr += chunk;
-				try {
-					options?.onStderr?.(chunk);
-				} catch (error) {
-					const cause = toError(error);
-					callbackError = new ExecutionError("callback_error", cause.message, cause);
-					onAbort();
-				}
-			});
+			const handleChunk = (
+				chunk: string,
+				callback: ((chunk: string) => void | PromiseLike<void>) | undefined,
+				append: (chunk: string) => void,
+			) => {
+				append(chunk);
+				if (callback === undefined) return;
+				const callbackPromise = Promise.resolve()
+					.then(() => callback(chunk))
+					.catch((error) => {
+						if (!callbackError) {
+							const cause = toError(error);
+							callbackError = new ExecutionError("callback_error", cause.message, error);
+							onAbort();
+						}
+						throw error;
+					});
+				callbackPromises.add(callbackPromise);
+				void callbackPromise.then(
+					() => callbackPromises.delete(callbackPromise),
+					() => callbackPromises.delete(callbackPromise),
+				);
+			};
+			child.stdout?.on("data", (chunk: string) =>
+				handleChunk(chunk, options?.onStdout, (value) => (stdout += value)),
+			);
+			child.stderr?.on("data", (chunk: string) =>
+				handleChunk(chunk, options?.onStderr, (value) => (stderr += value)),
+			);
 
 			void waitForChildProcess(child).then(
-				(code) => {
+				async (code) => {
+					// Normal command completion must not be held hostage by an observer that
+					// never settles. Abort completion uses the shorter cancellation path above;
+					// this generous bound preserves slow, legitimate callbacks without hanging
+					// the execution forever.
+					const callbacksSettled = Promise.allSettled([...callbackPromises]);
+					let callbackTimeout: ReturnType<typeof setTimeout> | undefined;
+					const callbackBound = new Promise<boolean>((resolve) => {
+						callbackTimeout = setTimeout(() => resolve(false), NORMAL_CALLBACK_SETTLEMENT_TIMEOUT_MS);
+						callbackTimeout.unref?.();
+					});
+					try {
+						const settled = await Promise.race([callbacksSettled.then(() => true), callbackBound]);
+						if (!settled && !callbackError) {
+							settle(err(new ExecutionError("callback_error", "Output callback did not settle within 5000ms")));
+							return;
+						}
+					} finally {
+						if (callbackTimeout) clearTimeout(callbackTimeout);
+					}
 					if (callbackError) {
 						settle(err(callbackError));
 						return;

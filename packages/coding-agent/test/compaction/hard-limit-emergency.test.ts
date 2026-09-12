@@ -19,7 +19,10 @@ import type {
 	ExtensionHandler,
 } from "../../src/core/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { createInMemoryExtensionSessionSettings, HARD_LIMIT_SETTINGS } from "../helpers/extension-session-settings.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 const registrations: Array<{ unregister: () => void }> = [];
 
@@ -96,7 +99,7 @@ function createContext(contextWindow: number, maxTokens = contextWindow, compact
 		mode: "print",
 		ui: Object.create(null) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
@@ -109,7 +112,7 @@ function createContext(contextWindow: number, maxTokens = contextWindow, compact
 		hasPendingMessages: () => false,
 		shutdown: vi.fn(),
 		getContextUsage: () => ({ tokens: contextWindow + 1, contextWindow, percent: 1.01 }),
-		getCompactionSettings: () => ({ enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 }),
+		getCompactionSettings: () => HARD_LIMIT_SETTINGS,
 		getLookAtSettings: () => ({ enabled: true, models: undefined }),
 		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
@@ -150,7 +153,7 @@ function createCompactionContext(): ExtensionContext {
 		mode: "print",
 		ui: Object.create(null) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry,

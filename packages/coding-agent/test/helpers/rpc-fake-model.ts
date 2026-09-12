@@ -59,7 +59,7 @@ export function responseTextFor(body: unknown): string {
 	return "ok";
 }
 
-function writeAnthropicSse(res: ServerResponse, text: string, model: string): void {
+function writeAnthropicSse(res: ServerResponse, text: string, model: string, multiDelta = false): void {
 	res.writeHead(200, {
 		"content-type": "text/event-stream",
 		"cache-control": "no-cache",
@@ -82,14 +82,17 @@ function writeAnthropicSse(res: ServerResponse, text: string, model: string): vo
 		},
 	});
 	send("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
-	send("content_block_delta", { index: 0, delta: { type: "text_delta", text } });
+	if (multiDelta) {
+		const parts = [text.slice(0, 1), text.slice(1, 2), text.slice(2)].filter(Boolean);
+		for (const part of parts) send("content_block_delta", { index: 0, delta: { type: "text_delta", text: part } });
+	} else send("content_block_delta", { index: 0, delta: { type: "text_delta", text } });
 	send("content_block_stop", { index: 0 });
 	send("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } });
 	send("message_stop", {});
 	res.end();
 }
 
-export async function startFakeModelServer(): Promise<FakeModelServer> {
+export async function startFakeModelServer(options: { multiDelta?: boolean } = {}): Promise<FakeModelServer> {
 	const requests: FakeModelRequest[] = [];
 	const server = createServer((req, res) => {
 		const chunks: Buffer[] = [];
@@ -108,7 +111,19 @@ export async function startFakeModelServer(): Promise<FakeModelServer> {
 				text,
 			});
 			if (req.url?.includes("/messages")) {
-				writeAnthropicSse(res, responseTextFor(body), model ?? MOCK_MODEL);
+				// Deterministic slow lane: prompts containing "hold-open-<ms>" keep the
+				// response (and therefore the session's streaming state) open for <ms>.
+				const holdOpenMs = /hold-open-(\d+)/.exec(requestText(body))?.[1];
+				if (holdOpenMs) {
+					// No abort listener: the response stays pending by design; the res.destroyed
+					// guard keeps a late fire quiet after the client gave up.
+					setTimeout(() => {
+						if (!res.destroyed)
+							writeAnthropicSse(res, responseTextFor(body), model ?? MOCK_MODEL, options.multiDelta);
+					}, Number(holdOpenMs));
+					return;
+				}
+				writeAnthropicSse(res, responseTextFor(body), model ?? MOCK_MODEL, options.multiDelta);
 				return;
 			}
 			res.writeHead(404, { "content-type": "application/json" });
@@ -122,6 +137,10 @@ export async function startFakeModelServer(): Promise<FakeModelServer> {
 		requests,
 		close: () =>
 			new Promise<void>((resolveClose, rejectClose) => {
+				// `server.close()` waits for every open connection to end. The slow lane
+				// holds responses open and RPC hosts keep sockets alive, so drop them
+				// first or the callback never fires and teardown hangs.
+				server.closeAllConnections();
 				server.close((error) => {
 					if (error) {
 						rejectClose(error);

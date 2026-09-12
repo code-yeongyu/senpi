@@ -50,6 +50,11 @@ type EscapeFixture = {
 	abortAndFireQueuedMessages: ReturnType<typeof vi.fn>;
 	hideShortcutOverlay: ReturnType<typeof vi.fn>;
 	updateEditorBorderColor: ReturnType<typeof vi.fn>;
+	// setupKeyHandlers subscribes the editor's image-marker channel; the fixture
+	// borrows the real method plus the real payload map it reconciles.
+	pendingImages: Map<number, unknown>;
+	subscribeImageMarkers: unknown;
+	reconcilePendingImages: unknown;
 };
 
 const setupKeyHandlers = Reflect.get(InteractiveMode.prototype, "setupKeyHandlers") as (this: EscapeFixture) => void;
@@ -97,6 +102,9 @@ describe("fallback abort leaves double-Escape session history usable", () => {
 			abortAndFireQueuedMessages: vi.fn().mockResolvedValue(0),
 			hideShortcutOverlay: vi.fn(),
 			updateEditorBorderColor: vi.fn(),
+			pendingImages: new Map<number, unknown>(),
+			subscribeImageMarkers: Reflect.get(InteractiveMode.prototype, "subscribeImageMarkers"),
+			reconcilePendingImages: Reflect.get(InteractiveMode.prototype, "reconcilePendingImages"),
 		};
 		setupKeyHandlers.call(fixture);
 

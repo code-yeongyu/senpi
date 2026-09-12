@@ -5,28 +5,45 @@ import type { TokenUsageSnapshot } from "./types.ts";
 /** Custom session-entry type carrying the cache-warm continuation story. */
 export const GOAL_CACHE_WARMUP_ENTRY_TYPE = "goal-cache-warmup";
 
+/**
+ * Accounting fallback for a monitor continuation whose scheduled delay is no
+ * longer known (a held timer restored across a reload). It is deliberately NOT
+ * the armed delay: while a wake source is live the monitor arms the configured
+ * backstop below, never a timer derived from the cache-safe wait.
+ */
 export const GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS = 240_000;
+/**
+ * Default `promptCache.goalBackstopMaxSeconds` (settings-manager.ts) expressed in ms:
+ * the 5-minute Anthropic prompt-cache TTL minus the 30s safety buffer, so the
+ * periodic re-check lands inside the cache.
+ */
+export const GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS = 270_000;
 const GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS = 1_000;
 const GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS = 3_600_000;
 
-export function resolveGoalMonitorContinuationDelayMs(
-	cacheSafeWaitSeconds: number | undefined,
-	goalBackstopMaxSeconds?: number,
-): number {
-	if (
-		typeof cacheSafeWaitSeconds !== "number" ||
-		!Number.isFinite(cacheSafeWaitSeconds) ||
-		cacheSafeWaitSeconds <= 0
-	) {
-		return GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS;
-	}
-	const configuredCeilingMs =
+/**
+ * Delay of the goal-monitor backstop, in milliseconds.
+ *
+ * A live wake source normally resumes the goal when it delivers (the drain
+ * fire), but a wake source can be misconfigured - a filter that never matches,
+ * a stream that never ends - so the backstop is the floor underneath it: the
+ * goal re-checks at least this often instead of trusting the source for an
+ * hour. It is configured, never derived from the prompt-cache safe wait, through
+ * `promptCache.goalBackstopMaxSeconds`; a missing, non-finite, or non-positive
+ * setting falls back to the 270s default, and the result is clamped into
+ * [1s, 1h].
+ */
+export function resolveGoalMonitorContinuationDelayMs(goalBackstopMaxSeconds: number | undefined): number {
+	const configuredMs =
 		typeof goalBackstopMaxSeconds === "number" &&
 		Number.isFinite(goalBackstopMaxSeconds) &&
 		goalBackstopMaxSeconds > 0
-			? Math.min(goalBackstopMaxSeconds * 1000, GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS)
-			: GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS;
-	return Math.max(GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS, Math.min(cacheSafeWaitSeconds * 1000, configuredCeilingMs));
+			? goalBackstopMaxSeconds * 1000
+			: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS;
+	return Math.max(
+		GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS,
+		Math.min(configuredMs, GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS),
+	);
 }
 
 /** Cache context captured when a monitor-wait continuation is scheduled. */
@@ -125,6 +142,51 @@ export function formatWakeDuration(ms: number): string {
 	const hours = Math.floor(minutes / 60);
 	const restMinutes = minutes % 60;
 	return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`;
+}
+
+/**
+ * Wake timestamp shown in cache-warm notices. Rendered in the user's local
+ * system timezone with its short zone label (for example `GMT+9`); falls back
+ * to the legacy UTC shape when local timezone formatting is unavailable.
+ */
+export function formatWakeTimestamp(dueAtMs: number): string {
+	const date = new Date(dueAtMs);
+	const local = formatLocalWakeTimestamp(date);
+	if (local !== undefined) return local;
+	return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+function formatLocalWakeTimestamp(date: Date): string | undefined {
+	try {
+		const parts = new Intl.DateTimeFormat("en-CA", {
+			year: "numeric",
+			month: "2-digit",
+			day: "2-digit",
+			hour: "2-digit",
+			minute: "2-digit",
+			hourCycle: "h23",
+			timeZoneName: "short",
+		}).formatToParts(date);
+		const read = (type: string): string | undefined => parts.find((part) => part.type === type)?.value;
+		const year = read("year");
+		const month = read("month");
+		const day = read("day");
+		const hour = read("hour");
+		const minute = read("minute");
+		if (
+			year === undefined ||
+			month === undefined ||
+			day === undefined ||
+			hour === undefined ||
+			minute === undefined
+		) {
+			return undefined;
+		}
+		const zone = read("timeZoneName");
+		return `${year}-${month}-${day} ${hour}:${minute}${zone === undefined ? "" : ` ${zone}`}`;
+	} catch {
+		return undefined;
+	}
 }
 
 export function formatCacheTtl(seconds: number): string {

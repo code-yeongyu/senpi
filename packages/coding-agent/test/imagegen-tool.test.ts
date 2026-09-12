@@ -4,33 +4,21 @@ import type { AssistantImages, ImagesContext, ImagesModel, ProviderImagesOptions
 import { registerImagesApiProvider, unregisterImagesApiProviders } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setImageGenRegistry, setNativeBypass } from "../src/core/extensions/builtin/imagegen/state.ts";
-import { generateImageTool } from "../src/core/extensions/builtin/imagegen/tool.ts";
-import type { ExtensionAPI } from "../src/core/extensions/types.ts";
+import {
+	generateImageTool,
+	type GenerateImageDetails as ImageDetails,
+} from "../src/core/extensions/builtin/imagegen/tool.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
 const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl3T2QAAAAASUVORK5CYII=";
 const TOOL_NAME = "generate_image";
 const STUB_SOURCE_ID = "imagegen-tool-test-stub";
 
-interface StubCall {
-	model: ImagesModel<"openai-images">;
-	context: ImagesContext;
-	options: ProviderImagesOptions | undefined;
-}
-
-interface StubController {
-	calls: StubCall[];
-	setImages(count: number): void;
-	setRevisedPrompts(prompts: string[]): void;
-	setUsage(usage: AssistantImages["usage"]): void;
-	fail(message: string): void;
-}
-
 const harnesses: Harness[] = [];
 
-function registerStubImagesProvider(): StubController {
+function registerStubImagesProvider() {
 	const controller = {
-		calls: [] as StubCall[],
+		calls: [] as Array<{ model: ImagesModel<"openai-images">; options?: ProviderImagesOptions }>,
 		images: 1,
 		revisedPrompts: [] as string[],
 		usage: undefined as AssistantImages["usage"],
@@ -42,17 +30,17 @@ function registerStubImagesProvider(): StubController {
 			api: "openai-images" as const,
 			async generateImages(
 				model: ImagesModel<"openai-images">,
-				context: ImagesContext,
+				_context: ImagesContext,
 				options?: ProviderImagesOptions,
 			): Promise<AssistantImages> {
-				controller.calls.push({ model, context, options });
+				controller.calls.push({ model, options });
 				const base: AssistantImages = {
 					api: "openai-images",
 					provider: model.provider,
 					model: model.id,
 					output: [],
 					stopReason: "stop",
-					timestamp: Date.now(),
+					timestamp: 0,
 				};
 				if (controller.error !== undefined) {
 					return { ...base, stopReason: "error", errorMessage: controller.error };
@@ -69,35 +57,11 @@ function registerStubImagesProvider(): StubController {
 		STUB_SOURCE_ID,
 	);
 
-	return {
-		calls: controller.calls,
-		setImages(count: number) {
-			controller.images = count;
-		},
-		setRevisedPrompts(prompts: string[]) {
-			controller.revisedPrompts = prompts;
-		},
-		setUsage(usage: AssistantImages["usage"]) {
-			controller.usage = usage;
-		},
-		fail(message: string) {
-			controller.error = message;
-		},
-	};
+	return controller;
 }
 
-interface ToolHarnessOptions {
-	gateway?: boolean;
-}
-
-async function createToolHarness(options: ToolHarnessOptions = {}): Promise<Harness> {
-	const harness = await createHarness({
-		extensionFactories: [
-			(pi: ExtensionAPI) => {
-				pi.registerTool(generateImageTool);
-			},
-		],
-	});
+async function createToolHarness(options: { gateway?: boolean } = {}): Promise<Harness> {
+	const harness = await createHarness({ extensionFactories: [(pi) => pi.registerTool(generateImageTool)] });
 	harnesses.push(harness);
 	if (options.gateway) {
 		harness.modelRegistry.registerProvider("quotio-openai", {
@@ -106,14 +70,8 @@ async function createToolHarness(options: ToolHarnessOptions = {}): Promise<Harn
 			api: "openai-completions",
 			models: [
 				{
-					id: "gpt-5",
-					name: "GPT-5",
+					...harness.getModel(),
 					api: "openai-completions",
-					reasoning: false,
-					input: ["text"],
-					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-					contextWindow: 128_000,
-					maxTokens: 16_384,
 					baseUrl: "https://gateway.example/openai/v1",
 				},
 			],
@@ -123,32 +81,12 @@ async function createToolHarness(options: ToolHarnessOptions = {}): Promise<Harn
 	return harness;
 }
 
-interface ImageDetails {
-	paths: string[];
-	model: string;
-	source: string;
-	size: string;
-	quality: string;
-	requested: number;
-	generated: number;
-	revisedPrompts: string[];
-	error?: string;
-	reason?: string;
-}
-
 function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
-	return result.content
-		.filter((block): block is { type: "text"; text: string } => block.type === "text")
-		.map((block) => block.text)
-		.join("\n");
-}
-
-function imageBlocks(result: { content: Array<{ type: string }> }): Array<{ type: string }> {
-	return result.content.filter((block) => block.type === "image");
+	return result.content.flatMap((block) => (block.type === "text" ? [block.text ?? ""] : [])).join("\n");
 }
 
 describe("generate_image tool", () => {
-	let stub: StubController;
+	let stub: ReturnType<typeof registerStubImagesProvider>;
 
 	beforeEach(() => {
 		stub = registerStubImagesProvider();
@@ -165,15 +103,15 @@ describe("generate_image tool", () => {
 
 	it("saves a generated image, reports its path, and records revised prompts", async () => {
 		const harness = await createToolHarness({ gateway: true });
-		stub.setRevisedPrompts(["A richly detailed red fox"]);
-		stub.setUsage({
+		stub.revisedPrompts = ["A richly detailed red fox"];
+		stub.usage = {
 			input: 12,
 			output: 34,
 			cacheRead: 0,
 			cacheWrite: 0,
 			totalTokens: 46,
 			cost: { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0, total: 0.3 },
-		});
+		};
 
 		const result = await harness.session.executeTool<ImageDetails>(TOOL_NAME, {
 			prompt: "a red fox",
@@ -185,13 +123,13 @@ describe("generate_image tool", () => {
 		expect(readFileSync(absolute).subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 		expect(result.details.paths).toEqual(["art/fox.png"]);
 		expect(result.details.revisedPrompts).toEqual(["A richly detailed red fox"]);
-		expect(result.details.model).toBe("gpt-image-2");
+		expect(result.details.model).toBe("gpt-image-2.5-sunburst");
 		expect(result.details.requested).toBe(1);
 		expect(result.details.generated).toBe(1);
 		expect(result.details.size).toBe("auto");
 		expect(result.details.quality).toBe("auto");
 		expect(resultText(result)).toContain("art/fox.png");
-		expect(imageBlocks(result)).toHaveLength(1);
+		expect(result.content.filter((block) => block.type === "image")).toHaveLength(1);
 		expect(result.usage?.totalTokens).toBe(46);
 	});
 
@@ -242,7 +180,7 @@ describe("generate_image tool", () => {
 		expect(call?.model.baseUrl).toBe("https://gateway.example/openai/v1");
 		expect(call?.model.provider).toBe("quotio-openai");
 		expect(call?.model.api).toBe("openai-images");
-		expect(call?.model.id).toBe("gpt-image-2");
+		expect(call?.model.id).toBe("gpt-image-2.5-sunburst");
 		expect(call?.options?.apiKey).toBe("gateway-secret");
 		expect(call?.options?.size).toBe("1024x1536");
 		expect(call?.options?.quality).toBe("high");
@@ -279,7 +217,7 @@ describe("generate_image tool", () => {
 
 	it("indexes multiple images before the png extension", async () => {
 		const harness = await createToolHarness({ gateway: true });
-		stub.setImages(2);
+		stub.images = 2;
 
 		const result = await harness.session.executeTool<ImageDetails>(TOOL_NAME, {
 			prompt: "a red fox",
@@ -290,7 +228,7 @@ describe("generate_image tool", () => {
 		expect(result.details.paths).toEqual(["art/fox-01.png", "art/fox-02.png"]);
 		expect(existsSync(join(harness.tempDir, "art/fox-01.png"))).toBe(true);
 		expect(existsSync(join(harness.tempDir, "art/fox-02.png"))).toBe(true);
-		expect(imageBlocks(result)).toHaveLength(2);
+		expect(result.content.filter((block) => block.type === "image")).toHaveLength(2);
 		expect(stub.calls[0]?.options?.n).toBe(2);
 	});
 
@@ -311,7 +249,7 @@ describe("generate_image tool", () => {
 
 	it("removes this invocation's files when a later write fails", async () => {
 		const harness = await createToolHarness({ gateway: true });
-		stub.setImages(2);
+		stub.images = 2;
 		// A dangling symlink passes the existsSync preflight (it resolves to nothing) but
 		// fails the exclusive create, so the second write fails after the first succeeded.
 		mkdirSync(join(harness.tempDir, "art"), { recursive: true });
@@ -340,7 +278,7 @@ describe("generate_image tool", () => {
 
 	it("reports a provider failure without writing files", async () => {
 		const harness = await createToolHarness({ gateway: true });
-		stub.fail("upstream refused the request");
+		stub.error = "upstream refused the request";
 
 		const result = await harness.session.executeTool<ImageDetails>(TOOL_NAME, {
 			prompt: "a red fox",

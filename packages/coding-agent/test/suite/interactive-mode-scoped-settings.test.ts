@@ -74,7 +74,7 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 		expect(setSessionModel).not.toHaveBeenCalled();
 	});
 
-	it("keeps the settings UI thinking selector on the global-setting setter", () => {
+	it("keeps the settings UI thinking selector on the global-setting setter", async () => {
 		// Given: the settings selector is opened with both thinking-setting APIs observable.
 		const setThinkingLevel = vi.fn();
 		const setSessionThinkingLevel = vi.fn();
@@ -95,7 +95,7 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 			},
 			settingsManager: createSettingsManagerStub(),
 			ui: { mode: "inline" },
-			themeController: { getTerminalTheme: () => "dark" },
+			themeController: { getThemeSelection: () => "dark", getTerminalTheme: () => "dark" },
 			footer: { invalidate: vi.fn() },
 			updateEditorBorderColor: vi.fn(),
 		};
@@ -105,7 +105,9 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 		}
 
 		// When: the interactive settings callback selects a new thinking level.
-		showSettingsSelector.call(fakeThis);
+		// showSettingsSelector is async: it awaits the (possibly remote) thinking-level
+		// list before building the selector.
+		await showSettingsSelector.call(fakeThis);
 		const callbacks = settingsCapture.callbacks;
 		if (callbacks === undefined) throw new Error("Settings callbacks were not captured");
 		callbacks.onThinkingLevelChange("high");
@@ -117,7 +119,7 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 
 	it("keeps post-auth default model selection on the global-setting setter", async () => {
 		// Given: authentication completes while the session still has the unknown placeholder model.
-		const defaultModel = { provider: "openai", id: "gpt-5.5" };
+		const defaultModel = { provider: "openai", id: "gpt-5.6-sol" };
 		const setModel = vi.fn(async () => undefined);
 		const setSessionModel = vi.fn(async () => undefined);
 		const fakeThis = {
@@ -182,7 +184,9 @@ function createSettingsManagerStub() {
 		getClearOnShrink: () => false,
 		getShowTerminalProgress: () => false,
 		getTuiMode: () => "regular",
+		getFullscreenExitOutput: () => "transcript",
 		getFullscreenScrollbar: () => "auto",
+		getFullscreenCopyOnSelect: () => true,
 		getSmoothStreaming: () => false,
 		getSmoothStreamingFps: () => 30,
 		getMermaidRenderingMode: () => "streaming",

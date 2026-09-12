@@ -1,5 +1,5 @@
 import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { arch, platform, release, tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { Type } from "typebox";
@@ -55,9 +55,11 @@ function decodeCodexRequestBody(body: RequestInit["body"] | undefined): Record<s
 function buildSSEPayload({
 	status,
 	includeDone = false,
+	endTurn,
 }: {
 	status: "completed" | "incomplete";
 	includeDone?: boolean;
+	endTurn?: boolean;
 }): string {
 	const terminalType = status === "incomplete" ? "response.incomplete" : "response.completed";
 	const events = [
@@ -81,6 +83,7 @@ function buildSSEPayload({
 			type: terminalType,
 			response: {
 				status,
+				end_turn: endTurn,
 				incomplete_details: status === "incomplete" ? { reason: "max_output_tokens" } : null,
 				usage: {
 					input_tokens: 5,
@@ -163,6 +166,7 @@ describe("openai-codex streaming", () => {
 				expect(headers?.get("chatgpt-account-id")).toBe("acc_test");
 				expect(headers?.get("OpenAI-Beta")).toBe("responses=experimental");
 				expect(headers?.get("originator")).toBe("senpi");
+				expect(headers?.get("User-Agent")).toBe(`senpi (${platform()} ${release()}; ${arch()})`);
 				expect(headers?.get("accept")).toBe("text/event-stream");
 				expect(headers?.has("x-api-key")).toBe(false);
 				return new Response(stream, {
@@ -267,7 +271,7 @@ describe("openai-codex streaming", () => {
 		process.env.PI_CODING_AGENT_DIR = tempDir;
 		const token = mockToken();
 		const encoder = new TextEncoder();
-		const sse = buildSSEPayload({ status: "completed", includeDone: true });
+		const sse = buildSSEPayload({ status: "completed", includeDone: true, endTurn: false });
 
 		const stream = new ReadableStream<Uint8Array>({
 			start(controller) {
@@ -320,6 +324,7 @@ describe("openai-codex streaming", () => {
 
 		expect(result.content.find((c) => c.type === "text")?.text).toBe("Hello");
 		expect(result.stopReason).toBe("stop");
+		expect(result.endTurn).toBe(false);
 	});
 
 	it("maps response.incomplete to stopReason length even when the SSE body stays open", async () => {
@@ -1086,6 +1091,7 @@ describe("openai-codex streaming", () => {
 		["gpt-5.1-codex", "priority", 2],
 		["gpt-5.5", "flex", 0.5],
 		["gpt-5.5", "priority", 2.5],
+		["gpt-6-astra", "fast", 2],
 	] as const)(
 		"uses the client-sent %s service tier for %s when Codex echoes default",
 		async (modelId, serviceTier, multiplier) => {
@@ -1113,7 +1119,7 @@ describe("openai-codex streaming", () => {
 					type: "response.completed",
 					response: {
 						status: "completed",
-						service_tier: "default",
+						service_tier: serviceTier === "fast" ? "fast" : "default",
 						usage: {
 							input_tokens: 1000000,
 							output_tokens: 1000000,
@@ -1330,6 +1336,7 @@ describe("openai-codex streaming", () => {
 						type: "response.completed",
 						response: {
 							status: "completed",
+							end_turn: false,
 							usage: {
 								input_tokens: 5,
 								output_tokens: 3,
@@ -1374,12 +1381,13 @@ describe("openai-codex streaming", () => {
 			messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
 		};
 
-		await streamSimpleOpenAICodexResponses(model, context, {
+		const result = await streamSimpleOpenAICodexResponses(model, context, {
 			apiKey: token,
 			sessionId: "session-auto",
 			transport: "auto",
 		}).result();
 
+		expect(result.endTurn).toBe(false);
 		expect(sentBodies).toHaveLength(1);
 		expect(capturedWebSocketHeaders?.["session-id"]).toBe("session-auto");
 		expect(capturedWebSocketHeaders?.session_id).toBeUndefined();

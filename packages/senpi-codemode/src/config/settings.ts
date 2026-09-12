@@ -19,6 +19,8 @@ export const codemodeSettingsSchema = Type.Object(
 			),
 		),
 		cellTimeoutSeconds: Type.Optional(Type.Number({ minimum: 1 })),
+		foregroundWindowSeconds: Type.Optional(Type.Number({ minimum: 1 })),
+		runBudgetSeconds: Type.Optional(Type.Number({ minimum: 1 })),
 		hardLimitSeconds: Type.Optional(Type.Number({ minimum: 1 })),
 		parallelPoolWidth: Type.Optional(Type.Number({ minimum: 1 })),
 		taskTools: Type.Optional(
@@ -63,8 +65,20 @@ export interface CodemodeSettings {
 		readonly rb: boolean;
 		readonly jl: boolean;
 	};
+	/** Idle time an interactive call blocks the turn before the cell detaches; capped by the foreground window. */
 	readonly cellTimeoutSeconds: number;
-	/** Wall-clock kill deadline for a single cell; bounds detached cells too. */
+	/**
+	 * Longest an interactive eval call blocks the agent loop before the cell detaches, capping
+	 * `cellTimeoutSeconds` and the bridge-parked grace. A still-running cell keeps living up to its
+	 * run budget and the hard limit; this only frees the turn. Print/json calls never detach.
+	 */
+	readonly foregroundWindowSeconds: number;
+	/**
+	 * Kill deadline for a cell's own execution time — child processes, network, timers, CPU — with
+	 * time parked on host tool calls excluded. A per-call `timeout` replaces it for that cell.
+	 */
+	readonly runBudgetSeconds: number;
+	/** Wall-clock kill deadline for a single cell; bounds detached and bridge-parked cells too. */
 	readonly hardLimitSeconds: number;
 	readonly parallelPoolWidth: number;
 	readonly taskTools?: CodemodeTaskTools;
@@ -98,6 +112,25 @@ export const DEFAULT_HARD_LIMIT_SECONDS = 1800;
 
 export const HARD_LIMIT_ENVIRONMENT_FLAG = "SENPI_CODEMODE_HARD_LIMIT_SECONDS";
 
+/**
+ * Bash parity: `terminal/tools/foreground-window.ts` auto-detaches a still-running bash command to a
+ * background session at 60s regardless of its `timeout` kill deadline. An eval cell gets the same
+ * default foreground window so a large `timeout` extends the cell's lifetime without holding the turn
+ * hostage for hours.
+ */
+export const DEFAULT_FOREGROUND_WINDOW_SECONDS = 60;
+
+export const FOREGROUND_WINDOW_ENVIRONMENT_FLAG = "SENPI_CODEMODE_FOREGROUND_SECONDS";
+
+/**
+ * One language kernel runs one cell at a time and a killed JavaScript cell that cannot settle
+ * cooperatively restarts its worker, so a runaway cell costs far more than a runaway bash command:
+ * five minutes of own execution time is the default before the cell is killed.
+ */
+export const DEFAULT_RUN_BUDGET_SECONDS = 300;
+
+export const RUN_BUDGET_ENVIRONMENT_FLAG = "SENPI_CODEMODE_RUN_BUDGET_SECONDS";
+
 // OMP settings-schema.ts:3211-3299 has language/path settings only; eval.ts:427
 // defaults timeout to 30s, and codemode pins concurrency-bridge.ts:30 width to 4.
 export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
@@ -108,6 +141,8 @@ export const defaultCodemodeSettings: ResolvedCodemodeSettings = {
 		jl: false,
 	},
 	cellTimeoutSeconds: 30,
+	foregroundWindowSeconds: DEFAULT_FOREGROUND_WINDOW_SECONDS,
+	runBudgetSeconds: DEFAULT_RUN_BUDGET_SECONDS,
 	hardLimitSeconds: DEFAULT_HARD_LIMIT_SECONDS,
 	parallelPoolWidth: 4,
 	taskTools: {
@@ -159,11 +194,23 @@ export function resolveEnabledLanguages(
 
 /** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
 export function resolveHardLimitSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
-	const override = env[HARD_LIMIT_ENVIRONMENT_FLAG];
-	if (override === undefined) return settings.hardLimitSeconds;
-	const parsed = Number.parseInt(override, 10);
-	if (!Number.isFinite(parsed) || parsed <= 0) return settings.hardLimitSeconds;
-	return parsed;
+	return positiveSecondsOverride(env[HARD_LIMIT_ENVIRONMENT_FLAG]) ?? settings.hardLimitSeconds;
+}
+
+/** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
+export function resolveForegroundWindowSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
+	return positiveSecondsOverride(env[FOREGROUND_WINDOW_ENVIRONMENT_FLAG]) ?? settings.foregroundWindowSeconds;
+}
+
+/** Environment override wins over the settings file; a non-positive or malformed value is ignored. */
+export function resolveRunBudgetSeconds(settings: CodemodeSettings, env: Environment = process.env): number {
+	return positiveSecondsOverride(env[RUN_BUDGET_ENVIRONMENT_FLAG]) ?? settings.runBudgetSeconds;
+}
+
+function positiveSecondsOverride(value: string | undefined): number | undefined {
+	if (value === undefined) return undefined;
+	const parsed = Number.parseInt(value, 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 async function loadSettingsFile(path: string): Promise<LoadedCodemodeSettings> {
@@ -200,6 +247,8 @@ function mergeSettings(input: CodemodeSettingsInput): ResolvedCodemodeSettings {
 			jl: input.languages?.jl ?? defaultCodemodeSettings.languages.jl,
 		},
 		cellTimeoutSeconds: input.cellTimeoutSeconds ?? defaultCodemodeSettings.cellTimeoutSeconds,
+		foregroundWindowSeconds: input.foregroundWindowSeconds ?? defaultCodemodeSettings.foregroundWindowSeconds,
+		runBudgetSeconds: input.runBudgetSeconds ?? defaultCodemodeSettings.runBudgetSeconds,
 		hardLimitSeconds: input.hardLimitSeconds ?? defaultCodemodeSettings.hardLimitSeconds,
 		parallelPoolWidth: input.parallelPoolWidth ?? defaultCodemodeSettings.parallelPoolWidth,
 		taskTools: {

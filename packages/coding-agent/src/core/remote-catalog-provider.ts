@@ -2,48 +2,34 @@ import type { Api, Model, ModelsStoreEntry, Provider } from "@earendil-works/pi-
 import { VERSION } from "../config.ts";
 import { fetchWithRetry } from "../utils/management-http.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { mergeRemoteCatalogModels, parseRemoteCatalog, type RemoteCatalogConflict } from "./remote-catalog-merge.ts";
 
 const DEFAULT_CATALOG_BASE_URL = "https://pi.dev";
+const REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS = 4_000;
 export const REMOTE_CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
-const INPUT_MODALITY_ORDER = ["text", "image", "video"] as const;
+/**
+ * Builtin providers that exist only in this fork. Upstream's pi.dev catalog does
+ * not serve them and answers with a non-404 failure, which becomes a chronic
+ * per-refresh "Could not refresh <id>" warning (transient failures never persist
+ * lastModified, so the freshness throttle below never engages for them).
+ */
+export const FORK_ONLY_BUILTIN_PROVIDERS: ReadonlySet<string> = new Set(["alibaba-token-plan", "opengateway"]);
 
 /**
- * Union of input modalities, in canonical order. The remote overlay refreshes
- * costs/limits but may lag behind fork-declared capabilities (e.g. kimi-coding
- * k3 video input), so a catalog entry must never silently drop a modality the
- * built-in model already declares.
+ * Whether the remote catalog overlay can serve a provider. Fork-only providers
+ * are skipped under the default upstream catalog base URL; a custom base URL (a
+ * fork-owned catalog) may serve them, so the wrap is preserved there.
  */
-function mergeInputModalities(baseline: Model<Api>["input"], dynamic: Model<Api>["input"]): Model<Api>["input"] {
-	const set = new Set([...(dynamic ?? []), ...(baseline ?? [])]);
-	return INPUT_MODALITY_ORDER.filter((modality) => set.has(modality));
+export function remoteCatalogServesProvider(providerId: string, catalogBaseUrl?: string): boolean {
+	return catalogBaseUrl !== undefined || !FORK_ONLY_BUILTIN_PROVIDERS.has(providerId);
 }
 
-function mergeModels(baseline: readonly Model<Api>[], dynamic: readonly Model<Api>[]): Model<Api>[] {
-	const merged = [...baseline];
-	for (const model of dynamic) {
-		const index = merged.findIndex((entry) => entry.id === model.id);
-		if (index >= 0) {
-			merged[index] = { ...model, input: mergeInputModalities(merged[index].input, model.input) };
-		} else {
-			merged.push(model);
-		}
-	}
-	return merged;
-}
+const remoteCatalogConflicts = new WeakMap<Provider, readonly RemoteCatalogConflict[]>();
 
-function parseCatalog(providerId: string, value: unknown): Model<Api>[] {
-	const entries = Array.isArray(value)
-		? value
-		: typeof value === "object" && value !== null && "models" in value && Array.isArray(value.models)
-			? value.models
-			: typeof value === "object" && value !== null
-				? Object.values(value)
-				: undefined;
-	if (!entries) throw new Error(`Invalid model catalog for provider "${providerId}"`);
-	return entries
-		.filter((entry): entry is Model<Api> => typeof entry === "object" && entry !== null && "id" in entry)
-		.map((model) => ({ ...model, provider: providerId }));
+/** Return capability conflicts rejected from a provider's remote overlay. */
+export function getRemoteCatalogConflicts(provider: Provider): readonly RemoteCatalogConflict[] {
+	return remoteCatalogConflicts.get(provider) ?? [];
 }
 
 function remoteModels(
@@ -64,10 +50,9 @@ export function withRemoteCatalog(
 	localGeneratedAt?: number,
 ): Provider {
 	let dynamicModels: readonly Model<Api>[] = [];
-
-	return {
+	const wrappedProvider: Provider = {
 		...provider,
-		getModels: () => mergeModels(provider.getModels(), dynamicModels),
+		getModels: () => mergeRemoteCatalogModels(provider.id, provider.getModels(), dynamicModels).models,
 		refreshModels: async (context) => {
 			const stored = context.stored;
 			const restored = remoteModels(stored, localGeneratedAt).filter((model) => model.provider === provider.id);
@@ -75,6 +60,10 @@ export function withRemoteCatalog(
 				!(await context.publish({
 					update: () => {
 						dynamicModels = restored;
+						remoteCatalogConflicts.set(
+							wrappedProvider,
+							mergeRemoteCatalogModels(provider.id, provider.getModels(), restored).conflicts,
+						);
 					},
 				}))
 			) {
@@ -94,14 +83,18 @@ export function withRemoteCatalog(
 			// leave the overlay empty.
 			const validator = stored?.models.length ? stored.etag : undefined;
 			const url = new URL(`/api/models/providers/${encodeURIComponent(provider.id)}`, catalogBaseUrl);
-			const response = await fetchWithRetry(url, {
-				headers: {
-					accept: "application/json",
-					"User-Agent": getPiUserAgent(VERSION),
-					...(validator ? { "if-none-match": validator } : {}),
+			const response = await fetchWithRetry(
+				url,
+				{
+					headers: {
+						accept: "application/json",
+						"User-Agent": getPiUserAgent(VERSION),
+						...(validator ? { "if-none-match": validator } : {}),
+					},
+					signal: context.signal,
 				},
-				signal: context.signal,
-			});
+				{ attemptTimeoutMs: REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS },
+			);
 			if (context.signal.aborted) return;
 			const checkedAt = Date.now();
 			// Unchanged: dynamicModels already holds the stored overlay, so only the
@@ -127,7 +120,7 @@ export function withRemoteCatalog(
 				await context.publish({ persist: { ...(stored ?? { models: [] }), checkedAt } });
 				throw new Error(`Model catalog request failed for ${provider.id}: ${response.status}`);
 			}
-			const refreshed = parseCatalog(provider.id, await response.json());
+			const refreshed = parseRemoteCatalog(provider.id, await response.json());
 			const lastModified = Date.parse(response.headers.get("last-modified") ?? "");
 			if (context.signal.aborted) return;
 			const entry = {
@@ -141,8 +134,14 @@ export function withRemoteCatalog(
 				persist: entry,
 				update: () => {
 					dynamicModels = published;
+					remoteCatalogConflicts.set(
+						wrappedProvider,
+						mergeRemoteCatalogModels(provider.id, provider.getModels(), published).conflicts,
+					);
 				},
 			});
 		},
 	};
+	remoteCatalogConflicts.set(wrappedProvider, []);
+	return wrappedProvider;
 }

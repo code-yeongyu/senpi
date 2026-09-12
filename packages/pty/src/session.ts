@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import process from "node:process";
 import { loadNativePty, type NativePtyLoadResult, type NativePtyUnavailableDiagnostic } from "./native-loader.ts";
 import { PipeFallbackSession, shouldUsePipeFallback } from "./pipe-fallback.ts";
+import { createBunTerminalSession, isBunTerminalEnabled } from "./session-bun.ts";
 import {
 	exitedOperation,
 	normalizeOperationResult,
@@ -43,6 +44,8 @@ export class TerminalSession {
 	private readonly nativeLoadResult: NativePtyLoadResult;
 	private readonly createNativeSessionDependency?: CreateNativeTerminalSession;
 	private readonly env: Readonly<Record<string, string | undefined>>;
+	private readonly runtimeVersions: import("./session-bun.ts").BunRuntimeVersions;
+	private readonly bunRuntime: import("./session-bun.ts").BunRuntime | undefined;
 	private readonly rawTailLimit: number;
 	private readonly dataHandlers = new Set<TerminalSessionDataHandler>();
 	private readonly exitHandlers = new Set<() => void>();
@@ -64,6 +67,9 @@ export class TerminalSession {
 		this.nativeLoadResult = dependencies.nativeLoadResult ?? loadNativePty();
 		this.createNativeSessionDependency = dependencies.createNativeSession;
 		this.env = dependencies.env ?? process.env;
+		this.runtimeVersions =
+			dependencies.runtimeVersions ?? (process.versions as import("./session-bun.ts").BunRuntimeVersions);
+		this.bunRuntime = dependencies.bunRuntime;
 		this.rawTailLimit = normalizeRawTailBytes(options.rawTailBytes);
 	}
 
@@ -117,16 +123,25 @@ export class TerminalSession {
 		if (this.settledExit !== null) throw new Error("Cannot restart exited terminal session");
 		if (this.backendHandle !== null) throw new Error("Terminal session has already been started");
 
-		const nativeFactory = this.createNativeSessionDependency ?? getNativeSessionFactory(this.nativeLoadResult);
-		if (nativeFactory && !shouldUsePipeFallback(this.nativeLoadResult, this.env)) {
-			this.backendValue = "native";
-			this.backendHandle = nativeFactory(toNativeOptions(this.options), (chunk) => this.emitData(chunk));
+		if (isBunTerminalEnabled(this.env, this.runtimeVersions)) {
+			this.backendValue = "bun";
+			this.backendHandle = createBunTerminalSession(
+				toNativeOptions(this.options),
+				(chunk) => this.emitData(chunk),
+				this.bunRuntime,
+			);
 		} else {
-			this.backendValue = "pipe-fallback";
-			const fallback = new PipeFallbackSession(toPipeFallbackOptions(this.options));
-			this.backendHandle = fallback;
-			this.unsubscribeBackendData = fallback.onData((chunk) => this.emitData(chunk));
-			fallback.start();
+			const nativeFactory = this.createNativeSessionDependency ?? getNativeSessionFactory(this.nativeLoadResult);
+			if (nativeFactory && !shouldUsePipeFallback(this.nativeLoadResult, this.env)) {
+				this.backendValue = "native";
+				this.backendHandle = nativeFactory(toNativeOptions(this.options), (chunk) => this.emitData(chunk));
+			} else {
+				this.backendValue = "pipe-fallback";
+				const fallback = new PipeFallbackSession(toPipeFallbackOptions(this.options));
+				this.backendHandle = fallback;
+				this.unsubscribeBackendData = fallback.onData((chunk) => this.emitData(chunk));
+				fallback.start();
+			}
 		}
 
 		const backendHandle = this.backendHandle;

@@ -1,4 +1,5 @@
 import type { Credential } from "@earendil-works/pi-ai";
+import { accountDisplayName } from "@earendil-works/pi-ai/auth/pool/slots";
 import type { AuthStorage } from "../../../auth-storage.ts";
 import { emitProviderAccountsChanged } from "./account-events.ts";
 import {
@@ -14,6 +15,7 @@ export const CLAUDE_SDK_OAUTH_PROVIDER_ID = "claude-sdk-oauth";
 
 export type ProviderAccountSummary = {
 	readonly name: string;
+	readonly displayName?: string;
 	readonly source: AccountSlot["source"];
 	readonly blocked: boolean;
 	readonly pinned: boolean;
@@ -27,13 +29,17 @@ export function getProviderAccounts(
 	assertManagedProvider(provider);
 	const credential = credentialFrom(storage.get(provider));
 	const now = Date.now();
-	return listAccounts(credential, (name) => env[name]).map((account) => ({
-		name: account.name,
-		source: account.source,
-		blocked:
-			account.blockReason === "auth_error" || (account.blockedUntil !== undefined && account.blockedUntil > now),
-		pinned: credential.pinned === account.name,
-	}));
+	return listAccounts(credential, (name) => env[name]).map((account) => {
+		const displayName = accountDisplayName(account.displayName);
+		return {
+			name: account.name,
+			...(displayName === undefined ? {} : { displayName }),
+			source: account.source,
+			blocked:
+				account.blockReason === "auth_error" || (account.blockedUntil !== undefined && account.blockedUntil > now),
+			pinned: credential.pinned === account.name,
+		};
+	});
 }
 
 export async function pinProviderAccount(

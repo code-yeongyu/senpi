@@ -1,5 +1,38 @@
+import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
+
+/** Policy defaults shared with the pool engine so schema and runtime cannot drift. */
+export const CREDENTIAL_POLICY_DEFAULTS = {
+	rotation: true,
+	affinity: true,
+	cooldownBaseMs: DEFAULT_SLOT_BLOCK_MS,
+	cooldownCapMs: MAX_SLOT_BLOCK_MS,
+} as const;
+
+const CredentialSlotRefSchema = Type.Object(
+	{
+		env: Type.Optional(Type.String({ minLength: 1 })),
+		value: Type.Optional(Type.String({ minLength: 1 })),
+	},
+	{ additionalProperties: false },
+);
+
+/**
+ * Policy only: named slots REFERENCE env vars or command values; key material
+ * itself stays in auth.json or the environment, and unknown keys (for example
+ * a literal `apiKey`) are rejected outright.
+ */
+const CredentialPolicySchema = Type.Object(
+	{
+		rotation: Type.Optional(Type.Boolean()),
+		affinity: Type.Optional(Type.Boolean()),
+		cooldownBaseMs: Type.Optional(Type.Number({ minimum: 0 })),
+		cooldownCapMs: Type.Optional(Type.Number({ minimum: 0 })),
+		slots: Type.Optional(Type.Record(Type.String({ minLength: 1 }), CredentialSlotRefSchema)),
+	},
+	{ additionalProperties: false },
+);
 
 const PercentileCutoffsSchema = Type.Object({
 	p50: Type.Optional(Type.Number()),
@@ -68,6 +101,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	supportsDeveloperRole: Type.Optional(Type.Boolean()),
 	supportsReasoningEffort: Type.Optional(Type.Boolean()),
 	supportsUsageInStreaming: Type.Optional(Type.Boolean()),
+	supportsFinishReason: Type.Optional(Type.Boolean()),
 	maxTokensField: Type.Optional(Type.Union([Type.Literal("max_completion_tokens"), Type.Literal("max_tokens")])),
 	requiresToolResultName: Type.Optional(Type.Boolean()),
 	requiresAssistantAfterToolResult: Type.Optional(Type.Boolean()),
@@ -163,7 +197,7 @@ const ModelDefinitionSchema = Type.Object({
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
-	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image"), Type.Literal("video")]))),
 	cost: Type.Optional(ModelCostSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
@@ -180,7 +214,7 @@ const ModelOverrideSchema = Type.Object({
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	thinkingLevelMapMode: Type.Optional(Type.Union([Type.Literal("merge"), Type.Literal("replace")])),
-	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image"), Type.Literal("video")]))),
 	cost: Type.Optional(
 		Type.Object({
 			input: Type.Optional(Type.Number()),
@@ -204,7 +238,6 @@ const ProviderConfigSchema = Type.Object({
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
-	oauth: Type.Optional(Type.Literal("radius")),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	extraBody: Type.Optional(ExtraBodySchema),
 	cacheRetention: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("short"), Type.Literal("long")])),
@@ -214,6 +247,7 @@ const ProviderConfigSchema = Type.Object({
 	blacklist: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
 	modelOverrides: Type.Optional(Type.Record(Type.String(), ModelOverrideSchema)),
+	credentials: Type.Optional(CredentialPolicySchema),
 });
 
 const ModelsConfigSchema = Type.Object({
@@ -225,4 +259,5 @@ export const validateModelsConfig = Compile(ModelsConfigSchema);
 export type ModelsJsonModel = Static<typeof ModelDefinitionSchema>;
 export type ModelsJsonModelOverride = Static<typeof ModelOverrideSchema>;
 export type ModelsJsonProvider = Static<typeof ProviderConfigSchema>;
+export type ModelsJsonCredentialPolicy = Static<typeof CredentialPolicySchema>;
 export type ModelsJson = Static<typeof ModelsConfigSchema>;

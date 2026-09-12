@@ -11,6 +11,7 @@ type Handler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unk
 interface ToolResultLike {
 	content: Array<{ type: string; text?: string }>;
 	isError?: boolean;
+	details?: { bash_id?: string };
 }
 
 interface ToolLike {
@@ -102,10 +103,10 @@ function firstText(result: ToolResultLike): string {
 	return result.content.find((block) => block.type === "text")?.text ?? "";
 }
 
-function extractBashId(text: string): string {
-	const match = /ID: (bash_\d+)/.exec(text);
-	if (!match?.[1]) throw new Error(`No bash id in tool result: ${text}`);
-	return match[1];
+function extractBashId(result: ToolResultLike | undefined): string {
+	const bashId = result?.details?.bash_id;
+	if (!bashId) throw new Error(`No bash id in tool result details: ${JSON.stringify(result?.details)}`);
+	return bashId;
 }
 
 describe("terminal extension — background state survives reload", () => {
@@ -171,7 +172,8 @@ describe("terminal extension — background state survives reload", () => {
 			persistent: true,
 		});
 		expect(created?.isError).toBeFalsy();
-		extractBashId(firstText(created ?? { content: [] }));
+		expect(firstText(created ?? { content: [] })).toMatch(/^Monitor started with ID: mon_[0-9A-HJKMNP-TV-Z]{16}$/);
+		extractBashId(created);
 
 		const gen2 = await reloadInto(gen1);
 
@@ -192,7 +194,7 @@ describe("terminal extension — background state survives reload", () => {
 			run_in_background: true,
 		});
 		expect(created?.isError).toBeFalsy();
-		const bashId = extractBashId(firstText(created ?? { content: [] }));
+		const bashId = extractBashId(created);
 
 		const gen2 = await reloadInto(gen1);
 
@@ -212,7 +214,7 @@ describe("terminal extension — background state survives reload", () => {
 			command: `sh -c 'while [ ! -e "${trigger}" ]; do sleep 0.05; done; echo finishing-now'`,
 			run_in_background: true,
 		});
-		const bashId = extractBashId(firstText(created ?? { content: [] }));
+		const bashId = extractBashId(created);
 
 		const gen2 = await reloadInto(gen1);
 

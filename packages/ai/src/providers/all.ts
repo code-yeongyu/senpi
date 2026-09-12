@@ -11,8 +11,10 @@ import { basetenProvider } from "./baseten.ts";
 import { cerebrasProvider } from "./cerebras.ts";
 import { cloudflareAIGatewayProvider } from "./cloudflare-ai-gateway.ts";
 import { cloudflareWorkersAIProvider } from "./cloudflare-workers-ai.ts";
+import { cursorProvider } from "./cursor.ts";
 import modelDataManifest from "./data/.manifest.json" with { type: "json" };
 import { deepseekProvider } from "./deepseek.ts";
+import { devinProvider } from "./devin.ts";
 import { fireworksProvider } from "./fireworks.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
 import { googleProvider } from "./google.ts";
@@ -40,6 +42,7 @@ import { qwenTokenPlanCnProvider } from "./qwen-token-plan-cn.ts";
 import { qwenTokenPlanIndividualProvider } from "./qwen-token-plan-individual.ts";
 import { radiusProvider } from "./radius.ts";
 import { togetherProvider } from "./together.ts";
+import { veniceProvider } from "./venice.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
 import { xaiProvider } from "./xai.ts";
 import { xiaomiProvider } from "./xiaomi.ts";
@@ -140,6 +143,8 @@ export function builtinProviders(): Provider[] {
 		cerebrasProvider(),
 		cloudflareAIGatewayProvider(),
 		cloudflareWorkersAIProvider(),
+		cursorProvider(),
+		devinProvider(),
 		deepseekProvider(),
 		fireworksProvider(),
 		githubCopilotProvider(),
@@ -166,6 +171,7 @@ export function builtinProviders(): Provider[] {
 		qwenTokenPlanIndividualProvider(),
 		radiusProvider(),
 		togetherProvider(),
+		veniceProvider(),
 		vercelAIGatewayProvider(),
 		xaiProvider(),
 		xiaomiProvider(),

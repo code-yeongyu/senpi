@@ -1,5 +1,52 @@
 # todotools Fork Tracker
 
+## 2026-09-04 - Task_Management stops re-sending the tool description
+
+### What changed
+
+- `prompt.ts`: `TASK_MANAGEMENT_SECTION` no longer interpolates `TODO_TOOL_DESCRIPTION`. The section keeps the when-to-use sentence and the Evidence bullets; the operations table, anatomy, and rules stay only in the tool description. The `(CRITICAL)` heading suffix is dropped with the duplicate.
+- `prompt.ts`: the two "never guess the task text from memory" bullets merged into one.
+- `test/suite/fixtures/task-management-section.txt` regenerated; `test/suite/prompt-single-home.test.ts` pins that the section never contains the description and that the ops table and anatomy render in exactly one surface.
+
+### Why
+
+- Both surfaces ship on every turn while the todo tool is active, so the description was billed twice: 684 tokens for the section plus 576 for the description. The section is now 95 tokens with no rule lost, since the model reads the same mechanics from the tool schema.
+
+### Why extension system couldn't handle this differently
+
+- Both strings are owned by this builtin; the split between tool schema and system section is internal to it.
+
+### Expected merge conflict zones
+
+- LOW: `prompt.ts` string bodies and the golden fixture; regenerate the fixture rather than merging it.
+
+## Mirror Cursor native todos into senpi.todo-state (2026-08-19)
+
+Cursor resolves `todo` on the server and never runs local `execute()`, so the widget stayed empty. `message_end` now persists `arguments.todos` as `senpi.todo-state` when there is no local `op`.
+
+Conflict zone: `todotools/index.ts` `message_end`.
+
+## 2026-08-27 - Apply explicit empty native todo lists
+
+### What changed
+
+- The native todo mirror now distinguishes an absent `todos` payload from an explicitly empty array.
+- Empty native lists are persisted and synced, allowing the `todo-sidebar` widget to be removed.
+- Fully terminal native lists remain hidden while lists with pending work remain visible.
+
+### Why
+
+The `message_end` mirror previously skipped every empty result, so a native `todos: []` call could not clear stale persisted state or remove the widget.
+
+### Source
+
+- Fork-local fix for issue #1146.
+- Regression coverage is in `test/suite/regressions/991-cursor-native-todo-mirror.test.ts`.
+
+### Expected merge conflict zones
+
+- LOW: `todotools/index.ts` and `native-todo-mirror.ts` around native todo mirroring.
+
 ## 2026-07-31 - Animate same-phase completions in the todo sidebar
 
 ### What changed

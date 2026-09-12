@@ -142,10 +142,12 @@ describe("Anthropic cross-model history hardening", () => {
 		expect(assistantBlocks(payload).some((block) => block.type === "thinking")).toBe(false);
 	});
 
-	it("degrades to the lowest legal effort when thinking cannot be disabled", async () => {
-		// Claude Fable 5 rejects `thinking.type: "disabled"` outright, so a replayed
-		// foreign tool turn must fall back to the cheapest legal effort instead of
-		// failing every turn with a 400.
+	it("keeps adaptive thinking for a replayed foreign tool turn", async () => {
+		// Adaptive families accept a final assistant turn that starts with tool_use
+		// (verified live 2026-09-09 on claude-opus-5, claude-opus-4-6 and
+		// claude-fable-5: HTTP 200), and every change to `thinking` re-keys the
+		// prompt cache, so the request keeps the caller's effort instead of
+		// degrading to `effort: "low"`.
 		const fable = getModel("anthropic", "claude-fable-5");
 		const { assistant, results } = foreignToolTurn([{ id: "call_abc", name: "bash" }]);
 		const context: Context = {
@@ -154,8 +156,49 @@ describe("Anthropic cross-model history hardening", () => {
 
 		const payload = await capturePayload(fable, context, { reasoning: "high" });
 
-		expect(payload.thinking).toBeUndefined();
-		expect(payload.output_config).toEqual({ effort: "low" });
+		expect(payload.thinking?.type).toBe("adaptive");
+		expect(payload.output_config).toEqual({ effort: "high" });
+	});
+
+	it("keeps adaptive thinking when the model itself answered with tool_use and no thinking block", async () => {
+		// The prompt-cache regression behind "cache misses every second prompt":
+		// with adaptive thinking the model often skips thinking before a trivial
+		// tool call; degrading the continuation to `disabled` re-keyed the whole
+		// cached prefix on every tool turn (28k tokens re-written per turn in the
+		// 2026-09-09 capture).
+		const opus = getModel("anthropic", "claude-opus-5");
+		const { assistant, results } = foreignToolTurn([{ id: "toolu_native", name: "read" }]);
+		const nativeAssistant: AssistantMessage = {
+			...assistant,
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-opus-5",
+		};
+		const context: Context = {
+			messages: [{ role: "user", content: "read it", timestamp: Date.now() - 3000 }, nativeAssistant, ...results],
+		};
+
+		const payload = await capturePayload(opus, context, { reasoning: "high" });
+
+		expect(payload.thinking?.type).toBe("adaptive");
+		expect(payload.output_config).toEqual({ effort: "high" });
+	});
+
+	it("keeps budget thinking when a native tool turn has no thinking block", async () => {
+		const { assistant, results } = foreignToolTurn([{ id: "toolu_native", name: "read" }]);
+		const nativeAssistant: AssistantMessage = {
+			...assistant,
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+		};
+		const context: Context = {
+			messages: [{ role: "user", content: "read it", timestamp: Date.now() - 3000 }, nativeAssistant, ...results],
+		};
+
+		const payload = await capturePayload(model, context, { reasoning: "high" });
+
+		expect(payload.thinking?.type).toBe("enabled");
 	});
 
 	it("keeps thinking enabled when the final turn does not require replayed thinking", async () => {

@@ -65,7 +65,12 @@ function hasVertexAdcCredentials(env?: ProviderEnv): boolean {
 	return cachedVertexAdcCredentialsExists;
 }
 
-function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
+/**
+ * The canonical provider-id to API-key env-var mapping. Exported so numbered
+ * env credential slots (`OPENAI_API_KEY_2`, ...) can generalize over the same
+ * source of truth instead of duplicating it.
+ */
+export function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 	if (provider === "github-copilot") {
 		return ["COPILOT_GITHUB_TOKEN"];
 	}
@@ -91,6 +96,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		"google-vertex": "GOOGLE_CLOUD_API_KEY",
 		groq: "GROQ_API_KEY",
 		cerebras: "CEREBRAS_API_KEY",
+		venice: "VENICE_API_KEY",
 		xai: "XAI_API_KEY",
 		radius: "RADIUS_API_KEY",
 		openrouter: "OPENROUTER_API_KEY",

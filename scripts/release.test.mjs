@@ -8,6 +8,7 @@ import {
 	CHANGELOGS,
 	DEFAULT_UNRELEASED_SUBSECTIONS,
 	buildUnreleasedBlock,
+	canonicalizeUnreleasedSubsections,
 	insertUnreleasedBlock,
 	resolveNextUnreleasedSubsections,
 } from "./release-changelog.mjs";
@@ -126,6 +127,60 @@ describe("release changelog bookkeeping", () => {
 
 		// Then
 		assert.deepEqual(subsections, ["### Fixed"]);
+	});
+
+	it("collapses duplicated and aliased subsections into the canonical order", () => {
+		// Given
+		const capturedSubsections = [
+			"### Added",
+			"### Changed",
+			"### Fixed",
+			"### New Features",
+			"### Breaking Changes",
+			"### Added",
+			"### Changed",
+			"### Fixed",
+			"### Removed",
+		];
+
+		// When
+		const subsections = resolveNextUnreleasedSubsections(capturedSubsections);
+
+		// Then
+		assert.deepEqual(subsections, DEFAULT_UNRELEASED_SUBSECTIONS);
+	});
+
+	it("keeps an unknown subsection once, after the canonical ones", () => {
+		// Given
+		const capturedSubsections = ["### Fixed", "### Security", "### Security", "### Added"];
+
+		// When
+		const subsections = resolveNextUnreleasedSubsections(capturedSubsections);
+
+		// Then
+		assert.deepEqual(subsections, ["### Added", "### Fixed", "### Security"]);
+	});
+
+	it("falls back to the default block when the captured block had no subsections", () => {
+		// Given
+		const capturedSubsections = [];
+
+		// When
+		const subsections = resolveNextUnreleasedSubsections(capturedSubsections);
+
+		// Then
+		assert.deepEqual(subsections, DEFAULT_UNRELEASED_SUBSECTIONS);
+	});
+
+	it("canonicalizeUnreleasedSubsections trims heading whitespace before matching", () => {
+		// Given
+		const capturedSubsections = ["### Fixed ", " ### Added"];
+
+		// When
+		const subsections = canonicalizeUnreleasedSubsections(capturedSubsections);
+
+		// Then
+		assert.deepEqual(subsections, ["### Added", "### Fixed"]);
 	});
 
 	it("inserts the next-cycle section before the stamped release header", () => {

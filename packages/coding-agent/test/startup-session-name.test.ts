@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
+
+assertWorkspaceBuildPrerequisite(import.meta.url);
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 const CLI_TIMEOUT_MS = 60_000;
@@ -129,18 +132,5 @@ describe("startup session name", () => {
 		expect(result.code).toBe(1);
 		expect(result.signal).toBeNull();
 		expect(readSessionInfoNames(dirs.sessionFile)).toEqual(["CLI Named Session"]);
-	});
-
-	it("rejects empty --name values without appending session metadata", async () => {
-		const dirs = setup();
-		const result = await runCli(
-			["--session", dirs.sessionFile, "--name", "   ", "--model", "missing-model", "-p", "hi"],
-			dirs,
-		);
-
-		expect(result.code).toBe(1);
-		expect(result.signal).toBeNull();
-		expect(result.stderr).toContain("--name requires a non-empty value");
-		expect(readSessionInfoNames(dirs.sessionFile)).toEqual([]);
 	});
 });

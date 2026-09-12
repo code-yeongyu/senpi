@@ -13,12 +13,19 @@ type DirectInputLifecycleDependencies = {
 	readonly goalStoreRef: (ctx: ExtensionContext) => GoalStoreRef;
 	readonly beginAgentGoalAccounting: (goal: Goal) => void;
 	readonly refreshGoalUi: (ctx: ExtensionContext, goal: Goal) => void;
+	/**
+	 * One-shot resume fired when the first user message after a suppressed
+	 * flooded load is accepted. The load-time suppression notice tells the user
+	 * to "send a message to resume"; this callback is what keeps that promise.
+	 */
+	readonly resumeAfterSuppressedLoad?: (ctx: ExtensionContext, goal: Goal) => Promise<void>;
 };
 
 /** Correlates raw input with admission before changing persisted Goal state. */
 export class GoalDirectInputLifecycle {
 	readonly #dependencies: DirectInputLifecycleDependencies;
 	readonly #candidates = new Map<string, DirectInputCandidate>();
+	#suppressedLoadResumeArmed = false;
 
 	constructor(dependencies: DirectInputLifecycleDependencies) {
 		this.#dependencies = dependencies;
@@ -26,6 +33,12 @@ export class GoalDirectInputLifecycle {
 
 	reset(): void {
 		this.#candidates.clear();
+		this.#suppressedLoadResumeArmed = false;
+	}
+
+	/** Arms the one-shot resume for a goal parked by load-time flood suppression. */
+	armSuppressedLoadResume(): void {
+		this.#suppressedLoadResumeArmed = true;
 	}
 
 	async onInput(event: InputEvent, ctx: ExtensionContext): Promise<void> {
@@ -50,7 +63,7 @@ export class GoalDirectInputLifecycle {
 		if (currentGoal?.id !== candidate.goalId) return;
 
 		if (currentGoal.status === "blocked" && isMechanicalContinuationBlock(currentGoal.blockedReason)) {
-			await resetContinuationStreak(ref);
+			await resetContinuationStreak(ref, { unattended: true });
 			const reactivated = await updateGoal(ref, { status: "active" }, "user");
 			this.#dependencies.beginAgentGoalAccounting(reactivated);
 			this.#dependencies.refreshGoalUi(ctx, reactivated);
@@ -58,7 +71,11 @@ export class GoalDirectInputLifecycle {
 		}
 
 		if (currentGoal.status !== "active") return;
-		const reset = await resetContinuationStreak(ref);
+		const reset = await resetContinuationStreak(ref, { unattended: true });
 		if (reset !== null) this.#dependencies.refreshGoalUi(ctx, reset);
+		if (this.#suppressedLoadResumeArmed) {
+			this.#suppressedLoadResumeArmed = false;
+			await this.#dependencies.resumeAfterSuppressedLoad?.(ctx, reset ?? currentGoal);
+		}
 	}
 }

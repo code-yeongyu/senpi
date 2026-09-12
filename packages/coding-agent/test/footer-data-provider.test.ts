@@ -1,4 +1,5 @@
 import { execFile, spawnSync } from "child_process";
+import { EventEmitter } from "events";
 import { existsSync, type FSWatcher, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -71,6 +72,14 @@ function createReftableWorktree(tempDir: string): WorktreeFixture {
 	writeFileSync(join(reftableDir, "tables.list"), "0\n");
 
 	return { worktreeDir, reftableDir };
+}
+
+function emitReftableTablesListChange(provider: FooterDataProvider): void {
+	const watcher: unknown = Reflect.get(provider, "reftableTablesListWatcher");
+	if (!(watcher instanceof EventEmitter)) {
+		throw new Error("Expected a tables.list watcher");
+	}
+	watcher.emit("change", "change", "tables.list");
 }
 
 function awaitBranchResolution(): Promise<void> {
@@ -189,6 +198,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 	});
 
 	it("does not notify listeners when reftable updates keep the same branch", async () => {
+		vi.useFakeTimers();
 		const { worktreeDir, reftableDir } = createReftableWorktree(tempDir);
 		process.chdir(worktreeDir);
 
@@ -201,6 +211,9 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 			const resolutionDelivered = awaitBranchResolution();
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
+			emitReftableTablesListChange(provider);
+			await vi.advanceTimersByTimeAsync(500);
+			vi.useRealTimers();
 			await awaitWithTimeout(resolutionDelivered, "the reftable refresh to resolve the branch");
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
@@ -209,10 +222,12 @@ describe("FooterDataProvider reftable branch detection", () => {
 			expect(onBranchChange).not.toHaveBeenCalled();
 		} finally {
 			provider.dispose();
+			vi.useRealTimers();
 		}
 	});
 
 	it("debounces rapid reftable updates into a single async refresh", async () => {
+		vi.useFakeTimers();
 		const { worktreeDir, reftableDir } = createReftableWorktree(tempDir);
 		process.chdir(worktreeDir);
 
@@ -223,17 +238,24 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 			const resolutionDelivered = awaitBranchResolution();
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
+			emitReftableTablesListChange(provider);
 			writeFileSync(join(reftableDir, "tables.list"), "2\n");
+			emitReftableTablesListChange(provider);
 			writeFileSync(join(reftableDir, "tables.list"), "3\n");
+			emitReftableTablesListChange(provider);
+			await vi.advanceTimersByTimeAsync(500);
+			vi.useRealTimers();
 			await awaitWithTimeout(resolutionDelivered, "the debounced reftable refresh to resolve the branch");
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
 		} finally {
 			provider.dispose();
+			vi.useRealTimers();
 		}
 	});
 
 	it("updates the cached branch when the reftable directory changes", async () => {
+		vi.useFakeTimers();
 		const { worktreeDir, reftableDir } = createReftableWorktree(tempDir);
 		process.chdir(worktreeDir);
 
@@ -242,17 +264,29 @@ describe("FooterDataProvider reftable branch detection", () => {
 			expect(provider.getGitBranch()).toBe("main");
 			resolvedBranch = "foo";
 			const onBranchChange = vi.fn();
-			provider.onBranchChange(onBranchChange);
+			const branchChanged = new Promise<void>((resolve) => {
+				provider.onBranchChange(() => {
+					onBranchChange();
+					resolve();
+				});
+			});
 
 			const resolutionDelivered = awaitBranchResolution();
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await awaitWithTimeout(resolutionDelivered, "the reftable refresh to resolve the branch");
+			emitReftableTablesListChange(provider);
+			await vi.advanceTimersByTimeAsync(500);
+			vi.useRealTimers();
+			await Promise.all([
+				awaitWithTimeout(branchChanged, "the branch-change notification"),
+				awaitWithTimeout(resolutionDelivered, "the reftable refresh to resolve the branch"),
+			]);
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
 			expect(provider.getGitBranch()).toBe("foo");
 			expect(onBranchChange).toHaveBeenCalledTimes(1);
 		} finally {
 			provider.dispose();
+			vi.useRealTimers();
 		}
 	});
 

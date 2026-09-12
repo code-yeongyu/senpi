@@ -193,6 +193,9 @@ describe("prepareSenpiBundledWorkspaces", () => {
 			"": { dependencies: { "cross-spawn": "7.0.6" } },
 			"node_modules/cross-spawn": { version: "7.0.6" },
 			"node_modules/which": { version: "2.0.2" },
+			"node_modules/@code-yeongyu/senpi-codemode/node_modules/@babel/parser": { version: "8.0.4" },
+			"node_modules/@code-yeongyu/senpi-codemode/node_modules/@babel/types": { version: "8.0.4" },
+			"node_modules/@code-yeongyu/senpi-codemode/node_modules/typebox": { version: "1.3.8" },
 		});
 		writeCodingAgentManifest(tempDir);
 		const publicDeclarationPath = join(tempDir, "packages", "coding-agent", "dist", "client", "remote-session.d.ts");
@@ -225,6 +228,17 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		for (const name of ["cross-spawn", "which"]) {
 			writeJson(join(tempDir, "node_modules", name, "package.json"), { name, version: "1.0.0" });
 		}
+		for (const name of ["@babel/parser", "@babel/types", "@babel/unlocked", "typebox"]) {
+			writeJson(join(tempDir, "packages", "senpi-codemode", "node_modules", name, "package.json"), {
+				name,
+				version: "8.0.4",
+			});
+		}
+		for (const artifact of [".bin", ".vite"]) {
+			writeJson(join(tempDir, "packages", "senpi-codemode", "node_modules", artifact, "package.json"), {
+				name: `${artifact}-artifact`,
+			});
+		}
 
 		// When
 		prepareSenpiBundledWorkspaces(tempDir);
@@ -246,6 +260,21 @@ describe("prepareSenpiBundledWorkspaces", () => {
 				name,
 			);
 		}
+		const stagedCodemodeNodeModules = join(
+			tempDir,
+			"packages",
+			"coding-agent",
+			"node_modules",
+			"@code-yeongyu",
+			"senpi-codemode",
+			"node_modules",
+		);
+		for (const name of ["@babel/parser", "@babel/types", "typebox"]) {
+			assert.equal(JSON.parse(readFileSync(join(stagedCodemodeNodeModules, name, "package.json"), "utf8")).name, name);
+		}
+		assert.equal(existsSync(join(stagedCodemodeNodeModules, "@babel/unlocked")), false);
+		assert.equal(existsSync(join(stagedCodemodeNodeModules, ".bin")), false);
+		assert.equal(existsSync(join(stagedCodemodeNodeModules, ".vite")), false);
 		// ...and the manifest lists every registry-backed staged package. Client and
 		// protocol are ordinary vendored files with relative declaration imports, so
 		// Bun never sees registry edges for their unpublished upstream package names.

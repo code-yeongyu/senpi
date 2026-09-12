@@ -38,6 +38,8 @@ const NON_SOL_MODEL_IDS = [
 	"deepseek-v4-flash",
 ];
 
+const ASTRA_MODEL_IDS = ["gpt-6-astra", "gpt-6-astra-fast", "openai/gpt-6-astra"];
+
 describe("high-reasoning-warning", () => {
 	describe("isSensitiveHighReasoningModel", () => {
 		it.each(SOL_MODEL_IDS)("flags the gpt-5.6-sol variant %s", (id) => {
@@ -58,6 +60,11 @@ describe("high-reasoning-warning", () => {
 			expect(shouldWarnHighReasoning(mkModel("gpt-5.6-sol"), "xhigh")).toBe(true);
 			expect(shouldWarnHighReasoning(mkModel("gpt-5.6-sol"), "max")).toBe(true);
 			expect(shouldWarnHighReasoning(mkModel("openai/gpt-5.6-sol-pro"), "xhigh")).toBe(true);
+		});
+
+		it.each(ASTRA_MODEL_IDS)("warns for GPT-6 Astra only at max: %s", (id) => {
+			expect(shouldWarnHighReasoning(mkModel(id), "xhigh")).toBe(false);
+			expect(shouldWarnHighReasoning(mkModel(id), "max")).toBe(true);
 		});
 
 		it("does NOT warn for claude-fable-5 at xhigh or max (reported bug)", () => {

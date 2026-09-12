@@ -2,16 +2,32 @@ import type { ExtensionUIContext } from "../../../core/extensions/index.ts";
 import { getAvailableThemesWithPaths, getThemeByName, type Theme, theme } from "../../interactive/theme/theme.ts";
 import type { ApprovalBridge } from "./approval-bridge.ts";
 import { type ApprovalKind, CANCEL_REASON, NO_SUBSCRIBER_REASON, PERMISSION_OPTIONS } from "./approval-types.ts";
+import type { UserInputBridge } from "./user-input-bridge.ts";
 
 type PermissionPrompt = Readonly<{ kind: ApprovalKind; toolName: string; command: string | null; reason: string }>;
 
-export function createAppServerUIContext(bridge: ApprovalBridge, threadId: string): ExtensionUIContext {
+export function createAppServerUIContext(
+	bridge: ApprovalBridge,
+	threadId: string,
+	userInput?: UserInputBridge,
+	getTurnId: () => string = () => "turn-user-input",
+): ExtensionUIContext {
 	let pendingInput: string | undefined;
 	let editorText = "";
 	let editorFactory: Parameters<ExtensionUIContext["setEditorComponent"]>[0] | undefined;
 	let toolsExpanded = false;
 
 	return {
+		question(request, opts) {
+			return (
+				userInput?.requestUserInput(threadId, getTurnId(), request.requestId, request, opts) ??
+				Promise.resolve({
+					status: "unavailable",
+					answers: {},
+					unanswered: request.questions.map((question) => question.id),
+				})
+			);
+		},
 		async select(title, options) {
 			const prompt = parsePermissionPrompt(title);
 			if (!prompt || !isPermissionOptions(options)) {

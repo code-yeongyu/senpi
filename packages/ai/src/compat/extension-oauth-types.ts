@@ -8,6 +8,12 @@ export interface OAuthPrompt {
 	message: string;
 	placeholder?: string;
 	allowEmpty?: boolean;
+	/**
+	 * Per-prompt cancellation, forwarded from `AuthPrompt.signal`: a provider
+	 * aborts it when an out-of-band step resolves the flow, e.g. a manual-code
+	 * prompt raced against a local callback server.
+	 */
+	signal?: AbortSignal;
 }
 
 /** Legacy extension OAuth authorization link. */
@@ -33,6 +39,8 @@ export interface OAuthSelectOption {
 export interface OAuthSelectPrompt {
 	message: string;
 	options: readonly OAuthSelectOption[];
+	/** Per-prompt cancellation, forwarded from `AuthPrompt.signal`. */
+	signal?: AbortSignal;
 }
 
 /** Callback surface retained only for coding-agent extension compatibility. */

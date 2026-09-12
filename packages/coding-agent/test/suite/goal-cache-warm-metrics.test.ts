@@ -2,6 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
 	estimateCacheWarmMetrics,
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
 	resolveGoalMonitorContinuationDelayMs,
 } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 
@@ -20,19 +21,31 @@ function anthropicModel(costOverrides: Partial<Model<Api>["cost"]> = {}): Model<
 	} as Model<Api>;
 }
 
-describe("goal monitor continuation delay", () => {
+describe("goal monitor backstop delay", () => {
 	it.each([
-		[undefined, undefined, 240_000],
-		[270, undefined, 270_000],
-		[3570, undefined, 3_570_000],
-		[3570, 900, 900_000],
-		[5, undefined, 5_000],
-		[7200, undefined, 3_600_000],
-		[270, 0, 270_000],
-		[0, undefined, 240_000],
-		[Number.NaN, undefined, 240_000],
-	] as const)("resolves cache-safe wait %s with ceiling %s to %sms", (safeWait, ceiling, expected) => {
-		expect(resolveGoalMonitorContinuationDelayMs(safeWait, ceiling)).toBe(expected);
+		[undefined, 270_000],
+		[3570, 3_570_000],
+		[900, 900_000],
+		[5, 5_000],
+		[7200, 3_600_000],
+		[0, 270_000],
+		[-30, 270_000],
+		[Number.NaN, 270_000],
+	] as const)("resolves backstop ceiling %s to %sms", (backstopMaxSeconds, expected) => {
+		expect(resolveGoalMonitorContinuationDelayMs(backstopMaxSeconds)).toBe(expected);
+	});
+
+	it("defaults to a re-check inside the 5-minute prompt-cache TTL", () => {
+		// A wake source that never delivers must not park the goal for an hour:
+		// the default floor is the 5m Anthropic TTL minus the 30s safety buffer.
+		expect(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS).toBe(270_000);
+		expect(resolveGoalMonitorContinuationDelayMs(undefined)).toBe(270_000);
+	});
+
+	it("is configured, not derived from the prompt-cache safe wait", () => {
+		// The delay takes only the configured ceiling; a longer TTL or a different
+		// safety buffer never changes it.
+		expect(resolveGoalMonitorContinuationDelayMs.length).toBe(1);
 	});
 });
 

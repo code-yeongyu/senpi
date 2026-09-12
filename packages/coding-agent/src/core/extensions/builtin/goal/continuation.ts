@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { type AgentMessage, EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC } from "@earendil-works/pi-agent-core";
 import type { Goal } from "./types.ts";
 
 type AssistantAgentMessage = Extract<AgentMessage, { role: "assistant" }>;
@@ -8,9 +8,22 @@ export const GOAL_CONTINUATION_CAP = 8;
 export const GOAL_STALL_TOOLLESS_THRESHOLD = 3;
 export const GOAL_REPETITION_HASH_STREAK = 3;
 export const GOAL_LENGTH_RECOVERY_LIMIT = 1;
+/**
+ * Hard budget of automatic continuations without accepted direct user input (#1139).
+ * Progress and tool use never refill it: only direct input does. Stays above the
+ * #447 distinct-progress pin (50) and an 8-hour monitor-backstop cadence
+ * (~120 deliveries at 240s), below the observed 289-continuation incident run.
+ */
+export const GOAL_UNATTENDED_CONTINUATION_LIMIT = 150;
 export const GOAL_USER_GRACE_DELAY_MS = 10_000;
 
-export type GoalContinuationPath = "immediate" | "monitorDelayed" | "userGrace" | "sessionStart" | "systemRecovery";
+export type GoalContinuationPath =
+	| "immediate"
+	| "monitorDelayed"
+	| "userGrace"
+	| "sessionStart"
+	| "systemRecovery"
+	| "providerRecovery";
 
 export type GoalContinuationInput = {
 	readonly goal: Goal | null;
@@ -18,6 +31,7 @@ export type GoalContinuationInput = {
 	readonly hasPendingMessages: boolean;
 	readonly path: GoalContinuationPath;
 	readonly lastStopReason: AssistantAgentMessage["stopReason"] | undefined;
+	readonly lastTurnWasMalformedToolUse: boolean;
 	readonly consecutiveContinuations: number;
 	readonly lastContinuationSignature: string | undefined;
 	readonly currentSignature: string | undefined;
@@ -25,13 +39,23 @@ export type GoalContinuationInput = {
 	readonly recentNormalizedOutputHashes: readonly string[];
 	readonly toollessContinuationStreak: number;
 	readonly continuationPending: boolean;
+	/** The last turn was rejected (or silently starved) by context size and recovery did not shrink it. */
+	readonly lastTurnStuckOnContextOverflow: boolean;
 };
 
 export type GoalContinuationVerdict =
 	| { kind: "continue"; prompt: "full" | "minimal"; stallNotice: boolean }
 	| {
 			kind: "deny";
-			reason: "not-eligible" | "single-flight" | "cap" | "stale" | "repetition" | "length-exhausted";
+			reason:
+				| "not-eligible"
+				| "single-flight"
+				| "cap"
+				| "stale"
+				| "repetition"
+				| "length-exhausted"
+				| "unattended"
+				| "context-overflow";
 	  };
 
 export function shouldQueueGoalContinuationWhenIdle(
@@ -55,7 +79,8 @@ function didAgentEndCleanly(messages: readonly AgentMessage[]): boolean {
 	if (lastAssistantIndex === undefined) return false;
 
 	const lastAssistant = messages[lastAssistantIndex];
-	if (lastAssistant?.role !== "assistant" || !isContinuableStopReason(lastAssistant.stopReason)) return false;
+	if (lastAssistant?.role !== "assistant") return false;
+	if (!isContinuableStopReason(lastAssistant.stopReason) && !isMalformedToolUseTurn(lastAssistant)) return false;
 
 	for (let index = lastAssistantIndex + 1; index < messages.length; index++) {
 		const message = messages[index];
@@ -78,16 +103,33 @@ function isContinuableStopReason(stopReason: AssistantAgentMessage["stopReason"]
 	return stopReason === "stop" || stopReason === "length";
 }
 
+// The agent loop demotes a tool-call-less `toolUse` stop to `stop` before `agent_end`, so the
+// original stop reason is gone by the time a goal sees the turn. Accept either shape: the raw
+// message (extensions observing it pre-demotion) or the demotion diagnostic the loop leaves behind.
+export function isMalformedToolUseTurn(message: AssistantAgentMessage): boolean {
+	if (message.content.some((content) => content.type === "toolCall")) return false;
+	if (message.stopReason === "toolUse") return true;
+	return (
+		message.stopReason === "stop" &&
+		(message.diagnostics ?? []).some((diagnostic) => diagnostic.type === EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC)
+	);
+}
+
 function isAbortedToolResult(message: ToolResultAgentMessage): boolean {
 	if (!message.isError) return false;
 	return message.content.some((content) => content.type === "text" && /\babort(?:ed)?\b/i.test(content.text));
 }
 
 export function evaluateGoalContinuation(input: GoalContinuationInput): GoalContinuationVerdict {
+	// Re-sending an overflowed context fails identically on every path (#1422).
+	if (input.goal?.status === "active" && input.lastTurnStuckOnContextOverflow) {
+		return { kind: "deny", reason: "context-overflow" };
+	}
 	if (!isEligibleForGoalContinuation(input)) return { kind: "deny", reason: "not-eligible" };
 	if (input.continuationPending) return { kind: "deny", reason: "single-flight" };
 	if (hasRepeatedNormalizedOutputHash(input.recentNormalizedOutputHashes))
 		return { kind: "deny", reason: "repetition" };
+	if (isUnattendedBudgetExhausted(input)) return { kind: "deny", reason: "unattended" };
 	if (input.consecutiveContinuations >= GOAL_CONTINUATION_CAP) {
 		return { kind: "deny", reason: "cap" };
 	}
@@ -155,11 +197,20 @@ export function continuationTurnUsedTools(messages: readonly AgentMessage[]): bo
 
 function isEligibleForGoalContinuation(input: GoalContinuationInput): boolean {
 	if (input.goal?.status !== "active" || input.hasPendingMessages) return false;
-	if (input.path === "systemRecovery") return true;
+	if (input.path === "systemRecovery" || input.path === "providerRecovery") return true;
 	if (input.path === "immediate") {
-		return input.lastStopReason !== undefined && isContinuableStopReason(input.lastStopReason);
+		return (
+			input.lastTurnWasMalformedToolUse ||
+			(input.lastStopReason !== undefined && isContinuableStopReason(input.lastStopReason))
+		);
 	}
 	return input.isIdle;
+}
+
+/** Monitor-delayed deliveries are exempt: armed-wake waiting is by-design and rate-limited by the cache-aware timer. */
+function isUnattendedBudgetExhausted(input: GoalContinuationInput): boolean {
+	if (input.path === "monitorDelayed") return false;
+	return (input.goal?.unattendedContinuations ?? 0) >= GOAL_UNATTENDED_CONTINUATION_LIMIT;
 }
 
 function hasRepeatedNormalizedOutputHash(hashes: readonly string[]): boolean {

@@ -30,6 +30,8 @@ export interface TerminalToolContext {
 	readonly onMonitorEvent?: (event: MonitorEvent) => void;
 	/** Resets session-global wake-budget delivery for a fresh or explicitly rearmed monitor. */
 	readonly onMonitorRearmed?: (id: string) => void;
+	/** Clears notifier bookkeeping when multiple paused monitors are resumed. */
+	readonly onMonitorsResumed?: (ids: readonly string[]) => void;
 }
 
 /** Minimal tool-result shape returned by the terminal tools. */
@@ -37,6 +39,20 @@ export interface TerminalToolResult {
 	content: Array<{ type: "text"; text: string }>;
 	details: Record<string, unknown> | undefined;
 	isError?: boolean;
+}
+
+/**
+ * Resolve a stable "mon_" monitor id to its current runtime id (bash_N/watch_N), passing a
+ * runtime id through unchanged. Companion tools may run against a manager that does not
+ * implement `resolveId` (narrower embedder/test managers expose `get` only); such managers
+ * have never seen a `mon_` id, so falling back to the id verbatim preserves the lookup they
+ * already supported. This is the single choke point for that rule — do not inline it.
+ */
+export function resolveTerminalId(
+	manager: Pick<TerminalManager, "get"> & Partial<Pick<TerminalManager, "resolveId">>,
+	id: string,
+): string {
+	return manager.resolveId?.(id) ?? id;
 }
 
 export function textResult(

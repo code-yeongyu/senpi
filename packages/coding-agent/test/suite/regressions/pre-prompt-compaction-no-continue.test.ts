@@ -1,9 +1,9 @@
 import { type AssistantMessage, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../src/core/manual-continue.ts";
 import { createHarness, getAssistantTexts, getUserTexts, type Harness } from "../harness.ts";
 
-const EXPECTED_CAP_RECOVERY =
-	"Compaction rejected: the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.";
+const EXPECTED_CAP_REJECTION = { name: "RequiredCompactionError", rejectionCause: "per-turn-cap" };
 
 function createUsage(totalTokens: number) {
 	return {
@@ -164,8 +164,7 @@ describe("pre-prompt compaction regression", () => {
 					pi.on("session_before_compact", async () => ({
 						cancel: true,
 						rejectionCause: "per-turn-cap",
-						reason:
-							"the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.",
+						reason: "pr875-cap-reason",
 					}));
 				},
 			],
@@ -206,8 +205,8 @@ describe("pre-prompt compaction regression", () => {
 		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 		harness.setResponses([fauxAssistantMessage("must not reach provider")]);
 
-		await expect(harness.session.prompt("next prompt")).rejects.toThrow(EXPECTED_CAP_RECOVERY);
-		await expect(harness.session.prompt("retry prompt")).rejects.toThrow(EXPECTED_CAP_RECOVERY);
+		await expect(harness.session.prompt("next prompt")).rejects.toMatchObject(EXPECTED_CAP_REJECTION);
+		await expect(harness.session.prompt("retry prompt")).rejects.toMatchObject(EXPECTED_CAP_REJECTION);
 
 		expect(harness.faux.state.callCount).toBe(0);
 		expect(getUserTexts(harness)).not.toContain("next prompt");
@@ -289,7 +288,13 @@ describe("pre-prompt compaction regression", () => {
 			willRetry: true,
 			accepted: true,
 		});
-		expect(getUserTexts(harness)).toContain(".");
+		// The bare "." retry is the manual-continue shortcut: it arrives as a hidden
+		// custom message instead of a literal user turn.
+		expect(
+			harness.session.messages.some(
+				(message) => message.role === "custom" && message.customType === MANUAL_CONTINUE_CUSTOM_TYPE,
+			),
+		).toBe(true);
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 
@@ -352,8 +357,7 @@ describe("pre-prompt compaction regression", () => {
 					pi.on("session_before_compact", async () => ({
 						cancel: true,
 						rejectionCause: "per-turn-cap",
-						reason:
-							"the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.",
+						reason: "pr875-cap-reason",
 					}));
 				},
 			],
@@ -380,19 +384,19 @@ describe("pre-prompt compaction regression", () => {
 		await harness.session.followUp("retain native follow-up");
 		releaseProvider.resolve();
 
-		await expect(initialPrompt).rejects.toThrow(EXPECTED_CAP_RECOVERY);
+		await expect(initialPrompt).rejects.toMatchObject(EXPECTED_CAP_REJECTION);
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.session.getSteeringMessages()).toEqual(["retain native steer"]);
 		expect(harness.session.getFollowUpMessages()).toEqual(["retain native follow-up"]);
 		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
 
-		await expect(harness.session.prompt("later normal admission")).rejects.toThrow(EXPECTED_CAP_RECOVERY);
+		await expect(harness.session.prompt("later normal admission")).rejects.toMatchObject(EXPECTED_CAP_REJECTION);
 		await expect(
 			harness.session.sendCustomMessage(
 				{ customType: "extension-note", content: "later custom admission", display: true },
 				{ triggerTurn: true },
 			),
-		).rejects.toThrow(EXPECTED_CAP_RECOVERY);
+		).rejects.toMatchObject(EXPECTED_CAP_REJECTION);
 
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.session.getSteeringMessages()).toEqual(["retain native steer"]);
@@ -896,8 +900,7 @@ describe("pre-prompt compaction regression", () => {
 						return {
 							cancel: true,
 							rejectionCause: "per-turn-cap",
-							reason:
-								"the absolute compaction cap was reached for this runtime. Restart the CLI to resume this session, or start a new session.",
+							reason: "pr875-cap-reason",
 						};
 					});
 				},
@@ -962,9 +965,9 @@ describe("pre-prompt compaction regression", () => {
 			);
 
 		expect(normalError).toBeInstanceOf(Error);
-		expect((normalError as Error).message).toContain(EXPECTED_CAP_RECOVERY);
+		expect(normalError).toMatchObject(EXPECTED_CAP_REJECTION);
 		expect(customError).toBeInstanceOf(Error);
-		expect((customError as Error).message).toContain(EXPECTED_CAP_RECOVERY);
+		expect(customError).toMatchObject(EXPECTED_CAP_REJECTION);
 		expect(compactionRequests).toBe(2);
 		expect(harness.faux.state.callCount).toBe(0);
 		expect(harness.session.messages).toContainEqual(

@@ -20,6 +20,15 @@ import type { RpcExtensionUIRequest } from "./rpc-types.ts";
 /** The capability string a client sends in its handshake to opt into the notice. */
 export const CUSTOM_UNSUPPORTED_CAPABILITY = "custom_unsupported";
 export const EXTENSION_EVENTS_CAPABILITY = "extension_events";
+export const RENDERED_COMPONENTS_CAPABILITY = "rendered_components";
+export const AUTO_TITLE_SESSIONS_CAPABILITY = "auto_title_sessions";
+/**
+ * Opt-in: the host replaces inline image bytes inside tool results with `image_ref`
+ * placeholders for this connection; the client fetches a block on demand with `get_media`.
+ */
+export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
+/** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
+export const QUESTION_CAPABILITY = "question";
 
 /**
  * Env var carrying client capabilities to a single-connection stdio RPC host

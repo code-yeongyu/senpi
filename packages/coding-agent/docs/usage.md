@@ -22,10 +22,12 @@ The editor can be replaced temporarily by built-in UI such as `/settings` or by 
 | File reference | Type `@` to fuzzy-search project files |
 | Path completion | Press Tab to complete paths |
 | Multi-line input | Shift+Enter, or Ctrl+Enter on Windows Terminal |
-| Copy response | Ctrl+X copies the last assistant message; in `/tree`, it copies the selected message |
+| Copy response | Ctrl+X copies the selected message in `/tree`; otherwise it copies the last assistant message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
+| Edit response | Ctrl+E on an assistant message in `/tree` opens it in the editor; submitting continues the session from the edited copy |
 | Images | Paste with Ctrl+V, Alt+V on Windows, or drag into the terminal |
 | Shell command | `!command` runs and sends output to the model |
 | Hidden shell command | `!!command` runs without sending output to the model |
+| Manual continue | Type `.` alone to resume the most recent intent without sending a new user message |
 | External editor | Ctrl+G opens `externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere |
 | Shortcut overlay | Type `?` on an empty editor to show a dismissible shortcut grid |
 | Startup tips | A rotating `Tip:` line in the startup banner and under the working status teaches features; disable with `"tips": false` |
@@ -40,9 +42,13 @@ Type `/` in the editor to open command completion. Extensions can register custo
 |---------|-------------|
 | `/login`, `/logout` | Manage OAuth or API-key credentials |
 | [`/llama`](llama-cpp.md) | Download, load, and unload llama.cpp router models |
-| `/model` | Switch models |
+| `/model` | Switch models; Ctrl+S in the picker saves the startup default |
+| `/thinking` | Switch thinking level; Ctrl+S in the picker saves the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
-| `/settings` | Thinking level, theme, message delivery, transport |
+| `/reasoning [on\|off]` | Show or toggle reasoning for the current model |
+| `/efforts [level]` | Show or set reasoning effort (graded models only) |
+| `/fast [on\|off]` | Toggle fast mode (OpenAI Codex models, persisted per model) |
+| `/settings` | Theme, message delivery, transport, and other preferences |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -62,6 +68,22 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/keybindings` | Open your `keybindings.json` in `$EDITOR` (seeded with current bindings when missing) and reload it live |
 | `/changelog` | Display version history |
 | `/quit`, `/exit` | Quit senpi |
+
+### Reasoning and Fast Mode Commands
+
+**`/reasoning [on|off]`** shows or toggles reasoning. Behavior adapts to the active model:
+
+- Models without reasoning support are told plainly.
+- Always-on models reject `/reasoning off`.
+- On/off-only and graded models toggle normally.
+
+`/reasoning on` restores the effort level you last used for that model. No-arg shows current status.
+
+**`/efforts [minimal|low|medium|high|xhigh|max]`** sets the reasoning effort ladder for graded models. On/off-only models are directed to use `/reasoning` instead. `xhigh` and `max` appear only when the model supports them. No-arg shows current effort and available levels.
+
+**`/fast [on|off]`** toggles OpenAI Codex fast mode (`service_tier: "priority"`). The choice is remembered per model and survives restarts. No-arg toggles. Non-Codex models are told fast mode is unavailable. If the active model selection pins `:priority` via a favorite decorator, `/fast off` is blocked and explains why.
+
+All three commands work over RPC and headless (no selector opened, status sent as text notifications).
 
 ## Message Queue
 
@@ -92,7 +114,7 @@ senpi --fork <path|id>    # Fork a session into a new session file
 Useful session commands:
 
 - `/session` shows the current session file and ID.
-- `/tree` navigates the in-file session tree and can summarize abandoned branches.
+- `/tree` navigates the in-file session tree and can summarize abandoned branches. Ctrl+E on an assistant entry edits that response in place of the original (the original stays in the file on an abandoned branch; tool calls in the edited response are dropped).
 - `/fork` creates a new session from an earlier user message.
 - `/clone` duplicates the current active branch into a new session file.
 - `/compact` summarizes older messages to free context.
@@ -146,7 +168,7 @@ If you use pi for open source work and want to publish sessions for model, promp
 ## CLI Reference
 
 ```bash
-senpi [options] [@files...] [messages...]
+senpi [options] [--] [@files...] [messages...]
 ```
 
 ### Package Commands
@@ -243,18 +265,19 @@ senpi --no-extensions -e ./my-extension.ts
 
 | Option | Description |
 |--------|-------------|
-| `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
-| `--append-system-prompt <text>` | Append to system prompt |
+| `--system-prompt <text>` | Replace the generated base prompt (text or a file path); per-model prompt presets step aside; context files and skills are still appended |
+| `--append-system-prompt <text>` | Append to the system prompt (repeatable; text or a file path); applies after per-model prompt presets |
 | `--tui-mode <mode>` | TUI mode: `regular` (default) or experimental `fullscreen` |
+| `--use-theme <name[/name]>` | Set the initial interactive theme for this run without changing settings |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
 | `-h`, `--help` | Show help |
 | `-v`, `--version` | Show version |
 
-In `fullscreen` mode, the transcript scrolls inside the terminal viewport while queued messages, working status, extension widgets, editor, and footer remain fixed at the bottom. Mouse/trackpad input scrolls the region under the pointer; keyboard viewport actions always remain available. Inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. In `regular` mode, senpi uses the main screen and terminal-owned scrollback, and iTerm2 inline images continue to render normally.
+In `fullscreen` mode, the transcript scrolls inside the terminal viewport while queued messages, working status, extension widgets, editor, and footer remain fixed at the bottom. Mouse/trackpad input scrolls the region under the pointer; keyboard viewport actions always remain available. Inline images work in terminals that support the Kitty graphics protocol, including Kitty and Ghostty. In iTerm2 they render as text placeholders because its inline-image protocol cannot delete or crop placements during application-owned scrolling. In `regular` mode, senpi uses the main screen and terminal-owned scrollback, and iTerm2 inline images continue to render normally. See [Terminal setup](terminal-setup.md) for terminal-specific settings and workarounds.
 
-Set **TUI mode** in `/settings` to switch between `regular` and `fullscreen` immediately and choose the default for future sessions.
+Set **TUI mode** in `/settings` to switch between `regular` and `fullscreen` immediately and choose the default for future sessions. **Fullscreen exit output** controls whether exiting fullscreen prints the final transcript or restores the previous screen and prints only the session resume hint.
 
 ### File Arguments
 
@@ -274,6 +297,9 @@ senpi "List all .ts files in src/"
 
 # Non-interactive
 senpi -p "Summarize this codebase"
+
+# Prompt beginning with a dash
+senpi -p -- "- Summarize these points"
 
 # Non-interactive with piped stdin
 cat README.md | senpi -p "Summarize this text"

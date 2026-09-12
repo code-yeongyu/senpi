@@ -1,5 +1,96 @@
 # loop-guard changes
 
+## loop-guard: give polling blocks a terminal recovery action (2026-08-25)
+
+- Block reasons for `bash_output` and `task_output` now tell the agent to stop
+  polling, arm a monitor or rely on a supported completion notification when
+  waiting is appropriate, and otherwise re-plan.
+- Other blocked tools keep generic reuse, stop, re-plan, or alternate-tool
+  guidance without implying that a monitor exists.
+- Why: the previous generic instruction to change an argument deliberately
+  allowed same-target polling to evade identical-loop escalation.
+- Tests cover the polling and non-polling recovery branches.
+- Expected merge conflict zones: LOW in `notice.ts` and this tracker entry;
+  NONE in public extension APIs.
+
+## loop-guard: block ignored identical loops and interrupt persistent hard stops (2026-08-17)
+
+- Exact identical loops now hard-escalate after two admitted reminders. The
+  second reminder arms a block that activates only after its `turn_end`, so
+  calls through count 6 still execute; the next same-signature model call is
+  vetoed by the public `tool_call` hook with a non-terminal error result.
+  Similar and cyclic detections remain advisory.
+- A private `IdenticalLoopEscalation` correlates model attempts by
+  `toolCallId`, canonical signature, and turn boundary. Calls that bypass
+  `tool_execution_start` (including extension bridge subcalls) are never
+  blocked; a changed tool or changed arguments reset the hard-escalation
+  episode immediately.
+- The third loop-guard-owned block claims the shared `wake_source_state`
+  liveness lease, emits a one-shot transcript/UI warning, and calls
+  `ctx.abort("system")`. After `agent_settled`, a hidden recovery
+  `CustomMessage` with `triggerTurn: true` starts a fresh provider user-role
+  turn; the lease releases at that turn's `agent_start`. Later same-signature
+  calls remain blocked and system-aborted without repeating the warning or
+  recovery. Later hard stops reclaim wake-source ownership and publish a
+  continuation hold, preventing timer-driven Goal recovery until real input.
+  Loop-guard now occupies the first builtin slot so its veto runs before
+  repeated PreToolUse hooks and permission prompts.
+- The escalation transcript box uses the shared notice kit with semantic
+  `error` tone and a width-stable ASCII marker. This keeps severity
+  theme-driven and avoids the one-cell underfill produced when terminals
+  disagree about U+26D4 emoji width.
+- Why: session `01a00f43` showed the model correctly restating every reminder
+  ("No more todo", "use apply_patch") while sampling the same `todo view`
+  action 197 times. More advisory prose could not alter the action-level
+  attractor; a failed tool observation and a user-attributed fresh turn can.
+- Goal isolation: hard stops use only system aborts; the wake-source lease
+  makes Goal treat the interrupted interval as externally owned instead of
+  scheduling a competing system recovery; blocked todo errors bypass Goal's
+  stale-goal reminder. Goal production code and public extension APIs are
+  unchanged.
+- Pattern replacement now clears the state-machine episode, pending recovery,
+  and wake-source lease atomically, so external lifecycle calls cannot revive a
+  stale hard-stop recovery after the model changes tools or arguments.
+- Cursor server-driven exec calls now traverse the same vetoable `tool_call`
+  preflight before `tool.execute`. The session preflight first awaits the
+  AgentSession event queue, so `tool_execution_start` correlation is committed
+  before loop-guard consumes the call. Block reasons return in-band with
+  matched lifecycle events.
+- Coverage: `loop-guard-hard-escalation.test.ts` pins delayed activation,
+  first-veto order, changed-argument reset, uncorrelated bridge/multi-tool
+  controls, one-shot warning/recovery, wake-source lease transitions, repeated
+  system abort, and `terminate:false`. `loop-guard-goal-isolation.test.ts` plus
+  existing Goal system-abort/reminder suites prove active-goal preservation,
+  wake-source-owned recovery, and error-result reminder isolation. Mutation
+  proof covers user-owned abort, pending-wake omission, and todo-error leakage.
+- Expected merge conflict zones: HIGH in `loop-guard/index.ts` around event
+  wiring; MEDIUM in `builtin/index.ts` registration order; LOW in new
+  `escalation.ts`, notice/renderer/policy support, and focused tests; NONE in
+  Goal or public extension API files.
+
+## loop-guard: emit one final notice at the bounded tracker ceiling (2026-08-17)
+
+- `NoticeGate` now admits one final notice when a detection reaches the
+  maximum count observable inside the 64-record tracker window: 64 calls for
+  identical/similar runs and `floor(64 / period)` repetitions for cycles. A
+  per-fingerprint saturation flag keeps subsequent capped detections silent,
+  while the existing geometric 2x escalation remains unchanged below the
+  ceiling.
+- Why: real session `01a00f43` emitted identical notices at 3/6/12/24/48,
+  then the detector count saturated at 64 while the gate demanded 96. The
+  guard remained permanently silent through the final 5m45s of a 197-call
+  `todo view` loop. The escalation policy assumed an unbounded count even
+  though the tracker intentionally bounds it.
+- Extension boundary: the fix stays inside the private detector/gate policy.
+  Tool signatures, renderer details, extension API events, and Goal behavior
+  are unchanged.
+- Coverage: `loop-guard-detectors.test.ts` drives real bounded identical and
+  similar streams and a stable period-2 gate sequence, pinning
+  `3/6/12/24/48/64`, `5/10/20/40/64`, and `3/6/12/24/32` respectively with
+  no repeated capped notice.
+- Expected merge conflict zones: LOW in `detectors.ts` around `NoticeGate`;
+  LOW in the focused detector suite; NONE in public extension APIs.
+
 ## loop-guard: notice renderer delegates to the shared notice kit (2026-08-04)
 
 - `renderer.ts` now builds its box through `noticeMessageRenderer` from `src/core/extensions/notice/`. The exported `renderLoopGuardNotice` symbol, registration, title/why/expanded text, accent tone, and expand behavior are unchanged; existing suites pass unmodified.

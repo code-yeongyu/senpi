@@ -45,6 +45,44 @@ export const DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS = 300_000;
  */
 export const DEFAULT_SUMMARIZATION_MAX_DURATION_MS = 120_000;
 
+/**
+ * How much the wall-clock budget grows per estimated input token.
+ *
+ * The 120s floor covers healthy summaries. Large sessions summarize hundreds of
+ * thousands of tokens: a 257k-token input already exceeds 120s on slower
+ * providers while still streaming (#1068), so the budget scales with the amount
+ * being summarized. 2ms/token assumes a worst-case sustained throughput of ~500
+ * tokens/second; faster providers simply finish well inside the budget.
+ */
+export const SUMMARIZATION_MAX_DURATION_PER_TOKEN_MS = 2;
+
+/**
+ * Absolute ceiling for one summarization attempt. The wall-clock budget exists
+ * to stop a slow-but-alive stream from holding the session forever; it must stay
+ * a bound, so size-scaled budgets are clamped here instead of growing linearly
+ * without limit.
+ */
+export const SUMMARIZATION_MAX_DURATION_CAP_MS = 1_800_000;
+
+/**
+ * Total time one summarization attempt may hold the session, sized to its input.
+ *
+ * The budget never shrinks below {@link DEFAULT_SUMMARIZATION_MAX_DURATION_MS};
+ * inputs small enough that `2ms/token` stays under that floor keep the exact
+ * 120s contract. Above ~60k estimated tokens the budget grows by
+ * {@link SUMMARIZATION_MAX_DURATION_PER_TOKEN_MS} per token and is clamped to
+ * {@link SUMMARIZATION_MAX_DURATION_CAP_MS}. An explicit positive `overrideMs`
+ * (e.g. the `compaction.summarizationMaxDurationMs` setting) replaces the
+ * computed budget; non-finite and non-positive values are ignored.
+ */
+export function summarizationMaxDurationMs(estimatedInputTokens: number, overrideMs?: number): number {
+	if (overrideMs !== undefined && Number.isFinite(overrideMs) && overrideMs > 0) {
+		return Math.min(SUMMARIZATION_MAX_DURATION_CAP_MS, overrideMs);
+	}
+	const scaled = estimatedInputTokens * SUMMARIZATION_MAX_DURATION_PER_TOKEN_MS;
+	return Math.min(SUMMARIZATION_MAX_DURATION_CAP_MS, Math.max(DEFAULT_SUMMARIZATION_MAX_DURATION_MS, scaled));
+}
+
 export interface ConsumeStreamWithIdleTimeoutOptions<T> {
 	/** Silence budget per read; the timer resets on every event. */
 	readonly idleTimeoutMs: number;

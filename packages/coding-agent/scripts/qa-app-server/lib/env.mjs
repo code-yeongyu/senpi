@@ -26,6 +26,7 @@ const providerEnvKeys = Object.freeze([
 	"GOOGLE_CLOUD_API_KEY",
 	"GROQ_API_KEY",
 	"CEREBRAS_API_KEY",
+	"VENICE_API_KEY",
 	"XAI_API_KEY",
 	"FIREWORKS_API_KEY",
 	"TOGETHER_API_KEY",

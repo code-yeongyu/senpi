@@ -112,6 +112,7 @@ describe("issues #7027 and #7113 credential refresh hang", () => {
 
 		await complete.call(context, dynamicModel.provider, "Stalled Login", "api_key", harness.getModel());
 		expect(runtime.refresh).toHaveBeenCalledWith({
+			allowNetwork: true,
 			providers: [dynamicModel.provider],
 			signal: expect.any(AbortSignal),
 		});

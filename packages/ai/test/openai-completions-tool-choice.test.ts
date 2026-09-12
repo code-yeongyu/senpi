@@ -372,20 +372,115 @@ describe("openai-completions tool_choice", () => {
 		expect(getModel("zai", "glm-4.7")?.compat?.zaiToolStream).toBe(true);
 		expect(getModel("zai", "glm-5-turbo")?.compat?.zaiToolStream).toBe(true);
 		expect(getModel("zai", "glm-5.2")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-5.3")?.compat?.zaiToolStream).toBe(true);
 	});
 
-	it("stores z.ai GLM-5.2 effort metadata", () => {
+	it("stores z.ai effort metadata", () => {
 		for (const provider of ["zai", "zai-coding-cn"] as const) {
-			const model = getModel(provider, "glm-5.2")!;
-			expect(model.compat?.supportsReasoningEffort).toBe(true);
-			expect(model.thinkingLevelMap).toEqual({
+			for (const modelId of ["glm-5.2", "glm-5.2-highspeed"] as const) {
+				const model = getModel(provider, modelId)!;
+				expect(model.compat?.supportsReasoningEffort).toBe(true);
+				expect(model.thinkingLevelMap).toEqual({
+					off: "none",
+					minimal: null,
+					low: null,
+					medium: null,
+					high: "high",
+					xhigh: null,
+					max: "max",
+				});
+			}
+
+			const glm53 = getModel(provider, "glm-5.3")!;
+			expect(glm53.compat?.supportsReasoningEffort).toBe(true);
+			expect(glm53.thinkingLevelMap).toEqual({
+				off: null,
 				minimal: null,
-				low: "high",
-				medium: "high",
+				low: "low",
+				medium: null,
 				high: "high",
+				xhigh: null,
 				max: "max",
 			});
 		}
+	});
+	it("stores z.ai GLM-5.3 catalog and effort metadata", () => {
+		for (const provider of ["zai", "zai-coding-cn"] as const) {
+			const model = getModel(provider, "glm-5.3")!;
+			expect(model).toMatchObject({
+				name: "GLM-5.3",
+				reasoning: true,
+				input: ["text"],
+				contextWindow: 1_000_000,
+				maxTokens: 131_072,
+			});
+			expect(model.compat?.supportsReasoningEffort).toBe(true);
+			expect(model.thinkingLevelMap).toEqual({
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: null,
+				high: "high",
+				xhigh: null,
+				max: "max",
+			});
+		}
+	});
+
+	it("maps z.ai GLM-5.3 thinking levels to reasoning_effort", async () => {
+		const model = getModel("zai", "glm-5.3")!;
+		const cases = [
+			{ reasoning: "low", effort: "low" },
+			{ reasoning: "medium", effort: "high" },
+			{ reasoning: "high", effort: "high" },
+			{ reasoning: "xhigh", effort: "max" },
+			{ reasoning: "max", effort: "max" },
+		] as const;
+
+		for (const testCase of cases) {
+			let payload: unknown;
+
+			await streamSimple(
+				model,
+				{
+					messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+				},
+				{
+					apiKey: "test",
+					reasoning: testCase.reasoning,
+					onPayload: (params: unknown) => {
+						payload = params;
+					},
+				},
+			).result();
+
+			const params = (payload ?? mockState.lastParams) as { thinking?: unknown; reasoning_effort?: string };
+			expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
+			expect(params.reasoning_effort).toBe(testCase.effort);
+		}
+	});
+
+	it("does not send disabled thinking for GLM-5.3 when reasoning is off through streamSimple", async () => {
+		const model = getModel("zai", "glm-5.3")!;
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as { thinking?: { type?: string }; reasoning_effort?: string };
+		expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
+		expect(params.thinking?.type).not.toBe("disabled");
+		expect(params.reasoning_effort).toBeUndefined();
 	});
 
 	it("maps z.ai GLM-5.2 thinking levels to reasoning_effort", async () => {
@@ -1180,10 +1275,10 @@ describe("openai-completions tool_choice", () => {
 		expect(params.messages?.[0]?.role).toBe("system");
 	});
 
-	it("keeps developer messages for OpenAI and Anthropic OpenRouter reasoning model instructions", async () => {
+	it("keeps developer messages for OpenAI and Anthropic OpenRouter batch instructions", async () => {
 		for (const model of [
 			getModel("openrouter", "openai/gpt-5.2-codex"),
-			getModel("openrouter", "anthropic/claude-sonnet-4.5"),
+			getModel("openrouter", "anthropic/claude-fable-5.1:batch"),
 		]) {
 			expect(model).toBeDefined();
 			let payload: unknown;
@@ -1427,6 +1522,7 @@ describe("openai-completions tool_choice", () => {
 				supportsOpenAIGrammarTools: false,
 				sendSessionAffinityHeaders: false,
 				sessionAffinityFormat: "openai",
+				supportsMaxOutputTokens: true,
 				supportsLongCacheRetention: true,
 			},
 		);
@@ -1555,8 +1651,59 @@ describe("openai-completions tool_choice", () => {
 		}
 	});
 
+	it("sends max_tokens for built-in and custom DeepSeek API models", async () => {
+		const customModel = {
+			...localOpenAICompletionsModel,
+			id: "custom-deepseek-model",
+			name: "Custom DeepSeek Model",
+			provider: "custom-deepseek",
+			baseUrl: "https://api.deepseek.com",
+		} satisfies Model<"openai-completions">;
+		const customUppercaseModel = {
+			...customModel,
+			id: "custom-uppercase-deepseek-model",
+			name: "Custom Uppercase DeepSeek Model",
+			baseUrl: "https://API.DeepSeek.COM",
+		} satisfies Model<"openai-completions">;
+		const nativeModels = [
+			getModel("deepseek", "deepseek-v4-flash")!,
+			getModel("deepseek", "deepseek-v4-pro")!,
+		] as const;
+		const cases = [...nativeModels, customModel, customUppercaseModel] as const;
+
+		for (const model of nativeModels) {
+			expect(model.compat?.maxTokensField).toBe("max_tokens");
+		}
+
+		for (const model of cases) {
+			let payload: unknown;
+
+			await streamSimple(
+				model,
+				{
+					messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+				},
+				{
+					apiKey: "test",
+					maxTokens: 123,
+					onPayload: (params: unknown) => {
+						payload = params;
+					},
+				},
+			).result();
+
+			const params = (payload ?? mockState.lastParams) as { max_tokens?: number; max_completion_tokens?: number };
+			expect(params.max_tokens).toBe(123);
+			expect(params.max_completion_tokens).toBeUndefined();
+		}
+	});
+
 	it("sends max_tokens for Z.AI completions models", async () => {
-		const cases = [getModel("zai", "glm-5-turbo")!, getModel("zai", "glm-5.2")!] as const;
+		const cases = [
+			getModel("zai", "glm-5-turbo")!,
+			getModel("zai", "glm-5.2")!,
+			getModel("zai", "glm-5.3")!,
+		] as const;
 
 		for (const model of cases) {
 			expect(model.compat?.maxTokensField).toBe("max_tokens");

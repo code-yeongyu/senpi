@@ -1,6 +1,7 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
+import { applySessionEnvironment } from "../session-env.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
 import { SubprocessRunQueue } from "./subprocess-queue.ts";
@@ -26,6 +27,7 @@ export class SubprocessKernel {
 	private readonly onMessage?: (message: KernelToHostMessage) => void;
 	private readonly runs = new SubprocessRunQueue();
 	private process: SubprocessProcess | null = null;
+	private processReady = false;
 	private retirementPromise: Promise<void> | null = null;
 	private retirementProcess: SubprocessProcess | null = null;
 	private retirementFailure: Error | null = null;
@@ -109,7 +111,7 @@ export class SubprocessKernel {
 
 	private pumpRuns(): void {
 		const process = this.process;
-		if (this.closed || this.runs.active || !process || process.isRetiring) return;
+		if (this.closed || this.runs.active || !process || process.isRetiring || !this.processReady) return;
 		const run = this.runs.startNext(performance.now());
 		if (!run) return;
 		const timeoutMs = run.input.timeoutMs;
@@ -132,7 +134,14 @@ export class SubprocessKernel {
 	}
 
 	private spawnProcess(): void {
-		const child = spawnSubprocess(this.options.spawn, this.options);
+		const child = spawnSubprocess(this.options.spawn, {
+			...this.options,
+			env:
+				this.options.env ??
+				(this.options.sessionEnv
+					? applySessionEnvironment(globalThis.process.env, this.options.sessionEnv)
+					: undefined),
+		});
 		const process = new SubprocessProcess(child, {
 			onLine: (source, line) => this.handleLine(source, line),
 			onStderr: (source, data) => this.handleMessage(source, { type: "text", stream: "stderr", data }),
@@ -142,6 +151,7 @@ export class SubprocessKernel {
 			},
 		});
 		this.process = process;
+		this.processReady = false;
 		try {
 			process.send(
 				encodeBridgeFrame({ type: "init", sessionId: this.options.sessionId, connection: this.options.connection }),
@@ -165,6 +175,17 @@ export class SubprocessKernel {
 
 	private handleMessage(process: SubprocessProcess, message: KernelToHostMessage): void {
 		if (!this.accepts(process)) return;
+		if (message.type === "ready") {
+			this.processReady = true;
+			this.runs.handleMessage(message, this.onMessage);
+			this.pumpRuns();
+			return;
+		}
+		if (message.type === "init-failed") {
+			this.runs.handleMessage(message, this.onMessage);
+			this.failClosed(new KernelStartupError(message.error.message));
+			return;
+		}
 		if (this.runs.handleMessage(message, this.onMessage)) this.pumpRuns();
 	}
 
@@ -176,6 +197,7 @@ export class SubprocessKernel {
 			return;
 		}
 		this.process = null;
+		this.processReady = false;
 		this.failClosed(new KernelExitedError(signal ?? code ?? "unknown"));
 	}
 

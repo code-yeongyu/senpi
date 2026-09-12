@@ -1,0 +1,360 @@
+syntax = "proto3";
+
+// Vendored SUBSET of Codeium/Windsurf Cascade's protobuf surface, transcribed
+// from the schemas Devin's released CLI speaks. Only the messages, fields and
+// enum values senpi's devin-agent transport reads or writes are declared; every
+// field number and wire type matches the upstream schema exactly, so unknown
+// upstream fields round-trip as unknown fields instead of corrupting a message.
+//
+// Package name is cosmetic: Connect binary framing carries no message names and
+// the RPC paths are spelled out in packages/ai/src/api/devin-agent/paths.ts.
+package exa.api_server_pb;
+
+// exa.chat_pb.CacheControlType
+enum CacheControlType {
+  CACHE_CONTROL_TYPE_UNSPECIFIED = 0;
+  CACHE_CONTROL_TYPE_EPHEMERAL = 1;
+}
+
+// exa.chat_pb.ChatMessageSource
+enum ChatMessageSource {
+  CHAT_MESSAGE_SOURCE_UNSPECIFIED = 0;
+  CHAT_MESSAGE_SOURCE_USER = 1;
+  CHAT_MESSAGE_SOURCE_SYSTEM = 2;
+  CHAT_MESSAGE_SOURCE_UNKNOWN = 3;
+  CHAT_MESSAGE_SOURCE_TOOL = 4;
+  CHAT_MESSAGE_SOURCE_SYSTEM_PROMPT = 5;
+}
+
+// exa.chat_pb.ChatMessageRequestType
+enum ChatMessageRequestType {
+  CHAT_MESSAGE_REQUEST_TYPE_UNSPECIFIED = 0;
+  CHAT_MESSAGE_REQUEST_TYPE_GENERAL = 1;
+  CHAT_MESSAGE_REQUEST_TYPE_CONTEXT_CHECK = 2;
+  CHAT_MESSAGE_REQUEST_TYPE_PLAN = 3;
+  CHAT_MESSAGE_REQUEST_TYPE_COMMAND = 4;
+  CHAT_MESSAGE_REQUEST_TYPE_CASCADE = 5;
+}
+
+// exa.codeium_common_pb.StopReason
+enum StopReason {
+  STOP_REASON_UNSPECIFIED = 0;
+  STOP_REASON_INCOMPLETE = 1;
+  STOP_REASON_STOP_PATTERN = 2;
+  STOP_REASON_MAX_TOKENS = 3;
+  STOP_REASON_MIN_LOG_PROB = 4;
+  STOP_REASON_MAX_NEWLINES = 5;
+  STOP_REASON_EXIT_SCOPE = 6;
+  STOP_REASON_NONFINITE_LOGIT_OR_PROB = 7;
+  STOP_REASON_FIRST_NON_WHITESPACE_LINE = 8;
+  STOP_REASON_PARTIAL = 9;
+  STOP_REASON_FUNCTION_CALL = 10;
+  STOP_REASON_CONTENT_FILTER = 11;
+  STOP_REASON_NON_INSERTION = 12;
+  STOP_REASON_ERROR = 13;
+}
+
+// exa.chat_pb.ConversationalPlannerMode
+enum ConversationalPlannerMode {
+  CONVERSATIONAL_PLANNER_MODE_UNSPECIFIED = 0;
+  CONVERSATIONAL_PLANNER_MODE_DEFAULT = 1;
+  CONVERSATIONAL_PLANNER_MODE_READ_ONLY = 2;
+  CONVERSATIONAL_PLANNER_MODE_NO_TOOL = 3;
+  CONVERSATIONAL_PLANNER_MODE_EXPLORE = 4;
+  CONVERSATIONAL_PLANNER_MODE_PLANNING = 5;
+  CONVERSATIONAL_PLANNER_MODE_AUTO = 6;
+}
+
+// exa.codeium_common_pb.DisplayOption
+//
+// 6-8 are the slots the native client requests beside 3-4: the internal
+// default/eval slot, the unclassified slot and the second visible-model slot.
+enum DisplayOption {
+  DISPLAY_OPTION_UNSPECIFIED = 0;
+  DISPLAY_OPTION_ARENA = 1;
+  DISPLAY_OPTION_BATTLE_GROUP_ONLY = 2;
+  DISPLAY_OPTION_MODEL_ROUTER = 3;
+  DISPLAY_OPTION_QUICK_REVIEW = 4;
+  DISPLAY_OPTION_INTERNAL_DEFAULT = 6;
+  DISPLAY_OPTION_UNCLASSIFIED = 7;
+  DISPLAY_OPTION_NORMAL = 8;
+}
+
+// exa.codeium_common_pb.ModelDimensionKind
+enum ModelDimensionKind {
+  MODEL_DIMENSION_KIND_UNSPECIFIED = 0;
+  MODEL_DIMENSION_KIND_COST = 1;
+  MODEL_DIMENSION_KIND_COST_FUZZY = 2;
+}
+
+// exa.codeium_common_pb.Metadata
+//
+// user_jwt is field 21 upstream (22 is force_team_id); the first vendored
+// copy had it on 22, which sent the minted JWT into the wrong field.
+message Metadata {
+  string ide_name = 1;
+  string extension_version = 2;
+  string api_key = 3;
+  string locale = 4;
+  string os = 5;
+  bool disable_telemetry = 6;
+  string ide_version = 7;
+  string hardware = 8;
+  uint64 request_id = 9;
+  string session_id = 10;
+  string extension_name = 12;
+  string user_jwt = 21;
+  string force_team_id = 22;
+  string device_fingerprint = 24;
+  string ide_type = 28;
+  repeated DisplayOption supported_model_displays = 30;
+}
+
+// exa.codeium_common_pb.ChatToolCall
+message ChatToolCall {
+  string id = 1;
+  string name = 2;
+  string arguments_json = 3;
+  string invalid_json_str = 4;
+  string invalid_json_err = 5;
+  bool is_custom_tool_call = 6;
+}
+
+// exa.chat_pb.ChatToolChoice
+message ChatToolChoice {
+  oneof choice {
+    string option_name = 1;
+    string tool_name = 2;
+  }
+}
+
+// exa.chat_pb.ComputerUseToolConfig
+message ComputerUseToolConfig {
+  int32 display_width_px = 1;
+  int32 display_height_px = 2;
+  int32 display_number = 3;
+}
+
+// exa.chat_pb.ChatToolDefinition
+message ChatToolDefinition {
+  string name = 1;
+  string description = 2;
+  string json_schema_string = 3;
+  repeated string attribution_field_names = 5;
+  string server_name = 6;
+  optional bool read_only_hint = 7;
+  ComputerUseToolConfig computer_use_config = 8;
+  optional bool is_custom_tool = 9;
+  bool strict = 12;
+}
+
+// exa.chat_pb.PromptCacheOptions
+message PromptCacheOptions {
+  CacheControlType type = 1;
+}
+
+// exa.codeium_common_pb.ImageData
+message ImageData {
+  string base64_data = 1;
+  string mime_type = 2;
+  string caption = 3;
+}
+
+// exa.chat_pb.ChatMessagePrompt
+message ChatMessagePrompt {
+  string message_id = 1;
+  ChatMessageSource source = 2;
+  string prompt = 3;
+  uint32 num_tokens = 4;
+  bool safe_for_code_telemetry = 5;
+  repeated ChatToolCall tool_calls = 6;
+  string tool_call_id = 7;
+  PromptCacheOptions prompt_cache_options = 8;
+  bool tool_result_is_error = 9;
+  repeated ImageData images = 10;
+  string thinking = 11;
+  string signature = 12;
+  bool thinking_redacted = 13;
+  string signature_type = 18;
+}
+
+// exa.codeium_common_pb.CompletionConfiguration
+message CompletionConfiguration {
+  uint64 num_completions = 1;
+  uint64 max_tokens = 2;
+  uint64 max_newlines = 3;
+  double min_log_probability = 4;
+  double temperature = 5;
+  double first_temperature = 6;
+  uint64 top_k = 7;
+  double top_p = 8;
+  repeated string stop_patterns = 9;
+  uint64 seed = 10;
+  double fim_eot_prob_threshold = 11;
+}
+
+// exa.codeium_common_pb.ModelUsageStats
+message ModelUsageStats {
+  uint64 input_tokens = 2;
+  uint64 output_tokens = 3;
+  uint64 cache_write_tokens = 4;
+  uint64 cache_read_tokens = 5;
+  string message_id = 7;
+  string model_uid = 9;
+  string billing_model_uid = 10;
+  string requested_model_uid = 11;
+}
+
+message GetChatMessageRequest {
+  Metadata metadata = 1;
+  string prompt = 2;
+  repeated ChatMessagePrompt chat_message_prompts = 3;
+  bool use_internal_chat_model = 5;
+  ChatMessageRequestType request_type = 7;
+  CompletionConfiguration configuration = 8;
+  repeated ChatToolDefinition tools = 10;
+  bool disable_parallel_tool_calls = 11;
+  ChatToolChoice tool_choice = 12;
+  PromptCacheOptions system_prompt_cache_options = 13;
+  string chat_model_name = 14;
+  string cascade_id = 16;
+  string prompt_id = 17;
+  ConversationalPlannerMode planner_mode = 20;
+  string chat_model_uid = 21;
+  string execution_id = 22;
+  optional string model_assignment_jwt = 26;
+}
+
+message GetChatMessageResponse {
+  string message_id = 1;
+  string delta_text = 3;
+  uint32 delta_tokens = 4;
+  StopReason stop_reason = 5;
+  repeated ChatToolCall delta_tool_calls = 6;
+  ModelUsageStats usage = 7;
+  string delta_thinking = 9;
+  string delta_signature = 10;
+  bool thinking_redacted = 11;
+  int32 credit_cost = 14;
+  string output_id = 15;
+  string request_id = 17;
+  int32 committed_credit_cost = 18;
+  double committed_acu_cost = 22;
+  optional string actual_model_uid = 23;
+}
+
+// exa.codeium_common_pb.ModelOrAlias
+message ModelOrAlias {
+  oneof choice {
+    string model = 1;
+    string alias = 2;
+  }
+}
+
+// exa.codeium_common_pb.ModelFeatures (subset)
+message ModelFeatures {
+  bool supports_images = 11;
+  bool supports_tool_calls = 12;
+  bool supports_thinking = 15;
+  bool supports_parallel_tool_calls = 21;
+}
+
+// exa.codeium_common_pb.ModelInfo (subset)
+message ModelInfo {
+  ModelFeatures model_features = 6;
+  int32 max_output_tokens = 13;
+  string model_uid = 17;
+  DisplayOption display_option = 22;
+  bool is_model_router = 25;
+}
+
+// exa.codeium_common_pb.ModelDimension
+message ModelDimension {
+  string label = 1;
+  float value = 2;
+  string denominator = 3;
+  float min_range = 4;
+  float max_range = 5;
+  ModelDimensionKind kind = 6;
+  optional string info = 7;
+}
+
+// exa.codeium_common_pb.ModelFamilyMetadataValue
+message ModelFamilyMetadataValue {
+  int32 order = 1;
+  string name = 2;
+}
+
+// exa.codeium_common_pb.ModelFamilyMetadataEntry
+message ModelFamilyMetadataEntry {
+  string key = 1;
+  ModelFamilyMetadataValue value = 2;
+}
+
+// exa.codeium_common_pb.ModelFamilyMetadata
+message ModelFamilyMetadata {
+  string model_family_label = 1;
+  repeated ModelFamilyMetadataEntry entries = 2;
+  bool is_default_model_in_family = 3;
+}
+
+// exa.codeium_common_pb.ClientModelConfig
+message ClientModelConfig {
+  string label = 1;
+  ModelOrAlias model_or_alias = 2;
+  float credit_multiplier = 3;
+  bool disabled = 4;
+  bool supports_images = 5;
+  bool is_premium = 7;
+  bool is_beta = 9;
+  bool is_recommended = 11;
+  bool is_new = 15;
+  // The account's context window for this lane, not the output cap.
+  int32 max_tokens = 18;
+  bool is_capacity_limited = 20;
+  string model_uid = 22;
+  ModelInfo model_info = 23;
+  optional string description = 27;
+  ModelFamilyMetadata model_family_metadata = 30;
+  bool is_default_model_in_family = 31;
+  repeated ModelDimension model_dimensions = 32;
+}
+
+message GetCliModelConfigsRequest {
+  Metadata metadata = 1;
+}
+
+message GetCliModelConfigsResponse {
+  repeated ClientModelConfig client_model_configs = 1;
+}
+
+// exa.auth_pb.GetUserJwtRequest
+message GetUserJwtRequest {
+  Metadata metadata = 1;
+}
+
+// exa.auth_pb.GetUserJwtResponse
+message GetUserJwtResponse {
+  string user_jwt = 1;
+  string custom_api_server_url = 2;
+}
+
+// exa.api_server_pb.ModelAssignment
+message ModelAssignment {
+  string assignment_jwt = 1;
+  string model_uid = 2;
+  repeated string harness_uids = 3;
+}
+
+// exa.api_server_pb.AssignModelRequest
+message AssignModelRequest {
+  Metadata metadata = 1;
+  string model_router_uid = 2;
+  string cascade_id = 3;
+  ChatMessagePrompt chat_message_prompt = 5;
+}
+
+// exa.api_server_pb.AssignModelResponse
+message AssignModelResponse {
+  ModelAssignment assignment = 1;
+}

@@ -34,6 +34,9 @@ Applications can use the in-memory reference or provide an adapter for OpenTelem
 
 ```bash
 npm install @earendil-works/pi-telemetry
+
+# Bun alternative
+bun add @earendil-works/pi-telemetry
 ```
 
 ## Telemetry Concepts
@@ -449,14 +452,14 @@ The package does not use `AsyncLocalStorage` or another runtime-specific ambient
 From this package directory:
 
 ```bash
-npm test
-npm run build
+bun run test
+bun run build
 ```
 
 Repository-wide type checking, formatting, linting, and smoke checks run with:
 
 ```bash
-npm run check
+bun run check
 ```
 
 ## License

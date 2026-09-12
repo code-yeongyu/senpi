@@ -1,5 +1,315 @@
 # changes
 
+## 2026-09-11 - Parse versioned changelog entries for branded sources (senpi#1583)
+
+### What changed
+
+- `packages/coding-agent/src/utils/changelog.ts`: parses dated version headers and fenced examples safely, compares SemVer and CalVer entries, preserves prerelease suffixes, bounds notifications to the active source version, and de-duplicates repeated versions.
+
+### Why
+
+- Changelog notifications must understand Senpi's CalVer revisions and branded prerelease labels without showing entries from another source or future release.
+
+### Why an extension could not handle it
+
+- Parsing and ordering happen inside the host's changelog utility before interactive extensions receive control.
+
+### Expected merge conflict zones
+
+- LOW: changelog header parsing and version comparison helpers.
+
+## 2026-09-11 - Add content revisions for file-backed caches
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts` adds a SHA-256 file-content revision helper for auth and provider-settings caches.
+
+### Why
+
+- A content change must invalidate a cache even when the filesystem reports unchanged mtime and size.
+
+### Why an extension could not handle it
+
+- The revision primitive is shared by core auth storage and provider settings loaders.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/utils/paths.ts` file-revision helpers.
+
+## Canonical identity resolves through the native realpath (2026-09-07)
+
+### What changed
+
+- `paths.ts`: `canonicalizePath` resolves through `realpathSync.native` instead of `realpathSync`. Its contract is unchanged - it still swallows to the raw input on throw, so the callers that use it for identity comparison keep the convenience behaviour they depend on.
+- `paths.ts`: `canonicalizePathStrict` is new. It resolves the same way but does not swallow, so a caller that cannot act on an unconfirmed path gets an error instead of its own input handed back. The convenience form keeps every existing caller.
+
+### Why
+
+- Node's JS-implemented `realpathSync` collapses a `..` inside a symlink target lexically, before following the symlink that segment sits behind, so it can answer a path that differs from the one the kernel opens. Two spellings that name one file could therefore compare unequal, and a path that escapes through a symlinked parent could compare as though it did not. `realpathSync.native` (libuv) agrees with the kernel on both platforms measured.
+
+### Why an extension could not handle it
+
+- `canonicalizePath` is the identity primitive the loader and trust plumbing call before any extension is constructed, so nothing downstream can correct an answer it has already returned.
+
+### Expected merge conflict zones
+
+- LOW: the single `realpathSync` call inside `canonicalizePath`; no signature or control-flow change.
+
+## Open-free resolution follows realpath(3) for `.` and `..` (2026-09-07)
+
+### What changed
+
+- `paths.ts`: the walker applies `.` and `..` against the already-resolved prefix and no longer normalizes either the requested path or a link target before traversal. `realpathWithoutOpenStrict` is new: it keeps the missing-descendant tolerance but throws on EACCES, EIO, ELOOP and hop exhaustion instead of returning a guess.
+
+### Why
+
+- Collapsing `..` lexically diverges from realpath(3) whenever the `..` sits in a link target behind another symlink: for `entry -> "jump/../secret"` with `jump -> outside/subdir` the lexical answer is allowed/secret while the I/O reaches outside/secret. A containment policy fed the lexical answer approves one directory while the read leaves it, and an identity key built from it treats one file as two.
+- The tolerant contract is right for the classifier and the monitor parent, where a blocked main thread is worse than an approximate answer, and wrong for a policy or identity decision, which needs to fail closed. Hence two functions rather than one.
+
+### Why an extension could not handle it
+
+- The resolver is host infrastructure shared by the permission classifier, the terminal monitor registry and the core file tools.
+
+### Expected merge conflict zones
+
+- `paths.ts` resolver body and its exports.
+- `test/canonical-path-identity.test.ts`, `test/bounded-realpath.test.ts` (new).
+
+## Open-free path resolution and watch-target helpers (2026-09-07)
+
+### What changed
+
+- `paths.ts` gains `realpathWithoutOpen(path)`: realpath(3) semantics with one `lstatSync`/`readlinkSync` per component (`MAX_SYMLINK_HOPS` 40), components from the first missing or unreadable one kept verbatim, never throws. It is the walker `permission-system/external-dir.ts` introduced on 2026-09-06, moved here so the permission parser and `terminal/monitor-registry.ts` share one implementation.
+- `fs-watch.ts` gains `canonicalWatchPath(path)` (the win32-only `realpathSync.native` lookup `watchWithErrorHandler` already performed, now reusable) and `probeDirectoryOpenable(directory)` (`opendir` + one `read` + `close` on the async pool, so a caller can bound the open that a synchronous `fs.watch` would otherwise perform on its own thread).
+
+### Why
+
+- Bun's `fs.realpath*` opens every directory it resolves; on a wedged autofs trigger that open never returns and freezes the host main thread. Paths that a model merely mentions must be resolved without `open(2)`; `canonicalizePath` stays realpath-based for startup/config paths that senpi owns.
+
+### Why an extension could not handle it
+
+- Both consumers are in-tree: the permission `tool_call` hook (`permission-system/parsers.ts`) and the file-monitor registry (`terminal/monitor-registry.ts`) run on the host itself, and they must derive the same identity string from the same walker. An extension cannot replace the resolution the host performs before its own hook fires.
+
+### Expected merge conflict zones
+
+- `paths.ts` import block and the new exported function; `fs-watch.ts` (upstream has no such helpers).
+
+## Keep synchronous Windows process-tree kill; never throw on missing taskkill (2026-09-03)
+
+### What changed
+
+- `shell.ts` keeps the fork's synchronous `killWindowsProcessTree(pid, taskkillPaths)` /
+  `killProcessTree` / `killTrackedDetachedChildren` path (`spawnSync` over
+  `windowsTaskkillCandidates`). Upstream 7af2d27dc's async `spawn` + `child.once("error")` is not
+  adopted because RPC host shutdown and hooks call the killer in the same tick as `process.exit`.
+- The ENOENT / spawn-failure guard is already the fork `spawnSync` `result.error` / try-catch
+  path: a missing or failed `taskkill` never throws. Regression `6596-taskkill-enoent` is adapted
+  to mock `spawnSync` instead of async `spawn`.
+
+### Why
+
+- Adopting upstream's async kill would make shutdown reaping fire-and-forget and leave orphaned
+  children. Dropping the ENOENT guard (or leaving the upstream test mocking `spawn`) would crash
+  or false-pass when `taskkill` is absent from PATH.
+
+### Why an extension could not handle it
+
+- Process-tree kill runs from RPC host shutdown, hooks, and bash abort inside core utilities
+  before any extension hook can wrap it.
+
+### Expected merge conflict zones
+
+- `shell.ts` import of `spawn` vs `spawnSync`, and the win32 branch of `killProcessTree`.
+
+## Branded build labels never advertise a bogus engine update (2026-09-04)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: `isNewerPackageVersion` returns `false` for version pairs it cannot order instead of falling back to string inequality, so branded build labels (for example `omo@c6e7dd7 2026-09-04 10:17 +09:00`) stop advertising an engine update on every startup.
+
+### Why
+
+- A branded distribution injects a free-form `SENPI_BRAND.displayVersion` that no version parser can order against a registry CalVer. The old inequality fallback made every such pair look "newer", showing a false update toast.
+
+### Why an extension could not handle it
+
+- The comparison lives in the engine's own update-check utility; extensions cannot replace its semantics.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `isNewerPackageVersion` in `packages/coding-agent/src/utils/version-check.ts`.
+
+## Fix biome import-order format drift from #1230 (2026-08-31)
+
+### What changed
+
+- `packages/coding-agent/src/utils/fs-watch.ts` import specifiers reordered by `biome check --write` (type-only `FSWatcher` after `realpathSync`). Formatting only; zero behavior change.
+
+### Why
+
+- #1230 merged with biome format drift on this file, so every subsequent contributor's pre-commit `--write` pass re-fixed it and smuggled the hunk into unrelated commits. Same class as #1231.
+
+### Why an extension could not handle it
+
+- Not applicable: repository formatting hygiene, no runtime surface.
+
+### Expected merge conflict zones
+
+- LOW: `fs-watch.ts` import block only.
+
+## Canonicalize Windows fs.watch paths before watching (2026-08-31)
+
+### What changed
+
+- `packages/coding-agent/src/utils/fs-watch.ts` resolves existing watch paths with `realpathSync.native()` on Windows before calling `fs.watch()`, keeping the raw path when resolution fails (missing paths still surface through the existing `onError` flow).
+
+### Why
+
+- libuv's Windows fs-event implementation `abort()`s the whole process (`Assertion failed: !_wcsnicmp(filename, dir, dirlen), src\win\fs-event.c:72`) when a watched directory path carries a non-canonical component (8.3 short name, junction) and an incoming event's long-path conversion no longer prefix-matches the stored watch path. Entering a session from the `/resume` selector re-creates the runtime while such watchers are armed, killing the app ([#1229](https://github.com/code-yeongyu/senpi/issues/1229)).
+
+### Why an extension could not handle it
+
+- The abort happens inside libuv native code before any JavaScript `error` event fires, and every repository watcher (footer git watchers, theme watcher, config-reload) routes through this shared wrapper.
+
+### Expected merge conflict zones
+
+- LOW: the `watchWithErrorHandler` body in `packages/coding-agent/src/utils/fs-watch.ts`.
+
+## Utils re-diverge from upstream dcd4619 (2026-08-25)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts` keeps `ShellKind` classification, the
+  `SENPI_GIT_BASH_PATH` override, and PTY-aware invocation argument selection.
+- `packages/coding-agent/src/utils/syntax-highlight.ts` keeps upstream's per-language lazy
+  registration but rewrites every import to the extensionless exported subpaths
+  (`highlight.js/lib/core`, `highlight.js/lib/languages/*`): the fork pins highlight.js 11, whose
+  strict `exports` map rejects upstream's `.js`-suffixed deep paths (written against v10) — the
+  exact failure that broke every CI test job on this PR before the rewrite.
+
+### Why
+
+These are fork-owned product surfaces (senpi branding, provider wire behavior, fork runtime features) that upstream does not carry; the sync must re-assert them on top of upstream's tree.
+
+### Why this lives in the fork
+
+The divergence lives in core wiring, package identity, or build plumbing that executes before any extension loads, so no extension hook can express it.
+
+### Expected merge conflict zones
+
+- The import block of `packages/coding-agent/src/utils/syntax-highlight.ts` whenever upstream edits
+  its language set (fork must keep extensionless specifiers while highlight.js 11 is pinned).
+
+## Repository audit baseline for the utils tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`, tag v0.84.2). It assigns every audited production path whose exact
+  nearest tracker is this file, summarizing each fork delta; the dated history below it remains authoritative for the
+  feature narrative. `packages/coding-agent/src/utils/tools-manager.ts` is already covered by the 2026-08-13 entry
+  below.
+- `packages/coding-agent/src/utils/child-process.ts`: abort-aware `waitForChildProcess` and post-exit stdout drain
+  (dated entries below).
+- `packages/coding-agent/src/utils/shell.ts`: synchronous Windows process-tree kill, shell-kind resolution for
+  persistent terminals, and the sanitize fast path (dated entries below).
+- `packages/coding-agent/src/utils/fs-watch.ts`: optional recursive-watch options (2026-07-21 entry below).
+- `packages/coding-agent/src/utils/paths.ts`: shared `shortenPath()` display helper (2026-05-24 entry below).
+- `packages/coding-agent/src/utils/version-check.ts` and `packages/coding-agent/src/utils/pi-user-agent.ts`:
+  brand-aware update channel and outbound identity (own entry below).
+- `packages/coding-agent/src/utils/clipboard-image.ts`: equivalent optional-chaining guard on the native image check
+  (own entry below).
+- `packages/coding-agent/src/utils/highlight-js-lib-index.d.ts`: deleted ambient module declaration, with
+  `packages/coding-agent/src/utils/syntax-highlight.ts` importing the typed package entry instead (own entry below).
+
+### Why
+
+- The pre-backfill audit reported these paths uncovered because the entries that describe them predate the canonical
+  four-section format (their conflict-zone headings carried suffixes) or never named the exact path. This inventory
+  closes that gap without rewriting accurate history below.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository policy enforced by repository scripts before any extension loader exists; the paths
+  themselves are shared leaf utilities beneath the extension API.
+
+### Expected merge conflict zones
+
+- NONE for this inventory: the tracker merges to `ours` and the path list is pin-relative.
+
+## Brand-aware update channel and outbound identity (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/utils/version-check.ts`: latest-version checks query the npm registry
+  (`registry.npmjs.org` package documents, or a brand update channel's dist-tags endpoint) instead of the engine's
+  release site; `readAvailableVersion()` reads whichever document shape was fetched. Version comparison gained a
+  Senpi CalVer comparator (`YYYY.M.D` with an optional hotfix component) ahead of the semver fallback, release notes
+  link to the senpi changelog tag or the brand's changelog template, and the offline/skip gates read brand-scoped
+  environment values. A brand without an update channel skips the check entirely: the engine's own releases are not
+  installable from inside a branded distribution.
+- `packages/coding-agent/src/utils/pi-user-agent.ts`: the update-check user agent identifies as
+  `BRAND?.userAgent ?? APP_NAME` and defaults its version argument to `DISPLAY_VERSION`.
+
+### Why
+
+- `senpi update` and startup update checks must compare against senpi or brand releases, never upstream engine
+  releases, and CalVer hotfix segments do not order under plain semver comparison.
+
+### Why an extension could not handle it
+
+- Startup version checks run from core utilities before extensions load; an extension cannot redirect the fetch
+  target or rewrite the user agent of a check that has already fired.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/utils/version-check.ts` endpoint selection and version comparator.
+- LOW: `packages/coding-agent/src/utils/pi-user-agent.ts` identity line.
+
+## Clipboard native-read equivalent guard (2026-08-17)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard-image.ts`: the native backend's image check collapsed
+  `!clipboard || !clipboard.hasImage()` into the equivalent `!clipboard?.hasImage()`.
+
+### Why
+
+- Optional-chaining parity with the fork's erasable-syntax tree; behavior is unchanged — a missing native backend
+  and a backend reporting no image both still return no image.
+
+### Why an extension could not handle it
+
+- Clipboard image decoding is a shared leaf utility consumed by core input paths; extensions call into it rather than
+  around it.
+
+### Expected merge conflict zones
+
+- LOW: the single guard line in the native clipboard read.
+
+## Removed highlight.js ambient module declaration (2026-08-17)
+
+### What changed
+
+- Deleted `packages/coding-agent/src/utils/highlight-js-lib-index.d.ts`, the hand-written ambient declaration that
+  typed a deep `lib/index.js` import.
+- `packages/coding-agent/src/utils/syntax-highlight.ts` imports `hljs` from the package's typed entry point instead,
+  so the highlight interface comes from upstream types rather than a fork copy.
+
+### Why
+
+- The declaration existed only to type an untyped deep import; the package entry is typed, and maintaining a fork
+  declaration let it drift from the real highlight API.
+
+### Why an extension could not handle it
+
+- Module typing is compile-time; extensions cannot supply ambient declarations for the host package build.
+
+### Expected merge conflict zones
+
+- LOW: the import line in `packages/coding-agent/src/utils/syntax-highlight.ts`; the deletion is clean unless
+  upstream edits the removed file.
+
 ## Brand-aware offline package management (2026-08-13)
 
 ### What changed
@@ -23,6 +333,39 @@
 
 - LOW: `tools-manager.ts`, at the offline environment gate and `downloadFile`
   response-body handling.
+
+## Windows process-tree kill survives an unresolvable taskkill (2026-08-11)
+
+### What changed
+
+- `shell.ts`: the Windows branch of `killProcessTree` moved into `killWindowsProcessTree`, which walks the ordered
+  launcher list from the new `windowsTaskkillCandidates` export (every existing absolute `System32` / `Sysnative`
+  `taskkill.exe`, then the bare PATH-resolved name), runs each with `spawnSync` under a 5s timeout, and only degrades
+  to `process.kill(pid)` when no launcher starts at all. Both new functions are exported for regression coverage.
+
+### Why
+
+- `spawn("taskkill", ...)` resolves the executable through PATH and reports a failed lookup asynchronously on the
+  child's `error` event, so the surrounding `try`/`catch` never saw it. On a session whose PATH had lost
+  `%SystemRoot%\System32`, `killTrackedDetachedChildren()` during shutdown raised
+  `Error: spawn taskkill ENOENT` as an uncaught exception and took the CLI down instead of exiting, and no tracked
+  child was killed.
+- The kill is synchronous because `emergencyTerminalExit()` calls `killTrackedDetachedChildren()` and then
+  `process.exit(129)` in the same tick. An asynchronous killer — or a fallback wired to the child's `error` event —
+  never runs on that path, so the tracked child would survive. `spawnSync` reports a failed lookup on its returned
+  `error` field instead of emitting it, so ENOENT can no longer become an uncaught exception either.
+- The candidate list exists because the reported failure was PATH resolution, not a missing binary: a broken PATH must
+  not downgrade a tree kill to a direct kill. `process.kill` maps to `TerminateProcess` and leaves descendants
+  orphaned, the same limitation `packages/pty/src/pipe-fallback.ts` documents, so it stays a last resort.
+
+### Why extension system couldn't handle this
+
+- Detached-child bookkeeping and the shutdown signal handlers live in core modes; no extension hook runs inside the
+  signal path that kills tracked children.
+
+### Expected merge conflict zones on next upstream sync
+
+- LOW: the Windows branch of `killProcessTree` and the `node:path` / `child_process` import lines in `shell.ts`.
 
 ## Config-reload recursive watch option (2026-07-21)
 

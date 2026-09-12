@@ -4,7 +4,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { fetchOpenGatewayModels } from "./generate-models-opengateway.ts";
+import { isPrunableModelShard } from "./model-shards.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
+import { getOpenRouterThinkingLevelMap, type OpenRouterReasoningMetadata } from "./openrouter-reasoning-options.ts";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
 	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
@@ -14,6 +16,7 @@ import {
 import type {
 	AnthropicMessagesCompat,
 	Api,
+	BedrockCompat,
 	KnownProvider,
 	Model,
 	ModelCost,
@@ -149,9 +152,19 @@ const COPILOT_STATIC_HEADERS = {
 	"Copilot-Integration-Id": "vscode-chat",
 } as const;
 
-const KIMI_STATIC_HEADERS = {
-	"User-Agent": "KimiCLI/1.5",
-} as const;
+const VENICE_BASE_URL = "https://api.venice.ai/api/v1";
+// Venice's ChatCompletionRequest schema is `additionalProperties: false`, so only
+// documented fields may be sent. Everything senpi sends by default for an
+// unrecognized OpenAI-compatible host is on Venice's accepted list (`store`,
+// `developer` role, `reasoning_effort`, `stream_options.include_usage`,
+// `max_completion_tokens`, `prompt_cache_key`, `prompt_cache_retention`, and
+// `strict` tools), so the auto-detected compat defaults are left alone.
+// The one behavior that must be overridden: Venice prepends its own default
+// system prompt ahead of the caller's unless told not to, which would sit in
+// front of the agent's system prompt.
+const VENICE_COMPAT: OpenAICompletionsCompat = {
+	veniceParameters: { include_venice_system_prompt: false },
+};
 
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
@@ -241,10 +254,12 @@ const NVIDIA_NIM_UNSUPPORTED_MODELS = new Set([
 ]);
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
 const ZAI_GLM52_THINKING_LEVEL_MAP = {
+	off: "none",
 	minimal: null,
-	low: "high",
-	medium: "high",
+	low: null,
+	medium: null,
 	high: "high",
+	xhigh: null,
 	max: "max",
 } as const;
 const OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = {
@@ -260,6 +275,11 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4",
 	"github-copilot:claude-sonnet-4.5",
 ]);
+const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
+	"claude-fable-5-1": ["claude-opus-4-8", "claude-opus-5"],
+	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
+	"claude-opus-5": ["claude-opus-4-8"],
+} satisfies Record<string, string[]>;
 
 const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	minimal: null,
@@ -267,6 +287,10 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	medium: null,
 	high: "high",
 	max: "max",
+} as const;
+const DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP = {
+	...DEEPSEEK_V4_THINKING_LEVEL_MAP,
+	low: "low",
 } as const;
 const QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP = {
 	minimal: null,
@@ -308,6 +332,7 @@ const QWEN_TOKEN_PLAN_PROVIDER_IDS = new Set<string>([
 const QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = new Set<string>([
 	"deepseek-v4-flash-0731",
 	"deepseek-v4-pro",
+	"deepseek-v4-pro-0813",
 	"glm-5.2",
 	"qwen3.6-flash",
 	"qwen3.7-max",
@@ -378,14 +403,66 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6-astra",
 ]);
+// Public OpenAI documents additional_tools for applications that load tools
+// outside the normal tool-search flow. Codex currently uses the input item for
+// its Responses Lite GPT-5.6 models.
+// https://developers.openai.com/api/docs/guides/tools-tool-search#add-tools-at-a-specific-point-in-the-input
+const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
+const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
+// OpenAI budgets input and output separately: the Responses API rejects a request with
+// `context_too_large` once the prompt alone exceeds (documented context window - max output),
+// whatever `max_output_tokens` asks for. senpi's `contextWindow` is the prompt budget, so the
+// catalog stores the input cap: 272,000 for the 400,000 tier and 922,000 for the 1,050,000 tier.
+// The split follows the model, not the gateway: `applyOpenAiInputCap` runs over every provider's
+// GPT-5.x / GPT-6 rows (Azure, Bedrock, Copilot, OpenRouter, Vercel, OpenGateway, OpenCode...)
+// because those gateways forward the same upstream limit. Issue #1422.
+const OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS: ReadonlyMap<number, number> = new Map([
+	[400000, OPENAI_LONG_CONTEXT_INPUT_THRESHOLD],
+	[1050000, 922000],
+]);
+const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
+// Flagship default context windows. OpenAI documents a 1,050,000-token window for both models;
+// the project deliberately ships cost-tier defaults (users widen through model overrides):
+// GPT-5.6 Sol keeps 650,000; GPT-6 Astra keeps 600,000.
+const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 600000;
+const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
+	["gpt-5.6-sol", 650000],
+	["gpt-6-astra", GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW],
+]);
+const GPT_56_SOL_DEFAULT_CONTEXT_WINDOW = 650000;
+
+function toOpenAiInputCap(contextWindow: number, maxTokens: number): number {
+	if (maxTokens !== 128000) return contextWindow;
+	return OPENAI_DOCUMENTED_CONTEXT_WINDOW_INPUT_CAPS.get(contextWindow) ?? contextWindow;
+}
+
+const OPENAI_GATEWAY_ID_PREFIX = /^(?:[a-z]{2}\.)?(?:global\.)?openai[./]/;
+
+/** GPT-5.x / GPT-6 rows on any provider: the OpenAI input/output split follows the model, not the gateway. */
+function isOpenAiFlagshipFamilyId(id: string): boolean {
+	const bare = id.replace(OPENAI_GATEWAY_ID_PREFIX, "");
+	return /^gpt-(?:5|6)(?:[.-]|$)/.test(bare) && !bare.startsWith("gpt-oss");
+}
+
+function applyOpenAiInputCap(model: Model<Api>): void {
+	if (!isOpenAiFlagshipFamilyId(model.id)) return;
+	// models.dev (and the gateways that mirror it) report gpt-5-pro output as 272000,
+	// a duplicate of the input sub-limit; the documented max output is 128000.
+	if (model.id.replace(OPENAI_GATEWAY_ID_PREFIX, "") === "gpt-5-pro" && model.maxTokens === 272000) {
+		model.maxTokens = 128000;
+	}
+	model.contextWindow = toOpenAiInputCap(model.contextWindow, model.maxTokens);
+}
 const OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = new Set([
 	"gpt-5.4",
 	"gpt-5.5",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6-astra",
 ]);
 const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.4",
@@ -395,6 +472,7 @@ const OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
+	"gpt-6-astra",
 ]);
 
 function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cost"] {
@@ -435,6 +513,7 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 // OpenAI models with Priority processing support, per the OpenAI pricing page's
 // Priority table. `-fast` catalog variants are generated for exactly this set.
 const OPENAI_PRIORITY_TIER_MODEL_IDS = new Set([
+	"gpt-6-astra",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
@@ -454,18 +533,45 @@ const OPENAI_PRIORITY_TIER_MODEL_IDS = new Set([
 	"o3",
 	"o4-mini",
 ]);
-const XAI_RESPONSES_MODEL_ID = "grok-4.5";
+
+// Codex backend models eligible for Priority-tier -fast variants. Mirrors the
+// OpenAI priority list but restricted to GPT-5.6 reasoning models that ship on
+// the Codex Responses API; older Codex-only SKUs (gpt-5.3-codex-spark) are
+// Priority-ineligible.
+const OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS = new Set([
+	"gpt-6-astra",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+]);
 const XAI_BUILTIN_EXCLUDED_MODEL_IDS = new Set([
 	"grok-3",
 	"grok-3-fast",
-	"grok-4.20-0309-non-reasoning",
-	"grok-4.20-0309-reasoning",
 	"grok-code-fast-1",
 ]);
-const XAI_RESPONSES_EFFORT_LEVEL_MAP = {
-	off: null,
-	minimal: null,
-} as const;
+// Documented per-model xAI reasoning specifications. Grok 4.6 exposes low/medium/high/xhigh;
+// the fixed-reasoning Grok 4.20 variant exposes only `high`. Models without an entry fall back
+// to `applyThinkingLevelMetadata()`'s "no verified effort options" defaults.
+const XAI_THINKING_LEVEL_MAPS: Record<string, NonNullable<Model<"openai-responses">["thinkingLevelMap"]>> = {
+	"grok-4.6": {
+		off: null,
+		minimal: null,
+		low: "low",
+		medium: "medium",
+		high: "high",
+		xhigh: "xhigh",
+		max: null,
+	},
+	"grok-4.20-0309-reasoning": {
+		off: null,
+		minimal: null,
+		low: null,
+		medium: null,
+		high: "high",
+		xhigh: null,
+		max: null,
+	},
+};
 const XAI_RESPONSES_COMPAT: OpenAIResponsesCompat = {
 	supportsLongCacheRetention: false,
 };
@@ -570,13 +676,13 @@ function supportsOpenAiXhigh(modelId: string): boolean {
 		modelId.includes("gpt-5.3") ||
 		modelId.includes("gpt-5.4") ||
 		modelId.includes("gpt-5.5") ||
-		modelId.includes("gpt-5.6")
+		(modelId.includes("gpt-5.6") || modelId.includes("gpt-6-astra"))
 	);
 }
 
 function supportsOpenAiMax(model: Model<Api>): boolean {
 	return (
-		model.id.includes("gpt-5.6") &&
+		(model.id.includes("gpt-5.6") || model.id.includes("gpt-6-astra")) &&
 		(model.api === "openai-responses" ||
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses" ||
@@ -586,6 +692,16 @@ function supportsOpenAiMax(model: Model<Api>): boolean {
 
 function isGoogleThinkingApi(model: Model<any>): boolean {
 	return model.api === "google-generative-ai" || model.api === "google-vertex";
+}
+
+const VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = new Set(["anthropic", "openrouter"]);
+
+function supportsAnthropicMidConvoEffort(modelId: string): boolean {
+	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
+	return (
+		/^claude-opus-5(?:-\d{8})?$/.test(id) ||
+		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
+	);
 }
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
@@ -642,7 +758,12 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	sendSessionAffinityHeaders: false,
 	supportsPromptCacheKey: false,
 	supportsLongCacheRetention: true,
-} satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "deferredToolsMode">> & {
+} satisfies Required<
+	Omit<
+		OpenAICompletionsCompat,
+		"cacheControlFormat" | "deferredToolsMode" | "supportsThinkingTokenBudget" | "thinkingTokenBudgetField"
+	>
+> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
 };
@@ -673,6 +794,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 	const isNvidia = provider === "nvidia" || baseUrl.includes("integrate.api.nvidia.com");
 	const isAntLing = provider === "ant-ling" || baseUrl.includes("api.ant-ling.com");
 	const isTogetherReasoningOnly = isTogether && TOGETHER_REASONING_ONLY_MODELS.has(model.id);
+	const isDeepSeek = provider === "deepseek" || baseUrl.toLowerCase().includes("deepseek.com");
 
 	const isNonStandard =
 		isNvidia ||
@@ -682,7 +804,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		baseUrl.includes("api.x.ai") ||
 		isTogether ||
 		baseUrl.includes("chutes.ai") ||
-		baseUrl.includes("deepseek.com") ||
+		isDeepSeek ||
 		isZai ||
 		isMoonshot ||
 		provider === "opencode" ||
@@ -692,10 +814,16 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		isAntLing;
 
 	const useMaxTokens =
-		baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing || isZai;
+		baseUrl.includes("chutes.ai") ||
+		isDeepSeek ||
+		isMoonshot ||
+		isCloudflareAiGateway ||
+		isTogether ||
+		isNvidia ||
+		isAntLing ||
+		isZai;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
-	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const isOpenRouterDeveloperRoleModel =
 		isOpenRouter && (model.id.startsWith("anthropic/") || model.id.startsWith("openai/"));
 	const openRouterCacheControlPrefixes = ["anthropic/", "qwen/", "google/"];
@@ -777,11 +905,66 @@ function applyOpenAICompletionsCompatMetadata(model: Model<Api>): void {
 	}
 }
 
+function applyAnthropicMessagesCompatMetadata(model: Model<Api>): void {
+	if (model.api !== "anthropic-messages") return;
+	const compat = getAnthropicMessagesCompat(model.provider, model.id);
+	if (compat) {
+		mergeAnthropicMessagesCompat(model, compat);
+		if (compat.supportsMidConvoEffort) mergeThinkingLevelMap(model, { off: null });
+	}
+}
+
+function isAnthropicFallbackMetadataModel(model: Model<Api>): model is Model<"anthropic-messages"> {
+	if (model.provider !== "anthropic" || model.api !== "anthropic-messages") return false;
+	return (
+		model.id in ANTHROPIC_ALLOWED_FALLBACK_MODELS ||
+		Object.values(ANTHROPIC_ALLOWED_FALLBACK_MODELS).some((fallbackModelIds) => fallbackModelIds.includes(model.id))
+	);
+}
+
+function applyAnthropicAllowedFallbackModelMetadata(models: readonly Model<"anthropic-messages">[]): void {
+	const modelsById = new Map(models.map((model) => [model.id, model]));
+	for (const [modelId, fallbackModelIds] of Object.entries(ANTHROPIC_ALLOWED_FALLBACK_MODELS)) {
+		const model = modelsById.get(modelId);
+		if (!model) continue;
+
+		const compatibleFallbackModelIds = model.compat?.supportsMidConvoEffort
+			? fallbackModelIds.filter(supportsAnthropicMidConvoEffort)
+			: fallbackModelIds;
+		const allowedFallbackModels = compatibleFallbackModelIds.flatMap((fallbackModelId) => {
+			const fallbackModel = modelsById.get(fallbackModelId);
+			return fallbackModel
+				? [{ provider: fallbackModel.provider, model: fallbackModel.id, cost: fallbackModel.cost }]
+				: [];
+		});
+		if (allowedFallbackModels.length > 0) {
+			mergeAnthropicMessagesCompat(model, { allowedFallbackModels });
+		}
+	}
+}
+
+// Bedrock global cross-region inference profiles for OpenAI GPT-5.6 serve the same
+// weights as the regional `openai.gpt-5.6-*` entries and accept `strict: true` tool
+// schemas, but models.dev only reports `structured_output` on the regional IDs. Without
+// this override a regeneration silently drops `compat.supportsStrictMode`, and
+// `bedrock-converse-stream.ts` then rejects `strict: "require"` sampling and downgrades
+// `strict: "prefer"` to an unconstrained schema.
+const BEDROCK_STRICT_MODE_MODEL_IDS = new Set([
+	"global.openai.gpt-5.6-luna",
+	"global.openai.gpt-5.6-sol",
+	"global.openai.gpt-5.6-terra",
+]);
+
 function applyStrictToolCompatMetadata(model: Model<Api>): void {
-	if (model.provider === "openai" && model.api === "openai-responses") {
+	if (
+		(model.provider === "openai" || model.provider === "cloudflare-ai-gateway") &&
+		model.api === "openai-responses"
+	) {
 		model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsStrictMode: true };
 	} else if (model.provider === "anthropic" && model.api === "anthropic-messages") {
 		mergeAnthropicMessagesCompat(model, { supportsStrictTools: true });
+	} else if (model.provider === "amazon-bedrock" && BEDROCK_STRICT_MODE_MODEL_IDS.has(model.id)) {
+		model.compat = { ...(model.compat as BedrockCompat | undefined), supportsStrictMode: true };
 	}
 }
 
@@ -814,8 +997,12 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
 	const isOpenAICodex = model.provider === "openai-codex" && model.api === "openai-codex-responses";
 	if (!(isOpenAIResponses || isOpenAICodex) || !OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) return;
+	const supportsAdditionalTools =
+		(isOpenAIResponses && OPENAI_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id)) ||
+		(isOpenAICodex && OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
 	model.compat = {
 		...(model.compat as OpenAIResponsesCompat | undefined),
+		...(supportsAdditionalTools ? { supportsAdditionalTools: true } : {}),
 		supportsToolSearch: true,
 	};
 }
@@ -830,6 +1017,16 @@ function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
 		...(model.compat as OpenAIResponsesCompat | undefined),
 		supportsExplicitPromptCacheMode: true,
 	};
+}
+
+// Every catalog that ships a GPT-6 Astra entry declares the same context window.
+// Upstream passthrough catalogs (opencode, openrouter, github-copilot,
+// vercel-ai-gateway) otherwise inherit the documented 1,050,000 window while the
+// first-party OpenAI catalogs carry the input cap, so the effective Astra budget
+// changed with the provider that routed the request.
+function applyGpt6AstraContextWindow(model: Model<Api>): void {
+	if (!model.id.includes("gpt-6-astra")) return;
+	model.contextWindow = GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW;
 }
 
 function isGemini3ProModel(modelId: string): boolean {
@@ -862,8 +1059,10 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeThinkingLevelMap(model, { off: "none" });
 	}
-	if (model.provider === "xai" && model.api === "openai-responses" && model.id === XAI_RESPONSES_MODEL_ID) {
-		mergeThinkingLevelMap(model, XAI_RESPONSES_EFFORT_LEVEL_MAP);
+	// xAI models without verified effort options (e.g. grok-build-0.1) must not
+	// send the undocumented "none"/"minimal" efforts.
+	if (model.provider === "xai" && model.api === "openai-responses" && model.thinkingLevelMap === undefined) {
+		mergeThinkingLevelMap(model, { off: null, minimal: null });
 	}
 	if (supportsOpenAiXhigh(model.id)) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
@@ -929,7 +1128,10 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 			model,
 			model.provider === "openrouter"
 				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh", max: null }
-				: DEEPSEEK_V4_THINKING_LEVEL_MAP,
+				: (model.provider === "deepseek" || model.provider === "opencode" || model.provider === "opencode-go") &&
+					model.id.includes("deepseek-v4-flash")
+					? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
+					: DEEPSEEK_V4_THINKING_LEVEL_MAP,
 		);
 	}
 	if (isGoogleThinkingApi(model) && isGemini3ProModel(model.id)) {
@@ -963,13 +1165,13 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		// Pi's low/medium/high pass through verbatim; OpenRouter normalizes to Mercury's vocabulary.
 		mergeThinkingLevelMap(model, { off: null });
 	}
-	if (model.provider === "openrouter" && model.id === "z-ai/glm-5.2") {
+	if (model.provider === "openrouter" && (model.id === "z-ai/glm-5.2" || model.id === "z-ai/glm-5.3")) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
 	}
-	if (model.provider === "fireworks" && model.id.includes("glm-5p2")) {
+	if (model.provider === "fireworks" && (model.id.includes("glm-5p2") || model.id.includes("glm-5p3"))) {
 		mergeThinkingLevelMap(model, { off: "none", minimal: null, low: "high", medium: "high", max: "max" });
 	}
-	if (model.provider === "opencode-go" && model.id === "glm-5.2") {
+	if (model.provider === "opencode-go" && (model.id === "glm-5.2" || model.id === "glm-5.3")) {
 		mergeThinkingLevelMap(model, OPENCODE_GO_GLM52_THINKING_LEVEL_MAP);
 	}
 	if (model.provider === "opencode-go" && model.id === "kimi-k2.6") {
@@ -994,6 +1196,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 
 function getAnthropicMessagesCompat(provider: string, modelId: string): AnthropicMessagesCompat | undefined {
 	const compat: AnthropicMessagesCompat = {};
+	if (
+		VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS.has(provider) &&
+		supportsAnthropicMidConvoEffort(modelId)
+	) {
+		compat.supportsMidConvoEffort = true;
+	}
 	if (EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS.has(`${provider}:${modelId}`)) {
 		compat.supportsEagerToolInputStreaming = false;
 	}
@@ -1096,11 +1304,12 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 
 			const contextWindow = model.top_provider?.context_length || model.context_length || 4096;
 
+			const useAnthropicMessages = /^anthropic\//.test(modelKey) && !modelKey.endsWith(":batch");
 			const normalizedModel: Model<any> = {
 				id: modelKey,
 				name: model.name,
-				api: "openai-completions",
-				baseUrl: "https://openrouter.ai/api/v1",
+				api: useAnthropicMessages ? "anthropic-messages" : "openai-completions",
+				baseUrl: useAnthropicMessages ? "https://openrouter.ai/api" : "https://openrouter.ai/api/v1",
 				provider,
 				reasoning: model.supported_parameters?.includes("reasoning") || false,
 				input,
@@ -1183,6 +1392,65 @@ async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 		if (generatorOptions.strict) throw error;
 		return [];
 	}
+}
+
+function processZaiModels(data: ModelsDevCatalog): Model<Api>[] {
+	const variants = [
+		{
+			source: "zai-coding-plan",
+			provider: "zai",
+			baseUrl: "https://api.z.ai/api/coding/paas/v4",
+		},
+		{
+			source: "zhipuai-coding-plan",
+			provider: "zai-coding-cn",
+			baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+		},
+	] as const;
+	const models: Model<Api>[] = [];
+
+	for (const { source, provider, baseUrl } of variants) {
+		for (const [modelId, model] of Object.entries(data[source]?.models ?? {})) {
+			const m = model as ModelsDevModel;
+			if (m.tool_call !== true) continue;
+			const supportsImage = m.modalities?.input?.includes("image");
+
+			const isGlm52 = modelId === "glm-5.2" || modelId === "glm-5.2-highspeed";
+			const thinkingLevelMap = isGlm52
+				? { off: "none", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null }
+				: getEffortThinkingLevelMap(m.reasoning_options ?? []);
+			const supportsReasoningEffort = thinkingLevelMap !== undefined;
+			const referenceCost = data.zai?.models[modelId]?.cost ?? m.cost;
+
+			models.push({
+				id: modelId,
+				name: m.name || modelId,
+				api: "openai-completions",
+				provider,
+				baseUrl,
+				reasoning: m.reasoning === true,
+				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+				input: supportsImage ? ["text", "image"] : ["text"],
+				cost: {
+					input: referenceCost?.input || 0,
+					output: referenceCost?.output || 0,
+					cacheRead: referenceCost?.cache_read || 0,
+					cacheWrite: referenceCost?.cache_write || 0,
+				},
+				compat: {
+					supportsDeveloperRole: false,
+					thinkingFormat: "zai",
+					...(supportsReasoningEffort ? { supportsReasoningEffort: true } : {}),
+					...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
+				},
+				contextWindow: m.limit?.context || 4096,
+				maxTokens: m.limit?.output || 4096,
+			});
+			recordModelsDevReasoningOptions(provider, modelId, m);
+		}
+	}
+
+	return models;
 }
 
 function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Api>[] {
@@ -1324,7 +1592,7 @@ function processFireworksModels(provider: ModelsDevProvider | undefined): Model<
 			maxTokens: model.limit?.output || 4096,
 		};
 
-		if (modelId.includes("glm-5p2")) {
+		if (modelId.includes("glm-")) {
 			models.push({
 				...common,
 				api: "openai-completions",
@@ -1679,21 +1947,49 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		// Cloudflare Workers AI models are also addressable through the AI Gateway
+		// compatibility endpoint under the `workers-ai/` namespace.
+		if (data["cloudflare-workers-ai"]?.models) {
+			for (const [modelId, model] of Object.entries(data["cloudflare-workers-ai"].models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+				models.push({
+					id: `workers-ai/${modelId}`,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "cloudflare-ai-gateway",
+					baseUrl: CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+					compat: { sendSessionAffinityHeaders: true },
+				});
+			}
+		}
+
 		// Process xAi models
 		if (data.xai?.models) {
 			for (const [modelId, model] of Object.entries(data.xai.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-				const useResponsesApi = modelId === XAI_RESPONSES_MODEL_ID;
+				const thinkingLevelMap = XAI_THINKING_LEVEL_MAPS[modelId];
 
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
-					api: useResponsesApi ? "openai-responses" : "openai-completions",
+					api: "openai-responses",
 					provider: "xai",
 					baseUrl: "https://api.x.ai/v1",
-					...(useResponsesApi ? { compat: { ...XAI_RESPONSES_COMPAT } } : {}),
+					compat: { ...XAI_RESPONSES_COMPAT },
 					reasoning: m.reasoning === true,
+					...(thinkingLevelMap ? { thinkingLevelMap } : {}),
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
 						input: m.cost?.input || 0,
@@ -1710,45 +2006,57 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 		// Process zAi models
 		const zaiCodingPlanVariants = [
-			{ provider: "zai", baseUrl: "https://api.z.ai/api/coding/paas/v4" },
-			{ provider: "zai-coding-cn", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4" },
+			{
+				source: "zai-coding-plan",
+				provider: "zai",
+				baseUrl: "https://api.z.ai/api/coding/paas/v4",
+			},
+			{
+				source: "zhipuai-coding-plan",
+				provider: "zai-coding-cn",
+				baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+			},
 		] as const;
 
-		if (data["zai-coding-plan"]?.models) {
-			for (const { provider, baseUrl } of zaiCodingPlanVariants) {
-				for (const [modelId, model] of Object.entries(data["zai-coding-plan"].models)) {
-					const m = model as ModelsDevModel;
-					if (m.tool_call !== true) continue;
-					const supportsImage = m.modalities?.input?.includes("image");
+		for (const { source, provider, baseUrl } of zaiCodingPlanVariants) {
+			for (const [modelId, model] of Object.entries(data[source]?.models ?? {})) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+				const supportsImage = m.modalities?.input?.includes("image");
 
-					const isGlm52 = modelId === "glm-5.2";
+				const isGlm52 = modelId === "glm-5.2" || modelId === "glm-5.2-highspeed";
+				const isGlm5x = isGlm52 || /^(?:glm-5\.3)(?:-(?:flash|highspeed))?$/.test(modelId);
+				const referenceCost = modelId === "glm-5.2-highspeed" ? undefined : data.zai?.models[modelId]?.cost ?? m.cost;
 
-					models.push({
-						id: modelId,
-						name: m.name || modelId,
-						api: "openai-completions",
-						provider,
-						baseUrl,
-						reasoning: m.reasoning === true,
-						...(isGlm52 ? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP } : {}),
-						input: supportsImage ? ["text", "image"] : ["text"],
-						cost: {
-							input: m.cost?.input || 0,
-							output: m.cost?.output || 0,
-							cacheRead: m.cost?.cache_read || 0,
-							cacheWrite: m.cost?.cache_write || 0,
-						},
-						compat: {
-							supportsDeveloperRole: false,
-							thinkingFormat: "zai",
-							...(isGlm52 ? { supportsReasoningEffort: true } : {}),
-							...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
-						},
-						contextWindow: m.limit?.context || 4096,
-						maxTokens: m.limit?.output || 4096,
-					});
-					recordModelsDevReasoningOptions(provider, modelId, m);
-				}
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider,
+					baseUrl,
+					reasoning: m.reasoning === true,
+					...(isGlm52
+						? { thinkingLevelMap: ZAI_GLM52_THINKING_LEVEL_MAP }
+						: isGlm5x
+							? { thinkingLevelMap: getEffortThinkingLevelMap(m.reasoning_options ?? []) }
+							: {}),
+					input: supportsImage ? ["text", "image"] : ["text"],
+					cost: {
+						input: referenceCost?.input || 0,
+						output: referenceCost?.output || 0,
+						cacheRead: referenceCost?.cache_read || 0,
+						cacheWrite: referenceCost?.cache_write || 0,
+					},
+					compat: {
+						supportsDeveloperRole: false,
+						thinkingFormat: "zai",
+						...(isGlm5x ? { supportsReasoningEffort: true } : {}),
+						...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+				recordModelsDevReasoningOptions(provider, modelId, m);
 			}
 		}
 
@@ -1881,6 +2189,35 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 		models.push(...processBasetenModels(data.baseten));
 
+		// Process Venice AI models
+		if (data.venice?.models) {
+			for (const [modelId, model] of Object.entries(data.venice.models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+				if (m.status === "deprecated") continue;
+
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "venice",
+					baseUrl: VENICE_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					compat: { ...VENICE_COMPAT },
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+				recordModelsDevReasoningOptions("venice", modelId, m);
+			}
+		}
+
 		// Process OpenCode models (Zen and Go)
 		// API mapping based on provider.npm field:
 		// - @ai-sdk/openai → openai-responses
@@ -1997,11 +2334,11 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.status === "deprecated") continue;
 
 				// Claude 4.x and 5.x models route to Anthropic Messages API
-				const isCopilotClaude = /^claude-(haiku|sonnet|opus)-[45]([.\-]|$)/.test(modelId);
-				// Grok 4.5, gpt-5, oswe, and MAI-Code models are only served through
+				const isCopilotClaude = /^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)/.test(modelId);
+				// Grok, gpt-5, oswe, and MAI-Code models are only served through
 				// the Copilot /responses endpoint.
 				const needsResponsesApi =
-					modelId === "grok-4.5" ||
+					modelId.startsWith("grok-") ||
 					modelId.startsWith("gpt-5") ||
 					modelId.startsWith("oswe") ||
 					modelId.startsWith("mai-");
@@ -2108,7 +2445,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider: "kimi-coding",
 					// Kimi For Coding's Anthropic-compatible API - SDK appends /v1/messages
 					baseUrl: "https://api.kimi.com/coding",
-					headers: { ...KIMI_STATIC_HEADERS },
 					compat: {
 						...(allowEmptySignature ? { allowEmptySignature: true } : {}),
 						forceAdaptiveThinking: true,
@@ -2226,6 +2562,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(providerModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				if (m.status === "deprecated") continue;
 
 				models.push({
 					id: modelId,
@@ -2443,6 +2780,10 @@ async function generateModels() {
 			candidate.contextWindow = OPENAI_LONG_CONTEXT_INPUT_THRESHOLD;
 			candidate.maxTokens = 128000;
 		}
+		const flagshipContextWindow = OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS.get(candidate.id);
+		if (candidate.provider === "openai" && flagshipContextWindow !== undefined) {
+			candidate.contextWindow = flagshipContextWindow;
+		}
 		if (candidate.provider === "openai" && OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS.has(candidate.id)) {
 			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
 			candidate.cost = withOpenAiLongContextPricing(standardCost ?? candidate.cost);
@@ -2451,11 +2792,6 @@ async function generateModels() {
 		if (candidate.provider === "cloudflare-ai-gateway") {
 			const standardCost = OPENAI_GPT_56_STANDARD_COSTS[candidate.id];
 			if (standardCost) candidate.cost = withOpenAiLongContextPricing(standardCost);
-		}
-		// models.dev reports gpt-5-pro output as 272000 (a duplicate of the input sub-limit);
-		// the actual max output is 128000. Also propagates to the derived Azure clone.
-		if (candidate.provider === "openai" && candidate.id === "gpt-5-pro") {
-			candidate.maxTokens = 128000;
 		}
 		// Keep Kimi K3's canonical output limit when gateway metadata is missing or incorrect.
 		if (
@@ -2665,6 +3001,19 @@ async function generateModels() {
 	// Add missing gpt models
 	const missingOpenAiModels: Model<"openai-responses">[] = [
 		{
+			id: "gpt-6-astra",
+			name: "GPT-6 Astra",
+			api: "openai-responses",
+			baseUrl: "https://api.openai.com/v1",
+			provider: "openai",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }),
+			contextWindow: GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW,
+			maxTokens: 128000,
+			thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
+		},
+		{
 			id: "gpt-5.6-sol",
 			name: "GPT-5.6 Sol",
 			api: "openai-responses",
@@ -2673,7 +3022,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 }),
-			contextWindow: OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+			contextWindow: GPT_56_SOL_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: 128000,
 		},
 		{
@@ -2851,7 +3200,8 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Older model limits are based on observed server behavior; GPT-5.6 follows Codex's 272k catalog limit (formerly 372k).
+	// Older model limits are based on observed server behavior. GPT-5.6 Luna and Terra follow Codex's 272k
+	// catalog limit (formerly 372k); Sol defaults to 400k.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
 	const CODEX_GPT_56_CONTEXT = 272000;
@@ -2907,6 +3257,19 @@ async function generateModels() {
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
+			id: "gpt-6-astra",
+			name: "GPT-6 Astra",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing({ input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 }),
+			contextWindow: GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW,
+			maxTokens: CODEX_MAX_TOKENS,
+			thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
+		},
+		{
 			id: "gpt-5.6-luna",
 			name: "GPT-5.6 Luna",
 			api: "openai-codex-responses",
@@ -2927,7 +3290,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing({ input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 }),
-			contextWindow: CODEX_GPT_56_CONTEXT,
+			contextWindow: GPT_56_SOL_DEFAULT_CONTEXT_WINDOW,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
@@ -3018,11 +3381,11 @@ async function generateModels() {
 	// Azure Foundry deploys these with larger context windows than OpenAI's own short-tier defaults.
 	// See models-sold-directly-by-azure docs.
 	const AZURE_CONTEXT_WINDOW_OVERRIDES: Record<string, number> = {
-		"gpt-5.4": 1050000,
-		"gpt-5.5": 1050000,
-		"gpt-5.6-luna": 1050000,
-		"gpt-5.6-sol": 1050000,
-		"gpt-5.6-terra": 1050000,
+		"gpt-5.4": OPENAI_MAX_CONTEXT_INPUT_CAP,
+		"gpt-5.5": OPENAI_MAX_CONTEXT_INPUT_CAP,
+		"gpt-5.6-luna": OPENAI_MAX_CONTEXT_INPUT_CAP,
+		"gpt-5.6-sol": OPENAI_MAX_CONTEXT_INPUT_CAP,
+		"gpt-5.6-terra": OPENAI_MAX_CONTEXT_INPUT_CAP,
 	};
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
@@ -3042,20 +3405,42 @@ async function generateModels() {
 	allModels.push(...azureOpenAiModels);
 
 	for (const model of allModels) {
+		applyOpenAiInputCap(model);
 		applyOpenAICompletionsCompatMetadata(model);
+		applyAnthropicMessagesCompatMetadata(model);
 		applyModelsDevReasoningOptionMetadata(model);
 		applyThinkingLevelMetadata(model);
 		applyStrictToolCompatMetadata(model);
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
+		applyGpt6AstraContextWindow(model);
+		if (
+			model.id.includes("gpt-6-astra") &&
+			(model.api === "openai-responses" ||
+				model.api === "azure-openai-responses" ||
+				model.api === "openai-codex-responses" ||
+				model.api === "openai-completions")
+		) {
+			mergeThinkingLevelMap(model, {
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			});
+		}
 	}
+	applyAnthropicAllowedFallbackModelMetadata(allModels.filter(isAnthropicFallbackMetadataModel));
 
 	// Emit after metadata application so variants clone fully processed base models.
-	// Cost rates stay at base values: the openai-responses adapter multiplies usage
-	// cost by the service-tier multiplier at request time, so raised catalog rates
-	// would double-count. Scoped to the direct OpenAI provider; Azure clones and the
-	// Codex backend are intentionally excluded.
+	// Cost rates stay at base values: the openai-responses and openai-codex-responses
+	// adapters multiply usage cost by the service-tier multiplier at request time, so
+	// raised catalog rates would double-count. Scoped to the direct OpenAI provider and
+	// the Codex backend (both support Priority service tier via service_tier=priority).
+	// Azure clones are intentionally excluded (they proxy OpenAI and would double-count).
 	const openAiFastVariants: Model<Api>[] = [];
 	for (const model of allModels) {
 		if (model.provider !== "openai" || !OPENAI_PRIORITY_TIER_MODEL_IDS.has(model.id)) continue;
@@ -3067,7 +3452,18 @@ async function generateModels() {
 			serviceTier: "priority",
 		});
 	}
-	allModels.push(...openAiFastVariants);
+	const codexFastVariants: Model<Api>[] = [];
+	for (const model of allModels) {
+		if (model.provider !== "openai-codex" || !OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS.has(model.id)) continue;
+		codexFastVariants.push({
+			...model,
+			id: `${model.id}-fast`,
+			name: `${model.name} Fast`,
+			upstreamModelId: model.id,
+			serviceTier: "priority",
+		});
+	}
+	allModels.push(...openAiFastVariants, ...codexFastVariants);
 
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
@@ -3180,7 +3576,7 @@ async function generateModels() {
 					writeFileSync(join(providersDir, filename), output);
 				}
 				for (const entry of readdirSync(providersDir)) {
-					if (entry.endsWith(".models.ts") && !generatedShardFiles.has(entry)) rmSync(join(providersDir, entry));
+					if (isPrunableModelShard(entry, generatedShardFiles)) rmSync(join(providersDir, entry));
 				}
 
 				let output = generatedHeader;

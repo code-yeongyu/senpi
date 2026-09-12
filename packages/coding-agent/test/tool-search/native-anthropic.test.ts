@@ -1,12 +1,5 @@
-// Todo 33 — Anthropic native tool-search adapter (gated GO by the todo-29 spike).
-//
-// Exercises the request-side injection + HARD RULES against the request
-// validator mock (which 400s on violation exactly as the API would), the
-// tool_reference expansion, the 400 -> local-fallback path, the config-off
-// no-op, and Metis M5 co-residence with anthropic-web-search + a cache_control
-// tail tool + a service_tier field.
-
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { addAnthropicWebSearchToPayload } from "../../src/core/extensions/builtin/anthropic-web-search/index.ts";
@@ -19,6 +12,7 @@ import {
 	installMcpNativeToolSearchGate,
 	isMcpNativeToolSearchEnabled,
 } from "../../src/core/extensions/builtin/tool-search/native-search.ts";
+import { getToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import type { ExtensionAPI, ExtensionFactory } from "../../src/core/extensions/types.ts";
 import {
 	mockAnthropicExpandToolReferences,
@@ -65,6 +59,8 @@ describe("todo 9 generalized catalog injection", () => {
 		};
 		const harness = await createHarness({
 			api: "anthropic-messages",
+			provider: "anthropic",
+			models: [{ id: "claude-opus-5" }],
 			extensionFactories: [
 				{ factory: toolSearchExtension, path: "<builtin:tool-search>" },
 				{ factory: searchableExtension, path: "/workspace/extensions/weather.ts" },
@@ -395,5 +391,67 @@ describe("todo33 anthropic native: M5 co-residence with web-search + cache tail 
 		expect((final as { service_tier?: string }).service_tier).toBe("auto");
 		// The final captured payload is valid (no 400).
 		expect(validateAnthropicToolSearchPayload(final)).toEqual({ status: 200 });
+	});
+});
+
+describe("native 400 pending recovery signal", () => {
+	it("wires the adapter's 400 fallback into a session-consumable pending retry signal", async () => {
+		installMcpNativeToolSearchGate(() => true);
+		const searchableExtension: ExtensionFactory = (pi: ExtensionAPI) => {
+			pi.registerTool({
+				name: "mcp_memory",
+				label: "Memory",
+				description: "Look up stored memory notes",
+				exposure: "search",
+				parameters: Type.Object({ query: Type.String() }),
+				execute: async () => ({ content: [{ type: "text" as const, text: "ok" }], details: {} }),
+			});
+		};
+		const harness = await createHarness({
+			extensionFactories: [
+				{ factory: toolSearchExtension, path: "<builtin:tool-search>" },
+				{ factory: searchableExtension, path: "/workspace/extensions/memory.ts" },
+			],
+		});
+		try {
+			const service = getToolSearchService();
+			service.feed(
+				"mcp",
+				[
+					{
+						name: "mcp_memory",
+						label: "Memory",
+						aliases: [],
+						description: "Look up stored memory notes",
+						keywords: [],
+						source: "mcp",
+						group: "mcp",
+						ownerLabel: "mcp",
+						registrationId: "mcp\0mcp\0mcp_memory",
+					},
+				],
+				{ activate: () => {} },
+			);
+			await harness.getExtensionRunner().emit({ type: "session_start", reason: "startup" });
+			const payload = { model: "claude-fable-5-1", tools: [] as unknown[], messages: [] };
+			const injected = await harness.getExtensionRunner().emitBeforeProviderRequest(payload, undefined, {
+				model: getModel("anthropic", "claude-fable-5-1"),
+				headers: {},
+			});
+			expect(JSON.stringify(injected)).toContain("tool_search_tool_bm25");
+
+			await harness.getExtensionRunner().emit({ type: "after_provider_response", status: 400, headers: {} });
+
+			expect(service.takeNativeInjectionFailure()).toEqual(expect.stringContaining("400"));
+			expect(service.takeNativeInjectionFailure()).toBeNull();
+			const untouched = await harness.getExtensionRunner().emitBeforeProviderRequest(payload, undefined, {
+				model: getModel("anthropic", "claude-fable-5-1"),
+				headers: {},
+			});
+			expect(JSON.stringify(untouched)).not.toContain("tool_search_tool_bm25");
+		} finally {
+			installMcpNativeToolSearchGate(() => false);
+			harness.cleanup();
+		}
 	});
 });

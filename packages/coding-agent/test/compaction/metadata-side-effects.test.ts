@@ -11,6 +11,9 @@ import type {
 } from "../../src/core/extensions/index.ts";
 import type { CompactionEntry, SessionEntry } from "../../src/core/session-manager.ts";
 import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { createTempAgentDir } from "../support/temp-agent-dir.ts";
+
+const AGENT_DIR = createTempAgentDir();
 
 const CHECKPOINT_CUSTOM_TYPE = "compaction.agent-checkpoint";
 const TODO_SNAPSHOT_CUSTOM_TYPE = "compaction.todo-snapshot";
@@ -70,7 +73,7 @@ function createExtensionContext(entries: SessionEntry[]): ExtensionContext {
 			notify: vi.fn(),
 		}) as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		agentDir: "/tmp/senpi-test-agent",
+		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager,
 		modelRegistry: {} as ExtensionContext["modelRegistry"],

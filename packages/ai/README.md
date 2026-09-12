@@ -90,12 +90,16 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Qwen Token Plan** (separate Individual and existing catalogs, with a separate China provider)
 - **Xiaomi MiMo** (defaults to API billing endpoint, with separate Token Plan providers for `cn`/`ams`/`sgp` regions)
 - **Alibaba Token Plan** (Alibaba Cloud Model Studio prepaid Token Plan, OpenAI-compatible `ap-southeast-1` endpoint)
+- **Cursor** (Pro/Ultra/Teams subscription; native `cursor-agent` protocol with full chat + server-driven tool calling, per-account dynamic catalog, requires OAuth, see below)
 - **Any other OpenAI-compatible API**: local Ollama, vLLM, LM Studio, etc.
 
 ## Installation
 
 ```bash
 npm install @earendil-works/pi-ai
+
+# Bun alternative
+bun add @earendil-works/pi-ai
 ```
 
 TypeBox exports are re-exported from `@earendil-works/pi-ai`: `Type`, `Static`, and `TSchema`.
@@ -433,6 +437,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |
 | Baseten | `BASETEN_API_KEY` |
+| Venice AI | `VENICE_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | OpenGateway | `OPENGATEWAY_API_KEY` |
@@ -800,7 +805,7 @@ Many models support thinking/reasoning capabilities where they can show their in
 const model = models.getModel('anthropic', 'claude-sonnet-4-5')!;
 // or models.getModel('openai', 'gpt-5-mini');
 // or models.getModel('google', 'gemini-2.5-flash');
-// or models.getModel('xai', 'grok-4.5');
+// or models.getModel('xai', 'grok-4.6');
 
 // Check if model supports reasoning
 if (model.reasoning) {
@@ -1161,6 +1166,7 @@ Built-in API implementations live under `./api/<api-id>`:
 | `openai-completions` | `OpenAICompletionsOptions` |
 | `openai-responses` | `OpenAIResponsesOptions` |
 | `openai-codex-responses` | `OpenAICodexResponsesOptions` |
+| `cursor-agent` | `CursorAgentOptions` |
 | `azure-openai-responses` | `AzureOpenAIResponsesOptions` |
 | `google-generative-ai` | `GoogleOptions` |
 | `google-vertex` | `GoogleVertexOptions` |
@@ -1189,8 +1195,10 @@ interface OpenAICompletionsCompat {
   requiresThinkingAsText?: boolean;  // Whether thinking blocks must be converted to text (default: false)
   requiresReasoningContentOnAssistantMessages?: boolean; // Whether all replayed assistant messages must include empty reasoning_content when reasoning is enabled (default: auto-detected for DeepSeek)
   thinkingFormat?: 'openai' | 'openrouter' | 'deepseek' | 'together' | 'baseten' | 'zai' | 'qwen' | 'chat-template' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling'; // Format for reasoning param: 'openai' uses reasoning_effort, 'openrouter' uses reasoning: { effort }, 'deepseek' uses thinking: { type } plus reasoning_effort when supported, 'together' uses reasoning: { enabled } plus reasoning_effort when supported, 'baseten' uses configurable chat_template_args plus reasoning_effort when supported, 'zai' uses thinking: { type }, 'qwen' uses enable_thinking, 'chat-template' uses configurable chat_template_kwargs, 'qwen-chat-template' uses chat_template_kwargs.enable_thinking and preserve_thinking, 'string-thinking' uses top-level thinking, 'ant-ling' uses reasoning: { effort } only for mapped efforts (default: openai)
-  chatTemplateKwargs?: Record<string, string | number | boolean | null | { '$var': 'thinking.enabled' | 'thinking.effort'; omitWhenOff?: boolean }>; // chat_template_kwargs values; use $var for pi-controlled thinking values
-  chatTemplateArgs?: Record<string, string | number | boolean | null | { '$var': 'thinking.enabled' | 'thinking.effort'; omitWhenOff?: boolean }>; // chat_template_args values for thinkingFormat: 'baseten'; use $var for pi-controlled thinking values
+  chatTemplateKwargs?: Record<string, string | number | boolean | null | { '$var': 'thinking.enabled' | 'thinking.effort' | 'thinking.budget'; omitWhenOff?: boolean }>; // chat_template_kwargs values; use $var for pi-controlled thinking values
+  chatTemplateArgs?: Record<string, string | number | boolean | null | { '$var': 'thinking.enabled' | 'thinking.effort' | 'thinking.budget'; omitWhenOff?: boolean }>; // chat_template_args values for thinkingFormat: 'baseten'; use $var for pi-controlled thinking values
+  thinkingTokenBudgetField?: 'thinking_token_budget' | 'thinking_budget' | 'thinking_budget_tokens'; // Top-level field that caps reasoning tokens from thinkingBudgets (vLLM / Qwen / llama.cpp). Off by default.
+  supportsThinkingTokenBudget?: boolean; // Alias for thinkingTokenBudgetField: 'thinking_token_budget' (vLLM). Prefer thinkingTokenBudgetField. Default: false.
   cacheControlFormat?: 'anthropic';  // Anthropic-style cache_control on system prompt, last tool, and last user/assistant text content
   openRouterRouting?: OpenRouterRouting; // OpenRouter routing preferences (default: {})
   vercelGatewayRouting?: VercelGatewayRouting; // Vercel AI Gateway routing preferences (default: {})
@@ -1483,6 +1491,7 @@ Several providers support OAuth authentication instead of static API keys:
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
 - **OpenRouter** (OAuth PKCE that mints a user-controlled API key)
+- **Cursor** (Pro/Ultra/Teams subscription; browser deep-link + poll flow. After login, the per-account model catalog is discovered through `GetUsableModels` and chat streams over the native `cursor-agent` protocol with in-band tool execution — hosts supply `CursorAgentOptions.execHandlers` to bridge Cursor's server-driven tool calls onto local tools)
 
 Each of these providers carries an `OAuthAuth` on `provider.auth.oauth` with three operations: `login(interaction)` uses the provider-neutral `AuthInteraction.prompt()`/`notify()` protocol and returns a credential, `refresh(credential, signal)` refreshes expiring credentials when applicable, and `toAuth(credential)` derives request auth (GitHub Copilot's per-account base URL comes from here). Provider login interactions and refresh calls always carry a concrete abort signal. Refresh is automatic: `models.getAuth(providerId)` and request paths refresh expired tokens under a credential-store lock, so concurrent requests and processes cannot double-refresh. OpenRouter's OAuth flow instead returns a permanent API key, so its refresh operation is a no-op.
 
@@ -1547,9 +1556,9 @@ Official docs: [Application Default Credentials](https://cloud.google.com/docs/a
 The quickest way to authenticate:
 
 ```bash
-npx @earendil-works/pi-ai login              # interactive provider selection
-npx @earendil-works/pi-ai login anthropic    # login to specific provider
-npx @earendil-works/pi-ai list               # list available providers
+bunx @earendil-works/pi-ai login              # interactive provider selection
+bunx @earendil-works/pi-ai login anthropic    # login to specific provider
+bunx @earendil-works/pi-ai list               # list available providers
 ```
 
 Credentials are saved to `auth.json` in the current directory.

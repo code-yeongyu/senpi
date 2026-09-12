@@ -13,6 +13,7 @@ import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/run
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
+import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 
 /**
  * Result returned by runtime creation.
@@ -205,7 +206,11 @@ export class AgentSessionRuntime {
 			targetSessionFile,
 		});
 		this.beforeSessionInvalidate?.();
+		const replaced = this.session.sessionManager;
 		this.session.dispose();
+		// Nothing writes to the replaced manager once its session is disposed, so the
+		// shared host may hand its session file to another worker.
+		unregisterSessionWriter(replaced);
 	}
 
 	private async reportRemovedExtensions(): Promise<void> {
@@ -381,12 +386,12 @@ export class AgentSessionRuntime {
 		}
 
 		const sessionManager = this.session.sessionManager;
+		await this.teardownCurrent("fork", sessionManager.getSessionFile());
 		if (!targetLeafId) {
-			sessionManager.newSession({ parentSession: this.session.sessionFile });
+			sessionManager.newSession({ parentSession: previousSessionFile });
 		} else {
 			sessionManager.createBranchedSession(targetLeafId);
 		}
-		await this.teardownCurrent("fork", sessionManager.getSessionFile());
 		await this.apply(
 			await this.createRuntime({
 				cwd: this.cwd,
@@ -425,6 +430,7 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
+		reserveSessionWrite(destinationPath);
 		if (resolve(destinationPath) !== resolvedPath) {
 			copyFileSync(resolvedPath, destinationPath);
 		}

@@ -1,6 +1,7 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
+import { INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
-import { createInlineWorker, type WorkerLike } from "./inline-worker.ts";
+import { abandonedWorkerNote, awaitCooperativeSettlement, type WorkerRetirement } from "./interrupt-bounds.ts";
 import {
 	assertJavaScriptKernelOpen,
 	type JavaScriptKernelMode,
@@ -9,22 +10,20 @@ import {
 	type ResultMessage,
 	type ToolCallMessage,
 } from "./kernel-contract.ts";
-import { type JavaScriptKernelOptions, LocalModuleLoader, localBridgeConnection } from "./local-module-loader.ts";
+import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
 import { JavaScriptRunQueue, type PendingJavaScriptRun, stoppedResult } from "./run-queue.ts";
-import { bridgeError, spawnNodeWorker, WorkerStartupCancelledError, waitForReady } from "./worker-host.ts";
+import { bridgeError, WorkerStartupCancelledError } from "./worker-host.ts";
+import { WorkerSlot } from "./worker-slot.ts";
 
 export { JavaScriptKernelClosedError, type JavaScriptKernelMode, type JavaScriptRunInput } from "./kernel-contract.ts";
 export type { JavaScriptKernelOptions } from "./local-module-loader.ts";
+export { type JavaScriptWorkerEntryUrlOptions, resolveJsWorkerEntryUrl } from "./worker-startup.ts";
 
 export class JavaScriptKernel {
 	readonly #options: JavaScriptKernelOptions;
 	readonly #moduleLoader: LocalModuleLoader;
-	#worker: WorkerLike | null = null;
-	#mode: JavaScriptKernelMode = "worker";
+	readonly #slot: WorkerSlot;
 	#lifecycle: LifecycleState = "open";
-	#ready: Promise<void> | null = null;
-	#startupAbort: AbortController | null = null;
-	#generation = 0;
 	#activation: Promise<void> | null = null;
 	#recovery: Promise<void> | null = null;
 	#closePromise: Promise<void> | null = null;
@@ -36,10 +35,15 @@ export class JavaScriptKernel {
 	constructor(options: JavaScriptKernelOptions) {
 		this.#options = options;
 		this.#moduleLoader = new LocalModuleLoader(options);
+		this.#slot = new WorkerSlot(options, {
+			isOpen: () => this.#lifecycle === "open",
+			onMessage: (message) => this.#handleMessage(message),
+			onCrash: (error) => this.#handleCrash(error),
+		});
 	}
 
 	get mode(): JavaScriptKernelMode {
-		return this.#mode;
+		return this.#slot.mode;
 	}
 
 	async run(input: JavaScriptRunInput): Promise<ResultMessage> {
@@ -52,13 +56,16 @@ export class JavaScriptKernel {
 	async interrupt(reason = "interrupted"): Promise<KernelInterruptHandle> {
 		assertJavaScriptKernelOpen(this.#lifecycle, "interrupt");
 		const active = this.#runs.active;
-		const target = this.#runs.takeInterruptTarget();
-		if (!target) return { stateRetained: Promise.resolve(true) };
-		if (target === active) this.#clearTimeout();
-		this.#runs.settle(target, stoppedResult(target.input.cellId, `JS cell interrupted: ${reason}`));
-		await this.#restartAfterStop();
-		// A restart always replaces the worker VM, so no user global survives.
-		return { stateRetained: Promise.resolve(false) };
+		if (!active) {
+			const queued = this.#runs.takeInterruptTarget();
+			if (!queued) return { stateRetained: Promise.resolve(true) };
+			this.#runs.settle(queued, stoppedResult(queued.input.cellId, `JS cell interrupted: ${reason}`));
+			await this.#restartAfterStop();
+			return { stateRetained: Promise.resolve(false) };
+		}
+		this.#clearTimeout();
+		const stop = await this.#stopActive(active, reason, `JS cell interrupted: ${reason}`);
+		return { stateRetained: Promise.resolve(stop.retained), ...(stop.note === undefined ? {} : { note: stop.note }) };
 	}
 
 	async reset(): Promise<void> {
@@ -70,7 +77,7 @@ export class JavaScriptKernel {
 	}
 
 	deliverToolReply(message: Extract<HostToKernelMessage, { type: "tool-reply" }>): void {
-		if (this.#lifecycle === "open") this.#worker?.postMessage(message);
+		if (this.#lifecycle === "open") this.#slot.postMessage(message);
 	}
 
 	async nextToolCall(): Promise<ToolCallMessage> {
@@ -81,7 +88,7 @@ export class JavaScriptKernel {
 
 	async close(): Promise<void> {
 		if (this.#closePromise) return await this.#closePromise;
-		this.#worker?.postMessage({ type: "close" });
+		this.#slot.postMessage({ type: "close" });
 		this.#lifecycle = "closing";
 		this.#runs.settleAll("JS kernel closed");
 		const recovery = this.#recovery;
@@ -117,92 +124,17 @@ export class JavaScriptKernel {
 
 	async #ensureReady(): Promise<void> {
 		assertJavaScriptKernelOpen(this.#lifecycle, "run");
-		if (!this.#ready) {
-			const generation = ++this.#generation;
-			const controller = new AbortController();
-			this.#startupAbort = controller;
-			const ready = this.#startWorker(generation, controller.signal);
-			this.#ready = ready;
-			void ready.then(
-				() => {
-					if (this.#ready === ready) this.#startupAbort = null;
-				},
-				() => {
-					if (this.#ready === ready) {
-						this.#ready = null;
-						this.#startupAbort = null;
-					}
-				},
-			);
-		}
-		return await this.#ready;
-	}
-
-	async #startWorker(generation: number, signal: AbortSignal): Promise<void> {
-		let worker = this.#spawnWorker();
-		this.#publishWorker(worker, generation);
-		try {
-			await this.#initializeWorker(worker, signal);
-			return;
-		} catch (error) {
-			if (!this.#isCurrent(worker, generation) || error instanceof WorkerStartupCancelledError) {
-				await worker.terminate();
-				throw new WorkerStartupCancelledError();
-			}
-			if (worker.mode === "inline") throw error;
-			this.#worker = null;
-			await worker.terminate();
-		}
-		if (this.#lifecycle !== "open" || generation !== this.#generation) throw new WorkerStartupCancelledError();
-		worker = createInlineWorker(this.#options.cwd, this.#options.parallelPoolWidth);
-		this.#publishWorker(worker, generation);
-		await this.#initializeWorker(worker, signal);
-	}
-
-	#spawnWorker(): WorkerLike {
-		try {
-			const url = this.#options.workerEntryUrl ?? new URL("./worker-entry.js", import.meta.url);
-			return spawnNodeWorker(url, this.#options.cwd, this.#options.parallelPoolWidth);
-		} catch (error) {
-			if (!(error instanceof Error)) throw error;
-			return createInlineWorker(this.#options.cwd, this.#options.parallelPoolWidth);
-		}
-	}
-
-	#publishWorker(worker: WorkerLike, generation: number): void {
-		if (this.#lifecycle !== "open" || generation !== this.#generation) throw new WorkerStartupCancelledError();
-		this.#worker = worker;
-		this.#mode = worker.mode;
-		worker.onMessage((message) => {
-			if (this.#isCurrent(worker, generation)) this.#handleMessage(message);
-		});
-		worker.onError((error) => {
-			if (this.#isCurrent(worker, generation)) this.#handleCrash(error);
-		});
-	}
-
-	async #initializeWorker(worker: WorkerLike, signal: AbortSignal): Promise<void> {
-		const ready = waitForReady(worker, signal);
-		worker.postMessage({
-			type: "init",
-			sessionId: this.#options.sessionId,
-			connection: localBridgeConnection(this.#options),
-		});
-		await ready;
-	}
-
-	#isCurrent(worker: WorkerLike, generation: number): boolean {
-		return this.#lifecycle === "open" && this.#worker === worker && this.#generation === generation;
+		await this.#slot.ensureReady();
 	}
 
 	#startNext(): void {
-		if (this.#lifecycle !== "open" || this.#runs.active || !this.#worker) return;
+		if (this.#lifecycle !== "open" || this.#runs.active || !this.#slot.present) return;
 		const next = this.#runs.startNext(performance.now());
 		if (!next) return;
 		if (next.input.timeoutMs) {
 			this.#timeout = setTimeout(() => void this.#timeoutActive(next), next.input.timeoutMs);
 		}
-		this.#worker.postMessage({
+		this.#slot.postMessage({
 			type: "run",
 			cellId: next.input.cellId,
 			code: this.#moduleLoader.prepareCell(next.input.code),
@@ -211,21 +143,46 @@ export class JavaScriptKernel {
 	}
 
 	async #timeoutActive(run: PendingJavaScriptRun): Promise<void> {
-		if (!this.#runs.releaseActive(run)) return;
+		if (this.#runs.active !== run || run.settled) return;
 		const durationMs = run.input.timeoutMs ?? 0;
-		this.#runs.settle(run, {
-			type: "result",
-			cellId: run.input.cellId,
-			ok: false,
-			error: { message: `JS cell timed out after ${durationMs}ms` },
+		await this.#stopActive(
+			run,
+			`timed out after ${durationMs}ms`,
+			`JS cell timed out after ${durationMs}ms`,
 			durationMs,
-		});
-		await this.#restartAfterStop();
+		);
+	}
+
+	/**
+	 * Asks the worker to settle the active cell cooperatively (rejecting its bridge calls and killing its
+	 * children); only a cell that stays unsettled past the grace costs the worker VM. Reports whether the
+	 * worker state survived and, when a blocked worker had to be abandoned, the note that explains it.
+	 */
+	async #stopActive(
+		run: PendingJavaScriptRun,
+		reason: string,
+		message: string,
+		durationMs = 0,
+	): Promise<{ readonly retained: boolean; readonly note?: string }> {
+		run.interruptResult = { type: "result", cellId: run.input.cellId, ok: false, error: { message }, durationMs };
+		run.interruptAck ??= Promise.withResolvers<void>();
+		this.#slot.postMessage({ type: "interrupt", reason });
+		if ((await awaitCooperativeSettlement(run)) === "settled") return { retained: run.settledByWorker };
+		if (!this.#runs.releaseActive(run)) return { retained: run.settledByWorker };
+		const retirement = await this.#terminate();
+		this.#runs.settle(run, run.interruptResult ?? stoppedResult(run.input.cellId, message));
+		void this.#recover(() => Promise.resolve());
+		return retirement === "abandoned" ? { retained: false, note: abandonedWorkerNote() } : { retained: false };
 	}
 
 	async #restartAfterStop(): Promise<void> {
+		await this.#recover(() => this.#terminate());
+	}
+
+	/** One recovery at a time: retire through `retire` (a no-op when the worker is already gone), then bring a fresh worker up. */
+	async #recover(retire: () => Promise<unknown>): Promise<void> {
 		if (this.#recovery) return await this.#recovery;
-		const recovery = this.#performRestartAfterStop();
+		const recovery = this.#performRecovery(retire);
 		this.#recovery = recovery;
 		try {
 			await recovery;
@@ -234,9 +191,9 @@ export class JavaScriptKernel {
 		}
 	}
 
-	async #performRestartAfterStop(): Promise<void> {
+	async #performRecovery(retire: () => Promise<unknown>): Promise<void> {
 		try {
-			await this.#terminate();
+			await retire();
 			if (this.#lifecycle !== "open") return;
 			await this.#ensureReady();
 			if (this.#lifecycle === "open") this.#startNext();
@@ -247,6 +204,10 @@ export class JavaScriptKernel {
 	}
 
 	#handleMessage(message: KernelToHostMessage): void {
+		if (message.type === "status" && message.event.op === INTERRUPT_ACK_OP) {
+			this.#runs.active?.interruptAck?.resolve();
+			return;
+		}
 		this.#options.onMessage?.(message);
 		this.#runs.active?.input.onMessage?.(message);
 		if (message.type === "tool-call") {
@@ -260,13 +221,14 @@ export class JavaScriptKernel {
 		if (!active || active.input.cellId !== message.cellId) return;
 		this.#clearTimeout();
 		this.#runs.releaseActive(active);
-		this.#runs.settle(active, message);
+		active.settledByWorker = true;
+		this.#runs.settle(active, active.interruptResult ?? message);
 		this.#startNext();
 	}
 
 	#handleCrash(error: Error): void {
 		const active = this.#runs.active;
-		if (!active && this.#startupAbort) return;
+		if (!active && this.#slot.startingUp) return;
 		this.#clearTimeout();
 		if (active) {
 			this.#runs.releaseActive(active);
@@ -286,14 +248,8 @@ export class JavaScriptKernel {
 		this.#timeout = null;
 	}
 
-	async #terminate(): Promise<void> {
+	async #terminate(): Promise<WorkerRetirement> {
 		this.#clearTimeout();
-		this.#generation += 1;
-		this.#startupAbort?.abort();
-		this.#startupAbort = null;
-		this.#ready = null;
-		const worker = this.#worker;
-		this.#worker = null;
-		if (worker) await worker.terminate();
+		return await this.#slot.retire();
 	}
 }

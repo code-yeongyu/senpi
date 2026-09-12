@@ -7,9 +7,10 @@ import { createRegistry, type MethodRegistry, registerExtensionRequestMethod } f
 import { registerFuzzyFileSearchMethods } from "./search/fuzzy-search-methods.ts";
 import { FuzzyFileSearchService } from "./search/fuzzy-search-service.ts";
 import { ApprovalBridge, createAppServerUIContext } from "./server/approvals.ts";
-import { NotificationRouter } from "./server/notifications.ts";
+import { NotificationRouter, type RouterOutboundMessage } from "./server/notifications.ts";
 import type { ServerCore } from "./server/server-core.ts";
 import { registerAppServerSkillMethods } from "./server/skills.ts";
+import { UserInputBridge } from "./server/user-input-bridge.ts";
 import { connectionId } from "./threads/handler-params.ts";
 import { registerThreadLifecycleHandlers, type ThreadLifecycleController } from "./threads/handlers.ts";
 import { createMcpWireStatusAdapter, createProcessMcpWireStatusAdapter } from "./threads/mcp-wire-status.ts";
@@ -46,7 +47,7 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 		cwd: process.cwd(),
 		env: process.env,
 	});
-	const approvals = new ApprovalBridge((threadId, message) => {
+	const sendToSubscribers = (threadId: string, message: RouterOutboundMessage): number => {
 		let subscriberCount = 0;
 		try {
 			subscriberCount = threads.getLoadedThread(threadId).subscribers.size;
@@ -58,12 +59,22 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 		}
 		notifications.toThread(threadId, message);
 		return subscriberCount;
-	});
+	};
+	const approvals = new ApprovalBridge(sendToSubscribers);
+	const userInput = new UserInputBridge(sendToSubscribers);
 	let lifecycle: ThreadLifecycleController | undefined;
 	threads = new ThreadRegistry({
 		agentDir: getAgentDir(),
 		sessionDir: process.env[ENV_SESSION_DIR],
-		createSession: (options) => createBoundAppServerSession(options, approvals, notifications, requestShutdown),
+		createSession: (options) =>
+			createBoundAppServerSession(options, approvals, notifications, requestShutdown, userInput, (threadId) => {
+				try {
+					return threads.getLoadedThread(threadId).activeTurn?.turnId ?? "turn-user-input";
+				} catch (error) {
+					if (error instanceof ThreadNotFoundError) return "turn-user-input";
+					throw error;
+				}
+			}),
 		mcpWireStatusAdapter: processMcpWireStatusAdapter,
 	});
 	registerExtensionRequestMethod(registry, (threadId) => threads.getLoadedThread(threadId).session);
@@ -79,6 +90,7 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 			serverCwd: process.cwd(),
 			threads,
 		},
+		userInput,
 	);
 	registerAppServerSkillMethods(registry, {
 		agentDir: getAgentDir(),
@@ -108,6 +120,7 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 		idleUnloadMinutes: 30,
 		replayPendingApprovals: (threadId) => {
 			approvals.replayPendingForThread(threadId);
+			userInput.replayPendingForThread(threadId);
 		},
 	});
 	registerLoadedThreadObjectListHandler(registry, threads);
@@ -118,6 +131,7 @@ export function createAppServerRuntime(requestShutdown: (reason: string) => void
 		turnLog,
 		turns,
 		dispose: () => {
+			for (const thread of threads.listLoaded()) userInput.cancelPendingForThread(thread.id);
 			fuzzySearch.dispose();
 			lifecycle?.dispose();
 		},
@@ -129,6 +143,8 @@ async function createBoundAppServerSession(
 	approvals: ApprovalBridge,
 	notifications: NotificationRouter,
 	requestShutdown: (reason: string) => void,
+	userInput: UserInputBridge,
+	getTurnId: (threadId: string) => string,
 ): Promise<AppServerSessionResult> {
 	const result = await createAgentSession(options);
 	const threadId = result.session.sessionId;
@@ -146,7 +162,7 @@ async function createBoundAppServerSession(
 		notifications.toThread(threadId, notification);
 	});
 	await result.session.bindExtensions({
-		uiContext: createAppServerUIContext(approvals, threadId),
+		uiContext: createAppServerUIContext(approvals, threadId, userInput, () => getTurnId(threadId)),
 		mode: "app-server",
 		shutdownHandler: () => requestShutdown("extension shutdown"),
 		onError: (error) => {
@@ -162,6 +178,7 @@ async function createBoundAppServerSession(
 	result.session.subscribe((event) => {
 		if (event.type === "agent_end") {
 			approvals.cancelPendingForThread(threadId);
+			userInput.cancelPendingForThread(threadId);
 		}
 	});
 	return { ...result, initialNotifications, mcpWireStatusAdapter };

@@ -7,16 +7,19 @@ describe("openai images provider", () => {
 		expect(models.getProvider("openai")).toBeDefined();
 	});
 
-	it("exposes gpt-image-2 as a text-only openai-images model", () => {
-		const models = builtinImagesModels();
-		const model = models.getModel("openai", "gpt-image-2");
-		expect(model).toBeDefined();
-		expect(model?.api).toBe("openai-images");
-		expect(model?.provider).toBe("openai");
-		expect(model?.baseUrl).toBe("https://api.openai.com/v1");
-		expect(model?.input).toEqual(["text"]);
-		expect(model?.output).toEqual(["image"]);
-	});
+	it.each(["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"])(
+		"exposes %s with text and image inputs",
+		(id) => {
+			const models = builtinImagesModels();
+			const model = models.getModel("openai", id);
+			expect(model).toBeDefined();
+			expect(model?.api).toBe("openai-images");
+			expect(model?.provider).toBe("openai");
+			expect(model?.baseUrl).toBe("https://api.openai.com/v1");
+			expect(model?.input).toEqual(["text", "image"]);
+			expect(model?.output).toEqual(["image"]);
+		},
+	);
 
 	it("exposes gpt-image-1.5 as a text-only openai-images model", () => {
 		const models = builtinImagesModels();

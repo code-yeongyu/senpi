@@ -18,6 +18,8 @@ type OAuthFlowLoaders = {
 	openrouter: () => OAuthAuth | Promise<OAuthAuth>;
 	kimiCoding: () => OAuthAuth | Promise<OAuthAuth>;
 	xai: () => OAuthAuth | Promise<OAuthAuth>;
+	cursor: () => OAuthAuth | Promise<OAuthAuth>;
+	devin: () => OAuthAuth | Promise<OAuthAuth>;
 	radius: (options: { name: string; gateway: string }) => OAuthAuth | Promise<OAuthAuth>;
 };
 
@@ -56,6 +58,16 @@ export const loadKimiCodingOAuth = async (): Promise<OAuthAuth> => {
 export const loadXaiOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.xai();
 	return ((await importOAuthModule("./xai.ts")) as { xaiOAuth: OAuthAuth }).xaiOAuth;
+};
+
+export const loadCursorOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.cursor();
+	return ((await importOAuthModule("./cursor.ts")) as { cursorOAuth: OAuthAuth }).cursorOAuth;
+};
+
+export const loadDevinOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.devin();
+	return ((await importOAuthModule("./devin.ts")) as { devinOAuth: OAuthAuth }).devinOAuth;
 };
 
 export const loadRadiusOAuth = async (options: { name: string; gateway: string }): Promise<OAuthAuth> => {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it, test } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Image } from "../src/components/image.ts";
+import type { Terminal } from "../src/terminal.ts";
 import {
 	deleteKittyImage,
 	encodeKitty,
@@ -101,6 +102,38 @@ class MultipleExpandableToolTranscriptComponent implements Component {
 	invalidate(): void {}
 }
 
+// A component whose expansion grows two offscreen blocks AND changes a visible
+// status row in the same frame, so the renderer takes the viewport-remap repaint
+// branch (firstVisibleChanged !== -1) rather than the replay escape.
+class VisibleChangeExpandableComponent implements Component {
+	private expanded = false;
+	readonly tail = Array.from({ length: 3 }, (_, index) => `tail row ${index}`);
+
+	setExpanded(expanded: boolean): void {
+		this.expanded = expanded;
+	}
+
+	render(_width: number): string[] {
+		const readBlock = this.expanded
+			? [
+					"read expanded lib.rs:210",
+					"pub until: Option<String>,",
+					"pub year: Option<String>,",
+					"pub scanner_settings: scanner::ScannerSettings,",
+					"pub struct DailyTotals {",
+					"pub tokens: i64,",
+				]
+			: ["read collapsed lib.rs:210-329"];
+		const toolBlock = this.expanded
+			? ["tool expanded bash", "stdout line 0", "stdout line 1", "stdout line 2", "stdout line 3", "stdout line 4"]
+			: ["tool collapsed bash output"];
+		const status = this.expanded ? "status expanded" : "status collapsed";
+		return [...readBlock, ...toolBlock, status, ...this.tail];
+	}
+
+	invalidate(): void {}
+}
+
 class ExpandedStreamingOutputComponent implements Component {
 	private outputLineCount = 12;
 	readonly stableTail = ["loader row", "editor row", "footer row"];
@@ -115,6 +148,30 @@ class ExpandedStreamingOutputComponent implements Component {
 	}
 
 	invalidate(): void {}
+}
+
+const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
+
+class BoundedWriteTerminal implements Terminal {
+	readonly writes: string[] = [];
+	columns = 80;
+	rows = 24;
+	readonly kittyProtocolActive = false;
+
+	start(_onInput: (data: string) => void, _onResize: () => void): void {}
+	stop(): void {}
+	async drainInput(_maxMs?: number, _idleMs?: number): Promise<void> {}
+	write(data: string): void {
+		this.writes.push(data);
+	}
+	moveBy(_lines: number): void {}
+	hideCursor(): void {}
+	showCursor(): void {}
+	clearLine(): void {}
+	clearFromCursor(): void {}
+	clearScreen(): void {}
+	setTitle(_title: string): void {}
+	setProgress(_active: boolean): void {}
 }
 
 class LoggingVirtualTerminal extends VirtualTerminal {
@@ -335,6 +392,55 @@ describe("TUI input render scheduling", () => {
 		assert.ok(terminal.getViewport().join("\n").includes("input:ZQX"));
 
 		tui.stop();
+	});
+});
+
+describe("TUI bounded render output", () => {
+	it("splits a large full render without changing its output", () => {
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		const kittyLine = `\x1b_Ga=T,f=100;${"A".repeat(1_200_000)}\x1b\\`;
+		component.lines = [kittyLine, kittyLine];
+		tui.addChild(component);
+
+		tui.renderNow();
+
+		assert.ok(terminal.writes.length > 2, "large output should be split across terminal writes");
+		assert.ok(
+			terminal.writes.every((write) => write.length <= MAX_RENDER_WRITE_CHARS),
+			"each terminal write should stay below the configured limit",
+		);
+		// The fork's TuiBase frame prologue is `\x1b[?2026h\x1b[?7l` (synchronized
+		// update + autowrap guard) and it clears each line with `\r\x1b[2K`, so the
+		// byte-exact upstream expectation does not apply. Assert instead that
+		// chunking preserved both payloads, their order, and the frame envelope.
+		const output = terminal.writes.join("");
+		assert.ok(output.startsWith("\x1b[?2026h"), "frame must open a synchronized update");
+		assert.ok(output.endsWith("\x1b[?2026l"), "frame must close the synchronized update");
+		assert.strictEqual(output.split(kittyLine).length - 1, 2, "chunking must preserve both Kitty payloads intact");
+		assert.ok(output.indexOf(kittyLine) < output.lastIndexOf(kittyLine), "chunking must preserve payload order");
+	});
+
+	it("splits large differential updates without a full redraw", () => {
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = ["before"];
+		tui.renderNow();
+		terminal.writes.length = 0;
+
+		const kittyLine = `\x1b_Ga=T,f=100;${"A".repeat(1_200_000)}\x1b\\`;
+		component.lines = ["before", kittyLine, kittyLine];
+		tui.renderNow();
+
+		assert.ok(terminal.writes.length > 2, "large output should be split across terminal writes");
+		assert.ok(terminal.writes.every((write) => write.length <= MAX_RENDER_WRITE_CHARS));
+		const output = terminal.writes.join("");
+		assert.ok(output.startsWith("\x1b[?2026h"));
+		assert.ok(output.endsWith("\x1b[?2026l"));
+		assert.ok(!output.includes("\x1b[2J"), "the update should stay on the differential render path");
 	});
 });
 
@@ -939,6 +1045,53 @@ describe("TUI viewport remap for above-viewport growth", () => {
 			"tail row 6",
 			"tail row 7",
 		]);
+
+		tui.stop();
+	});
+
+	it("replays every offscreen Ctrl+O block when expansion also changes a visible row", async () => {
+		// Geometry that hits the viewport-remap repaint branch (firstVisibleChanged !== -1):
+		// the tail is short enough that a visible row changes when the blocks expand,
+		// unlike the stable-tail case above which routes to the replay escape.
+		const terminal = new LoggingVirtualTerminal(72, 5);
+		const tui = new TUI(terminal);
+		const component = new VisibleChangeExpandableComponent();
+		tui.addChild(component);
+
+		component.setExpanded(false);
+		tui.start();
+		await terminal.waitForRender();
+		terminal.clearWrites();
+
+		component.setExpanded(true);
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const scrollback = terminal.getScrollBuffer();
+		// The failing branch repaints only the visible rows and marks the inserted
+		// above-viewport rows as painted, so the expanded blocks never reach scrollback.
+		assert.deepStrictEqual(
+			getScrollbackSuffix(scrollback, 16),
+			[
+				"read expanded lib.rs:210",
+				"pub until: Option<String>,",
+				"pub year: Option<String>,",
+				"pub scanner_settings: scanner::ScannerSettings,",
+				"pub struct DailyTotals {",
+				"pub tokens: i64,",
+				"tool expanded bash",
+				"stdout line 0",
+				"stdout line 1",
+				"stdout line 2",
+				"stdout line 3",
+				"stdout line 4",
+				"status expanded",
+				"tail row 0",
+				"tail row 1",
+				"tail row 2",
+			],
+			"Expanded offscreen blocks must reach scrollback even when a visible row also changed",
+		);
 
 		tui.stop();
 	});

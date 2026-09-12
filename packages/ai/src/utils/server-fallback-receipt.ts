@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "../types.ts";
+import type { AssistantMessage, Model } from "../types.ts";
 import { appendAssistantMessageDiagnostic } from "./diagnostics.ts";
 
 export const SERVER_FALLBACK_ABORTED_DIAGNOSTIC = "server_fallback_aborted";
@@ -55,6 +55,30 @@ export function parseStickyFallbackReceipt(
 
 export function serverFallbackRefusalExplanation(receipt: ServerFallbackReceipt): string {
 	return `Server-side fallback (${receipt.from} -> ${receipt.to}) aborted by client policy`;
+}
+
+export function applyServerFallbackContinuation(
+	message: AssistantMessage,
+	model: Model<"anthropic-messages">,
+	receipt: ServerFallbackReceipt,
+): Model<"anthropic-messages"> {
+	// Keep source indices stable for stream projections while making abandoned
+	// client calls audit-only before the agent can execute the completed message.
+	for (const [index, block] of message.content.entries()) {
+		if (block.type === "toolCall") {
+			message.content[index] = { type: "providerNative", subtype: "discarded_tool_call", raw: block };
+		}
+	}
+	message.model = receipt.to;
+	const fallback = model.compat?.allowedFallbackModels?.find(
+		(candidate) =>
+			typeof candidate !== "string" && candidate.provider === model.provider && candidate.model === receipt.to,
+	);
+	return {
+		...model,
+		id: receipt.to,
+		cost: fallback && typeof fallback !== "string" ? fallback.cost : model.cost,
+	};
 }
 
 /**

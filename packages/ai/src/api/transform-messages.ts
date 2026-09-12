@@ -176,7 +176,7 @@ export function transformMessages<TApi extends Api>(
 					// Redacted thinking is opaque encrypted content, only valid for the same model.
 					// Drop it for cross-model to avoid API errors.
 					if (block.redacted) {
-						return isSameModel && preserveProviderState ? { ...block } : [];
+						return isSameModel ? { ...block } : [];
 					}
 					const hasUsableSignature =
 						typeof block.thinkingSignature === "string" && block.thinkingSignature.trim().length > 0;

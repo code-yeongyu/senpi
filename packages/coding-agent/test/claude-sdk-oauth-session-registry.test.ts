@@ -181,6 +181,7 @@ function continuityFor(sessionId: string, extra: { idleExpired: boolean }) {
 		modelId: "claude-test",
 		fingerprint: { toolsetHash: "tools-v1", systemPromptHash: "prompt-v1" },
 		transcriptAvailable: true,
+		crossAccountResumeSupported: true,
 		...extra,
 	});
 }
@@ -254,6 +255,28 @@ describe("Claude SDK OAuth session registry", () => {
 		expect(replacement.generation).toBe(expired.generation + 1);
 		expect(registry.isCurrentGeneration("expired", expired.generation)).toBe(false);
 		expect(closed).toEqual([expired.sdkSessionId]);
+	});
+
+	it("never reuses a generation number across repeated close/reopen cycles", () => {
+		let now = 1_000;
+		overrideSessionRegistryBoundary({ now: () => now, queryFactory: () => fakeQuery() });
+		const registry = new ClaudeSdkOauthSessionRegistry();
+		const generations: number[] = [];
+		for (let cycle = 0; cycle < 3; cycle++) {
+			const entry = registry.getOrCreate(input("cycle"));
+			generations.push(entry.generation);
+			transitionSessionState(entry, "IDLE_SYNCED");
+			now += SESSION_REGISTRY_IDLE_TTL_MS;
+			registry.closeSession("cycle", "test_cycle");
+		}
+		expect(generations[0]).toBeLessThan(generations[1]);
+		expect(generations[1]).toBeLessThan(generations[2]);
+		const reopened = registry.getOrCreate(input("cycle"));
+		expect(reopened.generation).toBeGreaterThan(generations[2]);
+		expect(registry.isCurrentGeneration("cycle", reopened.generation)).toBe(true);
+		for (const generation of generations) {
+			expect(registry.isCurrentGeneration("cycle", generation)).toBe(false);
+		}
 	});
 
 	it("cold-seeds a resident entry idle at the TTL on the admission decision path", () => {
@@ -512,6 +535,31 @@ describe("Claude SDK OAuth session registry", () => {
 		expect(isBoundAccountTokenExpiring(entry, accounts)).toBe(true);
 		now--;
 		expect(isBoundAccountTokenExpiring(entry, accounts)).toBe(false);
+	});
+
+	it("preserves a matching early terminal result", async () => {
+		const { query, registry, entry } = pumpFixture();
+		const turn = submitSessionTurn(registry, entry, { message: userContent });
+		const submitted = await submittedMessage(entry);
+		const terminal = result(submitted.uuid, entry.sdkSessionId);
+		query.emit(terminal);
+		expect((await turn).messages).toEqual([terminal]);
+		expect(entry.activeTurn).toBeNull();
+	});
+
+	it("restores sdkResultFailure classification before replay claim", async () => {
+		const { query, registry, entry } = pumpFixture();
+		const turn = submitSessionTurn(registry, entry, { message: userContent });
+		await submittedMessage(entry);
+		query.emit({
+			type: "result",
+			subtype: "error_during_execution",
+			is_error: true,
+			result: "rate_limit",
+			session_id: entry.sdkSessionId,
+		} as unknown as SDKMessage);
+		await expect(turn).rejects.toThrow(/rate_limit/i);
+		expect(query.closes).toBe(1);
 	});
 
 	it("claims a turn from the replayed submitted uuid", async () => {

@@ -18,7 +18,7 @@ import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 function renderLastLine(container: Container, width = 120): string {
@@ -223,6 +223,30 @@ describe("InteractiveMode.showStatus", () => {
 		// adds spacer + text
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
+	});
+});
+
+describe("InteractiveMode.showManagedToolStatus", () => {
+	beforeAll(() => initTheme("dark"));
+
+	test("renders tool updates as one contiguous group", () => {
+		const fakeThis: any = {
+			chatContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+			managedToolStatusStarted: false,
+			lastStatusSpacer: undefined,
+			lastStatusText: undefined,
+		};
+		const showManagedToolStatus = (InteractiveMode as any).prototype.showManagedToolStatus;
+
+		showManagedToolStatus.call(fakeThis, { type: "info", message: "fd downloading" });
+		showManagedToolStatus.call(fakeThis, { type: "info", message: "rg downloading" });
+		showManagedToolStatus.call(fakeThis, { type: "warning", message: "rg failed" });
+
+		expect(fakeThis.chatContainer.children).toHaveLength(4);
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toBe(
+			"fd downloading\n rg downloading\n Warning: rg failed",
+		);
 	});
 });
 
@@ -939,7 +963,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 			) => (InteractiveMode as any).prototype.getCompactNonPackageExtensionLabel.call(fakeThis, p, index, allPaths),
 			getCompactExtensionLabels: (extensions: ExtensionFixture[]) =>
 				(InteractiveMode as any).prototype.getCompactExtensionLabels.call(fakeThis, extensions),
-			formatDiagnostics: () => "diagnostics",
+			formatDiagnostics: () => [{ text: "diagnostics", tone: "warning" }],
 			getBuiltInCommandConflictDiagnostics: () => [],
 		};
 
@@ -1602,7 +1626,8 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		const output = renderAll(fakeThis.loadedResourcesContainer);
-		expect(output).toContain("[Skill conflicts]");
+		expect(output).toContain("Skill conflicts");
+		expect(output).toContain(theme.getBgAnsi("customMessageBg"));
 		expect(output).not.toContain("[Skills]");
 	});
 

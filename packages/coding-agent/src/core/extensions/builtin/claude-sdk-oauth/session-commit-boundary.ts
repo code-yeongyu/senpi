@@ -4,21 +4,36 @@ import { sessionSyncDigest } from "./session-sync.ts";
 
 export type AssistantCommitOutcome = "clean" | "rewritten" | "not-resident";
 
+type ContentBlock = AssistantMessage["content"][number];
+
+/**
+ * Only the payload the model produced is fingerprinted. Everything the stream
+ * pipeline stamps around it (thinking timing, content-block indices, partial
+ * JSON) can legitimately differ between the last `message_update` and `message_end`
+ * without any extension rewriting the answer; hashing such fields marked plain
+ * turns `assistant_rewritten` and forced a full re-send on the next turn
+ * (senpi#691, oh-my-openagent#7925). An unknown block shape stays fail-closed.
+ */
+function semanticContentBlock(block: ContentBlock): unknown {
+	switch (block.type) {
+		case "text":
+			return { type: block.type, text: block.text };
+		case "thinking":
+			return { type: block.type, thinking: block.thinking, thinkingSignature: block.thinkingSignature };
+		case "toolCall":
+			return { type: block.type, id: block.id, name: block.name, arguments: block.arguments };
+		default:
+			return block;
+	}
+}
+
 export function assistantContentHash(message: AssistantMessage): string {
 	return sessionSyncDigest({
 		role: message.role,
 		api: message.api,
 		provider: message.provider,
 		model: message.model,
-		content: message.content.map((block) => {
-			if (block.type !== "thinking") return block;
-			// Agent-core stamps these display-only fields after the final
-			// message_update; every semantic thinking field stays fail-closed.
-			const stableBlock = { ...block };
-			delete stableBlock.startedAt;
-			delete stableBlock.endedAt;
-			return stableBlock;
-		}),
+		content: message.content.map(semanticContentBlock),
 	});
 }
 

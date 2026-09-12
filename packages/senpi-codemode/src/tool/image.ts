@@ -119,7 +119,7 @@ export class EvalOutputCollector {
 	async finish(): Promise<EvalOutputResult> {
 		await this.#processImages();
 		const summary = await this.#finalSummary();
-		const meta = truncationMetaFromSummary(summary);
+		const meta = truncationMetaFromSummary(summary, this.#options.maxColumns);
 		const notice = summary.artifactId === undefined ? undefined : artifactNotice(summary.artifactId);
 		return {
 			output: summary.output.trimEnd(),
@@ -215,7 +215,7 @@ function formatDisplayJson(value: unknown): string {
 	return `${text.slice(0, MAX_DISPLAY_TEXT_BYTES)}\n[…${text.length - MAX_DISPLAY_TEXT_BYTES}ch elided…]`;
 }
 
-function truncationMetaFromSummary(summary: OutputSummary): TruncationMeta | undefined {
+function truncationMetaFromSummary(summary: OutputSummary, maxColumns: number): TruncationMeta | undefined {
 	if (!summary.truncated) return undefined;
 	const artifact = summary.artifactId === undefined ? {} : { artifactId: summary.artifactId };
 	if (summary.elidedBytes !== undefined && summary.elidedBytes > 0) {
@@ -239,9 +239,18 @@ function truncationMetaFromSummary(summary: OutputSummary): TruncationMeta | und
 			...artifact,
 		};
 	}
+	const droppedBytes = Math.max(0, summary.totalBytes - summary.outputBytes);
+	const clampedLines = summary.columnTruncatedLines ?? 0;
+	const columnOnly = clampedLines > 0 && (summary.columnDroppedBytes ?? 0) >= droppedBytes;
+	const byteCapped = summary.totalBytes - (summary.columnDroppedBytes ?? 0) > DEFAULT_MAX_BYTES;
 	return {
 		direction: "tail",
-		truncatedBy: summary.outputBytes < summary.totalBytes ? "bytes" : "lines",
+		truncatedBy: columnOnly ? "columns" : byteCapped ? "bytes" : "lines",
+		...(columnOnly
+			? { maxColumns, columnTruncatedLines: clampedLines }
+			: byteCapped
+				? { maxBytes: DEFAULT_MAX_BYTES }
+				: {}),
 		totalLines: summary.totalLines,
 		totalBytes: summary.totalBytes,
 		outputLines: summary.outputLines,

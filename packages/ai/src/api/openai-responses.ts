@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ResponseCreateParamsStreaming, ResponseStreamEvent } from "openai/resources/responses/responses.js";
-import { clampThinkingLevel, supportsMax, supportsXhigh } from "../models.ts";
+import { clampThinkingLevel, inferOpenAIThinkingLevelMap, supportsMax, supportsXhigh } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -19,6 +19,7 @@ import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
@@ -46,7 +47,7 @@ interface WebSocketLike {
 	removeEventListener(type: WebSocketEventType, listener: WebSocketListener): void;
 }
 
-interface CachedWebSocketConnection {
+export interface CachedWebSocketConnection {
 	socket: WebSocketLike;
 	busy: boolean;
 	idleTimer?: ReturnType<typeof setTimeout>;
@@ -93,8 +94,10 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsImageGeneration: model.compat?.supportsImageGeneration ?? isNativeEndpoint,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
+		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
+		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
 	};
 }
 
@@ -176,7 +179,7 @@ function formatOpenAIResponsesError(error: unknown): string {
 export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
-	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"] | "fast";
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
 }
 
@@ -334,7 +337,11 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 ): AssistantMessageEventStream => {
 	resolveOpenAIClientAuth(model.provider, options?.apiKey, options?.headers);
 
-	const base = buildBaseOptions(model, context, options, options?.apiKey);
+	const base = {
+		...buildBaseOptions(model, context, options, options?.apiKey),
+		toolChoice: options?.toolChoice,
+		serviceTier: options?.serviceTier,
+	} satisfies OpenAIResponsesOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort =
 		clampedReasoning === "off"
@@ -359,7 +366,7 @@ function createClient(
 	env?: ProviderEnv,
 ) {
 	const compat = getCompat(model, env);
-	const headers: ProviderHeaders = { ...model.headers };
+	const headers: ProviderHeaders = { "User-Agent": getPiUserAgent(), ...model.headers };
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
 		const copilotHeaders = buildCopilotDynamicHeaders({
@@ -404,10 +411,16 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
+	const deferredToolsMode = compat.supportsAdditionalTools
+		? "additional-tools"
+		: compat.supportsToolSearch
+			? "tool-search"
+			: undefined;
+	const toolPlacement = splitDeferredTools(context, deferredToolsMode !== undefined);
 	const requestedReasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
+	const thinkingLevelMap = inferOpenAIThinkingLevelMap(model);
 	const mappedReasoningEffort =
-		requestedReasoningEffort === undefined ? undefined : model.thinkingLevelMap?.[requestedReasoningEffort];
+		requestedReasoningEffort === undefined ? undefined : thinkingLevelMap?.[requestedReasoningEffort];
 	const reasoningEffort = mappedReasoningEffort === undefined ? requestedReasoningEffort : mappedReasoningEffort;
 	const reasoningRequested = reasoningEffort !== undefined && reasoningEffort !== null;
 	const reasoningUnavailable = reasoningEffort === null;
@@ -415,6 +428,7 @@ function buildParams(
 		preserveThinking: reasoningRequested,
 		grammarToolInputProperties,
 		deferredTools: toolPlacement.deferred,
+		deferredToolsMode,
 		toolOptions: {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
@@ -433,7 +447,7 @@ function buildParams(
 		store: false,
 	};
 
-	if (options?.maxTokens) {
+	if (options?.maxTokens && compat.supportsMaxOutputTokens) {
 		params.max_output_tokens = Math.max(options.maxTokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS);
 	}
 
@@ -442,7 +456,7 @@ function buildParams(
 	}
 
 	if (options?.serviceTier !== undefined) {
-		params.service_tier = options.serviceTier;
+		params.service_tier = options.serviceTier as ResponseCreateParamsStreaming["service_tier"];
 	}
 
 	if (toolPlacement.immediate.length > 0) {
@@ -463,9 +477,9 @@ function buildParams(
 				...(options?.reasoningSummary === null ? {} : { summary: options?.reasoningSummary || "auto" }),
 			};
 			params.include = ["reasoning.encrypted_content"];
-		} else if (!reasoningUnavailable && model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null) {
+		} else if (!reasoningUnavailable && model.provider !== "github-copilot" && thinkingLevelMap?.off !== null) {
 			params.reasoning = {
-				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
+				effort: (thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};
 		}
 		if (model.provider === "xai") params.include = ["reasoning.encrypted_content"];
@@ -518,17 +532,37 @@ function closeWebSocketSilently(socket: WebSocketLike, code = 1000, reason = "do
 	} catch {}
 }
 
-function scheduleSessionWebSocketExpiry(sessionId: string, entry: CachedWebSocketConnection): void {
+/**
+ * Arms the idle-expiry for a cached session socket. A fire while the entry is
+ * busy must not strand the entry: the holder may never run the release path
+ * that schedules a fresh timer, and a cached-but-forgotten entry would pin its
+ * socket for process lifetime. A live busy socket is re-checked on the next
+ * tick; a dead one is dropped immediately because nothing can release it.
+ */
+export function scheduleSessionWebSocketExpiry(sessionId: string, entry: CachedWebSocketConnection): void {
 	if (entry.idleTimer) {
 		clearTimeout(entry.idleTimer);
 	}
 	entry.idleTimer = setTimeout(() => {
-		if (entry.busy) return;
+		if (entry.busy) {
+			if (!isWebSocketReusable(entry.socket)) {
+				closeWebSocketSilently(entry.socket, 1000, "idle_timeout_dead");
+				websocketSessionCache.delete(sessionId);
+				return;
+			}
+			scheduleSessionWebSocketExpiry(sessionId, entry);
+			return;
+		}
 		closeWebSocketSilently(entry.socket, 1000, "idle_timeout");
 		websocketSessionCache.delete(sessionId);
 	}, SESSION_WEBSOCKET_CACHE_TTL_MS);
 	const unref = (entry.idleTimer as { unref?: () => void }).unref;
 	if (unref) unref.call(entry.idleTimer);
+}
+
+/** Number of sessions holding a cached websocket (diagnostics). */
+export function getOpenAIResponsesWebSocketCacheSize(): number {
+	return websocketSessionCache.size;
 }
 
 async function connectWebSocket(url: string, headers: Headers, signal?: AbortSignal): Promise<WebSocketLike> {
@@ -847,12 +881,13 @@ function buildWebSocketHeaders(
 
 function getServiceTierCostMultiplier(
 	model: Pick<Model<"openai-responses">, "id">,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
 ): number {
 	switch (serviceTier) {
 		case "flex":
 			return 0.5;
 		case "priority":
+		case "fast":
 			return model.id === "gpt-5.5" ? 2.5 : 2;
 		default:
 			return 1;
@@ -861,7 +896,7 @@ function getServiceTierCostMultiplier(
 
 function applyServiceTierPricing(
 	usage: Usage,
-	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | "fast" | undefined,
 	model: Pick<Model<"openai-responses">, "id">,
 ) {
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);

@@ -20,13 +20,25 @@ task-tool names are known.
 - Loopback, bearer-authenticated kernel bridge with bounded JSONL frames.
 - Structured status events for file operations, environment access, phases,
   bridge activity, and delegated task progress.
+- One versioned `senpi.eval.execution` event at terminal cell settlement. The
+  in-process event bus receives bounded per-call arguments and result previews
+  for extension-owned consumers; external RPC clients receive a 32 KiB-capped
+  metadata-only projection with wall time, kernel time, exact call counts,
+  pending-call counts, and bounded per-tool aggregates.
 - Bounded streaming output with head/tail previews, column clamping, and
   session-adjacent spill files for large streams.
 - TUI and HTML-export rendering for syntax-highlighted cells, status rows,
   task progress, structured display values, truncation warnings, and image
   fallbacks.
+- Runtime identity badges in eval headers — `eval py (3.14.7, ~/.venv/bin/python3)`,
+  `eval js (node 26.7.0, /opt/…/bin/node)` — with the same `runtime` info on
+  `EvalToolDetails` and its `cells` for RPC consumers; interpreter detection
+  resolves absolute executable paths, and the eval prompt host line names the
+  JS runtime (`node`/`bun`).
 - JavaScript import rewriting for supported local modules and package imports
-  in the persistent Node.js worker.
+  in the persistent JS worker (Bun when senpi runs on bun, Node.js otherwise).
+- On a Bun >= 1.4 kernel the eval prompt names the bundled `bun-1-4` skill as
+  MUST READ before the first js cell; node kernels keep the Node.js wording.
 - GPT models receive a terse `eval` prompt dialect that prioritizes composing
   active tools through `tool.<name>(args)` and documents detach-on-timeout.
 
@@ -34,13 +46,26 @@ task-tool names are known.
 
 | Language | Default | Runtime | Notes |
 | --- | --- | --- | --- |
-| `js` | enabled | Node.js worker | Requires Node.js 24 or newer; supports top-level `await` and `return`. |
+| `js` | enabled | In-process worker on senpi's own runtime (Bun or Node.js 24+) | Supports top-level `await` and `return`; the eval prompt's runtime line follows the kernel. |
 | `py` | enabled | `python3` or `python` | Optional interpreter detected at session start. |
 | `rb` | disabled | `ruby` | Optional interpreter detected at session start. |
 | `jl` | disabled | `julia` | Optional interpreter detected at session start. |
 
 A missing optional interpreter removes that language from the session's `eval`
 schema; it is not an installation failure.
+
+### Session environment
+
+Every kernel starts with the active session's `PI_*` environment — `PI_SESSION_ID`,
+`PI_SESSION_FILE` (when the session is persistent), `PI_PROVIDER`, `PI_MODEL`, and
+`PI_REASONING_LEVEL` (when set) — resolved at session start, mirroring the bash tool's
+session environment contract. The values are visible to `env()`/`process.env`/`os.environ`
+inside cells and are inherited by every child process a cell spawns
+(`Bun.$`, `Bun.spawn`, `child_process`, `subprocess`, ...). Inherited `PI_*` values from
+the launching environment are dropped first, so a child spawned from a cell sees exactly
+what a child spawned from the bash tool sees. The values snapshot at kernel start, so a
+mid-session model switch updates the bash tool's next command but not already-running
+kernels; a new session starts fresh kernels with fresh values.
 
 ## Settings
 
@@ -59,6 +84,9 @@ Configuration is loaded in this order:
     "jl": false
   },
   "cellTimeoutSeconds": 30,
+  "foregroundWindowSeconds": 60,
+  "runBudgetSeconds": 300,
+  "hardLimitSeconds": 1800,
   "parallelPoolWidth": 4,
   "taskTools": {
     "task": "task",
@@ -75,7 +103,10 @@ Configuration is loaded in this order:
 | Key | Default | Effect |
 | --- | --- | --- |
 | `languages` | `py`/`js` enabled; `rb`/`jl` disabled | Selects desired languages before interpreter detection. |
-| `cellTimeoutSeconds` | `30` | Idle timeout for one cell unless the call supplies `timeout`; interactive calls detach by default and print/json calls error. |
+| `cellTimeoutSeconds` | `30` | Idle time an interactive call blocks the turn before the cell detaches. Print/json calls never detach. |
+| `foregroundWindowSeconds` | `60` | Caps `cellTimeoutSeconds` and the grace a bridge-parked cell gets before it detaches, so an interactive call never blocks the turn longer than this. Env override: `SENPI_CODEMODE_FOREGROUND_SECONDS`. |
+| `runBudgetSeconds` | `300` | Kill deadline for a cell's own execution time - child processes, network, timers, CPU. Time parked in host tool calls (`agent()`, `tool.*`) is not charged, and the budget keeps counting after the cell detaches. A per-call `timeout` replaces it for that cell. Env override: `SENPI_CODEMODE_RUN_BUDGET_SECONDS`. |
+| `hardLimitSeconds` | `1800` | Wall-clock kill deadline for a cell, parked or not; a per-call `timeout` above it raises it. Env override: `SENPI_CODEMODE_HARD_LIMIT_SECONDS`. |
 | `parallelPoolWidth` | `4` | Maximum concurrent `parallel()` thunks. |
 | `taskTools.task` | `"task"` | Registered tool name used by `agent()`. |
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |
@@ -98,12 +129,12 @@ options object and asynchronous helpers are `await`-able.
 
 | Helper | Contract |
 | --- | --- |
-| `display(value)` | Emits text, structured JSON, markdown, or supported image display data. |
+| `display(value)` | Emits text, structured JSON, markdown, or image display data. Images reach the model only through `display`: pass a figure, raw image bytes (PNG/JPEG/GIF/WebP/BMP sniffed), a `data:` URL, a `Blob`-like or `Bun.Image` value, a marshalled tool result, or one of its `images[i]` frames. |
 | `print(value, ...)` | Emits text output. |
 | `read(path, offset?, limit?)` | Reads text with 1-indexed line slicing. `local://` paths resolve under the session artifact root. |
 | `write(path, content)` | Creates parent directories and writes text. `local://` paths persist in the session artifact root. |
-| `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. |
-| `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline. |
+| `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. Includes the session's `PI_*` values (see [Session environment](#session-environment)). |
+| `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline and returns `{ text, images?, details?, hasError? }` in every kernel; image blocks arrive as `images[i] = { mimeType, dataBase64 }`. |
 | `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. |
 | `completion(prompt, model?, system?, schema?)` | Requests a one-shot host completion; `schema` asks the host to parse structured output. |
 | `agent(prompt, ...)` | Delegates to the configured active `taskTools.task` tool. Supports background handles and structured JSON results. |
@@ -146,24 +177,52 @@ cell keeps only its own language kernel busy. A new same-language call returns
 a busy error with its cell id and output tail; calls in other languages continue
 normally. Do not re-run the cell.
 
+Every cell, detached or not, is bounded by two kill deadlines. The run budget
+(`runBudgetSeconds`, or the call's `timeout`) charges only the cell's own
+execution time and is paused while a host tool call is in flight, so a cell
+waiting on `agent()` survives while a runaway child process or loop does not.
+The hard limit (`hardLimitSeconds`, raised by a larger `timeout`) is wall-clock
+and bounds parked cells too. A cell killed by either deadline reports which one
+in its result or completion notification, together with whether kernel state
+survived; the tool schema states the configured numbers. The `timeout` value
+never changes when an interactive call detaches: that is `cellTimeoutSeconds`
+capped by `foregroundWindowSeconds`.
+
 While any cell is detached, the interactive footer shows a highlighted
 `↗ <language> · <summary>` status on the extension status line (the cell id
 when the call had no summary), clearing as soon as the last detached cell settles.
 
 Use `eval({ action: "peek", cell_id })` for its state and buffered output, or
 `eval({ action: "stop", cell_id })` to cancel it. Python stop interrupts the
-existing kernel and preserves variables. JavaScript stop kills and restarts its
-worker, so JavaScript VM state is lost. Detached completion messages state when
-kernel variables are available to the next eval cell; oversized buffered output
-is written under the session local root and referenced as `local://…`.
+existing kernel and preserves variables. JavaScript stop is cooperative first:
+the worker rejects the cell's pending bridge `tool.*` calls and kills the
+`Bun.spawn` children it started, and a cell that settles within the 2 s grace
+keeps the worker and every global. Only a cell that stays unsettled (a
+never-resolving promise, an un-abortable `fetch`, a `Bun.$` command) costs the
+worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
+`child_process.spawnSync`) cannot be stopped at all; after a 3 s termination
+deadline a fresh worker replaces it, the cell output gains a stderr line naming
+the blocked synchronous call, and the blocked call keeps running until it
+returns. Kernel-level timeouts follow the same path. Stop results and detached
+completion messages report the real outcome - variables preserved, worker
+restarted, or outcome unknown - never a per-language assumption; oversized
+buffered output is written under the session local root and referenced as
+`local://…`.
+
+Commands a cell runs through `Bun.$` never read the host's terminal: the worker
+thread shares the TUI's stdin, so the shell wrapper hands every template an
+empty pipe (`true | ( … )`) while a cell is active. Output, exit codes, `cwd`,
+`env`, and explicit `< ${input}` redirects are unchanged; `Bun.spawn` and
+`Bun.spawnSync` already default stdin to `/dev/null`.
 
 ## Output and artifacts
 
 Cell output is streamed while the cell runs. Large streams spill to an absolute
-file after the default 50 KiB threshold. With a session file such as
-`/path/session.jsonl`, artifacts live in `/path/session-artifacts/`; sessions
-without a file use a unique temporary directory. Truncated results include a
-plain-path notice such as `[Full output: /absolute/path/eval-….log]`.
+file after the default 50 KiB threshold or when the output column cap drops
+bytes. With a session file such as `/path/session.jsonl`, artifacts live in
+`/path/session-artifacts/`; sessions without a file use a unique temporary
+directory. Truncated results include a plain-path notice such as
+`[Full output: /absolute/path/eval-….log]`.
 
 ## Deliberate differences from oh-my-pi
 
@@ -192,10 +251,10 @@ namespace to prevent recursive execution.
 
 ```bash
 cd packages/senpi-codemode
-npm test
+bun run test
 
 cd ../..
-npm run check
+bun run check
 ```
 
 Direct real-surface QA drivers live in `scripts/qa-*.ts`: kernel cells

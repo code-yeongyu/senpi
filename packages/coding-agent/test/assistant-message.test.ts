@@ -195,6 +195,75 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).not.toContain("encrypted_content");
 	});
 
+	test("#given an Anthropic tool_search_tool_result #when rendering providerNative #then lists the discovered tool names", () => {
+		// given
+		initTheme("dark");
+		const component = new AssistantMessageComponent({
+			...createAssistantMessage([
+				{
+					type: "providerNative",
+					subtype: "tool_search_tool_result",
+					raw: {
+						type: "tool_search_tool_result",
+						tool_use_id: "srvtoolu_123",
+						content: {
+							type: "tool_search_tool_search_result",
+							tool_references: [
+								{ type: "tool_reference", tool_name: "memory" },
+								{ type: "tool_reference", tool_name: "web_search" },
+							],
+						},
+					},
+				},
+			]),
+			api: "anthropic-messages",
+			provider: "anthropic",
+		});
+
+		// when
+		const rendered = component.render(160).join("\n");
+
+		// then
+		expect(rendered).toContain("▸ anthropic · tool_search results");
+		expect(rendered).toContain("2 tools");
+		expect(rendered).toContain("memory");
+		expect(rendered).toContain("web_search");
+		expect(rendered).not.toContain("tool_search_tool_search_result");
+		expect(rendered).not.toContain("srvtoolu_123");
+	});
+
+	test("#given a failed tool search #when rendering providerNative #then the error code and message are shown", () => {
+		// given
+		initTheme("dark");
+		const component = new AssistantMessageComponent({
+			...createAssistantMessage([
+				{
+					type: "providerNative",
+					subtype: "tool_search_tool_result",
+					raw: {
+						type: "tool_search_tool_result",
+						tool_use_id: "srvtoolu_456",
+						content: {
+							type: "tool_search_tool_result_error",
+							error_code: "invalid_tool_input",
+							error_message: "Invalid regular expression pattern",
+						},
+					},
+				},
+			]),
+			api: "anthropic-messages",
+			provider: "anthropic",
+		});
+
+		// when
+		const rendered = component.render(160).join("\n");
+
+		// then
+		expect(rendered).toContain("▸ anthropic · tool_search results");
+		expect(rendered).toContain("invalid_tool_input");
+		expect(rendered).toContain("Invalid regular expression pattern");
+	});
+
 	test("#given OpenAI native web_search_call sources #when rendering providerNative #then displays status query and sources", () => {
 		// given
 		initTheme("dark");

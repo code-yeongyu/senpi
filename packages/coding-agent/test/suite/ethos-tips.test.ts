@@ -48,7 +48,7 @@ describe("ethos tips", () => {
 			"Using our tools means your work is already the deep, valuable kind. Keep your eyes on the essence of your craft. The rest is our problem now, and we're great at problems.",
 		);
 		expect(byId.get("ethos.ulw-plan-sage")).toBe(
-			"Try ulw-plan on fable-5 xhigh. A patient sage obsessed with the essence does the agonizing for you and fills in every blank you were pretending not to see.",
+			"Try ulw-plan on fable-5.1 xhigh. A patient sage obsessed with the essence does the agonizing for you and fills in every blank you were pretending not to see.",
 		);
 		expect(byId.get("ethos.ulw-loop-shallow")).toBe(
 			"For days when deep thought sounds awful, run the ulw loop with gpt-5.6-sol fast/medium. Fair warning: shallow thinking sends invoices.",

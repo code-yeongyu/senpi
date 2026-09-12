@@ -1,4 +1,813 @@
-# claude-sdk-oauth extension changes
+# claude-sdk-oauth
+
+## 2026-09-11 - Detect same-tick settings rewrites
+
+### What changed
+
+- `settings.ts`: the cached provider-settings loader now keys its manager cache on a SHA-256 content revision rather than `mtimeMs:size`, so a rewrite made within one filesystem mtime tick is observed.
+
+### Why
+
+- Linux filesystems can preserve the same mtime for two rapid writes, leaving the loader with stale provider settings despite its re-read contract.
+
+### Why an extension could not handle it
+
+- The cache and its invalidation key are owned by this provider extension's settings loader.
+
+### Expected merge conflict zones
+
+- LOW: `settings.ts` around `settingsFingerprint`.
+
+
+## 2026-09-10 - Optional Claude account display names (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts`: `AccountSlot` carries optional `displayName`; immutable `name` remains the operational identity.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-management.ts`: explicitly projects safe display metadata alongside existing secret-free account descriptors.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-command.ts`: adds rename/clear-name and renders display labels for listings, the pinned-account line and the affinity pick. Post-login naming is delegated to the shared helper, which offers it only for a machine-generated slot ID, so the lane's own "Name for this account" prompt is never followed by a second name prompt. Existing slot creation names, sentinel envelope, refresh, failover, affinity and session continuity are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts`, `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-management.ts` and `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/account-command.ts`: readable labels must not change the account IDs responsible for Claude credentials, config roots and SDK session bindings.
+
+### Why an extension could not handle it
+
+- These three paths are the provider extension's own types and command surfaces. The shared locked metadata operation and login receipt are implemented below this extension.
+
+### Expected merge conflict zones
+
+- LOW: slot shape in `accounts.ts`; descriptor mapper in `account-management.ts`; imports, command hints and list/add handlers in `account-command.ts`.
+
+## 2026-09-10 - Never list a sentinel-material stored slot as an account
+
+### What changed
+
+- `accounts.ts`: `isSentinelSlot` recognizes a stored account whose `access` and `refresh` are both the managed sentinel, and `listAccounts` filters those out.
+- `test/claude-sdk-oauth-accounts.test.ts`: a pool holding a real account plus a generated `login-2` sentinel slot lists only the real one.
+
+### Why
+
+- A shipped build stored this credential's own flat sentinel projection as a generated `login-N` slot. Selecting it fails the provider's auth check and dead-ends the request. The coding-agent auth store heals the stored entry on load (see the core tracker); this filter covers the extension's own direct reads (`readStoredCredential`) so a poisoned entry can never be selected even before that repair runs.
+
+### Why an extension could not handle it
+
+- The account listing is this provider's own pool surface.
+
+### Expected merge conflict zones
+
+- LOW: `storedSlots` filtering in `accounts.ts`.
+
+## Recording a refused model switch keeps the stored binding (2026-09-10)
+
+### What changed
+
+- `session-binding.ts`: `model_change_rejected` joins `LEDGER_ONLY_ENTRY_TYPES`.
+
+### Why
+
+- `bindingFromStoredBranch` fails closed on any entry after the committed assistant that the model could see. The new `model_change_rejected` entry (#1526) is never projected into the LLM context, but it was absent from the set, so recording a refused switch made a later resume discard the stored SDK session: fresh upstream session, full context re-send, prompt-cache loss - caused by an entry the model never sees.
+
+### Why an extension could not handle it
+
+- The set is the builtin's own resume-admission policy.
+
+### Expected merge conflict zones
+
+- LOW: `LEDGER_ONLY_ENTRY_TYPES`.
+
+## 2026-09-10 - Detach completed resume initialization abort listeners
+
+### What changed
+
+- `session-reattach.ts`: the abort listener that bounds `initializationResult`
+  is now removed in a `finally` block after initialization settles.
+- `test/claude-sdk-oauth-reattach.test.ts`: cover both successful initialization
+  followed by normal request cleanup and genuine abort during pending
+  initialization.
+
+### Why
+
+- The request controller is also aborted during normal completed-request
+  cleanup. Leaving the initialization listener attached closed a healthy
+  resumed query after initialization, forcing the next turn through another
+  resume and eventually a full-history cache write.
+- Pending and pre-aborted initialization still closes the query and rejects, so
+  cancellation remains fail-closed while completed initialization no longer
+  has a stale listener.
+
+### Expected merge conflict zones
+
+- LOW: `session-reattach.ts` initialization helper and the adjacent reattach
+  regression test; no public API or generated bundle changes.
+
+## 2026-09-10 - Validate the Claude Code executable before the SDK spawns it, fall back to PATH
+
+### What changed
+
+- `executable.ts`: `ExecutableDeps` gains `isFile`. `describeClaudeCodeExecutable` walks `CLAUDE_CODE_EXECUTABLE`, the compiled-Bun extraction, the platform sidecar package(s) resolved through `createRequire` rooted at the imported `@anthropic-ai/claude-agent-sdk` instance, then `claude` on PATH - and accepts a candidate only once its spawnable spelling (`path.resolve`, plus `path.toNamespacedPath` on win32 so it carries the `\?\` prefix) is a regular file in this process. `resolveClaudeCodeExecutable` returns that spelling or throws senpi's own error naming every candidate tried. `overrideExecutableDeps` / `resetExecutableDeps` expose the deps for tests the way `overrideSdkBoundary` does.
+- `executable-path-lookup.ts` (new): `findExecutableOnPath` - the `where claude` / `command -v claude` walk with no shell, honouring `PATHEXT` on win32 and skipping anything that is not a regular file.
+- `availability.ts`: `describeClaudeLane` reports the same resolution the query path uses (`executable`, `tried`) plus the host `runtime` (`bun` | `node`) for a doctor surface; the ambient probe already shares the resolver, so a path this process cannot stat is never spawned.
+
+### Why
+
+- code-yeongyu/senpi#1541: on a Windows npm-global `omo-ai` install the win32-x64 sidecar resolved (it was hoisted to `omo-ai/node_modules/`) but the SDK reported `Claude Code native binary not found at <that path>` although Explorer showed the file. senpi handed the SDK the first `require.resolve` hit unvalidated, honoured `CLAUDE_CODE_EXECUTABLE` unvalidated, and had no fallback to the working `claude.exe` on PATH; the SDK's generic wrapper then reported the miss.
+
+### Why an extension could not handle it
+
+- The executable string is chosen inside the builtin provider before `query()` is called; no extension hook runs between resolution and `pathToClaudeCodeExecutable`.
+
+### Expected merge conflict zones
+
+- LOW: `executable.ts` is fork-only; `availability.ts` grows an export above `createAmbientAuthStatusReader`. `executable-path-lookup.ts` is new. Tests: `test/claude-sdk-oauth-executable*.test.ts`, `test/claude-sdk-oauth-availability.test.ts`.
+
+## 2026-09-09 - Classify multi-message cold starts as bootstrap
+
+### What changed
+
+- `session-stream.ts`: `createResidentAttempt` now identifies a first turn by the absence of any prior assistant message in `input.context.messages`, while retaining the no-resident-entry and no-persisted-binding checks. A fresh context can therefore bootstrap even when injected context and the actual prompt produce multiple transmitted user messages; a cold start after an assistant turn remains `flatten` with `registry_miss`.
+- `claude-sdk-oauth-bootstrap-classification.test.ts` covers both observations through the resident session-stream fake SDK boundary.
+
+### Why
+
+- A multi-message first turn was incorrectly shown as `Session continuity lost - resent the full conversation (registry_miss)` even though no SDK session existed and nothing could have been lost. This was reported on Discord by samaronejr on 2026-09-09 while opening a second concurrent OmO session.
+
+### Why an extension could not handle it
+
+- The `firstTurn` predicate is private to the builtin resident admission path, before any extension-facing stream result or continuity observation is emitted.
+
+### Expected merge conflict zones
+
+- LOW: `session-stream.ts` next to the `createResidentAttempt` `firstTurn` predicate and the focused bootstrap classification test.
+
+## 2026-09-08 - `/claude-account add` relays login prompts through the shared account-command interaction
+
+### What changed
+
+- `account-command.ts`: `addAccount` builds its `AuthInteraction` with `createExtensionLoginInteraction` from `../oauth-login-interaction.ts` instead of a local relay that sent every prompt to `ctx.ui.input(prompt.message)`. Prompts now honour their type and placeholder and are dismissed when the provider aborts them; `auth_url` opens the browser in the TUI and `device_code` prints the user code. `ClaudeAccountCommandDeps` gains an optional `openBrowser` so tests can observe the launch. The local `authEventMessage` helper is gone.
+
+### Why
+
+- code-yeongyu/senpi#1485 fixed the same relay shape in `/gpt-account add`; the Claude command shared the placeholder, per-prompt-signal and browser gaps, so both commands now use one implementation.
+
+### Why an extension could not handle it
+
+- The command is registered by the builtin provider extension and drives `modelRuntime.login` directly; no user extension can interpose on that relay.
+
+### Expected merge conflict zones
+
+- LOW: `account-command.ts` import block, `ClaudeAccountCommandDeps`, and `addAccount`. Fork-only file.
+
+## 2026-09-07 - Restart bindings survive ledger entries appended after the committed assistant
+
+### What changed
+
+- `session-commit-boundary.ts`: `assistantContentHash` fingerprints only the semantic payload of each block - `text`, `thinking` (text and signature), and `toolCall` `{id, name, arguments}` - plus role/api/provider/model. Timing stamps, streaming indices, partial JSON, and any other transport metadata no longer participate; an unknown block shape is still hashed whole (fail-closed).
+- `session-binding.ts`: `bindingFromStoredBranch` no longer requires the committed assistant to sit immediately after the marker, and no longer checks the suffix against a hard-coded allowlist of custom types. The committed assistant is the first `message` entry after the marker; every entry the session-manager never projects into the LLM context (`custom` of any type, `label`, `session_info`, `thinking_level_change`, `model_change`, `configuration_update`, plus the goal-continuation `custom_message`) is admitted before and after it. Entries the model can see - `message`, any other `custom_message`, `compaction`, `branch_summary` - still fail closed.
+
+### Why
+
+- oh-my-openagent#7925 (`assistant_rewritten` cascade): the commit boundary compared a hash taken at the last `message_update` with the `message_end` message. Both carry the same answer, but the stream pipeline keeps stamping metadata around it after the last update (senpi#691 fixed one such field, thinking timing, by denylisting it). Every new volatile field re-opens the same hole: a plain turn commits as `rewritten`, the next turn forks or flattens, and after a flatten there is no earlier assistant boundary so every following turn flattens again with the whole conversation. Allowlisting the semantic payload closes the class instead of the instance; an extension that actually rewrites text, thinking, or tool arguments is still detected.
+- oh-my-openagent#7925: every `omo --session <id>` resume cold-seeded with `registry_miss` and the sidecar vanished. The co-resident memory extension appends `custom` ledger records after each turn and one more on every `session_start`, none of which were in the allowlist, so the next restart deleted a valid sidecar. The allowlist had already been patched twice for the same defect class (stop hooks, rule scans, goal warm-ups); the correct invariant is "never reaches the model", which the entry type decides, not the writer.
+
+### Why an extension could not handle it
+
+- The sidecar validation is private to this builtin's restart path; no extension hook observes it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-binding.ts` around `bindingFromStoredBranch` and the retired `SAFE_BINDING_SUFFIX_TYPES` allowlist.
+- LOW: `session-commit-boundary.ts` around `assistantContentHash`.
+
+## 2026-09-07 - Emit one continuity observation per turn (discarded attempts stay silent)
+
+### What changed
+
+- `session-turn-attempt.ts`: `staged.emit()` moved out of the attempt generator's `finally` onto the retained-completion path. A discarded attempt (account failover unwinds the generator via `return()`) and an internally-failed attempt (throws to `catch`) now emit nothing; only an attempt consumed to completion emits, so a turn yields exactly one continuity observation. A turn where every attempt fails still yields the single terminal observation from `residentSessionMessages`.
+
+### Why
+
+- senpi#1432 follow-up: the observability contract (session-observability.ts head comment and the AGENTS.md invariant) promises exactly one observation per completed turn, but the `finally` emitted the discarded attempt's staged decision too. A two-account failover turn therefore logged two `claude_sdk_oauth_session_continuity` events (the discarded `delta` plus the retained `fork`), and a fully-failed turn logged its staged decision plus the terminal error - inflating the continuity counts the #1432 report was built on.
+
+### Why an extension could not handle it
+
+- The attempt lifecycle and the staged-observation emit are private to this builtin provider; no extension hook observes attempt retention.
+
+### Expected merge conflict zones
+
+- LOW: `session-turn-attempt.ts` around the generator `try/catch` tail (the removed `finally`).
+
+
+## 2026-09-07 - Reattach across account failover; retire the unwired failover decision
+
+### What changed
+
+- `session-continuity.ts`: `ContinuityDecisionInput.crossAccountResumeSupported` is a required boolean, filled by `session-stream.ts` from `auth.authLane !== "config-dir"`. `decideFromBinding` flattens account drift only with `cross_root_unsupported` on the config-dir lane; otherwise it falls through to the retry checkpoint (same-turn failover forks at the pre-turn boundary with reason `timeout_retry`) and the prefix checks (a matching prefix reattaches with reason `account_changed`). `model_changed` still flattens.
+- Removed `decideFailoverContinuity`, `FailoverContinuityInput`, `FailoverLane`, and `test/claude-sdk-oauth-failover-continuity.test.ts`. Tests were flipped in `claude-sdk-oauth-restart-binding-drift.test.ts`, `claude-sdk-oauth-restored-security.test.ts`, and `claude-sdk-oauth-continuity-retry-checkpoint.test.ts`; added regression coverage in `suite/regressions/1432-claude-sdk-oauth-failover-reattach.test.ts`.
+
+### Why
+
+- Issue #1432: on multi-account sessions a rate-limited attempt is discarded (`session-turn-attempt.ts` `discard()` closes the live entry), the next account's attempt takes the binding path, and `decideFromBinding` flattened on `account_changed` before the retry checkpoint could run, so every failover re-sent the whole conversation (observed 100 `flatten`/`account_changed` in one day, count up to 409). The session-stable HRW ranking re-selects the primary account when its 60 s block expires, so the cycle repeated. `decideFailoverContinuity` (3b8a5f828, 2026-08-01) described the intended behavior but was never called, and the "shared-root lanes reattach on failover" invariant documented below was never implemented.
+
+### Why an extension could not handle it
+
+- The decision table and the binding admission are private to this builtin.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-continuity.ts` (`ContinuityDecisionInput`, head of `decideFromBinding`, removed failover block).
+- LOW: `session-stream.ts` `decideNativeContinuity` call site; the flipped test files.
+
+## 2026-09-07 - Reattach restart bindings across prompt/toolset drift; date-line normalization survives trailing appends
+
+### What changed
+
+- `session-continuity.ts`: `identityDrift` now reports `system_prompt_changed` / `toolset_changed` instead of the bare `options_changed`. `decideFromBinding` flattens only on `account_changed` / `model_changed`; prompt/toolset drift falls through to the normal prefix checks and a matching prefix reattaches with the drift reason (divergence reasons still win). The live-entry path is unchanged structurally and simply surfaces the split reasons.
+- `session-sync.ts`: `GENERATED_DATE_LINE` no longer anchors the `Current working directory:` line to end-of-string, so the date/cwd pair is neutralized wherever it sits in the prompt.
+- Tests: `claude-sdk-oauth-restart-binding-drift.test.ts` (new) pins the restart contract and midnight stability with trailing appends; `claude-sdk-oauth-fingerprint.test.ts`, `claude-sdk-oauth-restored-security.test.ts`, `claude-sdk-oauth-continuity-decision.test.ts`, `claude-sdk-oauth-session-registry-wiring.test.ts` expectations moved from `options_changed` / `flatten` to the split reasons / `reattach`.
+
+### Why
+
+- oh-my-openagent#7884: a plain `omo --session <id>` resume after a restart printed `Session continuity lost - resent the full conversation (options_changed) - sent 485.5KB`. Two defects compounded: (1) a restart binding flattened on any fingerprint drift, while the live path reattaches on the same drift; (2) the date-line normalization required the cwd line to be the last line of the prompt, but a real prompt carries hundreds of lines of extension appends (`<Task_Management>`, bash timeout policy, terminal prompt, memory) after it, so `systemPromptHash` drifted at every UTC midnight and every restart-resume across a midnight or an engine/prompt upgrade re-sent the whole conversation.
+- A restart has no live query: the resume builds a fresh `query()` carrying the CURRENT options and hooks, so the 2026-09-0x note that a `HOST_TOOL_POLICY_FINGERPRINT` bump "cold-seeds once" on the first admission after upgrade is superseded - the bump now reattaches with `toolset_changed`, and resident sessions still re-fingerprint through the live path as before. Account/model drift keeps failing closed because those are lineage identity, not per-query options.
+- The split reasons answer the issue's request to see WHICH option group changed: `session.log` continuity events now carry `system_prompt_changed` or `toolset_changed`. `options_changed` stays in the sanitized vocabulary for historical log lines but is no longer emitted.
+
+### Why an extension could not handle it
+
+- The continuity decision table, the persisted binding admission, and the fingerprint digest are private to this builtin provider; no extension hook observes the restart binding or the hash inputs.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-continuity.ts` `identityDrift` and the head of `decideFromBinding` (drift gate + reattach reasons).
+- LOW: `session-sync.ts` `GENERATED_DATE_LINE` regex and its docblock; the four updated test files around `options_changed` expectations.
+
+## 2026-09-06 - Preserve early terminal results during turn claim
+
+### What changed
+
+- `session-registry-pump.ts` and `session-turn-claim.ts` retain a matching SDK result received before replay claim and attribute it when the claim arrives instead of discarding the turn as `SessionTurnAttributionError`.
+- `test/claude-sdk-oauth-session-registry.test.ts` covers the deterministic early-result ordering.
+
+### Why
+
+- Claude SDK OAuth can emit a terminal result before the replayed user message; the result belongs to the submitted turn and must settle it safely.
+
+### Why an extension could not handle it
+
+- The race occurs inside the builtin provider's private async query pump and turn claim state machine, before extension messages are delivered.
+
+### Expected merge conflict zones
+
+- LOW in `session-registry-pump.ts` and `session-turn-claim.ts` around pre-replay buffering and claim handling; test addition near the session registry pump fixtures.
+
+
+## 2026-09-03 - Persist compaction-aware restart bindings
+
+### What changed
+
+- `session-binding.ts`: requires a matching sent-prefix digest for closed-entry fallback bindings, and admits only labels, approved metadata, goal-cache warmups, and the goal-continuation custom message after a committed assistant.
+- `session-registry-wiring.ts`: hashes the converted, compaction-aware session context at `message_end`, including an empty transmitted-message list, and falls back to a verified binding when the resident entry has already closed.
+
+### Why
+
+- Restart persistence must use the same provider-visible projection as admission, preserve valid count-zero anchors, and fail closed when lineage identity is unavailable or later conversation may already have reached the SDK.
+
+### Why an extension could not handle it
+
+- The SDK sent-stream digest, resident binding lifecycle, and restart sidecar are private to this builtin provider lane; no external extension hook can safely reconstruct them at `message_end`.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-binding.ts` around stored-binding identity checks and safe suffix validation.
+- MEDIUM: `session-registry-wiring.ts` at the `message_end` persistence boundary and converted context hashing.
+
+## 2026-09-03 - Classify Fable usage-credit failures as entitlement
+
+### What changed
+
+- `errors.ts`: added `SdkErrorKind` `entitlement` and classified prose matching `requires usage credits`, `/usage-credits`, and `credits_required` as `{ kind: "entitlement", retryable: false }`.
+- `guidance.ts`: `sdkErrorGuidance("entitlement")` tells the user to switch models, enable usage credits, or pin another account.
+
+### Why
+
+- #709: Claude Code returns "Fable 5 requires usage credits" for subscription accounts. Classifying that as `rate_limit` would block the single account for 60s and prevent Opus fallback on the same account. Non-retryable entitlement is thrown immediately (no account block); AgentSession's hard-error fallback already advances to the next model.
+
+### Why an extension could not handle it
+
+- SDK error classification and auth guidance live inside this builtin provider before any extension-facing result exists.
+
+### Expected merge conflict zones
+
+- MEDIUM in `errors.ts` around `classifySdkError` prose matchers and the `SdkErrorKind` union.
+- LOW in `guidance.ts` around `sdkErrorGuidance`.
+## 2026-09-03 - State host-tool denial as a fact, not an instruction to end the turn
+## 2026-09-03 - Fail closed when a managed lane has no accounts (LAB-27)
+
+### What changed
+
+- `tools.ts`: `TOOL_EXECUTION_DENIED_MESSAGE` and `HOST_TOOL_EXECUTION_DENIED_MESSAGE` now state that Senpi executes the tool on the host and returns the result as the next user message; the copy no longer tells the model to end the turn. `HOST_TOOL_POLICY_FINGERPRINT` is `host-tool-denial-v2` so resident sessions re-fingerprint instead of silently keeping the old denial text; because `toolsetHash` is also persisted in the restart sidecar, the first admission after upgrading cold-seeds once (`flatten` / `options_changed`) instead of resuming the pre-bump SDK session - intended, pinned by `claude-sdk-oauth-fingerprint.test.ts`. PreToolUse still denies with `continue: false` and `permissionDecisionReason`; there is no Stop hook.
+- `session-sync.ts`: `configFingerprint` still hashes `hostToolPolicy: HOST_TOOL_POLICY_FINGERPRINT` into `toolsetHash`; the bump is what makes a wording-only denial change retire live queries via `options_changed`.
+
+### Why
+
+- senpi#784 / oh-my-openagent#7115: agents diagnosed "Do not retry with other tools; end the turn." as a failure and retried with other tools. The denial is not a failure - Senpi executes the captured call and returns the result as the next user message. A wording-only change without bumping the fingerprint would leave resident queries serving the old reason.
+
+### Why an extension could not handle it
+
+- Host-tool denial hooks and the session fingerprint are private to this builtin provider; no extension hook sees `permissionDecisionReason` or `toolsetHash`.
+
+### Expected merge conflict zones
+
+- LOW: `tools.ts` denial constants and `HOST_TOOL_POLICY_FINGERPRINT`.
+- LOW: `session-sync.ts` `configFingerprint` `hostToolPolicy` field.
+### What changed
+
+- `auth-lane.ts`: `managedPool` no longer folds an empty account pool into the ambient return. The ambient lane still returns `undefined` and spawns the host Claude CLI lane; an explicit or resolved managed lane (`oauth-slots`, `config-dir`) with zero stored and zero environment accounts now throws `NO_MANAGED_ACCOUNTS_ERROR` (`authentication_failed: No Claude SDK OAuth accounts configured for the managed lane; run /login claude-sdk-oauth or set CLAUDE_CODE_OAUTH_TOKEN`) before any subprocess is spawned.
+
+### Why
+
+- After `/logout claude-sdk-oauth` (or with a hand-written `tokenInjection: "oauth-slots"` and no slots), the combined `lane === "ambient" || accounts.length === 0` guard returned `undefined`, and `queryWithAuthLane` then built an ambient child environment and ran the SDK against whatever the host `claude` CLI happened to be logged into. A user who chose a managed lane silently got answers billed to an unrelated local Claude login, and `/logout` was not authoritative. The availability predicate in `oauth-login.ts` can hide the provider, but `streamClaudeSdkOauth` reaches `queryWithAuthLane` directly, so the spawn path had to refuse on its own.
+- The ambient default of oh-my-openagent#6784 is preserved deliberately: unset `tokenInjection` with an empty store still resolves to `ambient` through `resolveEffectiveLane` and keeps spawning ambiently.
+
+### Why an extension could not handle it
+
+- Lane resolution and the pre-spawn credential decision live inside this builtin provider's `managedPool`/`queryWithAuthLane`; no extension hook runs between lane selection and the SDK subprocess spawn.
+
+### Expected merge conflict zones
+
+- LOW in `auth-lane.ts` around the `managedPool` lane guard (one condition split into two statements plus one module-level message constant).
+## 2026-09-03 - Never resume an SDK session id the SDK never acknowledged
+
+### What changed
+
+- `session-registry.ts`: `ClaudeSdkOauthSessionEntry.sdkSessionIdConfirmed` records whether the SDK acknowledged the entry's session id; entries created from a resume start confirmed, entries whose id `getOrCreate` minted locally start unconfirmed.
+- `session-registry-pump.ts`: a `system`/`init` message and the replay echo that claims the turn both mark the entry confirmed (either proves Claude Code runs under that id).
+- `session-reattach.ts`: `ContinuityBinding.sdkSessionIdConfirmed` carries the flag; `bindingFromEntry` copies it.
+- `session-turn-attempt.ts`: bindings are published with the flag instead of silently; an attempt whose failure says `No conversation found with session ID` forgets the binding outright, because Claude Code has declared the bound id dead.
+- `session-continuity.ts`: `withoutUnconfirmedResume` turns a `reattach`/`fork` decision on an unconfirmed binding into `flatten` with the new reason `session_unconfirmed`; same-turn retry checkpoints (`timeout_retry`) are unaffected because they never resume the id.
+- `session-observability.ts`: `ContinuityReason` gains `session_unconfirmed`.
+
+### Why
+
+- oh-my-openagent#7562: switching a long session to `claude-sdk-oauth` cold-seeds with a locally minted id; when that first attempt fails before Claude Code echoes anything (result before replay claim, API error), the retry checkpoint still carried the unconfirmed id, the next turn chose `reattach`, Claude Code answered `No conversation found with session ID`, and every later turn repeated the cycle with zero usage. Resuming is now gated on acknowledgement, and an id Claude Code reports missing is dropped instead of retried.
+
+### Why an extension could not handle it
+
+- Continuity decisions and binding publication are private to this builtin's resident-session lane; no extension hook sees the `init`/replay frames or the binding map.
+
+### Expected merge conflict zones
+
+- LOW: `session-continuity.ts` `decideNativeContinuity` entry branch, `session-turn-attempt.ts` publish/catch paths, `session-registry-pump.ts` init/claim handling, the `ContinuityReason` union.
+## 2026-09-03 - Map malformed content entries to text instead of broken image blocks
+
+### What changed
+
+- `content-blocks.ts`: new shared `appendSdkContentBlocks` mapper. Raw string entries become text blocks, well-formed images keep `media_type`/`data`, and anything else becomes an omission placeholder.
+- `prompt-bridge.ts`: flatten `appendContentBlocks` delegates to the shared mapper and keeps hasText / "(see attached image)" semantics.
+- `session-sync.ts`: resident delta `appendContent` delegates to the same mapper and ignores the boolean.
+
+### Why
+
+- Persisted tool results can include raw strings (OmO formatter notes mixed into `toolResult` content). Both bridges treated every non-`text` entry as a base64 image, so a string became `{type:"image", source:{media_type: undefined, data: undefined}}` and Claude Code aborted the next query with a Buffer/string type error ([oh-my-openagent#7660](https://github.com/code-yeongyu/oh-my-openagent/issues/7660)).
+
+### Why an extension could not handle it
+
+- Flatten and resident-delta content-block mapping are private to this builtin provider. An external extension cannot rewrite those SDK blocks after they are assembled.
+
+### Expected merge conflict zones
+
+- LOW in `prompt-bridge.ts` around `appendContentBlocks`.
+- LOW in `session-sync.ts` around `appendContent`.
+- NEW file `content-blocks.ts`.
+## 2026-09-03 - Accept a rotation-projected OAuth slot as configured
+## Surface SDK error text and classify is_error results (2026-09-03)
+
+### What changed
+
+- `oauth-login.ts`: the `configuredFor` predicate behind `check` and `resolveAmbient` counts a stored credential whose top-level OAuth fields are concrete (neither `access` nor `refresh` is the managed sentinel) as one account, in addition to the `accounts` array and environment tokens. A projected sentinel still counts as zero, so the ambient opt-in path is unchanged.
+
+### Why
+
+- Shared credential rotation projects one named slot onto the flat credential shape and strips `accounts` before handing the credential to the provider. The predicate only counted `accounts`, so a projected concrete slot counted as zero accounts and the provider reported "Provider is not configured: claude-sdk-oauth" — which a user hit as a failing second login.
+
+### Why an extension could not handle it
+
+- This IS the extension side: the availability predicate lives in this builtin provider's auth config and runs before any request-scoped hook.
+
+### Expected merge conflict zones
+
+- LOW: `oauth-login.ts` around the `accountCount` computation in `configuredFor`. The same hunk appears in the open PRs #1304 and #1196.
+- `errors.ts`: added shared extraction for assistant text and `is_error` result failures, transport classification, and SDK code classifications.
+- `auth-lane.ts`: shared SDK failure extraction now carries real text, and transient token refresh failures are marked as server errors instead of permanent auth errors.
+- `stream.ts`: assistant and result failures terminate ambient streams with their actual text.
+- `session-registry-pump.ts`: `is_error` results reject and close claimed resident turns.
+- `session-turn-attempt.ts`: only genuine successful results record a successful turn.
+- `guidance.ts`: added version-floor and model-not-found remediation guidance.
+- `stream-guidance.ts`: appends actionable binary guidance to surfaced SDK errors.
+
+### Why
+
+- Claude Code emits useful API text beside a bare `unknown` assistant error and can mark an otherwise `success` result as `is_error`; losing either signal hides version failures and prevents session-limit and API-error failover.
+
+### Why an extension could not handle it
+
+- These SDK messages are classified inside the builtin provider's ambient stream, managed auth lane, and resident session pump before any extension-facing result exists.
+
+### Expected merge conflict zones
+
+- MEDIUM in `errors.ts`, `auth-lane.ts`, and `stream.ts` around SDK message failure extraction.
+- LOW in `session-registry-pump.ts`, `session-turn-attempt.ts`, `guidance.ts`, and `stream-guidance.ts`.
+## 2026-09-02 - Honor tool-less summarization requests
+
+### What changed
+
+- The non-resident Claude SDK OAuth lane maps explicit `toolChoice: "none"` requests to `tools: []`, strict MCP configuration, and `maxTurns: 1`, and skips the custom-tools MCP server. Empty tool contexts also send `tools: []` without changing strict MCP, turn limits, or normal MCP behavior.
+
+### Why
+
+- Compaction's tool-use-hijack retry forbids tool calls with `toolChoice: "none"`. The lane previously ignored that option and still offered host-denied built-in and custom tools, causing an empty summary instead of allowing the retry to produce text.
+
+### Why an extension could not handle it
+
+- The SDK query options and custom MCP server are assembled inside this builtin provider lane before the SDK boundary. An external extension cannot alter those request-scoped options after provider dispatch.
+
+### Expected merge conflict zones
+
+- LOW in `options.ts` around `buildClaudeSdkOauthQueryOptions` tool selection and strict MCP configuration.
+- LOW in `stream.ts` around non-resident custom MCP server construction.
+
+
+## 2026-09-02 - Count SDK api_retry as stream liveness
+
+### What changed
+
+- Regression coverage pins that `system/api_retry` is the first stream event on both query and resident-pump paths.
+
+### Why
+
+- SDK retry notices prove the provider stream is alive and must prevent a false stream-start timeout before assistant content arrives.
+
+### Why an extension could not handle it
+
+- The SDK message-to-stream event boundary is internal to the builtin claude-sdk-oauth lane.
+
+### Expected merge conflict zones
+
+- LOW: claude-sdk-oauth stream regression tests.
+
+## 2026-08-21 - Cache provider settings loads by mtime+size to cut lock convoy
+
+### What changed
+
+- `settings.ts`: `loadClaudeSdkOauthProviderSettingsFromDisk` caches the `SettingsManager` instance keyed on (cwd, mtimeMs:size of the global and project settings.json). A cache hit skips `SettingsManager.create` and its two locked disk reads; environment overrides are re-parsed on every call so live env changes take effect immediately.
+
+### Why
+
+- `fallbackEligible()` calls this loader on every retry-fallback candidate probe. A fresh `SettingsManager` per call took the cross-process settings lock twice; under error storms this multiplied into hundreds of locked disk reads per session per error, driving the lock-retry busy-wait (fixed in core) that froze the TUI.
+
+### Why an extension could not handle it
+
+- This IS the extension side: the cache is local to the provider settings loader.
+
+### Expected merge conflict zones
+
+- `settings.ts` around `loadClaudeSdkOauthProviderSettingsFromDisk`.
+
+
+## 2026-08-20 - Terminate policy refusals without waiting for the stream watchdog
+
+### What changed
+
+- `refusal.ts` recognizes the pinned SDK's terminal `system/model_refusal_no_fallback` message and its documented
+  older assistant `message.stop_reason: "refusal"` shape, preserving the policy category and display explanation in a
+  typed terminal error. The fallback-retry notice remains non-terminal.
+- `auth-lane.ts` classifies that error as non-retryable before account failover, `stream.ts` terminates non-resident
+  streams immediately, and `session-registry-pump.ts` settles and closes a resident turn without reading another SDK
+  message.
+- `test/claude-sdk-oauth-refusal.test.ts` covers structured ambient and resident refusals plus the legacy assistant
+  frame, with iterators that fail if consumption proceeds past the refusal.
+
+### Why
+
+Claude policy and cybersecurity refusals can end without an SDK `result` message. The resident pump treated the
+refusal notice as an ordinary message and kept waiting for a result, so the provider watchdog fired about 90 seconds
+later and the timeout retry ladder re-sent the paid conversation. Refusal is a terminal model decision, not a
+stream-start transport failure or an account failover condition.
+
+### Why an extension could not handle it
+
+The dropped signal sits inside this builtin provider's private SDK message consumer and resident query pump. No
+external extension hook can settle the active resident turn or prevent its timeout retry after the SDK message has
+been consumed here.
+
+### Expected merge conflict zones
+
+- LOW in `auth-lane.ts` at `sdkFailure`, `stream.ts` at the SDK message loop, and `session-registry-pump.ts` at active
+  turn message handling.
+
+## 2026-08-20 - Same-turn timeout retries fork at the pre-turn boundary (issue #723)
+
+### What changed
+
+- `session-reattach.ts`: `ContinuityBinding` gained an optional in-memory-only `unansweredTurnDigest`. It
+  rides the existing clone/remember paths but is NEVER persisted: `storedBindingFromEntry`
+  (`session-binding.ts`) builds the sidecar record from an explicit field list, and the strict
+  `schemaVersion: 1` schema (`session-binding-store.ts`) rejects any record carrying it.
+  Tests: `test/claude-sdk-oauth-binding-store.test.ts` (round-trip rejects it).
+- `session-turn-attempt.ts`: an attempt that pushed its user payload but ended aborted, failed, or
+  discarded now remembers a retry checkpoint binding anchored at the PRE-TURN boundary
+  (`bindingFromEntry(entry, hashes.slice(0, entry.sentCount))` + the attempted turn's full sent-stream
+  digest). Covers the `turn.aborted` resolution, the queue-failure (completion rejected) path, and
+  `discard()` before `closeSession`.
+- `session-continuity.ts`: `decideFromBinding` gains a branch ahead of the existing prefix logic — when
+  the binding carries a checkpoint, the FULL current sent stream hashes to it, and the prefix at
+  `binding.sentCount` matches, it returns `fork` at `binding.lastAssistantUuid` (`reason:
+  "timeout_retry"`), or the cold-seed `flatten` with the same reason when no boundary exists (first
+  turn). A digest mismatch falls through to the pre-existing branches unchanged.
+- `session-observability.ts`: `ContinuityReason` union and the sanitizer allowlist admit
+  `timeout_retry`. No new event types; one observation per main turn is preserved.
+- Tests: `test/suite/regressions/723-claude-sdk-oauth-timeout-abort-retry-continuity.test.ts`,
+  `test/claude-sdk-oauth-continuity-decision.test.ts`, `test/claude-sdk-oauth-continuity-retry-checkpoint.test.ts`.
+
+### Why
+
+A stream-start-timeout abort closes the SDK session with the turn's user message already appended and
+  un-answered. The retry then re-attached to that lineage and appended the SAME message again — one
+  duplicate per attempt, ~8K tokens of cache re-billing per attempt, and for a first turn (no assistant
+  boundary, binding absent) a full re-flatten of the whole conversation at full price on every attempt
+  (issue #723: $25 per 6 minutes, $1084 over 3 days on worker dispatch). Forking at the pre-turn
+  boundary rewinds past the orphaned message, so the retry's request byte-layout matches the failed
+  attempt's and the provider serves it from prefix cache; a first turn re-seeds byte-identically
+  (flatten is a deterministic function of context), which is likewise cache-read after the first write.
+
+### Why an extension could not handle it
+
+- The retry checkpoint must be recorded where the attempt's outcome is known (`session-turn-attempt.ts`)
+  and consumed by the resident-lane continuity decision table (`session-continuity.ts`) — both are
+  internal to this builtin's resident session machinery; no extension hook observes attempt outcomes or
+  continuity bindings.
+
+### Expected merge conflict zones
+
+- `session-continuity.ts` in `decideFromBinding` (head of the function) — upstream continuity reworks
+  touch the same function.
+- `session-turn-attempt.ts` attempt-outcome block and `discard()` — same file upstream reworked in the
+  2026-08-01 continuity pass.
+- `session-reattach.ts` `ContinuityBinding` field list.
+- `session-observability.ts` `ContinuityReason` union tail and `SANITIZED_REASONS` set (mechanically
+  duplicated literals; both must gain the member).
+
+## 2026-08-20 - SDK bundle loads on first stream instead of at CLI startup
+
+### What changed
+
+- New `sdk-boundary.lazy.ts` owns the single deferred `import("@anthropic-ai/claude-agent-sdk")`, caching the
+  module and sharing one in-flight promise across concurrent callers. `sdk-boundary.ts` keeps its synchronous
+  `getSdkBoundary()` surface and re-exports `loadClaudeAgentSdk`; its default members read the loaded module
+  (`getSessionMessages` is async and self-loads, `query` / `createSdkMcpServer` are synchronous SDK functions
+  and therefore require the preload). Its exported types are now derived from the loader's module type instead
+  of from value imports.
+- The three async entry points that reach a synchronous SDK member now await the loader first:
+  `stream.ts` (`streamClaudeSdkOauth`, before `getSdkBoundary().query` and the resident-session lane),
+  `session-reattach.ts` (`reattachSession`, before `getOrCreateSession` builds a query), and `custom-tools.ts`
+  (`buildCustomToolServers`, now async, before `createSdkMcpServer`). A future call site that skips the preload
+  fails with a named error at that call rather than silently restoring the startup import.
+- The tiny `@anthropic-ai/claude-agent-sdk/extract` entrypoint used by `executable.ts` is unaffected and stays
+  a static import; only the 1.2 MB `sdk.mjs` bundle moved.
+
+### Why
+
+- Importing `dist/main.js` is roughly 70% of CLI boot wall time, and the SDK bundle was parsed and evaluated on
+  every start even though only the claude-sdk-oauth streaming lane ever calls into it. Deferring it removes that
+  cost from every run that never opens a Claude SDK stream, with no behavior change for runs that do.
+
+### Why an extension could not handle it
+
+- The static import lives in this builtin provider's own SDK boundary module. An extension cannot remove an
+  import edge from a module the core already loads, and re-registering the provider id would fork the auth lane,
+  session registry, and failover wiring that live here.
+
+### Expected merge conflict zones
+
+- MEDIUM in `sdk-boundary.ts`: the import block and the `defaultSdkBoundary` literal, which upstream also touches
+  when adding SDK members. A new member must be added to `sdk-boundary.lazy.ts`'s module projection as well.
+- LOW in `stream.ts` and `session-reattach.ts` at the first statement of the async body (the added `await`).
+- LOW in `custom-tools.ts` at the `buildCustomToolServers` signature, now async.
+
+## 2026-08-19 - Kill-switched lane leaves implicit fallback expansion
+
+### What changed
+
+- `index.ts`: the provider registration passes `fallbackEligible`, returning false only under the
+  verbatim `enabled: false` kill switch. An absent flag and unreadable settings stay eligible, so an
+  explicit senpi-side login keeps the lane in bare-family fallback expansion.
+  Tests: `test/suite/claude-sdk-oauth-fallback-eligibility.test.ts`.
+
+### Why
+
+- Bare expansion ranked lanes by credential only; a kill-switched lane could still consume an expansion
+  slot it is guaranteed to refuse (see `core/extensions/changes.md` 2026-08-19).
+
+### Why an extension could not handle it
+
+- This IS the extension side of the `ProviderConfig.fallbackEligible` registration field.
+
+### Expected merge conflict zones
+
+- `index.ts` provider registration object.
+ extension changes
+
+## 2026-08-19 - Ambient auth lane requires an explicit opt-in
+
+### What changed
+
+- New provider setting `claudeSdkOauthProvider.enabled` (boolean, absent means false) plus the matching
+  `SENPI_CLAUDE_SDK_OAUTH_ENABLED` env var (`1`/`true`/`0`/`false`, case-insensitive), parsed in `settings.ts` with the
+  same boolean style the cursor-cli-oauth sibling uses. It follows the directory's standing precedence rule:
+  env > project settings > global settings > default.
+- `configuredFor` in `oauth-login.ts` now gates **only** the ambient branch: when the resolved lane is `ambient` and no
+  `CLAUDE_CODE_OAUTH_TOKEN*` env account exists, it returns false unless the flag is true, instead of probing the host
+  Claude CLI. It remains the single predicate behind both `check` and `resolveAmbient`, so availability and resolution
+  still cannot disagree.
+- Stored auth.json accounts and env OAuth tokens stay available with the flag unset: an explicit senpi-side login is
+  itself the opt-in, so this is not a regression for anyone who ran `/claude-account` or exported a token.
+- `index.ts` widens its deliberately narrow `readSettings` projection from `{ tokenInjection }` to
+  `{ tokenInjection, enabled }` so the flag reaches the predicate, and accepts an optional `readSettings` extension dep
+  (alongside the existing `readAmbientAuthStatus`) so tests can declare a settings block without touching disk.
+
+### Why
+
+- The provider reported itself AVAILABLE merely because the host's Claude Code CLI happened to be logged in: the
+  SDK-bundled `claude` binary exits 0 for `auth status`, so on any Mac with Claude Code installed senpi silently spent
+  the user's Claude Pro/Max subscription with zero senpi-side consent. Host state is not consent; opt-in must be
+  explicit and default to off.
+
+### Why an extension could not handle it
+
+- The predicate is the builtin provider's own `oauth.check` / `oauth.resolveAmbient` pair, constructed inside
+  `createOAuthConfig`. An external extension cannot narrow another provider's availability without re-registering the
+  provider id, and doing so would fork the auth lane, session registry, and failover wiring that live here.
+
+### Expected merge-conflict zones
+
+- LOW in `settings.ts` (`ClaudeSdkOauthProviderSettings` field list, `parseProviderSettings` and
+  `parseEnvironmentSettings` return literals - upstream additions land in the same two literals).
+- MEDIUM in `oauth-login.ts` at the `configuredFor` ambient branch, which upstream also touches for lane selection.
+- LOW in `index.ts` at the `createOAuthConfig` deps literal.
+- LOW in `test/support/claude-sdk-oauth-provider.ts` (`composedProvider` gained a third `settings` parameter) and in the
+  ambient tests that now pass `{ enabled: true }`.
+
+## 2026-08-18 - Anchor restart records at branch state (issue #6981 review)
+
+### What changed
+
+- The persisted record is derived from the resident registry entry plus the sent-hashes the branch actually carries.
+  The process binding map is no longer read at `message_end`: it holds the previous turn's state while that handler
+  runs, and only a prefix digest right after a restart, so reading it anchored this turn's marker to a stale or absent
+  sent-stream (duplicate resend after restart) or threw on the restored shape (orphaned marker, silent flatten on the
+  next restart).
+- The safe-suffix allowlist now admits the whole display-only metadata family the co-resident builtins append after a
+  committed assistant: stop-hook state/diagnostics/output, rule activations, and rule scans. Previously a project with
+  a Stop hook emitting diagnostics or output failed restore on every restart.
+- Records are keyed and compared by canonical session path, so a symlinked directory or another spelling of the same
+  file resolves to one sidecar instead of silently losing the binding.
+- A non-`clean` commit outcome no longer anchors a record, an orphaned record whose session id does not match is
+  deleted rather than left on disk, and the pending-fork labels that lost their producers are gone.
+- `session_before_fork` no longer records a taint: forks mint a new session id and file, so the taint was unreachable;
+  `session_start(fork)` invalidation plus path/session binding is what isolates a fork.
+
+### Declared residuals
+
+- Branch-derived hashes decline to anchor when a compaction boundary sits on the branch: the walk is not
+  compaction-aware while admission compares against the compaction-truncated context, so anchoring across a boundary
+  would inflate `sentCount` and flatten every later restart. Declining leaves restart resume unavailable for that
+  session instead of silently wrong. Not reachable while this lane is active (the lane stands senpi compaction down),
+  so it needs a compaction entry from another provider's turns, a legacy version, or an imported file.
+- `isContentlessUserMessage` matches only a literal zero-length array, while the context path normalizes a null or
+  missing `content` to an empty array before filtering. A legacy, imported, or hand-edited message with a null
+  `content` therefore diverges between the two derivations. It fails closed (cold-seed), and it is the same untrusted
+  input class the trust boundary covers.
+- `verifyRestoredTranscript` requires the stored assistant boundary to exist in the transcript, not to be its tip.
+- A `custom_message` or `branch_summary` entry shifts the same way: the context path converts both to a user message
+  and hashes them, while the branch walk skips them because they persist as their own entry types rather than as
+  `message`. The branch therefore under-counts, never over-counts, so a restart either flattens (divergence inside the
+  anchored prefix) or re-sends the later messages as delta (divergence after it). The cost is a lost cache, not a
+  wrong resume, and unlike the compaction residual it self-corrects rather than persisting.
+
+### Trust boundary
+
+- The session JSONL is untrusted input (it can be imported, hand-edited, or copied) and carries only a capability-free
+  marker. The sidecar is the trusted store: mode 0600, strict schema, bounded size, keyed to one canonical session
+  path and session id. Integrity rests on same-user file ownership, the same boundary as the SDK's own config dir.
+
+### Cost
+
+- Each committed assistant appends one small marker entry to the session file and rewrites the fixed-size sidecar, so
+  session files grow by one marker per assistant message (several per tool-loop turn) while the record itself stays
+  constant-size regardless of conversation length.
+
+## 2026-08-18 - Persist restart bindings for headless continuation (issue #6981)
+
+### What changed
+
+- Successful resident turns append a capability-free branch marker and atomically replace a private, fixed-size
+  sidecar containing the SDK lineage, sent-prefix digest, assistant hash/boundary, identity, and prompt/tool
+  fingerprints.
+- Startup/resume restores only when the sidecar belongs to the current session file and header, its exact marker and
+  adjacent committed assistant remain on the active branch, and the local SDK transcript still contains the stored
+  top-level assistant boundary. Imported JSONL and legacy custom payloads are never lineage authority.
+- Provider exits, assistant rewrites, accepted compaction, forks, tree navigation, and extension removal delete
+  durable and process state. Persisted identity drift and config-dir transcript roots fail closed; reload retains the
+  fresher process binding, and nested binding state is copied at the registry boundary.
+
+### Why
+
+- `omo -p -c` restores the Senpi JSONL session in a new process, but the SDK registry and binding maps are module
+  memory. The existing checkpoint parser was never wired into runtime append or restore, so every headless
+  continuation started without a binding and re-sent the full conversation with `registry_miss`.
+
+### Why an extension could not handle it
+
+- The binding contains private SDK lineage and sent-stream hashes created inside this builtin provider. No external
+  extension can reconstruct that state after the provider process exits.
+
+### Expected merge-conflict zones
+
+- MEDIUM in `session-binding.ts`, `session-binding-store.ts`, `session-registry-wiring.ts`,
+  `session-continuity.ts`, `session-reattach.ts`, and `session-stream.ts`; LOW in their focused tests and issue #6981
+  regression.
+
+## 2026-08-18 - Select the Claude binary for the host libc
+
+### What changed
+
+- Linux executable resolution now tries the glibc package first on glibc hosts and when libc detection is unavailable, and tries the musl package first only when `process.report` identifies musl.
+- The libc detector is injectable for deterministic coverage, while the non-preferred Linux package remains a fallback and `CLAUDE_CODE_EXECUTABLE` remains the highest-priority override.
+
+### Why
+
+- The resolver previously selected the musl package first on every Linux host. When both optional packages were installed on glibc, the chosen binary exited with code 127 because `/lib/ld-musl-*` was unavailable.
+
+### Why an extension could not handle it
+
+- The executable path is resolved inside this builtin provider before SDK query construction and ambient authentication probes; no external extension hook can replace that private boundary.
+
+### Expected merge conflict zones
+
+- LOW: `executable.ts` around Linux candidate ordering and default dependency detection.
+
+## Repository audit baseline for the claude-sdk-oauth tracker (2026-08-17)
+
+### What changed
+
+- This entry is the canonical inventory for the repository-wide changes.md audit (`scripts/audit-changes-md.mjs`, pin
+  `914cf1472e715297caa30db4b9535d534a9eb718`). The audited production paths whose exact nearest tracker is this file:
+  none — every file under `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/` is fork-only (absent
+  from the pinned upstream tree), so the audit assigns this tracker no upstream-owned divergence.
+- Two leftover diff3 conflict-separator lines were removed from the historical entries below; the surrounding
+  history is preserved unchanged.
+
+### Why
+
+- Anchoring the tracker in canonical four-section form keeps future divergences under this directory resolvable by
+  the audit gate, and stray conflict markers would corrupt any future structural pass over the history.
+
+### Why an extension could not handle it
+
+- Tracker coverage is repository and release policy, not runtime behavior; it is enforced by repository scripts before
+  any extension loader exists.
+
+### Expected merge conflict zones
+
+- NONE: this tracker is fork-only (upstream has no counterpart file).
+
+## 2026-08-14 - Preserve effective ambient request authentication
+
+### What changed
+
+- Ambient resolution now returns the effective `CLAUDE_CODE_OAUTH_TOKEN` slot environment with its sentinel auth result.
+- Both resident and non-resident SDK lanes pass only Claude OAuth request slots into account discovery and subprocess environment construction.
+- A request token namespace replaces host token slots instead of joining them, and unrelated request values such as `PATH`, `HOME`, or `NODE_OPTIONS` cannot cross the SDK child boundary.
+- Present-but-empty request token slots remain in the effective environment returned with the synthetic auth marker, so replay cannot substitute a host token.
+- Ambient resolution receives the raw request environment and applies Claude token slots as one namespace. Masking the primary slot therefore cannot import a host secondary slot, and masking a numbered slot cannot import the host primary slot.
+- A request token configured with `tokenInjection: "config-dir"` is routed through the non-persisting OAuth environment lane instead of being written into the stable agent credential directory.
+- Explicit ambient injection treats request token slots as configured without probing host Claude login state.
+- Availability probes reject pre-aborted cold callers, keep one in-flight owner across TTL boundaries, and timestamp only settled cache results.
+- Focused coverage drives request tokens through stored/ambient auth, true ambient and resident lanes, real session-title generation, and captured SDK subprocess options while a different host token is present.
+
+### Why
+
+- Request-scoped environment overrides were accepted during availability resolution but discarded before SDK spawn, widened to unrelated process-control values, persisted under `config-dir`, or merged per variable so a different host token slot survived an explicit mask. Empty masks were also dropped before replay. The child could inherit or fail over to a host account, cross account and billing boundaries, persist a request secret, or accept request-controlled Node startup configuration.
+- A pre-aborted caller could start and populate a shared probe, while a long-running probe could be duplicated once its future cache TTL elapsed.
+
+### Why an extension could not handle it
+
+- The effective credential crosses the builtin provider's private auth resolver, resident-session adapter, availability cache, and SDK subprocess boundary. No external hook can restore or safely narrow it after those boundaries.
+
+### Expected merge-conflict zones
+
+- MEDIUM: `oauth-login.ts` around ambient resolution, `auth-lane.ts` plus `auth-environment.ts` around environment/account discovery, `config-dir-credentials.ts` around persistent managed-account materialization, and `availability.ts` around in-flight/cache ownership.
+- LOW: `stream.ts` and `session-stream.ts` where request options enter the auth lane.
 
 ## 2026-08-14 - Pin native auto-compaction on the SDK lane
 
@@ -46,6 +855,24 @@
 ### Expected merge-conflict zones
 
 - LOW: `session-registry-wiring.ts` at the `session_compact` handler and its focused wiring test.
+
+
+## 2026-08-14 - Hide ambient auth probes on Windows
+
+### What changed
+
+- `readAmbientClaudeAuthStatus()` now passes `windowsHide: true` when spawning
+  `claude auth status`, preventing the availability check from opening a console
+  window on Windows.
+- Merged with the bounded ambient probe: `windowsHide` moved onto the default
+  `spawnProbe`, so the injected-spawn path and the real spawn stay identical.
+- `claude-sdk-oauth-availability.test.ts` drives the two outcome cases through
+  `probeAmbientClaudeAuthStatus` instead of the reader, because the reader
+  memoises for 30s and would replay the first probe's `true` to both.
+
+### Expected merge-conflict zones
+
+- LOW: `availability.ts` spawn options.
 
 ## 2026-08-13 - Preserve request cancellation through OAuth refresh
 
@@ -97,6 +924,60 @@ The lane decision lives inside the builtin provider's own `queryWithAuthLane`/`m
 
 LOW in `auth-lane.ts` (new `resolveEffectiveLane` + `managedPool` lane resolution); LOW in `oauth-login.ts` (`readSettings` dep + lane-aware `check`); LOW in `index.ts` (one new import + `readSettings` wiring); LOW in `options.ts` (one fallback literal). LOW in `test/claude-sdk-oauth-auth-status.test.ts` and `test/suite/regressions/6784-claude-sdk-oauth-default-lane.test.ts`.
 
+## 2026-08-13 - Bound the ambient probe and let an abandoned request stop waiting
+
+### What changed
+
+- `probeAmbientClaudeAuthStatus` runs under a 10s deadline, killing the status child and reporting unavailable
+  when it expires. The probe accepts an injected spawn so the deadline is covered without a real subprocess.
+- The reader returned by `createAmbientAuthStatusReader` takes an optional `AbortSignal` and rejects for THAT
+  caller once its request is abandoned. The shared probe keeps running for the callers still waiting on it.
+- `check()` and `resolveAmbient()` thread the signal supplied by `ApiKeyAuth`, so both paths through
+  `configuredFor()` are bounded.
+
+### Why
+
+- `claude auth status` validates credentials and can stall. The probe sits on the auth path of every request and
+  its result is shared, so one stall parked every caller that joined it, with no deadline and no way for an
+  aborted turn to walk away. Model calls waited behind auth resolution that could never settle.
+- Cancelling the shared probe on one caller's abort would be the wrong repair: it would cancel work another live
+  request is waiting on. Only the individual wait is abandoned.
+
+### Why an extension could not handle it
+
+- The probe and its cache live inside this builtin provider, behind `Models.getAuth()`. No external hook observes
+  that boundary or the per-request signal reaching it.
+
+### Expected merge-conflict zones
+
+- LOW: `availability.ts` around the reader and probe signatures.
+- LOW: `oauth-login.ts` at `configuredFor`, `check`, and `resolveAmbient` parameter lists.
+
+## 2026-08-12 - Restore request auth for the ambient lane
+
+- Regression from 2acbb6e0c ("Require a real OAuth login for runtime availability"), which removed the
+  `apiKey: "claude-sdk-oauth-managed"` registration placeholder. That placeholder was the provider's only route to
+  api-key auth, and `resolveProviderAuth()` reads ambient credentials exclusively through `apiKey.resolve()`.
+  Removing it left the provider registering `oauth` alone, so with no stored account every request failed
+  `Provider is not configured: claude-sdk-oauth` — including the automatic `session_title_generation` call, which
+  surfaced the error on session start before the user typed anything.
+- The availability check kept accepting an environment token or a logged-in Claude CLI, so those users still had
+  `claude-sdk-oauth` models offered and selected. Availability and resolution disagreed, and no configuration could
+  fix it: only a stored credential was ever consulted, while `queryWithAuthLane` has always supported an `ambient`
+  lane that `managedPool` selects by default.
+- `createOAuthConfig` now exposes `resolveAmbient()`, returning the sentinel access field when the provider is
+  usable without a stored credential. `check()` and `resolveAmbient()` share one `configuredFor()` predicate — the
+  lane resolution introduced by the entry above, factored out — so availability and resolution cannot drift apart
+  again. This does not restore the false availability 2acbb6e0c fixed: resolution applies the same lane rules and
+  the same real probe as `check()`, where the removed literal reported configured unconditionally.
+- `availability.ts` memoises the ambient probe (30s TTL, shared in-flight read, rejections uncached). The probe
+  spawns the Claude binary at roughly 200-650ms and now sits on the per-request auth path rather than only on
+  catalog refresh.
+- This cannot be implemented by an external extension: the composer discards a provider's ambient credentials
+  before `Models.getAuth()` runs, so the resolution path must exist in provider composition.
+- Expected merge conflict zones: LOW in `oauth-login.ts` and `availability.ts`; LOW in the focused ambient
+  resolution and probe-cache tests.
+
 ## 2026-08-11 - Require a real OAuth login for runtime availability
 
 - Removed the literal `apiKey: "claude-sdk-oauth-managed"` registration placeholder. Provider composition treated
@@ -134,6 +1015,23 @@ The stored-OAuth branch in `ModelsImpl.checkProviderAuth` is a structural short-
 ### Expected merge-conflict zones
 
 LOW in `oauth-login.ts` (added `check` to the returned shape + optional `readSettings` dep); LOW in `index.ts` (one added `readSettings` line); LOW in `provider-composer.ts` (`ExtensionOAuthConfig.check` + `adaptOAuth` forwarding, both additive).
+
+
+## 2026-08-10 - Ignore content-less user messages in sent-stream continuity
+
+- `sentMessages()` now drops user messages whose `content` array is empty. Such a message carries nothing to transmit
+  and is transient: it is present for a single provider call and gone by the next. Hashing one shifted every later
+  index, so the following turn reported `sent_stream_diverged` and re-sent the entire history even though the
+  conversation had not changed.
+- Observed live on `2026.8.9-2`: consecutive prefix snapshots of one session held 203 messages both times, with the
+  only difference an empty user message at index 201 that vanished on the next call, forcing a 203-message flatten.
+- Tool results are never filtered. An empty tool result is a real observation, and its `toolCallId` and `toolName`
+  stay hash-significant, so genuine rewrites of already-sent history still resolve to `sent_stream_diverged`.
+- This cannot be implemented by an external extension: the transmitted set is computed inside the builtin provider
+  before session-registry continuity is decided, and no extension hook can replace it.
+- Added `test/suite/regressions/790-claude-sdk-oauth-empty-user-continuity.test.ts` covering the transient empty
+  message, a plain append, a genuine rewrite, and the filter itself.
+- Expected merge conflict zones: LOW in `session-sync.ts` (`sentMessages`); LOW in the new regression test.
 
 ## 2026-08-07 - Ignore volatile thinking timing in continuity hashes
 
@@ -173,7 +1071,7 @@ LOW in `oauth-login.ts` (added `check` to the returned shape + optional `readSet
 - **Abort.** `interrupt()` receipts gate the outcome: `still_queued: []` keeps the live session; a legacy or uncertain receipt closes the query but keeps the binding for reattach. Abort never taints and never flattens. Teardown during resume-initialization is synchronous, so an aborted initialization is torn down before the next assertion point.
 - **Fingerprint.** The generated `Current date:` line is normalized before hashing, so a UTC midnight rollover no longer retires a live conversation; cwd and every other prompt region stay fail-closed. Host tool policy is fingerprinted by an explicit `HOST_TOOL_POLICY_FINGERPRINT` version instead of callback source text, and the executable path plus `includePartialMessages` now participate.
 - **Account failover.** Shared-root lanes (`oauth-slots`, `ambient`) reattach, or fork at the last verified boundary when cross-account resume is denied. The `config-dir` lane keeps per-account credentials inside its own `CLAUDE_CONFIG_DIR` and no official SDK API moves a transcript across roots, so its failover is the one declared residual that still flattens.
-- **Restart.** A branch-local binding checkpoint records `{sdkSessionId, sentCount, sentPrefixHash, lastAssistantUuid, accountName, claudeConfigDir, modelId}`; on the first turn after a restart it is verified against the SDK transcript before resuming, forks at the boundary when the local prefix advanced, and flattens only when the transcript or boundary is gone.
+- **Restart.** A bounded branch-local checkpoint records the SDK lineage, sent-prefix digest, last assistant boundary, account/model identity, and prompt/tool fingerprints. Startup/resume restores it only when the checkpoint is followed by its committed assistant and the current prefix digest matches; malformed, invalidated, divergent, or unavailable SDK state falls back without guessing a fork boundary.
 - **Observability.** Every main turn emits exactly one continuity observation (kind + sanitized reason + delta count) as an assistant diagnostic and a structured `claude_sdk_oauth_session_continuity` `session.log` event (paired with `claude_sdk_oauth_session_close`); the TUI shows a muted notice only for degradations. `closeSession` no longer discards its reason — the retained cause is attributed to the next admission.
 - **Escape hatch.** `resumeMode: "off"` (or `SENPI_CLAUDE_SDK_OAUTH_RESUME=off`) still restores the legacy per-turn behaviour and reports `disabled` observations.
 - Merge-conflict risk: high across this directory. New modules: session-continuity.ts, session-reattach.ts, session-binding.ts, session-commit-boundary.ts, session-observability.ts, session-reaper.ts, session-entry-annotations.ts.

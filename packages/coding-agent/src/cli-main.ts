@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
+import { enableStartupCompileCache } from "./compile-cache.ts";
 import { APP_NAME } from "./config.ts";
 import { scrubBrandFromEnvironment } from "./core/brand.ts";
 import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { installEarlyInspectorVmImportRecovery } from "./inspector-policy.ts";
 import { main } from "./main.ts";
+
+// A direct `cli-main` invocation (the bun binary, `--inspect` runs, tests) has no launcher parent to
+// inherit the cache from. Enabling it here is a no-op when cli.ts already published the directory.
+enableStartupCompileCache();
 
 // Must precede the asynchronous bootstrap: with --inspect-brk, the recoverable Inspector
 // import rejection can fire before interactive mode registers its own crash handler.

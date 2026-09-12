@@ -2,7 +2,13 @@ import { type Static, Type } from "typebox";
 import { formatTerminalToolOutput } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import { safeRegExp, TERMINAL_OUTPUT_TOOL } from "../shared.ts";
-import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
+import {
+	errorResult,
+	resolveTerminalId,
+	type TerminalToolContext,
+	type TerminalToolResult,
+	textResult,
+} from "./context.ts";
 import { renderBashOutputCall, renderBashOutputResult } from "./render.ts";
 import { describeExit } from "./spawn.ts";
 
@@ -50,17 +56,31 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 			"Peek at background bash session output (filter, screen view, status); watch patterns with monitor, completion arrives as a notification",
 		parameters: bashOutputSchema,
 		async execute(_toolCallId: string, input: BashOutputInput): Promise<TerminalToolResult> {
-			const runtime = ctx.manager.get(input.bash_id);
+			const sessionId = resolveTerminalId(ctx.manager, input.bash_id);
+			const runtime = ctx.manager.get(sessionId);
 			if (!runtime) return errorResult(`No terminal session found with id: ${input.bash_id}`);
 
+			const monitorEntry = ctx.monitorRegistry?.snapshot().find((entry) => entry.id === sessionId);
+			const muted = monitorEntry?.paused === true;
+			const mutedDropped = muted ? (ctx.monitorRegistry?.mutedDropped(sessionId) ?? 0) : 0;
+			let mutedNote = "";
+			if (muted) {
+				mutedNote =
+					mutedDropped > 0
+						? `monitor muted — ${mutedDropped} line(s) dropped while muted; run monitor({ action: "rearm", bash_id: "${input.bash_id}" }) to resume.`
+						: `monitor muted; run monitor({ action: "rearm", bash_id: "${input.bash_id}" }) to resume.`;
+			}
+			const extra = monitorEntry ? { details: { monitorMuted: muted, mutedDropped } } : undefined;
+			const prefix = mutedNote.length > 0 ? `${mutedNote}\n` : "";
+
 			if (input.view === "screen") {
-				return textResult(`${statusLine(runtime)}\n${screenView(runtime)}`);
+				return textResult(`${prefix}${statusLine(runtime)}\n${screenView(runtime)}`, extra);
 			}
 
 			const delta = runtime.readDelta();
 			const formatted = formatTerminalToolOutput(applyFilter(delta.text, input.filter));
 			const dropped = delta.droppedChars > 0 ? `[${delta.droppedChars} earlier chars dropped]\n` : "";
-			return textResult(`${statusLine(runtime)}\n${dropped}${formatted.text || "(no new output)"}`);
+			return textResult(`${prefix}${statusLine(runtime)}\n${dropped}${formatted.text || "(no new output)"}`, extra);
 		},
 		renderCall: renderBashOutputCall,
 		renderResult: renderBashOutputResult,

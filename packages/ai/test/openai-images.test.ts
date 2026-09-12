@@ -21,6 +21,7 @@ vi.mock("openai", () => {
 		}
 
 		images = {
+			edit: (params: unknown, options?: unknown) => this.images.generate(params, options),
 			generate: (params: unknown, options?: unknown) => {
 				mockState.requestParams.push(params);
 				mockState.requestOptions.push(options);
@@ -37,7 +38,11 @@ vi.mock("openai", () => {
 			},
 		};
 	}
-	return { default: FakeOpenAI };
+	return {
+		default: FakeOpenAI,
+		toFile: async (bytes: Uint8Array, name: string, options: FilePropertyBag) =>
+			new File([Uint8Array.from(bytes)], name, options),
+	};
 });
 
 type ImageFixture = { b64_json?: string; url?: string; revised_prompt?: string };
@@ -137,7 +142,7 @@ describe("openai images", () => {
 			[{ input: [] }, "non-empty"],
 			[{ input: [{ type: "text", text: "   " }] }, "non-empty"],
 			[{ input: [{ type: "text", text: "x".repeat(32001) }] }, "32000"],
-			[{ input: [{ type: "image", mimeType: "image/png", data: PNG_B64 }] }, "images edit endpoint"],
+			[{ input: [{ type: "image", mimeType: "image/png", data: PNG_B64 }] }, "non-empty"],
 		];
 		for (const [input, message] of invalid) {
 			expect((await run({}, model, input)).errorMessage).toContain(message);

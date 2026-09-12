@@ -7,8 +7,10 @@
  */
 
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
+import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { kimiCodeIdentityHeaders } from "./kimi-identity.ts";
 
 const CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const DEFAULT_OAUTH_HOST = "https://auth.kimi.com";
@@ -70,6 +72,7 @@ async function startDeviceAuthorization(oauthHost: string, signal: AbortSignal):
 	const response = await fetch(`${oauthHost}/api/oauth/device_authorization`, {
 		method: "POST",
 		headers: {
+			...kimiCodeIdentityHeaders(),
 			"Content-Type": "application/x-www-form-urlencoded",
 			Accept: "application/json",
 		},
@@ -152,6 +155,7 @@ async function pollForToken(
 			const response = await fetch(`${oauthHost}/api/oauth/token`, {
 				method: "POST",
 				headers: {
+					...kimiCodeIdentityHeaders(),
 					"Content-Type": "application/x-www-form-urlencoded",
 					Accept: "application/json",
 				},
@@ -206,21 +210,6 @@ async function pollForToken(
 	});
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-	return new Promise((resolve, reject) => {
-		signal.throwIfAborted();
-		const onAbort = () => {
-			clearTimeout(timeout);
-			reject(signal.reason);
-		};
-		const timeout = setTimeout(() => {
-			signal.removeEventListener("abort", onAbort);
-			resolve();
-		}, ms);
-		signal.addEventListener("abort", onAbort, { once: true });
-	});
-}
-
 function isRetryableRefreshFailure(response: Response): boolean {
 	return response.status === 429 || response.status >= 500;
 }
@@ -240,6 +229,7 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 			response = await fetch(`${oauthHost}/api/oauth/token`, {
 				method: "POST",
 				headers: {
+					...kimiCodeIdentityHeaders(),
 					"Content-Type": "application/x-www-form-urlencoded",
 					Accept: "application/json",
 				},
@@ -305,6 +295,6 @@ export const kimiCodingOAuth: OAuthAuth = {
 	},
 
 	async toAuth(credential) {
-		return { headers: { Authorization: `Bearer ${credential.access}` } };
+		return { headers: { ...kimiCodeIdentityHeaders(), Authorization: `Bearer ${credential.access}` } };
 	},
 };

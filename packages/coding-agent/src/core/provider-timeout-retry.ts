@@ -14,6 +14,28 @@ export interface ProviderTimeoutRetryPlanInput {
 	streamStartTimeoutMs: number | undefined;
 }
 
+/**
+ * Raise the retry-continuation liveness cap to the stream-start budget granted to
+ * the same retry, so the watchdog can never cancel an attempt on a deadline the
+ * attempt was never given.
+ *
+ * An explicitly disabled cap (`undefined`) stays disabled: the operator opted out
+ * of the wedge guard, and the provider guards still bound the request. A cap that
+ * already outlasts the granted guard is returned unchanged, so an operator who
+ * configured a longer cap keeps it.
+ */
+function reconcileWatchdogTimeoutMs(
+	streamRetryTimeoutMs: number | undefined,
+	streamStartTimeoutMs: number | undefined,
+): number | undefined {
+	if (streamRetryTimeoutMs === undefined || streamRetryTimeoutMs <= 0) return undefined;
+	if (streamStartTimeoutMs === undefined) return streamRetryTimeoutMs;
+	// This timer starts before the retry reaches its first reader.next(). A 10%
+	// proportional grace therefore makes the provider guard strictly win without
+	// imposing a magic absolute delay on short or long operator-configured guards.
+	return Math.max(streamRetryTimeoutMs, Math.ceil(streamStartTimeoutMs * 1.1));
+}
+
 export interface BoundedRetryContinuation {
 	continueRun(): Promise<void>;
 	getActiveSignal(): AbortSignal | undefined;
@@ -37,13 +59,17 @@ export function createProviderTimeoutRetryPlan({
 	// it was configured with. `streamRetryTimeoutMs` still bounds the retry
 	// continuation itself (see `runBoundedRetryContinuation`), which cancels a
 	// wedged retry without lying to the provider about its deadline.
+	//
+	// The cap is reconciled against the guards this same retry was granted. The
+	// grace above is required because this continuation starts its clock earlier
+	// than the provider stream-start reader.
 	return {
 		options: {
 			deferQueuedMessages: true,
 			...(timeoutMs === undefined ? {} : { timeoutMs }),
 			...(streamStartTimeoutMs === undefined ? {} : { streamStartTimeoutMs }),
 		},
-		watchdogTimeoutMs: streamRetryTimeoutMs,
+		watchdogTimeoutMs: reconcileWatchdogTimeoutMs(streamRetryTimeoutMs, streamStartTimeoutMs),
 	};
 }
 

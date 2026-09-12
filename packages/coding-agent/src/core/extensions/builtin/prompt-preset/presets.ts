@@ -1,22 +1,27 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
 import { buildClaudeFable5Prompt } from "./claude-fable-5.ts";
+import { buildClaudeFable51Prompt } from "./claude-fable-5-1.ts";
 import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
 import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
 import { buildClaudeOpus48Prompt } from "./claude-opus-4-8.ts";
 import { buildClaudeOpus5Prompt } from "./claude-opus-5.ts";
+import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
 import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
 import { buildDeepseekV4Flash0731Prompt } from "./deepseek-v4-flash-0731.ts";
 import { buildDeepseekV4ProPrompt } from "./deepseek-v4-pro.ts";
 import { buildGlm52Prompt } from "./glm-5-2.ts";
+import { buildGlm53Prompt } from "./glm-5-3.ts";
 import { buildGpt52Prompt } from "./gpt-5.2.ts";
 import { buildGpt53CodexPrompt } from "./gpt-5.3-codex.ts";
 import { buildGpt54Prompt } from "./gpt-5.4.ts";
 import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
+import { buildGpt6AstraPrompt } from "./gpt-6-astra.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
+import { buildGrok46Prompt } from "./grok-4.6.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
@@ -37,6 +42,19 @@ export interface ResolvedPromptPreset {
 
 function normalizeModelId(modelId: string): string {
 	return modelId.toLowerCase().replace(/\s+/g, "-");
+}
+
+// GPT-6 Astra id shapes verified against the OpenAI model page, codex's
+// models.json, and Bedrock's catalog (2026-09-04): gpt-6-astra, gpt-6-astra-fast,
+// dated snapshots, openai/gpt-6-astra, openai.gpt-6-astra, global.openai.gpt-6-astra,
+// and the display name "GPT-6 Astra". Bare "gpt-6" and "astra" stay out: the guide
+// names no other GPT-6 model, and a future sibling deserves its own preset.
+function hasGpt6AstraSignal(value: string): boolean {
+	return /(?:^|[/@:._-])gpt[._-]?6[._-]astra(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+function isGpt6AstraModel(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGpt6AstraSignal(model.id) || (model.name !== undefined && hasGpt6AstraSignal(model.name));
 }
 
 type Gpt5Version = "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4" | "gpt-5.5" | "gpt-5.6";
@@ -109,6 +127,37 @@ function isDeepseekV4FlashModel(model: ModelWithPromptPresetMetadata): boolean {
 	return hasDeepseekV4FlashSignal(model.id) || (model.name !== undefined && hasDeepseekV4FlashSignal(model.name));
 }
 
+// DeepSeek V4.1 Flash id shapes verified against models.dev and the provider
+// catalogs (2026-09-11): deepseek-flash (the official API name, also opencode-go),
+// deepseek-v4.1-flash and deepseek/deepseek-v4.1-flash[:thinking] (OpenRouter,
+// Vercel, requesty, kilo, ...), deepseek-ai/DeepSeek-V4.1-Flash (Hugging Face,
+// DeepInfra), accounts/fireworks/models/deepseek-v4p1-flash, venice's
+// deepseek-v4-1-flash, and the display name "DeepSeek V4.1 Flash".
+function hasDeepseekV41FlashSignal(value: string): boolean {
+	const normalized = normalizeModelId(value);
+	return (
+		/(?:^|[/@:._-])deepseek[._-]v4(?:[._-]1|p1)[._-]flash(?:$|[/@:._-])/.test(normalized) ||
+		/(?:^|[/@:._-])deepseek[._-]flash(?:$|[/@:._-])/.test(normalized)
+	);
+}
+
+const DEEPSEEK_OFFICIAL_PROVIDER = "deepseek";
+
+// DeepSeek retired V4 Flash on 2026-09-10: on the official API, deepseek-v4-flash
+// and deepseek-v4-flash-vision-exp are served by V4.1 Flash. Every other
+// provider still hosts the V4 weights under those names.
+function isRetiredOfficialDeepseekV4FlashAlias(model: ModelWithPromptPresetMetadata): boolean {
+	return model.provider === DEEPSEEK_OFFICIAL_PROVIDER && hasDeepseekV4FlashSignal(model.id);
+}
+
+function isDeepseekV41FlashModel(model: ModelWithPromptPresetMetadata): boolean {
+	return (
+		hasDeepseekV41FlashSignal(model.id) ||
+		(model.name !== undefined && hasDeepseekV41FlashSignal(model.name)) ||
+		isRetiredOfficialDeepseekV4FlashAlias(model)
+	);
+}
+
 function hasDeepseekV4ProSignal(value: string): boolean {
 	return /(?:^|[/@:._-])deepseek[._-]v4[._-]pro(?:$|[/@:._-])/.test(normalizeModelId(value));
 }
@@ -125,6 +174,14 @@ function isGlm52Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGlm52Signal(model.id) || (model.name !== undefined && hasGlm52Signal(model.name));
 }
 
+function hasGlm53Signal(value: string): boolean {
+	return /(?:^|[/@._-])glm(?:[._-]|p)5(?:[._-]|p)3(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+function isGlm53Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGlm53Signal(model.id) || (model.name !== undefined && hasGlm53Signal(model.name));
+}
+
 function hasGrok45Signal(value: string): boolean {
 	// Match any Grok 4.5 id shape: grok-4.5, grok4.5, grok45, grok-4p5, provider:model,
 	// path/prefix ids, and trailing tags (:thinking, -latest). Keep 4.3 / 4.20 / 3 out.
@@ -135,8 +192,29 @@ function isGrok45Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasGrok45Signal(model.id) || (model.name !== undefined && hasGrok45Signal(model.name));
 }
 
+function hasGrok46Signal(value: string): boolean {
+	// Same id shapes as hasGrok45Signal with a 4.6 minor version. Keep 4.5 / 4.3 / 4.20 / 3 out.
+	return /(?:^|[/@:._-])grok(?:[._-]|p)?4(?:[._-]|p)?6(?:$|[/@._:-])/.test(normalizeModelId(value));
+}
+
+function isGrok46Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasGrok46Signal(model.id) || (model.name !== undefined && hasGrok46Signal(model.name));
+}
+
+// Claude Mythos shares each Fable release's prompting guide ("Prompting Claude
+// Fable 5.1" covers Fable 5.1 and Mythos 5.1; "Prompting Claude Fable 5"
+// covers Fable 5 and Mythos 5), so Mythos ids route to the matching Fable preset.
+const CLAUDE_FABLE_51_MARKERS = ["fable-5-1", "fable-5.1", "mythos-5-1", "mythos-5.1"] as const;
+const CLAUDE_FABLE_5_MARKERS = ["fable-5", "mythos-5"] as const;
+
+function isClaudeFable51Model(modelId: string): boolean {
+	const normalized = normalizeModelId(modelId);
+	return CLAUDE_FABLE_51_MARKERS.some((marker) => normalized.includes(marker));
+}
+
 function isClaudeFable5Model(modelId: string): boolean {
-	return normalizeModelId(modelId).includes("fable-5");
+	const normalized = normalizeModelId(modelId);
+	return CLAUDE_FABLE_5_MARKERS.some((marker) => normalized.includes(marker));
 }
 
 function isClaudeOpus5Model(modelId: string): boolean {
@@ -175,6 +253,9 @@ export function resolvePresetName(
 		return modelPromptPreset;
 	}
 
+	if (isGpt6AstraModel(model)) {
+		return "gpt-6-astra";
+	}
 	const gpt5Version = extractGpt5Version(model.id);
 	if (gpt5Version) {
 		return gpt5Version;
@@ -188,6 +269,10 @@ export function resolvePresetName(
 	if (isKimiK26Model(model)) {
 		return "kimi-k2-6";
 	}
+	// The dotted release must resolve before the generic fable-5 substring.
+	if (isClaudeFable51Model(model.id)) {
+		return "claude-fable-5-1";
+	}
 	if (isClaudeFable5Model(model.id)) {
 		return "claude-fable-5";
 	}
@@ -198,6 +283,9 @@ export function resolvePresetName(
 	if (claudeVersion) {
 		return claudeVersion;
 	}
+	if (isGlm53Model(model)) {
+		return "glm-5.3";
+	}
 	if (isGlm52Model(model)) {
 		return "glm-5.2";
 	}
@@ -205,11 +293,17 @@ export function resolvePresetName(
 	if (isDeepseekV4Flash0731Model(model)) {
 		return "deepseek-v4-flash-0731";
 	}
+	if (isDeepseekV41FlashModel(model)) {
+		return "deepseek-v4-1-flash";
+	}
 	if (isDeepseekV4FlashModel(model)) {
 		return "deepseek-v4-flash";
 	}
 	if (isDeepseekV4ProModel(model)) {
 		return "deepseek-v4-pro";
+	}
+	if (isGrok46Model(model)) {
+		return "grok-4.6";
 	}
 	if (isGrok45Model(model)) {
 		return "grok-4.5";
@@ -219,6 +313,8 @@ export function resolvePresetName(
 
 function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
 	switch (name) {
+		case "gpt-6-astra":
+			return { name, prompt: buildGpt6AstraPrompt(options) };
 		case "gpt-5.6":
 			return { name, prompt: buildGpt56Prompt(options) };
 		case "gpt-5.5":
@@ -231,14 +327,20 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildGpt52Prompt(options) };
 		case "gpt-5":
 			return { name, prompt: buildGpt5Prompt(options) };
+		case "glm-5.3":
+			return { name, prompt: buildGlm53Prompt(options) };
 		case "glm-5.2":
 			return { name, prompt: buildGlm52Prompt(options) };
 		case "deepseek-v4-flash":
 			return { name, prompt: buildDeepseekV4FlashPrompt(options) };
 		case "deepseek-v4-flash-0731":
 			return { name, prompt: buildDeepseekV4Flash0731Prompt(options) };
+		case "deepseek-v4-1-flash":
+			return { name, prompt: buildDeepseekV41FlashPrompt(options) };
 		case "deepseek-v4-pro":
 			return { name, prompt: buildDeepseekV4ProPrompt(options) };
+		case "grok-4.6":
+			return { name, prompt: buildGrok46Prompt(options) };
 		case "grok-4.5":
 			return { name, prompt: buildGrok45Prompt(options) };
 		case "kimi-k3":
@@ -247,6 +349,8 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildKimiK27Prompt(options) };
 		case "kimi-k2-6":
 			return { name, prompt: buildKimiK26Prompt(options) };
+		case "claude-fable-5-1":
+			return { name, prompt: buildClaudeFable51Prompt(options) };
 		case "claude-fable-5":
 			return { name, prompt: buildClaudeFable5Prompt(options) };
 		case "claude-opus-5":

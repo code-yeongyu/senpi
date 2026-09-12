@@ -1,6 +1,7 @@
 import { Buffer } from "buffer";
 
 const RESIDENT_STRING_MIN_BYTES = 32 * 1024;
+const DEFAULT_RESIDENT_STRING_BUDGET_BYTES = 64 * 1024 * 1024;
 const RESIDENT_STRING_PREFIX = "\u0000senpi-resident-string:v1:";
 const OMIT_JSON_VALUE = Symbol("omit-json-value");
 
@@ -13,6 +14,17 @@ export class ResidentStringStore {
 	private strings = new Map<string, string>();
 	private bytes = 0;
 	private nextId = 0;
+
+	/**
+	 * Externalized strings are a cache of the JSONL, not a second source of truth.
+	 * Keep at most 64 MiB by default; evicted values are materialized from disk by
+	 * SessionManager when a persisted entry is actually read.
+	 */
+	private readonly maxBytes: number;
+
+	constructor(maxBytes = DEFAULT_RESIDENT_STRING_BUDGET_BYTES) {
+		this.maxBytes = maxBytes;
+	}
 
 	clear(): void {
 		this.strings.clear();
@@ -31,8 +43,8 @@ export class ResidentStringStore {
 		return transformJson(value, (text) => this.externalizeString(text));
 	}
 
-	materialize<T>(value: T): T {
-		return transformJson(value, (text) => this.materializeString(text));
+	materialize<T>(value: T, onMissing?: (id: string) => string | undefined): T {
+		return transformJson(value, (text) => this.materializeString(text, onMissing));
 	}
 
 	private externalizeString(text: string): string {
@@ -43,16 +55,21 @@ export class ResidentStringStore {
 		const id = `${this.nextId++}`;
 		this.strings.set(id, text);
 		this.bytes += Buffer.byteLength(text, "utf8");
+		while (this.bytes > this.maxBytes && this.strings.size > 0) {
+			const oldest = this.strings.entries().next().value as [string, string];
+			this.strings.delete(oldest[0]);
+			this.bytes -= Buffer.byteLength(oldest[1], "utf8");
+		}
 		return `${RESIDENT_STRING_PREFIX}${id}`;
 	}
 
-	private materializeString(text: string): string {
+	private materializeString(text: string, onMissing?: (id: string) => string | undefined): string {
 		if (!text.startsWith(RESIDENT_STRING_PREFIX)) {
 			return text;
 		}
 
 		const id = text.slice(RESIDENT_STRING_PREFIX.length);
-		return this.strings.get(id) ?? text;
+		return this.strings.get(id) ?? onMissing?.(id) ?? text;
 	}
 }
 

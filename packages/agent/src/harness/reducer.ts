@@ -410,6 +410,12 @@ function deriveEffectiveConfiguration(input: LaneReductionInput): EffectiveLaneC
 			case "thinking_level_change":
 				configuration = { ...configuration, thinkingLevel: entry.thinkingLevel as ThinkingLevel };
 				break;
+			case "configuration_update":
+				configuration = {
+					...configuration,
+					thinkingLevel: entry.reasoning.effort as ThinkingLevel,
+				};
+				break;
 			case "active_tools_change":
 				configuration = { ...configuration, activeToolNames: [...entry.activeToolNames] };
 				break;

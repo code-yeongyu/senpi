@@ -14,6 +14,25 @@ function hasTextOnlyContent(content: unknown, allowString: boolean): boolean {
 	return content.every((block) => isRecord(block) && block.type === "text" && typeof block.text === "string");
 }
 
+function isWellFormedImageBlock(block: Record<string, unknown>): boolean {
+	return (
+		block.type === "image" &&
+		typeof block.mimeType === "string" &&
+		block.mimeType.startsWith("image/") &&
+		typeof block.data === "string" &&
+		block.data.length > 0
+	);
+}
+
+function hasSafeToolResultContent(content: unknown): boolean {
+	if (!Array.isArray(content)) return false;
+	return content.every(
+		(block) =>
+			isRecord(block) &&
+			((block.type === "text" && typeof block.text === "string") || isWellFormedImageBlock(block)),
+	);
+}
+
 function isUsage(value: unknown): boolean {
 	if (!isRecord(value) || !isRecord(value.cost)) return false;
 	for (const field of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] as const) {
@@ -28,22 +47,44 @@ function isUsage(value: unknown): boolean {
 	);
 }
 
-function hasSafeAssistantContent(content: unknown): boolean {
+const base64SignaturePattern = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** Validate an opaque provider signature without exposing or logging content. */
+function isValidOpaqueSignature(sig: unknown): sig is string {
+	return typeof sig === "string" && sig.length > 0 && sig.length <= 65_536;
+}
+
+/** Gemini signatures are base64; other providers use bounded opaque strings. */
+function isValidProviderSignature(sig: unknown, providerIsGoogle: boolean): sig is string {
+	if (!isValidOpaqueSignature(sig)) return false;
+	return !providerIsGoogle || (sig.length % 4 === 0 && base64SignaturePattern.test(sig));
+}
+
+function hasSafeAssistantContent(content: unknown, providerIsGoogle: boolean): boolean {
 	if (!Array.isArray(content)) return false;
 	for (const block of content) {
 		if (!isRecord(block) || typeof block.type !== "string") return false;
 		switch (block.type) {
 			case "text":
-				if (typeof block.text !== "string" || block.textSignature !== undefined) return false;
+				if (typeof block.text !== "string") return false;
+				if (block.textSignature !== undefined && !isValidProviderSignature(block.textSignature, providerIsGoogle)) {
+					return false;
+				}
 				break;
 			case "thinking":
 				if (
 					typeof block.thinking !== "string" ||
 					(block.startedAt !== undefined && !isFiniteNumber(block.startedAt)) ||
 					(block.endedAt !== undefined && !isFiniteNumber(block.endedAt)) ||
-					(block.redacted !== undefined && typeof block.redacted !== "boolean") ||
-					block.redacted === true ||
-					block.thinkingSignature !== undefined
+					(block.redacted !== undefined && typeof block.redacted !== "boolean")
+				) {
+					return false;
+				}
+				// Redacted thinking requires a bounded opaque signature for replay.
+				if (
+					(block.thinkingSignature !== undefined &&
+						!isValidProviderSignature(block.thinkingSignature, providerIsGoogle)) ||
+					(block.redacted === true && !isValidOpaqueSignature(block.thinkingSignature))
 				) {
 					return false;
 				}
@@ -54,8 +95,13 @@ function hasSafeAssistantContent(content: unknown): boolean {
 					typeof block.name !== "string" ||
 					!isRecord(block.arguments) ||
 					(block.incomplete !== undefined && block.incomplete !== true) ||
-					(block.errorMessage !== undefined && typeof block.errorMessage !== "string") ||
-					block.thoughtSignature !== undefined
+					(block.errorMessage !== undefined && typeof block.errorMessage !== "string")
+				) {
+					return false;
+				}
+				if (
+					block.thoughtSignature !== undefined &&
+					!isValidProviderSignature(block.thoughtSignature, providerIsGoogle)
 				) {
 					return false;
 				}
@@ -68,6 +114,8 @@ function hasSafeAssistantContent(content: unknown): boolean {
 }
 
 function hasSafeAssistantEnvelope(message: Record<string, unknown>): boolean {
+	const provider = typeof message.provider === "string" ? message.provider : "";
+	const providerIsGoogle = provider === "google" || provider === "google-vertex";
 	const stopReason = message.stopReason;
 	const stopDetails = message.stopDetails;
 	const safeStopDetails =
@@ -94,7 +142,7 @@ function hasSafeAssistantEnvelope(message: Record<string, unknown>): boolean {
 		(message.diagnostics === undefined || Array.isArray(message.diagnostics)) &&
 		(message.errorMessage === undefined || typeof message.errorMessage === "string") &&
 		(message.rawStopReason === undefined || typeof message.rawStopReason === "string") &&
-		hasSafeAssistantContent(message.content)
+		hasSafeAssistantContent(message.content, providerIsGoogle)
 	);
 }
 
@@ -104,7 +152,7 @@ function hasSafeToolResultEnvelope(message: Record<string, unknown>): boolean {
 		message.toolCallId.length > 0 &&
 		typeof message.toolName === "string" &&
 		message.toolName.length > 0 &&
-		hasTextOnlyContent(message.content, false) &&
+		hasSafeToolResultContent(message.content) &&
 		typeof message.isError === "boolean" &&
 		isFiniteNumber(message.timestamp) &&
 		(message.usage === undefined || isUsage(message.usage)) &&

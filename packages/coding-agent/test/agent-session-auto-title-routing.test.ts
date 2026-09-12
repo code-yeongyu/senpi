@@ -40,7 +40,7 @@ describe("agent session auto title routing", () => {
 		harness.session.agent.streamFunction = (model, context, options) => {
 			const streamOptions = {
 				...options,
-				serviceTier: "priority",
+				serviceTier: "priority" as const,
 			};
 			return streamSimple({ ...model, id: "upstream-model" }, context, streamOptions);
 		};

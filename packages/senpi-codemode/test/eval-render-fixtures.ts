@@ -16,6 +16,9 @@ export interface RenderContextOptions {
 	readonly spinnerFrame?: number;
 	readonly hasResult?: boolean;
 	readonly args?: EvalToolInput;
+	/** Fixed render-time clock in epoch ms; keeps elapsed-time assertions off wall time. */
+	readonly now?: number;
+	readonly invalidate?: () => void;
 }
 
 function isEvalComponent(input: EvalComponent | RenderContextOptions): input is EvalComponent {
@@ -38,7 +41,8 @@ export function callContext(input?: EvalComponent | RenderContextOptions): CallC
 	return {
 		args: options.args ?? { language: "js", code: "", summary: "render fixture" },
 		toolCallId: "eval-render-call",
-		invalidate: () => {},
+		invalidate: options.invalidate ?? (() => {}),
+		...(options.now === undefined ? {} : { now: options.now }),
 		lastComponent: options.lastComponent,
 		state: {},
 		cwd: "/tmp",
@@ -61,7 +65,8 @@ export function resultContext(input?: EvalComponent | RenderContextOptions, show
 	return {
 		args: options.args ?? { language: "js", code: "", summary: "render fixture" },
 		toolCallId: "eval-render-result",
-		invalidate: () => {},
+		invalidate: options.invalidate ?? (() => {}),
+		...(options.now === undefined ? {} : { now: options.now }),
 		lastComponent: options.lastComponent,
 		state: {},
 		cwd: "/tmp",

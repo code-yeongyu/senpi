@@ -44,15 +44,13 @@ vi.mock("@anthropic-ai/sdk", () => {
 			mockState.constructorOptions = options;
 		}
 
-		messages = {
-			create: (params: Record<string, unknown>, requestOptions: Record<string, unknown>) => {
-				mockState.createParams = params;
-				mockState.requestOptions = requestOptions;
-				return {
-					asResponse: async () => createSseResponse(),
-				};
-			},
+		private readonly create = (params: Record<string, unknown>, requestOptions: Record<string, unknown>) => {
+			mockState.createParams = params;
+			mockState.requestOptions = requestOptions;
+			return { asResponse: async () => createSseResponse() };
 		};
+		beta = { messages: { create: this.create } };
+		messages = { create: this.create };
 	}
 
 	return { default: FakeAnthropic };

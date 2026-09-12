@@ -67,5 +67,5 @@ Tier the scope, never the rigor.
 
 ${buildTestDisciplineSection()}
 
-"Should pass" is not verification. Reporting clean output without running the validator is a violation. Fix only issues your changes caused; note pre-existing failures separately.`;
+"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: report only evidence-backed work, flag the unverified explicitly, and report failing tests with the output. Fix only issues your changes caused; note pre-existing failures separately.`;
 }

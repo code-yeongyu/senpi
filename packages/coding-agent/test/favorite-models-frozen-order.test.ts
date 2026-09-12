@@ -1,4 +1,4 @@
-import { setKeybindings } from "@earendil-works/pi-tui";
+import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { FavoriteModelsSelectorComponent } from "../src/modes/interactive/components/favorite-models-selector.ts";
@@ -138,6 +138,45 @@ describe("favorite models frozen order", () => {
 		const rows = parseRenderedRows(reopened, provider);
 		expect(rows.map((row) => row.id)).toEqual(["faux-1", "faux-3", "faux-2"]);
 		expect(rows.map((row) => row.favorite)).toEqual([true, true, false]);
+	});
+
+	it("keeps over-long favorite rows to one terminal line and all favorites reachable", async () => {
+		const longId = "model-with-an-intentionally-over-long-identifier-that-wraps";
+		const harness = await createHarness({
+			models: [
+				{ id: longId, name: "Long", reasoning: true },
+				{ id: "faux-2", name: "Two", reasoning: true },
+				{ id: "faux-3", name: "Three", reasoning: true },
+			],
+		});
+		harnesses.push(harness);
+		const provider = harness.models[0]?.provider ?? "faux";
+		const ids = harness.models.map((model) => `${model.provider}/${model.id}`);
+		const selectedModels: string[] = [];
+		const selector = new FavoriteModelsSelectorComponent(
+			{ allModels: [...harness.models], favoriteModelIds: ids },
+			{
+				onChange: () => {},
+				onPersist: () => {},
+				onSelect: (model) => {
+					selectedModels.push(model.id);
+				},
+				onCancel: () => {},
+			},
+		);
+
+		const renderedLines = selector.render(44).map(stripAnsi);
+		const modelRows = renderedLines.filter((line) => /^(?:→ | {2})[*-] /.test(line));
+		expect(modelRows).toHaveLength(ids.length);
+		expect(modelRows.every((line) => visibleWidth(line) <= 44)).toBe(true);
+		expect(modelRows.filter((line) => line.includes(`[${provider}]`))).toHaveLength(2);
+		expect(modelRows.some((line) => line.includes(longId.slice(0, 30)) && line.includes("..."))).toBe(true);
+
+		for (let i = 0; i < ids.length; i++) {
+			selector.handleInput("\r");
+			selector.handleInput("\x1b[B");
+		}
+		expect(selectedModels).toEqual(harness.models.map((model) => model.id));
 	});
 
 	it("still matches the canonical provider/id recall query from issue #3217", async () => {

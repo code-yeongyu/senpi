@@ -9,8 +9,30 @@ export type { AnthropicEffort, AnthropicOptions, AnthropicThinkingDisplay } from
 export { sanitizeAnthropicToolPairs } from "./api/anthropic-tool-pairs.ts";
 export type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 export type { BedrockOptions, BedrockThinkingDisplay } from "./api/bedrock-converse-stream.ts";
+export {
+	measureCursorHistorySerializedBytes,
+	measureCursorModelInputSerializedBytes,
+} from "./api/cursor-agent/measure.ts";
+export {
+	composeShellCommand as composeCursorShellCommand,
+	omitUndefinedArgs as omitUndefinedCursorArgs,
+	piLimit as cursorPiLimit,
+	piLsPath as cursorPiLsPath,
+	piReadArgs as cursorPiReadArgs,
+	piTimeout as cursorPiTimeout,
+} from "./api/cursor-agent/pi-args.ts";
+export type {
+	CursorAgentOptions,
+	CursorExecHandlerResult,
+	CursorExecHandlers,
+	CursorExecPairing,
+	CursorMcpCall,
+	CursorPiCall,
+	CursorShellStreamCallbacks,
+	CursorToolResultHandler,
+} from "./api/cursor-agent/types.ts";
 export type { GoogleOptions } from "./api/google-generative-ai.ts";
-export type { GoogleThinkingLevel } from "./api/google-shared.ts";
+export type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./api/google-shared.ts";
 export type { GoogleVertexOptions } from "./api/google-vertex.ts";
 export * from "./api/lazy.ts";
 export type { MistralOptions } from "./api/mistral-conversations.ts";
@@ -47,6 +69,25 @@ export {
 	copyContextProvenance,
 	getContextProvenance,
 } from "./context-provenance.ts";
+export * from "./cursor/catalog-grouping.ts";
+export {
+	CURSOR_MODEL_CAPABILITIES,
+	type CursorCapabilityEvidence,
+	type CursorLevelEncoding,
+	type CursorLevelSpec,
+	type CursorModelCapability,
+	type CursorParameterId,
+	type CursorVariantAlias,
+	type CursorVariantParse,
+	getCursorBaseIdForVariant,
+	getCursorCapabilityForBase,
+	getCursorVariantAlias,
+} from "./cursor/model-capabilities.ts";
+export {
+	type CursorResolvedSelection,
+	renderCursorCliModelString,
+	resolveCursorSelectionDescriptor,
+} from "./cursor/selection-descriptor.ts";
 export * from "./env-api-keys.ts";
 export * from "./images-models.ts";
 export * from "./models.ts";
@@ -65,7 +106,15 @@ export {
 export { createXtmlRecoveryStreamParser } from "./tool-call-middleware/protocols/kimi-xtml/recovery-stream.ts";
 export { wrapStreamWithInvokeRecovery } from "./tool-call-middleware/recovery-stream-wrapper.ts";
 export * from "./types.ts";
+export {
+	type CursorExecResolvedCarrier,
+	copyCursorExecResolved,
+	isCursorExecResolved,
+	kCursorExecResolved,
+} from "./utils/block-symbols.ts";
 export * from "./utils/diagnostics.ts";
+export { dropFailedAssistantTurns } from "./utils/drop-failed-assistant-turns.ts";
+export { estimateContextTokens } from "./utils/estimate.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
 export { extractOpenAiCodexAccountId } from "./utils/openai-codex-auth.ts";

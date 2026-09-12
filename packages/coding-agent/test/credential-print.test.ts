@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import { parseArgs } from "../src/cli/args.ts";
 import { AuthCommandError, isAuthCommandHelp, parseAuthCommand } from "../src/cli/auth-command.ts";
 import { resolveCredentialForPrint } from "../src/cli/credential-print.ts";
+import { APP_NAME } from "../src/config.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { main } from "../src/main.ts";
@@ -75,7 +76,7 @@ describe("credential print commands", () => {
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain('Unknown option --credentails for "auth check".');
 			expect(stderr).toContain(
-				'Use "senpi --help" or "pi auth check --provider <provider> [--json] [--credentials] [--no-refresh]".',
+				`Use "${APP_NAME} --help" or "${APP_NAME} auth check --provider <provider> [--json] [--credentials] [--no-refresh]".`,
 			);
 			expect(process.exitCode).toBe(1);
 		} finally {

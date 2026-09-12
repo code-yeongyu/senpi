@@ -245,11 +245,13 @@ export function buildClaudeSdkOauthQueryOptions(input: ClaudeSdkOauthQueryOption
 			: mode === "override"
 				? loadOverrideSystemPrompt(providerSettings.systemPromptFile)
 				: resolveCustomSystemPrompt(input.context.systemPrompt);
-	const strictMcpConfig = providerSettings.strictMcpConfig ?? !appendSystemPrompt;
+	const toolLessRequest = input.streamOptions?.toolChoice === "none";
+	const emptyToolContext = (input.context.tools?.length ?? 0) === 0;
+	const strictMcpConfig = toolLessRequest || (providerSettings.strictMcpConfig ?? !appendSystemPrompt);
 	const queryOptions: Options = {
 		cwd,
 		model: input.model.id,
-		tools: input.tools ? [...input.tools] : [...BUILTIN_SDK_TOOLS],
+		tools: toolLessRequest || emptyToolContext ? [] : input.tools ? [...input.tools] : [...BUILTIN_SDK_TOOLS],
 		permissionMode: "dontAsk",
 		includePartialMessages: true,
 		canUseTool,
@@ -259,6 +261,7 @@ export function buildClaudeSdkOauthQueryOptions(input: ClaudeSdkOauthQueryOption
 		settingSources: resolveSettingSources(providerSettings, mode, authLane),
 	};
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;
+	if (toolLessRequest) queryOptions.maxTurns = 1;
 	if (strictMcpConfig) queryOptions.extraArgs = { "strict-mcp-config": null };
 
 	const reasoning = input.streamOptions?.reasoning;

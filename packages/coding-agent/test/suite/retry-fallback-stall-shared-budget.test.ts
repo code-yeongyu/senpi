@@ -56,7 +56,10 @@ describe("provider stream stalls use the shared bounded retry budget", () => {
 			// Three same-model attempts with the shared exponential backoff, and no
 			// escalation: the stall class no longer short-circuits the budget.
 			expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
-			expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toEqual([1, 2, 4]);
+			expect(harness.eventsOfType("auto_retry_start").map((event) => event.delayMs)).toSatisfy(
+				(d: number[]) =>
+					d.length === 3 && d[0]! >= 1 && d[0]! < 1.25 && d[1]! >= 2 && d[1]! < 2.5 && d[2]! >= 4 && d[2]! < 5,
+			);
 			expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([true]);
 			expect(harness.faux.state.callCount).toBe(4);
 		},
