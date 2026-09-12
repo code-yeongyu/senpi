@@ -6,31 +6,81 @@
  * interactive-mode can turn ordinary composer text into the comment answer.
  */
 
-import { Container, decodeKittyPrintable, matchesKey, Text, type TUI } from "@earendil-works/pi-tui";
+import {
+	Container,
+	decodeKittyPrintable,
+	getKeybindings,
+	type KeybindingsManager,
+	type KeyId,
+	Text,
+	type TUI,
+} from "@earendil-works/pi-tui";
 import type { QuestionRequest, QuestionResponse } from "../../../core/extensions/types.ts";
 import { theme } from "../theme/theme.ts";
 import { formatCountdownLabel, type QuestionDraft } from "./ask-user-question-state.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
-import { rawKeyHint } from "./keybinding-hints.ts";
+import { keyText } from "./keybinding-hints.ts";
 
 /** Widget slot key used with `setWidget`; one pending async question at a time. */
 export const ASK_USER_WIDGET_KEY = "ask-user";
-/** Editor shortcut that expands the pending question into the full component. */
-export const ASK_USER_ANSWER_KEY = "alt+a";
+/** Keybinding action (default `alt+a`, rebindable in keybindings.json) that expands the pending question. */
+export const ASK_USER_ANSWER_KEYBINDING = "app.question.answer";
 /**
- * What the `a` key types on macOS when the terminal lets Option compose
- * characters instead of sending it as Alt (the default in Terminal.app,
- * iTerm2, Ghostty and kitty). Accepting these keeps the advertised `option+a`
- * working without a terminal-settings detour; other platforms never see
- * Option this way, so they keep treating the glyphs as text.
+ * What each letter key types on a US-layout macOS keyboard while Option is
+ * held and the terminal lets Option compose characters instead of sending
+ * Alt (the default in Terminal.app, iTerm2, Ghostty and kitty), as
+ * `[Option+letter, Option+Shift+letter]`. Accepting the glyphs of the bound
+ * `alt+<letter>` chords keeps the advertised shortcut working without a
+ * terminal-settings detour; other platforms never see Option this way, so
+ * they keep treating the glyphs as text. The dead keys `e`, `i`, `n` and `u`
+ * compose with the next keystroke instead of typing a glyph, so a binding on
+ * one of them needs the terminal's Option-as-Meta setting.
  */
-const DARWIN_OPTION_A_GLYPHS: ReadonlySet<string> = new Set(["å", "Å"]);
+const DARWIN_OPTION_GLYPHS: Readonly<Record<string, readonly [string, string]>> = {
+	a: ["å", "Å"],
+	b: ["∫", "ı"],
+	c: ["ç", "Ç"],
+	d: ["∂", "Î"],
+	f: ["ƒ", "Ï"],
+	g: ["©", "˝"],
+	h: ["˙", "Ó"],
+	j: ["∆", "Ô"],
+	k: ["˚", "\uf8ff"],
+	l: ["¬", "Ò"],
+	m: ["µ", "Â"],
+	o: ["ø", "Ø"],
+	p: ["π", "∏"],
+	q: ["œ", "Œ"],
+	r: ["®", "‰"],
+	s: ["ß", "Í"],
+	t: ["†", "ˇ"],
+	v: ["√", "◊"],
+	w: ["∑", "„"],
+	x: ["≈", "˛"],
+	y: ["¥", "Á"],
+	z: ["Ω", "¸"],
+};
+
+/** Glyphs the bound `alt+<letter>` chords type on darwin when Option composes. */
+export function darwinOptionGlyphs(keys: readonly KeyId[]): ReadonlySet<string> {
+	const glyphs = new Set<string>();
+	for (const key of keys) {
+		const letter = /^alt\+([a-z])$/i.exec(key)?.[1]?.toLowerCase();
+		if (letter === undefined) continue;
+		for (const glyph of DARWIN_OPTION_GLYPHS[letter] ?? []) glyphs.add(glyph);
+	}
+	return glyphs;
+}
 
 /** True when `data` is the editor input that expands the pending question on `platform`. */
-export function matchesAskUserAnswerKey(data: string, platform: NodeJS.Platform = process.platform): boolean {
-	if (matchesKey(data, ASK_USER_ANSWER_KEY)) return true;
+export function matchesAskUserAnswerKey(
+	data: string,
+	platform: NodeJS.Platform = process.platform,
+	keybindings: KeybindingsManager = getKeybindings(),
+): boolean {
+	if (keybindings.matches(data, ASK_USER_ANSWER_KEYBINDING)) return true;
 	if (platform !== "darwin") return false;
-	return DARWIN_OPTION_A_GLYPHS.has(decodeKittyPrintable(data) ?? data);
+	return darwinOptionGlyphs(keybindings.getKeys(ASK_USER_ANSWER_KEYBINDING)).has(decodeKittyPrintable(data) ?? data);
 }
 
 function hasAnswer(answer: QuestionResponse["answers"][string] | undefined): boolean {
@@ -74,13 +124,20 @@ export function buildTimedOutResponse(
 	};
 }
 
+/** Hint naming every way into the pending question; the shortcut segment follows the effective binding. */
+export function renderAnswerHint(): string {
+	const shortcut = keyText(ASK_USER_ANSWER_KEYBINDING);
+	if (shortcut === "") return theme.fg("muted", "type your reply to answer");
+	return theme.fg("dim", shortcut) + theme.fg("muted", " to answer, or just type your reply");
+}
+
 export function renderAsyncQuestionLine(unanswered: number, countdownLabel: string): string {
 	const countdown = countdownLabel === "" ? "" : theme.fg("muted", ` · ${countdownLabel}`);
 	return (
 		theme.fg("accent", theme.bold("?")) +
 		theme.fg("text", ` Question pending (${unanswered} unanswered)`) +
 		theme.fg("muted", " - ") +
-		rawKeyHint(ASK_USER_ANSWER_KEY, "to answer, or just type your reply") +
+		renderAnswerHint() +
 		countdown
 	);
 }
