@@ -1,3 +1,4 @@
+import { APP_NAME } from "../../../../config.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { pickVariant, TOOL_NAMES } from "./family.ts";
 import { getPendingQuestions } from "./registry.ts";
@@ -9,6 +10,19 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 		description: "Disable the built-in question tool.",
 		type: "boolean",
 		default: false,
+	});
+	pi.registerCommand("answer", {
+		description: "Open the pending question",
+		handler: async (_args, ctx) => {
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify(
+					`/answer opens the pending question in the TUI; run ${APP_NAME} in TUI mode to use it.`,
+					"info",
+				);
+				return;
+			}
+			// In TUI mode interactive-mode's text dispatch handles /answer first.
+		},
 	});
 	const state: AskUserState = { timedOut: false, unavailable: false };
 	let registered = false;

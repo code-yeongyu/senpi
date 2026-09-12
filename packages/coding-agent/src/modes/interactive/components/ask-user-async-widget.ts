@@ -91,8 +91,12 @@ export function renderOptionsLine(question: Question, remaining: number): string
 /** Hint naming every way into the pending question; the shortcut segment follows the effective binding. */
 export function renderAnswerHint(): string {
 	const shortcut = keyText(ASK_USER_ANSWER_KEYBINDING);
-	if (shortcut === "") return theme.fg("muted", "type your reply to answer");
-	return theme.fg("dim", shortcut) + theme.fg("muted", " to answer, or just type your reply");
+	const keys = shortcut === "" ? "enter" : `enter or ${shortcut}`;
+	return [
+		theme.fg("dim", keys) + theme.fg("muted", " to answer"),
+		theme.fg("dim", "/answer"),
+		theme.fg("muted", "or just type your reply"),
+	].join(theme.fg("muted", " · "));
 }
 
 export interface AskUserAsyncWidgetOptions {

@@ -3945,8 +3945,18 @@ export class InteractiveMode {
 
 	/** Editor shortcut: expand the pending async question into the full component. */
 	private handleAskUserShortcut(data: string): boolean {
+		if (!this.asyncQuestion || this.askUserQuestion || !matchesAskUserAnswerKey(data)) return false;
+		return this.expandPendingQuestion();
+	}
+
+	/**
+	 * Key-free entry into the pending async question (empty Enter, /answer):
+	 * mounts the full component in place of the editor. Returns false when
+	 * nothing is pending or the component is already open.
+	 */
+	private expandPendingQuestion(): boolean {
 		const state = this.asyncQuestion;
-		if (!state || this.askUserQuestion || !matchesAskUserAnswerKey(data)) return false;
+		if (!state || this.askUserQuestion) return false;
 		const component = new AskUserQuestionComponent(
 			state.request,
 			(response) => {
@@ -4507,7 +4517,12 @@ export class InteractiveMode {
 				this.hideShortcutOverlay();
 				this.lastEditorText = "";
 				text = text.trim();
-				if (!text) return;
+				if (!text) {
+					// Enter on an empty editor opens the pending async question; it needs
+					// no chord, so it works under every terminal and keymap.
+					this.expandPendingQuestion();
+					return;
+				}
 
 				// A pending async question claims ordinary text as its comment answer;
 				// slash and bash commands keep their normal routing.
@@ -4579,6 +4594,11 @@ export class InteractiveMode {
 				if (text === "/keybindings") {
 					this.editor.setText("");
 					await this.handleKeybindingsCommand();
+					return;
+				}
+				if (text === "/answer") {
+					this.editor.setText("");
+					if (!this.expandPendingQuestion()) this.showStatus("No question is pending.");
 					return;
 				}
 				if (text === "/hotkeys") {
