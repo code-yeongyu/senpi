@@ -149,7 +149,7 @@ describe("DeepSeek V4.1 Flash prompt preset", () => {
 				"deepseek/deepseek-v4-flash",
 				"openrouter/deepseek/deepseek-v4.1-flash",
 				"vercel-ai-gateway/deepseek/deepseek-v4.1-flash",
-				"opencode-go/deepseek-flash",
+				"opencode-go/deepseek-v4.1-flash",
 			]),
 		);
 		expect(misses).toEqual([]);
