@@ -11,12 +11,17 @@
 - Added five-times-faster mouse wheel scrolling while holding Alt in fullscreen mode ([#9166](https://github.com/earendil-works/pi/pull/9166) by [@xl0](https://github.com/xl0)).
 - Added a clickable "Jump to latest message" label with the `tui.altScreen.bottom` shortcut to the fullscreen transcript while it is scrolled up ([#9080](https://github.com/earendil-works/pi/pull/9080) by [@rwachtler](https://github.com/rwachtler)).
 
+- Added two chord-free ways to open a pending async ask-user question: Enter on an empty editor and the `/answer` command (which reports `No question is pending.` when there is nothing to open), so the question stays reachable when a terminal, multiplexer or another keymap swallows the shortcut.
+- Added the `app.question.answer` keybinding (default `alt+a`, `option+a` on macOS): the async ask-user shortcut can now be rebound in `keybindings.json`, is listed in `/hotkeys` and `docs/keybindings.md`, and the widget hint follows the configured chord (fixes #1623).
+
 ### Changed
 
 - Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in (`embedWorkingStatus`) for all status spinners.
 - Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring the experimental tool-sampling flag. Extensions can re-register tool definitions with `constrainedSampling: false`.
 - Reduced fullscreen transcript search latency on large transcripts by caching unchanged search results, indexing ASCII runs, and limiting highlight work to visible matches ([#8800](https://github.com/earendil-works/pi/pull/8800) by [@cristinaponcela](https://github.com/cristinaponcela)).
 - Upstream's experimental server, client, and plugin sources ship source-only through `pi-test.sh`; they are not part of the published package. The supported local SDK, the `./client` entry point, and the stdio RPC API are unchanged.
+
+- The async ask-user widget above the editor now shows the pending question itself: the first unanswered question with its options (and how many more wait behind it), one truncated line each, moving on to the next unanswered question when a partial draft collapses; on macOS the Option-composed glyph accepted for the shortcut follows the bound letter instead of being fixed to `å`/`Å`.
 
 ### Fixed
 

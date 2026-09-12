@@ -147,13 +147,12 @@ import {
 	waitForPromptDisposition,
 } from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
+import { matchesAskUserAnswerKey } from "./components/ask-user-answer-key.ts";
 import {
 	ASK_USER_WIDGET_KEY,
 	AskUserAsyncWidget,
 	buildCommentResponse,
 	buildTimedOutResponse,
-	matchesAskUserAnswerKey,
-	unansweredIds,
 } from "./components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "./components/ask-user-question.ts";
 import type { QuestionDraft } from "./components/ask-user-question-state.ts";
@@ -3914,7 +3913,8 @@ export class InteractiveMode {
 		this.setExtensionWidget(ASK_USER_WIDGET_KEY, (tui) => {
 			const startedAt = Date.now();
 			return new AskUserAsyncWidget({
-				unanswered: unansweredIds(state.request, state.draft).length,
+				request: state.request,
+				draft: state.draft,
 				timeoutMs: state.timeoutMs,
 				tui,
 				onExpire: () => state.finish(buildTimedOutResponse(state.request, state.draft, Date.now() - startedAt)),
@@ -3924,8 +3924,18 @@ export class InteractiveMode {
 
 	/** Editor shortcut: expand the pending async question into the full component. */
 	private handleAskUserShortcut(data: string): boolean {
+		if (!this.asyncQuestion || this.askUserQuestion || !matchesAskUserAnswerKey(data)) return false;
+		return this.expandPendingQuestion();
+	}
+
+	/**
+	 * Key-free entry into the pending async question (empty Enter, /answer):
+	 * mounts the full component in place of the editor. Returns false when
+	 * nothing is pending or the component is already open.
+	 */
+	private expandPendingQuestion(): boolean {
 		const state = this.asyncQuestion;
-		if (!state || this.askUserQuestion || !matchesAskUserAnswerKey(data)) return false;
+		if (!state || this.askUserQuestion) return false;
 		const component = new AskUserQuestionComponent(
 			state.request,
 			(response) => {
@@ -4501,7 +4511,12 @@ export class InteractiveMode {
 				this.hideShortcutOverlay();
 				this.lastEditorText = "";
 				text = text.trim();
-				if (!text) return;
+				if (!text) {
+					// Enter on an empty editor opens the pending async question; it needs
+					// no chord, so it works under every terminal and keymap.
+					this.expandPendingQuestion();
+					return;
+				}
 
 				// A pending async question claims ordinary text as its comment answer;
 				// slash and bash commands keep their normal routing.
@@ -4573,6 +4588,11 @@ export class InteractiveMode {
 				if (text === "/keybindings") {
 					this.editor.setText("");
 					await this.handleKeybindingsCommand();
+					return;
+				}
+				if (text === "/answer") {
+					this.editor.setText("");
+					if (!this.expandPendingQuestion()) this.showStatus("No question is pending.");
 					return;
 				}
 				if (text === "/hotkeys") {
@@ -9052,6 +9072,7 @@ export class InteractiveMode {
 		const copyMessage = this.getAppKeyDisplay("app.message.copy");
 		const followUp = this.getAppKeyDisplay("app.message.followUp");
 		const dequeue = this.getAppKeyDisplay("app.message.dequeue");
+		const answerQuestion = this.getAppKeyDisplay("app.question.answer");
 		const pasteImage = this.getAppKeyDisplay("app.clipboard.pasteImage");
 
 		let hotkeys = `
@@ -9096,6 +9117,7 @@ export class InteractiveMode {
 | \`${copyMessage}\` | Copy last assistant message |
 | \`${followUp}\` | Queue follow-up message |
 | \`${dequeue}\` | Restore queued messages |
+| \`${answerQuestion}\` | Open the pending question (also: Enter on an empty editor, or /answer) |
 | \`${pasteImage}\` | Paste image or text from clipboard |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |
