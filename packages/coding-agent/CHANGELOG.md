@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Cursor conversations no longer lose their earliest turns to a hardcoded history cap: senpi sent at most 50,000 serialized bytes of history to Cursor because Cursor's model list carries no context-window field, and once that budget was exceeded the oldest complete turns were deleted outright - a 551-message conversation collapsed to 4 messages, and even a session that never called a tool lost its first 30KB turn. It now takes the real context limit Cursor reports for the live conversation (200,000 for kimi-k3, where senpi previously assumed 1,048,576), counts only what Cursor actually feeds the model instead of double-counting its display copies, keeps that limit correct when Cursor rotates a conversation, and forgets a remembered limit when Cursor reports none so a fresh conversation starts from the safe default; individually oversized tool results stay bounded as before (fixes #1603).
+
 ### Removed
 
 ## [2026.9.12] - 2026-09-12
@@ -56,8 +58,6 @@
 - The GPT-6 Astra preset drops its three-attempt failure cap for an unbounded-retry rule that widens the source on an empty lookup, ends a turn only when a pending handle will wake the session, requires a named next step to be taken in the same turn, and defaults its question tool to the non-blocking mode.
 
 ### Fixed
-
-- Cursor conversations no longer lose their earliest turns to a hardcoded history cap: senpi sent at most 50,000 serialized bytes of history to Cursor because Cursor's model list carries no context-window field, and once that budget was exceeded the oldest complete turns were deleted outright - a 551-message conversation collapsed to 4 messages, and even a session that never called a tool lost its first 30KB turn. It now takes the real context limit Cursor reports for the live conversation (200,000 for kimi-k3, where senpi previously assumed 1,048,576), counts only what Cursor actually feeds the model instead of double-counting its display copies, keeps that limit correct when Cursor rotates a conversation, and forgets a remembered limit when Cursor reports none so a fresh conversation starts from the safe default; individually oversized tool results stay bounded as before (fixes #1603).
 
 - Image-heavy `/resume` sessions no longer reparse the complete JSONL once per evicted resident string; one ordered materialization pass performs one authoritative history load while preserving transcript contents and branch state ([#1407](https://github.com/code-yeongyu/senpi/issues/1407))
 
