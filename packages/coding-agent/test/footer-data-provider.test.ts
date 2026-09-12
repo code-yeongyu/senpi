@@ -197,6 +197,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		}
 	});
 
+	// Drive debounce behavior explicitly; native fs.watch delivery can race watcher startup.
 	it("does not notify listeners when reftable updates keep the same branch", async () => {
 		vi.useFakeTimers();
 		const { worktreeDir, reftableDir } = createReftableWorktree(tempDir);

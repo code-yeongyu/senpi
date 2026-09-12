@@ -1,5 +1,19 @@
 # prompt-preset Extension Changes
 
+## DeepSeek V4.1 Flash catalog drift: provider-presence assertions (2026-09-12)
+
+### What changed
+
+- Tests: `packages/coding-agent/test/suite/prompt-presets-deepseek-v4-1-flash.test.ts` - the catalog sweep pinned the literal rows `deepseek/deepseek-v4-flash`, `openrouter/deepseek/deepseek-v4.1-flash`, and `vercel-ai-gateway/deepseek/deepseek-v4.1-flash`. The 2026-09-12 catalog regeneration (upstream 12f59336a + 713bdf38d adopted on merge) renamed the official row `deepseek-v4-flash` -> `deepseek-flash` (V4 Flash retired 2026-09-10), so the pin went stale while resolution stayed correct. The sweep now asserts the V4.1 set carries at least one row from the official `deepseek` provider and one from `opencode-go` (which renames its id between regenerations), with the zero-miss resolution check unchanged.
+
+### Why
+
+- Preset resolution (`hasDeepseekV41FlashSignal` + `isRetiredOfficialDeepseekV4FlashAlias` in `presets.ts`) already matches the regenerated ids (`normalizeModelId` lowercases, `deepseek-flash` and every `v4.1`/`v4p1`/`v4-1` shape hit the signal regexes); only the test pinned one spelling. Provider presence keeps the sweep non-vacuous without re-introducing id drift.
+
+### Expected merge conflict zones
+
+- LOW: test-only; the catalog sweep assertion block.
+
 ## GPT-6 Astra: unbounded retries, a turn that ends only on a handle (2026-09-11)
 
 ### What changed
@@ -45,7 +59,6 @@
 
 - LOW: `presets.ts` matcher block and `resolvePresetName` order; `settings.ts` union.
 
-||||||| parent of 4002847aa (fix(goal): earn the blocked status, and let Astra retry without a cap)
 ## Route user questions through the question tool (2026-09-10)
 
 ### What changed

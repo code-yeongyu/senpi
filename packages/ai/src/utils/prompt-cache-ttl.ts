@@ -37,17 +37,24 @@ function defaultSupportsToolReferences(model: Model<"anthropic-messages">): bool
 
 export function getAnthropicCompat(
 	model: Model<"anthropic-messages">,
-): Required<Omit<AnthropicMessagesCompat, "forceAdaptiveThinking" | "supportsMidConvoEffort">> {
+): Required<
+	Omit<AnthropicMessagesCompat, "forceAdaptiveThinking" | "supportsMidConvoEffort" | "sessionAffinityFormat">
+> &
+	Pick<AnthropicMessagesCompat, "sessionAffinityFormat"> {
 	// Auto-detect session affinity and cache control support from provider
 	const isFireworks = model.provider === "fireworks";
 	const isCloudflareAiGatewayAnthropic =
 		model.provider === "cloudflare-ai-gateway" && model.baseUrl.includes("anthropic");
 	const isXiaomi = model.provider === "xiaomi" || model.provider.startsWith("xiaomi-token-plan-");
+	// OpenRouter carries prompt-cache affinity on its own x-session-id header and
+	// rejects x-session-affinity (earendil-works/pi#9102).
+	const isOpenRouter = model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai");
 	return {
 		supportsEagerToolInputStreaming: model.compat?.supportsEagerToolInputStreaming ?? !isFireworks,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? !isFireworks,
 		sendSessionAffinityHeaders:
-			model.compat?.sendSessionAffinityHeaders ?? !!(isFireworks || isCloudflareAiGatewayAnthropic),
+			model.compat?.sendSessionAffinityHeaders ?? !!(isFireworks || isCloudflareAiGatewayAnthropic || isOpenRouter),
+		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? (isOpenRouter ? "openrouter" : undefined),
 		supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? !isFireworks,
 		supportsDisabledThinking: model.compat?.supportsDisabledThinking ?? !isXiaomi,
 		supportsTemperature: model.compat?.supportsTemperature ?? true,

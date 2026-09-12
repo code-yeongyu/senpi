@@ -965,3 +965,26 @@ amplification or dropping classic per-event backpressure.
 ### Expected merge conflict zones
 
 - `package.json` `scripts` and `devDependencies` versus upstream `tsgo` usage.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/coding-agent/package.json`: stays `@code-yeongyu/senpi` `2026.9.12` (`piConfig.configDir: .senpi`, `bin.senpi: dist/cli.js` beside `bin.pi`), `./rpc-entry` -> `dist/rpc-entry.js`, a dist-based `./client` export and no `./experimental/plugin` export, `files` without `!dist/client`/`npm-shrinkwrap.json`, the fork `build`/`build:binary`/`copy-assets`/`copy-binary-assets` scripts (pty build, Bun compile assets, codemode sidecar, native prebuilds), the runtime dependency set the fork bundles (`@anthropic-ai/claude-agent-sdk`, `@code-yeongyu/senpi-codemode`, `@earendil-works/pi-pty`, `@earendil-works/pi-client`/`pi-protocol` as runtime deps, MCP SDK, jsdom, held `openai 6.26.0`/`@anthropic-ai/sdk 0.123.0`/`signal-exit 3.0.7`), `bundledDependencies`/`bundleDependencies` incl. `@earendil-works/chord`, `private: true`, Node `>=24.0.0`, `typescript 7.0.2`, `vitest 4.1.11`; upstream's Chord dependency and D-Q bumps (`diff 9.0.0`, `highlight.js 11.12.0`, `hosted-git-info 10.1.1`, `marked 18.0.11`, `grok-mermaid 0.2.3`) were adopted.
+- `packages/coding-agent/install-lock/package.json`: generated installer manifest named `@code-yeongyu/senpi-install` `2026.9.12` depending on `@code-yeongyu/senpi 2026.9.12`, with the fork overrides (`protobufjs 7.6.5`, `rimraf 6.1.3`, `gaxios.rimraf`, `@hono/node-server 2.1.1`) and Node `>=24.0.0`.
+- `packages/coding-agent/tsconfig.build.json`: adds `@earendil-works/pi-client`, `pi-protocol` and `pi-pty` dist type paths and excludes the generated app-server protocol sources, while keeping `src/experimental` and `src/cli/experimental` out of the stable build (Q-C).
+- `packages/coding-agent/vitest.config.ts`: fork `setupFiles`, CI-only `forks` pool with two workers and a 20 s teardown, and source aliases for `pi-ai/node/provider-scope`, `pi-pty`, `pi-client` and `pi-protocol`.
+
+### Why
+
+- The published product is `senpi`, a self-contained tarball with bundled workspaces and held SDK pins; the build config keeps experimental source out of `dist`, and the vitest config must resolve the fork's extra workspaces from source and stay stable on CI runners.
+
+### Why an extension could not handle it
+
+- Package identity, bundling, compiler excludes and test-runner pools are build-time configuration; nothing at runtime can alter them.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/package.json` `scripts`, `exports`, `dependencies` and `files` on every upstream release.
+- MEDIUM: `tsconfig.build.json` `paths`/`exclude` and `vitest.config.ts` `alias` when upstream adds workspaces.
+- LOW: `install-lock/package.json` (regenerated, never hand-edited).

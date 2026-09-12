@@ -96,7 +96,11 @@ const payloadCases = [
 	},
 	{
 		name: "Codex Responses",
-		model: { ...getModel("openai-codex", "gpt-5.4"), baseUrl: "http://127.0.0.1:9" },
+		// gpt-5.5, not gpt-5.4: upstream 2e6fe2f98 (adopted, D-S) retired the GPT-5.4 Codex rows, so
+		// after catalog regeneration `getModel("openai-codex", "gpt-5.4")` is undefined. gpt-5.5 is the
+		// same codex row shape (reasoning, thinkingLevelMap { xhigh, minimal: "low" }), so "low" is
+		// still the cheapest legal effort here.
+		model: { ...getModel("openai-codex", "gpt-5.5"), baseUrl: "http://127.0.0.1:9" },
 		effort: "low",
 	},
 	{

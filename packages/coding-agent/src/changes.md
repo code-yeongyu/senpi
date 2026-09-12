@@ -1,5 +1,45 @@
 # changes
 
+## 2026-09-12 - Remove the client transcript/remote-session island, keep the dist `./client` export
+
+### What changed
+
+- `packages/coding-agent/src/client/transcript.ts`, `src/client/remote-session.ts`, and their tests are deleted (C14); upstream replaced that island with the source-only experimental client under `src/experimental/`.
+- `packages/coding-agent/src/client/index.ts` stays a one-line barrel, and `packages/coding-agent/package.json` keeps the fork's dist-based `./client` export instead of upstream's `source`-conditioned entry, so `@code-yeongyu/senpi/client` keeps resolving for installed consumers.
+- The 2026-08 block below that cites `src/client/transcript.ts` for an optional-chaining guard describes deleted code and stays as history.
+
+### Why
+
+- The transcript island duplicated what upstream now provides through Chord-routed services; carrying it would fork the RPC surface twice.
+
+### Why an extension could not handle it
+
+- Package exports and the client barrel are packaging contracts outside the extension API.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json` `exports["./client"]` and `src/client/index.ts` whenever upstream touches the client entry.
+
+## 2026-09-12 - Keep upstream's experimental server, client, and plugin sources source-only
+
+### What changed
+
+- `packages/coding-agent/src/experimental/cli.ts`, `src/experimental/commands.ts`, `src/experimental/server.ts`, `src/experimental/client.ts`, `src/experimental/client-runtime.ts`, `src/experimental/plugin.ts`, and the rest of `src/experimental/` arrive from upstream unchanged and are reachable only through `pi-test.sh` in a checkout (`Q-C=source-only`).
+- They are not exported from the published `@code-yeongyu/senpi` package, are not bundled into standalone binaries, and no fork runtime module imports them. `src/experimental/server.ts` still reads `PI_SERVER_DIR`/`PI_SERVER_ID` and defaults to `~/.pi/server`; that upstream naming is intentional for the source-only tree and is not part of the `SENPI_*` environment contract.
+- Unlike upstream, `@earendil-works/pi-client` and `@earendil-works/pi-protocol` stay runtime dependencies of `@code-yeongyu/senpi`, and the `./client` entry point stays published.
+
+### Why
+
+- Upstream moved its remote-harness experiment behind a `source` export condition after 0.85.0 shipped it by accident. The fork wants the sources present so future syncs merge cleanly, without widening the supported CLI surface or the tarball.
+
+### Why an extension could not handle it
+
+- Package export conditions, bundle inputs, and CLI entry wiring are build and packaging contracts; an extension cannot decide what the tarball contains.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json` `exports` (fork keeps `./client`; upstream gates `client` behind `source`), `scripts/build-coding-agent-bundle.mjs` inputs, `pi-test.sh`, and any upstream change that starts importing `src/experimental/` from `src/main.ts` or `src/cli.ts`.
+
 ## 2026-09-11 - Support brand-owned changelog sources (senpi#1583)
 
 ### What changed
@@ -132,7 +172,6 @@
 - MEDIUM: `packages/coding-agent/src/config.ts` around `getThemesDir()` / `getExportTemplateDir()` if upstream edits
   either resolver; the shared `ShippedAsset` descriptors and `resolveShippedAssetDir()` are fork-owned.
 
-||||||| parent of e351a846f (docs(rpc): document edit_assistant_message, the leaf token, and the entry_appended identity channel)
 ## 2026-09-09 - Forward shared-host policy to extension loading
 
 ### What changed
@@ -3042,3 +3081,49 @@ The instrumented transitions (`_emit`, queue internals, `RequiredCompactionError
 ### Expected merge conflict zones
 
 - Agent-session event handling, coding-agent barrel exports, and RPC command/client/response unions.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/coding-agent/src/bun/cli.ts`: the Bun entry keeps the fork order: upstream sandbox env setup, then `runtime-setup.ts` (sole Bedrock registration owner, Bun OAuth, process title), then the fork `register-cursor-agent.ts`, then `../cli-main.ts`; upstream's `bun/register-bedrock.ts` deletion was accepted.
+- `packages/coding-agent/src/cli.ts`: the fork launcher (Bun re-exec, package-manager command routing, `--version` fast path, bootstrap self-update, startup compile cache, isolated-process decision, inspector policy, dynamic `./cli-main.ts` import); upstream's `cli/setup.ts` is not imported here because `cli-main.ts` performs the same setup for both entry paths.
+- `packages/coding-agent/src/config.ts`: fork brand profile (`BRAND`, `APP_COMMAND`, `CONFIG_FLAT_LAYOUT`, `DISPLAY_VERSION`, `ENV_PREFIX`, `resolveAgentDir` with nearest-parent config discovery and flat-layout sentinel), shipped-asset resolution, Bun launcher repair command and the `code-yeongyu/senpi` self-update instruction.
+- `packages/coding-agent/src/index.ts`: keeps every fork barrel export (filesystem policy types, `InputDispositionEvent`, MCP declarations, notice primitives, read classifiers, RPC host/daemon helpers and errors, `sanitizeTerminalLabel`, `OAuthCredential`) and drops the PowerShell tool exports upstream still lists; upstream's `CompactionModelOverride` and `CustomEditorOptions` types were added.
+- `packages/coding-agent/src/migrations.ts`: the fork migration chain (`migrateEngineStateForBrand` first, `migrateLegacySenpiDirs`, `migrateExtensionSystem`) replaces upstream's in-file commands/prompts and deprecated-dir helpers; upstream's live `earendil-works/pi` doc URLs were taken.
+
+### Why
+
+- Startup ordering, runtime selection, brand/config-dir resolution and the public barrel are where the senpi product identity and its Bun/Node dual runtime live.
+
+### Why an extension could not handle it
+
+- These run before extensions load or define the module surface extensions import from.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/cli.ts` top-level flow; `packages/coding-agent/src/index.ts` export list.
+- MEDIUM: `packages/coding-agent/src/config.ts` constants block and `getAgentDir`; `packages/coding-agent/src/bun/cli.ts` import order.
+- LOW: `packages/coding-agent/src/migrations.ts` migration order.
+
+## 2026-09-12 - Sync CI repair: experimental runtime honors explicit agent dir and spawn context
+
+### What changed
+
+- `packages/coding-agent/src/experimental/server.ts`: `resolveSessionDirectory()` now honors an explicit `PI_CODING_AGENT_DIR` ahead of the branded `getAgentDir()` (SENPI_/OMO_ lanes), so the durable experimental server lists and attaches sessions from the directory its process was actually started with instead of the brand-quarantine default. The ask-user widget's minimal borrowed receiver also stays a prototype call target.
+- `packages/coding-agent/src/experimental/process.ts`: spawned internal processes carry the same explicit-dir resolution through their cwd/env instead of inheriting the brand default, so a server child sees its parent's session directory.
+- `packages/coding-agent/src/experimental/source-resolver.ts`: the experimental source resolver prefers the explicit `PI_CODING_AGENT_DIR` lane over the branded lane for the same reason; behavior on the plain `senpi` brand is unchanged when the variable is unset.
+- `packages/coding-agent/src/experimental/plugins/bundled.ts`: bundled plugin registration carries the explicit agent directory so cold server composition finds its own sessions (upstream CI arbiter: `test/experimental-remote-runtime.test.ts`, 26/26).
+
+### Why
+
+- The upstream durable-server composition contract treats an explicit `PI_CODING_AGENT_DIR` as THE agent-directory override; the fork's branded `envValue` lanes (SENPI_/OMO_ before PI_) shadowed it, so the server listed sessions from an empty quarantine dir and rejected every attach with `Unknown session`.
+
+### Why an extension could not handle it
+
+- The resolution lives inside the experimental server's process bootstrap and spawn plumbing, before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `resolveSessionDirectory` and the spawn context construction in `experimental/{server,process,source-resolver}.ts`; upstream only touches these for new composition features.
+

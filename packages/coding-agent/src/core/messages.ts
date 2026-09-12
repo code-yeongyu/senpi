@@ -84,7 +84,7 @@ export interface CustomMessage<T = unknown> {
 export interface BranchSummaryMessage {
 	role: "branchSummary";
 	summary: string;
-	fromId: string;
+	fromId: string | null;
 	timestamp: number;
 }
 

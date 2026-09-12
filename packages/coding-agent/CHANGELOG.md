@@ -6,14 +6,38 @@
 
 ### Added
 
+- Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
+- Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback; `compaction.model` still selects the summarization model ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
+- Added five-times-faster mouse wheel scrolling while holding Alt in fullscreen mode ([#9166](https://github.com/earendil-works/pi/pull/9166) by [@xl0](https://github.com/xl0)).
+- Added a clickable "Jump to latest message" label with the `tui.altScreen.bottom` shortcut to the fullscreen transcript while it is scrolled up ([#9080](https://github.com/earendil-works/pi/pull/9080) by [@rwachtler](https://github.com/rwachtler)).
+
 - Added two chord-free ways to open a pending async ask-user question: Enter on an empty editor and the `/answer` command (which reports `No question is pending.` when there is nothing to open), so the question stays reachable when a terminal, multiplexer or another keymap swallows the shortcut.
 - Added the `app.question.answer` keybinding (default `alt+a`, `option+a` on macOS): the async ask-user shortcut can now be rebound in `keybindings.json`, is listed in `/hotkeys` and `docs/keybindings.md`, and the widget hint follows the configured chord (fixes #1623).
 
 ### Changed
 
+- Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in (`embedWorkingStatus`) for all status spinners.
+- Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring the experimental tool-sampling flag. Extensions can re-register tool definitions with `constrainedSampling: false`.
+- Reduced fullscreen transcript search latency on large transcripts by caching unchanged search results, indexing ASCII runs, and limiting highlight work to visible matches ([#8800](https://github.com/earendil-works/pi/pull/8800) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Upstream's experimental server, client, and plugin sources ship source-only through `pi-test.sh`; they are not part of the published package. The supported local SDK, the `./client` entry point, and the stdio RPC API are unchanged.
+
 - The async ask-user widget above the editor now shows the pending question itself: the first unanswered question with its options (and how many more wait behind it), one truncated line each, moving on to the next unanswered question when a partial draft collapses; on macOS the Option-composed glyph accepted for the shortcut follows the bound letter instead of being fixed to `å`/`Å`.
 
 ### Fixed
+
+- Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages; the fork's retry profiles and jitter still shape the delay under that ceiling ([#8826](https://github.com/earendil-works/pi/issues/8826)).
+- Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers and skill or template expansion ([#8718](https://github.com/earendil-works/pi/issues/8718)).
+- Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
+- Fixed extension tools without parameter schemas to be rejected during registration instead of breaking provider requests ([#9300](https://github.com/earendil-works/pi/issues/9300)).
+- Fixed configurable save keybindings in the model and thinking selectors ([#9149](https://github.com/earendil-works/pi/pull/9149) by [@rwachtler](https://github.com/rwachtler)).
+- Fixed mouse hover changing selection and recentering autocomplete and settings lists, causing clicks to target a different item.
+- Fixed OpenAI Codex SSE parsing to process terminal events that are not followed by a blank line ([#9047](https://github.com/earendil-works/pi/issues/9047)).
+- Fixed skills being unavailable when Bash is the only enabled tool ([#8552](https://github.com/earendil-works/pi/pull/8552) by [@xl0](https://github.com/xl0)).
+- Fixed image orientation detection skipping EXIF data after non-EXIF APP1 segments ([#8616](https://github.com/earendil-works/pi/pull/8616) by [@wutongyuonce](https://github.com/wutongyuonce)).
+- Fixed imported sessions overwriting an existing session with the same filename ([#8985](https://github.com/earendil-works/pi/pull/8985) by [@wutongyuonce](https://github.com/wutongyuonce)).
+- Fixed session forks losing their compaction boundary ([#8990](https://github.com/earendil-works/pi/pull/8990) by [@acmerfight](https://github.com/acmerfight)).
+- Fixed managed `fd` and ripgrep downloads on Linux musl systems ([#9070](https://github.com/earendil-works/pi/pull/9070) by [@Charlie0113-T](https://github.com/Charlie0113-T)).
+- Fixed managed `fd` and ripgrep downloads requiring the GitHub Releases API ([#8708](https://github.com/earendil-works/pi/pull/8708) by [@Terminator666666](https://github.com/Terminator666666)).
 
 - Fixed native prompt-preset matching for Devin SWE-2 effort variants so `swe-2-high`, `swe-2-max`, `swe-2-low`, and `swe-2-high-lite` resolve to the Kimi K3 preset; the rejected bare `swe-2` id remains unmatched.
 

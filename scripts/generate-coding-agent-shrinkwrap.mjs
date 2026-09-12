@@ -18,9 +18,10 @@ const rootLockfilePath = join(repoRoot, "package-lock.json");
 // gate; it is intentionally NOT shipped in the tarball.
 const manifestRelPath = "packages/coding-agent/publish-deps.lock.json";
 const shrinkwrapPath = join(repoRoot, manifestRelPath);
-const internalPackagePrefixes = ["@earendil-works/pi-", "@code-yeongyu/senpi-codemode"];
+const internalPackagePrefixes = ["@earendil-works/chord", "@earendil-works/pi-", "@code-yeongyu/senpi-codemode"];
 const allowedInstallScriptPackages = new Map([
-	["@google/genai@2.18.0", "preinstall is a no-op in the published package"],
+	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
+	["esbuild@0.28.2", "postinstall selects and verifies the platform-specific esbuild binary"],
 	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
 ]);
 

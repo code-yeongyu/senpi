@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-12 - Remove the ai-to-protocol mapper with the protocol v8 adoption
+
+### What changed
+
+- `packages/server/src/protocol.ts` (the `toProtocolModelMetadata()` / `toProtocolAssistantMessage()` / `toProtocolUserMessage()` / `toProtocolToolResultMessage()` bridge), `packages/server/test/protocol.test.ts`, and the matching re-export in `packages/server/src/index.ts` are deleted (C13). Upstream replaced the mapping layer with service-addressed RPC routed through `src/session-router.ts` and deleted `packages/protocol/src/schemas.ts`, so the DTOs the mapper produced no longer exist.
+- The 2026-09-04, 2026-08-25, and 2026-08-13 blocks below that describe `protocol.ts` field accounting remain as history; they no longer name live code.
+
+### Why
+
+- Keeping a mapper for schemas upstream removed would mean re-inventing the wire contract inside the fork; the server now forwards opaque service envelopes and never decodes business payloads.
+
+### Why an extension could not handle it
+
+- The server package sits below the extension layer; the wire contract is not something an extension can shape.
+
+### Expected merge conflict zones
+
+- `packages/server/src/index.ts` exports and any upstream change that reintroduces a typed mapping module; expect fork-side deletions, not edits.
+
 ## 2026-09-10 - Use native TypeScript builds for omob performance
 
 ### What changed
@@ -117,3 +136,23 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - MEDIUM: `src/protocol.ts`, in `ExactKeys` manifests and assistant/tool-call
   conversion switches.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/server/package.json`: stays `@code-yeongyu/senpi-server 2026.9.12` (`senpi` keyword, `code-yeongyu/senpi` repository, `private: true`), `tsc` for `dev`/`typecheck`, `@earendil-works/chord`/`pi-agent-core`/`pi-protocol` at `^2026.9.12` plus the fork's `@earendil-works/pi-ai` runtime dependency, `vitest 4.1.11`.
+- `packages/server/src/testing/client.ts`: upstream service-addressed test client with the fork `(chunk: Buffer)` typing on the socket data handler.
+- `packages/server/src/transports/unix/listener.ts`: upstream `ServerListener` with `.bind-` ownership and stale-socket cleanup, with the fork `(chunk: Buffer)` typing on the socket data handler.
+
+### Why
+
+- The server publishes under the fork name and lockstep, and the fork's `@types/node 26.2.0` requires explicit `Buffer` typing on socket chunks.
+
+### Why an extension could not handle it
+
+- Manifest identity and transport source typing are compile-time concerns of the server package.
+
+### Expected merge conflict zones
+
+- LOW: `socket.on("data", ...)` handlers in both source files; `packages/server/package.json` name/version/dependency lines.

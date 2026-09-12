@@ -12,6 +12,8 @@
 
 ### Removed
 
+- Removed the withdrawn manual-drive configuration, action inspection methods, action outcomes, and snapshot action field from `AgentHarness`; the harness now runs on upstream's runtime/drive generation.
+
 ## [2026.9.12-2] - 2026-09-12
 
 ### Breaking Changes

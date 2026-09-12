@@ -384,7 +384,6 @@
 ### Expected merge conflict zones
 
 - LOW: the `executeTool` try block in `packages/coding-agent/src/core/agent-session.ts`.
-||||||| parent of e351a846f (docs(rpc): document edit_assistant_message, the leaf token, and the entry_appended identity channel)
 ## askUser settings and --no-ask-user session override (2026-09-10)
 
 ### What changed
@@ -5686,3 +5685,32 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
   packages/coding-agent/src/core/retry-fallback/controller.ts.
 
 
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: fork `AgentSessionLaunchProfile` (immutable cwd/permission/creation-model/thinking flags), settle-before-replacement and `session_extensions_removed` reporting, plus upstream's import path: `reserveSessionWrite(destinationPath)` followed by `copyFileSync(..., COPYFILE_EXCL)` when the source is not already stored.
+- `packages/coding-agent/src/core/agent-session.ts`: fork structure throughout (admission accounting, `compactBeforeNextAdmission` instead of upstream's `_compactBeforeNextAssistantResponse`, `preflightToolCall`/`_emitAfterToolCallHooks`, constants and tool-result truncation, input ids `${sessionId}:${n}` with `emitInputDisposition`/`throwIfCancelled`, `expandPromptTemplateWithMetadata` + `command_invocation`) with upstream behavior ported in: `_getCompactionSettings(forModel)` at every compaction read (D-L), retry delay `min(planner delay, settings.maxAgentDelayMs)` (D-M), and `steer`/`followUp` running input handlers through `_queueUserInput(text, images, behavior, { enqueueOrder, source })` (D-N).
+- `packages/coding-agent/src/core/keybindings.ts`: fork bindings `app.history.search` (ctrl+r), `app.tree.editMessage` (ctrl+e), `app.models.toggleFavorite` (ctrl+f) and the Windows/WSL defaults, alongside upstream's `app.thinking.save`; `isRecord`/`hasOwn` helpers for the config parse.
+- `packages/coding-agent/src/core/messages.ts`: fork `ConfigurationUpdateMessage`, context-excluded custom messages (`GOAL_CONTINUATION_MESSAGE_TYPE`), provenance copying, `dropFailedAssistantTurns` as the final transform, and the transport image budget (`elideOldImages`, `convertToLlmForTransport`, placeholders); upstream's `fromId: string | null` widening landed.
+- `packages/coding-agent/src/core/model-registry.ts`: fork `AuthStorage`-backed registry (`create`/`inMemory`, `modelRuntime` getter, availability snapshot fallback, `getUpstreamModelId`/`getServiceTier`, `extraBody` in compatibility headers) with upstream's `stream()`/`streamSimple()` passthroughs.
+- `packages/coding-agent/src/core/model-resolver.ts`: fork defaults (`openai-codex` gpt-5.6-sol, ollama, cursor `auto`), `AvailableModelsSource`, stored-reference resolution, pattern ownership metadata, service-tier and thinking provenance; upstream's `radius: "balanced"` default restored.
+- `packages/coding-agent/src/core/model-runtime.ts`: fork runtime (wire identity set at import, credential pool slots and rotation stream, remote catalog provider, `withPayloadRequestMetadata`, `isFallbackEligible`, `hasFreshAvailabilitySnapshot`, `reloadConfig`, native provider registration); upstream's `streamDeferred` split adopted.
+- `packages/coding-agent/src/core/session-manager.ts`: `_setSessionFile` keeps the fork reader contract (headerless file -> fresh in-memory id, never a replacement file, resident-store externalize, `mutationCount` bump) and upstream's `_loadEntries` + `inMemory(cwd, options, entries)` ingestion was extended with the same store handling.
+- `packages/coding-agent/src/core/settings-manager.ts`: `export type * from "./settings-public-types.ts"` stays (upstream's inline `CompactionSettings`/`RetrySettings` moved into the fork type modules); compaction getters take `forModel?` and keep the fork return type `ResolvedCompactionSettings & { model?: string }`; `getRetrySettings()` returns `maxAgentDelayMs` defaulting to pi-ai's `DEFAULT_MAX_AGENT_RETRY_DELAY_MS` and `maxRetries` from the senpi default retry profile.
+- `packages/coding-agent/src/core/skills.ts`: the fork `<skill_roots>` alias table and stronger loading sentence, rendered for both the read and upstream's new bash-only `fileReadTool` branch.
+
+### Why
+
+- The session loop, model runtime and settings model carry the fork's admission/compaction policy, credential pooling, Astra configuration replay and retry profiles; upstream's per-model compaction budgets, retry cap and queued-input handlers were folded into those shapes rather than replacing them.
+
+### Why an extension could not handle it
+
+- These are the core session, registry and settings classes that extensions receive; their constructors, getters and event contracts cannot be swapped from an extension.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/core/agent-session.ts` (`prompt`, `steer`/`followUp`, `_queueUserInput`, compaction and retry blocks); `packages/coding-agent/src/core/settings-manager.ts` compaction/retry getters; `packages/coding-agent/src/core/session-manager.ts` loaders.
+- MEDIUM: `packages/coding-agent/src/core/model-runtime.ts` stream wrappers; `packages/coding-agent/src/core/model-registry.ts` availability methods; `packages/coding-agent/src/core/messages.ts` `convertToLlm`.
+- LOW: `packages/coding-agent/src/core/keybindings.ts` binding table; `packages/coding-agent/src/core/model-resolver.ts` defaults map; `packages/coding-agent/src/core/skills.ts` prompt text; `packages/coding-agent/src/core/agent-session-runtime.ts` import path.

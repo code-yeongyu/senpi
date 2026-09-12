@@ -142,7 +142,8 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 
 /**
  * Retry policy: bounded attempts with exponential backoff (`baseDelayMs * 2^(attempt-1)`).
- * Matches `settings.retry` (`enabled`, `maxRetries`, `baseDelayMs`) in coding-agent; kept
+ * `maxAgentDelayMs` caps each computed delay and defaults to 60 seconds.
+ * Matches `settings.retry` (`enabled`, `maxRetries`, `baseDelayMs`, `maxAgentDelayMs`) in coding-agent; kept
  * here so the classifier and the policy-driven retry loop live together and stay reusable
  * by the SDK and other callers.
  */
@@ -152,14 +153,30 @@ export interface RetryPolicy {
 	maxRetries: number;
 	/** Base delay in ms. Per-attempt delay is `baseDelayMs * 2^(attempt-1)` before jitter. */
 	baseDelayMs: number;
+	/** Optional cap for agent-level retry delays in ms. Defaults to 60 seconds. */
+	maxAgentDelayMs?: number;
 	/** Injectable source used for Codex-style +/-10% backoff jitter. */
 	random?: () => number;
 }
 
-export function retryDelayMs(baseDelayMs: number, attempt: number, random: () => number = Math.random): number {
-	const scheduledDelayMs = baseDelayMs * 2 ** (attempt - 1);
-	const sample = Math.min(1, Math.max(0, random()));
-	return Math.round(scheduledDelayMs * (0.9 + sample * 0.2));
+export const DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60_000;
+
+/**
+ * Per-attempt backoff: `baseDelayMs * 2^(attempt-1)`, jittered by +/-10% through the
+ * injectable `random` source, then clamped to `maxAgentDelayMs` (60s by default). The
+ * jitter runs before the clamp so a capped delay stays exactly at the cap instead of
+ * scattering above it, and the safe-integer guard keeps a large `attempt` from producing
+ * `Infinity` before the clamp.
+ */
+export function retryDelayMs(
+	policy: Pick<RetryPolicy, "baseDelayMs" | "maxAgentDelayMs" | "random">,
+	attempt: number,
+): number {
+	const scheduledDelayMs = policy.baseDelayMs * 2 ** Math.max(0, attempt - 1);
+	const sample = Math.min(1, Math.max(0, (policy.random ?? Math.random)()));
+	const jitteredDelayMs = Math.round(scheduledDelayMs * (0.9 + sample * 0.2));
+	const safeDelay = Number.isSafeInteger(jitteredDelayMs) ? jitteredDelayMs : Number.MAX_SAFE_INTEGER;
+	return Math.min(safeDelay, policy.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS);
 }
 
 /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
@@ -252,7 +269,7 @@ export async function retryTransientCall<T>(
 
 			attempt++;
 			lastRetry = { attempt, errorMessage: errorMessageOf(error) };
-			const delayMs = retryDelayMs(policy!.baseDelayMs, attempt, policy!.random);
+			const delayMs = retryDelayMs(policy!, attempt);
 			await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 
 			try {
@@ -322,7 +339,7 @@ export async function retryAssistantCall(
 
 		attempt++;
 		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
-		const delayMs = retryDelayMs(policy!.baseDelayMs, attempt, policy!.random);
+		const delayMs = retryDelayMs(policy!, attempt);
 		await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 
 		// Normalize aborts during retry backoff to the same AssistantMessage shape as
@@ -332,7 +349,8 @@ export async function retryAssistantCall(
 		} catch (error) {
 			await callbacks?.onRetryFinished?.(false, attempt, lastRetry.errorMessage);
 			if (error instanceof RetrySleepAbortError) {
-				return { ...response, stopReason: "aborted", errorMessage: undefined };
+				const { errorMessage: _errorMessage, ...rest } = response;
+				return { ...rest, stopReason: "aborted" };
 			}
 			throw error;
 		}

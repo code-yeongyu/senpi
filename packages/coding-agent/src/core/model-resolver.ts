@@ -46,6 +46,8 @@ export const defaultModelPerProvider: Record<string, string> = {
 	// Cursor ships no models until its chat protocol is ported; "auto" matches
 	// the Cursor agent's native model auto-selection once models exist.
 	cursor: "auto",
+	// Radius resolves its catalog after discovery; "balanced" is the selectable default.
+	radius: "balanced",
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",

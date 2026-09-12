@@ -18,7 +18,7 @@ class PayloadCaptured extends Error {
 }
 
 interface OpenAIResponsesCachePayload extends OpenAICompletionsCachePayload {
-	prompt_cache_options?: { mode: "explicit" };
+	prompt_cache_options?: { mode?: "explicit"; ttl?: "30m" };
 }
 function stopAfterPayload<TPayload>(capture: (payload: TPayload) => void): (payload: unknown) => never {
 	return (payload: unknown): never => {
@@ -492,9 +492,12 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload?.prompt_cache_options).toBeUndefined();
 		});
 
-		it("should set prompt_cache_retention when cacheRetention is long", async () => {
-			const model = getModel("openai", "gpt-4o-mini");
-			let capturedPayload: any = null;
+		it.each([
+			["gpt-4o-mini", "24h", undefined],
+			["gpt-6-astra", undefined, { ttl: "30m" }],
+		] as const)("should use the supported long cache field for %s", async (modelId, retention, cacheOptions) => {
+			const model = getModel("openai", modelId);
+			let capturedPayload: OpenAIResponsesCachePayload | undefined;
 
 			const { streamOpenAIResponses } = await import("../src/providers/openai-responses.ts");
 
@@ -503,9 +506,9 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 					apiKey: "fake-key",
 					cacheRetention: "long",
 					sessionId: "session-2",
-					onPayload: (payload) => {
+					onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
 						capturedPayload = payload;
-					},
+					}),
 				});
 
 				for await (const event of s) {
@@ -515,9 +518,9 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 				// Expected to fail
 			}
 
-			expect(capturedPayload).not.toBeNull();
-			expect(capturedPayload.prompt_cache_key).toBe("session-2");
-			expect(capturedPayload.prompt_cache_retention).toBe("24h");
+			expect(capturedPayload?.prompt_cache_key).toBe("session-2");
+			expect(capturedPayload?.prompt_cache_retention).toBe(retention);
+			expect(capturedPayload?.prompt_cache_options).toEqual(cacheOptions);
 		});
 
 		it("uses model cacheRetention when request options omit cacheRetention", async () => {

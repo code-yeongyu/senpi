@@ -1149,12 +1149,18 @@ export function createRpcConnectionHandler(
 			}
 
 			case "steer": {
-				await session.steer(command.message, command.images, { enqueueOrder: command.enqueueOrder });
+				await session.steer(command.message, command.images, {
+					enqueueOrder: command.enqueueOrder,
+					source: "rpc",
+				});
 				return success(id, "steer");
 			}
 
 			case "follow_up": {
-				await session.followUp(command.message, command.images, { enqueueOrder: command.enqueueOrder });
+				await session.followUp(command.message, command.images, {
+					enqueueOrder: command.enqueueOrder,
+					source: "rpc",
+				});
 				return success(id, "follow_up");
 			}
 

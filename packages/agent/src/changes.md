@@ -1407,3 +1407,33 @@ Conflict zone: `agent-loop.ts` `streamAssistantResponse` catch.
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: `packages/agent/src/agent-loop.ts` streaming event switch and terminal response paths.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/agent/src/harness/compaction/branch-summarization.ts`: upstream body, but the summary text comes from the fork's `contentTextForSummary` (summary-safe content extraction) instead of `contentText`.
+- `packages/agent/src/harness/compaction/compaction.ts`: upstream body plus the fork's `dropFailedAssistantTurns` accounting in `estimateContextTokens` (a counted set so failed turns are neither estimated nor used as the last usage anchor, indices still relative to the input array), the fork cut-point fallback to the last candidate when no cut point clears the budget, and `contentTextForSummary` at both summary sites.
+- `packages/agent/src/harness/env/nodejs.ts`: upstream capture/spill rewrite plus the fork's shell hardening: `windowsTaskkillCandidates`/`killWindowsProcessTree` (synchronous `spawnSync` over every existing System32/Sysnative `taskkill.exe` before the PATH name, direct kill as last resort), promise-returning `onUpdate` observers tracked and awaited with a 5 s `NORMAL_CALLBACK_SETTLEMENT_TIMEOUT_MS` bound, and `callback_error` carrying the raw rejected value as `cause`.
+- `packages/agent/src/harness/messages.ts`: `convertToLlm` ends with the fork's `dropFailedAssistantTurns` so failed provider turns never replay, and `CompactionSummaryMessage` keeps the fork `details?: unknown` field.
+- `packages/agent/src/harness/runtime/drive/retry.ts`: `retryNotBefore` widens its policy `Pick` to include `random` so the fork's injectable jitter source reaches `retryDelayMs` from the runtime retry path (the fork jitters before the `maxAgentDelayMs` cap, D-M).
+- `packages/agent/src/harness/tools/edit.ts`: upstream signature and mutation-queue plumbing plus the fork `postMutate` seam (`runPostMutate` inside the same queue slot, re-read on `fileMayHaveChanged`, diff and patch recomputed against the committed bytes, `rereadNote`, `appendPostMutateNote`).
+- `packages/agent/src/harness/tools/write.ts`: same `postMutate` seam; the success text stays `Successfully wrote to <path>` with the hook note appended.
+- `packages/agent/src/harness/types.ts`: `ShellExecOptions.onUpdate` returns `void | PromiseLike<void>` so awaited output callbacks survive; `FileError`/`ExecutionError`/`CompactionError` expose a `readonly cause?: unknown` and `ExecutionError` accepts a non-Error cause; `getOrUndefined` keeps the fork nullable-normalizing signature (no caller of upstream's Result-unwrapping overload on either side).
+- `packages/agent/src/harness/utils/shell-output.ts`: `ShellCaptureOptions.onChunk` may return a promise and its settlement is returned to the environment so a rejection becomes `ExecutionError("callback_error")` instead of an unhandled rejection.
+- `packages/agent/src/index.ts`: adds the fork export line for `EMPTY_TOOL_USE_DEMOTION_DIAGNOSTIC` and `ProviderRetryWatchdogAbortError` from `assistant-terminal-state.ts`.
+- `packages/agent/src/types.ts`: keeps the fork loop surface: `thinkingSelection`, `abortServerSideFallback`, `cursorExecHandlers` (with the run-signal factory form), `streamStartTimeoutMs`/`initialRequestTimeoutMs`/`initialRequestStreamStartTimeoutMs`, `restorePendingMessages`, `removedToolHints`, `resolveUnknownToolCall`, wave-based parallel tool scheduling docs, `AgentToolResult.isError`, `reasoningBaseline` and the `@earendil-works/pi-agent-core` module-augmentation example.
+
+### Why
+
+- The fork's loop contract (failed-turn dropping, Astra prompt-cache prefix stability, Cursor exec channel, stream-start watchdogs, post-mutate hooks, hardened Windows process-tree kills, awaited output observers) has to survive upstream's runtime/session generation; these files are the living boundaries where that behavior is expressed.
+
+### Why an extension could not handle it
+
+- Context estimation, message projection, tool execution order, error `cause` typing and the harness's public option types are core wire and type contracts consumed by every lane; an extension cannot interpose on them.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/agent/src/harness/env/nodejs.ts` capture pipeline and Windows kill path; `packages/agent/src/types.ts` `AgentLoopConfig`/`AgentTool` interfaces.
+- MEDIUM: `estimateContextTokens`/`findCutPoint` in `compaction.ts`; `execute` bodies of `tools/edit.ts` and `tools/write.ts`; `ShellExecOptions` in `harness/types.ts`.
+- LOW: `convertToLlm` tail in `harness/messages.ts`; `retryNotBefore` signature; the `assistant-terminal-state.ts` export line in `index.ts`.

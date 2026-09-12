@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Transport } from "@earendil-works/pi-ai";
+import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Transport } from "@earendil-works/pi-ai";
 import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
 import type {
 	RetryPolicyProfile,
@@ -17,7 +17,7 @@ import { findNearestParentConfigDir } from "../nearest-parent-config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { envValue } from "./brand.ts";
-import type { CompactionSettings } from "./compaction-settings-access.ts";
+import type { CompactionModelSelector, CompactionSettings } from "./compaction-settings-access.ts";
 import {
 	compactionEnabled,
 	compactionKeepRecentTokens,
@@ -59,6 +59,9 @@ import {
 } from "./settings-shapes.ts";
 import type { BranchSummarySettings, TerminalSettings } from "./terminal-settings.ts";
 
+// `CompactionSettings` (now including `modelOverrides`), `CompactionModelOverride`,
+// `RetrySettings` and the rest of the public settings shapes live in their own modules;
+// this re-export keeps every existing importer's path working.
 export type * from "./settings-public-types.ts";
 
 export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
@@ -1270,17 +1273,23 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getCompactionReserveTokens(): number {
-		return compactionReserveTokens(this.settings.compaction);
+	/**
+	 * Token budgets resolve through the per-model override table (`compaction.modelOverrides`,
+	 * exact `provider/modelId` keys) before the ordinary setting and the built-in default.
+	 */
+	getCompactionReserveTokens(forModel?: CompactionModelSelector): number {
+		return compactionReserveTokens(this.settings.compaction, forModel);
 	}
 
-	getCompactionKeepRecentTokens(): number {
-		return compactionKeepRecentTokens(this.settings.compaction);
+	getCompactionKeepRecentTokens(forModel?: CompactionModelSelector): number {
+		return compactionKeepRecentTokens(this.settings.compaction, forModel);
 	}
 
-	getCompactionSettings(): ResolvedCompactionSettings & { model?: string } {
+	getCompactionSettings(forModel?: CompactionModelSelector): ResolvedCompactionSettings & { model?: string } {
 		return {
-			...resolveCompactionSettings(this.settings.compaction),
+			...resolveCompactionSettings(this.settings.compaction, forModel),
+			// `compaction.model` is the summarization model, a different concept from the
+			// session model whose per-model token budgets `forModel` resolves.
 			model: this.settings.compaction?.model,
 		};
 	}
@@ -1309,10 +1318,16 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/** True when the user explicitly configured retry.maxAgentDelayMs in settings (not the shipped default). */
+	isRetryMaxAgentDelayMsConfigured(): boolean {
+		return this.settings.retry?.maxAgentDelayMs !== undefined;
+	}
+
 	getRetrySettings(): {
 		enabled: boolean;
 		maxRetries: number;
 		baseDelayMs: number;
+		maxAgentDelayMs: number;
 	} {
 		return {
 			enabled: this.getRetryEnabled(),
@@ -1320,6 +1335,7 @@ export class SettingsManager {
 			// same budget on every consumer, so the default tracks the shipped profile.
 			maxRetries: this.settings.retry?.maxRetries ?? SENPI_DEFAULT_RETRY_PROFILE.turn.maxRetries,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
+			maxAgentDelayMs: this.settings.retry?.maxAgentDelayMs ?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS,
 		};
 	}
 

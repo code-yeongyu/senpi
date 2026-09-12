@@ -388,3 +388,28 @@ Every remaining audited production path with no nearer tracker than the root:
 - Upstream changes to the SQLite backend's dependency placement or independent-version policy.
 - Future workspace additions under nested `packages/*/*` paths, which must remain aligned
   across root npm workspaces, `pnpm-workspace.yaml`, and `scripts/build-all.mjs`.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `package.json`: the root manifest stays the fork's `senpi-monorepo` (Node >= 24, `packages/pty` workspace, `build`/`clean`/`test` routed through `scripts/build-all.mjs` and `scripts/run-workspaces.mjs`, the fork `check` chain with `check:claude-sdk-platform-lock` and `tsc --noEmit`, `refresh-lock`, `preinstall` bin stubs, Bun/pnpm `trustedDependencies`/`onlyBuiltDependencies`, and the held overrides such as `protobufjs 7.6.5`, `@anthropic-ai/sdk 0.123.0`, `esbuild 0.28.2`); upstream's `check:runtime-deps`/`check:entry-graphs`/`check:package-install` scripts exist but are not wired into `check`.
+- `packages/chord/package.json`: differs from the pin only by version fields: the fork CalVer `2026.9.12` instead of `0.85.1`, `vitest 4.1.11` instead of `4.1.9` so the held pin stays single-instanced, and `private: true` because chord is bundled into the senpi tarball rather than published.
+- `packages/chord/src/types.ts`: the same declarations as upstream; the only difference is biome 2.5.10 formatting of the nested conditional types (`JsonRepresentation`, `InvalidJsonPart`, `InvalidRemoteMember`), which the fork's `--error-on-warnings` check rewrites.
+- `packages/telemetry/package.json`: version fields only: CalVer `2026.9.12`, `@types/node 26.2.0`, `vitest 4.1.11`, `private: true`.
+- `tsconfig.json`: keeps the fork path map (`@code-yeongyu/senpi`, `@code-yeongyu/senpi/hooks`, `@code-yeongyu/senpi-server`, `@earendil-works/pi-pty`, `@earendil-works/pi-agent-core/session/testing`) unioned with upstream's Chord root and subpath entries; the file is expanded one-entry-per-line by the fork formatter.
+- `vitest.base.ts`: unions upstream's `aiUtils` alias with the fork `aiAuthPool` alias (`@earendil-works/pi-ai/auth/*` -> `packages/ai/src/auth/*`) beside the Chord aliases upstream added.
+
+### Why
+
+- The fork ships under its own package names, CalVer lockstep, Node 24 floor, mixed npm/Bun/pnpm build orchestration and held dependency pins; the root manifest, TypeScript path map and vitest aliases are where those choices are declared, so the sync cannot take upstream's versions of them verbatim.
+
+### Why an extension could not handle it
+
+- Workspace manifests, compiler path maps and test-runner aliases are build-time inputs read before any runtime code loads; no extension hook can rename packages, change the engine floor or register a module alias.
+
+### Expected merge conflict zones
+
+- HIGH: root `package.json` `scripts`, `devDependencies`, `overrides` and `engines` whenever upstream bumps tooling or adds a `check:*` step.
+- MEDIUM: `tsconfig.json` `paths` when upstream adds a workspace or subpath export; `vitest.base.ts` alias list for the same reason.
+- LOW: `packages/chord/package.json` and `packages/telemetry/package.json` version lines on every upstream release; `packages/chord/src/types.ts` re-wraps whenever upstream edits those conditional types.

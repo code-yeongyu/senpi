@@ -1,4 +1,9 @@
-import type { CompactionSettings } from "./compaction-settings-access.ts";
+import {
+	type CompactionModelSelector,
+	type CompactionSettings,
+	compactionKeepRecentTokens,
+	compactionReserveTokens,
+} from "./compaction-settings-access.ts";
 
 export interface ResolvedCompactionSettings {
 	enabled: boolean;
@@ -45,12 +50,17 @@ function finiteNumber(value: unknown, fallback: number, minimum = 0): number {
 	return typeof value === "number" && Number.isFinite(value) ? Math.max(minimum, value) : fallback;
 }
 
-export function resolveCompactionSettings(settings?: CompactionSettings): ResolvedCompactionSettings {
+export function resolveCompactionSettings(
+	settings?: CompactionSettings,
+	forModel?: CompactionModelSelector,
+): ResolvedCompactionSettings {
 	const raw = settings as Record<string, unknown> | undefined;
 	return {
 		enabled: typeof raw?.enabled === "boolean" ? raw.enabled : DEFAULTS.enabled,
-		reserveTokens: finiteNumber(raw?.reserveTokens, DEFAULTS.reserveTokens),
-		keepRecentTokens: finiteNumber(raw?.keepRecentTokens, DEFAULTS.keepRecentTokens),
+		// Token budgets resolve through the per-model override table and reject invalid
+		// configuration instead of clamping it.
+		reserveTokens: compactionReserveTokens(settings, forModel),
+		keepRecentTokens: compactionKeepRecentTokens(settings, forModel),
 		speculativeEnabled:
 			typeof raw?.speculativeEnabled === "boolean" ? raw.speculativeEnabled : DEFAULTS.speculativeEnabled,
 		speculativeFraction: finiteNumber(raw?.speculativeFraction, DEFAULTS.speculativeFraction),

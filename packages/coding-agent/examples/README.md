@@ -18,6 +18,9 @@ Example extensions demonstrating:
 - External integrations (SSH, file watchers, system theme sync)
 - Custom providers (Anthropic with custom streaming, GitLab Duo)
 
+### [plugins/pi-example-plugin/](plugins/pi-example-plugin/)
+An experimental plugin package for the source-only remote harness; in a checkout, senpi builds it into separate Session-worker and TUI Chord facets. Plugins are not part of the published `@code-yeongyu/senpi` package.
+
 ## Documentation
 
 - [SDK Reference](sdk/README.md)

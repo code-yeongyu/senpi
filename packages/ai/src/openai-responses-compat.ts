@@ -5,7 +5,7 @@ export interface OpenAIResponsesCompat {
 	supportsDeveloperRole?: boolean;
 	/** Session-affinity header format. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
-	/** Whether the provider supports `prompt_cache_retention: "24h"`. Default: true. */
+	/** Whether the provider supports long prompt cache retention. This uses `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"` on earlier models. Default: true. */
 	supportsLongCacheRetention?: boolean;
 	/** Whether the provider supports the OpenAI Responses WebSocket transport. */
 	supportsWebSocket?: boolean;

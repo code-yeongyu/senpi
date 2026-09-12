@@ -1,5 +1,26 @@
 # TUI delta rendering fork changes
 
+## 2026-09-12 - Carry-forwards from the upstream v0.85.x sync
+
+### What changed
+
+- `packages/tui/src/latex.ts` stays deleted; upstream f0592205f's seven relational-algebra join symbols now live in `packages/tui/src/components/latex.ts`, pinned by `test/components-latex-relations.test.ts`.
+- `packages/tui/src/tui.ts` keeps `PI_DEBUG_REDRAW` and the `pi-debug.log` filename instead of upstream c505f4c19's `PI_TUI_DEBUG_REDRAW` / `pi-tui-debug.log` rename.
+- `packages/tui/src/tui.ts` (`TuiBase.logDirectory`) keeps its `~/.senpi/agent` default, so over-wide crash dumps stay at `<home>/.senpi/agent/senpi-crash.log`; upstream's `os.tmpdir()` fallback when no log directory is supplied is not adopted.
+- `packages/tui/src/components/loader.ts` gains upstream's protected `getRenderedIndicator()` hook on top of the fork message/indicator formatters.
+
+### Why
+
+- The fork's debug and crash artifacts are documented under the `senpi` names and read by the QA harness; renaming them would break existing evidence tooling for no user benefit. The LaTeX symbol table belongs with the living component module.
+
+### Why an extension could not handle it
+
+- Renderer logging paths, crash dumps, and component internals are not reachable from extensions.
+
+### Expected merge conflict zones
+
+- `src/tui.ts` env-var and log-filename constants, `components/latex.ts` symbol tables, and `components/loader.ts` render hooks.
+
 ## 2026-09-11 - Keep dollar skill hints active across multiline drafts
 
 ### What changed
@@ -1058,3 +1079,29 @@ Component-level caching is added in coding-agent components because high-frequen
 ### Expected merge conflict zones
 
 - `packages/tui/src/tui.ts` around full-render and differential-render terminal writes; `packages/tui/src/tui-main-screen.ts` remains a thin state-capture subclass.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/tui/src/components/box.ts`: fork `Container` disposal semantics (`dispose()` idempotent via a `disposed` flag, `clear()` disposing children, `detachAll()` detaching without disposing for reuse) alongside upstream's mouse layout cache and child hit-testing.
+- `packages/tui/src/components/editor.ts`: fork atomic paste and image markers (`MarkerKind`, marker-aware segmentation, `removePasteMarker`/`removeImageMarker` with renumbering), undo snapshots carrying attachment payloads, `normalizeWarpWslShiftEnterInput` seam and the `@`/`#`/`$` autocomplete triggers, on top of upstream's mouse selection.
+- `packages/tui/src/components/select-list.ts`: fork `SelectListRowParts`/`renderRow` row composer and ranking beside upstream's `mousePressedIndex`/`handleMouse`/`getVisibleRange`.
+- `packages/tui/src/index.ts`: fork exports (fullscreen transcript search, atomic image markers, `expandPasteMarkers`, `ProcessTerminalOptions`, `calculateImageRows`, `sanitizeTerminalLabel`/`shortenImagePath`) with upstream's `MouseRegion`/native clipboard exports.
+- `packages/tui/src/terminal.ts`: fork dead-terminal detection (`EIO`/`EPIPE`/`ENOTCONN` codes, Bun errno fallbacks), shared stdin error dispatcher, keyboard-enhancement state, Warp/WSL shift+enter normalization, `ProcessTerminalOptions.onExternalStdoutWrite`, multiplexer detection; upstream's `getNativePlatformHelper()` VT-input path was adopted.
+- `packages/tui/src/tui-alt-screen.ts`: the fork keeps the `deleteAltScreenKittyImages` teardown name (three call sites) around upstream's mouse/scrollbar/search additions.
+- `packages/tui/src/utils.ts`: fork two-generation width cache, `coalesceAdjacentSgr`, DCS/tmux passthrough escaping and grapheme/word helpers, plus upstream's `getActiveBackgroundAnsi`.
+
+### Why
+
+- The fork renderer's paste/image provenance, disposal contract, terminal fault tolerance and width caching are product invariants pinned by fork tests; upstream's mouse, scrollbar and native-platform work was layered onto them.
+
+### Why an extension could not handle it
+
+- These are the TUI library primitives every component and the coding agent build on.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/tui/src/components/editor.ts` marker handling and input dispatch; `packages/tui/src/terminal.ts` `ProcessTerminal` start/stop.
+- MEDIUM: `packages/tui/src/index.ts` export list; `packages/tui/src/utils.ts` width cache and ANSI helpers; `select-list.ts` render path.
+- LOW: `box.ts` lifecycle methods; `tui-alt-screen.ts` teardown call sites.

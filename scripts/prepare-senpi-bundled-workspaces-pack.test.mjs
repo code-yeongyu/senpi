@@ -17,6 +17,14 @@ function clientProtocolFiles(prefix = "package/") {
 	];
 }
 
+function chordFiles(prefix = "package/") {
+	return [
+		{ path: `${prefix}node_modules/@earendil-works/chord/package.json` },
+		{ path: `${prefix}node_modules/@earendil-works/chord/dist/index.js` },
+		{ path: `${prefix}node_modules/@earendil-works/chord/dist/context/index.js` },
+	];
+}
+
 function telemetryFiles(prefix = "package/") {
 	return [
 		{ path: `${prefix}node_modules/@earendil-works/pi-telemetry/package.json` },
@@ -64,6 +72,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
 				...telemetryFiles(),
+				...chordFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
@@ -97,6 +106,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
 				...telemetryFiles(),
+				...chordFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
@@ -134,6 +144,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				...clientProtocolFiles(),
 				...telemetryFiles(),
 				{ path: "package/npm-shrinkwrap.json" },
+				...chordFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
@@ -166,6 +177,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
 				...telemetryFiles(),
+				...chordFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
@@ -197,6 +209,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "dist/cli.js" },
 				...clientProtocolFiles(""),
 				...telemetryFiles(""),
+				...chordFiles(""),
 				{ path: "node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "node_modules/@earendil-works/pi-ai/package.json" },
@@ -225,6 +238,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
 				...telemetryFiles(),
+				...chordFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
@@ -250,6 +264,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
 				...telemetryFiles(),
+				...chordFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },
@@ -283,6 +298,7 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 			files: [
 				{ path: "package/dist/cli.js" },
 				...clientProtocolFiles(),
+				...chordFiles(),
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/package.json" },
 				{ path: "package/node_modules/@earendil-works/pi-agent-core/dist/index.js" },
 				{ path: "package/node_modules/@earendil-works/pi-ai/package.json" },

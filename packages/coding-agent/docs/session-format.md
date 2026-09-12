@@ -2,13 +2,15 @@
 
 Sessions are stored as JSONL (JSON Lines) files. Each line is a JSON object with a `type` field. Session entries form a tree structure via `id`/`parentId` fields, enabling in-place branching without creating new files.
 
+This document describes the CLI session files written by `SessionManager` in `packages/coding-agent`. The agent harness in `packages/agent` keeps its own durable session data (header version 4, with compaction checkpoints that embed retained context) and the CBOR `pi-protocol` server/client stack speaks protocol v8. Those formats are separate from the CLI JSONL described here and are not interchangeable with it.
+
 ## File Location
 
 ```
-~/.senpi/agent/sessions/--<path>--/<timestamp>_<uuid>.jsonl
+~/.senpi/agent/sessions/--<path>--/<timestamp>_<session-id>.jsonl
 ```
 
-Where `<path>` is the working directory with `/` replaced by `-`.
+By default, `<session-id>` is a UUID. Callers can supply a custom ID through the SDK or `--session-id`. For `<path>`, Senpi removes the leading path separator and replaces `/`, `\\`, and `:` with `-`.
 
 ## Deleting Sessions
 
@@ -28,11 +30,11 @@ Existing sessions are automatically migrated to the current version (v3) when lo
 
 ## Source Files
 
-Source on GitHub ([pi-mono](https://github.com/earendil-works/pi-mono)):
-- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
-- [`packages/coding-agent/src/core/messages.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/messages.ts) - Extended message types (BashExecutionMessage, CustomMessage, etc.)
-- [`packages/ai/src/types.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
-- [`packages/agent/src/types.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/agent/src/types.ts) - AgentMessage union type
+Source on GitHub ([pi](https://github.com/earendil-works/pi)):
+- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
+- [`packages/coding-agent/src/core/messages.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/messages.ts) - Extended message types (BashExecutionMessage, CustomMessage, etc.)
+- [`packages/ai/src/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
+- [`packages/agent/src/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/agent/src/types.ts) - AgentMessage union type
 
 For TypeScript definitions in your project, inspect `node_modules/@code-yeongyu/senpi/dist/` and `node_modules/@earendil-works/pi-ai/dist/`.
 
@@ -48,6 +50,7 @@ Messages contain arrays of typed content blocks:
 interface TextContent {
   type: "text";
   text: string;
+  textSignature?: string;
 }
 
 interface ImageContent {
@@ -61,6 +64,8 @@ interface ThinkingContent {
   thinking: string;
   startedAt?: number;  // Unix epoch milliseconds
   endedAt?: number;    // Unix epoch milliseconds
+  thinkingSignature?: string;
+  redacted?: boolean;
 }
 
 `startedAt` and `endedAt` are optional epoch milliseconds stamped by the agent loop at stream-event receipt on a best-effort basis. They are absent on pre-feature sessions and on messages not produced through the agent loop. Renderers must treat their absence as "no timing available".
@@ -70,6 +75,8 @@ interface ToolCall {
   id: string;
   name: string;
   arguments: Record<string, any>;
+  thoughtSignature?: string;
+  namespace?: string;
 }
 ```
 
@@ -88,9 +95,16 @@ interface AssistantMessage {
   api: string;
   provider: string;
   model: string;
+  responseModel?: string;
+  responseId?: string;
+  providerThinkingLevel?: string;
+  diagnostics?: AssistantMessageDiagnostic[];
   usage: Usage;
-  stopReason: "stop" | "length" | "toolUse" | "error" | "aborted";
+  stopReason: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
+  deferred?: DeferredHandle;
   errorMessage?: string;
+  rawStopReason?: string;
+  endTurn?: boolean;
   timestamp: number;
 }
 
@@ -101,6 +115,7 @@ interface ToolResultMessage {
   content: (TextContent | ImageContent)[];
   details?: any;      // Tool-specific metadata
   usage?: Usage;      // Nested LLM work performed by the tool
+  addedToolNames?: string[];
   isError: boolean;
   timestamp: number;
 }
@@ -110,6 +125,8 @@ interface Usage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  cacheWrite1h?: number;
+  reasoning?: number;
   totalTokens: number;
   cost: {
     input: number;
@@ -121,7 +138,7 @@ interface Usage {
 }
 ```
 
-The exported pi-ai `StopReason` type also includes `"pending"`, but that value is reserved for partial messages in streaming events. Terminal `done`/`error` messages replace it with a completion reason before Senpi persists the assistant message, so `"pending"` should never appear in session JSONL.
+`"pending"` is reserved for partial messages in streaming events. Terminal events replace it with a completion reason before Senpi persists the assistant message, so `"pending"` should never appear in session JSONL. `"deferred"` is a terminal reason for a provider response that will complete later; its `deferred` handle contains the provider data needed to retrieve that response.
 
 ### Extended Message Types (from @code-yeongyu/senpi)
 
@@ -150,7 +167,7 @@ interface CustomMessage {
 interface BranchSummaryMessage {
   role: "branchSummary";
   summary: string;
-  fromId: string;                // Entry we branched from
+  fromId: string | null;         // Previous leaf whose abandoned path was summarized
   timestamp: number;
 }
 
@@ -182,8 +199,8 @@ All entries (except `SessionHeader`) extend `SessionEntryBase`:
 ```typescript
 interface SessionEntryBase {
   type: string;
-  id: string;           // 8-char hex ID
-  parentId: string | null;  // Parent entry ID (null for first entry)
+  id: string;           // Usually an 8-char hex ID; may fall back to a full UUID
+  parentId: string | null;  // Parent entry ID (null for a root entry)
   timestamp: string;    // ISO timestamp
 }
 ```
@@ -209,9 +226,9 @@ For sessions with a parent (created via `/fork`, `/clone`, or `newSession({ pare
 A message in the conversation. The `message` field contains an `AgentMessage`.
 
 ```json
-{"type":"message","id":"a1b2c3d4","parentId":"prev1234","timestamp":"2024-12-03T14:00:01.000Z","message":{"role":"user","content":"Hello"}}
-{"type":"message","id":"b2c3d4e5","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi!"}],"provider":"anthropic","model":"claude-sonnet-4-5","usage":{...},"stopReason":"stop"}}
-{"type":"message","id":"c3d4e5f6","parentId":"b2c3d4e5","timestamp":"2024-12-03T14:00:03.000Z","message":{"role":"toolResult","toolCallId":"call_123","toolName":"bash","content":[{"type":"text","text":"output"}],"isError":false}}
+{"type":"message","id":"a1b2c3d4","parentId":"prev1234","timestamp":"2024-12-03T14:00:01.000Z","message":{"role":"user","content":"Hello","timestamp":1733234401000}}
+{"type":"message","id":"b2c3d4e5","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi!"}],"api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-4-5","usage":{...},"stopReason":"stop","timestamp":1733234402000}}
+{"type":"message","id":"c3d4e5f6","parentId":"b2c3d4e5","timestamp":"2024-12-03T14:00:03.000Z","message":{"role":"toolResult","toolCallId":"call_123","toolName":"bash","content":[{"type":"text","text":"output"}],"isError":false,"timestamp":1733234403000}}
 ```
 
 ### ModelChangeEntry
@@ -238,18 +255,12 @@ Created when context is compacted. Stores a summary of earlier messages.
 {"type":"compaction","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"2024-12-03T14:10:00.000Z","summary":"User discussed X, Y, Z...","firstKeptEntryId":"c3d4e5f6","tokensBefore":50000}
 ```
 
-Newer harness-generated compactions embed the retained post-compaction context directly on the entry, instead of `firstKeptEntryId`:
-
-```json
-{"type":"compaction","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"2024-12-03T14:10:00.000Z","summary":"User discussed X, Y, Z...","tokensBefore":50000,"retainedTail":[{"role":"user","content":"latest request"},{"role":"assistant","content":[{"type":"text","text":"latest reply"}],"provider":"anthropic","model":"claude-sonnet-4-5","usage":{...},"stopReason":"stop"}]}
-```
+`firstKeptEntryId` is required. It identifies the first entry retained from before the compaction entry. When rebuilding context, Pi replaces older summarized entries with the compaction summary and keeps the range beginning at this entry.
 
 Optional fields:
 - `usage`: LLM usage from generating the summary; included in session token and cost totals
-- `retainedTail`: Materialized `AgentMessage[]` kept after compaction. This is optional only for backward compatibility with older sessions. Newer harness-generated compactions include it so we can rebuild context from this checkpoint without walking older entries before the compaction entry.
 - `details`: Implementation-specific data (e.g., `{ readFiles: string[], modifiedFiles: string[] }` for default, or custom data for extensions)
 - `fromHook`: `true` if generated by an extension, `false`/`undefined` if senpi-generated (legacy field name)
-- `firstKeptEntryId`: for compatibility with old entry format.
 
 ### BranchSummaryEntry
 
@@ -258,6 +269,8 @@ Created when switching branches via `/tree` with an LLM generated summary of the
 ```json
 {"type":"branch_summary","id":"g7h8i9j0","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:15:00.000Z","fromId":"f6g7h8i9","summary":"Branch explored approach A..."}
 ```
+
+`parentId` is the entry from which the new branch continues. `fromId` is the previous leaf whose abandoned path was summarized.
 
 Optional fields:
 - `usage`: LLM usage from generating the summary; included in session token and cost totals
@@ -309,11 +322,12 @@ The session name is displayed in the session selector (`/resume`) instead of the
 
 ## Tree Structure
 
-Entries form a tree:
-- First entry has `parentId: null`
-- Each subsequent entry points to its parent via `parentId`
+Entries normally form one tree, but navigation APIs can create multiple roots:
+- A root entry has `parentId: null`; the first entry is initially the root
+- Each non-root entry points to its parent via `parentId`
 - Branching creates new children from an earlier entry
 - The "leaf" is the current position in the tree
+- Calling `resetLeaf()` or `branchWithSummary(null, ...)` allows a later entry to become another root
 
 ```
 [user msg] ─── [assistant] ─── [user msg] ─── [assistant] ─┬─ [user msg] ← current leaf
@@ -326,11 +340,10 @@ Entries form a tree:
 `buildContextEntries()` walks from the current leaf to the root, producing the active entry list while honoring compaction:
 
 1. Collects all entries on the path
-2. If a `CompactionEntry` is on the path:
+2. If one or more `CompactionEntry` values are on the path, uses the latest one:
    - Includes the compaction entry first
-   - If `retainedTail` is present, it acts as a self-contained checkpoint and entries after the compaction are included
-   - Otherwise entries from `firstKeptEntryId` to the compaction are included
-   - Then entries after compaction are included
+   - Includes entries from `firstKeptEntryId` up to, but not including, the compaction entry
+   - Includes entries after the compaction entry
 3. Preserves non-message entries in the selected range so interactive mode can render them
 
 `buildSessionContext()` builds on that entry list to produce the message list for the LLM:
@@ -338,12 +351,12 @@ Entries form a tree:
 1. Extracts current model and thinking level settings from the full path
 2. Converts selected entries to messages:
    - `message` -> stored `AgentMessage`
-   - `compaction` -> `compactionSummary` plus `retainedTail` when present
+   - `compaction` -> `compactionSummary`
    - `branch_summary` -> `branchSummary`
    - `custom_message` -> `CustomMessage`
    - `custom` -> no context message
 
-This makes newer compactions act like self-contained checkpoints. `retainedTail` is optional only so older sessions that only store `firstKeptEntryId` continue to load correctly.
+The compaction summary replaces entries before `firstKeptEntryId`. The retained entries and all entries after the compaction remain available to the LLM.
 
 ## Parsing Example
 
@@ -392,18 +405,19 @@ for (const line of lines) {
 Key methods for working with sessions programmatically.
 
 ### Static Creation Methods
-- `SessionManager.create(cwd, sessionDir?)` - New session
-- `SessionManager.open(path, sessionDir?)` - Open existing session file
+- `SessionManager.create(cwd, sessionDir?, options?)` - New session; `options` can set `id` and `parentSession`
+- `SessionManager.open(path, sessionDir?, cwdOverride?)` - Open existing session file
 - `SessionManager.continueRecent(cwd, sessionDir?)` - Continue most recent or create new
-- `SessionManager.inMemory(cwd?)` - No file persistence
-- `SessionManager.forkFrom(sourcePath, targetCwd, sessionDir?)` - Fork session from another project
+- `SessionManager.inMemory(cwd?, options?, entries?)` - No file persistence, optionally initialized from entries
+- `SessionManager.forkFrom(sourcePath, targetCwd, sessionDir?, options?)` - Fork session from another project
 
 ### Static Listing Methods
 - `SessionManager.list(cwd, sessionDir?, onProgress?)` - List sessions for a directory
 - `SessionManager.listAll(onProgress?)` - List all sessions across all projects
+- `SessionManager.listAll(sessionDir?, onProgress?)` - List sessions from a custom session root
 
 ### Instance Methods - Session Management
-- `newSession(options?)` - Start a new session (options: `{ parentSession?: string }`)
+- `newSession(options?)` - Start a new session (options: `{ id?: string, parentSession?: string }`)
 - `setSessionFile(path)` - Switch to a different session file
 - `createBranchedSession(leafId)` - Extract branch to new session file
 
@@ -411,7 +425,7 @@ Key methods for working with sessions programmatically.
 - `appendMessage(message)` - Add message
 - `appendThinkingLevelChange(level)` - Record thinking change
 - `appendModelChange(provider, modelId)` - Record model change
-- `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?)` - Add compaction
+- `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?, usage?)` - Add compaction
 - `appendCustomEntry(customType, data?)` - Extension state (not in context)
 - `appendSessionInfo(name)` - Set session display name
 - `appendCustomMessageEntry(customType, content, display, details?)` - Extension message (in context)
@@ -427,7 +441,7 @@ Key methods for working with sessions programmatically.
 - `getLabel(id)` - Get label for entry
 - `branch(entryId)` - Move leaf to earlier entry
 - `resetLeaf()` - Reset leaf to null (before any entries)
-- `branchWithSummary(entryId, summary, details?, fromHook?)` - Branch with context summary
+- `branchWithSummary(entryId, summary, details?, fromHook?, usage?)` - Branch with context summary; `entryId` may be `null` to branch from the root
 
 ### Instance Methods - Context & Info
 - `buildContextEntries()` - Get active branch entries with compaction applied

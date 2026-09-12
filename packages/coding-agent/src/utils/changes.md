@@ -565,3 +565,21 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: new `duration.ts` utility and its fork-tracker entry.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/coding-agent/src/utils/tools-manager.ts`: the offline gate reads `envValue("OFFLINE")` (SENPI_ then PI_ prefix) instead of `process.env.PI_OFFLINE`, and the download stream is typed as `NodeReadableStream<Uint8Array>` instead of `as any`; upstream's musl fd/rg and version lookup changes were adopted.
+
+### Why
+
+- Every environment switch in the fork honors the brand prefix, and the fork lints with `--error-on-warnings`.
+
+### Why an extension could not handle it
+
+- Tool download runs during startup before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `isOffline()` and the `pipeline(Readable.fromWeb(...))` call.

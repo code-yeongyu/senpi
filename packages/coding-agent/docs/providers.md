@@ -272,7 +272,7 @@ senpi
 
 OpenGateway is an OpenAI-compatible multi-provider gateway serving OpenAI, Anthropic, Google, xAI, Moonshot, DeepSeek, ZAI, MiniMax, and Qwen models through one API key. Issue a key at <https://opengateway.ai/api-keys>, then `/login` and select **OpenGateway**, or export `OPENGATEWAY_API_KEY`. The data plane is `https://apis.opengateway.ai`; model ids use the gateway's `owner/model` format (for example `moonshotai/kimi-k3`, `anthropic/claude-fable-5`).
 
-Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts).
+Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/env-api-keys.ts).
 
 #### Auth File
 

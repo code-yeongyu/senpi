@@ -24,12 +24,13 @@ afterEach(() => {
 });
 
 describe("release package versioning", () => {
-	it("updates the pty, client, and protocol workspaces during lockstep releases", () => {
+	it("updates the chord, pty, client, and protocol workspaces during lockstep releases", () => {
 		// Given
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-release-versioning-"));
 		for (const file of [
 			"packages/ai/package.json",
 			"packages/agent/package.json",
+			"packages/chord/package.json",
 			"packages/client/package.json",
 			"packages/coding-agent/package.json",
 			"packages/protocol/package.json",
@@ -62,9 +63,16 @@ describe("release package versioning", () => {
 		const protocolPackage = JSON.parse(
 			readFileSync(join(tempDir, "packages", "protocol", "package.json"), "utf8"),
 		);
+		// Chord is bundled, not published, but it rides the same CalVer lockstep so the
+		// generated install lock can treat it as an internal workspace.
+		const chordPackage = JSON.parse(
+			readFileSync(join(tempDir, "packages", "chord", "package.json"), "utf8"),
+		);
+		assert.equal(chordPackage.version, "2099.1.2");
 		assert.equal(ptyPackage.version, "2099.1.2");
 		assert.equal(clientPackage.version, "2099.1.2");
 		assert.equal(protocolPackage.version, "2099.1.2");
+		assert.ok(logs.includes("  packages/chord/package.json: 0.0.0 -> 2099.1.2"));
 		assert.ok(logs.includes("  packages/pty/package.json: 0.0.0 -> 2099.1.2"));
 		assert.ok(logs.includes("  packages/client/package.json: 0.0.0 -> 2099.1.2"));
 		assert.ok(logs.includes("  packages/protocol/package.json: 0.0.0 -> 2099.1.2"));

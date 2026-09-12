@@ -638,3 +638,21 @@ If upstream changes branch summary preparation or adds new branch summary data s
 
 - LOW: `compaction.ts` around `completeSummarization` and the `generateSummary*` signatures.
 - LOW: `compaction-settings.ts`, `compaction-settings-access.ts`, and `compaction-settings-resolver.ts` settings contracts.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/branch-summarization.ts`: fork `BranchSummaryStreamOptions` (`extraBody`, `extensionRunner` emitting `session_before_compact`, `CompactionPreparation` hand-off, `randomUUID` entry ids) unioned with upstream's `maxTokens = min(4096, model.maxTokens)` clamp and its `getSummarizationFailure` routing so length-capped summaries become typed errors.
+
+### Why
+
+- Branch summaries must go through the fork's extension hook and payload options while honoring upstream's output cap and failure classification.
+
+### Why an extension could not handle it
+
+- The summarization request is built inside core before `session_before_compact` fires; an extension can veto it but not change its budget or error typing.
+
+### Expected merge conflict zones
+
+- MEDIUM: `generateBranchSummary` option plumbing and the `streamSimple`/`streamFn` call.

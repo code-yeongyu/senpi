@@ -1,3 +1,85 @@
+## 2026-09-12 - Upstream sync: status spinners in the editor border, mouse toggles, renderer-only tool cards
+
+### What changed
+
+- `components/custom-editor.ts` / `components/status-indicator.ts` / `interactive-mode.ts`: the base
+  editor opts in to `embedWorkingStatus`, so the working, retry and branch-summary indicators render
+  inside the editor's top border (upstream c1d4c8011 / 1d9787c11). The fork shimmer
+  (`formatWorkingStatusMessageFrame`, elapsed seconds, interrupt hint, large-session cadence) is the
+  text that lands in the border; the optional working tip stays as the only status-row line. The
+  compaction indicator keeps its own status row (single-row label + streamed preview, pinned by the
+  fork compaction suite). `clearStatusIndicator` reserves clear-on-shrink height only for rows that
+  were on screen, so an embedded spinner never leaves a two-row placeholder. Extension editors and
+  the Grok chrome editor do not opt in and keep the standalone row.
+- `interactive-mode.ts`: `createInteractiveTui` / `createInteractiveTuiReference` moved to
+  `tui-renderer.ts` (still re-exported); the fork's `ProcessTerminal({ onExternalStdoutWrite:
+  appendHiddenTuiStdout })` moved with them. The fullscreen dock comes from `chat-viewport.ts`, which
+  gained an optional `hookStatus` slot for the fork's tool-hook status rows. Scrollbar styling uses
+  the adopted `scrollbarTrack` / `scrollbarThumb` foreground tokens; `grok-day` / `grok-night` were
+  migrated (old thumb background became the track, thumb is the text colour).
+- `interactive-mode.ts`: tree navigation re-checks `session.isCompacting` after the summary dialog
+  and the streaming abort before touching another operation's UI (upstream 47acd8e6c, ported into
+  `runTreeNavigation`); provider login defers default-model selection until the catalog refresh
+  lands when the provider's default is not in the snapshot yet (upstream 9767ba275), keeping the
+  fork's persist-by-default `setModel`, system-prompt label, risky-model warning and the
+  cursor/`cursor-cli-oauth` `allowNetwork` refresh.
+- `components/tool-execution*.ts`: the card accepts `ToolRenderers` (a definition or a bare
+  renderer pair; `interactive-mode.ts` passes `withBuiltInRenderers(name, definition)`). The fork's
+  `ToolExecutionRenderer` keeps its own built-in fallback (`createAllToolDefinitions`, which still
+  carries `renderShell`). Left-clicking a finished classic card toggles expansion (upstream
+  71026970a) via a `MouseRegion` around each rendered slot.
+- `components/assistant-message.ts` / `assistant-render-descriptors.ts`: left-clicking a thinking run
+  toggles that run between its label and body; overrides are per run, cleared by
+  `setHideThinkingBlock`, and attached to the Markdown/Text child so the incremental reconciler is
+  unchanged.
+- `theme/theme.ts`: validation is always on. The TypeBox-compiled `validateThemeJson` lives in
+  upstream's `theme-json.ts` (schema now includes the optional `scrollbarTrack` / `scrollbarThumb`
+  tokens); `theme.ts` re-exports it and uses it as the default validator, with
+  `setThemeJsonValidator` kept as an override hook. Upstream made validation opt-in from `main.ts`,
+  which the fork does not do.
+- `components/model-selector.ts`: unchanged fork behaviour (confirm persists the default; no
+  separate `app.models.save` chord). Thinking and scoped-model selectors read their configurable
+  save bindings on open.
+
+### Why
+
+- Adopt upstream's border-embedded status, mouse interactions, renderer split and login/tree fixes
+  without losing the fork's shimmer, tips, compaction row, hook-status rows, paste pairing or theme
+  validation.
+
+### Expected merge conflict zones
+
+- MEDIUM: `showStatusIndicator` / `clearStatusIndicator` / `setEditorWorkingStatusIndicator` and
+  `completeProviderAuthentication` in `interactive-mode.ts`; `ToolRenderers` in
+  `components/tool-execution-types.ts`; the validator default in `theme/theme.ts`.
+
+## 2026-09-12 - Async ask-user shortcut accepts macOS Option-composed glyphs (senpi#1620)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: new
+  `matchesAskUserAnswerKey(data, platform)` keeps `alt+a` (`ESC a` / CSI-u alt) on every platform
+  and, on darwin only, also accepts the glyphs the `a` key types when the terminal lets Option
+  compose (`å`, `Å`, raw or as a kitty CSI-u printable). `ASK_USER_ANSWER_KEY` and the widget label
+  (`option+a` on darwin, `alt+a` elsewhere) are unchanged.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleAskUserShortcut` matches
+  through `matchesAskUserAnswerKey` instead of `matchesKey(data, ASK_USER_ANSWER_KEY)`.
+
+### Why
+
+- Terminal.app, iTerm2, Ghostty and kitty default to Option composing characters on macOS, so the
+  advertised `option+a` arrived as `å` and inserted text instead of expanding the pending question.
+
+### Why an extension could not handle it
+
+- The shortcut is consumed inside `CustomEditor.onExtensionShortcut` before extension shortcuts run,
+  and the async widget is interactive-mode state; no extension hook sees the raw editor input first.
+
+### Expected merge conflict zones
+
+- LOW: the `ask-user-async-widget.ts` import list and `handleAskUserShortcut` in
+  `packages/coding-agent/src/modes/interactive/interactive-mode.ts` (fork-only code).
+
 ## 2026-09-12 - Async ask-user widget shows the question; rebindable shortcut and key-free paths (senpi#1623)
 
 ### What changed
@@ -679,3 +761,32 @@
 
 - LOW: `AgentSessionEvent` model event union and `_cycleFavoriteModel`.
 - LOW: the interactive `handleEvent` switch.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/chat-viewport.ts`: the fullscreen dock gains an optional `hookStatus` component slot for the fork's tool-hook status rows.
+- `packages/coding-agent/src/modes/interactive/tui-renderer.ts`: the default terminal is `ProcessTerminal({ onExternalStdoutWrite: appendHiddenTuiStdout })` so stray stdout lands in the hidden TUI log.
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: fork descriptor-based incremental reconciler (`createAssistantRenderDescriptors`, bounded render signatures, per-run thinking toggles) instead of upstream's rebuild-on-change component.
+- `packages/coding-agent/src/modes/interactive/components/custom-editor.ts`: fork prompt-glyph gutter with a minimum horizontal padding of 2 (`getPaddingX`/`setPaddingX` overrides) on top of upstream's `embedWorkingStatus` editor.
+- `packages/coding-agent/src/modes/interactive/components/index.ts`: exports the fork `FavoriteModelsSelectorComponent` and its callback/config types; `ScopedModelsSelectorComponent` is not exported.
+- `packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts`: the fork's simplified scoped selection (toggle from all-enabled starts a one-model list, no collapse-to-null normalization) with configurable `app.models.save`; upstream's rejected 6949 UX is not restored.
+- `packages/coding-agent/src/modes/interactive/components/status-indicator.ts`: fork loader-based indicators (`CompactionStatusReason` labels, single-row compaction status with streamed preview and cancellation hint, `renderInBorder` override, `IdleStatus.setHeight`).
+- `packages/coding-agent/src/modes/interactive/components/thinking-selector.ts`: the `xhigh` description reads "Extended reasoning (~32k tokens or native xhigh effort)".
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: fork card (`ToolExecutionRenderer`, `GrokToolRow` presentation, progress rows, todo strike animation, image sidecar, bounded render signatures) accepting upstream's `ToolRenderers` and click-to-toggle.
+- `packages/coding-agent/src/modes/interactive/theme/theme.ts`: validation always on via `validateThemeJson` from `theme-json.ts` (re-exported; `setThemeJsonValidator` kept as an override hook), `grok-night`/`grok-day` shipped as built-ins with `scrollbarTrack`/`scrollbarThumb`, no `isLightTheme`.
+
+### Why
+
+- The fork's interactive chrome (Grok presentation, favorite-model selector, hidden stdout log, hook status rows, always-validated themes) sits on top of upstream's component set; these files are the overlap.
+
+### Why an extension could not handle it
+
+- Interactive components, the renderer factory and theme loading are private to the host; extensions render through them and cannot replace them.
+
+### Expected merge conflict zones
+
+- HIGH: `components/tool-execution.ts` and `components/assistant-message.ts` render paths; `components/status-indicator.ts` class set.
+- MEDIUM: `theme/theme.ts` validator and built-in theme loading; `components/scoped-models-selector.ts` toggle logic.
+- LOW: `chat-viewport.ts` options; `tui-renderer.ts` terminal construction; `components/index.ts` export list; `components/custom-editor.ts` padding overrides; `components/thinking-selector.ts` label text.

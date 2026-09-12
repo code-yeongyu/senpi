@@ -444,6 +444,58 @@ describe("TUI bounded render output", () => {
 	});
 });
 
+/** Set each environment variable to `value`, returning a function that restores the previous state. */
+function overrideEnv(names: readonly string[], value: string): () => void {
+	const previousValues = names.map((name) => [name, process.env[name]] as const);
+	for (const name of names) {
+		process.env[name] = value;
+	}
+	return () => {
+		for (const [name, previousValue] of previousValues) {
+			if (previousValue === undefined) delete process.env[name];
+			else process.env[name] = previousValue;
+		}
+	};
+}
+
+describe("TUI crash dump without configured log directory", () => {
+	it("writes the crash dump to the senpi agent directory under HOME", async () => {
+		// The fork keeps a concrete diagnostic destination: over-wide render dumps always
+		// land in `<home>/.senpi/agent/senpi-crash.log`, independent of the renderer's
+		// constructor log directory. Isolate the run by pointing HOME (and USERPROFILE on
+		// Windows) at a fresh directory instead of the real home.
+		const homeDir = mkdtempSync(join(tmpdir(), "senpi-tui-crash-"));
+		const crashLogPath = join(homeDir, ".senpi", "agent", "senpi-crash.log");
+		const restoreHomeEnv = overrideEnv(["HOME", "USERPROFILE"], homeDir);
+		const restoreStrictRender = overrideEnv(["PI_TUI_STRICT_RENDER"], "1");
+		try {
+			const terminal = new VirtualTerminal(40, 10);
+			const tui: TUI = new TuiMainScreen(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+			component.lines = ["ok"];
+			tui.start();
+			await terminal.waitForRender();
+
+			// Width overflow is detected in the differential render path
+			component.lines = ["x".repeat(60)];
+			assert.throws(
+				() => tui.renderNow(),
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.ok(error.message.includes(crashLogPath), `error message should reference ${crashLogPath}`);
+					return true;
+				},
+			);
+			assert.match(readFileSync(crashLogPath, "utf-8"), /Terminal width: 40/);
+		} finally {
+			restoreStrictRender();
+			restoreHomeEnv();
+			rmSync(homeDir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("TUI Kitty image cleanup", () => {
 	it("clears reserved Kitty image rows before drawing appended image placements", async () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });

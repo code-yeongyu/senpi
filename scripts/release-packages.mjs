@@ -1,10 +1,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { findPackageDirectories } from "./package-workspaces.mjs";
-import { resolveRegistryPackages } from "./registry-packages.mjs";
+import { registrySourcePackageNames, resolveRegistryPackages } from "./registry-packages.mjs";
 
 export const WORKSPACE_PACKAGES = [
 	"packages/ai/package.json",
+	// Chord is bundled into the senpi tarball rather than published, but it still rides the
+	// fork's CalVer lockstep so the install lock treats it as an internal workspace instead of
+	// trying to resolve a registry-absent `@earendil-works/chord` link entry.
+	"packages/chord/package.json",
 	"packages/agent/package.json",
 	"packages/client/package.json",
 	"packages/coding-agent/package.json",
@@ -60,4 +64,20 @@ export function getPublicWorkspacePackages() {
 			name: registryName,
 			version,
 		}));
+}
+
+// Upstream's check-runtime-deps targets every workspace package without `private: true`.
+// The fork's published sources are `private: true` under their upstream `@earendil-works/pi-*`
+// names (publish.mjs rewrites them to `@code-yeongyu/senpi-*` manifests), so the fork's
+// runtime-dependency contract is the union: public-by-flag packages (client/protocol here,
+// everything in upstream-shaped fixtures) plus the fork's registry sources. Private,
+// unpublished workspaces (chord, senpi-server, sqlite-node) stay out.
+export function getRuntimeDepsCheckPackages() {
+	return findPackageDirectories()
+		.map((directory) => ({
+			directory,
+			...JSON.parse(readFileSync(join(directory, "package.json"), "utf8")),
+		}))
+		.filter((pkg) => pkg.private !== true || registrySourcePackageNames.has(pkg.name))
+		.map(({ directory }) => ({ directory }));
 }

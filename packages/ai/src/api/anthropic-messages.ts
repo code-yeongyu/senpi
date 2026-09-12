@@ -1869,8 +1869,14 @@ function createClient(
 	}
 
 	// API key auth
-	const sessionAffinityHeaders: Record<string, string | null> =
-		sessionId && getAnthropicCompat(model).sendSessionAffinityHeaders ? { "x-session-affinity": sessionId } : {};
+	const affinityCompat = getAnthropicCompat(model);
+	const sessionAffinityHeaders: Record<string, string | null> = {};
+	if (sessionId && affinityCompat.sendSessionAffinityHeaders) {
+		// OpenRouter routes prompt-cache affinity through its own header name and
+		// rejects x-session-affinity (earendil-works/pi#9102).
+		const header = affinityCompat.sessionAffinityFormat === "openrouter" ? "x-session-id" : "x-session-affinity";
+		sessionAffinityHeaders[header] = sessionId;
+	}
 	const client = new Anthropic({
 		apiKey: apiKey ?? null,
 		authToken: null,

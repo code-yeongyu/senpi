@@ -19,7 +19,6 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	SlashCommand,
-	Terminal,
 	TuiMainScreenRenderState,
 } from "@earendil-works/pi-tui";
 import * as TuiLayouts from "@earendil-works/pi-tui";
@@ -34,7 +33,6 @@ import {
 	Markdown,
 	matchesKey,
 	outerKittyGraphicsMode,
-	ProcessTerminal,
 	Spacer,
 	sanitizeTerminalLabel,
 	setCapabilityOverrides,
@@ -97,7 +95,7 @@ import type {
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
 import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-import { appendHiddenTuiStdout, appendUncaughtCrashLog } from "../../core/hidden-stdout-log.ts";
+import { appendUncaughtCrashLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
@@ -122,6 +120,7 @@ import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { formatTimings, time } from "../../core/timings.ts";
+import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
@@ -135,13 +134,13 @@ import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { processImage } from "../../utils/image-process.ts";
-import { openBrowser } from "../../utils/open-browser.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, getReleaseChangelogUrl } from "../../utils/version-check.ts";
 import { abortedMessageForRendering } from "./aborted-error-label.ts";
+import { createChatViewport } from "./chat-viewport.ts";
 import {
 	type CompactionQueuedMessage,
 	transferCompactionQueue,
@@ -247,6 +246,7 @@ import { buildTmuxSetupWarning } from "./tmux-setup.ts";
 import { ToolArgsRevealController } from "./tool-args-reveal.ts";
 import { readToolProgress } from "./tool-progress.ts";
 import { ToolResultRevealController } from "./tool-result-reveal.ts";
+import { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
 import { formatDisplayVersion } from "./version-label.ts";
 import {
 	blendWorkingStatusShimmerRgbColor,
@@ -258,6 +258,8 @@ import {
 	type WorkingStatusRgbColor,
 } from "./working-status.ts";
 
+export { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
+
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
 	setExpanded(expanded: boolean): void;
@@ -267,6 +269,37 @@ function llamaCppPostLoginGuidance(actionLabel: string, loadedModelCount: number
 	return loadedModelCount === 0
 		? `${actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it.`
 		: `${actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.`;
+}
+
+interface WorkingStatusEditor extends EditorComponent {
+	readonly embedWorkingStatus: boolean;
+	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void;
+}
+
+function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
+	return (
+		"embedWorkingStatus" in editor &&
+		editor.embedWorkingStatus === true &&
+		"setWorkingStatusIndicator" in editor &&
+		typeof editor.setWorkingStatusIndicator === "function"
+	);
+}
+
+/**
+ * Hand the active status indicator to the editor border. Returns whether it was embedded; when it
+ * was not, the caller keeps the indicator in the standalone status row. The base editor may be
+ * absent on renderer-only hosts and the active editor may be an extension editor that never opts
+ * in, so both are probed instead of assumed.
+ */
+function embedStatusIndicatorInEditor(
+	defaultEditor: EditorComponent | undefined,
+	editor: EditorComponent | undefined,
+	indicator: StatusIndicator | undefined,
+): boolean {
+	if (defaultEditor && isWorkingStatusEditor(defaultEditor)) defaultEditor.setWorkingStatusIndicator(undefined);
+	if (!editor || !isWorkingStatusEditor(editor)) return false;
+	editor.setWorkingStatusIndicator(indicator);
+	return true;
 }
 
 function isExpandable(obj: unknown): obj is Expandable {
@@ -808,70 +841,6 @@ function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => C
 	};
 }
 
-interface InteractiveTuiOptions {
-	tuiMode: TuiMode;
-	showHardwareCursor: boolean;
-	logDirectory: string;
-	terminal?: Terminal;
-	onRightClickPaste?: () => void;
-	fullscreenCopyOnSelect?: boolean;
-}
-
-/** Composition root for selecting the interactive terminal renderer. */
-export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
-	const terminal = options.terminal ?? new ProcessTerminal({ onExternalStdoutWrite: appendHiddenTuiStdout });
-	if (options.tuiMode === "fullscreen") {
-		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
-		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
-			searchMatchStyle: (text) => theme.underline(styleSearchMatch(text)),
-			searchCurrentMatchStyle: (text) => theme.bold(theme.inverse(styleSearchMatch(text))),
-			openUrl: openBrowser,
-			onRightClickPaste: options.onRightClickPaste,
-			copyOnSelect: options.fullscreenCopyOnSelect,
-			copySelection: async (text) => {
-				try {
-					await copyToClipboard(text);
-					return true;
-				} catch {
-					return false;
-				}
-			},
-		});
-	}
-	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
-}
-
-/** Stable reference for components while InteractiveMode replaces the active renderer. */
-export function createInteractiveTuiReference(getTui: () => TUI): TUI {
-	return new Proxy({} as TUI, {
-		get: (_target, property) => {
-			const tui = getTui();
-			const value = Reflect.get(tui, property, tui);
-			if (typeof value !== "function") return value;
-			let methodTui = tui;
-			let method = value;
-			return (...args: unknown[]) => {
-				const currentTui = getTui();
-				if (currentTui !== methodTui) {
-					const currentMethod = Reflect.get(currentTui, property, currentTui);
-					if (typeof currentMethod !== "function") {
-						throw new TypeError(`TUI property ${String(property)} is not callable`);
-					}
-					methodTui = currentTui;
-					method = currentMethod;
-				}
-				return Reflect.apply(method, methodTui, args);
-			};
-		},
-		set: (_target, property, value) => {
-			const tui = getTui();
-			return Reflect.set(tui, property, value, tui);
-		},
-		has: (_target, property) => Reflect.has(getTui(), property),
-		getPrototypeOf: () => Reflect.getPrototypeOf(getTui()),
-	});
-}
-
 export class InteractiveMode {
 	private static restoreCompactionEscapeOverride(host: InteractiveMode): void {
 		if (!host.compactionEscapeOverrideActive) return;
@@ -940,6 +909,7 @@ export class InteractiveMode {
 	 */
 	private preResolvedSubmissionImages?: ImageContent[];
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
+	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
 	private workingMessage: string | undefined = undefined;
 	private workingVisible = true;
@@ -1167,6 +1137,7 @@ export class InteractiveMode {
 			this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
 				paddingX: editorPaddingX,
 				autocompleteMaxVisible,
+				embedWorkingStatus: true,
 			});
 		}
 		this.editor = this.defaultEditor;
@@ -1473,32 +1444,21 @@ export class InteractiveMode {
 
 		// Keep one component tree and remount it when changing renderers.
 		this.renderWidgets(); // Initialize with default spacer
-		this.transcriptScrollView = new TuiLayouts.ScrollView(this.documentContainer, {
-			follow: "end",
-			primary: true,
-			overscroll: "chain",
+		const viewport = createChatViewport({
+			document: this.documentContainer,
+			pendingMessages: this.pendingMessagesContainer,
+			status: this.statusContainer,
+			hookStatus: this.hookStatusContainer,
+			widgetsAbove: this.widgetContainerAbove,
+			editor: this.editorContainer,
+			widgetsBelow: this.widgetContainerBelow,
+			footer: this.footerContainer,
 			scrollbar: this.settingsManager.getFullscreenScrollbar(),
-			scrollbarStyle: (text) => theme.bg("scrollbarThumb", text),
+			scrollbarTrackStyle: (text) => theme.fg("scrollbarTrack", text),
+			scrollbarThumbStyle: (text) => theme.fg("scrollbarThumb", text),
 		});
-		const dock = new TuiLayouts.VStack([
-			{ component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
-			{ component: this.statusContainer, shrink: 1, minSize: 0 },
-			{ component: this.hookStatusContainer, shrink: 1, minSize: 0 },
-			{ component: this.widgetContainerAbove, shrink: 1, minSize: 0 },
-			{ component: this.editorContainer, shrink: 1, minSize: 3 },
-			{ component: this.widgetContainerBelow, shrink: 1, minSize: 0 },
-			{ component: this.footerContainer, shrink: 1, minSize: 1 },
-		]);
-		this.fullscreenLayoutRoot = new TuiLayouts.VStack([
-			{
-				component: this.transcriptScrollView,
-				basis: 0,
-				grow: 1,
-				shrink: 1,
-				minSize: 1,
-			},
-			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
-		]);
+		this.transcriptScrollView = viewport.transcript;
+		this.fullscreenLayoutRoot = viewport.root;
 		const rootComponents = [
 			this.documentContainer,
 			this.pendingMessagesContainer,
@@ -2790,10 +2750,11 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Get a registered tool definition by name (for custom rendering).
+	 * Extension-registered definition, falling back to the built-in one. The renderer components take
+	 * whatever this returns, so they never reach into the tool registry themselves.
 	 */
 	private getRegisteredToolDefinition(toolName: string) {
-		return this.session.getToolDefinition(toolName);
+		return withBuiltInRenderers(toolName, this.session.getToolDefinition(toolName));
 	}
 
 	private getMarkdownTransformers(): MarkdownTransformer[] {
@@ -2831,7 +2792,7 @@ export class InteractiveMode {
 				this.requestExtensionShutdown();
 			},
 			getContextUsage: () => this.session.getContextUsage(),
-			getCompactionSettings: () => this.settingsManager.getCompactionSettings(),
+			getCompactionSettings: () => this.settingsManager.getCompactionSettings(this.session.model),
 			getPromptCacheSafeWaitSeconds: () => this.session.resolvePromptCacheSafeWaitSeconds(),
 			getPromptCacheGoalBackstopMaxSeconds: () => this.settingsManager.getPromptCacheGoalBackstopMaxSeconds(),
 			getLookAtSettings: () => {
@@ -3220,8 +3181,16 @@ export class InteractiveMode {
 		this.activeStatusIndicator?.dispose();
 		this.activeStatusIndicator = indicator;
 		this.statusContainer.clear();
+		const embedded = embedStatusIndicatorInEditor(this.defaultEditor, this.editor, indicator);
+		this.activeWorkingIndicatorEmbedded = embedded;
 
+		// The spinner lives in the editor border when the editor opts in; the status row
+		// then only carries the optional working tip instead of a second spinner line.
 		const workingTip = indicator.kind === "working" ? this.resolveTurnWorkingTip() : undefined;
+		if (embedded) {
+			if (workingTip) this.statusContainer.addChild(new Text(theme.fg("dim", workingTip.line), 1, 0));
+			return;
+		}
 		if (!workingTip) {
 			this.statusContainer.addChild(indicator);
 			return;
@@ -3261,6 +3230,7 @@ export class InteractiveMode {
 		}
 		const hadActiveStatusIndicator = this.activeStatusIndicator !== undefined;
 		const isClearingWorking = this.activeStatusIndicator?.kind === "working";
+		const clearedIndicatorWasEmbedded = this.activeWorkingIndicatorEmbedded;
 		const shouldReserveHeight =
 			hadActiveStatusIndicator && this.options.tuiMode === "regular" && this.ui.getClearOnShrink();
 		const renderedHeight = shouldReserveHeight ? this.statusContainer.render(this.ui.terminal.columns).length : 0;
@@ -3269,8 +3239,12 @@ export class InteractiveMode {
 		if (isClearingWorking) {
 			this.workingStartedAt = undefined;
 		}
+		this.activeWorkingIndicatorEmbedded = false;
 		this.statusContainer.clear();
-		if (shouldReserveHeight) {
+		embedStatusIndicatorInEditor(this.defaultEditor, this.editor, undefined);
+		// An embedded spinner occupied no status row, so only a rendered tip line is worth
+		// reserving; otherwise the placeholder would add rows that were never on screen.
+		if (shouldReserveHeight && (!clearedIndicatorWasEmbedded || renderedHeight > 0)) {
 			const idleHeight = Math.min(this.ui.terminal.rows, Math.max(1, renderedHeight || 2));
 			this.idleStatus.setHeight(idleHeight);
 			this.statusContainer.addChild(this.idleStatus);
@@ -3278,11 +3252,16 @@ export class InteractiveMode {
 	}
 
 	private showWorkingStatusIndicator(): void {
+		const colorFn = isWorkingStatusEditor(this.editor)
+			? (text: string) =>
+					(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(text)
+			: undefined;
 		this.showStatusIndicator(
 			new WorkingStatusIndicator(
 				this.ui,
 				this.workingMessage ?? this.defaultWorkingMessage,
 				this.getWorkingIndicatorOptions(),
+				colorFn,
 			),
 		);
 	}
@@ -4114,6 +4093,17 @@ export class InteractiveMode {
 		}
 
 		this.editorContainer.addChild(this.editor as Component);
+		if (this.activeStatusIndicator) {
+			this.statusContainer.clear();
+			this.activeWorkingIndicatorEmbedded = embedStatusIndicatorInEditor(
+				this.defaultEditor,
+				this.editor,
+				this.activeStatusIndicator,
+			);
+			if (!this.activeWorkingIndicatorEmbedded) {
+				this.statusContainer.addChild(this.activeStatusIndicator);
+			}
+		}
 		this.ui.setFocus(this.editor as Component);
 		this.ui.requestRender();
 	}
@@ -4385,11 +4375,15 @@ export class InteractiveMode {
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			this.getSessionLogger().warn("clipboard_error", {
+			// `?.` guards keep this handler callable on a minimal borrowed receiver
+			// ({ editor, ui }) - the contract upstream's clipboard tests pin; a full
+			// InteractiveMode instance still logs to the session log and shows the
+			// status line.
+			this.getSessionLogger?.().warn("clipboard_error", {
 				op: "paste",
 				error: message,
 			});
-			this.showStatus(`Clipboard paste failed: ${sanitizeTuiErrorMessage(message)}`);
+			this.showStatus?.(`Clipboard paste failed: ${sanitizeTuiErrorMessage(message)}`);
 		}
 	}
 
@@ -6414,6 +6408,7 @@ export class InteractiveMode {
 			const level = this.session.thinkingLevel || "off";
 			this.editor.borderColor = theme.getThinkingBorderColor(level);
 		}
+		this.activeStatusIndicator?.invalidate();
 		this.ui.requestRender();
 	}
 
@@ -7893,6 +7888,14 @@ export class InteractiveMode {
 			await this.session.abort();
 		}
 
+		// Recheck after the dialogs and streaming abort, before replacing another operation's UI.
+		if (this.session.isCompacting) {
+			this.showError(
+				"Wait for the current compaction or tree navigation to finish before navigating the session tree.",
+			);
+			return;
+		}
+
 		// Set up escape handler and status indicator if summarizing
 		let showingSummaryIndicator = false;
 		const originalOnEscape = this.defaultEditor.onEscape;
@@ -8276,70 +8279,92 @@ export class InteractiveMode {
 	): Promise<void> {
 		const actionLabel = authType === "oauth" ? `Logged in to ${providerName}` : `Saved API key for ${providerName}`;
 
-		let selectedModel: Model<any> | undefined;
-		let systemPromptName: string | undefined;
-		let selectionError: string | undefined;
-		if (isUnknownModel(previousModel)) {
-			const availableModels = this.session.modelRuntime.getAvailableSnapshot();
-			const providerModels = availableModels.filter((model) => model.provider === providerId);
-			// Matches LLAMA_PROVIDER_ID from extensions/llama/provider.ts; kept inline to avoid coupling interactive mode to the built-in extension.
-			if (providerId === "llama.cpp") {
-				selectionError = llamaCppPostLoginGuidance(actionLabel, providerModels.length);
-			} else if (!hasDefaultModelProvider(providerId)) {
-				selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
-			} else if (providerModels.length === 0) {
-				selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;
-			} else {
-				const defaultModelId = defaultModelPerProvider[providerId];
-				selectedModel = providerModels.find((model) => model.id === defaultModelId);
-				if (!selectedModel) {
-					selectionError = `${actionLabel}, but its default model "${defaultModelId}" is not available. Use /model to select a model.`;
+		const session = this.session;
+		// Dynamic catalogs may be empty until the first authenticated network refresh.
+		const deferSelection =
+			isUnknownModel(previousModel) &&
+			hasDefaultModelProvider(providerId) &&
+			!session.modelRuntime
+				.getAvailableSnapshot()
+				.some((model) => model.provider === providerId && model.id === defaultModelPerProvider[providerId]);
+		const finishAuthentication = async () => {
+			let selectedModel: Model<any> | undefined;
+			let systemPromptName: string | undefined;
+			let selectionError: string | undefined;
+			if (isUnknownModel(previousModel)) {
+				const availableModels = this.session.modelRuntime.getAvailableSnapshot();
+				const providerModels = availableModels.filter((model) => model.provider === providerId);
+				// Matches LLAMA_PROVIDER_ID from extensions/llama/provider.ts; kept inline to avoid coupling interactive mode to the built-in extension.
+				if (providerId === "llama.cpp") {
+					selectionError = llamaCppPostLoginGuidance(actionLabel, providerModels.length);
+				} else if (!hasDefaultModelProvider(providerId)) {
+					selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
+				} else if (providerModels.length === 0) {
+					selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;
 				} else {
-					try {
-						systemPromptName = (await this.session.setModel(selectedModel))?.systemPromptName;
-					} catch (error: unknown) {
-						selectedModel = undefined;
-						const errorMessage = error instanceof Error ? error.message : String(error);
-						selectionError = `${actionLabel}, but selecting its default model failed: ${errorMessage}. Use /model to select a model.`;
+					const defaultModelId = defaultModelPerProvider[providerId];
+					// Radius catalogs vary by account; prefer balanced, then use catalog order.
+					selectedModel =
+						providerModels.find((model) => model.id === defaultModelId) ??
+						(providerId === "radius" ? providerModels[0] : undefined);
+					if (!selectedModel) {
+						selectionError = `${actionLabel}, but its default model "${defaultModelId}" is not available. Use /model to select a model.`;
+					} else {
+						try {
+							systemPromptName = (await this.session.setModel(selectedModel))?.systemPromptName;
+						} catch (error: unknown) {
+							selectedModel = undefined;
+							const errorMessage = error instanceof Error ? error.message : String(error);
+							selectionError = `${actionLabel}, but selecting its default model failed: ${errorMessage}. Use /model to select a model.`;
+						}
 					}
 				}
 			}
-		}
 
-		this.updateAvailableProviderCount();
-		this.footer.invalidate();
-		this.updateEditorBorderColor();
-		if (selectedModel) {
-			const systemPromptStr = systemPromptName ? ` System prompt: ${systemPromptName}.` : "";
-			this.showStatus(
-				`${actionLabel}. Selected ${selectedModel.id}.${systemPromptStr} Credentials saved to ${getAuthPath()}`,
-			);
-			this.showRiskyMainModelWarning(selectedModel);
-			void this.maybeWarnAboutAnthropicSubscriptionAuth(selectedModel);
-			this.checkDaxnutsEasterEgg(selectedModel);
-		} else {
-			this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}`);
-			if (selectionError) {
-				this.showError(selectionError);
+			this.updateAvailableProviderCount();
+			this.footer.invalidate();
+			this.updateEditorBorderColor();
+			if (selectedModel) {
+				const systemPromptStr = systemPromptName ? ` System prompt: ${systemPromptName}.` : "";
+				this.showStatus(
+					`${actionLabel}. Selected ${selectedModel.id}.${systemPromptStr} Credentials saved to ${getAuthPath()}`,
+				);
+				this.showRiskyMainModelWarning(selectedModel);
+				void this.maybeWarnAboutAnthropicSubscriptionAuth(selectedModel);
+				this.checkDaxnutsEasterEgg(selectedModel);
 			} else {
-				void this.maybeWarnAboutAnthropicSubscriptionAuth();
+				this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}`);
+				if (selectionError) {
+					this.showError(selectionError);
+				} else {
+					void this.maybeWarnAboutAnthropicSubscriptionAuth();
+				}
 			}
+		};
+		if (deferSelection) {
+			this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}. Refreshing model catalog…`);
+		} else {
+			await finishAuthentication();
 		}
 
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), 15_000);
 		const refreshProviders = providerId === "cursor" ? [providerId, "cursor-cli-oauth"] : [providerId];
-		void this.session.modelRuntime
+		void session.modelRuntime
 			.refresh({
 				allowNetwork: true,
 				providers: refreshProviders,
 				signal: controller.signal,
 			})
-			.then((result) => {
+			.then(async (result) => {
 				if (result.aborted) {
 					this.showWarning(`${actionLabel}, but its model catalog refresh timed out; using cached models.`);
 				} else if (result.errors.size > 0) {
 					this.showWarning(`${actionLabel}, but its model catalog could not be refreshed; using cached models.`);
+				}
+				// Do not replace a model or session selected while the refresh was running.
+				if (deferSelection && this.session === session && session.model === previousModel) {
+					await finishAuthentication();
 				}
 				this.updateAvailableProviderCount();
 				this.footer.invalidate();

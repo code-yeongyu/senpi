@@ -216,7 +216,17 @@ export class RpcClient {
 
 		const childProcess = spawn("node", [cliPath, ...args], {
 			cwd: this.options.cwd,
-			env: { ...process.env, ...this.options.env },
+			env: {
+				...process.env,
+				// The spawned child must BE the process this client signals and reaps. An ambient
+				// SENPI_RUNTIME=bun pin makes the launcher re-exec under Bun via spawnSync, so a
+				// SIGTERM to the wrapper leaves the Bun host running: it keeps the session lease
+				// and keeps writing session state after stop() resolved. Pin the runtime to the
+				// interpreter chosen here, the same way app-server/daemon.ts does; options.env is
+				// spread last so a caller can still override the pin explicitly.
+				SENPI_RUNTIME: "node",
+				...this.options.env,
+			},
 			stdio: ["pipe", "pipe", "pipe"],
 			// Callers may be console-less on win32 (GUI hosts, detached daemons), and a
 			// console-subsystem child would then allocate a fresh visible terminal window.

@@ -121,3 +121,27 @@ Canonical backfill seeded from the pre-backfill audit report under
 - The `createAgentSessionServices` call and the `getSystemPrompt` override block whenever
   upstream reshapes resource-loader options or the pin-era `systemPromptOverride` seam.
 - Dependency name/version lines shared with `packages/evals/package.json`.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/evals/package.json`: stays `@code-yeongyu/senpi-evals 2026.7.25` depending on `@code-yeongyu/senpi ^2026.9.12` and `@earendil-works/pi-ai ^2026.9.12`, with `@types/node 26.2.0`, `typescript 7.0.2`, `vitest-evals 0.16.1`, `vitest 4.1.11`.
+- `packages/evals/src/docs.eval.ts`: `defineTool` imported from `@code-yeongyu/senpi`.
+- `packages/evals/src/models.eval.ts`: `ModelRuntime` imported from `@code-yeongyu/senpi`; the local summary type's `input` is `Model<Api>["input"]` because the fork union includes `video`.
+- `packages/evals/src/providers.eval.ts`: `AgentSession`/`ModelRuntime` imported from `@code-yeongyu/senpi`; same `Model<Api>["input"]` widening.
+- `packages/evals/src/pi-harness.ts`: upstream harness (`SettingsManager.inMemory({ shellCommandPrefix })`, `extensionFactories`) importing from `@code-yeongyu/senpi`, with the `SENPI_*` variables unset ahead of the `PI_*` list in `shellCommandPrefix`.
+- `packages/evals/vitest.test.config.ts`: a `@code-yeongyu/senpi` source alias beside the `@earendil-works/pi-coding-agent` one so unit tests resolve the workspace source.
+
+### Why
+
+- The evals package targets the senpi package name and the fork's `envValue` precedence (SENPI_ before PI_); upstream's new eval files had to be retargeted or they would not resolve.
+
+### Why an extension could not handle it
+
+- Import specifiers, manifest ranges and vitest aliases are resolved before any eval code runs.
+
+### Expected merge conflict zones
+
+- MEDIUM: the import line of every `packages/evals/src/*.eval.ts` upstream adds; `shellCommandPrefix` in `pi-harness.ts`.
+- LOW: `packages/evals/package.json` dependency lines; `vitest.test.config.ts` alias list.

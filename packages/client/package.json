@@ -47,6 +47,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
+		"@earendil-works/chord": "^2026.9.12-2",
 		"@earendil-works/pi-protocol": "2026.9.12-2"
 	},
 	"devDependencies": {
