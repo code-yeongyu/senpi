@@ -91,7 +91,7 @@ function cursorPairedMessages(resultTexts: string[]): AgentMessage[] {
 function modelInputBytes(messages: AgentMessage[], convert = convertToLlm): number {
 	const converted = convert(messages);
 	const activeUserMessageIndex = converted.at(-1)?.role === "user" ? converted.length - 1 : -1;
-	return measureCursorModelInputSerializedBytes(converted as never, activeUserMessageIndex);
+	return measureCursorModelInputSerializedBytes(converted, activeUserMessageIndex);
 }
 
 function textBytes(messages: AgentMessage[]): number {
