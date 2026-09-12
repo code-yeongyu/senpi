@@ -4459,7 +4459,11 @@ function buildConversationTurns(
 }
 
 /** Returns the serialized byte cost of Cursor's complete stored history representation. */
-export { buildCursorHistoryWireBytesForTest, measureCursorHistorySerializedBytes } from "./cursor-agent/measure.ts";
+export {
+	buildCursorHistoryWireBytesForTest,
+	measureCursorHistorySerializedBytes,
+	measureCursorModelInputSerializedBytes,
+} from "./cursor-agent/measure.ts";
 
 /** Exported for tests: decodes Cursor history blobs built from conversation messages. */
 export function buildCursorHistoryForTest(
