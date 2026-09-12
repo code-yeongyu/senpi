@@ -7,7 +7,7 @@ type HookStatusTickerPrototype = {
 
 type HookStatusTickerThis = {
 	hookStatusIntervalId: ReturnType<typeof setInterval> | undefined;
-	sessionManager: { getEntries(): readonly unknown[] };
+	sessionManager: { getEntries(): readonly unknown[]; getEntryCount(): number };
 	refreshToolHookStatuses(): void;
 };
 
@@ -20,7 +20,7 @@ describe("InteractiveMode hook status ticker", () => {
 		const unrefSpy = vi.spyOn(intervalHandle, "unref");
 		const fakeThis: HookStatusTickerThis = {
 			hookStatusIntervalId: undefined,
-			sessionManager: { getEntries: () => [] },
+			sessionManager: { getEntries: () => [], getEntryCount: () => 0 },
 			refreshToolHookStatuses: vi.fn(),
 		};
 
@@ -44,7 +44,10 @@ describe("InteractiveMode hook status ticker", () => {
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockReturnValue(intervalHandle);
 		const fakeThis: HookStatusTickerThis = {
 			hookStatusIntervalId: undefined,
-			sessionManager: { getEntries: () => Array.from({ length: 1000 }) },
+			sessionManager: {
+				getEntries: () => Array.from({ length: 1000 }),
+				getEntryCount: () => 1000,
+			},
 			refreshToolHookStatuses: vi.fn(),
 		};
 
