@@ -198,7 +198,7 @@ type EnvDirection = "on" | "off";
 interface Expected {
 	/** Skill paths emitted by resources_discover. */
 	skillPresent: boolean;
-	/** IMAGE_GEN_SECTION (client) from imagegen before_agent_start. */
+	/** Shared IMAGE_GEN_SECTION guidance from imagegen before_agent_start. */
 	clientSection: boolean;
 	/** OPENAI_IMAGE_GEN_SECTION (native) from openai-image-gen before_agent_start. */
 	nativeSection: boolean;
@@ -243,13 +243,13 @@ function registryFor(creds: CredDirection): ImageGenAuthRegistry {
 //
 // Native injection depends on: model (api=responses + official-or-compat) AND env=on.
 // Client tool behavior depends on: nativeBypass (set by injector) or resolveImageGenAuth.
-// Skill contribution depends on: resolveImageGenAuth != none.
+// Skill contribution depends on: native injection OR resolveImageGenAuth != none.
 //
 // Coherence rules:
 //   nativeInjection > 0  →  toolBehavior = bypass  AND  nativeSection = true
 //   nativeInjection = 0  →  nativeSection = false
-//   creds != none        →  skillPresent = true  AND  clientSection = true (when not native)
-//   creds = none         →  skillPresent = false  AND  clientSection = false
+//   creds != none OR nativeInjection > 0  →  skillPresent = true AND clientSection = true
+//   creds = none + nativeInjection = 0   →  skillPresent = false AND clientSection = false
 //   creds = none + nativeInjection = 0  →  toolBehavior = missing_config
 //   creds != none + nativeInjection = 0  →  toolBehavior = live
 
@@ -261,8 +261,8 @@ const TRUTH_TABLE: TruthRow[] = [
 		env: "on",
 		label: "no creds, official endpoint, env on → native injection without client creds",
 		expected: {
-			skillPresent: false,
-			clientSection: false,
+			skillPresent: true,
+			clientSection: true,
 			nativeSection: true,
 			toolBehavior: "provider_native_bypass",
 			nativeInjection: 1,
@@ -527,8 +527,8 @@ const TRUTH_TABLE: TruthRow[] = [
 		env: "on",
 		label: "no creds, proxied + compat true, env on → native injection without client creds",
 		expected: {
-			skillPresent: false,
-			clientSection: false,
+			skillPresent: true,
+			clientSection: true,
 			nativeSection: true,
 			toolBehavior: "provider_native_bypass",
 			nativeInjection: 1,
@@ -677,7 +677,7 @@ describe("imagegen arbitration truth table", () => {
 			expect(exp.nativeSection, "native section implies native injection").toBe(hasNative);
 			expect(exp.toolBehavior === "provider_native_bypass", "bypass implies native injection").toBe(hasNative);
 
-			// (client and native sections CAN coexist when creds exist and native mode is active;
+			// (shared and native sections coexist whenever native mode is active;
 			// the imagegen section is conditional-safe text that applies regardless of which surface owns the request)
 		});
 	}
@@ -693,15 +693,19 @@ describe("imagegen arbitration truth table", () => {
 					hasNative,
 				);
 				expect(exp.nativeSection, `${row.label}: native section ⟺ native injection`).toBe(hasNative);
-				expect(exp.clientSection, `${row.label}: client section ⟺ creds exist`).toBe(row.creds !== "none");
+				expect(exp.clientSection, `${row.label}: shared guidance ⟺ native or creds`).toBe(
+					hasNative || row.creds !== "none",
+				);
 			}
 		});
 
-		it("every truth-table row satisfies: skill present ⟺ creds != none", () => {
+		it("every truth-table row satisfies: skill present ⟺ native injection or creds != none", () => {
 			for (const row of TRUTH_TABLE) {
 				const exp = row.expected;
 				const hasCreds = row.creds !== "none";
-				expect(exp.skillPresent, `${row.label}: skill presence ⟺ creds exist`).toBe(hasCreds);
+				expect(exp.skillPresent, `${row.label}: skill presence ⟺ native or creds`).toBe(
+					exp.nativeInjection > 0 || hasCreds,
+				);
 			}
 		});
 
