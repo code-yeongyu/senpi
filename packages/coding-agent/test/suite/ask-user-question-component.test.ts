@@ -14,6 +14,7 @@ const ENTER = "\r";
 const ESC = "\x1b";
 const CTRL_C = "\x03";
 const TAB = "\t";
+const SHIFT_TAB = "\x1b[Z";
 const SPACE = " ";
 const CTRL_ENTER = "\x1b[13;5u";
 
@@ -299,6 +300,46 @@ describe("AskUserQuestionComponent", () => {
 		const last = h.progressCalls[h.progressCalls.length - 1];
 		expect(last?.answers?.auth).toEqual({ selected: [], text: "use a vault token" });
 		expect(h.render()).toContain("Which extras should be enabled?");
+	});
+
+	it("clears the own-answer editor when advancing to the next question", () => {
+		const h = mount();
+
+		// Q1: open the own-answer editor and commit a typed answer.
+		h.component.handleInput(DOWN);
+		h.component.handleInput(DOWN);
+		h.component.handleInput(ENTER);
+		h.component.handleInput("use a vault token");
+		h.component.handleInput(ENTER);
+
+		// Q2: the editor must start empty instead of carrying Q1's text over.
+		expect(h.render()).toContain("Which extras should be enabled?");
+		expect(h.render()).not.toContain("use a vault token");
+
+		// Committing again on Q2 must not submit Q1's text as Q2's own answer.
+		h.component.handleInput(ENTER);
+
+		const last = h.progressCalls[h.progressCalls.length - 1];
+		expect(last?.answers?.extras).toBeUndefined();
+		expect(h.doneCalls).toHaveLength(0);
+	});
+
+	it("reloads a saved own answer when the question is revisited", () => {
+		const h = mount();
+
+		h.component.handleInput(DOWN);
+		h.component.handleInput(DOWN);
+		h.component.handleInput(ENTER);
+		h.component.handleInput("use a vault token");
+		h.component.handleInput(ENTER);
+
+		// Back to Q1 via the tab bar and reopen its own-answer editor.
+		h.component.handleInput(SHIFT_TAB);
+		h.component.handleInput(DOWN);
+		h.component.handleInput(DOWN);
+		h.component.handleInput(ENTER);
+
+		expect(h.render()).toContain("use a vault token");
 	});
 
 	it("formats the countdown as minutes above five minutes and mm:ss below", () => {

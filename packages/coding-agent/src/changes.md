@@ -1,5 +1,25 @@
 # changes
 
+## 2026-09-12 - Clear the ask-user own-answer editor when advancing to the next question
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: `commitOwnAnswer()` clears `ownAnswerInput` after committing the typed text to the active question. Previously the editor kept the committed value, so the Enter path (commit + `advance()`) left focus in own-answer on the next question with the previous question's text still in the editor, and pressing Enter again committed that stale text as the next question's own answer (it also reached `onProgress` drafts through `emitProgress`).
+- Revisiting a tab is unchanged: `openOwnAnswer()` still reloads the question's saved text from `AskUserQuestionState.textFor()`, so committed answers stay editable per question.
+- `packages/coding-agent/test/suite/ask-user-question-component.test.ts`: regression coverage for the empty editor on the next question, no stale `onProgress` answer for the next question, and the saved answer reloading when the tab is revisited.
+
+### Why
+
+- With multi-question `ask-user` requests, answering a question with the own-answer editor prefilled the following question with the previous answer's text and submitted it as that question's custom answer when the user pressed Enter again — silently answering a question the user had not answered.
+
+### Why an extension could not handle it
+
+- The editor lifetime is owned by the fork's in-tree question overlay component; `AskUserQuestionState` deliberately stays free of pi-tui input state, so only the component can reset the editor.
+
+### Expected merge conflict zones
+
+- `commitOwnAnswer()` in `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts` if upstream changes the own-answer commit/advance flow.
+
 ## 2026-09-12 - Support the Notification hook event and fire it for ask-user settlements
 
 ### What changed
