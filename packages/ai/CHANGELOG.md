@@ -6,6 +6,30 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.11] - 2026-09-11
+
+### Breaking Changes
+
+### Added
+
 - Pooled OAuth credential slots now retain optional human-readable display names while preserving immutable slot identities for selection, affinity, refresh, and failover.
 - Added the Devin (Cognition) Cascade transport: `devin-agent` Connect/protobuf streaming is mapped natively onto the shared stream contract, so text, thinking, tool calls, usage and stop reasons arrive as ordinary events, a failed or content-filtered stop is surfaced as an error instead of a silent end, and a truncated turn keeps the `length` stop reason. Model discovery is authenticated with the stored credential and falls back to the bundled SWE seed when the discovery endpoint is unavailable, so an offline or rate-limited discovery never empties the model list ([#1604](https://github.com/code-yeongyu/senpi/issues/1604)).
 - Added Devin (Cognition) CLI OAuth: the authorization flow is PKCE S256 with a loopback callback on `127.0.0.1:59653` and the state validated before the code is spent, and the issued CLI token is stored with the expiry derived from its own JWT rather than an assumed lifetime ([#1601](https://github.com/code-yeongyu/senpi/issues/1601)).

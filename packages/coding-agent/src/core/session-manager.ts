@@ -1614,28 +1614,24 @@ export class SessionManager {
 		if (this.entriesCache !== null && this.entriesCache.mutation === this.mutationCount) {
 			return this.entriesCache.entries;
 		}
-		const entries = this.fileEntries
-			.filter((e): e is SessionEntry => e.type !== "session");
+		const entries = this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
 		const materializedEntries = this._materializeEntries(entries);
 		this.entriesCache = { mutation: this.mutationCount, entries: materializedEntries };
 		return materializedEntries;
 	}
 
 	private _materializeEntries(entries: readonly SessionEntry[]): SessionEntry[] {
-		return materializeSessionEntries(
-			entries,
-			{
-				residentStore: this.residentStore,
-				loadHistoryEntries: () => this._loadFullHistoryEntries(),
-				onMaterialized: (entry) => {
-					if (entry.type !== "message") return;
-					const order = this.entryOrdersById.get(entry.id);
-					if (order !== undefined) {
-						this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
-					}
-				},
+		return materializeSessionEntries(entries, {
+			residentStore: this.residentStore,
+			loadHistoryEntries: () => this._loadFullHistoryEntries(),
+			onMaterialized: (entry) => {
+				if (entry.type !== "message") return;
+				const order = this.entryOrdersById.get(entry.id);
+				if (order !== undefined) {
+					this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
+				}
 			},
-		);
+		});
 	}
 
 	private _getCompactEntries(): SessionEntry[] {

@@ -289,6 +289,33 @@ describe("ensureHost", () => {
 		expect(failuresLeft).toBe(0);
 	}, 20_000);
 
+	it("registers a live host whose identity stays unreadable instead of tearing it down", async () => {
+		// The Windows CI variant that survived the retry work: every Get-CimInstance attempt is
+		// starved, so the spawned host never yields an identity. The host itself is healthy and
+		// answering, so it must be registered without an ownership guard rather than killed.
+		const qa = await scratch("unreadable-identity");
+		const host = await ensureFixtureHost(qa, { readProcessStartTime: async () => undefined });
+		expect(host).toMatchObject({ socket: qa.socket, reused: false });
+		const pidFile = JSON.parse(await readFile(createHostDaemonPaths(qa.agentDir).pidFile, "utf8")) as unknown;
+		expect(pidFile).toMatchObject({ pid: host.pid, processStartTime: null });
+		const second = await ensureFixtureHost(qa);
+		expect(second).toMatchObject({ socket: qa.socket, reused: true });
+	}, 20_000);
+
+	it("starts fresh when an unguarded pidfile's host no longer answers", async () => {
+		// A pidfile written without an identity guard can never authorize a kill, so a later
+		// ensure must start a new host instead of failing on the unreadable identity.
+		const qa = await scratch("unguarded-pidfile");
+		const live = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], { stdio: "ignore" });
+		children.push(live);
+		const paths = createHostDaemonPaths(qa.agentDir);
+		await mkdir(dirname(paths.pidFile), { recursive: true });
+		await writeFile(paths.pidFile, `${JSON.stringify({ pid: live.pid, processStartTime: null })}\n`);
+		const host = await ensureFixtureHost(qa);
+		expect(host.reused).toBe(false);
+		expect(host.pid).not.toBe(live.pid);
+	}, 20_000);
+
 	it("treats a failing probe against a dead pid as gone and starts a fresh host", async () => {
 		const qa = await scratch("dead-probe");
 		// A real process that has already exited: liveness is genuinely false.
@@ -497,6 +524,32 @@ describe("processMatchesPidFile", () => {
 		);
 		expect(matches).toBe(true);
 		expect(calls).toBe(3);
+	});
+
+	it("reads a pidfile without an identity guard as unreadable while the pid is live", async () => {
+		await expect(
+			processMatchesPidFile(
+				{ pid: process.pid, processStartTime: null },
+				async () => "ignored",
+				() => true,
+				{
+					attempts: 1,
+				},
+			),
+		).rejects.toBeInstanceOf(ProcessIdentityUnreadableError);
+	});
+
+	it("reads a pidfile without an identity guard as gone once the pid is not live", async () => {
+		await expect(
+			processMatchesPidFile(
+				{ pid: 4_294_967_294, processStartTime: null },
+				async () => "ignored",
+				() => false,
+				{
+					attempts: 1,
+				},
+			),
+		).resolves.toBe(false);
 	});
 
 	it("reads a failing probe against a dead pid as gone without retrying", async () => {

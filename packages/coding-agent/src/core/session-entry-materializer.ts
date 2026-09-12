@@ -1,5 +1,5 @@
-import type { ResidentStringStore } from "./session-resident-store.ts";
 import type { FileEntry, SessionEntry } from "./session-manager.ts";
+import type { ResidentStringStore } from "./session-resident-store.ts";
 
 type LoadHistoryEntries = () => readonly FileEntry[];
 type OnMaterialized = (entry: SessionEntry) => void;

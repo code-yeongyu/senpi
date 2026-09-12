@@ -53,7 +53,20 @@ export interface Model<TApi extends Api> {
 					? BedrockCompat
 					: TApi extends "cursor-agent"
 						? CursorAgentCompat
-						: never;
+						: TApi extends "devin-agent"
+							? DevinAgentCompat
+							: never;
+}
+
+/** Devin (Cascade) model metadata the transport branches on. */
+export interface DevinAgentCompat {
+	/**
+	 * Server-side router (`adaptive`): its uid is never a legal chat model uid, so
+	 * the transport resolves it through `AssignModel` before every turn.
+	 */
+	modelRouter?: boolean;
+	/** The lane accepts several tool calls per turn; absent means one at a time. */
+	supportsParallelToolCalls?: boolean;
 }
 
 /** Cursor agent protocol model metadata. */

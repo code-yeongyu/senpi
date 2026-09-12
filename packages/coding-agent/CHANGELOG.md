@@ -6,6 +6,41 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+- Added Devin router models: a Cascade model router such as `adaptive` is resolved through `AssignModel` before every turn, and the assigned model uid plus its assignment JWT ride on the chat request, so the server-side router picks the model instead of the request failing on the router uid.
+- Added inline images on Devin turns: images attached to a user prompt or returned by a tool now travel in the Cascade request instead of being dropped to text.
+
+### Changed
+
+- Devin model discovery now announces the Devin CLI's dev-channel `chisel` identity and requests every native display slot, filters the internal quick-review and default-only slots, marks server-side routers, and reads the account's context window, output cap, cost and image/tool support from the catalog the way the released client does. The bundled seed now lists the plan-available SWE-2 effort lanes (`swe-2-high`, `swe-2-max`, `swe-2-low`, `swe-2-high-lite`) beside SWE-1.6; the bare `swe-2` uid, which Cascade rejects with `permission_denied`, is gone.
+
+### Fixed
+
+- Fixed Devin chat failing with `Devin request failed (HTTP 404): {"detail":"Not Found"}` after a successful login: the OAuth login host (`api.devin.ai`) was overlaid onto the Cascade model host, so every `GetChatMessage` was posted to the REST API instead of `server.codeium.com` (fixes #1615).
+- Fixed Devin turns being rejected with an opaque `invalid_argument` once they reached the right host: the transport now mints the account's user JWT through `GetUserJwt` before every turn and follows the API host that call names, presents the released Devin CLI identity (`devin-cli` / `chisel` 3000.6.2) instead of a dev-channel one, carries the user JWT on the correct protobuf field (it was serialized as `force_team_id`), sends UUID-shaped conversation, execution and message ids instead of raw strings, and uses the released CLI completion configuration (a temperature of exactly 0 is refused by Cascade and is now clamped).
+- Fixed Devin tool calls losing their id mid-stream: Cascade sends the id only on the first argument chunk, and later chunks were opened as separate nameless tool calls, so file reads, shell commands and edits never executed. Chunks now merge into one call whose arguments accumulate across frames.
+- Fixed Devin rejections being reported as an empty successful turn: a Connect error trailer (`invalid_argument`, `permission_denied`, ...) now terminates the turn as an error carrying the server's code and message.
+- Fixed Devin model discovery answering HTTP 415: the unary `GetCliModelConfigs` call now sends a bare `application/proto` body like the CLI instead of a Connect streaming frame.
+
+### Removed
+
+## [2026.9.11] - 2026-09-11
+
+### Breaking Changes
+
+### Added
+
 - Added the Devin (Cognition) Cascade model transport: after signing in with Devin OAuth you can select a Devin model and stream completions through the native `devin-agent` Connect/protobuf protocol, with text, thinking, tool calls, usage and stop reasons mapped natively, plus credential-scoped model discovery that keeps the bundled seed when discovery is unavailable (fixes #1604).
 
 - Added Devin (Cognition) OAuth login: sign in through Devin's CLI authorization flow (PKCE S256, loopback callback on `127.0.0.1:59653`, state validated before the code is spent) and senpi stores the issued CLI token with its JWT-derived expiry (fixes #1601).
@@ -25,6 +60,8 @@
 - Cursor conversations no longer lose their earliest turns to a hardcoded history cap: senpi sent at most 50,000 serialized bytes of history to Cursor because Cursor's model list carries no context-window field, and once that budget was exceeded the oldest complete turns were deleted outright - a 551-message conversation collapsed to 4 messages, and even a session that never called a tool lost its first 30KB turn. It now takes the real context limit Cursor reports for the live conversation (200,000 for kimi-k3, where senpi previously assumed 1,048,576), counts only what Cursor actually feeds the model instead of double-counting its display copies, keeps that limit correct when Cursor rotates a conversation, and forgets a remembered limit when Cursor reports none so a fresh conversation starts from the safe default; individually oversized tool results stay bounded as before (fixes #1603).
 
 - Image-heavy `/resume` sessions no longer reparse the complete JSONL once per evicted resident string; one ordered materialization pass performs one authoritative history load while preserving transcript contents and branch state ([#1407](https://github.com/code-yeongyu/senpi/issues/1407))
+
+- A shared RPC host is no longer torn down because its own process-identity probe was starved. A host we spawned that is alive and answering its socket is registered with a guard-less pidfile, and a record without an identity guard reads as unknown ownership everywhere, so it can neither claim a host nor authorize a signal; a later ensure that cannot verify it simply starts a fresh host. On a loaded Windows machine, where every `Get-CimInstance` attempt can exceed its timeout, session start no longer fails with `started but its process identity stayed unreadable`.
 
 - Windows RPC host ownership checks no longer treat a temporarily empty process-identity probe
   for a live PID as evidence that the shared host is dead. Compatible endpoints are reused before
