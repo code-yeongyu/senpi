@@ -222,10 +222,17 @@ and only then constructs its session writer and runtime. A conflicting alias att
 explicitly before opening another writer.
 
 SessionManager writes, switches, forks, new sessions and imports obtain the same grant before writer creation or
-append-side normalization. Acquired paths are conservatively retained for that worker's entire lifetime, including
-superseded paths after a switch. Each worker may reserve at most 64 paths; an exhausted reservation budget fails
-explicitly. Close or an opening deadline requests worker termination, but does not release reservations or worker
-capacity until the actual exit event. A syscall that cannot yet be interrupted can therefore keep an entry
+append-side normalization. A grant is bound to a LIVE writer, not to the worker's lifetime: every snapshot a fully
+open worker publishes names the session files its live session writers still own, and the host releases each granted
+path that list (and the worker's current session path) no longer names. A session replaced by `new_session`,
+`switch_session`, a fork or an import therefore frees its previous file as soon as the replacement is published:
+another `open_session` for that superseded path opens its own worker instead of attaching or failing, and the
+previous opening spelling stops resolving to the replaced owner. Each worker may reserve at most 64 live paths
+at once; a request past that budget first reconciles against the latest snapshot and only then fails with
+`session_reservation_limit`, which is distinct from `session_path_in_use` (another owner holds the path). Only a
+fully open entry reconciles. An entry that is opening, closing or quarantined keeps every acquired path, because a
+worker stuck in a syscall can still be writing a path it can no longer report. Close or an opening deadline requests
+worker termination, but does not release reservations or worker capacity until the actual exit event. A syscall that cannot yet be interrupted can therefore keep an entry
 internally quarantined after the routing handle has closed. `list_sessions` continues to publish `closing`, not a
 new status: existing clients must not mistake a quarantined worker for a live reattach target. Retry the path only
 after that entry disappears.
@@ -296,7 +303,8 @@ In the response `error` field, machine-matchable:
 
 - `unknown_session`
 - `session_closing`
-- `session_path_in_use` (path held by an opening, closing, quarantined, or superseded owner; a fully-open current owner is attached instead)
+- `session_path_in_use` (path held by an opening, closing, or quarantined owner; a fully-open current owner is attached instead, and a path a live owner has superseded is released rather than held)
+- `session_reservation_limit` (this worker already holds 64 live session paths; the open or session replacement was refused without disturbing the existing session)
 - `missing_session_id` (session-scoped command without `sessionId` in multi mode)
 - `multi_session_disabled` (`open_session` in classic mode)
 - `invalid_path` (relative `sessionPath`/`cwd`)
@@ -313,7 +321,7 @@ Strict FIFO per session; one total stdout order; cross-session order unspecified
 
 ### Duplicate/idempotency
 
-Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle); while held by an `opening`/`closing` entry (including internal quarantine) → `session_path_in_use`. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
+Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle); while held by an `opening`/`closing` entry (including internal quarantine) → `session_path_in_use`. A path whose owner has already replaced it with another session file is no longer held: that open allocates a new worker and resumes the file. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
 
 ## Protocol Overview
 

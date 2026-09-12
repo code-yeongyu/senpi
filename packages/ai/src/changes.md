@@ -1,3 +1,30 @@
+## Cursor context ceilings come from the server, not the capability table (2026-09-12)
+
+### What changed
+
+- `packages/ai/src/cursor/context-limit-store.ts` (new): browser-safe in-memory store of the context ceiling Cursor reported per model id, with `recordCursorContextLimit`, `getCursorContextLimit`, `resolveCursorContextWindow` (observed, else catalog) and a persistence port. It is browser-safe on purpose: the catalog builders that read it are bundled for the browser by `scripts/check-browser-smoke.mjs`.
+- `packages/ai/src/utils/cursor-context-limit.ts` (new): the Node entry point. It owns the JSON file (`<agentDir>/cursor-context-limits.json`, same resolution as `packages/ai/src/api/cursor-conversation-rotation.ts`, override `CURSOR_CONTEXT_LIMIT_STORE`), loads it lazily once, writes atomically (tmp + rename), treats a missing or corrupt file as empty, and installs itself as the persistence port on first use rather than as an import side effect. It lives under `utils/` because `./utils/*` is the only subpath pattern `packages/ai` exports that a Node-only module reachable from the coding agent can use.
+- `packages/ai/src/api/cursor-agent.ts`: `onConversationCheckpoint` records `checkpoint.tokenDetails?.maxTokens` for the streaming model. The first checkpoint of a conversation reports 0 and is ignored. Also re-exports `measureCursorModelInputSerializedBytes`.
+- `packages/ai/src/api/cursor-agent/measure.ts`: `measureCursorModelInputSerializedBytes` sums only the `rootPromptMessagesJson` blobs - what Cursor replays to the model - where `measureCursorHistorySerializedBytes` also counts the `turns[]` display copies and reports roughly twice that. First proposed in #1614 by DevNewbie1826.
+- `packages/ai/src/index.ts`: exports the new measurement.
+- `packages/ai/src/cursor/store-migration.ts` and `packages/ai/src/providers/cursor.ts`: a catalog entry materializes its `contextWindow` through `resolveCursorContextWindow(entry.id, entry.window)`, so an observed ceiling wins over the capability table. With an empty store both are unchanged.
+- Tests: `packages/ai/test/cursor-context-limit-store.test.ts` (new) and a checkpoint case in `packages/ai/test/cursor-conversation-rotation-stream.test.ts`.
+
+### Why
+
+- `GetUsableModels` carries no window, so `CURSOR_MODEL_CAPABILITIES` is a committed guess. When the guess is larger than the account's real ceiling, every sizing decision downstream - context usage, compaction thresholds, request admission - is made against a window the server will not honour, and the turn fails as a 0-token `resource_exhausted` instead of compacting in time (senpi#1603).
+- The aggregate admission budget in the coding agent needs a measurement of what the model actually ingests; sizing against root plus display copies double-counted the same conversation.
+
+### Why an extension could not handle it
+
+- The checkpoint callback lives inside the builtin `cursor-agent` stream implementation, and the catalog builders are `packages/ai` internals; an extension can neither observe `tokenDetails` nor change how a Cursor `Model` is materialized.
+
+### Expected merge conflict zones
+
+- LOW: the new `packages/ai/src/cursor/context-limit-store.ts` and `packages/ai/src/utils/cursor-context-limit.ts` have no upstream counterpart.
+- MEDIUM: `packages/ai/src/api/cursor-agent.ts` around `onConversationCheckpoint` and the measure re-export block.
+- LOW: the single `contextWindow` line in `packages/ai/src/cursor/store-migration.ts` and `packages/ai/src/providers/cursor.ts`.
+
 ## Devin Cascade transport parity with the released CLI (2026-09-12)
 
 ### What changed

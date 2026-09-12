@@ -486,6 +486,28 @@ function extractImages(content: (TextContent | ImageContent)[]) {
 		);
 }
 
+/**
+ * Serialized byte cost of the MODEL INPUT alone: the `rootPromptMessagesJson`
+ * blobs Cursor's server replays as the prompt. `measureCursorHistorySerializedBytes`
+ * additionally counts the `turns[]` display copies of the same conversation, so
+ * it reports roughly twice this number and overstates what the model ingests.
+ * Each referenced blob is counted once per reference, because a blob replayed
+ * twice occupies the prompt twice.
+ *
+ * First proposed in #1614.
+ */
+export function measureCursorModelInputSerializedBytes(
+	messages: Message[],
+	activeUserMessageIndex = findLastUserMessageIndex(messages),
+): number {
+	const blobStore = new Map<string, Uint8Array>();
+	let total = 0;
+	for (const blobId of buildRootPromptMessagesJson(messages, [], blobStore, activeUserMessageIndex)) {
+		total += readCursorBlob(blobStore, blobId).byteLength;
+	}
+	return total;
+}
+
 export function measureCursorHistorySerializedBytes(
 	messages: Message[],
 	activeUserMessageIndex = findLastUserMessageIndex(messages),

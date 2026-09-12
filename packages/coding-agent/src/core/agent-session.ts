@@ -35,7 +35,6 @@ import type {
 import { ProviderRetryWatchdogAbortError, prepareAgentToolCall } from "@earendil-works/pi-agent-core";
 import {
 	contentText,
-	measureCursorHistorySerializedBytes,
 	providerNotConfiguredMessage,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
 	type ThinkingSelection,
@@ -71,6 +70,7 @@ import {
 	shouldRetryOverflowWithoutCompact,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
+import { getCursorContextLimit } from "@earendil-works/pi-ai/utils/cursor-context-limit";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/backoff";
 import { getAgentDir } from "../config.ts";
@@ -106,6 +106,7 @@ import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from ".
 import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import type { CompactionModelSelector } from "./compaction-settings-access.ts";
+import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "./dynamic-prompt/index.ts";
 import {
@@ -191,12 +192,7 @@ import {
 	MANUAL_CONTINUE_CUSTOM_TYPE,
 	MANUAL_CONTINUE_DIRECTIVE,
 } from "./manual-continue.ts";
-import {
-	type BashExecutionMessage,
-	type CustomMessage,
-	convertToLlm,
-	filterContextExcludedMessages,
-} from "./messages.ts";
+import { type BashExecutionMessage, type CustomMessage, filterContextExcludedMessages } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -957,121 +953,11 @@ const THINKING_LEVELS_WITH_MAX: ThinkingLevel[] = ["off", "minimal", "low", "med
 /** Caps explicit skill expansion so one prompt cannot consume unbounded context. */
 export const MAX_SKILL_EXPANSIONS_PER_PROMPT = 5;
 
-/** Cursor ingest rejects large verbatim tool payloads. The bound is UTF-8 bytes. */
-export const CURSOR_TOOL_RESULT_MAX_CHARS = 2000;
-export const CURSOR_TOOL_RESULT_MAX_BYTES = 50_000;
-const CURSOR_TRUNCATION_MARKER = "\n...[truncated]";
-
-export function truncateToolResultBodies(
-	messages: AgentMessage[] | undefined,
-	maxChars = CURSOR_TOOL_RESULT_MAX_CHARS,
-	maxBytes = CURSOR_TOOL_RESULT_MAX_BYTES,
-	convert = (candidate: AgentMessage[]) => convertToLlm(candidate),
-): { messages: AgentMessage[] | undefined; changed: boolean } {
-	if (!Array.isArray(messages) || messages.length === 0) return { messages, changed: false };
-	const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-	const markerChars = [...segmenter.segment(CURSOR_TRUNCATION_MARKER)].length;
-	const result = messages.slice();
-	let changed = false;
-
-	// Apply the per-result character cap first, independent of the aggregate wire cap.
-	for (let messageIndex = result.length - 1; messageIndex >= 0; messageIndex--) {
-		const message = result[messageIndex];
-		if (message.role !== "toolResult" || !Array.isArray(message.content)) continue;
-		let content = message.content;
-		for (let partIndex = content.length - 1; partIndex >= 0; partIndex--) {
-			const part = content[partIndex];
-			if (part.type === "image" && typeof part.data === "string") continue;
-			if (part.type !== "text" || typeof part.text !== "string") continue;
-			const graphemes = [...segmenter.segment(part.text)].map((item) => item.segment);
-			if (graphemes.length <= maxChars) continue;
-			const kept = graphemes.slice(0, Math.max(0, maxChars - markerChars)).join("");
-			const nextText = kept + CURSOR_TRUNCATION_MARKER;
-			content = content === message.content ? content.slice() : content;
-			content[partIndex] = { ...part, text: nextText };
-			result[messageIndex] = { ...message, content };
-			changed = true;
-		}
-	}
-
-	const measure = (candidate: AgentMessage[]): number => {
-		const converted = convert(candidate);
-		const activeUserMessageIndex = converted.at(-1)?.role === "user" ? converted.length - 1 : -1;
-		return measureCursorHistorySerializedBytes(converted, activeUserMessageIndex);
-	};
-	const fits = (candidate = result) => measure(candidate) <= maxBytes;
-	if (fits()) return { messages: changed ? result : messages, changed };
-
-	// Empty the oldest result bodies. Search the monotonic prefix of candidates
-	// rather than serializing once for every result (admission must stay bounded).
-	const emptyToolResult = (message: AgentMessage): AgentMessage => {
-		if (message.role !== "toolResult" || !Array.isArray(message.content)) return message;
-		const emptiedContent = message.content.map((part) =>
-			part.type === "text" ? { ...part, text: "" } : part.type === "image" ? { ...part, data: "" } : part,
-		);
-		const content = emptiedContent.filter((part, index) => {
-			if (index === 0) return true;
-			const previous = emptiedContent[index - 1];
-			const empty = part.type === "text" ? part.text === "" : part.type === "image" && part.data === "";
-			const previousEmpty =
-				previous.type === "text" ? previous.text === "" : previous.type === "image" && previous.data === "";
-			return !empty || !previousEmpty;
-		});
-		return { ...message, content };
-	};
-	const toolResultIndexes = result.flatMap((message, index) =>
-		message.role === "toolResult" && Array.isArray(message.content) ? [index] : [],
-	);
-	const withEmptyPrefix = (count: number): AgentMessage[] => {
-		const candidate = result.slice();
-		for (let i = 0; i < count; i++)
-			candidate[toolResultIndexes[i]] = emptyToolResult(candidate[toolResultIndexes[i]]);
-		return candidate;
-	};
-	let low = 0;
-	let high = toolResultIndexes.length;
-	while (low < high) {
-		const middle = Math.floor((low + high) / 2);
-		if (fits(withEmptyPrefix(middle + 1))) high = middle;
-		else low = middle + 1;
-	}
-	const emptyCount = Math.min(low + 1, toolResultIndexes.length);
-	if (emptyCount > 0) {
-		result.splice(0, result.length, ...withEmptyPrefix(emptyCount));
-		changed = true;
-	}
-	if (fits()) return { messages: changed ? result : messages, changed };
-
-	// If metadata alone exceeds the cap, discard the oldest complete turns. This
-	// search is also monotonic and avoids quadratic whole-history reserialization.
-	const turnRanges: Array<[number, number]> = [];
-	const isConvertedUser = (message: AgentMessage): boolean => convert([message])[0]?.role === "user";
-	for (let index = 0; index < result.length; index++) {
-		if (!isConvertedUser(result[index])) continue;
-		const nextUser = result.findIndex((message, nextIndex) => nextIndex > index && isConvertedUser(message));
-		turnRanges.push([index, nextUser < 0 ? result.length : nextUser]);
-	}
-	const withoutTurns = (count: number): AgentMessage[] => {
-		if (count === 0) return result;
-		const start = turnRanges[0]?.[0] ?? 0;
-		const end = turnRanges[count - 1]?.[1] ?? start;
-		return [...result.slice(0, start), ...result.slice(end)];
-	};
-	low = 0;
-	high = turnRanges.length;
-	while (low < high) {
-		const middle = Math.floor((low + high) / 2);
-		if (fits(withoutTurns(middle + 1))) high = middle;
-		else low = middle + 1;
-	}
-	const turnCount = Math.min(low + 1, turnRanges.length);
-	if (turnCount > 0) {
-		const next = withoutTurns(turnCount);
-		result.splice(0, result.length, ...next);
-		changed = true;
-	}
-	return { messages: changed ? result : messages, changed };
-}
+/**
+ * Cursor admission lives in its own module; the names stay exported here so
+ * existing importers keep resolving them.
+ */
+export { CURSOR_TOOL_RESULT_MAX_CHARS, truncateToolResultBodies } from "./cursor-history-admission.ts";
 
 // ============================================================================
 // AgentSession Class
@@ -1619,6 +1505,20 @@ export class AgentSession {
 		};
 	}
 
+	/**
+	 * Cursor states a model's real context ceiling on every conversation
+	 * checkpoint. Once observed, it replaces the catalog guess on the live model
+	 * so context usage, compaction thresholds and admission all size against the
+	 * window the server will actually enforce.
+	 */
+	private _applyObservedCursorContextWindow(model: Model<Api>): void {
+		const observed = getCursorContextLimit(model.id);
+		if (observed === undefined || observed <= 0 || observed === model.contextWindow) return;
+		const previous = model.contextWindow;
+		model.contextWindow = observed;
+		this._sessionLogger.info("cursor_context_window_observed", { modelId: model.id, previous, observed });
+	}
+
 	private _installAgentNextTurnRefresh(): void {
 		const previousPrepareNextTurnWithContext =
 			this.agent.prepareNextTurnWithContext ??
@@ -1628,19 +1528,32 @@ export class AgentSession {
 		const previousTransformContext = this.agent.transformContext;
 		this.agent.transformContext = async (messages, signal) => {
 			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
-			if (this.model?.provider === "cursor" || this.model?.provider === "cursor-cli-oauth") {
-				return (
-					(
-						await truncateToolResultBodies(
-							transformed,
-							CURSOR_TOOL_RESULT_MAX_CHARS,
-							CURSOR_TOOL_RESULT_MAX_BYTES,
-							(candidate) => this.agent.convertToLlm(candidate) as Message[],
-						)
-					).messages ?? transformed
-				);
+			const model = this.model;
+			if (model?.provider !== "cursor" && model?.provider !== "cursor-cli-oauth") return transformed;
+			this._applyObservedCursorContextWindow(model);
+			const budgetBytes = cursorAdmissionBudgetBytes(model.contextWindow);
+			const admission = admitCursorHistory({
+				messages: transformed,
+				budgetBytes,
+				convert: (candidate) => this.agent.convertToLlm(candidate) as Message[],
+			});
+			if (admission.blankedToolResults > 0) {
+				this._sessionLogger.info("cursor_admission_truncated", {
+					blankedToolResults: admission.blankedToolResults,
+					bytesBefore: admission.bytesBefore,
+					bytesAfter: admission.bytesAfter,
+					budgetBytes,
+				});
 			}
-			return transformed;
+			if (admission.overBudget) {
+				// The request is still admitted: Cursor answers an oversized history
+				// with a 0-token resource_exhausted, which the session layer compacts.
+				this._sessionLogger.warn("cursor_admission_over_budget", {
+					bytes: admission.bytesAfter,
+					budgetBytes,
+				});
+			}
+			return admission.messages ?? transformed;
 		};
 
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
@@ -6245,7 +6158,11 @@ export class AgentSession {
 		// Size the same retained context that will be admitted to Cursor. Persisted JSONL
 		// remains verbatim, but the in-memory request representation is bounded first.
 		if (model.provider === "cursor" || model.provider === "cursor-cli-oauth") {
-			simulatedMessages = truncateToolResultBodies(simulatedMessages).messages ?? simulatedMessages;
+			simulatedMessages =
+				admitCursorHistory({
+					messages: simulatedMessages,
+					budgetBytes: cursorAdmissionBudgetBytes(model.contextWindow),
+				}).messages ?? simulatedMessages;
 		}
 		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(simulatedMessages));
 		const settings = this._getCompactionSettings();

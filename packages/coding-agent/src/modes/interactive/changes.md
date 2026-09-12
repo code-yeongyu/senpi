@@ -80,6 +80,33 @@
 - LOW: the `ask-user-async-widget.ts` import list and `handleAskUserShortcut` in
   `packages/coding-agent/src/modes/interactive/interactive-mode.ts` (fork-only code).
 
+## 2026-09-12 - Async ask-user shortcut accepts macOS Option-composed glyphs (senpi#1620)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: new
+  `matchesAskUserAnswerKey(data, platform)` keeps `alt+a` (`ESC a` / CSI-u alt) on every platform
+  and, on darwin only, also accepts the glyphs the `a` key types when the terminal lets Option
+  compose (`å`, `Å`, raw or as a kitty CSI-u printable). `ASK_USER_ANSWER_KEY` and the widget label
+  (`option+a` on darwin, `alt+a` elsewhere) are unchanged.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleAskUserShortcut` matches
+  through `matchesAskUserAnswerKey` instead of `matchesKey(data, ASK_USER_ANSWER_KEY)`.
+
+### Why
+
+- Terminal.app, iTerm2, Ghostty and kitty default to Option composing characters on macOS, so the
+  advertised `option+a` arrived as `å` and inserted text instead of expanding the pending question.
+
+### Why an extension could not handle it
+
+- The shortcut is consumed inside `CustomEditor.onExtensionShortcut` before extension shortcuts run,
+  and the async widget is interactive-mode state; no extension hook sees the raw editor input first.
+
+### Expected merge conflict zones
+
+- LOW: the `ask-user-async-widget.ts` import list and `handleAskUserShortcut` in
+  `packages/coding-agent/src/modes/interactive/interactive-mode.ts` (fork-only code).
+
 ## 2026-09-11 - Ask-user overlay uses an explicit question and submit flow
 
 ### What changed

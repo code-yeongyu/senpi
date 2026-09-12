@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizeCursorCatalog } from "@earendil-works/pi-ai";
+import { resolveCursorContextWindow } from "@earendil-works/pi-ai/utils/cursor-context-limit";
 import type { ProviderModelConfig } from "../../types.ts";
 import { defaultCursorAgentExecutableDeps, resolveCursorAgentExecutable } from "./executable.ts";
 
@@ -78,7 +79,7 @@ function normalizeEntries(raw: readonly { id: string; label: string }[]): Provid
 		...(entry.thinkingLevelMap ? { thinkingLevelMap: entry.thinkingLevelMap } : {}),
 		input: ["text"] as ("text" | "image")[],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: entry.window,
+		contextWindow: resolveCursorContextWindow(entry.id, entry.window),
 		maxTokens: 64_000,
 		...(entry.representativeVariantId !== undefined && entry.representativeVariantId !== entry.id
 			? { upstreamModelId: entry.representativeVariantId }
