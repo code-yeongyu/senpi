@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-12 - Chord joins the owned registry aliases so bundled installs resolve
+
+### What changed
+
+- `scripts/release-packages.mjs`: the `packages/chord` entry in `WORKSPACE_PACKAGES` is documented as a published fork alias rather than a bundle-only workspace, and `getRuntimeDepsCheckPackages()`'s comment no longer lists chord among the unpublished workspaces. `getPublicWorkspacePackages()` now resolves eight registry packages because the shared mapping gained chord; the function itself is unchanged.
+- `scripts/sync-versions.test.mjs`: the fixture workspace set includes `packages/chord`, matching the real tree, so the registry-source completeness guard in `resolveRegistryPackages` is satisfied.
+
+### Why
+
+- `@code-yeongyu/senpi@2026.9.12-3` could not be installed with bun: the packaged manifest declared `"@earendil-works/chord": "^2026.9.12-3"`, and only upstream's 0.85.x line exists on the registry. Bun resolves declared edges for bundled packages too and synthesizes `^<bundled version>` when the manifest omits one, so chord needs a published fork alias exactly like agent-core, ai, tui, pty and telemetry (issue #1632). `scripts/release-packages.mjs` is where the fork records which workspaces ride the CalVer lockstep and which are published, so its chord rationale had to change with the mapping; `scripts/sync-versions.test.mjs` asserts the stamping behavior over a fixture that must mirror the real workspace set.
+
+### Why an extension could not handle it
+
+- Release planning, version stamping and publish-target selection run in the release scripts before publication, outside the runtime extension system: `scripts/release-packages.mjs` and `scripts/sync-versions.test.mjs` execute in the release pipeline, never inside a running agent session.
+
+### Expected merge conflict zones
+
+- `scripts/release-packages.mjs` workspace list and its surrounding comments; the fixture workspace list in `scripts/sync-versions.test.mjs`.
+
 ## 2026-09-12 - Registry planning and concurrent-main release recovery
 
 ### What changed
