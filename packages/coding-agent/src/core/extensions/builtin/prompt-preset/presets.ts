@@ -104,6 +104,14 @@ function isKimiK3Model(model: ModelWithPromptPresetMetadata): boolean {
 	return hasKimiK3Signal(model.id) || (model.name !== undefined && hasKimiK3Signal(model.name));
 }
 
+function hasSWE2Signal(value: string): boolean {
+	return /(?:^|[/@:._-])swe-2-(?:high|max|low|high-lite)(?:$|[/@:._-])/.test(normalizeModelId(value));
+}
+
+function isSWE2Model(model: ModelWithPromptPresetMetadata): boolean {
+	return hasSWE2Signal(model.id) || (model.name !== undefined && hasSWE2Signal(model.name));
+}
+
 // DeepSeek V4 id shapes verified against the OpenRouter live API, models.dev,
 // and senpi's generated provider catalogs (2026-07-31): deepseek-v4-flash,
 // deepseek/deepseek-v4-flash-0731, deepseek-ai/DeepSeek-V4-Pro,
@@ -260,7 +268,7 @@ export function resolvePresetName(
 	if (gpt5Version) {
 		return gpt5Version;
 	}
-	if (isKimiK3Model(model)) {
+	if (isSWE2Model(model) || isKimiK3Model(model)) {
 		return "kimi-k3";
 	}
 	if (isKimiK27Model(model)) {
