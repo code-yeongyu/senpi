@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Compaction checkpoint capture now reads session history once instead of reloading the entire transcript for each entry, preventing prolonged input freezes in previously compacted sessions ([#1588](https://github.com/code-yeongyu/senpi/pull/1588) by [@rlaope](https://github.com/rlaope)).
+
 ### Removed
 
 ## [2026.9.12-2] - 2026-09-12
