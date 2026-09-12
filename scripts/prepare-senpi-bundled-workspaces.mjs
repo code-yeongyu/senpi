@@ -38,11 +38,13 @@ export function nativePrebuildFile(target) {
 }
 
 const bundledWorkspaces = [
-	// Chord is a local workspace, never a registry package for this fork: the vendored
-	// client/protocol dist and the bundled agent-core dist both import
-	// `@earendil-works/chord`, so the packed copy under coding-agent/node_modules must be
-	// the only thing that resolves. `/context` ships too because the client runtime
-	// imports `@earendil-works/chord/context`.
+	// The vendored client/protocol dist and the bundled agent-core dist both import
+	// `@earendil-works/chord`, so the packed copy under coding-agent/node_modules is what the
+	// runtime loads. The declared dependency edge still has to point at the fork's published
+	// alias (`@code-yeongyu/senpi-chord`): Bun resolves bundled entries from the registry too and
+	// otherwise synthesizes `^<bundled version>`, which no upstream release satisfies (issue
+	// #1632). `/context` ships too because the client runtime imports
+	// `@earendil-works/chord/context`.
 	{
 		source: "packages/chord",
 		packageName: "@earendil-works/chord",

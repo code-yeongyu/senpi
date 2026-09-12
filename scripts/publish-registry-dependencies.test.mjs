@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { bundledWorkspacePackageChecks } from "./prepare-senpi-bundled-workspaces.mjs";
+import { registryPackageNames } from "./registry-packages.mjs";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const PRIVATE_UPSTREAM_WORKSPACES = [
+	{ packageJsonPath: "packages/chord/package.json", packageName: "@earendil-works/chord" },
 	{ packageJsonPath: "packages/ai/package.json", packageName: "@earendil-works/pi-ai" },
 	{ packageJsonPath: "packages/agent/package.json", packageName: "@earendil-works/pi-agent-core" },
 	{ packageJsonPath: "packages/tui/package.json", packageName: "@earendil-works/pi-tui" },
@@ -21,6 +24,7 @@ const INDEPENDENT_UPSTREAM_WORKSPACES = [
 	},
 ];
 const OWNED_REGISTRY_ALIASES = [
+	"@code-yeongyu/senpi-chord",
 	"@code-yeongyu/senpi-ai",
 	"@code-yeongyu/senpi-agent-core",
 	"@code-yeongyu/senpi-tui",
@@ -64,5 +68,22 @@ describe("npm publish dependency graph", () => {
 		for (const packageName of BUNDLED_ONLY_WORKSPACES) {
 			assert.ok(!publishedNames.includes(packageName));
 		}
+	});
+
+	it("publishes a registry alias for every bundled workspace", () => {
+		// Given: npm installs a bundled workspace from the packed copy, but Bun resolves the
+		// declared edge from the registry and synthesizes `^<bundled version>` when the manifest
+		// has none. A bundled workspace without an owned alias therefore ships a CalVer spec no
+		// upstream release satisfies, and `bun add @code-yeongyu/senpi@<version>` fails outright
+		// (issue #1632: chord shipped that way in 2026.9.12-3).
+		const publishedNames = getPublicWorkspacePackages().map(({ name }) => name);
+		const unaliased = [];
+		for (const { packageName } of bundledWorkspacePackageChecks()) {
+			const registryName = registryPackageNames.get(packageName);
+			if (registryName === undefined || !publishedNames.includes(registryName)) {
+				unaliased.push(packageName);
+			}
+		}
+		assert.deepEqual(unaliased, [], `bundled workspaces without a published registry alias: ${unaliased.join(", ")}`);
 	});
 });

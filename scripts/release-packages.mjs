@@ -5,9 +5,10 @@ import { registrySourcePackageNames, resolveRegistryPackages } from "./registry-
 
 export const WORKSPACE_PACKAGES = [
 	"packages/ai/package.json",
-	// Chord is bundled into the senpi tarball rather than published, but it still rides the
-	// fork's CalVer lockstep so the install lock treats it as an internal workspace instead of
-	// trying to resolve a registry-absent `@earendil-works/chord` link entry.
+	// Chord rides the fork's CalVer lockstep and is published under the fork alias
+	// (`@code-yeongyu/senpi-chord`) like every other bundled runtime workspace: the tarball still
+	// carries the packed copy, but the declared edge has to resolve from the registry because Bun
+	// resolves bundled entries too (issue #1632).
 	"packages/chord/package.json",
 	"packages/agent/package.json",
 	"packages/client/package.json",
@@ -71,7 +72,7 @@ export function getPublicWorkspacePackages() {
 // names (publish.mjs rewrites them to `@code-yeongyu/senpi-*` manifests), so the fork's
 // runtime-dependency contract is the union: public-by-flag packages (client/protocol here,
 // everything in upstream-shaped fixtures) plus the fork's registry sources. Private,
-// unpublished workspaces (chord, senpi-server, sqlite-node) stay out.
+// unpublished workspaces (senpi-server, sqlite-node) stay out.
 export function getRuntimeDepsCheckPackages() {
 	return findPackageDirectories()
 		.map((directory) => ({
