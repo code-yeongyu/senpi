@@ -7,15 +7,36 @@
  * instead of publishing an empty catalog.
  */
 
-import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import type { Model } from "../../types.ts";
-import { GetCliModelConfigsRequestSchema, GetCliModelConfigsResponseSchema } from "./gen/cascade_pb.ts";
-import { devinCliMetadata, normalizeDevinSessionToken } from "./metadata.ts";
+import {
+	type ClientModelConfig,
+	DisplayOption,
+	GetCliModelConfigsRequestSchema,
+	GetCliModelConfigsResponseSchema,
+	ModelDimensionKind,
+} from "./gen/cascade_pb.ts";
+import { devinDiscoveryMetadata } from "./metadata.ts";
 import { DEVIN_CLI_MODEL_CONFIGS_PATH, DEVIN_DEFAULT_BASE_URL } from "./paths.ts";
+import { postDevinUnary } from "./unary.ts";
 
 const DISCOVERY_TIMEOUT_MS = 5_000;
 const DEFAULT_CONTEXT_WINDOW = 200_000;
-const DEFAULT_MAX_TOKENS = 128_000;
+const DEFAULT_MAX_TOKENS = 64_000;
+
+/** Slots requested for parity with the native client but never surfaced as models. */
+const INTERNAL_DISPLAYS: ReadonlySet<DisplayOption> = new Set([
+	DisplayOption.QUICK_REVIEW,
+	DisplayOption.INTERNAL_DEFAULT,
+]);
+
+/**
+ * Lanes whose configs advertise image support while the backend silently drops
+ * `ChatMessagePrompt.images` (verified live on SWE-1.6 and SWE-1.6 Fast).
+ */
+const IMAGE_BLIND_UIDS: ReadonlySet<string> = new Set(["swe-1-6", "swe-1-6-fast"]);
+
+const REASONING_LABEL = /think|thinking|minimal|high|medium|low|xhigh|max|reasoning/i;
+const NO_REASONING_LABEL = /\bno thinking\b/i;
 
 export interface DevinDiscoveryOptions {
 	apiKey: string | undefined;
@@ -25,30 +46,22 @@ export interface DevinDiscoveryOptions {
 }
 
 export async function fetchDevinModels(options: DevinDiscoveryOptions): Promise<Model<"devin-agent">[] | undefined> {
-	const baseUrl = options.baseUrl ?? DEVIN_DEFAULT_BASE_URL;
+	const baseUrl = (options.baseUrl ?? DEVIN_DEFAULT_BASE_URL).replace(/\/+$/, "");
 	const controller = new AbortController();
 	const onAbort = () => controller.abort();
 	options.signal?.addEventListener("abort", onAbort, { once: true });
 	const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DISCOVERY_TIMEOUT_MS);
 
 	try {
-		const request = create(GetCliModelConfigsRequestSchema, { metadata: devinCliMetadata(options.apiKey) });
-		const payload = toUnaryFrame(request);
-		const response = await fetch(baseUrl + DEVIN_CLI_MODEL_CONFIGS_PATH, {
-			method: "POST",
-			headers: {
-				"content-type": "application/connect+proto",
-				"connect-protocol-version": "1",
-				authorization: `Bearer ${normalizeDevinSessionToken(options.apiKey)}`,
-			},
-			body: payload,
+		const response = await postDevinUnary({
+			baseUrl,
+			path: DEVIN_CLI_MODEL_CONFIGS_PATH,
+			requestSchema: GetCliModelConfigsRequestSchema,
+			request: { metadata: devinDiscoveryMetadata(options.apiKey) },
+			responseSchema: GetCliModelConfigsResponseSchema,
 			signal: controller.signal,
 		});
-		if (!response.ok) return undefined;
-		const body = new Uint8Array(await response.arrayBuffer());
-		const decoded = decodeUnary(body);
-		if (!decoded) return undefined;
-		const models = decoded.clientModelConfigs.filter(usable).map(toModel);
+		const models = normalizeDevinModels(response.clientModelConfigs, baseUrl);
 		return models.length > 0 ? models : undefined;
 	} catch {
 		return undefined;
@@ -58,51 +71,83 @@ export async function fetchDevinModels(options: DevinDiscoveryOptions): Promise<
 	}
 }
 
-function usable(config: { modelUid: string; disabled: boolean }): boolean {
-	return config.modelUid.length > 0 && !config.disabled;
+export function normalizeDevinModels(configs: readonly ClientModelConfig[], baseUrl: string): Model<"devin-agent">[] {
+	const seen = new Set<string>();
+	const models: Model<"devin-agent">[] = [];
+	for (const config of configs) {
+		if (config.disabled) continue;
+		const display = config.modelInfo?.displayOption ?? DisplayOption.UNSPECIFIED;
+		if (INTERNAL_DISPLAYS.has(display)) continue;
+		const uid = config.modelUid.trim();
+		if (!uid || seen.has(uid)) continue;
+		seen.add(uid);
+		const isRouter = display === DisplayOption.MODEL_ROUTER || config.modelInfo?.isModelRouter === true;
+		models.push(toModel(config, uid, baseUrl, isRouter));
+	}
+	return models.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function toModel(config: {
-	modelUid: string;
-	label: string;
-	maxTokens: number;
-	supportsImages: boolean;
-}): Model<"devin-agent"> {
+function toModel(config: ClientModelConfig, uid: string, baseUrl: string, isRouter: boolean): Model<"devin-agent"> {
+	const features = config.modelInfo?.modelFeatures;
+	const supportsImages = (features ? features.supportsImages : config.supportsImages) && !IMAGE_BLIND_UIDS.has(uid);
+	const maxOutputTokens = config.modelInfo?.maxOutputTokens ?? 0;
+	const compat = {
+		...(isRouter ? { modelRouter: true } : {}),
+		...(features?.supportsParallelToolCalls === true ? { supportsParallelToolCalls: true } : {}),
+	};
 	return {
-		id: config.modelUid,
-		name: config.label || config.modelUid,
+		id: uid,
+		name: config.label.trim() || uid,
 		api: "devin-agent",
 		provider: "devin",
-		baseUrl: DEVIN_DEFAULT_BASE_URL,
-		reasoning: true,
-		input: config.supportsImages ? ["text", "image"] : ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: DEFAULT_CONTEXT_WINDOW,
-		maxTokens: config.maxTokens > 0 ? config.maxTokens : DEFAULT_MAX_TOKENS,
+		baseUrl,
+		reasoning: supportsThinking(config),
+		input: supportsImages ? ["text", "image"] : ["text"],
+		cost: costOf(config),
+		contextWindow: config.maxTokens > 0 ? config.maxTokens : DEFAULT_CONTEXT_WINDOW,
+		maxTokens: maxOutputTokens > 0 ? maxOutputTokens : DEFAULT_MAX_TOKENS,
+		...(Object.keys(compat).length > 0 ? { compat } : {}),
 	};
 }
 
-/** Unary Connect bodies use the same 5-byte prefix, uncompressed. */
-function toUnaryFrame(
-	message: ReturnType<typeof create<typeof GetCliModelConfigsRequestSchema>>,
-): Uint8Array<ArrayBuffer> {
-	const payload = toBinary(GetCliModelConfigsRequestSchema, message);
-	const frame = new Uint8Array(5 + payload.byteLength);
-	new DataView(frame.buffer).setUint32(1, payload.byteLength, false);
-	frame.set(payload, 5);
-	return frame;
+function supportsThinking(config: ClientModelConfig): boolean {
+	const features = config.modelInfo?.modelFeatures;
+	if (features !== undefined) return features.supportsThinking;
+	if (NO_REASONING_LABEL.test(config.label)) return false;
+	return REASONING_LABEL.test(config.label);
 }
 
-function decodeUnary(
-	body: Uint8Array,
-): ReturnType<typeof fromBinary<typeof GetCliModelConfigsResponseSchema>> | undefined {
-	if (body.byteLength < 5) return undefined;
-	const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
-	const length = view.getUint32(1, false);
-	const payload = body.subarray(5, 5 + length);
-	try {
-		return fromBinary(GetCliModelConfigsResponseSchema, payload);
-	} catch {
-		return undefined;
+/** Per-million rates from the cost dimensions; Devin bills cache writes at the input rate, so cacheWrite stays 0. */
+function costOf(config: ClientModelConfig): Model<"devin-agent">["cost"] {
+	const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	for (const dimension of config.modelDimensions) {
+		if (dimension.kind !== ModelDimensionKind.COST && dimension.kind !== ModelDimensionKind.COST_FUZZY) continue;
+		// Dimension values arrive as protobuf floats (0.1 decodes as 0.10000000149…); round at sub-cent precision.
+		const perMillion =
+			Math.round(((dimension.value * 1_000_000) / denominatorTokens(dimension.denominator)) * 1e6) / 1e6;
+		switch (dimension.label.trim().toLowerCase()) {
+			case "input":
+				cost.input = perMillion;
+				break;
+			case "cached input":
+				cost.cacheRead = perMillion;
+				break;
+			case "output":
+				cost.output = perMillion;
+				break;
+			default:
+				break;
+		}
 	}
+	return cost;
+}
+
+const DENOMINATOR_SCALE: Readonly<Record<string, number>> = { k: 1_000, m: 1_000_000, b: 1_000_000_000 };
+
+function denominatorTokens(denominator: string): number {
+	const match = /(\d+(?:\.\d+)?)\s*([kmb])?/i.exec(denominator);
+	if (!match?.[1]) return 1_000_000;
+	const scale = match[2] ? (DENOMINATOR_SCALE[match[2].toLowerCase()] ?? 1) : 1;
+	const tokens = Number(match[1]) * scale;
+	return tokens > 0 ? tokens : 1_000_000;
 }

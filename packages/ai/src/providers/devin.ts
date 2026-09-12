@@ -1,12 +1,11 @@
 import { fetchDevinModels } from "../api/devin-agent/discovery.ts";
+import { DEVIN_DEFAULT_BASE_URL } from "../api/devin-agent/paths.ts";
 import { devinAgentApi } from "../api/devin-agent.lazy.ts";
 import { lazyOAuth } from "../auth/helpers.ts";
 import { loadDevinOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { Model } from "../types.ts";
 import { DEVIN_MODELS } from "./devin.models.ts";
-
-const DEVIN_BASE_URL = "https://server.codeium.com";
 
 /**
  * Devin (Cognition) Cascade provider.
@@ -23,7 +22,7 @@ export function devinProvider(): Provider<"devin-agent"> {
 	const provider = createProvider<"devin-agent">({
 		id: "devin",
 		name: "Devin",
-		baseUrl: DEVIN_BASE_URL,
+		baseUrl: DEVIN_DEFAULT_BASE_URL,
 		auth: {
 			oauth: lazyOAuth({ name: "Devin", loginLabel: "Sign in with Devin", load: loadDevinOAuth }),
 		},
@@ -50,7 +49,7 @@ export function devinProvider(): Provider<"devin-agent"> {
 			const credential = context.credential;
 			const apiKey = credential?.type === "oauth" ? credential.access : credential?.key;
 			if (!apiKey) return;
-			const discovered = await fetchDevinModels({ apiKey, baseUrl: DEVIN_BASE_URL, signal: context.signal });
+			const discovered = await fetchDevinModels({ apiKey, baseUrl: DEVIN_DEFAULT_BASE_URL, signal: context.signal });
 			if (!discovered || context.signal.aborted) return;
 			await context.publish({
 				persist: { models: discovered, checkedAt: Date.now() },
