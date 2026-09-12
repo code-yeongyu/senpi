@@ -20,9 +20,6 @@
 
 ### Fixed
 
-- Fixed Cursor requests losing whole conversation turns: admission enforced a fixed 50 KB aggregate cap and deleted the oldest turns when blanking tool results was not enough, so a 1M-token model kept roughly 6K tokens of history and an early instruction could disappear before the model saw it. The aggregate budget now follows the model context window (measured over what Cursor actually replays to the model), only tool result bodies are shrunk, and a history that still exceeds the budget is sent as-is for the existing overflow-to-compaction path to handle ([#1603](https://github.com/code-yeongyu/senpi/issues/1603)).
-- Fixed a long-lived RPC session dying with `session_path_in_use` after 64 session replacements: session-write grants are now bound to the writers that still exist, so a replaced session file is released as soon as the worker reports its new one. A superseded path can be reopened in a new worker instead of staying blocked for the host's lifetime, opening an explicit session file no longer burns a second phantom grant, and an exhausted per-worker budget is reported as the distinct `session_reservation_limit` (fixes #1612).
-- Fixed the async ask-user widget's advertised `option+a` shortcut doing nothing in macOS terminals that let Option compose characters (the Terminal.app, iTerm2, Ghostty and kitty defaults): on macOS the composed `å`/`Å` glyphs now expand the pending question too, `alt+a` keeps working everywhere, and other platforms keep treating those glyphs as text (fixes #1620).
 - Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages; the fork's retry profiles and jitter still shape the delay under that ceiling ([#8826](https://github.com/earendil-works/pi/issues/8826)).
 - Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers and skill or template expansion ([#8718](https://github.com/earendil-works/pi/issues/8718)).
 - Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
@@ -36,6 +33,23 @@
 - Fixed session forks losing their compaction boundary ([#8990](https://github.com/earendil-works/pi/pull/8990) by [@acmerfight](https://github.com/acmerfight)).
 - Fixed managed `fd` and ripgrep downloads on Linux musl systems ([#9070](https://github.com/earendil-works/pi/pull/9070) by [@Charlie0113-T](https://github.com/Charlie0113-T)).
 - Fixed managed `fd` and ripgrep downloads requiring the GitHub Releases API ([#8708](https://github.com/earendil-works/pi/pull/8708) by [@Terminator666666](https://github.com/Terminator666666)).
+
+### Removed
+
+## [2026.9.12-2] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Fixed Cursor requests losing whole conversation turns: admission enforced a fixed 50 KB aggregate cap and deleted the oldest turns when blanking tool results was not enough, so a 1M-token model kept roughly 6K tokens of history and an early instruction could disappear before the model saw it. The aggregate budget now follows the model context window (measured over what Cursor actually replays to the model), only tool result bodies are shrunk, and a history that still exceeds the budget is sent as-is for the existing overflow-to-compaction path to handle ([#1603](https://github.com/code-yeongyu/senpi/issues/1603)).
+- Fixed a long-lived RPC session dying with `session_path_in_use` after 64 session replacements: session-write grants are now bound to the writers that still exist, so a replaced session file is released as soon as the worker reports its new one. A superseded path can be reopened in a new worker instead of staying blocked for the host's lifetime, opening an explicit session file no longer burns a second phantom grant, and an exhausted per-worker budget is reported as the distinct `session_reservation_limit` (fixes #1612).
+
+- Fixed the async ask-user widget's advertised `option+a` shortcut doing nothing in macOS terminals that let Option compose characters (the Terminal.app, iTerm2, Ghostty and kitty defaults): on macOS the composed `å`/`Å` glyphs now expand the pending question too, `alt+a` keeps working everywhere, and other platforms keep treating those glyphs as text (fixes #1620).
 
 ### Removed
 
