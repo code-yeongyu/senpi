@@ -49,12 +49,13 @@ import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { repairedOutputBudget } from "../utils/prefill-budget-recovery.ts";
 import {
 	getOpenAICompletionsCompat as getCompat,
 	type ResolvedOpenAICompletionsCompat,
 } from "../utils/prompt-cache-ttl.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
-import { retryProviderStreamRequest } from "../utils/provider-retry.ts";
+import { retryProviderRequest, retryProviderStreamRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { isForcedToolChoiceUnsupportedError, omitToolChoiceParam } from "../utils/tool-choice-fallback.ts";
 import {
@@ -517,14 +518,37 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					throw error;
 				}
 			};
-			const { stream: openaiStream } = await retryProviderStreamRequest(
-				async () => {
+			const startStream = () =>
+				retryProviderStreamRequest(async () => {
 					const { data, response } = await createRequest();
 					await options?.onResponse?.(
 						{ status: response.status, headers: headersToRecord(response.headers) },
 						model,
 					);
 					return { stream: data, metadata: response };
+				});
+			let repairedPrefill = false;
+			const { stream: openaiStream } = await retryProviderRequest(
+				async () => {
+					try {
+						return await startStream();
+					} catch (error) {
+						const maxTokens = repairedPrefill
+							? undefined
+							: repairedOutputBudget(error, {
+									requested: params.max_tokens ?? params.max_completion_tokens,
+									thinkingTokens: resolveClampedThinkingBudget(model, options, params) ?? 0,
+									signal: options?.signal,
+								});
+						if (maxTokens === undefined) throw error;
+						// Only the first-chunk prefetch can reach here: never replay visible output.
+						repairedPrefill = true;
+						params =
+							params.max_tokens != null
+								? { ...params, max_tokens: maxTokens }
+								: { ...params, max_completion_tokens: maxTokens };
+						return startStream();
+					}
 				},
 				{ maxRetries: options?.maxRetries, maxRetryDelayMs: options?.maxRetryDelayMs, signal: options?.signal },
 			);

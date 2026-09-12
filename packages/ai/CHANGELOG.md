@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Recover once from an OpenAI-compatible prefill rejection that reports a consistent input/output context budget, reducing only the completion cap to the server-reported room while preserving conversation and reasoning settings ([#1616](https://github.com/code-yeongyu/senpi/pull/1616) by [@rlaope](https://github.com/rlaope)).
+
 ### Removed
 
 ## [2026.9.12-2] - 2026-09-12
