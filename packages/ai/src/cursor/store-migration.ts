@@ -1,5 +1,6 @@
 import type { Model } from "../types.ts";
 import { type CursorCatalogEntry, normalizeCursorCatalog } from "./catalog-grouping.ts";
+import { resolveCursorContextWindow } from "./context-limit-store.ts";
 import { getCursorVariantAlias } from "./model-capabilities.ts";
 
 function isGroupedShape(model: Model<"cursor-agent">): boolean {
@@ -19,7 +20,7 @@ function entryToModel(entry: CursorCatalogEntry, maxTokensById: ReadonlyMap<stri
 		...(entry.thinkingLevelMap ? { thinkingLevelMap: entry.thinkingLevelMap } : {}),
 		input: entry.input,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: entry.window,
+		contextWindow: resolveCursorContextWindow(entry.id, entry.window),
 		maxTokens,
 		...(entry.representativeVariantId !== undefined && entry.representativeVariantId !== entry.id
 			? { upstreamModelId: entry.representativeVariantId }

@@ -1,5 +1,28 @@
 # changes
 
+## 2026-09-12 - Cursor admission never deletes a turn (senpi#1603)
+
+### What changed
+
+- `packages/coding-agent/src/core/cursor-history-admission.ts` (new): owns Cursor request admission - the per-tool-result grapheme cap, blanking the oldest tool result bodies against an explicit byte budget, and `cursorAdmissionBudgetBytes` (effective context window x 4 chars per token, matching `core/compaction` `estimateTokens`). `admitCursorHistory` reports `blankedToolResults`, `bytesBefore`, `bytesAfter` and `overBudget`; `truncateToolResultBodies` stays as the positional entry point.
+- `packages/coding-agent/src/core/agent-session.ts`: the admission pass moved out of this file and the old names are re-exported from it. The third pass, which deleted the oldest whole turns when blanking was not enough, is gone: an over-budget history is admitted as-is. The `transformContext` closure now applies the observed Cursor ceiling to the live model (`cursor_context_window_observed`), derives the budget from `model.contextWindow`, and logs `cursor_admission_truncated` / `cursor_admission_over_budget`. `_wouldCompactionOverflow` sizes its simulated Cursor context with the same window-derived budget.
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`: catalog entries materialize `contextWindow` through `resolveCursorContextWindow`.
+- Tests: `packages/coding-agent/test/suite/regressions/1603-cursor-history-budget.test.ts` (new) and the rewritten aggregate cases in `packages/coding-agent/test/suite/regressions/1043-cursor-toolresult-truncate.test.ts`, which now pass explicit budgets and assert that bodies shrink while messages do not.
+
+### Why
+
+- Admission enforced a fixed 50,000-byte cap that had nothing to do with the model window, and measured it over both the prompt blobs and Cursor's display copies of the same conversation. A 1M-token model therefore admitted roughly 6K tokens, and a tool-free history - where there is no body to blank - lost its oldest turns outright, so a codeword or instruction from the first turn was gone before the model ever saw it.
+- Cursor rebuilds the conversation each hop, so the pass cannot compact mid-run; the correct answer to an oversized history is to admit it and let the existing 0-token `resource_exhausted` overflow path compact with the session's own policy.
+
+### Why an extension could not handle it
+
+- The pass runs inside `AgentSession`'s installed `transformContext` and feeds the same session-owned compaction and context-usage accounting; an extension context hook cannot see the model window admission is budgeting against, and cannot mutate the live model.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/coding-agent/src/core/agent-session.ts` - the constants block above the class and the `transformContext` closure inside `_installAgentNextTurnRefresh`.
+- LOW: the new `packages/coding-agent/src/core/cursor-history-admission.ts`.
+- LOW: the `contextWindow` line in `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`.
 ## 2026-09-12 - Bind session-write grants to live writers (senpi#1612)
 
 ### What changed
