@@ -1,5 +1,38 @@
 # changes
 
+## 2026-09-12 - Bind session-write grants to live writers (senpi#1612)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-write-reservation.ts` adds a live-writer registry
+  (`registerSessionWriter`, `unregisterSessionWriter`, `liveSessionWritePaths`) that holds owners
+  weakly, prunes collected ones on enumeration, and reports the current session file of every live
+  persisted writer.
+- `packages/coding-agent/src/core/session-manager.ts` registers every persisted manager in its
+  constructor, and splits `newSession()` into `_resetToNewSession()` (state reset and header, no
+  path work) plus the path allocation. `_setSessionFile()` now resets in place for a missing or
+  empty explicit file instead of allocating and reserving a second path it immediately discards.
+- `packages/coding-agent/src/core/agent-session-runtime.ts` unregisters the replaced session
+  manager after `teardownCurrent()` disposes it, so a superseded session file has no live writer.
+- `packages/coding-agent/test/suite/regressions/1612-session-manager-single-reservation.test.ts`
+  pins that opening a missing or zero-byte session file reserves exactly that one path.
+
+### Why
+
+- Under the shared RPC host every reservation was permanent, so a long-lived session died at the
+  64-path worker budget with `session_path_in_use`, and each explicit open burned two grants
+  instead of one. Ownership now follows the writer that actually exists.
+
+### Why an extension could not handle it
+
+- `SessionManager` and the runtime replacement path own session-file writes below the extension
+  boundary; the grant is taken synchronously before any extension observes the new session.
+
+### Expected merge conflict zones
+
+- MEDIUM: `session-manager.ts` around `newSession()` / `_setSessionFile()`.
+- LOW: the `teardownCurrent()` tail in `agent-session-runtime.ts` and the reservation module.
+
 ## 2026-09-11 - Batch persisted entry hydration after resident-string eviction (senpi#1407)
 
 ### What changed
