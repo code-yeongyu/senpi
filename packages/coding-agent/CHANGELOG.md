@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Fixed trailing blank terminal rows after autocomplete or other mounted content shrinks, keeping the editor and footer at the buffer bottom ([#873](https://github.com/code-yeongyu/senpi/pull/873) by [@rlaope](https://github.com/rlaope)).
+
 ### Removed
 
 ## [2026.9.12-2] - 2026-09-12

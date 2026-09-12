@@ -112,23 +112,25 @@ describe("TUI row clears reset stale SGR state", () => {
 	});
 
 	it("resets after row clears on scrollback replay", async () => {
-		const terminal = new LoggingVirtualTerminal(72, 6);
+		const terminal = new LoggingVirtualTerminal(72, 5);
 		const tui = new TUI(terminal);
 		const component = new ExpandableTranscriptComponent();
 		tui.addChild(component);
 
-		component.setExpanded(true);
+		component.setExpanded(false);
 		tui.start();
-		await terminal.waitForRender();
+		tui.renderNow();
+		await terminal.flush();
 		armStaleSgr(terminal);
 
 		try {
-			component.setExpanded(false);
-			tui.requestRender();
-			await terminal.waitForRender();
+			component.setExpanded(true);
+			tui.renderNow();
+			await terminal.flush();
 
 			const writes = terminal.getWrites();
-			assert.ok(writes.includes("\x1b[3J"), "scenario should use scrollback replay");
+			assert.ok(writes.includes("session title"), "scenario should use scrollback replay");
+			assert.ok(!writes.includes("\x1b[3J"), "scrollback replay should preserve existing history");
 			assertEveryRowClearResets(writes, "scrollback replay");
 		} finally {
 			tui.stop();
