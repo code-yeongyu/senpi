@@ -6,9 +6,20 @@
 
 ### Added
 
+- Added Devin router models: a Cascade model router such as `adaptive` is resolved through `AssignModel` before every turn, and the assigned model uid plus its assignment JWT ride on the chat request, so the server-side router picks the model instead of the request failing on the router uid.
+- Added inline images on Devin turns: images attached to a user prompt or returned by a tool now travel in the Cascade request instead of being dropped to text.
+
 ### Changed
 
+- Devin model discovery now announces the Devin CLI's dev-channel `chisel` identity and requests every native display slot, filters the internal quick-review and default-only slots, marks server-side routers, and reads the account's context window, output cap, cost and image/tool support from the catalog the way the released client does. The bundled seed now lists the plan-available SWE-2 effort lanes (`swe-2-high`, `swe-2-max`, `swe-2-low`, `swe-2-high-lite`) beside SWE-1.6; the bare `swe-2` uid, which Cascade rejects with `permission_denied`, is gone.
+
 ### Fixed
+
+- Fixed Devin chat failing with `Devin request failed (HTTP 404): {"detail":"Not Found"}` after a successful login: the OAuth login host (`api.devin.ai`) was overlaid onto the Cascade model host, so every `GetChatMessage` was posted to the REST API instead of `server.codeium.com` (fixes #1615).
+- Fixed Devin turns being rejected with an opaque `invalid_argument` once they reached the right host: the transport now mints the account's user JWT through `GetUserJwt` before every turn and follows the API host that call names, presents the released Devin CLI identity (`devin-cli` / `chisel` 3000.6.2) instead of a dev-channel one, carries the user JWT on the correct protobuf field (it was serialized as `force_team_id`), sends UUID-shaped conversation, execution and message ids instead of raw strings, and uses the released CLI completion configuration (a temperature of exactly 0 is refused by Cascade and is now clamped).
+- Fixed Devin tool calls losing their id mid-stream: Cascade sends the id only on the first argument chunk, and later chunks were opened as separate nameless tool calls, so file reads, shell commands and edits never executed. Chunks now merge into one call whose arguments accumulate across frames.
+- Fixed Devin rejections being reported as an empty successful turn: a Connect error trailer (`invalid_argument`, `permission_denied`, ...) now terminates the turn as an error carrying the server's code and message.
+- Fixed Devin model discovery answering HTTP 415: the unary `GetCliModelConfigs` call now sends a bare `application/proto` body like the CLI instead of a Connect streaming frame.
 
 ### Removed
 
