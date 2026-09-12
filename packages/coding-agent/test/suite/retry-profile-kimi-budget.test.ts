@@ -150,7 +150,10 @@ describe("retry profile routing", () => {
 		});
 		harnesses.push(harness);
 		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "rate_limit_exceeded: retry-after-ms: 3600000" }),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "rate_limit_exceeded: retry-after-ms: 3600000",
+			}),
 			fauxAssistantMessage("recovered after long wait"),
 		]);
 		const retryStarts: Array<{ delayMs: number }> = [];
