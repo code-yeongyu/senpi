@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Fixed `bun add @code-yeongyu/senpi` failing with `No version matching "^<version>" found for specifier "@earendil-works/chord"`. The bundled chord workspace had no published fork alias, so the packaged manifest declared a CalVer range that only upstream's own 0.85.x line could answer; chord is now published as `@code-yeongyu/senpi-chord` and the packaged dependency points at that alias, like every other bundled runtime workspace (fixes #1632).
+
 ### Removed
 
 ## [2026.9.12-3] - 2026-09-12

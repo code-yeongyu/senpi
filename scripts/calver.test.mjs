@@ -35,7 +35,7 @@ describe("computeNextVersion", () => {
 		assert.deepEqual(readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse).sort(), [
 			"@code-yeongyu/senpi", "@code-yeongyu/senpi-ai", "@code-yeongyu/senpi-agent-core",
 			"@code-yeongyu/senpi-tui", "@code-yeongyu/senpi-pty", "@code-yeongyu/senpi-telemetry",
-			"@code-yeongyu/senpi-codemode",
+			"@code-yeongyu/senpi-codemode", "@code-yeongyu/senpi-chord",
 		].sort());
 	});
 

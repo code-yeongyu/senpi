@@ -1,4 +1,5 @@
 export const registryPackageNames = new Map([
+	["@earendil-works/chord", "@code-yeongyu/senpi-chord"],
 	["@earendil-works/pi-ai", "@code-yeongyu/senpi-ai"],
 	["@earendil-works/pi-agent-core", "@code-yeongyu/senpi-agent-core"],
 	["@earendil-works/pi-tui", "@code-yeongyu/senpi-tui"],
