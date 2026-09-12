@@ -161,6 +161,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.message.copy` | `ctrl+x` | Copy the selected message in `/tree`; otherwise copy the last assistant message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
 | `app.message.followUp` | `alt+enter` | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` | Restore queued messages to editor |
+| `app.question.answer` | `alt+a` | Open the pending async question (Enter on an empty editor and `/answer` do the same without a chord; on macOS the Option-composed glyph of the bound letter is accepted too, except for the dead keys e, i, n, u) |
 
 ### Tree Navigation
 

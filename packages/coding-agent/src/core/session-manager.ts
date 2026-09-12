@@ -21,7 +21,7 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
-import { reserveSessionWrite } from "./session-write-reservation.ts";
+import { registerSessionWriter, reserveSessionWrite } from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -906,6 +906,9 @@ export class SessionManager {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
+		// A persisted manager owns its session file for as long as it lives; the shared
+		// RPC host reads this registry to release grants no writer holds anymore.
+		if (persist) registerSessionWriter(this);
 		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
@@ -954,8 +957,9 @@ export class SessionManager {
 				if (statSync(explicitPath).size > 0) {
 					throw new Error(`Session file is not a valid ${APP_NAME} session: ${explicitPath}`);
 				}
-				this.newSession();
-				this.sessionFile = explicitPath;
+				// The explicit path is already granted above and keeps being written here:
+				// allocating a second path would take a grant no writer ever uses.
+				this._resetToNewSession();
 				this._rewriteFile();
 				this.flushed = true;
 				return;
@@ -973,13 +977,24 @@ export class SessionManager {
 			this.mutationCount++;
 			this.flushed = true;
 		} else {
-			const explicitPath = this.sessionFile;
-			this.newSession();
-			this.sessionFile = explicitPath; // preserve explicit path from --session flag
+			// Same here: the explicit path from --session stays the only granted one.
+			this._resetToNewSession();
 		}
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
+		const timestamp = this._resetToNewSession(options);
+		if (this.persist) {
+			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
+			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			reserveSessionWrite(path);
+			this.sessionFile = path;
+		}
+		return this.sessionFile;
+	}
+
+	/** Resets every in-memory field onto a fresh header. Allocates no session path. */
+	private _resetToNewSession(options?: NewSessionOptions): string {
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
@@ -1013,14 +1028,7 @@ export class SessionManager {
 		};
 		this.mutationCount++;
 		this.flushed = false;
-
-		if (this.persist) {
-			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
-			reserveSessionWrite(path);
-			this.sessionFile = path;
-		}
-		return this.sessionFile;
+		return timestamp;
 	}
 
 	private _buildIndex(): void {
