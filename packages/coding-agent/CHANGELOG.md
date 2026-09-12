@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Fixed native prompt-preset matching for Devin SWE-2 effort variants so `swe-2-high`, `swe-2-max`, `swe-2-low`, and `swe-2-high-lite` resolve to the Kimi K3 preset; the rejected bare `swe-2` id remains unmatched.
 - Fixed Cursor Claude Fable 5.1 variants remaining as ten separate models with a 200k fallback window: they now group into plain and thinking identities with the full effort ladder and a 1M catalog window, while server-observed context limits still take precedence ([#1613](https://github.com/code-yeongyu/senpi/pull/1613) by [@thisisjun786](https://github.com/thisisjun786)).
 
 ### Removed
