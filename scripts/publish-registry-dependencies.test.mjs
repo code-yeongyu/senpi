@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -38,7 +39,9 @@ describe("npm publish dependency graph", () => {
 	it("keeps upstream workspaces private and publishes owned registry aliases", () => {
 		// Given: Bun resolves declared edges from the registry, but npm only packs the
 		// original import paths when their dependency keys remain in the manifest.
-		const publishScript = readFileSync(join(repoRoot, "scripts", "publish.mjs"), "utf8");
+		const publishedNames = getPublicWorkspacePackages().map(({ name }) => name);
+		assert.equal(readJson(join(repoRoot, "packages/server/package.json")).private, true);
+		assert.ok(!publishedNames.includes("@code-yeongyu/senpi-server"));
 
 		for (const workspace of PRIVATE_UPSTREAM_WORKSPACES) {
 			const manifest = readJson(join(repoRoot, workspace.packageJsonPath));
@@ -49,17 +52,17 @@ describe("npm publish dependency graph", () => {
 			const aiManifest = readJson(join(repoRoot, "packages/ai/package.json"));
 			const agentManifest = readJson(join(repoRoot, "packages/agent/package.json"));
 			assert.equal(manifest.private, true, `${workspace.packageName} must remain excluded from fork publishing`);
-			assert.doesNotMatch(publishScript, new RegExp(`name: "${workspace.packageName}"`));
+			assert.ok(!publishedNames.includes(workspace.packageName));
 			assert.equal(manifest.dependencies["@earendil-works/pi-agent-core"], `^${agentManifest.version}`);
 			assert.equal(manifest.dependencies["@earendil-works/pi-ai"], `^${aiManifest.version}`);
 			assert.equal(manifest.devDependencies["@earendil-works/pi-agent-core"], undefined);
 			assert.equal(manifest.devDependencies["@earendil-works/pi-ai"], undefined);
 		}
 		for (const packageName of OWNED_REGISTRY_ALIASES) {
-			assert.match(publishScript, new RegExp(`name: "${packageName}"`));
+			assert.ok(publishedNames.includes(packageName));
 		}
 		for (const packageName of BUNDLED_ONLY_WORKSPACES) {
-			assert.doesNotMatch(publishScript, new RegExp(`name: "${packageName}"`));
+			assert.ok(!publishedNames.includes(packageName));
 		}
 	});
 });
