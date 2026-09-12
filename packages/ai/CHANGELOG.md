@@ -10,6 +10,34 @@
 
 ### Fixed
 
+- Fixed Cursor Claude Fable 5.1 variants remaining as ten separate models with a 200k fallback window: they now group into plain and thinking identities with the full effort ladder and a 1M catalog window, while server-observed context limits still take precedence ([#1613](https://github.com/code-yeongyu/senpi/pull/1613) by [@thisisjun786](https://github.com/thisisjun786)).
+
+### Removed
+
+## [2026.9.12-2] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Cursor model windows now follow the ceiling the server reports. Every conversation checkpoint carries `tokenDetails.maxTokens`, and that observation is recorded per model id, persisted beside the conversation rotation store and preferred over the committed capability table, so a family whose real window is smaller than the table claims no longer sizes requests against a window it does not have ([#1603](https://github.com/code-yeongyu/senpi/issues/1603)).
+
+### Removed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 ### Removed
 
 ## [2026.9.11] - 2026-09-11

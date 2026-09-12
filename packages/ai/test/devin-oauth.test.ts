@@ -153,13 +153,12 @@ describe.sequential("Devin OAuth", () => {
 		await expect(devinOAuth.login(interaction)).rejects.toThrow(/token/i);
 	});
 
-	it("has no refresh grant and authenticates requests against the Devin API endpoint", async () => {
+	it("has no refresh grant and never overlays the login host onto the Cascade model host", async () => {
 		const credential = { type: "oauth", access: "devin-token", refresh: "devin-token", expires: 42 } as const;
 
 		await expect(devinOAuth.refresh(credential, neverAbortedSignal)).resolves.toBe(credential);
-		await expect(devinOAuth.toAuth(credential)).resolves.toEqual({
-			apiKey: "devin-token",
-			baseUrl: "https://api.devin.ai",
-		});
+		const auth = await devinOAuth.toAuth(credential);
+		expect(auth).toEqual({ apiKey: "devin-token" });
+		expect(auth.baseUrl).toBeUndefined();
 	});
 });

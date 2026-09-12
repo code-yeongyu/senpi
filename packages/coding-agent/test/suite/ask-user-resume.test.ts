@@ -80,6 +80,7 @@ function install(sessionManager: SessionManager) {
 	const handlers = new Map<string, StartHandler[]>();
 	const pi = {
 		registerFlag() {},
+		registerCommand() {},
 		registerTool() {},
 		getFlag() {
 			return false;

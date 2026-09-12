@@ -7,12 +7,17 @@
  * grant - Devin re-issues the token through a fresh login - so refresh returns
  * the stored credential untouched.
  *
+ * api.devin.ai is the LOGIN host only. The token it mints is spent against the
+ * Cascade model host seeded on every Devin model, so toAuth must never return a
+ * baseUrl: the registry would overlay it onto the model and every chat would
+ * 404 on the REST API.
+ *
  * NOTE: the callback module uses node:http and is CLI-only, never browser.
  */
 
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { startDevinCallbackServer } from "./devin-callback.ts";
-import { DEVIN_API_ENDPOINT, exchangeDevinAuthorizationCode } from "./devin-token.ts";
+import { exchangeDevinAuthorizationCode } from "./devin-token.ts";
 import { generatePKCE } from "./pkce.ts";
 
 const AUTHORIZE_URL = "https://app.devin.ai/auth/cli/continue";
@@ -109,6 +114,6 @@ export const devinOAuth: OAuthAuth = {
 		return credential;
 	},
 	async toAuth(credential) {
-		return { apiKey: credential.access, baseUrl: DEVIN_API_ENDPOINT };
+		return { apiKey: credential.access };
 	},
 };

@@ -1,10 +1,10 @@
 {
 	"name": "@code-yeongyu/senpi-install",
-	"version": "2026.9.11",
+	"version": "2026.9.12-2",
 	"private": true,
 	"description": "Lockfile root used by the Pi installer and updater.",
 	"dependencies": {
-		"@code-yeongyu/senpi": "2026.9.11"
+		"@code-yeongyu/senpi": "2026.9.12-2"
 	},
 	"overrides": {
 		"protobufjs": "7.6.5",
