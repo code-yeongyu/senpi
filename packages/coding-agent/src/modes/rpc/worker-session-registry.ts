@@ -2,18 +2,23 @@ import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import {
+	type LiveWorkerPaths,
+	RESERVATION_DENIAL_CODES,
+	SessionPathReservations,
+} from "./session-path-reservations.ts";
+import {
 	type OpenRpcSession,
 	type RpcSessionEntry,
 	type RpcSessionLaunchProfile,
 	RpcSessionRegistryError,
 } from "./session-registry.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
-import { SESSION_WORKER_LIMITS } from "./session-worker-protocol.ts";
+import { SESSION_WORKER_LIMITS, type SessionWriteGrant } from "./session-worker-protocol.ts";
 
 /** Transport-side lifecycle owner. Caller paths are never inspected on this event loop. */
 export class WorkerSessionRegistry {
 	private readonly entries = new Map<string, RpcSessionEntry>();
-	private readonly reservations = new Map<string, string>();
+	private readonly reservations = new SessionPathReservations();
 	private serial = 0;
 	readonly closeGraceMs: number;
 	private readonly now: () => number;
@@ -35,7 +40,7 @@ export class WorkerSessionRegistry {
 			throw new RpcSessionRegistryError("invalid_path");
 		if (profile.sessionPath) {
 			const key = this.knownReservationKey(profile.sessionPath);
-			const owner = key ? this.reservations.get(key) : undefined;
+			const owner = key ? this.reservations.owner(key) : undefined;
 			if (key && owner) return this.attach(owner, key);
 		}
 		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
@@ -51,11 +56,12 @@ export class WorkerSessionRegistry {
 		};
 		const worker = new SessionWorkerClient({
 			reserve: (path) => this.reserve(handle, path),
+			reconcile: (livePaths) => this.reconcile(handle, livePaths),
 			exit: () => {
 				if (this.entries.get(handle) !== entry) return;
 				entry.state = "closed";
 				this.entries.delete(handle);
-				for (const [path, owner] of this.reservations) if (owner === handle) this.reservations.delete(path);
+				this.reservations.releaseAll(handle);
 				entry.closeResolve?.();
 			},
 			failure: (error) => {
@@ -67,15 +73,17 @@ export class WorkerSessionRegistry {
 		this.entries.set(handle, entry);
 		try {
 			const path = await worker.prepare(this.options.configuration, profile);
-			const owner = this.reservations.get(path);
+			const owner = this.reservations.owner(path);
 			if (owner) {
 				const attached = this.attach(owner, path);
 				entry.state = "quarantined";
 				worker.quarantine();
 				return attached;
 			}
-			if (!this.reserve(handle, path)) throw new RpcSessionRegistryError("session_path_in_use");
+			const grant = this.reserve(handle, path);
+			if (grant !== "granted") throw new RpcSessionRegistryError(RESERVATION_DENIAL_CODES[grant]);
 			entry.reservationKey = path;
+			entry.requestedPathKey = profile.sessionPath ? path : undefined;
 			entry.sessionPath = path;
 			const snapshot = await worker.commit();
 			if (entry.state !== "opening") throw new RpcSessionRegistryError("session_closing");
@@ -173,9 +181,16 @@ export class WorkerSessionRegistry {
 
 	/** Only compare spellings already tied to a granted identity; do not inspect caller paths here. */
 	private knownReservationKey(path: string): string | undefined {
-		if (this.reservations.has(path)) return path;
+		if (this.reservations.owner(path)) return path;
 		for (const entry of this.entries.values()) {
-			if (entry.profile.sessionPath === path && entry.reservationKey) return entry.reservationKey;
+			// An opening spelling maps only while the key granted for it is still held: a
+			// superseded path belongs to nobody and must open its own worker.
+			if (
+				entry.profile.sessionPath === path &&
+				entry.requestedPathKey &&
+				this.reservations.owner(entry.requestedPathKey)
+			)
+				return entry.requestedPathKey;
 			const snapshot = entry.worker?.snapshot;
 			if (snapshot?.state.sessionFile === path) return snapshot.sessionPath;
 		}
@@ -192,17 +207,41 @@ export class WorkerSessionRegistry {
 		return { ...result, attached: true };
 	}
 
-	private reserve(handle: string, path: string): boolean {
+	/** Granted paths currently held by a handle; the per-worker budget is bounded by it. */
+	reservationCount(handle: string): number {
+		return this.reservations.count(handle);
+	}
+
+	private reserve(handle: string, path: string): SessionWriteGrant {
 		const entry = this.entries.get(handle);
-		if (!entry) return false;
-		const owner = this.reservations.get(path);
-		if (owner) return owner === handle;
-		if (entry.state !== "opening" && entry.state !== "open") return false;
-		let count = 0;
-		for (const current of this.reservations.values()) if (current === handle) count++;
-		if (count >= SESSION_WORKER_LIMITS.reservations) return false;
-		this.reservations.set(path, handle);
-		return true;
+		if (!entry) return "conflict";
+		if (this.reservations.owner(path) === handle) return "granted";
+		if (entry.state !== "opening" && entry.state !== "open") return "conflict";
+		return this.reservations.reserve(handle, path, this.liveWorkerPaths(entry));
+	}
+
+	/**
+	 * Releases the grants a worker's latest snapshot no longer claims.
+	 *
+	 * Only a fully open entry reports live writers. An entry still opening, closing or
+	 * quarantined keeps every grant until its real exit, because a worker stuck in a
+	 * syscall can still be writing a path it can no longer report.
+	 */
+	private reconcile(handle: string, livePaths: readonly string[]): void {
+		const entry = this.entries.get(handle);
+		if (entry?.state !== "open") return;
+		const sessionPath = entry.worker?.snapshot?.sessionPath;
+		this.reservations.reconcile(handle, { livePaths, sessionPath });
+		if (!sessionPath) return;
+		entry.reservationKey = sessionPath;
+		entry.sessionPath = sessionPath;
+	}
+
+	/** The live view a full budget is reconciled against; absent while the entry cannot report one. */
+	private liveWorkerPaths(entry: RpcSessionEntry): LiveWorkerPaths | undefined {
+		const snapshot = entry.state === "open" ? entry.worker?.snapshot : undefined;
+		if (!snapshot) return undefined;
+		return { livePaths: snapshot.liveSessionPaths, sessionPath: snapshot.sessionPath };
 	}
 
 	private openResult(handle: string, entry: RpcSessionEntry): OpenRpcSession {

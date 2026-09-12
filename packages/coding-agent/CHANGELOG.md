@@ -11,6 +11,8 @@
 ### Fixed
 
 - Fixed Cursor requests losing whole conversation turns: admission enforced a fixed 50 KB aggregate cap and deleted the oldest turns when blanking tool results was not enough, so a 1M-token model kept roughly 6K tokens of history and an early instruction could disappear before the model saw it. The aggregate budget now follows the model context window (measured over what Cursor actually replays to the model), only tool result bodies are shrunk, and a history that still exceeds the budget is sent as-is for the existing overflow-to-compaction path to handle ([#1603](https://github.com/code-yeongyu/senpi/issues/1603)).
+- Fixed a long-lived RPC session dying with `session_path_in_use` after 64 session replacements: session-write grants are now bound to the writers that still exist, so a replaced session file is released as soon as the worker reports its new one. A superseded path can be reopened in a new worker instead of staying blocked for the host's lifetime, opening an explicit session file no longer burns a second phantom grant, and an exhausted per-worker budget is reported as the distinct `session_reservation_limit` (fixes #1612).
+
 - Fixed the async ask-user widget's advertised `option+a` shortcut doing nothing in macOS terminals that let Option compose characters (the Terminal.app, iTerm2, Ghostty and kitty defaults): on macOS the composed `å`/`Å` glyphs now expand the pending question too, `alt+a` keeps working everywhere, and other platforms keep treating those glyphs as text (fixes #1620).
 
 ### Removed

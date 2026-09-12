@@ -13,7 +13,7 @@ import { type ExtensionRunner, emitSessionShutdownEvent } from "./extensions/run
 import type { CreateAgentSessionResult } from "./sdk.ts";
 import { assertSessionCwdExists } from "./session-cwd.ts";
 import { SessionManager } from "./session-manager.ts";
-import { reserveSessionWrite } from "./session-write-reservation.ts";
+import { reserveSessionWrite, unregisterSessionWriter } from "./session-write-reservation.ts";
 
 /**
  * Result returned by runtime creation.
@@ -206,7 +206,11 @@ export class AgentSessionRuntime {
 			targetSessionFile,
 		});
 		this.beforeSessionInvalidate?.();
+		const replaced = this.session.sessionManager;
 		this.session.dispose();
+		// Nothing writes to the replaced manager once its session is disposed, so the
+		// shared host may hand its session file to another worker.
+		unregisterSessionWriter(replaced);
 	}
 
 	private async reportRemovedExtensions(): Promise<void> {
