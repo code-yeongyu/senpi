@@ -12,10 +12,38 @@
 
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { completeSimple, getModel } from "../src/compat.ts";
+import { completeSimple, getModel, getModels } from "../src/compat.ts";
 import type { AssistantMessage, Message, Tool, ToolResultMessage } from "../src/types.ts";
 import { getLiveEnvApiKey, OPENROUTER_LIVE_TEST_FLAG } from "./live-api-gates.ts";
 import { resolveApiKey } from "./oauth.ts";
+
+const COPILOT_CODEX_MISSING = "github-copilot catalog has no codex-family model; update the test";
+const OPENROUTER_CODEX_MISSING = "openrouter catalog has no openai gpt-5 codex-family model; update the test";
+
+/**
+ * Pick a catalog model by id family so tests never pin a ModelId literal.
+ * Release-time generate-models rewrites the ModelId union from models.dev;
+ * a retired pin fails tsc even when the live test is skipIf-gated.
+ */
+function requireCatalogModel<T extends { id: string }>(
+	models: readonly T[],
+	idPattern: RegExp,
+	missingMessage: string,
+): T {
+	const model = models.find((candidate) => idPattern.test(candidate.id));
+	if (!model) {
+		throw new Error(missingMessage);
+	}
+	return model;
+}
+
+function requireCopilotCodexModel() {
+	return requireCatalogModel(getModels("github-copilot"), /codex/i, COPILOT_CODEX_MISSING);
+}
+
+function requireOpenrouterGpt5CodexModel() {
+	return requireCatalogModel(getModels("openrouter"), /openai\/gpt-5.*codex/, OPENROUTER_CODEX_MISSING);
+}
 
 // Resolve API keys
 const copilotToken = await resolveApiKey("github-copilot");
@@ -33,11 +61,23 @@ const echoTool: Tool<typeof echoToolSchema> = {
 	parameters: echoToolSchema,
 };
 
+describe("Tool Call ID Normalization - catalog model selection", () => {
+	it("selects a github-copilot codex-family model from the committed catalog", () => {
+		expect(requireCopilotCodexModel().id).toMatch(/codex/i);
+	});
+
+	it("throws when a provider has no codex-family model", () => {
+		expect(() => requireCatalogModel([] as Array<{ id: string }>, /codex/i, COPILOT_CODEX_MISSING)).toThrow(
+			COPILOT_CODEX_MISSING,
+		);
+	});
+});
+
 /**
  * Test 1: Live cross-provider handoff
  *
- * 1. Use github-copilot gpt-5.3-codex to generate a tool call
- * 2. Switch to openrouter openai/gpt-5.2-codex and complete
+ * 1. Use a github-copilot codex-family model (catalog-selected, not a pinned ModelId) to generate a tool call
+ * 2. Switch to an openrouter openai gpt-5*codex model and complete
  * 3. Switch to openai-codex gpt-5.5 and complete
  *
  * Both should succeed without "call_id too long" errors.
@@ -46,8 +86,8 @@ describe("Tool Call ID Normalization - Live Handoff", () => {
 	it.skipIf(!copilotToken || !openrouterKey)(
 		"github-copilot -> openrouter should normalize pipe-separated IDs",
 		async () => {
-			const copilotModel = getModel("github-copilot", "gpt-5.3-codex");
-			const openrouterModel = getModel("openrouter", "openai/gpt-5.2-codex");
+			const copilotModel = requireCopilotCodexModel();
+			const openrouterModel = requireOpenrouterGpt5CodexModel();
 
 			// Step 1: Generate tool call with github-copilot
 			const userMessage: Message = {
@@ -116,7 +156,7 @@ describe("Tool Call ID Normalization - Live Handoff", () => {
 	it.skipIf(!copilotToken || !codexToken)(
 		"github-copilot -> openai-codex should normalize pipe-separated IDs",
 		async () => {
-			const copilotModel = getModel("github-copilot", "gpt-5.3-codex");
+			const copilotModel = requireCopilotCodexModel();
 			const codexModel = getModel("openai-codex", "gpt-5.5");
 
 			// Step 1: Generate tool call with github-copilot
@@ -240,7 +280,7 @@ describe("Tool Call ID Normalization - Prefilled Context", () => {
 	it.skipIf(!openrouterKey)(
 		"openrouter should handle prefilled context with long pipe-separated IDs",
 		async () => {
-			const model = getModel("openrouter", "openai/gpt-5.2-codex");
+			const model = requireOpenrouterGpt5CodexModel();
 			const messages = buildPrefilledMessages();
 
 			const response = await completeSimple(
