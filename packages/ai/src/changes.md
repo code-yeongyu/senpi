@@ -1,3 +1,24 @@
+## Evidence-based prefill output reservation repair (2026-09-12)
+
+### What changed
+
+- `packages/ai/src/api/openai-completions.ts`: before the first chunk is exposed, allow one completion-cap correction when a prefill 400 reports consistent context, input, total and completion counts matching the actual request. Preserve the built payload, hooks, context and reasoning; later stream failures never enter this repair.
+- `packages/ai/src/utils/prefill-budget-recovery.ts`: validate the observed OpenGateway prefill report and reserve the existing 4096 safety tokens plus the existing answer/reasoning minimum. Ambiguous counts, insufficient room and cancellation leave normal error handling in charge.
+
+### Why
+
+- A custom fallback target declared a 1048576-token window while its server enforced 294912. The existing target-window clamp therefore permitted 210744 input + 131072 completion tokens. The catalog default was already corrected in #1255; changing admission alone cannot fix stale custom metadata. The server's explicit counts can repair an output-only reservation overflow without dropping or compacting context. This does not prevent the initial rejection or mutate model metadata.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-completions.ts` owns the actual post-hook wire parameters and first-chunk prefetch. An extension cannot safely replay that same request before exposing output without duplicating the adapter.
+- `packages/ai/src/utils/prefill-budget-recovery.ts` needs the actual transmitted completion cap and the adapter's reasoning reservation, not merely the configured model window.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-completions.ts`: the request/first-chunk retry boundary and provider-retry import.
+- `packages/ai/src/utils/prefill-budget-recovery.ts`: fork-only helper; no expected upstream conflict.
+
 ## Devin Cascade model transport (2026-09-12)
 
 ### What changed

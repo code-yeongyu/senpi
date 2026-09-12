@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Recover once from an OpenAI-compatible prefill rejection that reports a consistent input/output context budget, reducing only the completion cap to the server-reported room while preserving conversation and reasoning settings.
+
 ### Removed
 
 ## [2026.9.11] - 2026-09-11
