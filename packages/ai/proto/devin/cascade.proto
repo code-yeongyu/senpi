@@ -65,7 +65,32 @@ enum ConversationalPlannerMode {
   CONVERSATIONAL_PLANNER_MODE_AUTO = 6;
 }
 
+// exa.codeium_common_pb.DisplayOption
+//
+// 6-8 are the slots the native client requests beside 3-4: the internal
+// default/eval slot, the unclassified slot and the second visible-model slot.
+enum DisplayOption {
+  DISPLAY_OPTION_UNSPECIFIED = 0;
+  DISPLAY_OPTION_ARENA = 1;
+  DISPLAY_OPTION_BATTLE_GROUP_ONLY = 2;
+  DISPLAY_OPTION_MODEL_ROUTER = 3;
+  DISPLAY_OPTION_QUICK_REVIEW = 4;
+  DISPLAY_OPTION_INTERNAL_DEFAULT = 6;
+  DISPLAY_OPTION_UNCLASSIFIED = 7;
+  DISPLAY_OPTION_NORMAL = 8;
+}
+
+// exa.codeium_common_pb.ModelDimensionKind
+enum ModelDimensionKind {
+  MODEL_DIMENSION_KIND_UNSPECIFIED = 0;
+  MODEL_DIMENSION_KIND_COST = 1;
+  MODEL_DIMENSION_KIND_COST_FUZZY = 2;
+}
+
 // exa.codeium_common_pb.Metadata
+//
+// user_jwt is field 21 upstream (22 is force_team_id); the first vendored
+// copy had it on 22, which sent the minted JWT into the wrong field.
 message Metadata {
   string ide_name = 1;
   string extension_version = 2;
@@ -78,8 +103,11 @@ message Metadata {
   uint64 request_id = 9;
   string session_id = 10;
   string extension_name = 12;
-  string user_jwt = 22;
+  string user_jwt = 21;
+  string force_team_id = 22;
+  string device_fingerprint = 24;
   string ide_type = 28;
+  repeated DisplayOption supported_model_displays = 30;
 }
 
 // exa.codeium_common_pb.ChatToolCall
@@ -146,6 +174,8 @@ message ChatMessagePrompt {
   repeated ImageData images = 10;
   string thinking = 11;
   string signature = 12;
+  bool thinking_redacted = 13;
+  string signature_type = 18;
 }
 
 // exa.codeium_common_pb.CompletionConfiguration
@@ -160,6 +190,7 @@ message CompletionConfiguration {
   double top_p = 8;
   repeated string stop_patterns = 9;
   uint64 seed = 10;
+  double fim_eot_prob_threshold = 11;
 }
 
 // exa.codeium_common_pb.ModelUsageStats
@@ -191,6 +222,7 @@ message GetChatMessageRequest {
   ConversationalPlannerMode planner_mode = 20;
   string chat_model_uid = 21;
   string execution_id = 22;
+  optional string model_assignment_jwt = 26;
 }
 
 message GetChatMessageResponse {
@@ -219,6 +251,53 @@ message ModelOrAlias {
   }
 }
 
+// exa.codeium_common_pb.ModelFeatures (subset)
+message ModelFeatures {
+  bool supports_images = 11;
+  bool supports_tool_calls = 12;
+  bool supports_thinking = 15;
+  bool supports_parallel_tool_calls = 21;
+}
+
+// exa.codeium_common_pb.ModelInfo (subset)
+message ModelInfo {
+  ModelFeatures model_features = 6;
+  int32 max_output_tokens = 13;
+  string model_uid = 17;
+  DisplayOption display_option = 22;
+  bool is_model_router = 25;
+}
+
+// exa.codeium_common_pb.ModelDimension
+message ModelDimension {
+  string label = 1;
+  float value = 2;
+  string denominator = 3;
+  float min_range = 4;
+  float max_range = 5;
+  ModelDimensionKind kind = 6;
+  optional string info = 7;
+}
+
+// exa.codeium_common_pb.ModelFamilyMetadataValue
+message ModelFamilyMetadataValue {
+  int32 order = 1;
+  string name = 2;
+}
+
+// exa.codeium_common_pb.ModelFamilyMetadataEntry
+message ModelFamilyMetadataEntry {
+  string key = 1;
+  ModelFamilyMetadataValue value = 2;
+}
+
+// exa.codeium_common_pb.ModelFamilyMetadata
+message ModelFamilyMetadata {
+  string model_family_label = 1;
+  repeated ModelFamilyMetadataEntry entries = 2;
+  bool is_default_model_in_family = 3;
+}
+
 // exa.codeium_common_pb.ClientModelConfig
 message ClientModelConfig {
   string label = 1;
@@ -230,10 +309,15 @@ message ClientModelConfig {
   bool is_beta = 9;
   bool is_recommended = 11;
   bool is_new = 15;
+  // The account's context window for this lane, not the output cap.
   int32 max_tokens = 18;
   bool is_capacity_limited = 20;
   string model_uid = 22;
+  ModelInfo model_info = 23;
   optional string description = 27;
+  ModelFamilyMetadata model_family_metadata = 30;
+  bool is_default_model_in_family = 31;
+  repeated ModelDimension model_dimensions = 32;
 }
 
 message GetCliModelConfigsRequest {
@@ -242,4 +326,35 @@ message GetCliModelConfigsRequest {
 
 message GetCliModelConfigsResponse {
   repeated ClientModelConfig client_model_configs = 1;
+}
+
+// exa.auth_pb.GetUserJwtRequest
+message GetUserJwtRequest {
+  Metadata metadata = 1;
+}
+
+// exa.auth_pb.GetUserJwtResponse
+message GetUserJwtResponse {
+  string user_jwt = 1;
+  string custom_api_server_url = 2;
+}
+
+// exa.api_server_pb.ModelAssignment
+message ModelAssignment {
+  string assignment_jwt = 1;
+  string model_uid = 2;
+  repeated string harness_uids = 3;
+}
+
+// exa.api_server_pb.AssignModelRequest
+message AssignModelRequest {
+  Metadata metadata = 1;
+  string model_router_uid = 2;
+  string cascade_id = 3;
+  ChatMessagePrompt chat_message_prompt = 5;
+}
+
+// exa.api_server_pb.AssignModelResponse
+message AssignModelResponse {
+  ModelAssignment assignment = 1;
 }
