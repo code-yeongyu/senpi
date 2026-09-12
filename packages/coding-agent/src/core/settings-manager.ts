@@ -1318,6 +1318,11 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/** True when the user explicitly configured retry.maxAgentDelayMs in settings (not the shipped default). */
+	isRetryMaxAgentDelayMsConfigured(): boolean {
+		return this.settings.retry?.maxAgentDelayMs !== undefined;
+	}
+
 	getRetrySettings(): {
 		enabled: boolean;
 		maxRetries: number;

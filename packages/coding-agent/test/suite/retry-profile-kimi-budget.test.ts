@@ -130,4 +130,39 @@ describe("retry profile routing", () => {
 		expect(retryStarts).toHaveLength(1);
 		expect(retryStarts[0]?.delayMs).toBe(3_600_000);
 	});
+
+	it("user-configured maxAgentDelayMs clamps even an uncapped profile hint", async () => {
+		// D-M precedence: an explicit retry.maxAgentDelayMs in settings wins over the
+		// profile's own ceiling (here the kimi profile's uncapped override), then the
+		// profile ceiling, then the 60s shipped default.
+		const harness = await createHarness({
+			models: [{ id: "faux-1" }, { id: "faux-2" }],
+			retryProfile: KIMI_CODE_RETRY_PROFILE,
+			settings: {
+				retry: {
+					enabled: true,
+					maxRetries: 1,
+					baseDelayMs: 1,
+					maxAgentDelayMs: 5000,
+					fallbackChains: { [primary]: [fallback] },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "rate_limit_exceeded: retry-after-ms: 3600000" }),
+			fauxAssistantMessage("recovered after long wait"),
+		]);
+		const retryStarts: Array<{ delayMs: number }> = [];
+		const unsubscribe = harness.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") {
+				retryStarts.push({ delayMs: event.delayMs });
+				harness.session.abort();
+			}
+		});
+		await harness.session.prompt("hello").catch(() => undefined);
+		unsubscribe();
+		expect(retryStarts.length).toBeGreaterThan(0);
+		expect(retryStarts[0].delayMs).toBe(5000);
+	});
 });

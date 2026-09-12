@@ -8452,7 +8452,14 @@ export class AgentSession {
 		// (the tiered senpi-default).
 		const profileTurnCeilingMs =
 			retryProfile.turn.serverHint.mode === "override" ? retryProfile.turn.serverHint.ceiling.maxDelayMs : undefined;
-		const agentCeilingMs = profileTurnCeilingMs === undefined ? settings.maxAgentDelayMs : profileTurnCeilingMs;
+		// An explicitly user-configured retry.maxAgentDelayMs always wins; a profile's own
+		// ceiling is the next authority; the 60s default is the last resort.
+		const userConfiguredCeilingMs = this.settingsManager.isRetryMaxAgentDelayMsConfigured?.() ?? false;
+		const agentCeilingMs = userConfiguredCeilingMs
+			? settings.maxAgentDelayMs
+			: profileTurnCeilingMs === undefined
+				? settings.maxAgentDelayMs
+				: profileTurnCeilingMs;
 		const delayMs = Math.min(plannedDelayMs, agentCeilingMs ?? Number.MAX_SAFE_INTEGER);
 		// Prepare before auto_retry_start so an immediate Esc can cancel the retry sleep.
 		this._retryAbortController = new AbortController();
