@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed the async ask-user widget's advertised `option+a` shortcut doing nothing in macOS terminals that let Option compose characters (the Terminal.app, iTerm2, Ghostty and kitty defaults): on macOS the composed `å`/`Å` glyphs now expand the pending question too, `alt+a` keeps working everywhere, and other platforms keep treating those glyphs as text (fixes #1620).
+
 - Cursor conversations no longer lose their earliest turns to a hardcoded history cap: senpi sent at most 50,000 serialized bytes of history to Cursor because Cursor's model list carries no context-window field, and once that budget was exceeded the oldest complete turns were deleted outright - a 551-message conversation collapsed to 4 messages, and even a session that never called a tool lost its first 30KB turn. It now takes the real context limit Cursor reports for the live conversation (200,000 for kimi-k3, where senpi previously assumed 1,048,576), counts only what Cursor actually feeds the model instead of double-counting its display copies, keeps that limit correct when Cursor rotates a conversation, and forgets a remembered limit when Cursor reports none so a fresh conversation starts from the safe default; individually oversized tool results stay bounded as before (fixes #1603).
 
 ### Removed
