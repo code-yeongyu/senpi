@@ -1,9 +1,9 @@
+import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { QuestionRequest } from "../../src/core/extensions/types.ts";
-import {
-	ASK_USER_WIDGET_KEY,
-	matchesAskUserAnswerKey,
-} from "../../src/modes/interactive/components/ask-user-async-widget.ts";
+import { KeybindingsManager } from "../../src/core/keybindings.ts";
+import { matchesAskUserAnswerKey } from "../../src/modes/interactive/components/ask-user-answer-key.ts";
+import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "../../src/modes/interactive/components/ask-user-question.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../src/utils/ansi.ts";
@@ -15,6 +15,11 @@ const OPTION_A_GLYPH = "å";
 const OPTION_SHIFT_A_GLYPH = "Å";
 /** The same glyph reported as a CSI-u printable while the kitty keyboard protocol is active. */
 const KITTY_OPTION_A_GLYPH = "\x1b[229u";
+const ALT_Q = "\x1bq";
+/** What Option+Q / Option+Shift+Q type on the same macOS terminals. */
+const OPTION_Q_GLYPH = "\u0153";
+const OPTION_SHIFT_Q_GLYPH = "\u0152";
+const KITTY_OPTION_Q_GLYPH = "\x1b[339u";
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 
@@ -51,11 +56,13 @@ function askPending(fake: FakeInteractiveMode): void {
 afterEach(() => {
 	if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
 	else Reflect.deleteProperty(process, "platform");
+	setKeybindings(new KeybindingsManager());
 });
 
 describe("OS-aware async ask-user answer shortcut", () => {
 	beforeAll(() => {
 		initTheme("dark");
+		setKeybindings(new KeybindingsManager());
 	});
 
 	describe("matchesAskUserAnswerKey", () => {
@@ -121,6 +128,74 @@ describe("OS-aware async ask-user answer shortcut", () => {
 			askPending(fake);
 
 			expect(stripAnsi(fake.widgetText(ASK_USER_WIDGET_KEY) ?? "")).toContain(`${label} to answer`);
+		});
+	});
+
+	describe("rebinding app.question.answer", () => {
+		it.each<NodeJS.Platform>(["darwin", "linux", "win32"])("follows the configured chord on %s", (platform) => {
+			const keybindings = new KeybindingsManager({ "app.question.answer": "alt+q" });
+
+			expect(matchesAskUserAnswerKey(ALT_Q, platform, keybindings)).toBe(true);
+			expect(matchesAskUserAnswerKey(ALT_A, platform, keybindings)).toBe(false);
+		});
+
+		it("accepts the Option-composed glyphs of the bound letter on darwin only", () => {
+			const keybindings = new KeybindingsManager({ "app.question.answer": "alt+q" });
+
+			expect(matchesAskUserAnswerKey(OPTION_Q_GLYPH, "darwin", keybindings)).toBe(true);
+			expect(matchesAskUserAnswerKey(OPTION_SHIFT_Q_GLYPH, "darwin", keybindings)).toBe(true);
+			expect(matchesAskUserAnswerKey(KITTY_OPTION_Q_GLYPH, "darwin", keybindings)).toBe(true);
+			expect(matchesAskUserAnswerKey(OPTION_A_GLYPH, "darwin", keybindings)).toBe(false);
+			expect(matchesAskUserAnswerKey(OPTION_Q_GLYPH, "linux", keybindings)).toBe(false);
+		});
+
+		it("accepts every chord and every composed glyph when the binding lists several", () => {
+			const keybindings = new KeybindingsManager({ "app.question.answer": ["alt+a", "alt+q"] });
+
+			expect(matchesAskUserAnswerKey(ALT_A, "linux", keybindings)).toBe(true);
+			expect(matchesAskUserAnswerKey(ALT_Q, "linux", keybindings)).toBe(true);
+			expect(matchesAskUserAnswerKey(OPTION_A_GLYPH, "darwin", keybindings)).toBe(true);
+			expect(matchesAskUserAnswerKey(OPTION_Q_GLYPH, "darwin", keybindings)).toBe(true);
+		});
+
+		it("matches nothing and drops the shortcut from the widget when unbound", () => {
+			const keybindings = new KeybindingsManager({ "app.question.answer": [] });
+			setKeybindings(keybindings);
+			setPlatform("darwin");
+
+			expect(matchesAskUserAnswerKey(ALT_A, "darwin", keybindings)).toBe(false);
+			expect(matchesAskUserAnswerKey(OPTION_A_GLYPH, "darwin", keybindings)).toBe(false);
+			const fake = createFakeInteractiveMode();
+			askPending(fake);
+			const text = stripAnsi(fake.widgetText(ASK_USER_WIDGET_KEY) ?? "");
+			expect(text).not.toMatch(/(option|alt)\+/);
+			expect(text).toContain("to answer");
+		});
+
+		it.each<[NodeJS.Platform, string]>([
+			["darwin", "option+q"],
+			["linux", "alt+q"],
+		])("labels the widget with the configured chord on %s", (platform, label) => {
+			setKeybindings(new KeybindingsManager({ "app.question.answer": "alt+q" }));
+			setPlatform(platform);
+			const fake = createFakeInteractiveMode();
+			askPending(fake);
+
+			const text = stripAnsi(fake.widgetText(ASK_USER_WIDGET_KEY) ?? "");
+			expect(text).toContain(`${label} to answer`);
+			expect(text).not.toContain("+a");
+		});
+
+		it("expands the pending question through the rebound chord in the editor", () => {
+			setKeybindings(new KeybindingsManager({ "app.question.answer": "alt+q" }));
+			setPlatform("darwin");
+			const fake = createFakeInteractiveMode({ isStreaming: true });
+			askPending(fake);
+
+			expect(fake.pressEditorKey(ALT_A)).toBe(false);
+			expect(overlay(fake)).toBeUndefined();
+			expect(fake.pressEditorKey(OPTION_Q_GLYPH)).toBe(true);
+			expect(overlay(fake)).toBeInstanceOf(AskUserQuestionComponent);
 		});
 	});
 });
