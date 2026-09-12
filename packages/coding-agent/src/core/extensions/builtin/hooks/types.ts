@@ -202,6 +202,7 @@ export type HookInputWire =
 			readonly cwd: string;
 			readonly hook_event_name?: "Notification";
 			readonly session_id?: string;
+			readonly transcript_path?: string;
 			readonly notification_source?: string;
 			readonly request_id?: string;
 			readonly status?: string;

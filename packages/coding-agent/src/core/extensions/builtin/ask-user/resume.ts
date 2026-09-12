@@ -2,6 +2,7 @@ import type { SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../types.ts";
 import { TOOL_NAMES } from "./family.ts";
 import { formatUserMessage } from "./format.ts";
+import { emitAskUserNotification } from "./notify.ts";
 import {
 	type AskUserVariant,
 	DEFAULT_ASK_USER_TIMEOUT_MS,
@@ -72,17 +73,21 @@ function orphaned(request: QuestionRequest): QuestionResponse {
 }
 
 function deliver(
-	pi: Pick<ExtensionAPI, "sendUserMessage">,
+	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
+	ctx: ExtensionContext,
 	request: QuestionRequest,
 	response: QuestionResponse,
+	variant: AskUserVariant,
 ): void {
+	if (response.status === "cancelled") return;
 	pi.sendUserMessage(formatUserMessage(response, request.requestId, request.questions));
+	emitAskUserNotification(pi, ctx, request, response, variant);
 }
 
 export async function resumeDanglingQuestion(
-	pi: Pick<ExtensionAPI, "appendEntry" | "sendUserMessage">,
+	pi: Pick<ExtensionAPI, "appendEntry" | "sendUserMessage" | "events">,
 	event: Pick<SessionStartEvent, "reason">,
-	ctx: Pick<ExtensionContext, "sessionManager" | "ui" | "getAskUserSettings">,
+	ctx: ExtensionContext,
 ): Promise<void> {
 	if (event.reason !== "resume" && event.reason !== "reload") return;
 	const dangling = findDanglingQuestion(ctx.sessionManager.getBranch());
@@ -91,14 +96,14 @@ export async function resumeDanglingQuestion(
 	const timeoutMs = (ctx.getAskUserSettings?.().timeoutMinutes ?? DEFAULT_ASK_USER_TIMEOUT_MS / 60_000) * 60_000;
 	const request = requestFromCall(dangling, timeoutMs);
 	const question = ctx.ui.question;
-	if (!question) {
-		deliver(pi, request, orphaned(request));
-		return;
+	let response: QuestionResponse;
+	if (!question) response = orphaned(request);
+	else {
+		try {
+			response = await question.call(ctx.ui, request, { timeout: request.timeoutMs });
+		} catch {
+			response = orphaned(request);
+		}
 	}
-	try {
-		const response = await question.call(ctx.ui, request, { timeout: request.timeoutMs });
-		deliver(pi, request, response);
-	} catch {
-		deliver(pi, request, orphaned(request));
-	}
+	deliver(pi, ctx, request, response, dangling.variant);
 }

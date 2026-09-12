@@ -114,7 +114,15 @@ export async function dispatchNotificationHookEvent(options: {
 }
 
 export function notificationResultDetails(result: HookDispatchResult | undefined): LifecycleResultDetails {
-	return lifecycleResultDetails("Notification", result);
+	return {
+		cancel: false,
+		contexts:
+			result?.summaries.flatMap((summary) =>
+				summary.output.additionalContext === undefined ? [] : [summary.output.additionalContext],
+			) ?? [],
+		diagnostics:
+			result === undefined ? [] : [...result.diagnostics, ...commandFailureDiagnostics("Notification", result)],
+	};
 }
 
 export function buildPostCompactHookInput(event: SessionCompactEvent, ctx: ExtensionContext): HookInputWire {
@@ -231,7 +239,10 @@ function selectLifecycleHandlers(options: LifecycleDispatchOptions): LifecycleDi
 			);
 			continue;
 		}
-		const match = matchesLifecycleMatcher(handler, options.matcherInputs);
+		const match =
+			handler.event === "Notification"
+				? { diagnostics: [], matched: true }
+				: matchesLifecycleMatcher(handler, options.matcherInputs);
 		diagnostics.push(...match.diagnostics);
 		if (match.matched) matched.push(handler);
 	}

@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.ts";
-import { emitAskUserNotification } from "../../src/core/extensions/builtin/ask-user/notify.ts";
 import { parseHookConfig, SUPPORTED_HOOK_EVENTS } from "../../src/core/extensions/builtin/hooks/index.ts";
 import { matchingHookHandlers } from "../../src/core/extensions/builtin/hooks/matcher.ts";
 import { parseHookOutput } from "../../src/core/extensions/builtin/hooks/output-parser.ts";
@@ -66,7 +65,7 @@ describe("builtin hooks Notification event", () => {
 		const scriptPath = join(hookDir, "notify.mjs");
 		writeFileSync(
 			scriptPath,
-			`import { writeFileSync } from 'node:fs'; let stdin = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => { stdin += chunk; }); process.stdin.on('end', () => { writeFileSync(${JSON.stringify(stdinPath)}, stdin); process.stdout.write(JSON.stringify({})); });`,
+			`import { writeFileSync } from 'node:fs'; let stdin = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => { stdin += chunk; }); process.stdin.on('end', () => { writeFileSync(${JSON.stringify(stdinPath)}, stdin); process.stdout.write(JSON.stringify({ additionalContext: 'notification-timeout' })); });`,
 			"utf-8",
 		);
 		const hooksExtension = builtinExtensions.find((entry) => entry.id === "hooks");
@@ -119,21 +118,41 @@ describe("builtin hooks Notification event", () => {
 				ui: { ...runner.createContext().ui, question: vi.fn(async () => timedOut) },
 			};
 			const sent: unknown[] = [];
-			const timedOutResponse: QuestionResponse = timedOut;
-			await emitAskUserNotification(
-				{ sendMessage: (message: unknown) => void sent.push(message) },
-				ctx,
-				{
-					questions: [
-						{ id: "q1", header: "Library", question: "Which library?", options: [], multiSelect: false },
-					],
-					requestId: "notification-timeout",
-					timeoutMs: 1_800_000,
-					waitForAnswer: true,
-				},
-				timedOutResponse,
-				"claude",
-			);
+			const completed = Promise.withResolvers<void>();
+			const unsubscribe = harness.session.subscribe((event) => {
+				if (
+					event.type === "message_end" &&
+					event.message.role === "custom" &&
+					event.message.content === "notification-timeout"
+				) {
+					sent.push(event.message);
+					completed.resolve();
+				}
+			});
+			const tool = runner
+				.getAllRegisteredTools()
+				.find((entry) => entry.definition.name === "ask_user_question")?.definition;
+			if (!tool) throw new Error("missing ask-user tool");
+			const deadline = setTimeout(() => completed.reject(new Error("Notification was not recorded")), 5000);
+			try {
+				const result = await tool.execute(
+					"notification-timeout",
+					{
+						questions: [{ header: "Library", question: "Which library?", multiSelect: false }],
+						waitForAnswer: true,
+					},
+					undefined,
+					undefined,
+					ctx,
+				);
+				expect(result.details).toMatchObject({ status: "timed_out" });
+				await completed.promise;
+				expect(ctx.ui.question).toHaveBeenCalledOnce();
+				expect(sent).toHaveLength(1);
+			} finally {
+				clearTimeout(deadline);
+				unsubscribe();
+			}
 			const stdin: unknown = JSON.parse(readFileSync(stdinPath, "utf-8"));
 			expect(stdin).toMatchObject({
 				event: "Notification",

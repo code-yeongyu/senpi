@@ -4,10 +4,10 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/hooks/types.ts`: `Notification` moves from `UNSUPPORTED_KNOWN_HOOK_EVENTS` to `SUPPORTED_HOOK_EVENTS`, and `HookInputWire` gains a `Notification` variant carrying `message`, `kind`, optional `title`, `notification_source`, `request_id`, and `status`.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/types.ts`: `Notification` moves from `UNSUPPORTED_KNOWN_HOOK_EVENTS` to `SUPPORTED_HOOK_EVENTS`, and `HookInputWire` gains a `Notification` variant carrying `message`, `kind`, optional `title`, `notification_source`, `request_id`, `status`, and `transcript_path`.
 - `packages/coding-agent/src/core/extensions/builtin/hooks/matcher.ts`, `dispatcher.ts`, `output-parser.ts`, `lifecycle-adapter.ts`: `Notification` dispatches like the other non-blocking lifecycle events (matcher ignored, block-only aggregation, `additionalContext` accepted, decisions rejected with an `unsupported_field` diagnostic). New `buildNotificationHookInput` / `dispatchNotificationHookEvent` / `notificationResultDetails` helpers mirror the SessionStart path.
-- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts` (new) + `tool.ts`: every non-cancelled question settlement fires a best-effort `Notification` hook (`kind` `ask-user-timeout` on timeout, `ask-user-settled` otherwise) without delaying the tool result or the follow-up user message. Hook `additionalContext` is recorded through the standard lifecycle result path.
-- `packages/coding-agent/test/suite/hooks-notification.test.ts` (new): schema, matcher, output-parser, and end-to-end ask-user timeout coverage.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts`, `tool.ts`, and `resume.ts`: live and resumed non-cancelled settlements publish `ask-user:settled`. The active hooks builtin owns Notification execution (`kind` `ask-user-timeout` on timeout, `ask-user-settled` otherwise); disabling or excluding hooks prevents execution. Configuration and atomic trust snapshots are read asynchronously, and no Notification handlers means no trust I/O. Only validated hook `additionalContext` is recorded.
+- `packages/coding-agent/test/suite/hooks-notification*.test.ts`: schema/output parsing, real trusted command dispatch with ignored matchers, disabled/excluded builtin activation through the resource loader, registered-tool blocking/async answers and authoritative fake-clock timeouts, late UI responses, cancellation, concurrent IDs, resume/reload exactly-once delivery, gated preparation/command completion, rejected-output recording, and typed persistent/in-memory payload fields.
 
 ### Why
 
@@ -15,7 +15,7 @@
 
 ### Why an extension could not handle it
 
-- Hook event registration and the ask-user settlement path are both owned by in-tree builtins; an outside extension cannot add a supported hook event or observe the timeout delivery.
+- The supported hook wire event and authoritative ask-user settlement publication are owned by in-tree builtins. Extensions can observe the settlement event, but adding the Notification wire contract requires core changes.
 
 ### Expected merge conflict zones
 
