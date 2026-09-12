@@ -75,11 +75,9 @@ function commandDescription(command: SlashCommand | AutocompleteItem): string | 
 
 export function getDollarInvocationContext(
 	textBeforeCursor: string,
-	cursorLine: number,
+	_cursorLine: number,
 	commands: readonly (SlashCommand | AutocompleteItem)[],
 ): DollarInvocationContext | null {
-	if (cursorLine !== 0) return null;
-
 	const knownSkills = new Set(
 		commands.flatMap((command) => {
 			const name = skillName(commandName(command));

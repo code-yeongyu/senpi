@@ -126,6 +126,7 @@ export interface ExperimentalSettings {
 
 export interface Settings {
 	lastChangelogVersion?: string;
+	changelogSeen?: Record<string, string>;
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: ThinkingLevel;
@@ -1052,6 +1053,19 @@ export class SettingsManager {
 	setLastChangelogVersion(version: string): void {
 		this.globalSettings.lastChangelogVersion = version;
 		this.markModified("lastChangelogVersion");
+		this.save();
+	}
+
+	getChangelogSeen(source = "engine"): string | undefined {
+		return (
+			this.settings.changelogSeen?.[source] ?? (source === "engine" ? this.settings.lastChangelogVersion : undefined)
+		);
+	}
+
+	setChangelogSeen(source: string, version: string): void {
+		if (!source || this.globalSettings.changelogSeen?.[source] === version) return;
+		this.globalSettings.changelogSeen = { ...(this.globalSettings.changelogSeen ?? {}), [source]: version };
+		this.markModified("changelogSeen", source);
 		this.save();
 	}
 

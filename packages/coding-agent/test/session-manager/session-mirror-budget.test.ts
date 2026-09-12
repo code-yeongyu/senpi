@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	loadEntriesFromFile,
 	SessionManager,
@@ -99,6 +99,38 @@ describe("SessionManager resident mirror", () => {
 			expect(loadCount - firstReadCount).toBeLessThanOrEqual(1);
 		} finally {
 			restoreLoader();
+		}
+	});
+
+	it("batches full-history recovery for evicted entries in getEntries", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendMessage(assistantMsg("ready"));
+		for (let i = 0; i < 70; i++) {
+			session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}:RESUME_EVICTED_SENTINEL` });
+		}
+
+		const originalParse = JSON.parse;
+		let sentinelParseCount = 0;
+		const parseSpy = vi
+			.spyOn(JSON, "parse")
+			.mockImplementation(
+				(text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown): unknown => {
+					if (text.includes("RESUME_EVICTED_SENTINEL")) sentinelParseCount++;
+					return originalParse(text, reviver);
+				},
+			);
+		try {
+			const entries = session.getEntries();
+			const payloads = entries
+				.filter((entry) => entry.type === "custom")
+				.map((entry) => (entry.data as { payload: string }).payload);
+
+			expect(payloads).toHaveLength(70);
+			expect(payloads[0]).toBe(`0:${LARGE_TEXT}:RESUME_EVICTED_SENTINEL`);
+			expect(payloads.at(-1)).toBe(`69:${LARGE_TEXT}:RESUME_EVICTED_SENTINEL`);
+			expect(sentinelParseCount).toBe(70);
+		} finally {
+			parseSpy.mockRestore();
 		}
 	});
 

@@ -1,5 +1,24 @@
 # config-reload Extension Changes
 
+## 2026-09-11 - Keep per-source changelog acknowledgements routine (senpi#1583)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts`: classifies `changelogSeen` as routine settings during reload filtering.
+
+### Why
+
+- Acknowledging a changelog must not trigger a substantive configuration reload or cascade across sessions.
+
+### Why an extension could not handle it
+
+- The routine-setting classification is internal to the builtin reload diff before extension callbacks run.
+
+### Expected merge conflict zones
+
+- LOW: the routine settings key set.
+
+
 ## Offload non-recursive watch creation to the worker (2026-09-02)
 
 ### What changed

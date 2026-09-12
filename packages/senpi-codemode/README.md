@@ -218,10 +218,11 @@ empty pipe (`true | ( … )`) while a cell is active. Output, exit codes, `cwd`,
 ## Output and artifacts
 
 Cell output is streamed while the cell runs. Large streams spill to an absolute
-file after the default 50 KiB threshold. With a session file such as
-`/path/session.jsonl`, artifacts live in `/path/session-artifacts/`; sessions
-without a file use a unique temporary directory. Truncated results include a
-plain-path notice such as `[Full output: /absolute/path/eval-….log]`.
+file after the default 50 KiB threshold or when the output column cap drops
+bytes. With a session file such as `/path/session.jsonl`, artifacts live in
+`/path/session-artifacts/`; sessions without a file use a unique temporary
+directory. Truncated results include a plain-path notice such as
+`[Full output: /absolute/path/eval-….log]`.
 
 ## Deliberate differences from oh-my-pi
 

@@ -6,7 +6,7 @@ import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope"
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import { getDefaultSessionDir } from "../../core/session-manager.ts";
-import { installSessionWriteReservation } from "../../core/session-write-reservation.ts";
+import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import { createCliRuntimeFactory } from "../../main.ts";
 import { initTheme } from "../interactive/theme/theme.ts";
@@ -14,6 +14,7 @@ import { buildRpcSessionState } from "./connection-handler.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { type RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
+import { createWorkerCredit } from "./session-worker-credit.ts";
 import {
 	type HostToSessionWorker,
 	SESSION_WORKER_LIMITS,
@@ -37,25 +38,8 @@ function canonicalPath(path: string): string {
 	return existsSync(absolute) ? realpathSync(absolute) : join(realpathSync(dirname(absolute)), basename(absolute));
 }
 
-function exchange(
-	message: (signal: SharedArrayBuffer) => SessionWorkerToHost,
-	deniedError = "session_worker_output_denied",
-	signal = new SharedArrayBuffer(4),
-): void {
-	const state = new Int32Array(signal);
-	send(message(signal));
-	Atomics.wait(state, 0, 0, SESSION_WORKER_LIMITS.controlMs);
-	const result = Atomics.load(state, 0);
-	if (result === 2) {
-		if (deniedError === "session_path_in_use") throw new Error(deniedError);
-		failWorker(deniedError);
-	}
-	if (result !== 1) failWorker("session_worker_credit_timeout");
-}
-
-installSessionWriteReservation((path) =>
-	exchange((signal) => ({ type: "reserve", path: canonicalPath(path), signal }), "session_path_in_use"),
-);
+const { exchange, installWriteReservation } = createWorkerCredit(send, failWorker);
+installWriteReservation(canonicalPath);
 
 class WorkerEventWriter extends SessionEventWriter {
 	constructor() {
@@ -138,9 +122,15 @@ function subscribeSession(): void {
 function snapshot(): WorkerSnapshot {
 	if (!entry?.runtime) throw new Error("Session runtime is not ready");
 	const session = entry.runtime.session;
+	const sessionPath = session.sessionFile ? canonicalPath(session.sessionFile) : undefined;
+	// The host releases every granted path this list omits, so it must name each writer
+	// still alive in this isolate, plus the session the runtime currently writes.
+	const live = new Set(liveSessionWritePaths().map(canonicalPath));
+	if (sessionPath) live.add(sessionPath);
 	return {
 		state: buildRpcSessionState(session),
-		sessionPath: session.sessionFile ? canonicalPath(session.sessionFile) : undefined,
+		sessionPath,
+		liveSessionPaths: [...live],
 		busy: session.isSessionBusy,
 		streaming: session.isStreaming,
 	};

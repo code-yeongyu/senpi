@@ -1,5 +1,37 @@
 # senpi-codemode fork changes
 
+## 2026-09-11 - Column-capped eval output keeps a recovery artifact
+
+### What changed
+
+- `src/output/streaming-output-buffer.ts` and
+  `src/output/streaming-output.ts`: raw output now starts the existing spill
+  artifact when the per-line column cap drops bytes, even if the total output
+  has not crossed the spill threshold.
+- `src/prompt/eval-prompt-template.ts`: large text guidance now directs eval
+  callers to bounded chunks or offset-based file reads and treats truncation
+  notices as incomplete output.
+- `test/output/streaming-output.test.ts`: column-cap truncation proves that the
+  preview remains bounded while the artifact contains the complete raw stream.
+
+### Why
+
+- A long `console.log` line can be truncated by the output column cap before
+  the spill threshold. Without an artifact, the model has no reliable way to
+  recover the omitted bytes.
+
+### Why an extension could not handle it
+
+- The column cap and raw-stream mirroring are owned by `OutputSink` before the
+  eval tool result and notice are built; an external extension cannot recover
+  bytes that the sink never writes.
+
+### Expected merge conflict zones
+
+- LOW in `src/output/streaming-output.ts` around `push()` and `#mirrorRaw()`.
+- LOW in `src/prompt/eval-prompt-template.ts` and
+  `test/output/streaming-output.test.ts`.
+
 ## 2026-09-10 - Every eval cell gets a run budget; `timeout` is that budget
 
 ### What changed

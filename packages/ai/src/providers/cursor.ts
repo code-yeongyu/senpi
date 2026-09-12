@@ -2,6 +2,7 @@ import { cursorAgentApi, loadCursorAgentModule } from "../api/cursor-agent.lazy.
 import { lazyOAuth } from "../auth/helpers.ts";
 import { loadCursorOAuth } from "../auth/oauth/load.ts";
 import { normalizeCursorCatalog } from "../cursor/catalog-grouping.ts";
+import { resolveCursorContextWindow } from "../cursor/context-limit-store.ts";
 import { regroupStoredCursorModels } from "../cursor/store-migration.ts";
 import { createProvider, type Provider, type RefreshModelsContext } from "../models.ts";
 import type { Model } from "../types.ts";
@@ -47,7 +48,7 @@ async function fetchCursorModels(context: RefreshModelsContext): Promise<Model<"
 			input: entry.input,
 			// Subscription-billed: Cursor reports no per-token pricing here.
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: entry.window,
+			contextWindow: resolveCursorContextWindow(entry.id, entry.window),
 			maxTokens,
 			...(entry.representativeVariantId !== undefined && entry.representativeVariantId !== entry.id
 				? { upstreamModelId: entry.representativeVariantId }

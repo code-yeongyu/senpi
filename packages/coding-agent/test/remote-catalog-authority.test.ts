@@ -2,14 +2,11 @@ import {
 	createProvider,
 	InMemoryModelsStore,
 	type Model,
-	type Provider,
 	type ModelsPublication,
+	type Provider,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-	getRemoteCatalogConflicts,
-	withRemoteCatalog,
-} from "../src/core/remote-catalog-provider.ts";
+import { getRemoteCatalogConflicts, withRemoteCatalog } from "../src/core/remote-catalog-provider.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 

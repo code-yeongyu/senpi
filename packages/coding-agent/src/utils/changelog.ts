@@ -1,10 +1,13 @@
 import path from "node:path";
 import { existsSync, readFileSync } from "fs";
+import { compare, valid } from "semver";
 
 export interface ChangelogEntry {
 	major: number;
 	minor: number;
 	patch: number;
+	suffix?: string;
+	version?: string;
 	content: string;
 }
 
@@ -15,7 +18,51 @@ const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const INLINE_MARKDOWN_LINK_RE = /(!?\[[^\]\n]+\]\()([^\s)]+)((?:\s+[^)]*)?\))/g;
 
 function entryVersion(entry: ChangelogEntry): string {
-	return `${entry.major}.${entry.minor}.${entry.patch}`;
+	return entry.version ?? `${entry.major}.${entry.minor}.${entry.patch}${entry.suffix ? `-${entry.suffix}` : ""}`;
+}
+
+const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const CALVER_RE = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-([2-9]\d*))?$/;
+
+function isValidDate(value: string): boolean {
+	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+	if (!match) return false;
+	const year = Number(match[1]);
+	const month = Number(match[2]);
+	const day = Number(match[3]);
+	const date = new Date(Date.UTC(year, month - 1, day));
+	return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function isForeignVersion(version: string): boolean {
+	return version.startsWith("0.0.0-omob.") || /^\d+\.\d+\.\d+-0\.beta\./.test(version);
+}
+
+function compareVersionStrings(left: string, right: string): number | undefined {
+	const leftCalver = CALVER_RE.exec(left);
+	const rightCalver = CALVER_RE.exec(right);
+	if (leftCalver && rightCalver) {
+		const leftParts = [
+			Number(leftCalver[1]),
+			Number(leftCalver[2]),
+			Number(leftCalver[3]),
+			Number(leftCalver[4] ?? 1),
+		];
+		const rightParts = [
+			Number(rightCalver[1]),
+			Number(rightCalver[2]),
+			Number(rightCalver[3]),
+			Number(rightCalver[4] ?? 1),
+		];
+		for (let index = 0; index < leftParts.length; index += 1) {
+			if (leftParts[index] !== rightParts[index]) return leftParts[index] < rightParts[index] ? -1 : 1;
+		}
+		return 0;
+	}
+	const leftValid = valid(left);
+	const rightValid = valid(right);
+	if (!leftValid || !rightValid || isForeignVersion(left) !== isForeignVersion(right)) return undefined;
+	return Math.sign(compare(leftValid, rightValid));
 }
 
 function normalizeTag(version: string | ChangelogEntry): string {
@@ -119,11 +166,27 @@ export function parseChangelog(changelogPath: string): ChangelogEntry[] {
 		const entries: ChangelogEntry[] = [];
 
 		let currentLines: string[] = [];
-		let currentVersion: { major: number; minor: number; patch: number } | null = null;
+		let currentVersion: { major: number; minor: number; patch: number; suffix?: string; version: string } | null =
+			null;
+		let fence: { character: "`" | "~"; length: number } | null = null;
 
 		for (const line of lines) {
-			// Check if this is a version header (## [x.y.z] ...)
-			if (line.startsWith("## ")) {
+			const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+			if (fenceMatch) {
+				const character = fenceMatch[1][0] === "`" ? "`" : "~";
+				if (!fence) fence = { character, length: fenceMatch[1].length };
+				else if (fence.character === character && fenceMatch[1].length >= fence.length) fence = null;
+			}
+			const headerMatch =
+				fence === null
+					? /^##[ \t]+(?:\[([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)\]|([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)))(?:[ \t]+-[ \t]+(\d{4}-\d{2}-\d{2}))?[ \t]*$/.exec(
+							line,
+						)
+					: null;
+			if (
+				headerMatch ||
+				(fence === null && /^##[ \t]+\[?Unreleased\]?[ \t]*(?:-[ \t]+\d{4}-\d{2}-\d{2})?[ \t]*$/.test(line))
+			) {
 				// Save previous entry if exists
 				if (currentVersion && currentLines.length > 0) {
 					entries.push({
@@ -133,14 +196,21 @@ export function parseChangelog(changelogPath: string): ChangelogEntry[] {
 				}
 
 				// Try to parse version from this line
-				const versionMatch = line.match(/##\s+\[?(\d+)\.(\d+)\.(\d+)\]?/);
-				if (versionMatch) {
+				if (headerMatch && isValidDate(headerMatch[3] ?? "2026-01-01")) {
+					const parts = /^(\d+)\.(\d+)\.(\d+)(?:-(.*))?$/.exec(headerMatch[1] ?? headerMatch[2]);
+					if (!parts) {
+						currentVersion = null;
+						currentLines = [];
+						continue;
+					}
 					currentVersion = {
-						major: Number.parseInt(versionMatch[1], 10),
-						minor: Number.parseInt(versionMatch[2], 10),
-						patch: Number.parseInt(versionMatch[3], 10),
+						major: Number(parts[1]),
+						minor: Number(parts[2]),
+						patch: Number(parts[3]),
+						suffix: parts[4],
+						version: `${parts[1]}.${parts[2]}.${parts[3]}${parts[4] ? `-${parts[4]}` : ""}`,
 					};
-					currentLines = [line];
+					currentLines = [];
 				} else {
 					// Reset if we can't parse version
 					currentVersion = null;
@@ -171,25 +241,33 @@ export function parseChangelog(changelogPath: string): ChangelogEntry[] {
  * Compare versions. Returns: -1 if v1 < v2, 0 if v1 === v2, 1 if v1 > v2
  */
 export function compareVersions(v1: ChangelogEntry, v2: ChangelogEntry): number {
-	if (v1.major !== v2.major) return v1.major - v2.major;
-	if (v1.minor !== v2.minor) return v1.minor - v2.minor;
-	return v1.patch - v2.patch;
+	return compareVersionStrings(entryVersion(v1), entryVersion(v2)) ?? 0;
 }
 
 /**
  * Get entries newer than lastVersion
  */
-export function getNewEntries(entries: ChangelogEntry[], lastVersion: string): ChangelogEntry[] {
+export function getNewEntries(
+	entries: ChangelogEntry[],
+	lastVersion: string,
+	currentVersion?: string,
+): ChangelogEntry[] {
 	// Parse lastVersion
-	const parts = lastVersion.split(".").map(Number);
-	const last: ChangelogEntry = {
-		major: parts[0] || 0,
-		minor: parts[1] || 0,
-		patch: parts[2] || 0,
-		content: "",
-	};
-
-	return entries.filter((entry) => compareVersions(entry, last) > 0);
+	const parts = lastVersion.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.*))?$/);
+	if (!parts || isForeignVersion(lastVersion)) return [];
+	const current = currentVersion && VERSION_RE.test(currentVersion) ? currentVersion : undefined;
+	if (current && (isForeignVersion(current) || compareVersionStrings(lastVersion, current) === undefined)) return [];
+	return entries.filter((entry, index, all) => {
+		const version = entryVersion(entry);
+		const lower = compareVersionStrings(version, lastVersion);
+		const upper = current ? compareVersionStrings(version, current) : 0;
+		return (
+			lower !== undefined &&
+			lower > 0 &&
+			(upper === undefined || upper <= 0) &&
+			all.findIndex((candidate) => entryVersion(candidate) === version) === index
+		);
+	});
 }
 
 // Re-export getChangelogPath from paths.ts for convenience

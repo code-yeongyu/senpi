@@ -1,3 +1,75 @@
+## 2026-09-12 - Async ask-user widget shows the question; rebindable shortcut and key-free paths (senpi#1623)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: the collapsed
+  widget renders four lines instead of one: `? Question pending (N unanswered) · <countdown>`, the
+  first unanswered question as `<header> — <question>`, its options as `1 A · 2 B · own answer`
+  (plus `+K more question(s)` when more wait), one `TruncatedText` line each, and a hint naming
+  every way in (`enter or <shortcut> to answer · /answer · or just type your reply`). The widget takes
+  the `QuestionRequest` and the live `QuestionDraft`, so a partial draft that collapses shows the next
+  unanswered question. `ASK_USER_ANSWER_KEY`, `renderAsyncQuestionLine` and `setUnanswered` are gone.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-answer-key.ts` (new):
+  `ASK_USER_ANSWER_KEYBINDING = "app.question.answer"`, `matchesAskUserAnswerKey(data, platform,
+  keybindings)` resolving the chord through the `KeybindingsManager`, and `darwinOptionGlyphs(keys)`
+  mapping every bound `alt+<letter>` to its US-layout Option glyph pair (dead keys e/i/n/u excluded),
+  which generalizes the senpi#1620 `å`/`Å` acceptance to whatever letter the user binds.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleAskUserShortcut` delegates
+  to a new `expandPendingQuestion()`; the editor `onSubmit` calls it for an empty submission (Enter on
+  an empty editor opens the pending question, a no-op when nothing is pending); `/answer` is handled in
+  the text dispatch beside `/keybindings` and reports `No question is pending.` through `showStatus`;
+  `/hotkeys` lists `app.question.answer`.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/input-tips.ts`: new `open-pending-question`
+  tip bound to `app.question.answer`.
+- Docs: `docs/tui.md` async-widget paragraph, `docs/keybindings.md` row for `app.question.answer`.
+
+### Why
+
+- The one-line widget only said that a question existed, so a pending question could sit through its
+  whole idle countdown unnoticed. The single `alt+a` chord was a constant outside the keybinding
+  system: not rebindable, absent from `/hotkeys`, and dead whenever a terminal, multiplexer or workspace
+  prefix claimed Option/Alt+A, with no chord-free way to open the overlay.
+
+### Why an extension could not handle it
+
+- The async widget, the pending-question state and the editor submit path are interactive-mode
+  internals; extensions reach neither the editor's empty-submission branch nor the overlay mount.
+  `/answer` itself is registered by the builtin ask-user extension (see `src/core/changes.md`) and
+  intercepted by interactive-mode the way `/keybindings` is.
+
+### Expected merge conflict zones
+
+- LOW: the ask-user import block, `refreshAsyncWidget`, `handleAskUserShortcut`, the empty-text guard
+  in `setupEditorSubmitHandler`, the `/keybindings` dispatch neighbour and the `/hotkeys` table in
+  `interactive-mode.ts` (fork-only code paths).
+
+## 2026-09-12 - Async ask-user shortcut accepts macOS Option-composed glyphs (senpi#1620)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: new
+  `matchesAskUserAnswerKey(data, platform)` keeps `alt+a` (`ESC a` / CSI-u alt) on every platform
+  and, on darwin only, also accepts the glyphs the `a` key types when the terminal lets Option
+  compose (`å`, `Å`, raw or as a kitty CSI-u printable). `ASK_USER_ANSWER_KEY` and the widget label
+  (`option+a` on darwin, `alt+a` elsewhere) are unchanged.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleAskUserShortcut` matches
+  through `matchesAskUserAnswerKey` instead of `matchesKey(data, ASK_USER_ANSWER_KEY)`.
+
+### Why
+
+- Terminal.app, iTerm2, Ghostty and kitty default to Option composing characters on macOS, so the
+  advertised `option+a` arrived as `å` and inserted text instead of expanding the pending question.
+
+### Why an extension could not handle it
+
+- The shortcut is consumed inside `CustomEditor.onExtensionShortcut` before extension shortcuts run,
+  and the async widget is interactive-mode state; no extension hook sees the raw editor input first.
+
+### Expected merge conflict zones
+
+- LOW: the `ask-user-async-widget.ts` import list and `handleAskUserShortcut` in
+  `packages/coding-agent/src/modes/interactive/interactive-mode.ts` (fork-only code).
+
 ## 2026-09-11 - Ask-user overlay uses an explicit question and submit flow
 
 ### What changed
@@ -81,6 +153,24 @@
 
 ## 2026-09-10 - /tree edits carry the leaf token and reach shared hosts
 # changes
+
+## 2026-09-11 - Show the active brand changelog without cross-source updates (senpi#1583)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: uses the resolved brand or engine changelog source, persists acknowledgements by source, caps entries at the active version, and avoids engine link rewriting and install telemetry for branded sources.
+
+### Why
+
+- A branded product's release notes and version history must remain separate from the engine's release channel and telemetry.
+
+### Why an extension could not handle it
+
+- Interactive startup notices and the `/changelog` command are host-owned rendering paths that execute outside extension control.
+
+### Expected merge conflict zones
+
+- LOW: changelog startup handling and the `/changelog` command in `interactive-mode.ts`.
 
 ## 2026-09-02 - Do not paint two live login inputs
 

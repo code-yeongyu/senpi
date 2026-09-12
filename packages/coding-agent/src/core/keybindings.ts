@@ -28,6 +28,7 @@ export interface AppKeybindings {
 	"app.message.copy": true;
 	"app.message.followUp": true;
 	"app.message.dequeue": true;
+	"app.question.answer": true;
 	"app.clipboard.pasteImage": true;
 	"app.session.new": true;
 	"app.session.tree": true;
@@ -137,6 +138,10 @@ export const KEYBINDINGS = {
 	"app.message.dequeue": {
 		defaultKeys: windowsKeybindings ? "alt+q" : "alt+up",
 		description: "Restore queued messages",
+	},
+	"app.question.answer": {
+		defaultKeys: "alt+a",
+		description: "Open the pending question",
 	},
 	"app.clipboard.pasteImage": {
 		defaultKeys: windowsKeybindings ? "alt+v" : "ctrl+v",

@@ -1,4 +1,5 @@
-import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve as nodeResolvePath, parse, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -152,6 +153,18 @@ export function getFileRevision(path: string): string | undefined {
 	try {
 		const stats = statSync(path, { bigint: true });
 		return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Returns a revision derived from file contents rather than filesystem timestamps.
+ * Use this when a same-tick rewrite must invalidate an in-memory snapshot.
+ */
+export function getFileContentRevision(path: string): string | undefined {
+	try {
+		return createHash("sha256").update(readFileSync(path)).digest("hex");
 	} catch {
 		return undefined;
 	}

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { fetchOpenGatewayModels } from "./generate-models-opengateway.ts";
+import { isPrunableModelShard } from "./model-shards.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import { getOpenRouterThinkingLevelMap, type OpenRouterReasoningMetadata } from "./openrouter-reasoning-options.ts";
 import {
@@ -3575,7 +3576,7 @@ async function generateModels() {
 					writeFileSync(join(providersDir, filename), output);
 				}
 				for (const entry of readdirSync(providersDir)) {
-					if (entry.endsWith(".models.ts") && !generatedShardFiles.has(entry)) rmSync(join(providersDir, entry));
+					if (isPrunableModelShard(entry, generatedShardFiles)) rmSync(join(providersDir, entry));
 				}
 
 				let output = generatedHeader;

@@ -130,6 +130,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `tipsHistory` | object | - | Internal record of which tips were shown last (managed automatically) |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
+| `changelogSeen` | object | - | Internal per-source record of the latest changelog version acknowledged (managed automatically) |
 | `enableInstallTelemetry` | boolean | `true` | Send an anonymous install/update version ping after first install or changelog-detected updates. This does not control update checks |
 | `enableAnalytics` | boolean | `false` | Opt-in analytics data sharing. Currently only asked for during the experimental first-time setup (`PI_EXPERIMENTAL=1`) |
 | `trackingId` | string | - | Analytics tracking identifier, generated when `enableAnalytics` is turned on |

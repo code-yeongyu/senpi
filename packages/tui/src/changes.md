@@ -1,5 +1,24 @@
 # TUI delta rendering fork changes
 
+## 2026-09-11 - Keep dollar skill hints active across multiline drafts
+
+### What changed
+
+- `packages/tui/src/dollar-invocation-autocomplete.ts`: dollar skill lookup no longer rejects nonzero logical editor lines, so multiline drafts and queued message composition can request the same filtered skill suggestions.
+- `packages/tui/test/autocomplete-dollar.test.ts` and `packages/tui/test/editor-dollar-autocomplete.test.ts`: cover later-line provider lookup and paste/follow-up typing through the real Editor surface.
+
+### Why
+
+- The editor remains active while a response is streaming and while follow-up text is queued. A pasted or multiline draft can place the cursor on a later logical line, and the previous line-zero-only guard silently suppressed the skill picker there.
+
+### Why an extension could not handle it
+
+- Logical cursor routing and autocomplete request admission are owned by the standalone TUI Editor/provider path below the interactive extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/dollar-invocation-autocomplete.ts` context gate and the focused dollar/editor tests.
+
 ## 2026-09-11 - Offer skill hints for valid dollar tokens in prompt text
 
 ### What changed

@@ -1,5 +1,26 @@
 # Local fork changes
 
+## 2026-09-11 - Make file reload detection independent of mtime granularity
+
+### What changed
+
+- `src/utils/paths.ts` adds a SHA-256 file-content revision helper.
+- `src/core/auth-storage.ts` uses content revisions for shared auth reload coalescing.
+- The Cursor CLI OAuth and Claude SDK OAuth settings caches use content revisions instead of `mtimeMs:size`.
+- The package changelog records the runtime fix.
+
+### Why
+
+- Two rapid rewrites can share an mtime on Linux, causing auth readers or cached provider settings to retain stale data. Content revisions preserve the cache optimization while making change detection deterministic.
+
+### Why this lives in the fork
+
+- These are Senpi's auth and provider settings runtime paths and their fork-specific reload behavior.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/utils/paths.ts`, `src/core/auth-storage.ts`, and the two provider settings loaders.
+
 ## 2026-09-10 - Use native TypeScript builds for omob performance
 
 ### What changed

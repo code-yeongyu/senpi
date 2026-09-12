@@ -1,3 +1,122 @@
+## Cursor context ceilings come from the server, not the capability table (2026-09-12)
+
+### What changed
+
+- `packages/ai/src/cursor/context-limit-store.ts` (new): browser-safe in-memory store of the context ceiling Cursor reported per model id, with `recordCursorContextLimit`, `getCursorContextLimit`, `resolveCursorContextWindow` (observed, else catalog) and a persistence port. It is browser-safe on purpose: the catalog builders that read it are bundled for the browser by `scripts/check-browser-smoke.mjs`.
+- `packages/ai/src/utils/cursor-context-limit.ts` (new): the Node entry point. It owns the JSON file (`<agentDir>/cursor-context-limits.json`, same resolution as `packages/ai/src/api/cursor-conversation-rotation.ts`, override `CURSOR_CONTEXT_LIMIT_STORE`), loads it lazily once, writes atomically (tmp + rename), treats a missing or corrupt file as empty, and installs itself as the persistence port on first use rather than as an import side effect. It lives under `utils/` because `./utils/*` is the only subpath pattern `packages/ai` exports that a Node-only module reachable from the coding agent can use.
+- `packages/ai/src/api/cursor-agent.ts`: `onConversationCheckpoint` records `checkpoint.tokenDetails?.maxTokens` for the streaming model. The first checkpoint of a conversation reports 0 and is ignored. Also re-exports `measureCursorModelInputSerializedBytes`.
+- `packages/ai/src/api/cursor-agent/measure.ts`: `measureCursorModelInputSerializedBytes` sums only the `rootPromptMessagesJson` blobs - what Cursor replays to the model - where `measureCursorHistorySerializedBytes` also counts the `turns[]` display copies and reports roughly twice that. First proposed in #1614 by DevNewbie1826.
+- `packages/ai/src/index.ts`: exports the new measurement.
+- `packages/ai/src/cursor/store-migration.ts` and `packages/ai/src/providers/cursor.ts`: a catalog entry materializes its `contextWindow` through `resolveCursorContextWindow(entry.id, entry.window)`, so an observed ceiling wins over the capability table. With an empty store both are unchanged.
+- Tests: `packages/ai/test/cursor-context-limit-store.test.ts` (new) and a checkpoint case in `packages/ai/test/cursor-conversation-rotation-stream.test.ts`.
+
+### Why
+
+- `GetUsableModels` carries no window, so `CURSOR_MODEL_CAPABILITIES` is a committed guess. When the guess is larger than the account's real ceiling, every sizing decision downstream - context usage, compaction thresholds, request admission - is made against a window the server will not honour, and the turn fails as a 0-token `resource_exhausted` instead of compacting in time (senpi#1603).
+- The aggregate admission budget in the coding agent needs a measurement of what the model actually ingests; sizing against root plus display copies double-counted the same conversation.
+
+### Why an extension could not handle it
+
+- The checkpoint callback lives inside the builtin `cursor-agent` stream implementation, and the catalog builders are `packages/ai` internals; an extension can neither observe `tokenDetails` nor change how a Cursor `Model` is materialized.
+
+### Expected merge conflict zones
+
+- LOW: the new `packages/ai/src/cursor/context-limit-store.ts` and `packages/ai/src/utils/cursor-context-limit.ts` have no upstream counterpart.
+- MEDIUM: `packages/ai/src/api/cursor-agent.ts` around `onConversationCheckpoint` and the measure re-export block.
+- LOW: the single `contextWindow` line in `packages/ai/src/cursor/store-migration.ts` and `packages/ai/src/providers/cursor.ts`.
+
+## Devin Cascade transport parity with the released CLI (2026-09-12)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/devin.ts`: `toAuth` returns only the session token. It used to return `baseUrl: https://api.devin.ai`, and `Models.applyAuth` overlays `auth.baseUrl` onto the model, so every `GetChatMessage` was posted to the REST login host and answered `404 {"detail":"Not Found"}` (#1615). `api.devin.ai` is the login/token host only; chat stays on the Cascade host seeded on the model.
+- `packages/ai/proto/devin/cascade.proto` + `gen/cascade_pb.ts`: `Metadata.user_jwt` moves to its upstream field 21 (it was declared on 22, which is `force_team_id`, so a minted JWT would have been sent as a team override); adds `supported_model_displays`, `device_fingerprint`, `DisplayOption` (incl. the native 6-8 slots), `ModelDimensionKind`, `ModelFeatures`/`ModelInfo`/`ModelDimension`/`ModelFamilyMetadata` subsets on `ClientModelConfig`, `CompletionConfiguration.fim_eot_prob_threshold`, `ChatMessagePrompt.thinking_redacted`/`signature_type`, `GetChatMessageRequest.model_assignment_jwt`, and the `GetUserJwt`/`AssignModel` request-response pairs with `ModelAssignment`. Regenerated with the documented buf + transform workflow.
+- `packages/ai/src/api/devin-agent/metadata.ts`: two identities, as the released CLI presents them - `devin-cli`/`chisel`/`3000.6.2` on `GetUserJwt`, `AssignModel` and `GetChatMessage`, and the dev-channel `chisel`/`0.0.0-dev` identity with `supportedModelDisplays [3,4,6,7,8]` on `GetCliModelConfigs`. The previous `chisel`/`cli`/`0.0.0-dev` chat identity is not one the CLI sends.
+- `packages/ai/src/api/devin-agent/unary.ts` (new): unary Connect RPC helper - bare `application/proto` body both ways, raw-or-gzip decode, `DevinUnaryError` with status. `paths.ts` gains `DEVIN_USER_JWT_PATH`, `DEVIN_ASSIGN_MODEL_PATH`, `DEVIN_CHAT_HEADERS` (the released CLI header set: gzip Connect frame, `accept-encoding: identity`, `user-agent: connect-go/1.18.1 (go1.26.3)`, no `authorization` header - auth rides in `Metadata.api_key`) and `DEVIN_UNARY_HEADERS`.
+- `packages/ai/src/api/devin-agent.ts`: a turn is now `GetUserJwt` -> (`AssignModel` for `compat.modelRouter` models) -> `GetChatMessage`. The user JWT rides in `Metadata.user_jwt`; `custom_api_server_url` from `GetUserJwt` replaces the chat host when present (ordinary accounts are provisioned on a different host than the seed). An empty JWT, a non-2xx auth answer, or an assignment without uid+JWT fails the turn before any chat request. The end-of-stream trailer is parsed (`trailer.ts`, new) and an `{error:{code,message,details}}` trailer terminates the turn as an error naming the code - previously the trailer was ignored and a rejected turn surfaced as an empty successful `done`. `cascadeId` defaults to a fresh UUID instead of `""`.
+- `packages/ai/src/api/devin-agent/request.ts`: message ids are deterministic UUID-shaped (`deterministicUuid` of cascade id + index + role), assistant turns use `bot-<uuid>` or the server's `responseId` when the turn is native, tool-result ids include the tool call id, and empty assistant turns are skipped; `executionId` is a fresh UUID; `chatModelUid` is `assignment.modelUid ?? model.upstreamModelId ?? model.id`; `chatModelName` is no longer sent; `disableParallelToolCalls` follows `compat.supportsParallelToolCalls`; tools carry `strict: false`; user prompts and tool results carry inline `images`; the completion configuration is the released CLI's (`numCompletions 1`, `maxNewlines 200`, `temperature 0.4` default with `firstTemperature` mirrored, `topK 50`, `topP 1`, `fimEotProbThreshold 1`, stop patterns + caller stop sequences), and a caller temperature of exactly 0 is clamped to `0.0001` because Cascade answers a zero temperature with an opaque `invalid_argument`. `buildDevinRouterPrompt` builds the `AssignModel` prompt from the latest user turn with an empty message id.
+- `packages/ai/src/api/devin-agent/stream-state.ts`: tool-call chunks after the first arrive with an empty id; they now attach to the active call, arguments accumulate across chunks (a chunk either repeats the accumulated JSON or carries only the new bytes), `toolcall_delta` carries only the new bytes, and the block's arguments are re-parsed from the accumulated text with `parseStreamingJson`.
+- `packages/ai/src/api/devin-agent/discovery.ts`: `GetCliModelConfigs` goes through `postDevinUnary` (bare proto body - the Connect frame it used to send was answered HTTP 415), with the discovery identity and no bearer header; normalization drops disabled and internal-display configs, flags routers (`compat.modelRouter`), reads `contextWindow` from `ClientModelConfig.max_tokens` (the account's window, not the output cap) and `maxTokens` from `ModelInfo.max_output_tokens`, per-million cost from the cost dimensions, image support from model features minus the image-blind SWE-1.6 lanes, and sorts by id.
+- `packages/ai/src/model.ts`: `DevinAgentCompat { modelRouter?, supportsParallelToolCalls? }` bound to `Model<"devin-agent">.compat`.
+- `packages/ai/src/providers/devin.models.ts`: the seed is the plan-available SWE-2 effort lanes (`swe-2-high` first, then `swe-2-max`, `swe-2-low`, `swe-2-high-lite`) plus `swe-1-6`/`swe-1-6-fast`, 262k/200k context windows, 64k output. The bare `swe-2` uid is removed: Cascade rejects it with `permission_denied`.
+- Tests: `devin-agent-wire`, `devin-agent-request` (new), `devin-agent-stream`, `devin-agent-stream-deltas` (new), `devin-agent-stream-harness` (shared stub edge: GetUserJwt + AssignModel unary, then the chat stream), `devin-provider`, `devin-oauth`.
+
+### Why
+
+- Every Devin chat in the shipped 2026.9.11 engine failed. Login succeeded and minted a valid token, but the transport could not spend it: the login host overlay produced a 404 on every turn, and the layers behind it (missing user JWT, wrong identity, JWT on the wrong field, non-UUID ids, zero temperature) each produced `invalid_argument` once the host was right. Community reproduction on omo `5.0.0-0.beta.55` isolated the first two; the remaining gaps were found by diffing the transport against the released CLI's behaviour as mirrored by oh-my-pi's `devin.ts`.
+- Tool calls streamed by Cascade were split into a nameless second call on every argument continuation, so no tool ever executed even when text streamed.
+
+### Why an extension could not handle it
+
+- The api implementation, its auth adapter and the model compat type live inside `packages/ai`; an extension cannot change how `Models.applyAuth` consumes `toAuth`, cannot alter the builtin `devin-agent` stream function, and cannot extend the `Model<"devin-agent">.compat` type.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/model.ts`: the `compat` conditional type chain gains a `devin-agent` arm.
+- Everything under `packages/ai/src/api/devin-agent/`, `packages/ai/src/api/devin-agent.ts`, `packages/ai/proto/devin/cascade.proto` and `packages/ai/src/providers/devin*` are fork-owned files with no upstream counterpart.
+
+## Devin Cascade model transport (2026-09-12)
+
+### What changed
+
+- `packages/ai/proto/devin/cascade.proto` plus `packages/ai/src/api/devin-agent/gen/cascade_pb.ts`: a vendored SUBSET of Codeium/Windsurf's Cascade schema, generated with protoc-gen-es v2.13.0 and run through `scripts/transform-cursor-agent-proto.mjs` like the Cursor schema. Only the messages the transport reads or writes are declared; every field number matches upstream, so unknown upstream fields round-trip as unknown fields.
+- `packages/ai/src/api/devin-agent.ts`: the `devin-agent` API. One server-streaming `GetChatMessage` Connect call per turn, request sent as a single gzipped frame, response frames mapped onto senpi's assistant event protocol, terminal `done`/`error` with abort handling.
+- `packages/ai/src/api/devin-agent/frames.ts`: Connect framing - 5-byte prefix, gzip flag 0x01, end-of-stream trailer flag 0x02, and a 64 MiB payload cap so a corrupted length prefix cannot become a 4 GiB allocation.
+- `packages/ai/src/api/devin-agent/request.ts`: request building. Cascade has no system role, so the system prompt travels in the top-level `prompt` field and history becomes flat `ChatMessagePrompt` entries whose `source` carries the role; message ids are derived from the conversation id and index so a retried turn does not fork the server-side transcript.
+- `packages/ai/src/api/devin-agent/stream-state.ts`: delta bookkeeping. Cascade blocks are implicit and one frame may carry thinking, text and a tool call at once, so this module opens and closes senpi's blocks and maps Cascade stop reasons onto senpi's vocabulary.
+- `packages/ai/src/api/devin-agent/metadata.ts` and `paths.ts`: the CLI identity envelope, the `devin-session-token$` scheme prefix, and the RPC paths.
+- `packages/ai/src/api/devin-agent/discovery.ts`: credential-scoped `GetCliModelConfigs` discovery that returns undefined on failure or an empty roster.
+- `packages/ai/src/api/devin-agent.lazy.ts`, `packages/ai/src/compat.ts`, `packages/ai/src/types.ts`: the Node-only lazy boundary, the builtin api-registry entry, and the `devin-agent` api id with its options type.
+- `packages/ai/src/providers/devin.ts` and `packages/ai/src/providers/devin.models.ts`: the provider bound to the merged Devin OAuth flow, its public SWE seed, and a `refreshModels` that publishes the account's real lanes but never an empty catalog.
+- `packages/ai/src/providers/all.ts`: registers the provider among the builtins.
+
+- `packages/ai/src/api/devin-agent.ts` only upgrades the default `stop` to `toolUse` when a tool call block is present: a server-reported `length` means the turn was truncated, and a truncated tool call must not be advertised as a complete one.
+
+- `packages/ai/src/api/devin-agent.ts` terminates a Cascade `ERROR` or `CONTENT_FILTER` stop as an `error` event rather than a `done` event: senpi's protocol has no "done because it failed", and a done event carrying a failed turn would be consumed as a successful assistant message.
+
+- `packages/ai/src/api/devin-agent/discovery.ts` authenticates with the same `Bearer devin-session-token$…` header as the chat call, not only the protobuf `Metadata.api_key`: Cascade rejects an unauthenticated discovery request, which would have silently degraded every account to the static seed.
+
+### Why
+
+- The merged Devin OAuth flow could mint a credential that nothing could spend: senpi had no Cascade transport, so a signed-in user still had no Devin model to select.
+- Cascade deviates from every OpenAI-shaped adapter senpi already had (Connect framing, gzip per frame, protobuf payloads, no system role, implicit blocks, credential-scoped catalog), so the deviations are pinned in code next to the reasons.
+
+### Why an extension could not handle it
+
+- An api id must exist in `KnownApi`, in the per-api options map and in the builtin api-registry inside `packages/ai`; an extension cannot add one, cannot participate in the Bun binary's static bundle, and cannot return a `ProviderStreams` implementation that the model runtime treats as first-class.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the `KnownApi` union and the api options map - upstream adding an api touches both.
+- `packages/ai/src/compat.ts`: the lazy re-export block and the builtin api registration list.
+- `packages/ai/src/providers/all.ts`: the provider import list and the builtin provider array.
+- Everything under `packages/ai/src/api/devin-agent/` and the two `providers/devin*` files are additions with no upstream counterpart.
+
+## Devin CLI OAuth login flow (2026-09-11)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/devin.ts`: new Devin (Cognition) OAuth flow. Generates a PKCE S256 challenge plus a uuid state, sends the user to `https://app.devin.ai/auth/cli/continue` with `response_type=code`, the loopback `redirect_uri` and `prompt=select_account`, and races the loopback callback against the manual paste prompt for headless sessions. Exports `devinOAuth` whose `refresh` is a no-op (Devin has no refresh grant) and whose `toAuth` returns the stored token plus the `https://api.devin.ai` base URL.
+- `packages/ai/src/auth/oauth/devin-callback.ts`: one-shot loopback callback server pinned to `127.0.0.1:59653/callback`, the single redirect URI Devin registers for the CLI. Validates the issued state before the authorization code is spent, renders the shared OAuth result pages, and reports exchange failures through both the page and the login promise.
+- `packages/ai/src/auth/oauth/devin-token.ts`: the non-standard CLI token exchange. Posts JSON carrying only `code` and `code_verifier` (no client_id, no grant_type) with `Accept: application/json`, then builds the credential from the single `token` field used as both access and refresh, with expiry decoded from the JWT `exp` and a 31536000000 ms fallback.
+- `packages/ai/src/auth/oauth/load.ts`: adds `devin` to `OAuthFlowLoaders` and exports `loadDevinOAuth`, so the flow resolves through the same lazy-import boundary as every other provider and stays out of browser-reachable static imports.
+- `packages/ai/src/bun-oauth.ts`: registers `devin: () => devinOAuth` in the statically bundled flow set so the standalone Bun binary can run the login without dynamic import.
+
+### Why
+
+- senpi had no Devin authentication at all: no flow module, no loader entry, no bundled registration, so Devin could not be signed into from senpi even though its CLI grant is a plain public-client authorization-code flow.
+- Devin's grant deviates from the OAuth defaults the existing helpers assume (fixed redirect port, no client_id, no grant_type, one token serving as access and refresh, expiry only inside the JWT), so the deviations are pinned in code next to the reasons rather than rediscovered per incident.
+
+### Why an extension could not handle it
+
+- OAuth flows are resolved inside `packages/ai` through `registerBundledOAuthFlowLoaders` and the `OAuthFlowLoaders` type; an extension cannot add a member to that registry, cannot participate in the standalone Bun binary's static bundle, and cannot return an `OAuthAuth` that the credential store and auth resolution treat as first-class.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/oauth/load.ts`: the `OAuthFlowLoaders` member list and the block of `load*OAuth` exports — upstream adding a provider touches the same two spots.
+- `packages/ai/src/bun-oauth.ts`: the import list and the `registerBundledOAuthFlowLoaders` object literal.
+- The three `packages/ai/src/auth/oauth/devin*.ts` files are additions with no upstream counterpart and should not conflict.
+
 ## PR #1304 review fixes: shared auth-miss prefix, login merge, sentinel repair (2026-09-10)
 
 ### What changed

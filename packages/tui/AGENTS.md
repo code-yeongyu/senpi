@@ -57,8 +57,8 @@ native/                     Optional Darwin/Win32 modifier binaries (prebuilt, l
 
 ## $-INVOCATION
 
-- A leading `$` on prompt line 0 offers the same candidate list as `/`: slash commands insert as `/name`, skills as bare `$name`.
-- After one known skill, only further skills are offered. Mid-line `$` (e.g. `$HOME`) stays literal.
+- A `$` token at a valid boundary on any logical prompt line — the first line, a line after `shift+enter`, or a line from a multiline paste — offers the same candidate list as `/`: slash commands insert as `/name`, skills as bare `$name`.
+- After one known skill, only further skills are offered on that line. A `$` that is not at a token boundary, and shell-style expansions such as `$HOME` or `$1`, stay literal.
 - Completion application must preserve trailing-space behavior for both `/command ` and `$skill ` forms.
 
 ## ANTI-PATTERNS

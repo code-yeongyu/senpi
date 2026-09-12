@@ -1,5 +1,41 @@
 # changes
 
+## 2026-09-11 - Parse versioned changelog entries for branded sources (senpi#1583)
+
+### What changed
+
+- `packages/coding-agent/src/utils/changelog.ts`: parses dated version headers and fenced examples safely, compares SemVer and CalVer entries, preserves prerelease suffixes, bounds notifications to the active source version, and de-duplicates repeated versions.
+
+### Why
+
+- Changelog notifications must understand Senpi's CalVer revisions and branded prerelease labels without showing entries from another source or future release.
+
+### Why an extension could not handle it
+
+- Parsing and ordering happen inside the host's changelog utility before interactive extensions receive control.
+
+### Expected merge conflict zones
+
+- LOW: changelog header parsing and version comparison helpers.
+
+## 2026-09-11 - Add content revisions for file-backed caches
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts` adds a SHA-256 file-content revision helper for auth and provider-settings caches.
+
+### Why
+
+- A content change must invalidate a cache even when the filesystem reports unchanged mtime and size.
+
+### Why an extension could not handle it
+
+- The revision primitive is shared by core auth storage and provider settings loaders.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/utils/paths.ts` file-revision helpers.
+
 ## Canonical identity resolves through the native realpath (2026-09-07)
 
 ### What changed

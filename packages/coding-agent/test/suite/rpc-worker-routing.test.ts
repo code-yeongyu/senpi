@@ -187,6 +187,8 @@ it.each(["answered", "comment-submitted"] as const)(
 			const updated = a.wait((r) => r.type === "question_updated");
 			b.send({ type: "extension_ui_progress", sessionId, id: frame.id, answers: { q1: { selected: ["A"] } } });
 			expect((await updated).remainingMs).toBeGreaterThan(0);
+			// A submission with neither an answer nor a comment carries no decision: it is
+			// rejected and the question stays pending for every attachment.
 			const incomplete = b.wait((r) => r.error === "question_incomplete");
 			b.send({
 				type: "extension_ui_response",
@@ -199,6 +201,8 @@ it.each(["answered", "comment-submitted"] as const)(
 			const resolved = [a, b, c].map((peer) =>
 				peer.wait((r) => r.type === "question_resolved" && r.id === frame.id),
 			);
+			// A partial answer map is a decision on every surface (ask-user/pending.ts): it
+			// resolves the question as answered and reports the ids left unanswered.
 			const answers = outcome === "answered" ? { q1: { selected: ["A"] } } : {};
 			const comment = outcome === "answered" ? "" : "do it";
 			b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers, comment });
@@ -212,7 +216,7 @@ it.each(["answered", "comment-submitted"] as const)(
 			}
 			expect((await prompt).success).toBe(true);
 			const late = b.wait((r) => r.error === "question_already_resolved");
-			b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: {} });
+			b.send({ type: "extension_ui_response", sessionId, id: frame.id, answers: {}, comment: "do it" });
 			await late;
 			expect(c.records.filter((r) => r.method === "question")).toHaveLength(1);
 			const state = await c.request({ type: "get_state", sessionId });

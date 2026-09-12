@@ -35,6 +35,7 @@ export type FakeInteractiveMode = {
 	runtimeHost: { session: FakeSession; sendHostUiProgress?: Mock<(record: unknown) => void> };
 	onInputCallback: Mock<(input: unknown) => void>;
 	handleDebugCommand: Mock<() => void>;
+	showStatus: Mock<(message: string) => void>;
 	createExtensionUIContext(): ExtensionUIContext;
 	handleAskUserShortcut(data: string): boolean;
 	setupEditorSubmitHandler(): void;
@@ -64,6 +65,7 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 		runtimeHost: { session },
 		onInputCallback: vi.fn(),
 		handleDebugCommand: vi.fn(),
+		showStatus: vi.fn(),
 		askUserQuestion: undefined,
 		asyncQuestion: undefined,
 		lastEditorText: "",

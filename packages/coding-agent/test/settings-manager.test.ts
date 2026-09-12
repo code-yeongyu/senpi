@@ -20,6 +20,15 @@ import {
 } from "../src/core/settings-manager.ts";
 
 describe("SettingsManager", () => {
+	it("isolates changelog seen versions by source and persists them", async () => {
+		const manager = SettingsManager.inMemory({ lastChangelogVersion: "1.0.0" });
+		expect(manager.getChangelogSeen("engine")).toBe("1.0.0");
+		expect(manager.getChangelogSeen("omo")).toBeUndefined();
+		manager.setChangelogSeen("omo", "5.0.0-beta.2");
+		await manager.flush();
+		expect(manager.getChangelogSeen("engine")).toBe("1.0.0");
+		expect(manager.getChangelogSeen("omo")).toBe("5.0.0-beta.2");
+	});
 	it("bridges SENPI terminal capability overrides, with PI fallback", () => {
 		const previous = {
 			SENPI_HYPERLINKS: process.env.SENPI_HYPERLINKS,

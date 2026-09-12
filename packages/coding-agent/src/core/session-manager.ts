@@ -19,8 +19,9 @@ import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
+import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
-import { reserveSessionWrite } from "./session-write-reservation.ts";
+import { registerSessionWriter, reserveSessionWrite } from "./session-write-reservation.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -905,6 +906,9 @@ export class SessionManager {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
+		// A persisted manager owns its session file for as long as it lives; the shared
+		// RPC host reads this registry to release grants no writer holds anymore.
+		if (persist) registerSessionWriter(this);
 		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
@@ -953,8 +957,9 @@ export class SessionManager {
 				if (statSync(explicitPath).size > 0) {
 					throw new Error(`Session file is not a valid ${APP_NAME} session: ${explicitPath}`);
 				}
-				this.newSession();
-				this.sessionFile = explicitPath;
+				// The explicit path is already granted above and keeps being written here:
+				// allocating a second path would take a grant no writer ever uses.
+				this._resetToNewSession();
 				this._rewriteFile();
 				this.flushed = true;
 				return;
@@ -972,13 +977,24 @@ export class SessionManager {
 			this.mutationCount++;
 			this.flushed = true;
 		} else {
-			const explicitPath = this.sessionFile;
-			this.newSession();
-			this.sessionFile = explicitPath; // preserve explicit path from --session flag
+			// Same here: the explicit path from --session stays the only granted one.
+			this._resetToNewSession();
 		}
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
+		const timestamp = this._resetToNewSession(options);
+		if (this.persist) {
+			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
+			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			reserveSessionWrite(path);
+			this.sessionFile = path;
+		}
+		return this.sessionFile;
+	}
+
+	/** Resets every in-memory field onto a fresh header. Allocates no session path. */
+	private _resetToNewSession(options?: NewSessionOptions): string {
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
@@ -1012,14 +1028,7 @@ export class SessionManager {
 		};
 		this.mutationCount++;
 		this.flushed = false;
-
-		if (this.persist) {
-			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
-			reserveSessionWrite(path);
-			this.sessionFile = path;
-		}
-		return this.sessionFile;
+		return timestamp;
 	}
 
 	private _buildIndex(): void {
@@ -1523,19 +1532,20 @@ export class SessionManager {
 		if (fromId !== undefined && !entriesById.has(fromId) && this.mirrorTrimmed && this.sessionFile) {
 			entriesById = new Map(
 				this._loadFullHistoryEntries()
-					.filter((entry) => entry.type !== "session")
-					.map((entry) => [entry.id, this.residentStore.materialize(entry) as SessionEntry]),
+					.filter((entry): entry is SessionEntry => entry.type !== "session")
+					.map((entry) => [entry.id, this.residentStore.materialize(entry)]),
 			);
 		}
 		let current = startId ? entriesById.get(startId) : undefined;
 		while (current) {
-			path.unshift(this._materializeEntry(current));
+			path.unshift(current);
 			current = current.parentId ? entriesById.get(current.parentId) : undefined;
 		}
+		const materializedPath = this._materializeEntries(path);
 		if (fromId === undefined) {
-			this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries: path };
+			this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries: materializedPath };
 		}
-		return path;
+		return materializedPath;
 	}
 
 	/**
@@ -1612,11 +1622,24 @@ export class SessionManager {
 		if (this.entriesCache !== null && this.entriesCache.mutation === this.mutationCount) {
 			return this.entriesCache.entries;
 		}
-		const entries = this.fileEntries
-			.filter((e): e is SessionEntry => e.type !== "session")
-			.map((entry) => this._materializeEntry(entry));
-		this.entriesCache = { mutation: this.mutationCount, entries };
-		return entries;
+		const entries = this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
+		const materializedEntries = this._materializeEntries(entries);
+		this.entriesCache = { mutation: this.mutationCount, entries: materializedEntries };
+		return materializedEntries;
+	}
+
+	private _materializeEntries(entries: readonly SessionEntry[]): SessionEntry[] {
+		return materializeSessionEntries(entries, {
+			residentStore: this.residentStore,
+			loadHistoryEntries: () => this._loadFullHistoryEntries(),
+			onMaterialized: (entry) => {
+				if (entry.type !== "message") return;
+				const order = this.entryOrdersById.get(entry.id);
+				if (order !== undefined) {
+					this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
+				}
+			},
+		});
 	}
 
 	private _getCompactEntries(): SessionEntry[] {

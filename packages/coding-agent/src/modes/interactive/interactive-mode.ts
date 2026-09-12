@@ -61,7 +61,6 @@ import {
 	getDebugLogPath,
 	getDocsPath,
 	getShareViewerUrl,
-	VERSION,
 } from "../../config.ts";
 import {
 	type AgentSessionEvent,
@@ -79,6 +78,7 @@ import {
 	computeCacheWaste,
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
+import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
 import type {
@@ -130,7 +130,7 @@ import {
 	INSPECTOR_VM_IMPORT_WARNING,
 	isRecoverableInspectorVmImportError,
 } from "../../inspector-policy.ts";
-import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
+import { getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
@@ -148,13 +148,12 @@ import {
 	waitForPromptDisposition,
 } from "./compaction-queue-transfer.ts";
 import { ArminComponent } from "./components/armin.ts";
+import { matchesAskUserAnswerKey } from "./components/ask-user-answer-key.ts";
 import {
-	ASK_USER_ANSWER_KEY,
 	ASK_USER_WIDGET_KEY,
 	AskUserAsyncWidget,
 	buildCommentResponse,
 	buildTimedOutResponse,
-	unansweredIds,
 } from "./components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "./components/ask-user-question.ts";
 import type { QuestionDraft } from "./components/ask-user-question-state.ts";
@@ -1867,28 +1866,33 @@ export class InteractiveMode {
 			return undefined;
 		}
 
-		const lastVersion = this.settingsManager.getLastChangelogVersion();
-		const changelogPath = getChangelogPath();
+		const source = resolveChangelogSource();
+		if (!source.version) return undefined;
+		const lastVersion = this.settingsManager.getChangelogSeen(source.id);
+		const changelogPath = source.path;
 		const entries = parseChangelog(changelogPath);
 
 		if (!lastVersion) {
 			// Fresh install - record the version, send telemetry, don't show changelog
-			this.settingsManager.setLastChangelogVersion(VERSION);
-			this.reportInstallTelemetry(VERSION);
+			this.settingsManager.setChangelogSeen(source.id, source.version);
+			this.reportInstallTelemetry(source.version);
 			return undefined;
 		}
 
-		const newEntries = getNewEntries(entries, lastVersion);
+		const newEntries = getNewEntries(entries, lastVersion, source.version);
 		if (newEntries.length > 0) {
-			this.settingsManager.setLastChangelogVersion(VERSION);
-			this.reportInstallTelemetry(VERSION);
-			return newEntries.map((e) => normalizeChangelogLinks(e.content, e)).join("\n\n");
+			this.settingsManager.setChangelogSeen(source.id, source.version);
+			this.reportInstallTelemetry(source.version);
+			return newEntries
+				.map((e) => (source.rewriteLinks ? normalizeChangelogLinks(e.content, e) : e.content))
+				.join("\n\n");
 		}
 
 		return undefined;
 	}
 
 	private reportInstallTelemetry(version: string): void {
+		if (BRAND) return;
 		if (envValue("OFFLINE")) {
 			return;
 		}
@@ -3930,7 +3934,8 @@ export class InteractiveMode {
 		this.setExtensionWidget(ASK_USER_WIDGET_KEY, (tui) => {
 			const startedAt = Date.now();
 			return new AskUserAsyncWidget({
-				unanswered: unansweredIds(state.request, state.draft).length,
+				request: state.request,
+				draft: state.draft,
 				timeoutMs: state.timeoutMs,
 				tui,
 				onExpire: () => state.finish(buildTimedOutResponse(state.request, state.draft, Date.now() - startedAt)),
@@ -3940,8 +3945,18 @@ export class InteractiveMode {
 
 	/** Editor shortcut: expand the pending async question into the full component. */
 	private handleAskUserShortcut(data: string): boolean {
+		if (!this.asyncQuestion || this.askUserQuestion || !matchesAskUserAnswerKey(data)) return false;
+		return this.expandPendingQuestion();
+	}
+
+	/**
+	 * Key-free entry into the pending async question (empty Enter, /answer):
+	 * mounts the full component in place of the editor. Returns false when
+	 * nothing is pending or the component is already open.
+	 */
+	private expandPendingQuestion(): boolean {
 		const state = this.asyncQuestion;
-		if (!state || this.askUserQuestion || !matchesKey(data, ASK_USER_ANSWER_KEY)) return false;
+		if (!state || this.askUserQuestion) return false;
 		const component = new AskUserQuestionComponent(
 			state.request,
 			(response) => {
@@ -4502,7 +4517,12 @@ export class InteractiveMode {
 				this.hideShortcutOverlay();
 				this.lastEditorText = "";
 				text = text.trim();
-				if (!text) return;
+				if (!text) {
+					// Enter on an empty editor opens the pending async question; it needs
+					// no chord, so it works under every terminal and keymap.
+					this.expandPendingQuestion();
+					return;
+				}
 
 				// A pending async question claims ordinary text as its comment answer;
 				// slash and bash commands keep their normal routing.
@@ -4574,6 +4594,11 @@ export class InteractiveMode {
 				if (text === "/keybindings") {
 					this.editor.setText("");
 					await this.handleKeybindingsCommand();
+					return;
+				}
+				if (text === "/answer") {
+					this.editor.setText("");
+					if (!this.expandPendingQuestion()) this.showStatus("No question is pending.");
 					return;
 				}
 				if (text === "/hotkeys") {
@@ -8945,14 +8970,15 @@ export class InteractiveMode {
 	}
 
 	private handleChangelogCommand(): void {
-		const changelogPath = getChangelogPath();
+		const source = resolveChangelogSource();
+		const changelogPath = source.path;
 		const allEntries = parseChangelog(changelogPath);
 
 		const changelogMarkdown =
 			allEntries.length > 0
 				? allEntries
 						.reverse()
-						.map((e) => normalizeChangelogLinks(e.content, e))
+						.map((e) => (source.rewriteLinks ? normalizeChangelogLinks(e.content, e) : e.content))
 						.join("\n\n")
 				: "No changelog entries found.";
 
@@ -9021,6 +9047,7 @@ export class InteractiveMode {
 		const copyMessage = this.getAppKeyDisplay("app.message.copy");
 		const followUp = this.getAppKeyDisplay("app.message.followUp");
 		const dequeue = this.getAppKeyDisplay("app.message.dequeue");
+		const answerQuestion = this.getAppKeyDisplay("app.question.answer");
 		const pasteImage = this.getAppKeyDisplay("app.clipboard.pasteImage");
 
 		let hotkeys = `
@@ -9065,6 +9092,7 @@ export class InteractiveMode {
 | \`${copyMessage}\` | Copy last assistant message |
 | \`${followUp}\` | Queue follow-up message |
 | \`${dequeue}\` | Restore queued messages |
+| \`${answerQuestion}\` | Open the pending question (also: Enter on an empty editor, or /answer) |
 | \`${pasteImage}\` | Paste image or text from clipboard |
 | \`/\` | Slash commands |
 | \`!\` | Run bash command |

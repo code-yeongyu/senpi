@@ -9,8 +9,11 @@ import { AgentServerMessageSchema } from "../src/api/cursor-agent/gen/agent_pb.t
 import { frameConnectMessage, stream as streamCursorAgent } from "../src/api/cursor-agent.ts";
 import { CURSOR_CONVERSATION_POISONED_MESSAGE } from "../src/api/cursor-conversation-rotation.ts";
 import type { Model } from "../src/types.ts";
+import { getCursorContextLimit, resetCursorContextLimitStoreForTest } from "../src/utils/cursor-context-limit.ts";
 
 process.env.CURSOR_CONVERSATION_ID_STORE = join(mkdtempSync(join(tmpdir(), "cursor-rotate-")), "ids.json");
+// The stream records observed context ceilings; keep them out of the real agent dir.
+process.env.CURSOR_CONTEXT_LIMIT_STORE = join(mkdtempSync(join(tmpdir(), "cursor-limits-")), "limits.json");
 
 const neverAbortedSignal = new AbortController().signal;
 const CONNECT_END_STREAM_FLAG = 0b00000010;
@@ -36,6 +39,20 @@ function turnEndedFrame(): Buffer {
 			AgentServerMessageSchema,
 			create(AgentServerMessageSchema, {
 				message: { case: "interactionUpdate", value: { message: { case: "turnEnded", value: {} } } },
+			}),
+		),
+	);
+}
+
+function checkpointFrame(usedTokens: number, maxTokens: number): Buffer {
+	return frameConnectMessage(
+		toBinary(
+			AgentServerMessageSchema,
+			create(AgentServerMessageSchema, {
+				message: {
+					case: "conversationCheckpointUpdate",
+					value: { tokenDetails: { usedTokens, maxTokens } },
+				},
 			}),
 		),
 	);
@@ -136,6 +153,25 @@ describe("cursor-agent zero-token RE retry", () => {
 		const second = await runStream(baseUrl, "sess-rotate-stream");
 		expect(runs).toBe(3);
 		expect(second.stopReason).not.toBe("error");
+	});
+
+	// senpi#1603: the catalog only guesses a Cursor window. The checkpoint states
+	// the server's real ceiling, and admission has to size history against it.
+	it("records the checkpoint context ceiling for the streaming model", async () => {
+		// Given: a stream whose checkpoint reports a 200K ceiling.
+		resetCursorContextLimitStoreForTest();
+		const baseUrl = await startServer((stream) => {
+			stream.write(checkpointFrame(17_962, 200_000));
+			stream.write(turnEndedFrame());
+			stream.end();
+		});
+
+		// When: the turn completes.
+		const message = await runStream(baseUrl, "sess-context-ceiling");
+
+		// Then: the ceiling is stored under the streaming model id.
+		expect(message.stopReason).not.toBe("error");
+		expect(getCursorContextLimit("claude-4.6-opus-high")).toBe(200_000);
 	});
 
 	it("surfaces the poisoned-conversation error after the rotation cap", async () => {

@@ -12,6 +12,46 @@
 
 ### Removed
 
+## [2026.9.12-2] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.11] - 2026-09-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The eval tool instructions now tell callers to emit large text in bounded chunks or through offset-based file reads, and to treat a truncation notice as incomplete data that must be recovered from the full-output path instead of being read as the whole result ([#1600](https://github.com/code-yeongyu/senpi/pull/1600)).
+
+### Fixed
+
+- Column-capped eval output now preserves a recoverable full-output artifact, so a cell whose output is clipped by a narrow terminal column cap still exposes the complete text through the artifact path ([#1600](https://github.com/code-yeongyu/senpi/pull/1600)).
+
+### Removed
+
 ## [2026.9.10-2] - 2026-09-10
 
 ### Breaking Changes

@@ -34,6 +34,8 @@ export interface RpcSessionEntry {
 	sessionPath?: string;
 	/** Canonical reservation key for path-opened sessions; matches the reservations set. */
 	reservationKey?: string;
+	/** Key granted for the spelling this session was opened with; cleared once superseded. */
+	requestedPathKey?: string;
 	/** Current runtime cwd, which can change when a session is replaced. */
 	cwd: string;
 	/** Live attachments (open + later attaches). The runtime is disposed only when the last one closes. */
@@ -47,7 +49,13 @@ export interface RpcSessionEntry {
 }
 
 export class RpcSessionRegistryError extends Error {
-	readonly code: "unknown_session" | "session_closing" | "session_path_in_use" | "invalid_path" | "open_failed";
+	readonly code:
+		| "unknown_session"
+		| "session_closing"
+		| "session_path_in_use"
+		| "session_reservation_limit"
+		| "invalid_path"
+		| "open_failed";
 
 	constructor(code: RpcSessionRegistryError["code"], reason?: string) {
 		super(code === "open_failed" && reason ? `${code}: ${reason}` : code);

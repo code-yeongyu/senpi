@@ -67,7 +67,14 @@ function endpoint(input: Readable, output: Writable, diagnostic: () => string) {
 					reject(error);
 				},
 			};
-			const timer = setTimeout(() => listener.reject(new Error(`RPC deadline; ${diagnostic()}`)), ms);
+			// Name the awaited record: a bare deadline plus host stderr reads like a
+			// transport stall even when the host is healthy and the record simply never
+			// matched, which is how a contract drift once looked like socket backpressure.
+			const awaited = String(predicate).replace(/\s+/g, " ").slice(0, 200);
+			const timer = setTimeout(
+				() => listener.reject(new Error(`RPC deadline waiting for ${awaited}; ${diagnostic()}`)),
+				ms,
+			);
 			listeners.add(listener);
 		});
 	}
