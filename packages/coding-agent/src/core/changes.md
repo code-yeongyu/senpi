@@ -1,5 +1,37 @@
 # changes
 
+## 2026-09-12 - O(1) full-history entry count on SessionManager
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: new `getEntryCount()` returns the number of
+  ALL non-header entries across the full history in O(1). The count is maintained incrementally:
+  `_appendEntry()` increments per actual append, `_buildIndex()` recomputes it from the loaded
+  entries (skipping the recompute when the mirror is compaction-trimmed, where the mirror no longer
+  represents the full history), and `_resetToNewSession()` clears it.
+- `packages/coding-agent/test/session-manager/entry-count.test.ts`: persisted-lifecycle coverage -
+  header exclusion, the full-history count across an `appendCompaction()` trim with zero
+  full-history loads on repeated count reads, append-after-trim, reopen and `setSessionFile()`
+  rebuilds, branched-session recompute, and the real `startToolHookStatusTimer` cadence boundary
+  (999/1000 entries) without loading history.
+
+### Why
+
+- After a persisted compaction trims the in-memory mirror (`mirrorTrimmed`), every
+  `getEntries().length` reloads and materializes the entire JSONL. Count-only UI cadence decisions
+  sit on hot paths; profiling a live multi-day session attributed roughly a third of one sampled
+  60-second window to the tool-hook status timer's repeated full-history loads.
+
+### Why an extension could not handle it
+
+- The count is derived state inside `SessionManager` below the extension boundary; extensions only
+  receive `ReadonlySessionManager` and would have to call the loading `getEntries()` to count.
+
+### Expected merge conflict zones
+
+- LOW: the `fullEntryCount` field beside `mirrorTrimmed`, the guarded recompute at the end of
+  `_buildIndex()`, the increment in `_appendEntry()`, and the accessor beside `getEntries()`.
+
 ## 2026-09-12 - `app.question.answer` keybinding and `/answer` command for the async ask-user widget (senpi#1623)
 
 ### What changed

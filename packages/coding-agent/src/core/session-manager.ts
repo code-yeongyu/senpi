@@ -875,6 +875,11 @@ export class SessionManager {
 	private leafId: string | null = null;
 	private residentStore = new ResidentStringStore();
 	private mirrorTrimmed = false;
+	// Maintained count of ALL non-header entries across the full history. Equals
+	// getEntries().length, but survives _trimMirrorAfterCompaction() so count-only
+	// readers never pay the full-history load that getEntries() performs once the
+	// mirror is trimmed.
+	private fullEntryCount = 0;
 	private compactEntriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
 	// Monotonic counter bumped by every mutator; memoized materialized views are
 	// keyed on it so read hot paths (footer, RPC) never re-materialize unchanged sessions.
@@ -1017,6 +1022,7 @@ export class SessionManager {
 		};
 		this.fileEntries = [header];
 		this.mirrorTrimmed = false;
+		this.fullEntryCount = 0;
 		this.residentStore.clear();
 		this.byId.clear();
 		this.entryOrdersById.clear();
@@ -1076,8 +1082,10 @@ export class SessionManager {
 			cost: 0,
 			latestCacheHitRate: undefined,
 		};
+		let fullEntryCount = 0;
 		for (const [order, entry] of this.fileEntries.entries()) {
 			if (entry.type === "session") continue;
+			fullEntryCount++;
 			this.byId.set(entry.id, entry);
 			this.entryOrdersById.set(entry.id, order);
 			this.leafId = entry.id;
@@ -1095,6 +1103,12 @@ export class SessionManager {
 					this.labelTimestampsById.delete(entry.targetId);
 				}
 			}
+		}
+		// A compaction-trimmed mirror retains only kept entries while the full
+		// history still counts every persisted entry, so a trimmed rebuild must
+		// keep the maintained full-history count.
+		if (!this.mirrorTrimmed) {
+			this.fullEntryCount = fullEntryCount;
 		}
 	}
 
@@ -1176,6 +1190,7 @@ export class SessionManager {
 		this.byId.set(residentEntry.id, residentEntry);
 		this.entryOrdersById.set(residentEntry.id, this.fileEntries.length - 1);
 		this.leafId = residentEntry.id;
+		this.fullEntryCount++;
 		this._accumulateUsage(residentEntry);
 		this.mutationCount++;
 		this._persist(residentEntry);
@@ -1655,6 +1670,16 @@ export class SessionManager {
 		const materializedEntries = this._materializeEntries(entries);
 		this.entriesCache = { mutation: this.mutationCount, entries: materializedEntries };
 		return materializedEntries;
+	}
+
+	/**
+	 * O(1) count of ALL session entries across the full history (excludes the
+	 * header, not branch-scoped). Maintained incrementally and identical to
+	 * getEntries().length, so count-only readers do not pay the full-history
+	 * load that getEntries() performs once the mirror is trimmed.
+	 */
+	getEntryCount(): number {
+		return this.fullEntryCount;
 	}
 
 	private _materializeEntries(entries: readonly SessionEntry[]): SessionEntry[] {
