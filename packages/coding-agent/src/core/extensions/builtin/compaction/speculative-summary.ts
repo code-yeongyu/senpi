@@ -18,7 +18,7 @@ import {
 	DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 	summarizationMaxDurationMs,
 } from "../../../compaction/stream-watchdog.ts";
-import { convertToLlm } from "../../../messages.ts";
+import { convertToLlm, dedupeConsecutivePlaceholder } from "../../../messages.ts";
 import { getSessionContextEntryId } from "../../../session-manager.ts";
 import type { buildPrompt } from "./prompts.ts";
 import { repairOrphanedToolResults } from "./repair-tool-pairs.ts";
@@ -27,7 +27,28 @@ import { normalizeSummarizationTurnOrder } from "./summarization-turn-order.ts";
 
 const SUMMARY_TOKEN_HEADROOM = 32_768;
 const SUMMARY_CONTEXT_WINDOW_RESERVE_RATIO = 0.5;
+const COMPACTION_IMAGE_RETRY_PLACEHOLDER =
+	"[Image omitted from this compaction retry after the provider rejected image input.]";
 type CompactionProgressCallback = (delta: string) => void;
+
+function omitImagesForCompactionRetry(messages: Message[]): Message[] {
+	return messages.map((message) => {
+		if (
+			(message.role !== "user" && message.role !== "toolResult" && message.role !== "configurationUpdate") ||
+			!Array.isArray(message.content)
+		) {
+			return message;
+		}
+		if (!message.content.some((block) => block.type === "image")) return message;
+		const content = message.content.map((block) =>
+			block.type === "image" ? { type: "text" as const, text: COMPACTION_IMAGE_RETRY_PLACEHOLDER } : block,
+		);
+		return {
+			...message,
+			content: dedupeConsecutivePlaceholder(content, COMPACTION_IMAGE_RETRY_PLACEHOLDER),
+		};
+	});
+}
 
 function summaryMaxTokens(model: Model<any>, contextWindow: number): number {
 	const headroom = model.maxTokens > 0 ? Math.min(SUMMARY_TOKEN_HEADROOM, model.maxTokens) : SUMMARY_TOKEN_HEADROOM;
@@ -193,6 +214,8 @@ export async function generateSummaryMessage(options: {
 	/** Resolved per-attempt duration budget; falls back to the size-adaptive default. */
 	maxDurationMs?: number;
 	messages: AgentMessage[];
+	/** Replace images after request hooks on the one provider-rejection fallback attempt. */
+	omitImages?: boolean;
 	onProgress?: CompactionProgressCallback;
 	prompt: ReturnType<typeof buildPrompt>;
 	signal?: AbortSignal;
@@ -230,13 +253,16 @@ export async function generateSummaryMessage(options: {
 			options.maxDurationMs ??
 			summarizationMaxDurationMs(estimateSummaryRequestTokens(options.snapshot, options.messages, options.prompt));
 		const providerRequest = await options.context.prepareProviderRequest?.(requestMessages);
+		const convertedMessages = convertToLlm(providerRequest?.messages ?? requestMessages);
 		const requestContext = {
 			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
 			...(options.snapshot.systemPrompt !== undefined && options.snapshot.systemPromptStablePrefix !== undefined
 				? { systemPromptStablePrefix: options.snapshot.systemPromptStablePrefix }
 				: {}),
 			messages: repairOrphanedToolResults(
-				normalizeSummarizationTurnOrder(convertToLlm(providerRequest?.messages ?? requestMessages)),
+				normalizeSummarizationTurnOrder(
+					options.omitImages ? omitImagesForCompactionRetry(convertedMessages) : convertedMessages,
+				),
 			),
 			...(options.snapshot.tools && options.snapshot.tools.length > 0 ? { tools: options.snapshot.tools } : {}),
 		};
