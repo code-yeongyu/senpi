@@ -117,7 +117,12 @@ function renderFailureBox(
 	return component;
 }
 
-export function createApplyPatchTool(variant: "freeform" | "json" = "freeform"): ApplyPatchToolDefinition {
+export type ApplyPatchExecutions = Map<string, ReturnType<ApplyPatchToolDefinition["execute"]>>;
+
+export function createApplyPatchTool(
+	variant: "freeform" | "json" = "freeform",
+	executions?: ApplyPatchExecutions,
+): ApplyPatchToolDefinition {
 	const tool = defineTool<typeof APPLY_PATCH_PARAMS, ApplyPatchToolDetails | undefined, ApplyPatchRenderState>({
 		name: "apply_patch",
 		label: "ApplyPatch",
@@ -132,7 +137,7 @@ export function createApplyPatchTool(variant: "freeform" | "json" = "freeform"):
 		async execute(
 			_toolCallId,
 			params,
-			_signal,
+			signal,
 			onUpdate,
 			ctx,
 		): Promise<AgentToolResult<ApplyPatchToolDetails | undefined>> {
@@ -148,10 +153,20 @@ export function createApplyPatchTool(variant: "freeform" | "json" = "freeform"):
 			const pendingUpdate = await createPendingPatchUpdate(ctx.cwd, normalizedParams.input, initialProgress);
 			onUpdate?.({ content: [{ type: "text", text: pendingUpdate.text }], details: pendingUpdate.details });
 			const preview = pendingUpdate.details?.preview;
-			const result = await applyPatchDetailed(ctx.cwd, normalizedParams.input, async (progress) => {
-				const progressUpdate = await createPendingPatchUpdate(ctx.cwd, normalizedParams.input, progress, preview);
-				onUpdate?.({ content: [{ type: "text", text: progressUpdate.text }], details: progressUpdate.details });
-			});
+			const result = await applyPatchDetailed(
+				ctx.cwd,
+				normalizedParams.input,
+				async (progress) => {
+					const progressUpdate = await createPendingPatchUpdate(
+						ctx.cwd,
+						normalizedParams.input,
+						progress,
+						preview,
+					);
+					onUpdate?.({ content: [{ type: "text", text: progressUpdate.text }], details: progressUpdate.details });
+				},
+				signal,
+			);
 			const resultPreview = appliedPreview(result);
 			const persistedResult = compactApplyPatchResult(result);
 			if (result.failures.length > 0) {
@@ -210,6 +225,16 @@ export function createApplyPatchTool(variant: "freeform" | "json" = "freeform"):
 			return renderTextResult(result, theme);
 		},
 	});
+
+	if (executions) {
+		const execute = tool.execute;
+		tool.execute = (...args) => {
+			const execution = execute(...args);
+			// The abort race may finish first; retain settlement until tool_result consumes it.
+			executions.set(args[0], execution);
+			return execution;
+		};
+	}
 
 	if (variant === "json") return tool;
 	return Object.assign(tool, {
