@@ -50,6 +50,8 @@
 
 ### Fixed
 
+- Fixed cancelled multi-file `apply_patch` calls returning before byte-exact rollback completed, which could leave updates and deletions applied behind a generic abort result ([oh-my-openagent #8246](https://github.com/code-yeongyu/oh-my-openagent/issues/8246)).
+
 - Fixed the goal monitor parking on the ask-user idle-timeout setting instead of the earliest pending question deadline, so a shorter request no longer waits for a longer one; typing in an answer now extends that park without adding continuation prompts ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
 - Fixed shared RPC hosts expiring an old idle window after a short readiness connection, which could remove the Windows named pipe before the client attached (part of #1290).
