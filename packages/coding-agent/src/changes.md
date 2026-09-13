@@ -1,37 +1,5 @@
 # changes
 
-## 2026-09-13 - End provider retry watchdog ownership at recovery
-
-### What changed
-
-- `packages/coding-agent/src/core/provider-timeout-retry.ts` accepts an
-  `isRetryRequestPending` ownership check before its continuation watchdog aborts
-  the active Agent.
-- `packages/coding-agent/src/core/agent-session.ts` reports that ownership from
-  retry-attempt state, which resets when the recovered provider response reaches
-  `message_end`, before any returned local tool executes.
-
-### Why
-
-- A successful timeout retry could return a long-running `eval` tool call while
-  the retry continuation's absolute watchdog remained armed. When the old deadline
-  expired, it aborted the parent Agent after `auto_retry_end { success: true }`,
-  producing `eval ? error`, `Tool execution aborted`, and a stopped session without
-  user input.
-
-### Why an extension could not handle it
-
-- Retry ownership and the parent Agent abort are decided inside AgentSession before
-  extension result hooks can distinguish a recovered provider from a still-wedged
-  retry continuation.
-
-### Expected merge conflict zones
-
-- LOW: the watchdog callback in
-  `packages/coding-agent/src/core/provider-timeout-retry.ts`.
-- LOW: the `runBoundedRetryContinuation()` arguments in
-  `packages/coding-agent/src/core/agent-session.ts`.
-
 ## 2026-09-13 - Centralize standalone provider registration
 
 ### What changed
