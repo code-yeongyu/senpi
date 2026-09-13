@@ -1,0 +1,112 @@
+[
+ {
+  "id": "claude-fable-5-1-high",
+  "name": "Claude Fable 5.1 1M (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ },
+ {
+  "id": "claude-fable-5-1-low",
+  "name": "Claude Fable 5.1 1M Low (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ },
+ {
+  "id": "claude-fable-5-1-max",
+  "name": "Claude Fable 5.1 1M Max (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ },
+ {
+  "id": "claude-fable-5-1-medium",
+  "name": "Claude Fable 5.1 1M Medium (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ },
+ {
+  "id": "claude-fable-5-1-thinking-high",
+  "name": "Claude Fable 5.1 1M Thinking (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ },
+ {
+  "id": "claude-fable-5-1-thinking-low",
+  "name": "Claude Fable 5.1 1M Low Thinking (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ },
+ {
+  "id": "claude-fable-5-1-thinking-max",
+  "name": "Claude Fable 5.1 1M Max Thinking (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ },
+ {
+  "id": "claude-fable-5-1-thinking-medium",
+  "name": "Claude Fable 5.1 1M Medium Thinking (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ },
+ {
+  "id": "claude-fable-5-1-thinking-xhigh",
+  "name": "Claude Fable 5.1 1M Extra High Thinking (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ },
+ {
+  "id": "claude-fable-5-1-xhigh",
+  "name": "Claude Fable 5.1 1M Extra High (NO ZDR)",
+  "reasoning": false,
+  "contextWindow": 1000000,
+  "cursorMaxMode": false,
+  "input": [
+   "text",
+   "image"
+  ]
+ }
+]

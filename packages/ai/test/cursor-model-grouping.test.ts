@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeCursorCatalog, parseCursorVariantId } from "../src/cursor/catalog-grouping.ts";
 import { getCursorVariantAlias } from "../src/cursor/model-capabilities.ts";
 import fixture from "./fixtures/cursor-usable-models-20260818.json" with { type: "json" };
+import fable51Fixture from "./fixtures/cursor-usable-models-claude-fable-5-1-20260911.json" with { type: "json" };
 
 const ALL_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
@@ -111,6 +112,43 @@ describe("normalizeCursorCatalog (golden 204-id live fixture)", () => {
 		expect(fable?.legacyAliases).toContain("claude-fable-5-thinking-xhigh");
 		expect(fable?.legacyAliases).toContain("claude-fable-5-thinking-low");
 		expect(fable?.legacyAliases).not.toContain("claude-fable-5-low");
+	});
+});
+
+describe("normalizeCursorCatalog (claude-fable-5-1 live capture, 2026-09-11)", () => {
+	function normalizedFable51() {
+		return normalizeCursorCatalog(
+			fable51Fixture.map((entry) => ({
+				id: entry.id,
+				name: entry.name,
+				input: entry.input as ("text" | "image")[],
+				cursorMaxMode: entry.cursorMaxMode,
+			})),
+		);
+	}
+
+	it("collapses the ten raw variants into a plain and a thinking identity", () => {
+		const out = normalizedFable51();
+		expect(out.map((entry) => entry.id).sort()).toEqual(["claude-fable-5-1", "claude-fable-5-1-thinking"]);
+		const plain = out.find((entry) => entry.id === "claude-fable-5-1");
+		const thinking = out.find((entry) => entry.id === "claude-fable-5-1-thinking");
+		expect(plain?.thinkingMode).toBe(false);
+		expect(thinking?.thinkingMode).toBe(true);
+		for (const identity of [plain, thinking]) {
+			expect(identity?.reasoning).toBe(true);
+			expect(identity?.capabilityId).toBe("claude-fable-5-1");
+			for (const level of ["low", "medium", "high", "xhigh", "max"] as const) {
+				expect(identity?.thinkingLevelMap?.[level], `${identity?.id} ${level}`).toBe(level);
+			}
+		}
+	});
+
+	it("advertises the 1M window instead of the 200k unknown-family fallback", () => {
+		for (const entry of normalizedFable51()) {
+			expect(entry.window, entry.id).toBe(1000000);
+			expect(entry.maxWindow, entry.id).toBe(1000000);
+			expect(entry.name, entry.id).toContain("1M");
+		}
 	});
 });
 
