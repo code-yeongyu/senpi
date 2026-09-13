@@ -1,5 +1,39 @@
 # changes
 
+## Transactional cancellation rollback (2026-09-13)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/apply.ts`,
+  `apply-operation.ts`, and `transaction.ts` run registered-tool cancellations
+  under one affected-path reservation and restore every original file or symlink
+  from a byte-exact snapshot before the result can settle.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/tool.ts` and
+  `extension.ts` track each registered execution until the awaited `tool_result`
+  hook observes settlement, so the agent loop's generic abort race cannot publish
+  a final result while rollback is still running.
+- Direct `applyPatchDetailed()` calls without an `AbortSignal` retain the existing
+  partial-failure contract.
+
+### Why
+
+- A cancelled multi-file patch could return `Tool execution aborted` after earlier
+  updates and deletions had already changed the workspace. The abandoned execution
+  then continued applying later operations, and CRLF source bytes were not recoverable
+  from normalized text.
+
+### Why an extension could not handle it
+
+- The builtin owns patch parsing, mutation ordering, previews, and the final
+  `tool_result` hook. Rollback must hold the same core mutation queues as edit and
+  write operations; an external extension only sees the result after those writes.
+
+### Expected merge conflict zones
+
+- MEDIUM: operation orchestration in `apply.ts` and the execution wrapper in `tool.ts`.
+- LOW: the instance-local settlement registry in `extension.ts`.
+- NONE: new fork-owned `apply-operation.ts` and `transaction.ts`.
+
 ## Binary-safe patch previews (2026-08-05)
 
 ### What changed
