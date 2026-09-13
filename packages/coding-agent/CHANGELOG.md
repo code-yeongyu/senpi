@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed a recovered provider-timeout retry aborting a long-running local tool when the old retry-continuation watchdog expired, which could stop the session with `Tool execution aborted` after the provider had already succeeded.
+
 ### Removed
 
 ## [2026.9.13-2] - 2026-09-13

@@ -1,9 +1,12 @@
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
 	EventStream,
 	fauxAssistantMessage,
+	fauxToolCall,
 } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -111,6 +114,99 @@ describe("provider idle recovery", () => {
 			undefined,
 			undefined,
 		]);
+	});
+
+	// The screenshot showed foreground eval aborting without any further user input.
+	// Its 276.3s duration is compatible with a leftover continuation deadline, not
+	// an eval hard limit: provider recovery must stop that timer before local work.
+	it("does not abort a recovered retry's long-running tool before provider call 3 receives its result", async () => {
+		vi.useFakeTimers();
+		const retryTimeoutMs = 120_000;
+		const toolDurationMs = 276_300;
+		const toolEntered = createDeferred();
+		const releaseTool = createDeferred();
+		let toolSignal: AbortSignal | undefined;
+		const toolResult = { content: [{ type: "text" as const, text: "local-eval-result" }], details: {} };
+		const tool: AgentTool = {
+			name: "eval",
+			label: "Eval",
+			description: "Run deferred local work",
+			parameters: Type.Object({}),
+			async execute(_toolCallId, _params, signal) {
+				toolSignal = signal;
+				toolEntered.resolve();
+				await releaseTool.promise;
+				return toolResult;
+			},
+		};
+		const harness = await createHarness({
+			tools: [tool],
+			settings: {
+				retry: {
+					enabled: true,
+					modelFallback: false,
+					maxRetries: 1,
+					baseDelayMs: 0,
+					provider: { streamRetryTimeoutMs: retryTimeoutMs },
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.agent.timeoutMs = DEFAULT_PROVIDER_IDLE_TIMEOUT_MS;
+		harness.agent.streamStartTimeoutMs = DEFAULT_STREAM_START_TIMEOUT_MS;
+		harness.setResponses([
+			idleTimeoutError(),
+			fauxAssistantMessage(fauxToolCall("eval", {}, { id: "recovered-eval" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("completed"),
+		]);
+		const retryStarted = createDeferred();
+		const unsubscribe = harness.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") retryStarted.resolve();
+		});
+
+		const prompt = harness.session.prompt("run the local evaluation");
+		try {
+			await retryStarted.promise;
+			await vi.advanceTimersByTimeAsync(0);
+			await toolEntered.promise;
+			const parentSignal = harness.agent.signal;
+			expect(parentSignal).toBeDefined();
+			expect(toolSignal).toBe(parentSignal);
+			expect(harness.eventsOfType("auto_retry_end")).toMatchObject([{ success: true, attempt: 1 }]);
+			expect(harness.faux.getCallLog()).toHaveLength(2);
+			const settledWork = harness.session.waitForSettledSessionWork();
+
+			await vi.advanceTimersByTimeAsync(retryTimeoutMs - 1);
+			expect(parentSignal?.aborted).toBe(false);
+			expect(harness.eventsOfType("tool_execution_end")).toHaveLength(0);
+			await vi.advanceTimersByTimeAsync(2);
+			expect.soft(parentSignal?.aborted, "recovered provider watchdog must not abort the parent Agent").toBe(false);
+
+			await vi.advanceTimersByTimeAsync(toolDurationMs - retryTimeoutMs - 1);
+			releaseTool.resolve();
+			await settledWork;
+			await prompt;
+
+			const calls = harness.faux.getCallLog();
+			expect(calls, "tool result must reach provider call 3 without another user prompt").toHaveLength(3);
+			expect(calls[2].context.messages).toContainEqual(
+				expect.objectContaining({
+					role: "toolResult",
+					toolCallId: "recovered-eval",
+					isError: false,
+					content: toolResult.content,
+				}),
+			);
+			expect(parentSignal?.aborted).toBe(false);
+			expect(harness.session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop" });
+			expect(harness.session.isStreaming).toBe(false);
+		} finally {
+			unsubscribe();
+			releaseTool.resolve();
+			if (harness.session.isStreaming) await harness.session.abort();
+			await prompt;
+			await harness.session.waitForSettledSessionWork();
+		}
 	});
 
 	it("bounds a hung retry continuation after a provider transport timeout", async () => {
