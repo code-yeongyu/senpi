@@ -39,6 +39,7 @@ function reconcileWatchdogTimeoutMs(
 export interface BoundedRetryContinuation {
 	continueRun(): Promise<void>;
 	getActiveSignal(): AbortSignal | undefined;
+	isRetryRequestPending?(): boolean;
 	abortActive(): void;
 	timeoutMs: number | undefined;
 }
@@ -76,6 +77,7 @@ export function createProviderTimeoutRetryPlan({
 export async function runBoundedRetryContinuation({
 	continueRun,
 	getActiveSignal,
+	isRetryRequestPending,
 	abortActive,
 	timeoutMs,
 }: BoundedRetryContinuation): Promise<void> {
@@ -87,7 +89,7 @@ export async function runBoundedRetryContinuation({
 	}
 
 	const timer = setTimeout(() => {
-		if (getActiveSignal() === ownedSignal) {
+		if (getActiveSignal() === ownedSignal && (isRetryRequestPending?.() ?? true)) {
 			abortActive();
 		}
 	}, timeoutMs);

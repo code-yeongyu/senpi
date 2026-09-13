@@ -6844,6 +6844,7 @@ export class AgentSession {
 					}
 				},
 				getActiveSignal: () => this.agent.signal,
+				isRetryRequestPending: () => this._retryAttempt > 0,
 				abortActive: () =>
 					this.agent.abort(
 						new ProviderRetryWatchdogAbortError(
