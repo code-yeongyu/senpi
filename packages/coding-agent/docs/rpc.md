@@ -172,6 +172,9 @@ Environment overrides beat the file, and invalid values fall through to the next
 (`transient`|`persistent`) and `SENPI_RPC_HOST_IDLE_EXIT_MS` (positive integer milliseconds).
 
 The host exits only after the window elapses with NO attached client connections and NO active turns — continuously.
+Authenticated connection and disconnection events update the idle clock immediately, including readiness probes that
+fit entirely between timer ticks. Rejected authentication does not reset it. A readiness response is not a lease:
+a caller that waits a full idle window before attaching may need to call `ensureHost()` again.
 Any connection or agent turn resets the window, so a busy host never exits, and the exit itself is clean: the RPC host
 receives SIGTERM first, flushes pending output, removes its socket, and the supervisor then removes `host.pid` and
 `settings.json` (the stderr log stays for diagnostics). After an idle exit, the next `ensureHost()` transparently

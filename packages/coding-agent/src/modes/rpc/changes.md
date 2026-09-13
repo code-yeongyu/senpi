@@ -36,6 +36,26 @@
 
 - `packages/coding-agent/src/modes/rpc/session-worker.ts` startup imports and initialization before `parentPort` message subscription.
 
+## 2026-09-13 - Preserve short readiness activity between supervisor idle ticks (#1656)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` delegates the authenticated public proxy to `packages/coding-agent/src/modes/rpc/host-client-proxy.ts` and updates its idle decider on connection edges, not only timer ticks.
+- The extracted proxy reports successful attachment and the first detachment; rejected authentication does not count as activity. Idle policy values and the readiness protocol are unchanged.
+- The lifecycle suite registers real-socket, controlled-clock regressions covering reconnect before expiry, exact idle expiry, and rejected authentication.
+
+### Why
+
+- A readiness connection could open and close between ticks. The next tick then treated time containing that connection as continuously idle, removed the Windows named pipe, and left the attaching client with `connect ENOENT`.
+
+### Why an extension could not handle it
+
+- The detached lifecycle supervisor owns the public listener and idle clock before any session extension runs.
+
+### Expected merge conflict zones
+
+- The public proxy construction in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, its extracted implementation in `packages/coding-agent/src/modes/rpc/host-client-proxy.ts`, and the lifecycle test registration.
+
 ## 2026-09-12 - Queued RPC input carries its source to extension `input` handlers
 
 ### What changed

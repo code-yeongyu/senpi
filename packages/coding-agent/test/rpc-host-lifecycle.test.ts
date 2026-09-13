@@ -25,7 +25,6 @@ import {
 	findInternalSupervisorArgs,
 	HOST_COLD_START_ENV,
 	HOST_IDLE_EXIT_MS_ENV,
-	IdleExitDecider,
 	INTERNAL_SUPERVISOR_FLAG,
 	resolveHostChildLaunch,
 	resolveHostPolicy,
@@ -46,7 +45,10 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "../src/modes/rpc/socket-transport.ts";
+import { registerIdleProxyTests } from "./helpers/lifecycle-idle-proxy.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
+
+registerIdleProxyTests();
 
 const roots: string[] = [];
 const peers: JsonlPeer[] = [];
@@ -113,49 +115,6 @@ describe("host lifecycle policy resolution", () => {
 			coldStart: "transient",
 			idleExitMs: DEFAULT_HOST_IDLE_EXIT_MS,
 		});
-	});
-});
-
-describe("idle exit decision core", () => {
-	function fakeClock(start: number): { now: () => number; advance: (ms: number) => void } {
-		let current = start;
-		return { now: () => current, advance: (ms: number) => (current += ms) };
-	}
-
-	it("exits only after the window elapsed with continuous idle", () => {
-		const clock = fakeClock(1_000);
-		const decider = new IdleExitDecider(600, clock.now);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
-		clock.advance(599);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
-		clock.advance(1);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("exit");
-	});
-
-	it("activity resets the window; a connection or turn holds the host open", () => {
-		const clock = fakeClock(0);
-		const decider = new IdleExitDecider(600, clock.now);
-		decider.update({ connections: 0, activeTurns: 0 });
-		clock.advance(500);
-		expect(decider.update({ connections: 1, activeTurns: 0 })).toBe("active");
-		clock.advance(60_000);
-		expect(decider.update({ connections: 1, activeTurns: 0 })).toBe("active");
-		expect(decider.update({ connections: 0, activeTurns: 2 })).toBe("active");
-		clock.advance(60_000);
-		expect(decider.update({ connections: 0, activeTurns: 2 })).toBe("active");
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
-		clock.advance(599);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
-		clock.advance(1);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("exit");
-	});
-
-	it("an infinite window (persistent cold start) never exits", () => {
-		const clock = fakeClock(0);
-		const decider = new IdleExitDecider(Number.POSITIVE_INFINITY, clock.now);
-		decider.update({ connections: 0, activeTurns: 0 });
-		clock.advance(Number.MAX_SAFE_INTEGER);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
 	});
 });
 

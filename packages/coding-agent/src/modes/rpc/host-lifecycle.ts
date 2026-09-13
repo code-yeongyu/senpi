@@ -41,12 +41,13 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { realpathSync, writeSync } from "node:fs";
 import { access, chmod, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
-import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { createConnection, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, isBunBinary } from "../../config.ts";
 import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
+import { createHostClientProxy } from "./host-client-proxy.ts";
 import { createHostDaemonPaths } from "./host-ensure.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
@@ -65,7 +66,6 @@ import {
 	writeSocketIdentityFile,
 } from "./socket-ownership.ts";
 import {
-	authenticateSocket,
 	createSocketSecret,
 	ensureSocketSecret,
 	resolveSocketTransportAddress,
@@ -437,36 +437,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		void shutdown(reason, exitCode);
 	});
 
-	const server = createServer((client) => {
-		const accept = (): void => {
-			if (shuttingDown) {
-				client.destroy();
-				return;
-			}
-			const internal = createConnection(
-				resolveSocketTransportAddress(internalSocket, process.platform, internalSecret),
-			);
-			if (internalSecret) sendSocketHandshake(internal, internalSecret);
-			clientSockets.add(client);
-			// A readiness exchange can begin and end between ticks. Record the
-			// attachment now, before a later tick can reuse the preceding idle window.
-			decider.update(currentActivity());
-			const detach = (): void => {
-				clientSockets.delete(client);
-				decider.update(currentActivity());
-				internal.destroy();
-				client.destroy();
-			};
-			client.pipe(internal);
-			internal.pipe(client);
-			client.once("close", detach);
-			client.once("error", detach);
-			internal.once("close", detach);
-			internal.once("error", detach);
-		};
-		if (publicSecret) authenticateSocket(client, publicSecret, accept);
-		else accept();
-	});
+	const server = createHostClientProxy(
+		{ publicSecret, internalSocket, internalSecret },
+		{
+			clients: clientSockets,
+			isShuttingDown: () => shuttingDown,
+			onActivity: () => decider.update(currentActivity()),
+		},
+	);
 	server.once("error", (cause) => {
 		if (!shuttingDown) void shutdown(`public socket listener failed: ${errorMessage(cause)}`, 1);
 	});
