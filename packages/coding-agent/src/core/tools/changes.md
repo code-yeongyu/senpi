@@ -1,5 +1,31 @@
 # core/tools changes
 
+## Multi-file mutation queue reservations (2026-09-13)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/file-mutation-queue.ts` adds
+  `withFileMutationQueues()`, which resolves every path to the existing canonical
+  identity, deduplicates aliases, and reserves all identities before running one
+  mutation transaction.
+
+### Why
+
+- Transactional `apply_patch` rollback must keep every affected path isolated until
+  restoration finishes. Nesting the single-file helper deadlocks when two patch
+  paths are case or symlink aliases of the same file.
+
+### Why an extension could not handle it
+
+- Edit, write, and builtin extension mutations share this core queue. Only the queue
+  owner can atomically reserve canonical identities without duplicating its bounded
+  realpath and case-folding contract.
+
+### Expected merge conflict zones
+
+- LOW: queue registration and release in
+  `packages/coding-agent/src/core/tools/file-mutation-queue.ts`.
+
 ## Session cwd and goal-store environment keys (2026-09-13)
 
 ### What changed

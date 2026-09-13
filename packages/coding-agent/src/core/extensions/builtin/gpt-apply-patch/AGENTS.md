@@ -17,7 +17,9 @@ gpt-apply-patch/
 ├── patch-diff.ts       # Diff/hunk math on top of the npm `diff` package
 ├── patch-replace.ts    # Replace algorithms (anchor matching, seek fallback)
 ├── seek-sequence.ts    # Strict context-line seek with N-line tolerance
-├── apply.ts            # Apply parsed patch to workspace
+├── apply.ts            # Parse/orchestrate patch results and cancellation
+├── apply-operation.ts  # Apply one add/update/delete/move operation
+├── transaction.ts      # Multi-path byte snapshots and abort rollback
 ├── workspace.ts        # File I/O + path normalization for patches
 ├── preview.ts          # Preview before apply (used by permission-system parser)
 ├── preview-format.ts   # Render preview as TUI nodes (opencode-style diff)
@@ -33,6 +35,7 @@ gpt-apply-patch/
 |------|------|
 | Fix a parse error from a real GPT output | `parser.ts` — add a regression test in `test/suite/gpt-apply-patch-extension.test.ts` |
 | Improve strict-seek tolerance | `seek-sequence.ts` |
+| Change cancellation or rollback | `transaction.ts` + `apply.ts` |
 | Change render | `preview-format.ts` + `streaming-render.ts` |
 | Add a new file op (e.g. `*** Rename File:`) | `types.ts` + `parser.ts` + `apply.ts` |
 | Adjust which models opt in | `extension.ts` — `APPLY_PATCH_FREEFORM_APIS` + `gpt-` id prefix in `isOpenAIGptModel()` |

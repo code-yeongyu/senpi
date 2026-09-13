@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEditTool } from "../src/core/tools/edit.ts";
-import { withFileMutationQueue } from "../src/core/tools/file-mutation-queue.ts";
+import { withFileMutationQueue, withFileMutationQueues } from "../src/core/tools/file-mutation-queue.ts";
 import { createWriteTool } from "../src/core/tools/write.ts";
 
 function delay(ms: number): Promise<void> {
@@ -106,6 +106,21 @@ describe("withFileMutationQueue", () => {
 		]);
 
 		expect(order).toEqual(["target:start", "target:end", "alias:start", "alias:end"]);
+	});
+
+	it("deduplicates symlink aliases within one multi-file reservation", async () => {
+		const dir = await createTempDir();
+		const targetPath = join(dir, "target.txt");
+		const symlinkPath = join(dir, "alias.txt");
+		await writeFile(targetPath, "hello\n", "utf8");
+		await symlink(targetPath, symlinkPath);
+
+		let calls = 0;
+		await withFileMutationQueues([targetPath, symlinkPath], async () => {
+			calls += 1;
+		});
+
+		expect(calls).toBe(1);
 	});
 });
 

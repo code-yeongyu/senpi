@@ -22,7 +22,7 @@ let registrationQueue = Promise.resolve();
 async function getMutationQueueKey(filePath: string): Promise<string> {
 	const resolvedPath = resolve(filePath);
 	const canonicalPath = await withResolutionDeadline(realpath(resolvedPath)).catch((error: unknown) => {
-		if (isMissingPathError(error)) return resolvedPath;
+		if (isMissingPathError(error)) return realpathWithoutOpenStrict(resolvedPath);
 		throw error;
 	});
 	const identity = canonicalPath === RESOLUTION_TIMED_OUT ? realpathWithoutOpenStrict(resolvedPath) : canonicalPath;
@@ -34,32 +34,37 @@ async function getMutationQueueKey(filePath: string): Promise<string> {
  * Operations for different files still run in parallel.
  */
 export async function withFileMutationQueue<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+	return withFileMutationQueues([filePath], fn);
+}
+
+/** Reserve all canonical identities together, without nesting queues for aliases of one file. */
+export async function withFileMutationQueues<T>(filePaths: readonly string[], fn: () => Promise<T>): Promise<T> {
 	const registration = registrationQueue.then(async () => {
-		const key = await getMutationQueueKey(filePath);
-		const currentQueue = fileMutationQueues.get(key) ?? Promise.resolve();
+		const keys = [...new Set(await Promise.all(filePaths.map(getMutationQueueKey)))];
+		const currentQueue = Promise.all(keys.map((key) => fileMutationQueues.get(key))).then(() => undefined);
 
 		let releaseNext!: () => void;
 		const nextQueue = new Promise<void>((resolveQueue) => {
 			releaseNext = resolveQueue;
 		});
 		const chainedQueue = currentQueue.then(() => nextQueue);
-		fileMutationQueues.set(key, chainedQueue);
+		for (const key of keys) fileMutationQueues.set(key, chainedQueue);
 
-		return { key, currentQueue, chainedQueue, releaseNext };
+		return { keys, currentQueue, chainedQueue, releaseNext };
 	});
 	registrationQueue = registration.then(
 		() => undefined,
 		() => undefined,
 	);
 
-	const { key, currentQueue, chainedQueue, releaseNext } = await registration;
+	const { keys, currentQueue, chainedQueue, releaseNext } = await registration;
 	await currentQueue;
 	try {
 		return await fn();
 	} finally {
 		releaseNext();
-		if (fileMutationQueues.get(key) === chainedQueue) {
-			fileMutationQueues.delete(key);
+		for (const key of keys) {
+			if (fileMutationQueues.get(key) === chainedQueue) fileMutationQueues.delete(key);
 		}
 	}
 }
