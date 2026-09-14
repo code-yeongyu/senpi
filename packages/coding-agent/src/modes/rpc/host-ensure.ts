@@ -163,6 +163,9 @@ export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHos
 		try {
 			await releaseOwnershipLock(release, () => result?.readinessLease?.isRetained() ?? false);
 		} finally {
+			// The outer ensure scope owns the successful readiness connection. Release
+			// it only after the endpoint lock has committed and closed, immediately
+			// before the function settles, including when lock release itself fails.
 			result?.readinessLease?.release();
 		}
 	}
@@ -297,14 +300,10 @@ async function startHost(
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, childExit);
 	if (isCompatible(result.protocol)) {
-		try {
-			return {
-				host: { pid: pidFile.pid, socket, reused: false },
-				readinessLease: result.readinessLease,
-			};
-		} finally {
-			result.readinessLease?.release();
-		}
+		return {
+			host: { pid: pidFile.pid, socket, reused: false },
+			readinessLease: result.readinessLease,
+		};
 	}
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop
 	// failure here (unreadable identity, a host that outlives SIGKILL) would other-

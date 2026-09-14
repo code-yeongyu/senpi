@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- Fixed newly spawned shared RPC hosts consuming their entire idle window in post-readiness filesystem work before `ensureHost()` returned. The authenticated readiness connection now stays attached through the handoff, giving the first real client a complete idle window to attach (Refs #1656).
+- Fixed newly spawned shared RPC hosts consuming their entire idle window in post-readiness filesystem work before `ensureHost()` returned. The authenticated readiness connection now stays attached through the endpoint lock commit and final handoff, giving the first real client a complete idle window to attach (Refs #1656).
 
 - Fixed Enter on multi-select question options to toggle the highlighted choice without advancing, including option 1; empty own-answer commits preserve selections, and hints direct users to Tab and Submit when done (#8249).
 
@@ -64,7 +64,6 @@
 
 - Fixed shared RPC hosts expiring an old idle window after a short readiness connection, which could remove the Windows named pipe before the client attached (part of #1290).
 - Fixed missing Bedrock, Cursor, and Devin implementations in relocated standalone binaries by registering bundled modules in both the launcher and shared-session workers ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
-- Fixed the shared RPC host missing readiness connections between idle checks, which could close its Windows named pipe before the next client attached. Authenticated connection edges now reset the idle window immediately (Refs #1656).
 
 - Fixed the ask-user question dialog carrying a committed own-answer into the next question: after answering a question with typed text, the next question's editor no longer shows the previous answer's text and pressing Enter again no longer submits it as the next question's own answer.
 - Fixed the remaining focus traps in the ask-user question dialog: committing an own answer now lands on the next question's option list instead of leaving the editor open; Up/Down, Tab/Shift+Tab and Backspace-on-empty leave the own-answer editor (Left/Right move its cursor); the Submit tab's review rows are navigable (Up from the comment highlights the last answer, Enter on a row jumps back to that question, Left/Right move the comment cursor once it has text); Backspace on the option list clears the answer instead of opening the editor; Esc inside the own-answer editor of an async question returns to the options instead of collapsing it; and re-expanding an async question restores its draft answers and comment.

@@ -4,8 +4,8 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/host-ensure.ts` retains the successful authenticated readiness-probe connection through post-probe ownership and state work, releasing it only as `ensureHost()` returns.
-- `packages/coding-agent/test/rpc-host-lifecycle.test.ts` forces post-readiness work beyond a complete idle window and verifies that the returned host still accepts and holds a real client.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` transfers the successful authenticated readiness-probe connection to the outer ensure scope, retains it through the endpoint lock's real commit and close, and releases it in final cleanup immediately before `ensureHost()` settles.
+- `packages/coding-agent/test/rpc-host-lifecycle.test.ts` wraps the real ownership-lock release, records readiness ownership before and after its commit, verifies a protocol exchange after handoff, and proves the transient host still idle-exits after that client detaches without a scheduling delay.
 - `packages/coding-agent/docs/rpc.md` documents the full idle-window handoff guarantee for newly spawned hosts.
 
 ### Why
@@ -18,7 +18,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: the spawned-host readiness result and probe socket lifetime in `packages/coding-agent/src/modes/rpc/host-ensure.ts`.
+- LOW: the spawned-host readiness result, outer endpoint-lock cleanup, and probe socket lifetime in `packages/coding-agent/src/modes/rpc/host-ensure.ts`.
 
 ## 2026-09-13 - Reset supervisor idle time at occupancy transitions (#1290)
 
