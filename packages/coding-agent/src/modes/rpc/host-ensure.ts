@@ -66,7 +66,7 @@ export interface EnsureHostOptions {
 		 * to stall the real process-identity probe.
 		 */
 		readonly beforePidFileWrite?: () => Promise<void>;
-		/** Runs after a successful readiness probe but before ensureHost returns. */
+		/** Runs while the successful readiness connection is retained, before ensureHost returns. */
 		readonly afterReadiness?: () => Promise<void>;
 		/** Overrides the process-identity probe so a test can force its failure. */
 		readonly readProcessStartTime?: (pid: number) => Promise<string | undefined>;
@@ -155,7 +155,7 @@ async function ensureHostLocked(
 	testOptions: EnsureHostOptions["_test"],
 ): Promise<EnsuredHost> {
 	const pidFile = await readPidFile(paths);
-	const protocol = await probeProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	const { protocol } = await probeProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	if (isCompatible(protocol)) {
 		// A compatible socket is attachable even when another client surface
 		// started it. Only hosts we spawned are eligible for lifecycle management.
@@ -274,10 +274,17 @@ async function startHost(
 		await stderr.close();
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
+	// Keep the authenticated readiness connection attached through every remaining
+	// ensure step. Releasing it at the return boundary resets the supervisor's idle
+	// clock there, so slow lock/state I/O cannot consume the caller's attach window.
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, childExit);
 	if (isCompatible(result.protocol)) {
-		await testOptions?.afterReadiness?.();
-		return { pid: pidFile.pid, socket, reused: false };
+		try {
+			await testOptions?.afterReadiness?.();
+			return { pid: pidFile.pid, socket, reused: false };
+		} finally {
+			result.release?.();
+		}
 	}
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop
 	// failure here (unreadable identity, a host that outlives SIGKILL) would other-
@@ -410,7 +417,16 @@ async function waitForGone(
 
 type ChildExit = { readonly code: number | null; readonly signal: NodeJS.Signals | null };
 
-type ProtocolPollResult = { readonly protocol?: ProtocolInfo; readonly exited?: ChildExit };
+type ProtocolPollResult = {
+	readonly protocol?: ProtocolInfo;
+	readonly exited?: ChildExit;
+	readonly release?: () => void;
+};
+
+type ProtocolProbeResult = {
+	readonly protocol?: ProtocolInfo;
+	readonly release?: () => void;
+};
 
 async function pollProtocolInfo(
 	socket: string,
@@ -423,6 +439,7 @@ async function pollProtocolInfo(
 		const probe = probeProtocolInfo(
 			socket,
 			Math.min(SPAWNED_HOST_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
+			true,
 		);
 		const raced = childExit ? await Promise.race([probe, childExit]) : await probe;
 		if (isChildExit(raced)) {
@@ -432,32 +449,36 @@ async function pollProtocolInfo(
 			// had a chance to deliver an answer. A host that never answers still
 			// resolves through probeProtocolInfo's bounded timeout/close handling.
 			const info = await probe;
-			if (info) {
-				lastProtocol = info;
-				if (isCompatible(info)) return { protocol: info };
+			if (info.protocol) {
+				lastProtocol = info.protocol;
+				if (isCompatible(info.protocol)) return info;
 			} else {
 				return { protocol: lastProtocol, exited: raced };
 			}
-		} else if (raced) {
-			lastProtocol = raced;
-			if (isCompatible(raced)) return { protocol: raced };
+		} else if (raced.protocol) {
+			lastProtocol = raced.protocol;
+			if (isCompatible(raced.protocol)) return raced;
 		}
 		await delay(50);
 	}
 	return { protocol: lastProtocol };
 }
 
-function isChildExit(value: ProtocolInfo | ChildExit | undefined): value is ChildExit {
-	return !!value && "code" in value && "signal" in value;
+function isChildExit(value: ProtocolProbeResult | ChildExit): value is ChildExit {
+	return "code" in value && "signal" in value;
 }
 
-async function probeProtocolInfo(socketPath: string, timeoutMs: number): Promise<ProtocolInfo | undefined> {
+async function probeProtocolInfo(
+	socketPath: string,
+	timeoutMs: number,
+	retainCompatibleConnection = false,
+): Promise<ProtocolProbeResult> {
 	let secret: Buffer | undefined;
 	if (process.platform === "win32") {
 		try {
 			secret = await readSocketSecret(socketSecretPath(socketPath));
 		} catch {
-			return undefined;
+			return {};
 		}
 	}
 	return new Promise((resolveProbe) => {
@@ -468,8 +489,12 @@ async function probeProtocolInfo(socketPath: string, timeoutMs: number): Promise
 			if (settled) return;
 			settled = true;
 			clearTimeout(timeout);
+			if (retainCompatibleConnection && isCompatible(value)) {
+				resolveProbe({ protocol: value, release: () => socket.destroy() });
+				return;
+			}
 			socket.destroy();
-			resolveProbe(value);
+			resolveProbe({ protocol: value });
 		};
 		const timeout = setTimeout(() => finish(), timeoutMs);
 		socket.once("connect", () => {

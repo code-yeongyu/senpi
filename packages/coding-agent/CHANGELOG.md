@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Fixed newly spawned shared RPC hosts consuming their entire idle window in post-readiness filesystem work before `ensureHost()` returned. The authenticated readiness connection now stays attached through the handoff, giving the first real client a complete idle window to attach (Refs #1656).
 - Fixed shared RPC hosts expiring an old idle window after a short readiness connection, which could remove the Windows named pipe before the client attached (part of #1290).
 - Fixed missing Bedrock, Cursor, and Devin implementations in relocated standalone binaries by registering bundled modules in both the launcher and shared-session workers ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
 - Fixed the shared RPC host missing readiness connections between idle checks, which could close its Windows named pipe before the next client attached. Authenticated connection edges now reset the idle window immediately (Refs #1656).

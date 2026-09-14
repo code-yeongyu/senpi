@@ -180,6 +180,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 		const qa = scratch("conn");
 		await ensureLifecycleHost(qa, {
 			policy: { idleExitMs: 600 },
+			// Given: post-probe ensure work takes longer than a complete idle window.
 			afterReadiness: () => delay(800),
 		});
 		const entry = currentManaged();
@@ -686,11 +687,7 @@ async function ensureLifecycleHost(
 	}
 }
 
-/**
- * The transient supervisor can idle-exit between answering the handshake and
- * ensureHost returning, so the pidfile may already be gone; the returned pid is
- * still the identity every later liveness/exit probe needs.
- */
+/** The returned pid remains the fallback identity if shutdown removes the pidfile. */
 async function recordedPidFile(pidFilePath: string, pid: number): Promise<{ pid: number; processStartTime: string }> {
 	try {
 		return JSON.parse(await readFile(pidFilePath, "utf8")) as { pid: number; processStartTime: string };

@@ -1,5 +1,25 @@
 # changes
 
+## 2026-09-14 - Retain readiness through the ensure handoff (#1656)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` retains the successful authenticated readiness-probe connection through post-probe ownership and state work, releasing it only as `ensureHost()` returns.
+- `packages/coding-agent/test/rpc-host-lifecycle.test.ts` forces post-readiness work beyond a complete idle window and verifies that the returned host still accepts and holds a real client.
+- `packages/coding-agent/docs/rpc.md` documents the full idle-window handoff guarantee for newly spawned hosts.
+
+### Why
+
+- On a loaded Windows runner, lock release and state writes after the readiness probe detached could outlast the transient host's idle window. The supervisor then removed the named pipe before `ensureHost()` returned, so the first real client received `connect ENOENT`.
+
+### Why an extension could not handle it
+
+- `ensureHost()` owns the readiness connection and returns before any session extension can observe or influence the client handoff.
+
+### Expected merge conflict zones
+
+- LOW: the spawned-host readiness result and probe socket lifetime in `packages/coding-agent/src/modes/rpc/host-ensure.ts`.
+
 ## 2026-09-13 - Reset supervisor idle time at occupancy transitions (#1290)
 
 ### What changed
