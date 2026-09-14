@@ -62,6 +62,24 @@
 
 - Payload copying in `scripts/copy-codemode-sidecar.mjs`, RPC validation in `scripts/smoke-standalone-binary.mjs`, and compile flags in `scripts/build-binaries.sh`.
 
+## 2026-09-14 - Exclude sourcemaps from unhoisted publish dependencies
+
+### What changed
+
+- `scripts/prepare-senpi-publish-manifest.mjs` removes sourcemap files from the final staged dependency tree, including packages npm installed directly under coding-agent before workspace copying.
+
+### Why
+
+- `scripts/prepare-senpi-publish-manifest.mjs` selects every portable installed package for bundling. Tree-copy filters alone missed 44 maps in the unhoisted diff and http-proxy-agent packages, so the final manifest boundary also enforces the zero-map contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/prepare-senpi-publish-manifest.mjs` defines the tarball's installed dependency set before runtime extensions execute.
+
+### Expected merge conflict zones
+
+- Final staged-tree traversal in `scripts/prepare-senpi-publish-manifest.mjs`, after platform exclusions and before manifest serialization.
+
 ## 2026-09-14 - Align dependency gates and omit publish-only sourcemaps
 
 ### What changed
