@@ -7,6 +7,7 @@
  *   /askq wait=true                 blocking call, result returns as the tool result
  *   /askq wait=false                async call, answer arrives later as a user message
  *   /askq wait=true n=1 label=step1 one question only, tagged in the fixture log
+ *   /askq wait=false n=1 header=Alpha q="Choose a database" overrides the first question
  *
  * The command dispatches `pi.executeTool` and returns immediately, so the RPC
  * `prompt` response never waits on the user. Every call, tool result and failure
@@ -62,19 +63,26 @@ interface FixtureArgs {
 	wait: boolean | undefined;
 	count: number;
 	label: string;
+	header: string | undefined;
+	question: string | undefined;
 }
 
 function parseArgs(raw: string): FixtureArgs {
 	let wait: boolean | undefined;
 	let count = QUESTIONS.length;
 	let label = "askq";
-	for (const token of raw.trim().split(/\s+/).filter(Boolean)) {
-		const [key, value] = token.split("=");
+	let header: string | undefined;
+	let question: string | undefined;
+	for (const match of raw.matchAll(/(\w+)=(?:"([^"]*)"|'([^']*)'|(\S+))/g)) {
+		const [, key, doubleQuoted, singleQuoted, unquoted] = match;
+		const value = doubleQuoted ?? singleQuoted ?? unquoted;
 		if (key === "wait") wait = value === "true";
 		else if (key === "n") count = Number(value);
 		else if (key === "label" && value) label = value;
+		else if (key === "header") header = value;
+		else if (key === "q") question = value;
 	}
-	return { wait, count, label };
+	return { wait, count, label, header, question };
 }
 
 function logPath(ctx: ExtensionCommandContext): string {
@@ -92,11 +100,11 @@ function resultText(result: ExecuteToolResult): string {
 export default function askUserFixture(pi: ExtensionAPI): void {
 	pi.registerCommand("askq", {
 		description: "QA: call the built-in question tool directly (wait=true|false)",
-		argumentHint: "wait=true|false [n=1|2] [label=<tag>]",
+		argumentHint: "wait=true|false [n=1|2] [header=<text>] [q=<text>] [label=<tag>]",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
-			const { wait, count, label } = parseArgs(args);
+			const { wait, count, label, header, question: questionText } = parseArgs(args);
 			if (wait === undefined) {
-				ctx.ui.notify("Usage: /askq wait=true|false [n=1|2] [label=<tag>]", "warning");
+				ctx.ui.notify("Usage: /askq wait=true|false [n=1|2] [header=<text>] [q=<text>] [label=<tag>]", "warning");
 				return;
 			}
 			const tool = pi.getActiveTools().find((name) => name in WAIT_FLAGS);
@@ -105,7 +113,16 @@ export default function askUserFixture(pi: ExtensionAPI): void {
 				ctx.ui.notify("No question tool is active", "error");
 				return;
 			}
-			const params = { [WAIT_FLAGS[tool] ?? "waitForAnswer"]: wait, questions: QUESTIONS.slice(0, count) };
+			const questions = QUESTIONS.slice(0, count).map((question, index) =>
+				index === 0
+					? {
+							...question,
+							...(header === undefined ? {} : { header }),
+							...(questionText === undefined ? {} : { question: questionText }),
+						}
+					: question,
+			);
+			const params = { [WAIT_FLAGS[tool] ?? "waitForAnswer"]: wait, questions };
 			record(ctx, { event: "call", label, tool, wait, questionCount: params.questions.length });
 			void pi.executeTool(tool, params).then(
 				(result) => {

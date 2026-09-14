@@ -749,11 +749,13 @@ Commands run by the LLM-callable bash tool also receive current session metadata
 |----------|-------------|
 | `PI_SESSION_ID` | Current session ID |
 | `PI_SESSION_FILE` | Absolute session JSONL path; unset for ephemeral sessions |
+| `PI_SESSION_CWD` | Current session working directory |
+| `PI_GOAL_STORE_FILE` | Absolute session goal-store path, including in-memory sessions; the file need not exist yet |
 | `PI_PROVIDER` | Currently selected model provider |
 | `PI_MODEL` | Currently selected model ID |
 | `PI_REASONING_LEVEL` | Current effective reasoning level |
 
-These values are resolved when each command starts. See [Environment Variables](docs/environment-variables.md#bash-tool-session-environment) for semantics, examples, and custom-tool opt-out.
+These values are resolved when each command starts, including terminal-extension PTY bash. Eval kernels snapshot them at kernel start and pass them to their children. See [Environment Variables](docs/environment-variables.md#shell-tool-session-environment) for semantics, examples, and custom-tool opt-out.
 
 ---
 

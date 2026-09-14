@@ -6,6 +6,8 @@ import type { QuestionRequest, QuestionResponse } from "./schema.ts";
 export interface QuestionDialogOptions extends ExtensionUIDialogOptions {
 	deliver: "tool-result" | "user-message";
 	hardDeadlineAtMs: number;
+	/** Live absolute idle deadline; question UI countdowns are display-only when supplied. */
+	getDeadlineAtMs?: () => number;
 	onProgress: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
 }
 export interface PendingQuestionEntry {

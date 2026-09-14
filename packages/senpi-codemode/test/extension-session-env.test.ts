@@ -80,6 +80,7 @@ function sessionContext(
 	return {
 		...base,
 		cwd,
+		goalStoreFile: sessionFile === undefined ? undefined : join(cwd, "goals", `${sessionId}.json`),
 		sessionManager: {
 			...base.sessionManager,
 			getSessionId: () => sessionId,
@@ -129,6 +130,8 @@ describe("codemode extension session environment", () => {
 		expect(captured[0]?.sessionId).toBe("extension-session-a");
 		expect(captured[0]?.sessionEnv).toEqual({
 			PI_SESSION_ID: "extension-session-a",
+			PI_SESSION_CWD: cwd,
+			PI_GOAL_STORE_FILE: join(cwd, "goals", "extension-session-a.json"),
 			PI_SESSION_FILE: join(artifactsRoot, "session-a.jsonl"),
 			PI_PROVIDER: "fake",
 			PI_MODEL: "fake-model-a",
@@ -137,6 +140,7 @@ describe("codemode extension session environment", () => {
 		expect(captured[1]?.sessionId).toBe("extension-session-b");
 		expect(captured[1]?.sessionEnv).toEqual({
 			PI_SESSION_ID: "extension-session-b",
+			PI_SESSION_CWD: cwd,
 			PI_PROVIDER: "fake",
 			PI_MODEL: "fake-model-b",
 		});

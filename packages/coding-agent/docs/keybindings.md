@@ -164,8 +164,11 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.tools.expand` | `ctrl+o` | Collapse or expand tool output |
 | `app.message.copy` | `ctrl+x` | Copy the selected message in `/tree`; otherwise copy the last assistant message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
 | `app.message.followUp` | `alt+enter` | Queue follow-up message |
-| `app.message.dequeue` | `alt+up` | Restore queued messages to editor |
-| `app.question.answer` | `alt+a` | Open the pending async question (Enter on an empty editor and `/answer` do the same without a chord; on macOS the Option-composed glyph of the bound letter is accepted too, except for the dead keys e, i, n, u) |
+| `app.message.dequeue` | `alt+up` (`alt+q` on Windows and WSL) | Restore queued messages to editor when no pending question claims the chord |
+| `app.question.answer` | `alt+up`, `alt+a` | Open the pending async question before dequeue. Enter on an empty editor also opens it; `/answer` lists multiple requests. On macOS, the Option-composed glyph of a bound letter is also accepted (except dead keys e, i, n, u). |
+| `app.question.next` | `alt+down` | Cycle pending requests while the composer is empty and no overlay or autocomplete is open |
+
+The question hint prefers `alt+up` (`option+up` on macOS). In tmux, Apple Terminal, Warp, and VS Code it shows the retained `alt+a` alternative. Both bindings remain active; there is no third fallback chord. On Windows and WSL, dequeue uses `alt+q`, so `alt+up` does not conflict with it. Tab completion and Shift+Tab thinking-level cycling are unchanged.
 
 ### Tree Navigation
 

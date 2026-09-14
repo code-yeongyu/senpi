@@ -7,8 +7,12 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
+import {
+	GOAL_CACHE_WARMUP_ENTRY_TYPE,
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+} from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
+import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
 import { waitForSentCount } from "./goal-monitor-test-harness.ts";
 import {
 	createGoalAskUserWorld,
@@ -29,6 +33,61 @@ afterEach(async () => {
 });
 
 describe("goal loop with an async ask-user question", () => {
+	it("parks on the earliest request deadline and recomputes after that request settles", async () => {
+		world = await createGoalAskUserWorld("thread-ask-user-min-deadline");
+		const start = Date.now();
+		await world.startTurn();
+		await world.askAsync("long", 30);
+		await world.askAsync("short", 5);
+		await world.endTurn();
+		expect(world.eventsOn(GOAL_CONTINUATION_SCHEDULED_EVENT).at(-1)).toMatchObject({
+			delayMs: 300_000,
+			dueAtMs: start + 300_000,
+			wakeSources: { "ask-user": 2 },
+		});
+		expect(world.eventsOn(WAKE_SOURCE_STATE_EVENT).at(-1)).toMatchObject({
+			items: [
+				{ id: "long", deadlineAtMs: start + QUESTION_TIMEOUT_MS },
+				{ id: "short", deadlineAtMs: start + 300_000 },
+			],
+		});
+		await world.answer("OAuth", "short");
+		expect(world.eventsOn(GOAL_CONTINUATION_SCHEDULED_EVENT).at(-1)).toMatchObject({
+			delayMs: QUESTION_TIMEOUT_MS,
+			dueAtMs: start + QUESTION_TIMEOUT_MS,
+			wakeSources: { "ask-user": 1 },
+		});
+		expect(world.goal.sent).toHaveLength(0);
+	});
+
+	it("re-publishes an extended deadline on progress and moves the already parked timer", async () => {
+		world = await createGoalAskUserWorld("thread-ask-user-touched-deadline");
+		const start = Date.now();
+		await world.startTurn();
+		await world.askAsync("long", 30);
+		await world.askAsync("short", 5);
+		await world.endTurn();
+		await world.advance(60_000);
+		await world.touch("short");
+		expect(world.eventsOn(WAKE_SOURCE_STATE_EVENT).at(-1)).toMatchObject({
+			activeCount: 2,
+			items: [
+				{ id: "long", deadlineAtMs: start + QUESTION_TIMEOUT_MS },
+				{ id: "short", deadlineAtMs: start + 360_000 },
+			],
+		});
+		expect(world.eventsOn(GOAL_CONTINUATION_SCHEDULED_EVENT)).toHaveLength(2);
+		expect(world.eventsOn(GOAL_CONTINUATION_SCHEDULED_EVENT).at(-1)).toMatchObject({
+			delayMs: 300_000,
+			dueAtMs: start + 360_000,
+			iteration: 1,
+		});
+		expect(world.goal.entries.filter((entry) => entry.customType === GOAL_CACHE_WARMUP_ENTRY_TYPE)).toHaveLength(1);
+		await world.advance(240_000);
+		expect(world.goal.sent).toHaveLength(0);
+		expect(world.ask.deliveries).toHaveLength(0);
+	});
+
 	it("sends no continuation before the deadline and wakes once on the timeout", async () => {
 		world = await createGoalAskUserWorld("thread-ask-user-async-timeout");
 		await world.startTurn();

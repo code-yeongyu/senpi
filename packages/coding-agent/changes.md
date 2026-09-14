@@ -1,5 +1,23 @@
 # Local fork changes
 
+## 2026-09-13 - Retire the heavyweight webfetch DOM dependency
+
+### What changed
+
+- `packages/coding-agent/package.json` replaces jsdom and its types with exact-pinned linkedom 0.18.12, removes the XHR worker compile entry, and stops copying css-tree, mdn-data, and source-map-js sidecars. Imagegen and documentation assets remain shipped.
+
+### Why
+
+- `packages/coding-agent/package.json` no longer needs browser emulation or CSS dictionaries for inert HTML conversion (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` controls installed dependencies and compiled entries before extensions execute.
+
+### Expected merge conflict zones
+
+- Dependency pins, `build:binary`, and `copy-binary-assets` in `packages/coding-agent/package.json`.
+
 ## 2026-09-13 - Align standalone compile entries and splitting
 
 ### What changed

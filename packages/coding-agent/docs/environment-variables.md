@@ -25,6 +25,8 @@ Commands run by the `bash` and `powershell` tools receive the current Pi session
 |----------|-------------|
 | `PI_SESSION_ID` | Current session ID |
 | `PI_SESSION_FILE` | Absolute path to the current session JSONL file; unset for ephemeral sessions |
+| `PI_SESSION_CWD` | Current session working directory, independent of the shell child's working directory |
+| `PI_GOAL_STORE_FILE` | Absolute path to the session's authoritative goal-store file; the file need not exist yet |
 | `PI_PROVIDER` | Currently selected model provider |
 | `PI_MODEL` | Currently selected model ID |
 | `PI_REASONING_LEVEL` | Current effective reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
@@ -46,7 +48,9 @@ if [ -n "$PI_SESSION_FILE" ]; then
 fi
 ```
 
-These variables are injected into the LLM-callable `bash` and `powershell` tools. They are not injected into user-entered `!` or `!!` commands.
+These variables are injected into the LLM-callable `bash` (including terminal-extension PTY sessions) and `powershell` tools. They are not injected into user-entered `!` or `!!` commands. Eval kernels receive the same session environment at kernel start, and their children inherit it. Inherited values for `PI_SESSION_CWD` and `PI_GOAL_STORE_FILE` are cleared before session values are applied; an unavailable optional goal-store path stays unset.
+
+`PI_GOAL_STORE_FILE` comes from `ExtensionContext.goalStoreFile`, not from the session JSONL filename. Persisted sessions use the session manager's directory, including an explicit `SessionManager.open(path, otherSessionDir)` override. In-memory sessions use a cwd-hashed `extensions/goal/no-session/<hash>` bucket under the agent state directory. Reading the path does not create a goal or its file.
 
 ### Custom Shell Tools
 

@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { goalFilePath } from "../src/core/extensions/builtin/goal/persistence.ts";
+import { goalStoreRef } from "../src/core/extensions/builtin/goal/store-ref.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
@@ -125,7 +127,7 @@ describe("createAgentSession session manager defaults", () => {
 		const bashTool = session.getRegisteredTool("bash");
 		expect(bashTool).toBeTruthy();
 		const result = await bashTool!.execute("test", {
-			command: `printf '%s\\n' "$PI_SESSION_ID" "$PI_SESSION_FILE" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"`,
+			command: `printf '%s\\n' "$PI_SESSION_ID" "$PI_SESSION_FILE" "$PI_SESSION_CWD" "$PI_GOAL_STORE_FILE" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"`,
 		});
 		const output = (result.content as Array<{ type: string; text?: string }>)
 			.filter((item): item is { type: "text"; text: string } => item.type === "text")
@@ -135,6 +137,8 @@ describe("createAgentSession session manager defaults", () => {
 		expect(output.trim().split("\n")).toEqual([
 			session.sessionId,
 			session.sessionFile,
+			cwd,
+			goalFilePath(goalStoreRef(session.sessionManager, cwd)),
 			model!.provider,
 			model!.id,
 			session.thinkingLevel,

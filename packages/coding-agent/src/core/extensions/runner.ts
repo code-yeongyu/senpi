@@ -18,6 +18,8 @@ import type { ScopedModel } from "../model-resolver.ts";
 import { getSessionContextEntryId, SESSION_CONTEXT_ENTRY_ID, type SessionManager } from "../session-manager.ts";
 import { SettingsManager } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import { goalFilePath } from "./builtin/goal/persistence.ts";
+import { goalStoreRef } from "./builtin/goal/store-ref.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import type {
 	BeforeAgentStartEvent,
@@ -1107,6 +1109,10 @@ export class ExtensionRunner {
 			get sessionManager() {
 				runner.assertActive();
 				return runner.sessionManager;
+			},
+			get goalStoreFile() {
+				runner.assertActive();
+				return goalFilePath(goalStoreRef(runner.sessionManager, runner.cwd));
 			},
 			get modelRegistry() {
 				runner.assertActive();

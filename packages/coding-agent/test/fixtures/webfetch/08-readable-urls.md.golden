@@ -1,0 +1,5 @@
+# Relative destinations
+
+This article has enough meaningful text to qualify for reader extraction, and keeps its links and image destinations intact through conversion.
+
+[Guide](https://example.test/fixtures/guide) [Section](#section) ![Example](https://example.test/fixtures/base/images/example.png)

@@ -10,6 +10,7 @@ import {
 	type QuestionResponse,
 	toCanonical,
 } from "./schema.ts";
+import { startQuestion } from "./tool.ts";
 
 export const ASK_USER_RESUMED_ENTRY = "ask-user:resumed";
 
@@ -64,14 +65,6 @@ function requestFromCall(dangling: DanglingQuestion, timeoutMs: number): Questio
 	}
 }
 
-function orphaned(request: QuestionRequest): QuestionResponse {
-	return {
-		status: "orphaned-after-restart",
-		answers: {},
-		unanswered: request.questions.map((question) => question.id),
-	};
-}
-
 function deliver(
 	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
 	ctx: ExtensionContext,
@@ -95,15 +88,16 @@ export async function resumeDanglingQuestion(
 	pi.appendEntry(ASK_USER_RESUMED_ENTRY, { toolCallId: dangling.toolCallId });
 	const timeoutMs = (ctx.getAskUserSettings?.().timeoutMinutes ?? DEFAULT_ASK_USER_TIMEOUT_MS / 60_000) * 60_000;
 	const request = requestFromCall(dangling, timeoutMs);
-	const question = ctx.ui.question;
-	let response: QuestionResponse;
-	if (!question) response = orphaned(request);
-	else {
-		try {
-			response = await question.call(ctx.ui, request, { timeout: request.timeoutMs });
-		} catch {
-			response = orphaned(request);
-		}
-	}
+	// A dangling disk record creates a new runtime registration. Transport/UI
+	// hydration reuses that registration and never re-enters this lifecycle.
+	const response = await startQuestion(
+		pi,
+		ctx,
+		request,
+		ctx.signal,
+		{ timedOut: false, unavailable: false },
+		dangling.variant,
+		{ resuming: true },
+	);
 	deliver(pi, ctx, request, response, dangling.variant);
 }

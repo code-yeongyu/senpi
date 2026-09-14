@@ -2,7 +2,6 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { inlineCssTreeCompileData } from "./prepare-bun-compile-assets.mjs";
 import { rewriteOwnedRegistryAliases, stagePublishManifest } from "./prepare-senpi-publish-manifest.mjs";
 import { pinSenpiPeerDependency } from "./publish-manifest.mjs";
 export {
@@ -321,13 +320,6 @@ export function copyPublishDependencies(repoRoot) {
 		mkdirSync(dirname(targetPath), { recursive: true });
 		cpSync(sourcePath, targetPath, { recursive: true });
 	}
-
-	// The tarball must be Bun-compile-safe on its own: css-tree resolves its data through
-	// createRequire at module scope, which /$bunfs cannot serve, so every consumer that
-	// compiles this engine (omo release binaries, omob) would die on the first webfetch HTML
-	// conversion. Inlining happens on the STAGED copy only, so publishing never rewrites the
-	// developer's installed dependency.
-	inlineCssTreeCompileData(codingAgentNodeModules);
 
 	return manifest;
 }

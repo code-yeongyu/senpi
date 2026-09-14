@@ -2,6 +2,19 @@ import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import type { AskUserVariant, QuestionRequest, QuestionResponse } from "./schema.ts";
 
 export const ASK_USER_SETTLED_EVENT = "ask-user:settled";
+export const ASK_USER_ASKED_EVENT = "ask-user:asked";
+/** UI-only session metadata; never included in the model-facing answer frame. */
+export const ASK_USER_QUESTION_ENTRY = "ask-user:question";
+export interface AskUserQuestionEntry {
+	readonly requestId: string;
+	readonly headers: readonly string[];
+}
+
+export type AskUserAskedEvent = {
+	readonly ctx: ExtensionContext;
+	readonly request: QuestionRequest;
+	readonly variant: AskUserVariant;
+};
 
 export type AskUserSettledEvent = {
 	readonly ctx: ExtensionContext;

@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.13-2] - 2026-09-13
+
+### Breaking Changes
+
+### Added
+
 - Added opt-in, lease-scoped regular-mode mouse clicks with shared SGR parsing, committed-layout hit testing, private cursor-position calibration, and fail-closed handling of uncertain frame placement. Fullscreen selection and scrolling remain unchanged ([#1645](https://github.com/code-yeongyu/senpi/issues/1645)).
 
 ### Changed

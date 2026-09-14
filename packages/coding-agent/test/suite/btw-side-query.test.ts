@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import type { Component, TUI } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
 import btwExtension from "../../src/core/extensions/builtin/btw/index.ts";
@@ -9,7 +10,49 @@ import {
 	runSideQuery,
 	SIDE_QUERY_INSTRUCTION,
 } from "../../src/core/extensions/builtin/btw/side-query.ts";
+import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
+import type { Theme } from "../../src/modes/interactive/theme/theme.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
+
+type WidgetFactory = (tui: TUI, theme: Theme) => Component & { dispose?(): void };
+
+/** Installs a minimal TUI-mode UI context so /btw takes its widget branch instead of notify. */
+function installTuiHarness(harness: Harness) {
+	const widgets: Array<{ key: string; content: unknown }> = [];
+	const notifications: Array<{ message: string; type: string | undefined }> = [];
+	const inputHandlers = new Set<(data: string) => unknown>();
+	const fakeTui = { requestRender: () => {} } as unknown as TUI;
+	const fakeTheme = {
+		fg: (_name: string, text: string) => text,
+		bold: (text: string) => text,
+	} as unknown as Theme;
+	const ui = {
+		notify: (message: string, type?: string) => {
+			notifications.push({ message, type });
+		},
+		setWidget: (key: string, content: unknown) => {
+			widgets.push({ key, content });
+			if (typeof content === "function") (content as WidgetFactory)(fakeTui, fakeTheme);
+		},
+		onTerminalInput: (handler: (data: string) => unknown) => {
+			inputHandlers.add(handler);
+			return () => {
+				inputHandlers.delete(handler);
+			};
+		},
+	} as unknown as ExtensionUIContext;
+	harness.session.extensionRunner.setUIContext(ui, "tui");
+	return {
+		widgets,
+		notifications,
+		feedInput: (data: string) => {
+			for (const handler of [...inputHandlers]) handler(data);
+		},
+		get inputHandlerCount() {
+			return inputHandlers.size;
+		},
+	};
+}
 
 function estimatePromptTokens(context: {
 	systemPrompt?: string;
@@ -389,5 +432,125 @@ describe("/btw extension command", () => {
 		expect(firstAborted).toBe(true);
 		const lastCall = harness.faux.getCallLog().at(-1);
 		expect(getMessageText(lastCall?.context.messages.at(-1))).toBe("second");
+	});
+
+	it.each([
+		["raw", "\x1b"],
+		["kitty CSI-u", "\x1b[27u"],
+	])("dismisses a settled panel on %s Escape", async (_label, escapeSequence) => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("side answer")]);
+
+		await harness.session.prompt("/btw settled question");
+		expect(tui.widgets.map((widget) => widget.key)).toEqual(["btw"]);
+		expect(tui.inputHandlerCount).toBe(1);
+
+		tui.feedInput(escapeSequence);
+
+		expect(tui.widgets.at(-1)).toEqual({ key: "btw", content: undefined });
+		expect(tui.inputHandlerCount).toBe(0);
+	});
+
+	it("ignores a kitty Escape key release", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("side answer")]);
+
+		await harness.session.prompt("/btw settled question");
+		expect(tui.widgets.map((widget) => widget.key)).toEqual(["btw"]);
+		expect(tui.inputHandlerCount).toBe(1);
+
+		// Kitty CSI-u emits a release event after every press; a release whose
+		// press was consumed elsewhere must not dismiss the panel or cancel the query.
+		tui.feedInput("\x1b[27;1:3u");
+
+		expect(tui.widgets).toHaveLength(1);
+		expect(tui.inputHandlerCount).toBe(1);
+	});
+
+	it("cancels an in-flight side query on Escape while the main turn keeps streaming", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		let sideAborted = false;
+		let mainEntered!: () => void;
+		let sideEntered!: () => void;
+		let releaseMain!: () => void;
+		const mainInFlight = new Promise<void>((resolve) => {
+			mainEntered = resolve;
+		});
+		const sideInFlight = new Promise<void>((resolve) => {
+			sideEntered = resolve;
+		});
+		const mainGate = new Promise<void>((resolve) => {
+			releaseMain = resolve;
+		});
+		harness.setResponses([
+			async () => {
+				mainEntered();
+				await mainGate;
+				return fauxAssistantMessage("main answer");
+			},
+			async (_context, options) => {
+				sideEntered();
+				await new Promise<void>((resolve) => {
+					if (options?.signal?.aborted) {
+						sideAborted = true;
+						resolve();
+						return;
+					}
+					options?.signal?.addEventListener("abort", () => {
+						sideAborted = true;
+						resolve();
+					});
+				});
+				throw new Error("aborted");
+			},
+		]);
+
+		const main = harness.session.prompt("main question");
+		await mainInFlight;
+		const side = harness.session.prompt("/btw in-flight question");
+		await sideInFlight;
+
+		tui.feedInput("\x1b");
+		await side;
+
+		expect(sideAborted).toBe(true);
+		expect(tui.widgets.at(-1)).toEqual({ key: "btw", content: undefined });
+		expect(tui.inputHandlerCount).toBe(0);
+
+		releaseMain();
+		await main;
+	});
+
+	it("dismisses the active panel on a bare /btw instead of showing usage", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("side answer")]);
+
+		await harness.session.prompt("/btw open the panel");
+		expect(tui.widgets).toHaveLength(1);
+
+		await harness.session.prompt("/btw");
+
+		expect(tui.widgets.at(-1)).toEqual({ key: "btw", content: undefined });
+		expect(tui.notifications).toEqual([]);
+		expect(tui.inputHandlerCount).toBe(0);
+		expect(harness.faux.state.callCount).toBe(1);
+	});
+
+	it("keeps the usage hint for a bare /btw when no panel is active", async () => {
+		const harness = await setup();
+		const tui = installTuiHarness(harness);
+		harness.setResponses([fauxAssistantMessage("unused")]);
+
+		await harness.session.prompt("/btw");
+
+		expect(tui.widgets).toEqual([]);
+		expect(tui.notifications).toHaveLength(1);
+		expect(tui.notifications[0]?.type).toBe("warning");
+		expect(tui.notifications[0]?.message).toContain("/btw");
+		expect(harness.faux.state.callCount).toBe(0);
 	});
 });

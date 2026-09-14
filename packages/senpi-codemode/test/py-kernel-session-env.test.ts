@@ -18,6 +18,10 @@ describe("PythonKernel session environment", () => {
 		const spawns: KernelSpawnOptions[] = [];
 		const connection: BridgeConnectionConfig = { port: 1, token: "t" };
 		const previousFile = process.env.PI_SESSION_FILE;
+		const previousCwd = process.env.PI_SESSION_CWD;
+		const previousGoal = process.env.PI_GOAL_STORE_FILE;
+		process.env.PI_SESSION_CWD = "stale-cwd";
+		process.env.PI_GOAL_STORE_FILE = "stale-goal.json";
 		process.env.PI_SESSION_FILE = "stale-session-file.jsonl";
 		try {
 			const kernel = await PythonKernel.start({
@@ -33,6 +37,10 @@ describe("PythonKernel session environment", () => {
 			});
 			await kernel.close();
 		} finally {
+			if (previousCwd === undefined) delete process.env.PI_SESSION_CWD;
+			else process.env.PI_SESSION_CWD = previousCwd;
+			if (previousGoal === undefined) delete process.env.PI_GOAL_STORE_FILE;
+			else process.env.PI_GOAL_STORE_FILE = previousGoal;
 			if (previousFile === undefined) delete process.env.PI_SESSION_FILE;
 			else process.env.PI_SESSION_FILE = previousFile;
 		}
@@ -41,6 +49,8 @@ describe("PythonKernel session environment", () => {
 		const env = spawns[0]?.env;
 		expect(env?.PI_SESSION_ID).toBe("py-session-env-77");
 		expect(env).not.toHaveProperty("PI_SESSION_FILE");
+		expect(env).not.toHaveProperty("PI_SESSION_CWD");
+		expect(env).not.toHaveProperty("PI_GOAL_STORE_FILE");
 		expect(env?.PYTHONUNBUFFERED).toBe("1");
 	});
 
@@ -73,10 +83,26 @@ describe("PythonKernel session environment", () => {
 
 describe.skipIf(!(await hasPython3()))("PythonKernel live session environment", () => {
 	it("exposes PI_SESSION_ID to os.environ and to child processes", async () => {
-		const kernel = await liveKernel({ sessionEnv: { PI_SESSION_ID: "py-live-session-77" } });
+		const kernel = await liveKernel({
+			sessionEnv: { PI_SESSION_ID: "py-live-session-77", PI_SESSION_CWD: "/w", PI_GOAL_STORE_FILE: "/g/x.json" },
+		});
 		try {
 			const inProcess = await runCell(kernel, "import os\nos.environ.get('PI_SESSION_ID') == 'py-live-session-77'");
 			expect(inProcess).toMatchObject({ ok: true, valueRepr: "True" });
+
+			const paths = await runCell(
+				kernel,
+				"os.environ.get('PI_SESSION_CWD') + '|' + os.environ.get('PI_GOAL_STORE_FILE') == '/w|/g/x.json'",
+			);
+			expect(paths).toMatchObject({ ok: true, valueRepr: "True" });
+			const childPaths = await runCell(
+				kernel,
+				[
+					"import sys, subprocess",
+					"subprocess.check_output([sys.executable, '-c', \"import os; print(os.environ['PI_SESSION_CWD'] + '|' + os.environ['PI_GOAL_STORE_FILE'], end='')\"]) == b'/w|/g/x.json'",
+				].join("\n"),
+			);
+			expect(childPaths).toMatchObject({ ok: true, valueRepr: "True" });
 
 			const fromChild = await runCell(kernel, childProbe);
 			expect(fromChild).toMatchObject({ ok: true, valueRepr: "1" });

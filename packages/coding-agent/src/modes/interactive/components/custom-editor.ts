@@ -1,4 +1,11 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	Editor,
+	type EditorOptions,
+	type EditorTheme,
+	type TUI,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 import type { StatusIndicator } from "./status-indicator.ts";
 
@@ -19,6 +26,7 @@ export class CustomEditor extends Editor {
 	private configuredPaddingX: number;
 	private promptPaddingX: number;
 	private workingStatusIndicator: StatusIndicator | undefined;
+	private replyLabel: string | undefined;
 	public readonly embedWorkingStatus: boolean;
 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
 
@@ -61,7 +69,19 @@ export class CustomEditor extends Editor {
 		this.workingStatusIndicator = indicator;
 	}
 
+	setReplyLabel(label: string | undefined): void {
+		this.replyLabel = label;
+	}
+
 	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
+		if (this.replyLabel && width >= 5) {
+			const label = truncateToWidth(this.replyLabel, width - 4, "…");
+			return (
+				this.borderColor("── ") +
+				label +
+				this.borderColor(` ${"─".repeat(Math.max(0, width - visibleWidth(label) - 4))}`)
+			);
+		}
 		if (!this.embedWorkingStatus || !this.workingStatusIndicator || width <= 0) {
 			return super.renderTopBorder(width, hiddenLineCount);
 		}

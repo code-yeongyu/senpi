@@ -111,13 +111,24 @@ type SessionEnvSource = {
 	model?: { provider: string; id: string };
 	thinkingLevel?: string;
 	cwd?: string;
+	goalStoreFile?: string;
 };
+
+function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
+	return {
+		...ctx,
+		// Explicit deletions survive backends that merge overrides with the host environment.
+		getEnv: () => ({ ...ctx.getEnv(), PI_SESSION_CWD: undefined, PI_GOAL_STORE_FILE: undefined }),
+	};
+}
 
 function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSource): Record<string, string> {
 	const session = execCtx ?? ctx.getSessionContext?.();
 	if (!session?.sessionManager) return {};
 	const env: Record<string, string> = {};
 	env.PI_SESSION_ID = session.sessionManager.getSessionId();
+	if (session.cwd) env.PI_SESSION_CWD = session.cwd;
+	if (session.goalStoreFile) env.PI_GOAL_STORE_FILE = session.goalStoreFile;
 	const sessionFile = session.sessionManager.getSessionFile();
 	if (sessionFile) env.PI_SESSION_FILE = sessionFile;
 	if (session.model) {
@@ -236,7 +247,7 @@ async function runForeground(
 ): Promise<TerminalToolResult> {
 	if (signal?.aborted) return errorResult("Command aborted");
 	const timeoutMs = input.timeout !== undefined ? Math.trunc(input.timeout * 1000) : undefined;
-	const { id, runtime } = await spawnCommandSession(ctx, {
+	const { id, runtime } = await spawnCommandSession(sessionSpawnContext(ctx), {
 		command: input.command,
 		cols,
 		rows,
@@ -371,7 +382,7 @@ async function runBackground(
 ): Promise<TerminalToolResult> {
 	// Background sessions are NEVER killed by `timeout` (bash-timeout injects a default into
 	// every bash call); they live until exit or kill_bash, so no timeoutMs is passed.
-	const { id, runtime } = await spawnCommandSession(ctx, {
+	const { id, runtime } = await spawnCommandSession(sessionSpawnContext(ctx), {
 		command: input.command,
 		cols,
 		rows,

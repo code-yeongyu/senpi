@@ -7,6 +7,7 @@ export interface WakeSourceStateItem {
 	readonly id: string;
 	readonly description?: string;
 	readonly startedAtMs?: number;
+	readonly deadlineAtMs?: number;
 }
 
 export interface WakeSourceStateEvent {

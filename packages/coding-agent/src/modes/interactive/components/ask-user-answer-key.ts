@@ -7,8 +7,21 @@
 
 import { decodeKittyPrintable, getKeybindings, type KeybindingsManager, type KeyId } from "@earendil-works/pi-tui";
 
-/** Keybinding action (default `alt+a`, rebindable in keybindings.json) that expands the pending question. */
+import { QUESTION_ANSWER_FALLBACK_KEY, QUESTION_ANSWER_PRIMARY_KEY } from "../../../core/keybindings.ts";
+import { formatKeyText, keyText } from "./keybinding-hints.ts";
+
+/** Rebindable action that expands the pending question, retaining the legacy Option-letter chord. */
 export const ASK_USER_ANSWER_KEYBINDING = "app.question.answer";
+
+/** Prefer the arrow chord, or the retained letter chord on terminals that commonly reserve it. */
+export function askUserAnswerKeyHint(env: NodeJS.ProcessEnv = process.env): string {
+	const keys = getKeybindings().getKeys(ASK_USER_ANSWER_KEYBINDING);
+	const preferred =
+		env.TMUX || ["Apple_Terminal", "WarpTerminal", "vscode"].includes(env.TERM_PROGRAM ?? "")
+			? QUESTION_ANSWER_FALLBACK_KEY
+			: QUESTION_ANSWER_PRIMARY_KEY;
+	return keys.includes(preferred) ? formatKeyText(preferred) : keyText(ASK_USER_ANSWER_KEYBINDING);
+}
 
 /**
  * What each letter key types on a US-layout macOS keyboard while Option is

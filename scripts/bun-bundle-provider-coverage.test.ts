@@ -20,11 +20,11 @@ let metadata: z.infer<typeof metadataSchema>;
 const normalized = (path: string): string => path.replaceAll("\\", "/");
 
 beforeAll(() => {
-	// Given: the same four entries and optimization flags as the release build, without --compile.
+	// Given: the same three entries and optimization flags as the release build, without --compile.
 	const result = spawnSync(process.execPath, [
 		"build", "--target=bun", "--splitting", "--minify", "--keep-names", `--metafile=${join(scratch, "metafile.json")}`,
 		"./dist/bun/cli.js", "./src/modes/rpc/session-worker.ts", "./src/utils/image-resize-worker.ts",
-		"../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js", "--outdir", scratch,
+		"--outdir", scratch,
 	], { cwd, encoding: "utf8", timeout: 120_000 });
 	expect(result.status, result.stderr).toBe(0);
 	metadata = metadataSchema.parse(JSON.parse(readFileSync(join(scratch, "metafile.json"), "utf8")));

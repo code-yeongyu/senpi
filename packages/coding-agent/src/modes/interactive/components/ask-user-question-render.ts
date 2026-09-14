@@ -82,9 +82,11 @@ export function renderSubmitLine(state: AskUserQuestionState): string {
 	if (state.focus === "submit") {
 		return theme.fg("accent", theme.bold(`Submit (${answered}/${total} answered)`));
 	}
-	return (
-		theme.fg("accent", theme.bold(`Submit (${answered}/${total} answered)`)) + theme.fg("muted", " — Enter advances")
-	);
+	const hint =
+		state.focus === "options" && state.activeQuestion.multiSelect
+			? " — Enter toggles; Tab to Submit"
+			: " — Enter advances";
+	return theme.fg("accent", theme.bold(`Submit (${answered}/${total} answered)`)) + theme.fg("muted", hint);
 }
 
 export function renderHintsLine(state: AskUserQuestionState): string {
@@ -130,9 +132,9 @@ export function renderHintsLine(state: AskUserQuestionState): string {
 		"  " +
 		rawKeyHint("space", state.activeQuestion.multiSelect ? "toggle" : "select") +
 		"  " +
-		rawKeyHint("enter", "next") +
+		rawKeyHint("enter", state.activeQuestion.multiSelect ? "toggle" : "next") +
 		"  " +
-		rawKeyHint("tab", "next question") +
+		rawKeyHint("tab", state.activeQuestion.multiSelect ? "next / Submit" : "next question") +
 		"  " +
 		rawKeyHint("c", "comment") +
 		"  " +

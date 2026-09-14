@@ -9,6 +9,8 @@ import { createFakeInteractiveMode, type FakeInteractiveMode } from "./helpers/a
 
 const ESC = "\x1b";
 const ALT_A = "\x1ba";
+const DOWN = "\x1b[B";
+const SPACE = " ";
 const WIDGET_WIDTH = 120;
 
 const QUESTIONS: QuestionRequest["questions"] = [
@@ -106,7 +108,9 @@ describe("collapsed async ask-user widget content", () => {
 		askPending(fake, QUESTIONS.slice(0, 1));
 
 		fake.pressEditorKey(ALT_A);
-		overlay(fake).handleInput("2");
+		// Keep a draft with Space: a digit now submits this single-select request (#1645).
+		overlay(fake).handleInput(DOWN);
+		overlay(fake).handleInput(SPACE);
 		overlay(fake).handleInput(ESC);
 
 		const text = widgetLines(fake).join("\n");

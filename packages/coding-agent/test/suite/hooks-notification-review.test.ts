@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventBus } from "../../src/core/event-bus.ts";
-import { ASK_USER_SETTLED_EVENT, emitAskUserNotification } from "../../src/core/extensions/builtin/ask-user/notify.ts";
+import {
+	ASK_USER_ASKED_EVENT,
+	ASK_USER_SETTLED_EVENT,
+	emitAskUserNotification,
+} from "../../src/core/extensions/builtin/ask-user/notify.ts";
 import type { QuestionResponse } from "../../src/core/extensions/builtin/ask-user/schema.ts";
 import * as commandRunner from "../../src/core/extensions/builtin/hooks/command-runner.ts";
 import {
@@ -27,6 +31,7 @@ import { createHarness, type Harness } from "./harness.ts";
 
 const roots: string[] = [];
 const harnesses: Harness[] = [];
+const inFlightNotifications = new Set<Promise<void>>();
 const args = {
 	questions: [{ header: "Library", question: "Which library?", multiSelect: false }],
 	waitForAnswer: true,
@@ -82,8 +87,9 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
 		if (timer !== undefined) clearTimeout(timer);
 	}
 }
-afterEach(() => {
+afterEach(async () => {
 	vi.useRealTimers();
+	await bounded(Promise.all([...inFlightNotifications]));
 	vi.restoreAllMocks();
 	for (const harness of harnesses.splice(0)) harness.cleanup();
 	for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -97,7 +103,7 @@ async function fixture(activation: "active" | "disabled" | "excluded" = "active"
 	const scriptPath = join(dir, "record.mjs");
 	writeFileSync(
 		scriptPath,
-		`import { appendFileSync } from 'node:fs'; let data = ''; process.stdin.on('data', c => data += c); process.stdin.on('end', () => { appendFileSync(${JSON.stringify(stdinPath)}, JSON.stringify(JSON.parse(data)) + '\\n'); process.stdout.write(JSON.stringify({ additionalContext: JSON.parse(data).request_id })); });`,
+		`import { appendFileSync } from 'node:fs'; let data = ''; process.stdin.on('data', c => data += c); process.stdin.on('end', () => { const input = JSON.parse(data); if (input.kind === 'ask-user-asked') { process.stdout.write('{}'); return; } appendFileSync(${JSON.stringify(stdinPath)}, JSON.stringify(input) + '\\n'); process.stdout.write(JSON.stringify({ additionalContext: input.request_id })); });`,
 	);
 	const config = {
 		hooks: {
@@ -125,14 +131,23 @@ async function fixture(activation: "active" | "disabled" | "excluded" = "active"
 		disabledBuiltinExtensions: activation === "disabled" ? ["hooks"] : [],
 		askUser: { enabled: true },
 	};
+	// This fixture isolates settlement records; arrival commands are exercised separately.
+	const arrivalFinished = Promise.withResolvers<void>();
 	const notificationFinished = Promise.withResolvers<void>();
 	const bus = createEventBus();
 	const eventBus = {
 		emit: bus.emit,
 		on(channel: string, handler: (data: unknown) => void) {
 			return bus.on(channel, async (data) => {
-				await handler(data);
-				if (channel === ASK_USER_SETTLED_EVENT) notificationFinished.resolve();
+				const operation = Promise.resolve(handler(data));
+				inFlightNotifications.add(operation);
+				try {
+					await operation;
+					if (channel === ASK_USER_SETTLED_EVENT) notificationFinished.resolve();
+					if (channel === ASK_USER_ASKED_EVENT) arrivalFinished.resolve();
+				} finally {
+					inFlightNotifications.delete(operation);
+				}
 			});
 		},
 	};
@@ -187,6 +202,7 @@ async function fixture(activation: "active" | "disabled" | "excluded" = "active"
 		stdinPath,
 		hooksPath,
 		notificationFinished: notificationFinished.promise,
+		arrivalFinished: arrivalFinished.promise,
 		completed(id: string) {
 			const signal = Promise.withResolvers<void>();
 			signals.set(id, signal);
@@ -322,7 +338,8 @@ describe("Notification review regressions", () => {
 			f.ctx.ui.question = async () => cancelled;
 			const getSources = vi.spyOn(f.ctx, "getLoadedHookSources");
 			await f.tool.execute("cancelled", { ...args, waitForAnswer }, undefined, undefined, f.ctx);
-			expect(getSources).not.toHaveBeenCalled();
+			await bounded(f.arrivalFinished);
+			expect(getSources).toHaveBeenCalledOnce();
 			expect(f.payloads()).toEqual([]);
 			expect(f.records).toEqual([]);
 		},

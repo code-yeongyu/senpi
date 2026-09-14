@@ -39,10 +39,10 @@ afterEach(async () => {
 	await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-function assistantQuestion(id: string): AssistantMessage {
+function assistantQuestion(id: string, waitForAnswer: boolean): AssistantMessage {
 	return {
 		role: "assistant",
-		content: [{ type: "toolCall", id, name: "ask_user_question", arguments: ARGS }],
+		content: [{ type: "toolCall", id, name: "ask_user_question", arguments: { ...ARGS, waitForAnswer } }],
 		api: "anthropic-messages",
 		provider: "anthropic",
 		model: "claude-opus-4-6",
@@ -52,12 +52,12 @@ function assistantQuestion(id: string): AssistantMessage {
 	};
 }
 
-async function danglingSession(): Promise<SessionManager> {
+async function danglingSession(waitForAnswer = true): Promise<SessionManager> {
 	const root = await mkdtemp(join(tmpdir(), "ask-user-resume-"));
 	roots.push(root);
 	const writer = SessionManager.create(root, join(root, "sessions"));
 	writer.appendMessage({ role: "user", content: "pick a library", timestamp: 1 });
-	writer.appendMessage(assistantQuestion(CALL_ID));
+	writer.appendMessage(assistantQuestion(CALL_ID, waitForAnswer));
 	const file = writer.getSessionFile();
 	if (!file) throw new Error("expected session JSONL fixture");
 	return SessionManager.open(file);
@@ -109,7 +109,7 @@ function install(sessionManager: SessionManager) {
 		},
 	};
 	askUserExtension(pi as unknown as ExtensionAPI);
-	return { userMessages, received, handlers };
+	return { userMessages, received, handlers, events: pi.events };
 }
 
 function ctx(sessionManager: SessionManager, question?: ExtensionContext["ui"]["question"]): ExtensionContext {
@@ -133,6 +133,22 @@ async function emitStart(
 }
 
 describe("ask-user resume", () => {
+	it.each([true, false])(
+		"pairs an orphaned fresh runtime registration in wait=%s mode only once",
+		async (waitForAnswer) => {
+			const manager = await danglingSession(waitForAnswer);
+			const installed = install(manager);
+			const blocked: unknown[] = [];
+			installed.events.on("herdr:blocked", (data) => blocked.push(data));
+			await emitStart(installed.handlers, "resume", ctx(manager));
+			await emitStart(installed.handlers, "reload", ctx(manager));
+			expect(blocked).toEqual([
+				{ active: true, id: CALL_ID, label: "Library — Which library?" },
+				{ active: false, id: CALL_ID },
+			]);
+			expect(installed.userMessages).toEqual([formatUserMessage(ORPHANED, CALL_ID, CANONICAL_QUESTIONS)]);
+		},
+	);
 	it("re-presents a dangling ask_user_question once on resume", async () => {
 		const sessionManager = await danglingSession();
 		const { userMessages, received, handlers } = install(sessionManager);

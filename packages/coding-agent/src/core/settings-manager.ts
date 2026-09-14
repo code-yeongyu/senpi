@@ -808,11 +808,12 @@ export class SettingsManager {
 		};
 	}
 
-	getAskUserSettings(): { enabled: boolean; timeoutMinutes: number } {
+	getAskUserSettings(): { enabled: boolean; timeoutMinutes: number; bell: boolean } {
 		const configured = this.settings.askUser;
 		return {
 			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
 			timeoutMinutes: resolveAskUserTimeoutMinutes(configured?.timeoutMinutes),
+			bell: typeof configured?.bell === "boolean" ? configured.bell : true,
 		};
 	}
 

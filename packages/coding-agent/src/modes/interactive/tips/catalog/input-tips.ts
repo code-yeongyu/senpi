@@ -93,8 +93,8 @@ export const INPUT_TIPS = [
 	},
 	{
 		id: "open-pending-question",
-		bindings: ["app.question.answer"],
+		bindings: ["app.question.answer", "app.question.next"],
 		render: (keys) =>
-			`A question parked above the editor while the agent works shows what it asks; open it with Enter on an empty editor, /answer, or ${keys("app.question.answer")}.`,
+			`Pending questions queue above the editor. An empty-composer digit selects an option; ${keys("app.question.answer")} opens the shown request and ${keys("app.question.next")} cycles requests. /answer lists them.`,
 	},
 ] satisfies readonly TipDefinition[];

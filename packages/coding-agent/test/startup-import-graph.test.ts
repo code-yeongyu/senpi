@@ -28,6 +28,11 @@ const repoRoot = new URL("../../..", import.meta.url).pathname;
  */
 const DEFERRED_STARTUP_PACKAGES = [
 	{
+		specifier: "linkedom",
+		pattern: /\/node_modules\/linkedom\//u,
+		owner: "webfetch HTML conversion (core/extensions/builtin/webfetch/webfetch/content.lazy.ts)",
+	},
+	{
 		specifier: "jsdom",
 		pattern: /\/node_modules\/jsdom\//u,
 		owner: "webfetch HTML conversion (core/extensions/builtin/webfetch/webfetch/content.lazy.ts)",

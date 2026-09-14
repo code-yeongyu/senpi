@@ -56,6 +56,21 @@ describe("JavaScriptKernel session environment", () => {
 					const processValue = await cellValue(kernel, "return process.env.PI_SESSION_ID ?? null");
 					expect(processValue).toBe("js-session-env-77");
 
+					const paths = await runJavaScriptCell(
+						kernel,
+						"print(process.env.PI_SESSION_CWD + '|' + process.env.PI_GOAL_STORE_FILE)",
+					);
+					expect(paths.result.ok).toBe(true);
+					expect(paths.messages).toContainEqual({ type: "text", stream: "stdout", data: "/w|/g/x.json\n" });
+					const childPaths = await cellValue(
+						kernel,
+						[
+							"const cp = process.getBuiltinModule('node:child_process');",
+							"return cp.execFileSync(process.execPath, ['-e', 'process.stdout.write(process.env.PI_SESSION_CWD + \"|\" + process.env.PI_GOAL_STORE_FILE)'], { encoding: 'utf8' });",
+						].join("\n"),
+					);
+					expect(childPaths).toBe("/w|/g/x.json");
+
 					const childValue = await cellValue(kernel, childCell);
 					expect(childValue).toBe("js-session-env-77");
 
@@ -64,7 +79,13 @@ describe("JavaScriptKernel session environment", () => {
 					if (Object.hasOwn(globalThis, "Bun")) expect(bunSyncValue).toBe("js-session-env-77");
 				},
 				{
-					sessionEnv: { PI_SESSION_ID: "js-session-env-77", PI_PROVIDER: "fake", PI_MODEL: "fake-model" },
+					sessionEnv: {
+						PI_SESSION_ID: "js-session-env-77",
+						PI_SESSION_CWD: "/w",
+						PI_GOAL_STORE_FILE: "/g/x.json",
+						PI_PROVIDER: "fake",
+						PI_MODEL: "fake-model",
+					},
 					workerEntryUrl,
 				},
 			);
@@ -74,6 +95,10 @@ describe("JavaScriptKernel session environment", () => {
 	it("clears inherited PI_* values the active session does not set", async () => {
 		const previousFile = process.env.PI_SESSION_FILE;
 		const previousId = process.env.PI_SESSION_ID;
+		const previousCwd = process.env.PI_SESSION_CWD;
+		const previousGoal = process.env.PI_GOAL_STORE_FILE;
+		process.env.PI_SESSION_CWD = "stale-cwd";
+		process.env.PI_GOAL_STORE_FILE = "stale-goal.json";
 		process.env.PI_SESSION_FILE = "stale-session-file.jsonl";
 		process.env.PI_SESSION_ID = "stale-session-id";
 		try {
@@ -84,10 +109,25 @@ describe("JavaScriptKernel session environment", () => {
 
 					const sessionFile = await cellValue(kernel, "return process.env.PI_SESSION_FILE ?? null");
 					expect(sessionFile).toBeNull();
+					expect(await cellValue(kernel, "return process.env.PI_GOAL_STORE_FILE ?? null")).toBeNull();
+					expect(await cellValue(kernel, "return process.env.PI_SESSION_CWD ?? null")).toBeNull();
+					expect(
+						await cellValue(
+							kernel,
+							[
+								"const cp = process.getBuiltinModule('node:child_process');",
+								"return cp.execFileSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify([process.env.PI_SESSION_CWD ?? null, process.env.PI_GOAL_STORE_FILE ?? null]))'], { encoding: 'utf8' });",
+							].join("\n"),
+						),
+					).toBe("[null,null]");
 				},
 				{ sessionEnv: { PI_SESSION_ID: "js-fresh-session" } },
 			);
 		} finally {
+			if (previousCwd === undefined) delete process.env.PI_SESSION_CWD;
+			else process.env.PI_SESSION_CWD = previousCwd;
+			if (previousGoal === undefined) delete process.env.PI_GOAL_STORE_FILE;
+			else process.env.PI_GOAL_STORE_FILE = previousGoal;
 			if (previousId === undefined) delete process.env.PI_SESSION_ID;
 			else process.env.PI_SESSION_ID = previousId;
 			if (previousFile === undefined) delete process.env.PI_SESSION_FILE;

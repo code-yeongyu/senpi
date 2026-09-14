@@ -1,5 +1,31 @@
 # senpi-codemode fork changes
 
+## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/session-env.ts` adds `PI_SESSION_CWD` and optional `PI_GOAL_STORE_FILE` from the extension context, clearing inherited values before applying the active session. The shared subprocess environment carries both to Python, Ruby, and Julia.
+- `packages/senpi-codemode/src/kernels/js/worker-core.js` mirrors both keys in its worker-init clearing list, including the isolated inline fallback and children spawned by cells.
+
+### Why
+
+- A kernel's process cwd or session JSONL path cannot identify the authoritative goal store for an overridden session directory or an in-memory session. Consumers need host-resolved values, and an omitted optional value must never expose a stale parent session's path.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/kernels/session-env.ts` owns the environment contract at interpreter creation; `packages/senpi-codemode/src/kernels/js/worker-core.js` owns the separate worker environment before cells or their imports run. Consumer extensions cannot sanitize either boundary themselves.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/kernels/session-env.ts` key list, structural context slice, and resolver; `packages/senpi-codemode/src/kernels/js/worker-core.js` mirrored key list. Runtime factory plumbing is unchanged because it already passes the context.
+
+### Tests
+
+- `test/session-env.test.ts`: resolution, optional omission, inherited-value clearing.
+- `test/js-kernel-session-env.test.ts`: worker/inline cells and children, inherited-value clearing.
+- `test/py-kernel-session-env.test.ts`: subprocess sanitization and live Python/child values.
+- `test/extension-session-env.test.ts`: session-start forwarding and exact environment snapshots.
+
 ## 2026-09-13 - Steering detaches eligible foreground evaluations (#1637)
 
 ### What changed

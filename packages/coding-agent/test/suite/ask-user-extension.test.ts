@@ -101,6 +101,7 @@ describe("ask-user builtin", () => {
 	});
 	it("returns async acceptance before answer and tracks wake source until settlement", async () => {
 		const { tool, ctx, wakeEvents, deliveries } = await setup();
+		vi.useFakeTimers({ toFake: ["Date"], now: 0 });
 		const completion = Promise.withResolvers<QuestionResponse>();
 		const resolved = Promise.withResolvers<void>();
 		ctx.ui.question = vi.fn(() => completion.promise);
@@ -122,7 +123,11 @@ describe("ask-user builtin", () => {
 		await resolved.promise;
 		expect(getPendingQuestions(ctx.sessionManager.getSessionId())).toEqual([]);
 		expect(wakeEvents).toEqual([
-			{ source: "ask-user", activeCount: 1, items: [{ id: "async", description: "Library" }] },
+			{
+				source: "ask-user",
+				activeCount: 1,
+				items: [{ id: "async", description: "Library", deadlineAtMs: 1_800_000 }],
+			},
 			{ source: "ask-user", activeCount: 0, items: [] },
 		]);
 		expect(deliveries).toEqual(["[Answer to question async]\nLibrary: A"]);

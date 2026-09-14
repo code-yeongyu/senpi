@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { WakeSourceStateItem } from "../monitor-state-event.ts";
 import {
 	createGoalCacheWarmScheduleData,
 	estimateCacheWarmMetrics,
@@ -331,7 +332,7 @@ export class MonitorAwareGoalContinuation {
 		this.#resetContinuationState();
 	}
 
-	#schedule(goal: Goal, kind: DelayedContinuationKind): void {
+	#schedule(goal: Goal, kind: DelayedContinuationKind, repark = false): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
 		// A live wake source arms the periodic backstop only: the normal resumption
 		// is the drain fire in #setWakeSourceCount, and the backstop re-checks the
@@ -347,7 +348,7 @@ export class MonitorAwareGoalContinuation {
 				: GOAL_USER_GRACE_DELAY_MS;
 		this.#scheduledDelayMs = delayMs;
 		if (kind === "monitor") {
-			this.#cacheWarmIteration += 1;
+			if (!repark) this.#cacheWarmIteration += 1;
 			this.#scheduledCacheWarmIteration = this.#cacheWarmIteration;
 			const iteration = this.#scheduledCacheWarmIteration;
 			const cache = estimateCacheWarmMetrics(this.#ctx?.model, process.env, this.#lastTurnUsage);
@@ -364,10 +365,13 @@ export class MonitorAwareGoalContinuation {
 				...(cache !== undefined ? { cache } : {}),
 			});
 			this.#pi.events?.emit(GOAL_CONTINUATION_SCHEDULED_EVENT, scheduleData);
-			this.#appendWarmupEntry({
-				phase: "scheduled",
-				...scheduleData,
-			});
+			// Progress adjusts this wait; it is not another cache-warm iteration
+			// or transcript entry for every keystroke in the answer composer.
+			if (!repark)
+				this.#appendWarmupEntry({
+					phase: "scheduled",
+					...scheduleData,
+				});
 		} else {
 			this.#scheduledAtMs = undefined;
 			this.#scheduledCache = undefined;
@@ -587,7 +591,7 @@ export class MonitorAwareGoalContinuation {
 		if (events === undefined) return;
 		this.#channelStateUnsubscribers.push(
 			...subscribeGoalChannelState(events, {
-				onWakeSource: (source, activeCount) => this.#setWakeSourceCount(source, activeCount),
+				onWakeSource: (source, activeCount, event) => this.#setWakeSourceCount(source, activeCount, event?.items),
 				onContinuationHold: (source, active) => {
 					const inputId = `external:${source}`;
 					if (active) this.holdDirectInput(inputId);
@@ -623,13 +627,17 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	/**
-	 * Tracks when the pending question's idle timeout expires. A higher count is a
-	 * newly asked question, which restarts the window; dropping to zero clears it
-	 * so the next schedule uses the periodic backstop again.
+	 * Prefer the earliest authoritative request deadline. Legacy count-only
+	 * emitters retain the settings-window heuristic; zero clears the deadline.
 	 */
-	#noteAskUserWait(activeCount: number): void {
+	#noteAskUserWait(activeCount: number, items?: readonly WakeSourceStateItem[]): void {
 		if (activeCount <= 0) {
 			this.#askUserDeadlineAtMs = undefined;
+			return;
+		}
+		const deadlines = items?.flatMap((item) => (item.deadlineAtMs === undefined ? [] : [item.deadlineAtMs])) ?? [];
+		if (deadlines.length > 0) {
+			this.#askUserDeadlineAtMs = Math.min(...deadlines);
 			return;
 		}
 		const previousCount = this.#wakeSources.get(ASK_USER_WAKE_SOURCE) ?? 0;
@@ -643,9 +651,10 @@ export class MonitorAwareGoalContinuation {
 		this.#askUserDeadlineAtMs = undefined;
 	}
 
-	#setWakeSourceCount(source: string, activeCount: number): void {
+	#setWakeSourceCount(source: string, activeCount: number, items?: readonly WakeSourceStateItem[]): void {
 		const previousTotal = this.#activeWakeSourceCount();
-		if (source === ASK_USER_WAKE_SOURCE) this.#noteAskUserWait(activeCount);
+		const previousDeadline = this.#askUserDeadlineAtMs;
+		if (source === ASK_USER_WAKE_SOURCE) this.#noteAskUserWait(activeCount, items);
 		this.#wakeSources.set(source, activeCount);
 		const nextTotal = this.#activeWakeSourceCount();
 		if (previousTotal > 0 && nextTotal === 0) {
@@ -655,6 +664,11 @@ export class MonitorAwareGoalContinuation {
 			return;
 		}
 		if (this.#scheduledContinuationKind === "monitor") {
+			if (previousDeadline !== this.#askUserDeadlineAtMs && this.#goal !== null) {
+				this.#cancelTimer();
+				this.#schedule(this.#goal, "monitor", true);
+				return;
+			}
 			this.#waitTicker?.setChannelCounts(this.#wakeSourceSnapshot());
 		}
 	}

@@ -1,15 +1,19 @@
-import { setKeybindings } from "@earendil-works/pi-tui";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { setKeybindings, TuiMainScreen } from "@earendil-works/pi-tui";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultEditorTheme } from "../../../tui/test/test-themes.ts";
+import { VirtualTerminal } from "../../../tui/test/virtual-terminal.ts";
 import type { QuestionRequest } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
 import { matchesAskUserAnswerKey } from "../../src/modes/interactive/components/ask-user-answer-key.ts";
 import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "../../src/modes/interactive/components/ask-user-question.ts";
+import { CustomEditor } from "../../src/modes/interactive/components/custom-editor.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../src/utils/ansi.ts";
 import { createFakeInteractiveMode, type FakeInteractiveMode } from "./helpers/ask-user-async-fake-mode.ts";
 
 const ALT_A = "\x1ba";
+const ALT_UP = "\x1b[1;3A";
 /** What Option+A types in a macOS terminal that lets Option compose (Terminal.app, iTerm2, Ghostty, kitty defaults). */
 const OPTION_A_GLYPH = "å";
 const OPTION_SHIFT_A_GLYPH = "Å";
@@ -53,7 +57,12 @@ function askPending(fake: FakeInteractiveMode): void {
 	if (!pending) throw new Error("question() returned nothing");
 }
 
+beforeEach(() => {
+	vi.stubEnv("TERM_PROGRAM", "");
+	vi.stubEnv("TMUX", "");
+});
 afterEach(() => {
+	vi.unstubAllEnvs();
 	if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
 	else Reflect.deleteProperty(process, "platform");
 	setKeybindings(new KeybindingsManager());
@@ -119,15 +128,53 @@ describe("OS-aware async ask-user answer shortcut", () => {
 
 	describe("widget label", () => {
 		it.each<[NodeJS.Platform, string]>([
-			["darwin", "option+a"],
-			["linux", "alt+a"],
-			["win32", "alt+a"],
+			["darwin", "option+up"],
+			["linux", "alt+up"],
+			["win32", "alt+up"],
 		])("names the shortcut %s as %s", (platform, label) => {
 			setPlatform(platform);
 			const fake = createFakeInteractiveMode();
 			askPending(fake);
 
 			expect(stripAnsi(fake.widgetText(ASK_USER_WIDGET_KEY) ?? "")).toContain(`${label} to answer`);
+		});
+	});
+
+	describe("alt+up shares the dequeue chord", () => {
+		it.each([false, true])("dispatches through CustomEditor with pending=%s", (pending) => {
+			const fake = createFakeInteractiveMode();
+			const kb = new KeybindingsManager();
+			const ui = new TuiMainScreen(new VirtualTerminal());
+			const editor = new CustomEditor(ui, defaultEditorTheme, kb);
+			const dequeue = vi.fn();
+			editor.onExtensionShortcut = (data) => fake.handleAskUserShortcut(data);
+			editor.onAction("app.message.dequeue", dequeue);
+			if (pending) askPending(fake);
+			editor.handleInput(ALT_UP);
+			if (pending) {
+				expect(dequeue).not.toHaveBeenCalled();
+				expect(overlay(fake)).toBeInstanceOf(AskUserQuestionComponent);
+			} else expect(dequeue).toHaveBeenCalledExactlyOnceWith();
+			ui.stop();
+		});
+
+		it("keeps the Windows dequeue binding independent of alt+up", async () => {
+			// Defaults capture the platform at module evaluation; reload after setting it.
+			setPlatform("win32");
+			vi.resetModules();
+			const windows = await import("../../src/core/keybindings.ts");
+			const kb = new windows.KeybindingsManager();
+			expect(windows.useWindowsKeybindings()).toBe(true);
+			expect(kb.matches(ALT_Q, "app.message.dequeue")).toBe(true);
+			expect(matchesAskUserAnswerKey(ALT_UP, "win32", kb)).toBe(true);
+		});
+
+		it("hints the retained alt+a fallback on Apple Terminal", () => {
+			setPlatform("darwin");
+			vi.stubEnv("TERM_PROGRAM", "Apple_Terminal");
+			const fake = createFakeInteractiveMode();
+			askPending(fake);
+			expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("option+a to answer");
 		});
 	});
 

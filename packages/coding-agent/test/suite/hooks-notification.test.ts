@@ -65,7 +65,7 @@ describe("builtin hooks Notification event", () => {
 		const scriptPath = join(hookDir, "notify.mjs");
 		writeFileSync(
 			scriptPath,
-			`import { writeFileSync } from 'node:fs'; let stdin = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => { stdin += chunk; }); process.stdin.on('end', () => { writeFileSync(${JSON.stringify(stdinPath)}, stdin); process.stdout.write(JSON.stringify({ additionalContext: 'notification-timeout' })); });`,
+			`import { writeFileSync } from 'node:fs'; let stdin = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => { stdin += chunk; }); process.stdin.on('end', () => { if (JSON.parse(stdin).kind === 'ask-user-timeout') { writeFileSync(${JSON.stringify(stdinPath)}, stdin); process.stdout.write(JSON.stringify({ additionalContext: 'notification-timeout' })); } else process.stdout.write('{}'); });`,
 			"utf-8",
 		);
 		const hooksExtension = builtinExtensions.find((entry) => entry.id === "hooks");

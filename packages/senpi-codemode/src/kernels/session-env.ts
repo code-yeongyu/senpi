@@ -12,6 +12,8 @@
 export const SESSION_ENVIRONMENT_KEYS = [
 	"PI_SESSION_ID",
 	"PI_SESSION_FILE",
+	"PI_SESSION_CWD",
+	"PI_GOAL_STORE_FILE",
 	"PI_PROVIDER",
 	"PI_MODEL",
 	"PI_REASONING_LEVEL",
@@ -22,6 +24,8 @@ export type SessionEnvironment = Readonly<Record<string, string>>;
 
 /** Structural slice of `ExtensionContext` the session environment is resolved from. */
 export interface SessionEnvironmentSource {
+	readonly cwd: string;
+	readonly goalStoreFile?: string;
 	readonly sessionManager: {
 		getSessionId(): string;
 		getSessionFile(): string | undefined;
@@ -33,6 +37,8 @@ export interface SessionEnvironmentSource {
 export function sessionEnvironmentFrom(source: SessionEnvironmentSource): SessionEnvironment {
 	const env: Record<string, string> = {};
 	env.PI_SESSION_ID = source.sessionManager.getSessionId();
+	env.PI_SESSION_CWD = source.cwd;
+	if (source.goalStoreFile) env.PI_GOAL_STORE_FILE = source.goalStoreFile;
 	const sessionFile = source.sessionManager.getSessionFile();
 	if (sessionFile) env.PI_SESSION_FILE = sessionFile;
 	const model = source.model;

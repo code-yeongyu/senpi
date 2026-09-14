@@ -30,12 +30,12 @@ describe("binary release workflow", () => {
 		);
 	});
 
-	it("embeds jsdom's sync worker in release binaries", () => {
+	it("omits jsdom's retired sync worker from release binaries", () => {
 		if (process.platform !== "win32") {
 			assert.notEqual(statSync(buildScriptUrl).mode & 0o111, 0);
 		}
 		assert.match(buildScript, /node scripts\/prepare-bun-compile-assets\.mjs/);
-		assert.match(buildScript, /node_modules\/jsdom\/lib\/jsdom\/living\/xhr\/xhr-sync-worker\.js/);
+		assert.doesNotMatch(buildScript, /node_modules\/jsdom\/lib\/jsdom\/living\/xhr\/xhr-sync-worker\.js/);
 		assert.match(buildScript, /smoke-standalone-binary\.mjs/);
 	});
 
@@ -43,7 +43,7 @@ describe("binary release workflow", () => {
 		const binaryBuild = codingAgentPackage.scripts["build:binary"];
 		assert.match(binaryBuild, /npm --prefix \.\.\/pty run build/);
 		assert.match(binaryBuild, /node \.\.\/\.\.\/scripts\/prepare-bun-compile-assets\.mjs/);
-		assert.match(binaryBuild, /node_modules\/jsdom\/lib\/jsdom\/living\/xhr\/xhr-sync-worker\.js/);
+		assert.doesNotMatch(binaryBuild, /node_modules\/jsdom\/lib\/jsdom\/living\/xhr\/xhr-sync-worker\.js/);
 		assert.doesNotMatch(binaryBuild, /--external=css-tree/);
 	});
 

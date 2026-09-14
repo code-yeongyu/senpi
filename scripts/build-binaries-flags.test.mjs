@@ -55,10 +55,10 @@ for (const { name, command } of commands) {
 			"./dist/bun/cli.js",
 			"./src/modes/rpc/session-worker.ts",
 			"./src/utils/image-resize-worker.ts",
-			"../../node_modules/jsdom/lib/jsdom/living/xhr/xhr-sync-worker.js",
 		]) {
 			assert.ok(argv.includes(entry), `${name}: missing ${entry}`);
 		}
+		assert.ok(!argv.some((argument) => String(argument).includes("xhr-sync-worker.js")));
 	});
 
 	test(`${name} preserves autoload isolation when compiling standalone entries`, () => {

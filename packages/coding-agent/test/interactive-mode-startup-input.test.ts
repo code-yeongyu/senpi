@@ -17,6 +17,8 @@ function createEchoControllerStub() {
 }
 
 type SubmitContext = {
+	composerDestination: { kind: "chat" };
+	submitAsyncQuestionComment: (text: string) => boolean;
 	defaultEditor: { onSubmit?: (text: string) => void | Promise<void> };
 	editor: {
 		addToHistory?: (text: string) => void;
@@ -92,6 +94,7 @@ type InteractiveModePrivate = {
 	requestExtensionShutdown(this: ExtensionShutdownContext): void;
 	checkShutdownRequested(this: ExtensionShutdownContext): Promise<void>;
 	setupEditorSubmitHandler(this: SubmitContext): void;
+	submitAsyncQuestionComment(this: SubmitContext, text: string): boolean;
 	getUserInput(this: InputContext): Promise<{ text: string; images?: unknown[] }>;
 	takeSubmissionImages(this: SubmitContext, submittedText: string): unknown[];
 	beginUserEcho(this: SubmitContext, text: string, images?: readonly unknown[]): string | undefined;
@@ -106,6 +109,9 @@ const interactiveModePrototype = InteractiveMode.prototype as unknown as Interac
 
 function createSubmitContext(): SubmitContext {
 	const context: SubmitContext = {
+		// Refs #1645: preserve the production classifier in this borrowed receiver.
+		composerDestination: { kind: "chat" },
+		submitAsyncQuestionComment: (text) => interactiveModePrototype.submitAsyncQuestionComment.call(context, text),
 		defaultEditor: {},
 		editor: {
 			addToHistory: vi.fn(),

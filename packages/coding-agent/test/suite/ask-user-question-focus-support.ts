@@ -92,6 +92,6 @@ export function openOwnAnswer(h: FocusHarness): void {
 
 /** Answer both questions and land on the Submit tab with the comment editor focused. */
 export function reachSubmit(h: FocusHarness): void {
-	h.keys("1", KEY.space, KEY.enter);
+	h.keys("1", KEY.space, KEY.tab);
 	expect(h.render()).toContain("Review your answers");
 }

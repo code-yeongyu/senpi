@@ -1,0 +1,9 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ask-user answer chips > keeps ordinary user-message rendering byte-identical to the pre-change snapshot 1`] = `
+[
+  "]133;A[48;2;52;53;65m                                        [49m",
+  "[48;2;52;53;65m [38;2;212;212;212mOrdinary [39m[38;2;212;212;212mmessage[39m                       [49m",
+  "]133;B]133;C[48;2;52;53;65m                                        [49m",
+]
+`;

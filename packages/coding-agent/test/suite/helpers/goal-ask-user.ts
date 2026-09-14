@@ -14,7 +14,10 @@
 
 import { join } from "node:path";
 import { vi } from "vitest";
-import type { QuestionDialogOptions } from "../../../src/core/extensions/builtin/ask-user/registry.ts";
+import {
+	getPendingQuestions,
+	type QuestionDialogOptions,
+} from "../../../src/core/extensions/builtin/ask-user/registry.ts";
 import { readGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
 import type { Goal } from "../../../src/core/extensions/builtin/goal/types.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../../src/core/extensions/builtin/monitor-state-event.ts";
@@ -54,13 +57,15 @@ export interface GoalAskUserWorld {
 	/** Every question the stub surface received, with the delivery mode the tool requested. */
 	readonly questionCalls: readonly QuestionCall[];
 	/** Async question: resolves as soon as the tool accepted it. */
-	askAsync(requestId: string): Promise<ToolResult>;
+	askAsync(requestId: string, timeoutMinutes?: number): Promise<ToolResult>;
 	/** Blocking question: the returned promise stays pending until `answer()`. */
 	askBlocking(requestId: string): Promise<ToolResult>;
 	/** Answers the open question on the stub surface and waits for the extension to settle it. */
-	answer(label: string): Promise<void>;
+	answer(label: string, requestId?: string): Promise<void>;
+	/** Reports actual UI progress to the authoritative pending state. */
+	touch(requestId: string): Promise<void>;
 	/** Awaits the settlement of the async question (used after advancing onto its deadline). */
-	settleQuestion(): Promise<QuestionResponse>;
+	settleQuestion(requestId?: string): Promise<QuestionResponse>;
 	advance(ms: number): Promise<void>;
 	startTurn(): Promise<void>;
 	endTurn(): Promise<void>;
@@ -82,11 +87,17 @@ export async function createGoalAskUserWorld(threadId: string, timeoutMinutes = 
 	const state = { pendingMessages: false };
 	const ctx = await makeGoalContext(notices, threadId, state);
 	const questionCalls: QuestionCall[] = [];
-	let resolveQuestion: ((response: QuestionResponse) => void) | undefined;
+	let lastQuestionId: string | undefined;
+	const controls = new Map<
+		string,
+		{ resolve: (response: QuestionResponse) => void; options?: QuestionDialogOptions }
+	>();
+	const settlements = new Map<string, Promise<QuestionResponse>>();
 	const askCtx = ask.context((request: QuestionRequest, opts?: QuestionDialogOptions) => {
 		questionCalls.push({ request, deliver: opts?.deliver });
+		lastQuestionId = request.requestId;
 		return new Promise<QuestionResponse>((resolve) => {
-			resolveQuestion = resolve;
+			controls.set(request.requestId, { resolve, options: opts });
 		});
 	});
 	const unsubscribe = ask.harness.getExtensionRunner().onBusEvent(WAKE_SOURCE_STATE_EVENT, (data) => {
@@ -94,7 +105,6 @@ export async function createGoalAskUserWorld(threadId: string, timeoutMinutes = 
 	});
 
 	let consumedDeliveries = 0;
-	let settledQuestion: Promise<QuestionResponse> | undefined;
 	const syncPendingMessages = (): void => {
 		// `pi.sendUserMessage` always triggers a turn (agent-session.ts:7173), so a
 		// delivered answer leaves a queued user message until that turn starts. The
@@ -111,8 +121,16 @@ export async function createGoalAskUserWorld(threadId: string, timeoutMinutes = 
 		if (!definition) throw new Error(`the goal extension registered no ${name} tool`);
 		return definition;
 	};
-	const execute = (requestId: string, waitForAnswer: boolean): Promise<ToolResult> =>
-		ask.tool.execute(requestId, { questions: ASYNC_QUESTIONS, waitForAnswer }, undefined, undefined, askCtx);
+	const execute = (requestId: string, waitForAnswer: boolean, requestTimeoutMinutes?: number): Promise<ToolResult> =>
+		ask.tool.execute(
+			requestId,
+			{ questions: ASYNC_QUESTIONS, waitForAnswer },
+			undefined,
+			undefined,
+			requestTimeoutMinutes === undefined
+				? askCtx
+				: { ...askCtx, getAskUserSettings: () => ({ enabled: true, timeoutMinutes: requestTimeoutMinutes }) },
+		);
 
 	await runGoalHandlers(goal.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	await goalTool("create_goal").execute("create-goal", { objective: "Keep moving" }, undefined, undefined, ctx);
@@ -122,23 +140,30 @@ export async function createGoalAskUserWorld(threadId: string, timeoutMinutes = 
 		ask,
 		notices,
 		questionCalls,
-		askAsync: async (requestId) => {
-			const accepted = await execute(requestId, false);
-			settledQuestion = ask.settled(askCtx, requestId);
+		askAsync: async (requestId, requestTimeoutMinutes) => {
+			const accepted = await execute(requestId, false, requestTimeoutMinutes);
+			settlements.set(requestId, ask.settled(askCtx, requestId));
 			return accepted;
 		},
 		askBlocking: (requestId) => execute(requestId, true),
-		answer: async (label) => {
-			if (!resolveQuestion) throw new Error("the stub question surface has no open question");
-			const resolve = resolveQuestion;
-			resolveQuestion = undefined;
-			resolve({ status: "answered", answers: { [QUESTION_ID]: { selected: [label] } }, unanswered: [] });
-			if (settledQuestion) await settledQuestion;
+		answer: async (label, requestId = lastQuestionId) => {
+			const control = requestId === undefined ? undefined : controls.get(requestId);
+			if (!control || requestId === undefined) throw new Error("the stub question surface has no open question");
+			controls.delete(requestId);
+			control.resolve({ status: "answered", answers: { [QUESTION_ID]: { selected: [label] } }, unanswered: [] });
+			await settlements.get(requestId);
 			await advance(0);
 		},
-		settleQuestion: async () => {
-			if (!settledQuestion) throw new Error("no async question is pending");
-			const response = await settledQuestion;
+		touch: async (requestId) => {
+			const control = controls.get(requestId);
+			if (!control?.options) throw new Error("the stub surface has no progress callback");
+			control.options.onProgress({ answers: {} });
+			await goal.events.flush();
+		},
+		settleQuestion: async (requestId = lastQuestionId) => {
+			const settlement = requestId === undefined ? undefined : settlements.get(requestId);
+			if (!settlement) throw new Error("no async question is pending");
+			const response = await settlement;
 			await advance(0);
 			return response;
 		},
@@ -163,6 +188,10 @@ export async function createGoalAskUserWorld(threadId: string, timeoutMinutes = 
 			goal.events.emitted.filter((event) => event.channel === channel).map((event) => event.data),
 		cleanup: async () => {
 			unsubscribe();
+			const pending = getPendingQuestions(askCtx.sessionManager.getSessionId());
+			for (const entry of pending) entry.cancel();
+			await Promise.all(pending.map((entry) => entry.completion));
+			await runGoalHandlers(goal.handlers, "session_shutdown", { type: "session_shutdown", reason: "quit" }, ctx);
 			ask.harness.cleanup();
 			vi.useRealTimers();
 			await cleanupGoalMonitorTempDirs();

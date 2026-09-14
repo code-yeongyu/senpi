@@ -29,6 +29,7 @@ export const ASK_USER_MAX_TIMEOUT_MINUTES = 120;
 
 export interface AskUserSettings {
 	enabled?: boolean; // default: true
+	bell?: boolean; // default: true; ring once for a newly displayed question
 	timeoutMinutes?: number; // default: 30, clamped to 1-120 when read
 }
 

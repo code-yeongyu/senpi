@@ -14,6 +14,7 @@ describe("askUser settings", () => {
 		expect(SettingsManager.inMemory().getAskUserSettings()).toEqual({
 			enabled: true,
 			timeoutMinutes: 30,
+			bell: true,
 		});
 	});
 
@@ -24,12 +25,13 @@ describe("askUser settings", () => {
 		expect(SettingsManager.fromStorage(storage).getAskUserSettings()).toEqual({
 			enabled: true,
 			timeoutMinutes: 5,
+			bell: true,
 		});
 	});
 
 	it("honors askUser.enabled false", () => {
 		const manager = SettingsManager.inMemory({ askUser: { enabled: false } });
-		expect(manager.getAskUserSettings()).toEqual({ enabled: false, timeoutMinutes: 30 });
+		expect(manager.getAskUserSettings()).toEqual({ enabled: false, timeoutMinutes: 30, bell: true });
 	});
 
 	it("lets --no-ask-user win over askUser.enabled true", async () => {
@@ -45,10 +47,12 @@ describe("askUser settings", () => {
 		expect(harness.settingsManager.getAskUserSettings()).toEqual({
 			enabled: false,
 			timeoutMinutes: 15,
+			bell: true,
 		});
 		expect(harness.getExtensionRunner().createContext().getAskUserSettings?.()).toEqual({
 			enabled: false,
 			timeoutMinutes: 15,
+			bell: true,
 		});
 	});
 
@@ -72,6 +76,6 @@ describe("askUser settings", () => {
 		storage.withLock("global", () => JSON.stringify({ askUser: { enabled: "yes", timeoutMinutes: 12 } }));
 		const manager = SettingsManager.fromStorage(storage);
 		expect(collectSettingsDiagnostics(manager)).toEqual([]);
-		expect(manager.getAskUserSettings()).toEqual({ enabled: true, timeoutMinutes: 12 });
+		expect(manager.getAskUserSettings()).toEqual({ enabled: true, timeoutMinutes: 12, bell: true });
 	});
 });

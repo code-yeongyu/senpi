@@ -58,10 +58,10 @@ export class BtwPanel {
 		let footer: string;
 		switch (this.status) {
 			case "streaming":
-				footer = thm.fg("dim", "\nanswering… (Esc to cancel)");
+				footer = thm.fg("dim", "\nanswering… (/btw or Esc to cancel)");
 				break;
 			case "done":
-				footer = thm.fg("dim", "\n(dismisses on next message)");
+				footer = thm.fg("dim", "\n(/btw or Esc to dismiss; clears on next message)");
 				break;
 			case "error":
 				footer = thm.fg("error", `\nerror: ${this.detail}`);

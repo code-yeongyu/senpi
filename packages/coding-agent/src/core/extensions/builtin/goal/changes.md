@@ -1,5 +1,25 @@
 # goal Extension Changes
 
+## 2026-09-13 - Park on the earliest authoritative question deadline (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/channel-state-subscriptions.ts` forwards the full wake-source event. `monitor-continuation.ts` takes the minimum supplied ask-user item deadline instead of inferring every request's deadline from the settings window.
+- A changed minimum reparks an already scheduled monitor timer, including while direct input holds it. Progress retains the same cache-warm iteration and does not append another transcript row. The settings heuristic remains for count-only events; the clamp, past-deadline extra window and last-source drain rule are unchanged. This supersedes the metadata-free behavior described in the 2026-09-10 park entry below.
+- The real ask-user/goal integration world now supports multiple request IDs, independent request timeouts and UI progress. Tests cover 30m/5m ordering, settlement recomputation, progress extension, and no repeated warmup transcript entries.
+
+### Why
+
+- Multiple pending requests can have different idle deadlines, and typing extends one request without changing the pending count. The parked timer must follow the current minimum without introducing a periodic prompt or a transcript row per keystroke.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` owns the single timer, direct-input holds and admission checks. Event consumers cannot reschedule it from outside the coordinator.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: schedule, noteAskUserWait and setWakeSourceCount; `channel-state-subscriptions.ts`: callback signature and wake-event forwarding. No prompt or backstop-bound constants change.
+
 ## Blocked is earned, not asserted: live-channel and goal-turn guards (2026-09-11)
 
 ### What changed

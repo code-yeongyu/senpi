@@ -118,9 +118,8 @@ describe("copyPublishDependencies", () => {
 		);
 	});
 
-	it("stages a Bun-compile-safe css-tree without touching the installed source tree", () => {
-		// Given: css-tree resolves its data through createRequire at module scope, which the
-		// compiled binaries built from the published tarball cannot serve from /$bunfs.
+	it("copies dependency source verbatim without the retired css-tree rewrite", () => {
+		// Given: a dependency left in a stale publish graph is copied, never patched.
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-compile-safe-"));
 		const cssTreeSource = join(tempDir, "node_modules", "css-tree");
 		mkdirSync(join(cssTreeSource, "lib"), { recursive: true });
@@ -138,13 +137,12 @@ describe("copyPublishDependencies", () => {
 		// When
 		copyPublishDependencies(tempDir);
 
-		// Then: the staged copy is compile-safe...
+		// Then: staging preserves the dependency source exactly.
 		const staged = readFileSync(
 			join(tempDir, "packages", "coding-agent", "node_modules", "css-tree", "lib", "data-patch.js"),
 			"utf8",
 		);
-		assert.doesNotMatch(staged, /createRequire/);
-		assert.match(staged, /"color"/);
+		assert.equal(staged, dataPatchSource);
 
 		// ...and publishing never rewrites the developer's installed dependency.
 		assert.equal(readFileSync(join(cssTreeSource, "lib", "data-patch.js"), "utf8"), dataPatchSource);

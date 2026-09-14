@@ -190,12 +190,12 @@ export class AskUserQuestionState {
 		this.notice = undefined;
 	}
 
-	/** Replace the question's answer with typed text; empty text clears it. */
+	/** Replace the question's answer with typed text; empty text is a no-op so existing option selections survive. */
 	setOwnAnswer(questionId: string, text: string): void {
 		const trimmed = text.trim();
+		if (trimmed === "") return;
 		this.selected.delete(questionId);
-		if (trimmed === "") this.texts.delete(questionId);
-		else this.texts.set(questionId, trimmed);
+		this.texts.set(questionId, trimmed);
 		this.notice = undefined;
 	}
 

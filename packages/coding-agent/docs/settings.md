@@ -480,6 +480,7 @@ This is the default and has no setting. Hooks and permission checks apply unchan
 |---------|------|---------|-------------|
 | `askUser.enabled` | boolean | `true` | Enable the built-in question tool (`request_user_input` / `ask_user_question`) |
 | `askUser.timeoutMinutes` | number | `30` | Idle minutes before an unanswered question times out, clamped to 1–120 |
+| `askUser.bell` | boolean | `true` | Ring the terminal bell once for a newly displayed question; reconnect hydration does not ring |
 
 Disable for one run without changing settings with `--no-ask-user` (wins over `askUser.enabled: true`). `disabledBuiltinExtensions: ["ask-user"]` remains the coarse switch that skips loading the extension.
 
@@ -487,10 +488,13 @@ Disable for one run without changing settings with `--no-ask-user` (wins over `a
 {
   "askUser": {
     "enabled": true,
-    "timeoutMinutes": 30
+    "timeoutMinutes": 30,
+    "bell": true
   }
 }
 ```
+
+While a question is pending, the terminal title shows `? <header>` unless an active tool title takes precedence. Settlement restores the previous title layer. Set `askUser.bell: false` to keep the title and question display without a bell.
 
 ### Sessions
 

@@ -213,12 +213,16 @@ function resolveSpawnContext(
 	const env = { ...getShellEnv() };
 	delete env.PI_SESSION_ID;
 	delete env.PI_SESSION_FILE;
+	delete env.PI_SESSION_CWD;
+	delete env.PI_GOAL_STORE_FILE;
 	delete env.PI_PROVIDER;
 	delete env.PI_MODEL;
 	delete env.PI_REASONING_LEVEL;
 	if (exposeSessionEnvironment && ctx) {
 		const model = ctx.model;
 		env.PI_SESSION_ID = ctx.sessionManager.getSessionId();
+		env.PI_SESSION_CWD = ctx.cwd;
+		if (ctx.goalStoreFile) env.PI_GOAL_STORE_FILE = ctx.goalStoreFile;
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		if (sessionFile) env.PI_SESSION_FILE = sessionFile;
 		if (model) {

@@ -10,12 +10,12 @@
 import { Container, Text, TruncatedText, type TUI } from "@earendil-works/pi-tui";
 import type { QuestionRequest, QuestionResponse } from "../../../core/extensions/types.ts";
 import { theme } from "../theme/theme.ts";
-import { ASK_USER_ANSWER_KEYBINDING } from "./ask-user-answer-key.ts";
+import { askUserAnswerKeyHint } from "./ask-user-answer-key.ts";
+import { AskUserCountdown } from "./ask-user-countdown.ts";
 import { formatCountdownLabel, type QuestionDraft } from "./ask-user-question-state.ts";
-import { CountdownTimer } from "./countdown-timer.ts";
 import { keyText } from "./keybinding-hints.ts";
 
-/** Widget slot key used with `setWidget`; one pending async question at a time. */
+/** Host-owned widget slot displaying one request from the pending queue. */
 export const ASK_USER_WIDGET_KEY = "ask-user";
 
 type Question = QuestionRequest["questions"][number];
@@ -63,10 +63,15 @@ export function buildTimedOutResponse(
 	};
 }
 
-export function renderStatusLine(unanswered: number, countdownLabel: string): string {
+export function renderStatusLine(unanswered: number, countdownLabel: string, pendingCount = 1): string {
 	const countdown = countdownLabel === "" ? "" : theme.fg("muted", ` · ${countdownLabel}`);
 	return (
-		theme.fg("accent", theme.bold("?")) + theme.fg("text", ` Question pending (${unanswered} unanswered)`) + countdown
+		theme.fg("accent", theme.bold("?")) +
+		theme.fg(
+			"text",
+			pendingCount > 1 ? ` ${pendingCount} questions pending` : ` Question pending (${unanswered} unanswered)`,
+		) +
+		countdown
 	);
 }
 
@@ -90,7 +95,7 @@ export function renderOptionsLine(question: Question, remaining: number): string
 
 /** Hint naming every way into the pending question; the shortcut segment follows the effective binding. */
 export function renderAnswerHint(): string {
-	const shortcut = keyText(ASK_USER_ANSWER_KEYBINDING);
+	const shortcut = askUserAnswerKeyHint();
 	const keys = shortcut === "" ? "enter" : `enter or ${shortcut}`;
 	return [
 		theme.fg("dim", keys) + theme.fg("muted", " to answer"),
@@ -104,6 +109,8 @@ export interface AskUserAsyncWidgetOptions {
 	draft: QuestionDraft;
 	/** Idle countdown shown in the line; 0 disables it. */
 	timeoutMs: number;
+	getDeadlineAtMs?: () => number;
+	pendingCount?: number;
 	tui?: TUI;
 	onExpire: () => void;
 }
@@ -111,22 +118,25 @@ export interface AskUserAsyncWidgetOptions {
 export class AskUserAsyncWidget extends Container {
 	private readonly request: QuestionRequest;
 	private readonly draft: QuestionDraft;
-	private readonly countdown: CountdownTimer | undefined;
+	private readonly countdown: AskUserCountdown | undefined;
+	private readonly pendingCount: number;
 	private countdownLabel = "";
 
 	constructor(options: AskUserAsyncWidgetOptions) {
 		super();
 		this.request = options.request;
 		this.draft = options.draft;
-		if (options.timeoutMs > 0) {
-			this.countdown = new CountdownTimer(
+		this.pendingCount = options.pendingCount ?? 1;
+		if (options.timeoutMs > 0 || options.getDeadlineAtMs) {
+			this.countdown = new AskUserCountdown(
 				options.timeoutMs,
 				options.tui,
-				(seconds) => {
-					this.countdownLabel = formatCountdownLabel(seconds * 1000);
+				(remainingMs) => {
+					this.countdownLabel = formatCountdownLabel(remainingMs);
 					this.update();
 				},
 				options.onExpire,
+				options.getDeadlineAtMs,
 			);
 		}
 		this.update();
@@ -141,11 +151,15 @@ export class AskUserAsyncWidget extends Container {
 		const pending = unansweredIds(this.request, this.draft);
 		const shown = this.request.questions.find((question) => question.id === pending[0]);
 		this.clear();
-		this.addChild(new Text(renderStatusLine(pending.length, this.countdownLabel), 1, 0));
+		this.addChild(new Text(renderStatusLine(pending.length, this.countdownLabel, this.pendingCount), 1, 0));
 		if (shown) {
 			this.addChild(new TruncatedText(renderQuestionLine(shown), 1, 0));
 			this.addChild(new TruncatedText(renderOptionsLine(shown, pending.length - 1), 1, 0));
 		}
-		this.addChild(new Text(INDENT + renderAnswerHint(), 1, 0));
+		const nextHint =
+			this.pendingCount > 1
+				? theme.fg("muted", ` · +${this.pendingCount - 1} more · ${keyText("app.question.next")} next question`)
+				: "";
+		this.addChild(new Text(INDENT + renderAnswerHint() + nextHint, 1, 0));
 	}
 }

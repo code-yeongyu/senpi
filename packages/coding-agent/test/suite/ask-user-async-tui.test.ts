@@ -2,6 +2,7 @@ import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { QuestionRequest } from "../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
+import { askUserAnswerKeyHint } from "../../src/modes/interactive/components/ask-user-answer-key.ts";
 import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
 import { AskUserQuestionComponent } from "../../src/modes/interactive/components/ask-user-question.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
@@ -14,6 +15,8 @@ import { ASYNC_QUESTIONS, createAskUserDelivery } from "./helpers/ask-user-deliv
 const ESC = "\x1b";
 const CTRL_ENTER = "\x1b[13;5u";
 const ALT_A = "\x1ba";
+const DOWN = "\x1b[B";
+const SPACE = " ";
 
 function buildRequest(): QuestionRequest {
 	return {
@@ -158,6 +161,7 @@ describe("async ask-user question in the interactive TUI", () => {
 	it("moves the wake source 1 -> 0 and delivers exactly one framed message per answer", async () => {
 		const delivery = await createAskUserDelivery();
 		harnesses.push(delivery.harness);
+		vi.useFakeTimers({ toFake: ["Date"], now: 0 });
 		const fake = createFakeInteractiveMode({ isStreaming: true });
 		const ctx = delivery.context(tuiQuestion(fake), false);
 
@@ -170,7 +174,11 @@ describe("async ask-user question in the interactive TUI", () => {
 		);
 		expect(result.details).toMatchObject({ accepted: true, status: "pending" });
 		expect(delivery.wakeEvents).toEqual([
-			{ source: "ask-user", activeCount: 1, items: [{ id: "tc-async", description: "Library" }] },
+			{
+				source: "ask-user",
+				activeCount: 1,
+				items: [{ id: "tc-async", description: "Library", deadlineAtMs: 1_800_000 }],
+			},
 		]);
 		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending (1 unanswered)");
 
@@ -178,7 +186,11 @@ describe("async ask-user question in the interactive TUI", () => {
 		await fake.submitEditorText("just use bun");
 		await settled;
 		expect(delivery.wakeEvents).toEqual([
-			{ source: "ask-user", activeCount: 1, items: [{ id: "tc-async", description: "Library" }] },
+			{
+				source: "ask-user",
+				activeCount: 1,
+				items: [{ id: "tc-async", description: "Library", deadlineAtMs: 1_800_000 }],
+			},
 			{ source: "ask-user", activeCount: 0, items: [] },
 		]);
 		// Exactly one framed message, delivered by the extension and not by the widget.
@@ -240,7 +252,9 @@ describe("async ask-user question in the interactive TUI", () => {
 		expect(overlay(fake)).toBeUndefined();
 
 		fake.pressEditorKey(ALT_A);
-		overlay(fake)?.handleInput("2");
+		// Space retains an optional draft; digits now submit a single question immediately (#1645).
+		overlay(fake)?.handleInput(DOWN);
+		overlay(fake)?.handleInput(SPACE);
 		vi.advanceTimersByTime(1_000);
 		expect(sendHostUiProgress).toHaveBeenCalledWith({
 			type: "extension_ui_progress",
@@ -264,8 +278,6 @@ describe("async ask-user question in the interactive TUI", () => {
 	it("renders the shortcut hint from the registered key", () => {
 		const fake = createFakeInteractiveMode();
 		void fake.createExtensionUIContext().question?.(buildRequest(), { timeout: 30 * 60_000 });
-		expect(stripAnsi(fake.widgetText(ASK_USER_WIDGET_KEY) ?? "")).toContain(
-			process.platform === "darwin" ? "option+a" : "alt+a",
-		);
+		expect(stripAnsi(fake.widgetText(ASK_USER_WIDGET_KEY) ?? "")).toContain(askUserAnswerKeyHint());
 	});
 });

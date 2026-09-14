@@ -1,5 +1,77 @@
 # changes
 
+
+## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional read-only `ExtensionContext.goalStoreFile`, preserving hand-built context compatibility.
+- `packages/coding-agent/src/core/extensions/runner.ts` implements the guarded lazy getter once in `createContext()` through `goalFilePath(goalStoreRef(sessionManager, cwd))`, honoring persisted, overridden-directory, and in-memory sessions without creating a goal file.
+- `packages/coding-agent/src/core/tools/bash.ts` clears inherited `PI_SESSION_CWD` and `PI_GOAL_STORE_FILE` before setting context values, including opt-out and custom spawn-hook semantics.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` supplies the same values for foreground/background PTY bash and clears inherited values even when no context or optional goal path is supplied. Explicit undefined overrides preserve deletion through PTY backends that merge the host environment.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` and `packages/coding-agent/src/core/extensions/runner.ts` expose facts consumers cannot infer from the session JSONL path, especially with a session-directory override or no persisted session.
+- `packages/coding-agent/src/core/tools/bash.ts` and `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` must not route child processes to stale inherited session paths; the session cwd is not necessarily the child's overridden working directory.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` and `packages/coding-agent/src/core/extensions/runner.ts` own the host context and its lifecycle guards; an extension cannot add a universally available authoritative context getter.
+- `packages/coding-agent/src/core/tools/bash.ts` owns core child spawn environment construction. `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts` owns its independent PTY spawn boundary. A consumer extension cannot sanitize all children at either boundary.
+
+### Expected merge conflict zones
+
+- LOW: the session-manager neighborhood of `ExtensionContext` in `packages/coding-agent/src/core/extensions/types.ts`, and imports plus `createContext()` in `packages/coding-agent/src/core/extensions/runner.ts`.
+- LOW: `resolveSpawnContext()` in `packages/coding-agent/src/core/tools/bash.ts`; session environment and the two spawn sites in `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`.
+
+### Tests
+
+- `test/suite/session-goal-store-context.test.ts`: persisted, `SessionManager.open(path, otherSessionDir)`, and in-memory goal paths; getter reads do not create files.
+- `test/suite/bash-session-env.test.ts`: real registered shell children, opt-out, optional getter omission.
+- `test/suite/terminal-bash-session-env.test.ts`: real foreground/background PTY children, execute-time/fallback contexts, inherited-value clearing.
+- `test/sdk-session-manager.test.ts`: SDK-created session values through the registered bash surface.
+
+
+
+## 2026-09-13 - Configurable pending-question arrival bell (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-shapes.ts` adds optional `AskUserSettings.bell`; `packages/coding-agent/src/core/settings-manager.ts` resolves it to true by default and honors an explicit false value. `docs/settings.md` documents the bell and pending-title behavior.
+
+### Why
+
+- Question arrivals should be noticeable without forcing an audible signal on users who disable it.
+
+### Why an extension could not handle it
+
+- The core settings manager owns global/project merge precedence and the typed ask-user settings contract consumed by the interactive host.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-shapes.ts`: AskUserSettings; `packages/coding-agent/src/core/settings-manager.ts`: getAskUserSettings.
+
+## 2026-09-13 - Pending-question cycling keybinding (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts` adds `app.question.next`, default `alt+down`, for cycling pending requests from an empty composer. Tab autocomplete and Shift+Tab thinking cycling are unchanged.
+- The answer action defaults to both `alt+up` and the retained `alt+a`. Exported primary/fallback key constants keep terminal-aware hints tied to the binding table. Pending-question interception precedes dequeue without changing its handler; Windows/WSL retain their independent `alt+q` dequeue key.
+
+### Why
+
+- Multiple requests need a configurable cycling chord without taking existing editor actions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/keybindings.ts` owns the app binding table and its TUI type augmentation; host dispatch and hints must share that declaration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/keybindings.ts`: AppKeybindings and KEYBINDINGS question entries.
+
+
 ## 2026-09-13 - Invocation-scoped steering notification (senpi#1637)
 
 ### What changed

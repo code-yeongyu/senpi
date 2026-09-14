@@ -1,5 +1,24 @@
 # changes — btw
 
+## 2026-09-13 - Explicit off switch: bare /btw and kitty-safe Escape
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`: bare `/btw` (no question) dismisses the active panel and aborts an in-flight side query instead of only printing usage; the usage hint remains when nothing is active. The panel's Escape listener matches through pi-tui `matchesKey(data, "escape")` instead of comparing against the raw `\x1b` byte.
+- `packages/coding-agent/src/core/extensions/builtin/btw/panel.ts`: the streaming and settled footers name `/btw` and Esc as the way to close the panel.
+
+### Why
+
+- Users had no discoverable way to turn the panel off: the settled footer only said it clears on the next message, and Escape also interrupts a streaming main turn. Under the kitty keyboard protocol (Ghostty, kitty, WezTerm) Escape arrives as `CSI 27 u`, so the raw byte comparison never matched and Escape silently did nothing.
+
+### Why an extension could not handle it
+
+- Both are internal to the builtin command and its widget; an external extension cannot reach the panel's input listener or the command's empty-argument branch.
+
+### Expected merge conflict zones
+
+- LOW: `index.ts` command handler head and the `onTerminalInput` callback; `panel.ts` `repaint()` footer strings.
+
 ## 2026-08-13 - Preserve provider-header deletion markers
 
 ### What changed

@@ -1,5 +1,29 @@
 # core/tools changes
 
+## Session cwd and goal-store environment keys (2026-09-13)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts` extends `resolveSpawnContext()` with `PI_SESSION_CWD` from `ctx.cwd` and optional `PI_GOAL_STORE_FILE` from `ctx.goalStoreFile`. Both inherited keys are deleted before active session values are applied, and injection still precedes `spawnHook`. With session exposure disabled or the optional goal path absent, stale inherited values remain unset.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/bash.ts` must give shell children the active session's working directory and authoritative goal-store path rather than inherited parent-session values. The session cwd can differ from a spawn-hook override, and the goal path cannot be inferred reliably from the session JSONL path for overridden session directories or in-memory sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/bash.ts` owns the core shell spawn environment and its session-exposure opt-out. A consumer extension cannot enforce the delete-then-set contract for every core shell child or guarantee that custom spawn hooks receive the resolved values.
+
+### Expected merge conflict zones
+
+- LOW: the inherited-key deletion list and active-context assignment block in `resolveSpawnContext()` in `packages/coding-agent/src/core/tools/bash.ts`. Preserve injection before `spawnHook` and the `exposeSessionEnvironment` gate.
+
+### Tests
+
+- `packages/coding-agent/test/suite/bash-session-env.test.ts`: real registered shell children receive both values; opt-out and optional-getter omission clear inherited values.
+- `packages/coding-agent/test/sdk-session-manager.test.ts`: SDK-created session metadata reaches the registered bash tool.
+- `packages/coding-agent/test/agent-session-dynamic-tools.test.ts`: existing custom spawn-hook and session-exposure opt-out coverage.
+
 ## Compact memory read classifications with stable headlines (2026-09-09)
 
 ### What changed

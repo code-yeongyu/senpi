@@ -6,6 +6,8 @@ import {
 } from "../src/kernels/session-env.ts";
 
 const fullSource = {
+	cwd: "/w",
+	goalStoreFile: "/g/x.json",
 	sessionManager: {
 		getSessionId: () => "session-77",
 		getSessionFile: () => "/tmp/sessions/session-77.jsonl",
@@ -18,6 +20,8 @@ describe("session environment contract", () => {
 	it("resolves every PI_* session variable the bash tool exposes", () => {
 		expect(sessionEnvironmentFrom(fullSource)).toEqual({
 			PI_SESSION_ID: "session-77",
+			PI_SESSION_CWD: "/w",
+			PI_GOAL_STORE_FILE: "/g/x.json",
 			PI_SESSION_FILE: "/tmp/sessions/session-77.jsonl",
 			PI_PROVIDER: "fake-provider",
 			PI_MODEL: "fake-model",
@@ -27,14 +31,20 @@ describe("session environment contract", () => {
 
 	it("omits optional variables the session does not provide", () => {
 		const env = sessionEnvironmentFrom({
+			cwd: "/w",
 			sessionManager: { getSessionId: () => "ephemeral-1", getSessionFile: () => undefined },
 		});
 
-		expect(env).toEqual({ PI_SESSION_ID: "ephemeral-1" });
+		expect(env).toEqual({ PI_SESSION_ID: "ephemeral-1", PI_SESSION_CWD: "/w" });
+		expect(env).not.toHaveProperty("PI_GOAL_STORE_FILE");
 		for (const key of SESSION_ENVIRONMENT_KEYS) {
-			if (key === "PI_SESSION_ID") continue;
+			if (key === "PI_SESSION_ID" || key === "PI_SESSION_CWD") continue;
 			expect(env).not.toHaveProperty(key);
 		}
+	});
+
+	it("clears inherited cwd and goal-store values when the session environment is empty", () => {
+		expect(applySessionEnvironment({ PI_SESSION_CWD: "stale", PI_GOAL_STORE_FILE: "stale" }, {})).toEqual({});
 	});
 
 	it("replaces inherited PI_* values instead of leaking them", () => {
@@ -42,6 +52,8 @@ describe("session environment contract", () => {
 			PATH: "/usr/bin",
 			PI_SESSION_ID: "stale-session",
 			PI_SESSION_FILE: "stale-file.jsonl",
+			PI_SESSION_CWD: "stale",
+			PI_GOAL_STORE_FILE: "stale",
 			PI_PROVIDER: "stale-provider",
 			PI_MODEL: "stale-model",
 			PI_REASONING_LEVEL: "stale-level",

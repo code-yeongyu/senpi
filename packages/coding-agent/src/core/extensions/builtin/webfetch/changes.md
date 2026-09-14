@@ -2,7 +2,47 @@
 
 Vendored from [`code-yeongyu/pi-webfetch`](https://github.com/code-yeongyu/pi-webfetch) (see `external-versions.json`).
 
-## Senpi adaptations vs upstream
+## 2026-09-14 - Preserve optional document tags during inert parsing
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/parse-web-document.ts` detects the HTML root from the parsed tree, moves root-level content into the synthesized body, and places leading metadata in the head. Comments and script strings cannot masquerade as document roots.
+- Six additional jsdom-generated goldens and independently baseline-checked omitted-root, comment-only, and script-only variants cover both output formats without changing existing goldens.
+
+### Why
+
+- LinkeDOM creates missing head/body containers without relocating content, which previously produced successful empty webfetch responses for documents with omitted body tags.
+
+### Why an extension could not handle it
+
+- Both converter paths consume the private parsed document before external extensions receive tool output.
+
+### Expected merge conflict zones
+
+- Document structure normalization in `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/parse-web-document.ts`.
+
+## 2026-09-13 - Inert DOM conversion with explicit URL identity
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/content.ts` uses linkedom documents and DOM-node input to Turndown's browser build, retaining explicit article selectors and Readability thresholds. Plaintext cleanup clones the selected root; fallback uses an untouched document.
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/parse-web-document.ts` wraps HTML fragments, assigns final document URLs and the first effective base URL, reapplies identity on reader clones, resolves link/image URLs, and unwraps script links without executing them.
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/turndown-browser.d.ts` forwards the existing Turndown types. The lazy conversion boundary remains unchanged.
+- Twenty-four base-generated goldens retain exact conversion fidelity; only documented URL absolutization in fixtures 9 and 10 differs, with unchanged destinations.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/content.ts` needs inert parsing, not browser emulation. Explicit URL identity in `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/parse-web-document.ts` keeps redirect/base resolution correct without jsdom's CSS and XHR dependencies. `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/turndown-browser.d.ts` keeps the browser-build import typed.
+
+### Why an extension could not handle it
+
+- These private converter and parser modules run inside the builtin tool; external extensions cannot replace their dependency graph or document cloning behavior.
+
+### Expected merge conflict zones
+
+- Imports and extraction in `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/content.ts`; document identity in `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/parse-web-document.ts`; declaration forwarding in `packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/turndown-browser.d.ts`.
+
+## Senpi adaptations vs upstream (historical; DOM dependencies superseded above)
 
 - Imports rewritten by `scripts/vendor-transform.mjs`: `@mariozechner/pi-{ai,tui}` -> `@earendil-works/pi-{ai,tui}`; `@mariozechner/pi-coding-agent` symbols -> `../../types.ts` (and `Theme` -> `modes/interactive/theme/theme.ts`); relative `.js` import suffixes -> `.ts`.
 - `webfetch/fetcher.ts`: `buildHeaders` return type `HeadersInit` -> `Record<string, string>` (senpi's root tsconfig has no DOM lib, so the `HeadersInit` global is unavailable; the value is already a plain string record).
