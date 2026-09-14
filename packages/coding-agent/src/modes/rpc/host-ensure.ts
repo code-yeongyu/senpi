@@ -66,8 +66,11 @@ export interface EnsureHostOptions {
 		 * to stall the real process-identity probe.
 		 */
 		readonly beforePidFileWrite?: () => Promise<void>;
-		/** Runs while the successful readiness connection is retained, before ensureHost returns. */
-		readonly afterReadiness?: () => Promise<void>;
+		/** Wraps the real ownership-lock release so tests can observe readiness ownership across it. */
+		readonly releaseOwnershipLock?: (
+			releaseLock: () => Promise<void>,
+			isReadinessRetained: () => boolean,
+		) => Promise<void>;
 		/** Overrides the process-identity probe so a test can force its failure. */
 		readonly readProcessStartTime?: (pid: number) => Promise<string | undefined>;
 	};
@@ -78,6 +81,16 @@ export interface EnsuredHost {
 	readonly socket: string;
 	readonly reused: boolean;
 }
+
+interface ReadinessLease {
+	readonly release: () => void;
+	readonly isRetained: () => boolean;
+}
+
+type EnsuredHostLocked = {
+	readonly host: EnsuredHost;
+	readonly readinessLease?: ReadinessLease;
+};
 
 type ProtocolInfo = {
 	readonly serverVersion: string;
@@ -139,11 +152,19 @@ export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHos
 	// locked". Its own guards (60s age, dead owner pid) already make it safe unlocked.
 	await reapOrphanedInternalHostDirs();
 	const release = await acquireOwnershipSafeLock(`${lockTarget}.lock`, lockOptions);
+	let result: EnsuredHostLocked | undefined;
 	try {
 		await options._test?.afterLockAcquired?.();
-		return await ensureHostLocked(paths, socket, options.agentDir ?? getAgentDir(), options.policy, options._test);
+		result = await ensureHostLocked(paths, socket, options.agentDir ?? getAgentDir(), options.policy, options._test);
+		return result.host;
 	} finally {
-		await release();
+		const releaseOwnershipLock =
+			options._test?.releaseOwnershipLock ?? ((releaseLock: () => Promise<void>) => releaseLock());
+		try {
+			await releaseOwnershipLock(release, () => result?.readinessLease?.isRetained() ?? false);
+		} finally {
+			result?.readinessLease?.release();
+		}
 	}
 }
 
@@ -153,13 +174,13 @@ async function ensureHostLocked(
 	agentDir: string,
 	policy: HostLifecyclePolicyInput | undefined,
 	testOptions: EnsureHostOptions["_test"],
-): Promise<EnsuredHost> {
+): Promise<EnsuredHostLocked> {
 	const pidFile = await readPidFile(paths);
 	const { protocol } = await probeProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	if (isCompatible(protocol)) {
 		// A compatible socket is attachable even when another client surface
 		// started it. Only hosts we spawned are eligible for lifecycle management.
-		return { pid: pidFile?.pid ?? 0, socket, reused: true };
+		return { host: { pid: pidFile?.pid ?? 0, socket, reused: true } };
 	}
 	const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
 	const pidMatches = pidFile ? await matchesPidFileOrUnknown(pidFile, probe) : false;
@@ -179,7 +200,7 @@ async function startHost(
 	agentDir: string,
 	policy: HostLifecyclePolicyInput | undefined,
 	testOptions: EnsureHostOptions["_test"],
-): Promise<EnsuredHost> {
+): Promise<EnsuredHostLocked> {
 	// The settings file must exist before the supervisor reads it at boot, so it
 	// records the policy before the spawn instead of beside the pidfile.
 	if (process.platform === "win32") await createSocketSecret(socketSecretPath(socket));
@@ -274,16 +295,15 @@ async function startHost(
 		await stderr.close();
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
-	// Keep the authenticated readiness connection attached through every remaining
-	// ensure step. Releasing it at the return boundary resets the supervisor's idle
-	// clock there, so slow lock/state I/O cannot consume the caller's attach window.
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, childExit);
 	if (isCompatible(result.protocol)) {
 		try {
-			await testOptions?.afterReadiness?.();
-			return { pid: pidFile.pid, socket, reused: false };
+			return {
+				host: { pid: pidFile.pid, socket, reused: false },
+				readinessLease: result.readinessLease,
+			};
 		} finally {
-			result.release?.();
+			result.readinessLease?.release();
 		}
 	}
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop
@@ -420,12 +440,12 @@ type ChildExit = { readonly code: number | null; readonly signal: NodeJS.Signals
 type ProtocolPollResult = {
 	readonly protocol?: ProtocolInfo;
 	readonly exited?: ChildExit;
-	readonly release?: () => void;
+	readonly readinessLease?: ReadinessLease;
 };
 
 type ProtocolProbeResult = {
 	readonly protocol?: ProtocolInfo;
-	readonly release?: () => void;
+	readonly readinessLease?: ReadinessLease;
 };
 
 async function pollProtocolInfo(
@@ -485,12 +505,23 @@ async function probeProtocolInfo(
 		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 		let buffer = "";
 		let settled = false;
+		let retained = false;
 		const finish = (value?: ProtocolInfo): void => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timeout);
 			if (retainCompatibleConnection && isCompatible(value)) {
-				resolveProbe({ protocol: value, release: () => socket.destroy() });
+				retained = true;
+				resolveProbe({
+					protocol: value,
+					readinessLease: {
+						isRetained: () => retained,
+						release: () => {
+							retained = false;
+							socket.destroy();
+						},
+					},
+				});
 				return;
 			}
 			socket.destroy();
@@ -507,7 +538,10 @@ async function probeProtocolInfo(
 			finish(readProtocolInfo(buffer.slice(0, newline)));
 		});
 		socket.once("error", () => finish());
-		socket.once("close", () => finish());
+		socket.once("close", () => {
+			retained = false;
+			finish();
+		});
 		// Register the error listener before sending the Windows named-pipe handshake.
 		// When an idle host has already removed its pipe, the handshake write can
 		// surface ENOENT immediately; without the listener this probe escapes instead

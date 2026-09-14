@@ -176,17 +176,28 @@ describe("ensureHost-spawned host lifecycle", () => {
 		expect(listInternalSocketDirs().filter((dir) => !internalBefore.includes(dir))).toEqual([]);
 	}, 45_000);
 
-	it("returns an attachable host when post-readiness work outlasts the idle window", async () => {
+	it("keeps readiness attached through ownership lock release and returns an attachable host", async () => {
+		// Given: the real ownership-lock release records readiness ownership on both sides of its COMMIT.
 		const qa = scratch("conn");
-		await ensureLifecycleHost(qa, {
+		const readinessAcrossLockRelease: boolean[] = [];
+
+		// When: ensureHost starts a transient host and completes its ownership handoff.
+		const ensured = await ensureLifecycleHost(qa, {
 			policy: { idleExitMs: 600 },
-			// Given: post-probe ensure work takes longer than a complete idle window.
-			afterReadiness: () => delay(800),
+			releaseOwnershipLock: async (releaseLock, isReadinessRetained) => {
+				readinessAcrossLockRelease.push(isReadinessRetained());
+				await releaseLock();
+				readinessAcrossLockRelease.push(isReadinessRetained());
+			},
 		});
+
+		// Then: readiness spans the real lock release, the returned endpoint serves RPC,
+		// and detaching the only real client still lets the transient host idle-exit.
+		expect(ensured.reused).toBe(false);
+		expect(readinessAcrossLockRelease).toEqual([true, true]);
 		const entry = currentManaged();
 		const peer = await JsonlPeer.connect(qa.socket);
-		await delay(2_000);
-		await expectHostAlive(qa, entry.pidFile);
+		expect(await peer.request({ id: "handoff", type: "get_protocol_info" })).toMatchObject({ success: true });
 		peer.destroy();
 		await waitForHostExit(entry);
 	}, 45_000);
@@ -641,7 +652,7 @@ async function ensureLifecycleHost(
 		hostArgs?: string[];
 		env?: Record<string, string>;
 		spawn?: { command: string; args: string[] };
-		afterReadiness?: () => Promise<void>;
+		releaseOwnershipLock?: (releaseLock: () => Promise<void>, isReadinessRetained: () => boolean) => Promise<void>;
 	} = {},
 ) {
 	const hostArgs = options.hostArgs ?? [];
@@ -661,7 +672,7 @@ async function ensureLifecycleHost(
 					...(options.env ?? {}),
 				},
 				hostArgs,
-				afterReadiness: options.afterReadiness,
+				releaseOwnershipLock: options.releaseOwnershipLock,
 				spawn: options.spawn
 					? {
 							command: process.execPath,
