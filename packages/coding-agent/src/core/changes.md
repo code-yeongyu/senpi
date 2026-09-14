@@ -1,5 +1,22 @@
 # changes
 
+## 2026-09-14 - Session-owned by-name activation and tool_search hidden hints (senpi#1682)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_activateLazyTool` promotes a lazily-activatable **search-exposed** tool itself when no tool-search catalog claims it, so a deferred tool activates on a by-name call even in a session without the tool-search builtin (exposure metadata owns the path; the catalog only enriches it). Eval-exposed tools are never promoted this way; they stay reachable only through the eval cell. `_bindToolSearchRemovedHints` binds `agent.removedToolHints` into the tool-search service at construction and after `bindCore`, so a `tool_search` query naming an eval-only or removed tool answers with that tool's redirect hint.
+
+### Why
+
+- The lazy activator lived only in the tool-search service, so deferred tools (e.g. `generate_image`) could not activate by name without the builtin loaded; the eval-only redirect existed only in the unknown-tool error path, leaving `tool_search` to answer "No tools matched" for hidden tools.
+
+### Why an extension could not handle it
+
+- Both hooks are session internals: the active-set promotion behind `_activateLazyTool` and the `agent.removedToolHints` record are owned by `packages/coding-agent/src/core/agent-session.ts`, which no extension API exposes for reading.
+
+### Expected merge conflict zones
+
+- LOW: two small additions in `_installAgentToolHooks` / `_activateLazyTool` and one call after `bindCore`; both are fork-owned regions.
 ## 2026-09-14 - Restore grep as an eval-only default tool (#1678)
 
 ### What changed

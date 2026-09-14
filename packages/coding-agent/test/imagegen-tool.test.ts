@@ -78,6 +78,9 @@ async function createToolHarness(options: { gateway?: boolean } = {}): Promise<H
 		});
 	}
 	await harness.session.bindExtensions({});
+	// generate_image is search-exposed: these tests exercise the tool body directly, not the
+	// activation path, so they opt into the same active set the by-name call would have produced.
+	harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), TOOL_NAME]);
 	return harness;
 }
 

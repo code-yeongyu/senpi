@@ -218,7 +218,11 @@ describe("openai-image-gen arbitration", () => {
 		expect(nativeImageTools(payload)).toEqual([{ type: NATIVE_TYPE, name: undefined }]);
 		expect(functionToolNames(payload)).not.toContain(GENERATE_IMAGE);
 		expect(functionToolNames(payload)).toContain("read");
-		const bypassed = await harness.session.executeTool<GenerateImageDetails>(GENERATE_IMAGE, { prompt: "a fox" });
+		const bypassed = await harness.session.executeTool<GenerateImageDetails>(
+			GENERATE_IMAGE,
+			{ prompt: "a fox" },
+			{ activateInactiveTool: true },
+		);
 		expect(bypassed.details.reason).toBe("provider_native_bypass");
 	});
 
@@ -251,7 +255,11 @@ describe("openai-image-gen arbitration", () => {
 		const payload = await payloadFor(harness);
 		expect(nativeImageTools(payload)).toHaveLength(0);
 		expect(functionToolNames(payload)).toContain(GENERATE_IMAGE);
-		const executed = await harness.session.executeTool<GenerateImageDetails>(GENERATE_IMAGE, { prompt: "a fox" });
+		const executed = await harness.session.executeTool<GenerateImageDetails>(
+			GENERATE_IMAGE,
+			{ prompt: "a fox" },
+			{ activateInactiveTool: true },
+		);
 		expect(executed.details.reason).not.toBe("provider_native_bypass");
 	});
 
@@ -317,12 +325,20 @@ describe("openai-image-gen arbitration", () => {
 	it("#given credentials appear after session start #when the tool executes #then it resolves them instead of a startup snapshot", async () => {
 		const stub = registerStubImagesProvider();
 		const harness = await startSession({ model: proxiedOpenAi, credentials: false });
-		const blocked = await harness.session.executeTool<GenerateImageDetails>(GENERATE_IMAGE, { prompt: "a fox" });
+		const blocked = await harness.session.executeTool<GenerateImageDetails>(
+			GENERATE_IMAGE,
+			{ prompt: "a fox" },
+			{ activateInactiveTool: true },
+		);
 		expect(blocked.details.reason).toBe("missing_config");
 
 		setImageGenRegistry(credentialedRegistry);
 
-		const executed = await harness.session.executeTool<GenerateImageDetails>(GENERATE_IMAGE, { prompt: "a fox" });
+		const executed = await harness.session.executeTool<GenerateImageDetails>(
+			GENERATE_IMAGE,
+			{ prompt: "a fox" },
+			{ activateInactiveTool: true },
+		);
 		expect(executed.details.reason).toBeUndefined();
 		expect(executed.details.paths).toHaveLength(1);
 		expect(stub.calls).toBe(1);

@@ -1,5 +1,28 @@
 # Tool Search Builtin Changes
 
+## 2026-09-14 - Side-effect-free tool_search with precision gating and hidden-tool hints (senpi #1682)
+
+### What changed
+
+- `tool.ts`: `tool_search` no longer activates anything. It returns up to 5 candidates as name, description and the one-line JSON parameter schema, and tells the model to call one by name; the existing lazy activator (`resolveUnknownToolCall` -> `_activateLazyTool`) promotes the tool on that first call, so the `tools` array changes only when a tool is genuinely used and the "callable from your NEXT turn" round trip is gone. `details` carries `matched` instead of `activated`; the TUI title reads "N tool(s) found". No activation marker is emitted any more.
+- `engine/bm25.ts`: results carry `coverage` (share of the query's content terms present in the document, stopwords excluded); an optional `precision` gate keeps a hit only when coverage >= 0.5 AND its score >= 0.35 x the best non-exact score. Index and query terms pass through a minimal plural fold (`stemToken`: `messages` -> `message`, `libraries` -> `library`). Exact-name hits bypass the gate. The engine default stays lenient; `ToolSearchService.search()` turns the gate on.
+- `service.ts`: `bindRemovedToolHints()` / `hiddenToolHints(query)` surface the host's `agent.removedToolHints` (eval-only `bash`/`powershell`/`workflow`/`monitor`, or any removed tool with a registered hint) when the query names one; `getToolParameters(name)` reads the schema of a registered inactive tool for the result text. `activate()` / `activateTool()` stay for programmatic and rehydration callers.
+- `core/agent-session.ts`: `_bindToolSearchRemovedHints()` binds the hint provider at construction and again after `bindCore`, whichever creates the session-scoped service first. `_activateLazyTool()` now promotes a lazily-activatable tool itself when no catalog service claims it, so a search-exposed tool activates on a by-name call even in a session without the tool-search builtin (the exposure metadata owns the path, the catalog only enriches it).
+- `builtin/imagegen/tool.ts`: `generate_image` is registered `exposure: "search"` with intent keywords; the bundled imagegen skill names the tool, so a by-name call activates it. The OpenAI native `image_generation` injector never depended on the client tool being resident.
+- Tests: `test/tool-search/tool.test.ts` and `test/mcp/tool-search-promotion.test.ts` now pin the by-name contract (search leaves the payload untouched; the by-name call activates and runs in the same turn; the transcript carries no marker; legacy v1/v2 markers still rehydrate). New `test/tool-search/precision.test.ts` (gate, stemming, hidden hints, service default) and `test/suite/regressions/issue-1682-tool-search-side-effect-free.test.ts` (eval-only hint through a real session, `generate_image` deferred and by-name activated). `3592` regression drops `generate_image` from the default active list.
+
+### Why
+
+- In a 30-day sample of real sessions, 90 `tool_search` calls produced 0 intent hits: 80 auto-activated unrelated tools on an incidental term match (`search`, `messages`), and 10 answered "No tools matched" for eval-only `bash`/`monitor`. Each false activation changed the `tools` array and invalidated the provider prompt cache for the whole context (150-390K tokens at the time) on top of the wasted round trip.
+
+### Why an extension could not handle it
+
+- The search tool, the gate and the activation path are the builtin itself; the hint provider is session state (`agent.removedToolHints`) that only the host can expose.
+
+### Expected merge conflict zones
+
+- LOW: `tool.ts` result text and details shape; `engine/bm25.ts` search loop; the imagegen tool definition header; the three rewritten tests.
+
 ## 2026-09-08 - Wire the native 400 fallback into a session recovery signal (senpi #1481/#1482)
 
 ### What changed

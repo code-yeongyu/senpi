@@ -194,7 +194,7 @@ describe("ToolSearchService", () => {
 			{} as ExtensionContext,
 		);
 		expect(result.content).toEqual([
-			expect.objectContaining({ type: "text", text: expect.stringContaining("No tools matched") }),
+			expect.objectContaining({ type: "text", text: expect.stringContaining("No catalog tools matched") }),
 		]);
 		expect(state.active).toEqual(["read", "bash"]);
 		expect(state.setActiveTools).not.toHaveBeenCalled();

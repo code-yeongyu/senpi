@@ -1411,6 +1411,21 @@ export class AgentSession {
 		});
 	}
 
+	/**
+	 * Let tool_search answer a query that names an eval-only or removed tool with that
+	 * tool's redirect hint. Idempotent: called at construction and again once the
+	 * extension runtime is bound, whichever creates the session-scoped service first.
+	 */
+	private _bindToolSearchRemovedHints(): void {
+		let service: ReturnType<typeof getToolSearchService>;
+		try {
+			service = getToolSearchService();
+		} catch {
+			return;
+		}
+		service.bindRemovedToolHints(() => this.agent.removedToolHints);
+	}
+
 	private _installAgentToolHooks(): void {
 		this.agent.resolveUnknownToolCall = (toolName) => {
 			let service: ReturnType<typeof getToolSearchService>;
@@ -1423,6 +1438,7 @@ export class AgentSession {
 			if (!catalogTool || !this._activateLazyTool(toolName)) return undefined;
 			return this.agent.state.tools.find((tool) => tool.name === toolName);
 		};
+		this._bindToolSearchRemovedHints();
 
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
 			this._toolExecutionDepth++;
@@ -3266,8 +3282,17 @@ export class AgentSession {
 	 */
 	private _activateLazyTool(toolName: string): boolean {
 		const definition = this._toolDefinitions.get(toolName)?.definition;
-		if (!definition || !normalizeToolExposure(definition).allowLazyActivation) return false;
-		return this._lazyToolActivators.some((activate) => activate(toolName));
+		if (!definition) return false;
+		const exposure = normalizeToolExposure(definition);
+		if (!exposure.allowLazyActivation) return false;
+		if (this._lazyToolActivators.some((activate) => activate(toolName))) return true;
+		// Exposure metadata owns the by-name path: when no catalog service is loaded (or it
+		// declines), the session promotes a search-exposed tool directly so a deferred tool
+		// still activates. Eval-exposed tools are reached through the eval cell, never promoted.
+		if (exposure.exposure === "search" && !this.getActiveToolNames().includes(toolName)) {
+			this.setActiveToolsByName([...this.getActiveToolNames(), toolName]);
+		}
+		return this.getActiveToolNames().includes(toolName);
 	}
 
 	private _isEvalOnlyPolicyArmed(): boolean {
@@ -7493,6 +7518,7 @@ export class AgentSession {
 				},
 			},
 		);
+		this._bindToolSearchRemovedHints();
 	}
 
 	/** Fallback-chain configuration warnings calculated when this session started. */

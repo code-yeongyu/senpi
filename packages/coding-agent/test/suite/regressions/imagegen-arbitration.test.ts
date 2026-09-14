@@ -648,9 +648,11 @@ describe("imagegen arbitration truth table", () => {
 			}
 
 			// ── consumer 2: client tool behavior ────────────────────────
-			const toolResult = await harness.session.executeTool<GenerateImageDetails>(GENERATE_IMAGE, {
-				prompt: "a fox in the snow",
-			});
+			const toolResult = await harness.session.executeTool<GenerateImageDetails>(
+				GENERATE_IMAGE,
+				{ prompt: "a fox in the snow" },
+				{ activateInactiveTool: true },
+			);
 			if (exp.toolBehavior === "live") {
 				expect(toolResult.details.reason, "live tool has no reason").toBeUndefined();
 				expect(stub.calls, "live tool must have called the images provider").toBeGreaterThan(0);

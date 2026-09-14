@@ -1,7 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { basename, extname } from "node:path";
 import type { ExtensionAPI, ToolInfo } from "../../types.ts";
-import { type Bm25Result, type Bm25SearchOptions, buildBm25Index } from "./engine/bm25.ts";
+import {
+	type Bm25Result,
+	type Bm25SearchOptions,
+	buildBm25Index,
+	DEFAULT_BM25_PRECISION,
+	normalizeToolName,
+	tokenizeToolText,
+} from "./engine/bm25.ts";
 import type { ToolSearchDocument, ToolSearchSource } from "./engine/document.ts";
 import { deriveExtensionRegistrationId, rehydrate } from "./engine/marker.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "./tool.ts";
@@ -19,6 +26,12 @@ export interface ToolSearchRuntime {
 
 type RuntimeApi = Pick<ExtensionAPI, "getActiveTools" | "getAllTools" | "setActiveTools">;
 
+/** Redirect text for a tool the model may name but cannot call directly (eval-only bash, removed tools). */
+export interface HiddenToolHint {
+	readonly name: string;
+	readonly hint: string;
+}
+
 interface FeedState {
 	docs: ToolSearchDocument[];
 	hooks: ToolSearchFeederHooks;
@@ -33,6 +46,7 @@ export class ToolSearchService {
 	#registryGeneration = 0;
 	#historyScannedGeneration = -1;
 	#registerToolSearch: (() => void) | undefined;
+	#removedToolHints: () => Readonly<Record<string, string>> = () => ({});
 
 	constructor(runtime: ToolSearchRuntime) {
 		this.#runtime = runtime;
@@ -69,6 +83,34 @@ export class ToolSearchService {
 		this.#registerToolSearch = register;
 	}
 
+	/** Let the host expose its removed-tool hints so a search for a hidden tool answers with the redirect. */
+	bindRemovedToolHints(provider: () => Readonly<Record<string, string>>): void {
+		this.#removedToolHints = provider;
+	}
+
+	/** Hints for every hidden tool the query names, in query order. */
+	hiddenToolHints(query: string): HiddenToolHint[] {
+		const hints = this.#removedToolHints();
+		const byNormalizedName = new Map(
+			Object.entries(hints).map(([name, hint]) => [normalizeToolName(name), { hint, name }]),
+		);
+		if (byNormalizedName.size === 0) return [];
+		const seen = new Set<string>();
+		const matched: HiddenToolHint[] = [];
+		for (const candidate of [normalizeToolName(query), ...tokenizeToolText(query)]) {
+			const entry = byNormalizedName.get(candidate);
+			if (entry === undefined || seen.has(entry.name)) continue;
+			seen.add(entry.name);
+			matched.push(entry);
+		}
+		return matched;
+	}
+
+	/** Parameter schema of a registered tool, active or not, so a search result can be called by name. */
+	getToolParameters(name: string): unknown {
+		return this.#runtime.getAllTools().find((tool) => tool.name === name)?.parameters;
+	}
+
 	beginSession(): void {
 		this.#feeds.delete("mcp");
 		this.#registryGeneration += 1;
@@ -91,7 +133,7 @@ export class ToolSearchService {
 	}
 
 	search(query: string, limit = 10, options: Bm25SearchOptions = {}): Bm25Result[] {
-		return buildBm25Index(this.getCatalog()).search(query, limit, options);
+		return buildBm25Index(this.getCatalog()).search(query, limit, { precision: DEFAULT_BM25_PRECISION, ...options });
 	}
 
 	/** Route all matches through their owning feeder, even when already active. */

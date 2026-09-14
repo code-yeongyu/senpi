@@ -1,5 +1,23 @@
 # mcp Extension Changes
 
+## stubSwap stubs promote themselves on the first by-name call (2026-09-14, senpi#1682)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts`: `buildMcpStubDefinition(name, promotion?)` takes the full definition plus a `promote` hook. A stub registered under `stubSwap` now accepts arbitrary arguments (`additionalProperties: true`); on execute it calls `promote()` (the tier-B `activate` hook, which swaps stub -> full) and then runs the full definition with the same call, so the model's first by-name call both activates and executes the tool in one turn. Without a promotion hook the stub keeps its old "use tool_search" answer. Description and render label say "deferred" instead of "inactive". A module-level `promotedNamesByRegistrar` remembers every name `swapStubsToFull` promoted, and the stubSwap branch keeps those names registered as full definitions on re-registration: a cold lazy server's background connect (`raceMcpStartupConnect` -> `#registerDirectTools`) or a `list_changed` re-list rebuilt the whole catalog and used to hand a just-promoted tool back to the model as a stub, which surfaced as a timing-dependent failure in `test/mcp/exposure-tierb.test.ts`.
+
+### Why
+
+- `tool_search` no longer activates anything (senpi#1682), so the only remaining activation path is the by-name call. Under `stubSwap` the stub is already resident and active, which means `resolveUnknownToolCall` never fires for it; without this change a stubbed tool could never be promoted again.
+
+### Why an extension could not handle it
+
+- The stub definition and the swap hook are owned by the MCP builtin's tier-B registration; nothing outside it holds the full definitions or the `stubbed` set.
+
+### Expected merge conflict zones
+
+- LOW: the stub builder at the bottom of `tier-b.ts` and the one `toRegister` map in `registerMcpTierBTools`.
+
 ## Explicit pgrep match-all pattern for process-tree collection (2026-08-12)
 
 ### What changed

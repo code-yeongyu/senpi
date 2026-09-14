@@ -40,6 +40,9 @@ beforeEach(async () => {
 	registerImagesApiProvider({ api: "openai-images", generateImages: generate }, STUB_SOURCE_ID);
 	harness = await createHarness({ extensionFactories: [(pi) => pi.registerTool(generateImageTool)] });
 	await harness.session.bindExtensions({});
+	// generate_image is search-exposed: these tests exercise the tool body directly, so they opt
+	// into the same active set the by-name call would have produced.
+	harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), "generate_image"]);
 });
 
 afterEach(() => {

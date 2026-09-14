@@ -20,7 +20,7 @@ function searchableToolsExtension(pi: ExtensionAPI): void {
 			label: name,
 			description,
 			exposure: "search",
-			parameters: Type.Object({}),
+			parameters: Type.Object({ city: Type.Optional(Type.String()) }),
 			execute: async () => ({ content: [{ type: "text" as const, text: `${name}-ran` }], details: {} }),
 		});
 	}
@@ -41,8 +41,16 @@ function relativeOrder(names: readonly string[], selected: ReadonlySet<string>):
 	return names.filter((name) => selected.has(name));
 }
 
+function toolResultTexts(harness: Harness): string[] {
+	return harness.sessionManager
+		.getEntries()
+		.filter((entry) => entry.type === "message")
+		.filter((entry) => entry.message.role === "toolResult")
+		.map((entry) => JSON.stringify(entry.message));
+}
+
 describe("registered shared tool_search", () => {
-	it("is active for search-exposed extension tools, promotes a match, and makes it callable next turn", async () => {
+	it("lists a match with its schema without activating it; the by-name call activates and runs it in the same turn", async () => {
 		const harness = await makeHarness();
 		const providerTools: string[][] = [];
 		harness.setResponses([
@@ -54,44 +62,43 @@ describe("registered shared tool_search", () => {
 			},
 			(context) => {
 				providerTools.push((context.tools ?? []).map((tool) => tool.name));
-				return fauxAssistantMessage(fauxToolCall("weather_forecast", {}), { stopReason: "toolUse" });
+				return fauxAssistantMessage(fauxToolCall("weather_forecast", { city: "Seoul" }), { stopReason: "toolUse" });
 			},
-			fauxAssistantMessage("done"),
+			(context) => {
+				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				return fauxAssistantMessage("done");
+			},
 		]);
 
 		await harness.session.prompt("find and call a weather tool");
-		if (process.env.TOOL_SEARCH_QA === "1") {
-			console.log(JSON.stringify({ providerTools, entries: harness.sessionManager.getEntries() }));
-		}
 
 		expect(providerTools[0]).toContain("tool_search");
 		expect(providerTools[0]).not.toContain("weather_forecast");
-		expect(providerTools[0]).not.toContain("calendar_create");
-		expect(providerTools[1]).toContain("weather_forecast");
-		expect(providerTools[1]).not.toContain("calendar_create");
-		const result = harness.sessionManager
-			.getEntries()
-			.filter((entry) => entry.type === "message")
-			.filter((entry) => entry.message.role === "toolResult")
-			.map((entry) => JSON.stringify(entry.message));
-		expect(result.some((text) => text.includes("weather_forecast-ran"))).toBe(true);
+		expect(providerTools[1]).toEqual(providerTools[0]);
+		expect(providerTools[2]).toContain("weather_forecast");
+		expect(providerTools[2]).not.toContain("calendar_create");
+
+		const results = toolResultTexts(harness);
+		const searchResult = results.find((text) => text.includes("Found 1 tool(s)"));
+		expect(searchResult).toBeDefined();
+		expect(searchResult).toContain("weather_forecast");
+		expect(searchResult).toContain("Nothing was activated");
+		expect(searchResult).toContain('parameters: {\\"type\\":\\"object\\"');
+		expect(searchResult).not.toContain("calendar_create");
+		expect(results.some((text) => text.includes("weather_forecast-ran"))).toBe(true);
 	});
 
-	it("keeps pre-existing active entries in identical relative order across two promotions", async () => {
+	it("keeps pre-existing active entries in identical relative order across two by-name activations", async () => {
 		const harness = await makeHarness();
 		const snapshots: string[][] = [];
 		harness.setResponses([
 			(context) => {
 				snapshots.push((context.tools ?? []).map((tool) => tool.name));
-				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "weather forecast" }), {
-					stopReason: "toolUse",
-				});
+				return fauxAssistantMessage(fauxToolCall("weather_forecast", {}), { stopReason: "toolUse" });
 			},
 			(context) => {
 				snapshots.push((context.tools ?? []).map((tool) => tool.name));
-				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "calendar schedule" }), {
-					stopReason: "toolUse",
-				});
+				return fauxAssistantMessage(fauxToolCall("calendar_create", {}), { stopReason: "toolUse" });
 			},
 			(context) => {
 				snapshots.push((context.tools ?? []).map((tool) => tool.name));
@@ -99,7 +106,7 @@ describe("registered shared tool_search", () => {
 			},
 		]);
 
-		await harness.session.prompt("promote two tools");
+		await harness.session.prompt("activate two tools by name");
 
 		const [before, afterFirst, afterSecond] = snapshots as [string[], string[], string[]];
 		const original = new Set(before);
@@ -108,9 +115,27 @@ describe("registered shared tool_search", () => {
 		expect(relativeOrder(afterSecond, afterFirstSet)).toEqual(afterFirst);
 		expect(afterFirst).toContain("weather_forecast");
 		expect(afterSecond).toContain("calendar_create");
+	});
 
-		if (process.env.TOOL_SEARCH_QA === "1") {
-			console.log(JSON.stringify({ before, afterFirst, afterSecond }));
-		}
+	it("reports no match without touching the active set", async () => {
+		const harness = await makeHarness();
+		const providerTools: string[][] = [];
+		harness.setResponses([
+			(context) => {
+				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "teleportation quantum xyzzy" }), {
+					stopReason: "toolUse",
+				});
+			},
+			(context) => {
+				providerTools.push((context.tools ?? []).map((tool) => tool.name));
+				return fauxAssistantMessage("nothing");
+			},
+		]);
+
+		await harness.session.prompt("search for a capability that does not exist");
+
+		expect(providerTools[1]).toEqual(providerTools[0]);
+		expect(toolResultTexts(harness).some((text) => text.includes("No catalog tools matched"))).toBe(true);
 	});
 });
