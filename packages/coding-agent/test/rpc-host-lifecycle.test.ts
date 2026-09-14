@@ -176,9 +176,12 @@ describe("ensureHost-spawned host lifecycle", () => {
 		expect(listInternalSocketDirs().filter((dir) => !internalBefore.includes(dir))).toEqual([]);
 	}, 45_000);
 
-	it("does not exit while a client is attached, then exits after it detaches", async () => {
+	it("returns an attachable host when post-readiness work outlasts the idle window", async () => {
 		const qa = scratch("conn");
-		await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
+		await ensureLifecycleHost(qa, {
+			policy: { idleExitMs: 600 },
+			afterReadiness: () => delay(800),
+		});
 		const entry = currentManaged();
 		const peer = await JsonlPeer.connect(qa.socket);
 		await delay(2_000);
@@ -637,6 +640,7 @@ async function ensureLifecycleHost(
 		hostArgs?: string[];
 		env?: Record<string, string>;
 		spawn?: { command: string; args: string[] };
+		afterReadiness?: () => Promise<void>;
 	} = {},
 ) {
 	const hostArgs = options.hostArgs ?? [];
@@ -656,6 +660,7 @@ async function ensureLifecycleHost(
 					...(options.env ?? {}),
 				},
 				hostArgs,
+				afterReadiness: options.afterReadiness,
 				spawn: options.spawn
 					? {
 							command: process.execPath,

@@ -66,6 +66,8 @@ export interface EnsureHostOptions {
 		 * to stall the real process-identity probe.
 		 */
 		readonly beforePidFileWrite?: () => Promise<void>;
+		/** Runs after a successful readiness probe but before ensureHost returns. */
+		readonly afterReadiness?: () => Promise<void>;
 		/** Overrides the process-identity probe so a test can force its failure. */
 		readonly readProcessStartTime?: (pid: number) => Promise<string | undefined>;
 	};
@@ -273,7 +275,10 @@ async function startHost(
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, childExit);
-	if (isCompatible(result.protocol)) return { pid: pidFile.pid, socket, reused: false };
+	if (isCompatible(result.protocol)) {
+		await testOptions?.afterReadiness?.();
+		return { pid: pidFile.pid, socket, reused: false };
+	}
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop
 	// failure here (unreadable identity, a host that outlives SIGKILL) would other-
 	// wise propagate instead of the readiness message and skip cleanupState below,
