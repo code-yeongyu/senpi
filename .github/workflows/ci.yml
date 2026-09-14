@@ -237,6 +237,11 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
+      - name: Node bundle isolation and RPC smoke
+        run: |
+          bun test scripts/node-bundle-provider-isolation.test.ts
+          bun test scripts/node-bundle-smoke.test.ts
+
       - name: Script tests
         run: npm run test:scripts
 

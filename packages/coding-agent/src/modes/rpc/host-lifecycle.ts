@@ -45,7 +45,7 @@ import { createConnection, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, isBunBinary } from "../../config.ts";
+import { getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
 import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { createHostClientProxy } from "./host-client-proxy.ts";
 import { createHostDaemonPaths } from "./host-ensure.ts";
@@ -826,7 +826,7 @@ function isEntryScript(): boolean {
 	}
 }
 
-if (isEntryScript()) {
+if (!isBundledNode && isEntryScript()) {
 	const launch = parseSupervisorArgs(process.argv.slice(2));
 	if (!launch) {
 		writeStderrLine("usage: host-lifecycle.ts --socket <path> [host cli args...]");

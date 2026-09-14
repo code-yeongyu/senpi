@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-14 - Restore the Node worker bundle builder
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` externalizes runtime-guarded Bun SQLite, optional canvas, and the package-relative native PTY loader; an esbuild plugin emits file-attributed assets. The Bun runtime-module stub and lazy Node jiti boundary remain intact.
+- Node bundle smoke coverage runs the CLI version command and a real shared-session worker lifecycle under Node.
+
+### Why
+
+- `scripts/build-coding-agent-bundle.mjs` could not reach the provider SDK isolation assertion because esbuild rejected Bun SQLite, file attributes, and native canvas. Bundling the PTY loader also relocated its manifest/prebuild lookup incorrectly (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` defines the distribution graph before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs`: external allowlist and common esbuild plugins.
+
 ## 2026-09-14 - Publish staging mirrors the dependency manifest exactly
 
 ### What changed

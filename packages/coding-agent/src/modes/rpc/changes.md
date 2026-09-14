@@ -20,6 +20,24 @@
 
 - LOW: the spawned-host readiness result, outer endpoint-lock cleanup, and probe socket lifetime in `packages/coding-agent/src/modes/rpc/host-ensure.ts`.
 
+## 2026-09-14 - Keep bundled workers out of supervisor entry dispatch
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` excludes the Node bundle from its standalone supervisor entry check. Explicit supervisor dispatch, unbundled Node, and Bun behavior are unchanged.
+
+### Why
+
+- esbuild gives every inlined module the unsplit worker's URL. The supervisor's source-file equality check therefore mistook the session worker for the supervisor CLI and exited with usage before the worker could open a session (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` performs entry dispatch before session runtime or extension initialization.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: config import and standalone entry guard.
+
 ## 2026-09-13 - Reset supervisor idle time at occupancy transitions (#1290)
 
 ### What changed

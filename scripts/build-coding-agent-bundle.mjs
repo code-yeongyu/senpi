@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,12 @@ const allowedExternalPackages = new Set([
 	"@earendil-works/chord/delta",
 	"@earendil-works/chord/node",
 	"@silvia-odwyer/photon-node",
+	// The native PTY loader resolves its manifest and prebuilds beside its package.
+	"@earendil-works/pi-pty",
+	// Runtime-guarded Bun lock adapter; Node uses node:sqlite instead.
+	"bun:sqlite",
+	// linkedom's optional native canvas stays package-relative, with its JS fallback.
+	"canvas",
 	// Optional native accelerators. Their callers fall back to JavaScript when absent.
 	"bufferutil",
 	"utf-8-validate",
@@ -44,6 +50,18 @@ const bunRuntimeModulesPlugin = {
 			contents: "export {};",
 			loader: "js",
 		}));
+	},
+};
+
+// Bun's file attribute is not a standard Node import attribute. Let esbuild
+// emit the asset and its path rather than parse it as a JavaScript module.
+const fileAttributePlugin = {
+	name: "file-attribute",
+	setup(build) {
+		build.onLoad({ filter: /./, namespace: "file" }, (args) => {
+			if (args.with.type !== "file") return undefined;
+			return { contents: readFileSync(args.path), loader: "file" };
+		});
 	},
 };
 
@@ -77,7 +95,7 @@ function commonBuildOptions() {
 		banner,
 		bundle: true,
 		define: { PI_BUNDLED_NODE: "true" },
-		external: ["@earendil-works/chord", "@silvia-odwyer/photon-node"],
+		external: ["@earendil-works/chord", "@silvia-odwyer/photon-node", "@earendil-works/pi-pty", "bun:sqlite", "canvas"],
 		format: "esm",
 		legalComments: "none",
 		logLevel: "warning",
@@ -85,7 +103,7 @@ function commonBuildOptions() {
 		minifySyntax: true,
 		minifyWhitespace: true,
 		platform: "node",
-		plugins: [httpsProxyAgentNamedExportPlugin, bunRuntimeModulesPlugin],
+		plugins: [httpsProxyAgentNamedExportPlugin, bunRuntimeModulesPlugin, fileAttributePlugin],
 		sourcemap: false,
 		target: "node22.19",
 		// Do not apply the monorepo's source-oriented path aliases while bundling

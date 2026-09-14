@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-14 - Exercise Node worker bundles on Linux
+
+### What changed
+
+- `.github/workflows/ci.yml` runs Node bundle SDK isolation and real CLI/shared-session smoke tests serially after workspace build in the Ubuntu Node 24 job.
+
+### Why
+
+- `.github/workflows/ci.yml` previously never invoked the standalone Node bundle builder, leaving unsupported runtime imports and worker startup failures undetected (Refs #1656).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` defines test execution before any runtime extensions load.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: workspace build and script-test steps.
+
 ## 2026-09-13 - Verify split workers with the release compiler
 
 ### What changed
