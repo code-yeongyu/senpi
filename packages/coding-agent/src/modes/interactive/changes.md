@@ -1,3 +1,23 @@
+## 2026-09-14 - Never confirm an ask-user question into an empty answer
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-keys.ts` treats Enter as pure navigation only for a multi-select question that already holds an answer. On a multi-select question with nothing chosen, Enter now selects the highlighted row before advancing, so confirming can no longer leave the question silently unanswered and land on Submit with `You have not answered all questions`.
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts` `setOwnAnswer()` drops the stored text for an empty editor but keeps existing selections, matching the `saveTypedOwnAnswer()` rule the Up/Down/Tab paths already follow. Committing an empty own-answer editor with Enter previously erased a selected option.
+- `packages/coding-agent/test/suite/ask-user-question-component.test.ts` pins both paths: Enter on an untouched multi-select question submits that option, and an empty own-answer commit keeps the option selected with space.
+
+### Why
+
+- Enter is the first key most users press on the highlighted first option. On multi-select questions the choice was discarded while the overlay still advanced, so submitting reported an unanswered question and the answer had to be re-entered.
+
+### Why an extension could not handle it
+
+- Key dispatch and the answer state of the ask-user overlay are host-owned TUI internals; no extension hook observes or rewrites overlay key handling.
+
+### Expected merge conflict zones
+
+- `activateHighlighted()` in `ask-user-question-keys.ts` and `setOwnAnswer()` in `ask-user-question-state.ts`. Question wire shapes, the response builder and the submit rules are unchanged.
+
 ## 2026-09-13 - Extension commands paint no optimistic user echo
 
 ### What changed

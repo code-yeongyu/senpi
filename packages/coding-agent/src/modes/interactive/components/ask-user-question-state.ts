@@ -190,12 +190,15 @@ export class AskUserQuestionState {
 		this.notice = undefined;
 	}
 
-	/** Replace the question's answer with typed text; empty text clears it. */
+	/** Replace the question's answer with typed text; an empty editor drops the text but keeps selections. */
 	setOwnAnswer(questionId: string, text: string): void {
 		const trimmed = text.trim();
-		this.selected.delete(questionId);
-		if (trimmed === "") this.texts.delete(questionId);
-		else this.texts.set(questionId, trimmed);
+		if (trimmed === "") {
+			this.texts.delete(questionId);
+		} else {
+			this.selected.delete(questionId);
+			this.texts.set(questionId, trimmed);
+		}
 		this.notice = undefined;
 	}
 

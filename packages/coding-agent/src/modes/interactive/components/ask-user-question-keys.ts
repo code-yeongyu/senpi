@@ -227,7 +227,10 @@ function activateHighlighted(ctx: AskUserKeyHandlerContext, confirm: boolean): v
 	}
 	const option = state.activeQuestion.options[state.highlightIndex];
 	if (!option) return;
-	if (!confirm || !state.activeQuestion.multiSelect) {
+	// Enter only navigates past a multi-select question that already holds an answer; on an empty one it
+	// picks the highlighted row so confirming never leaves the question silently unanswered.
+	const navigatesOnly = confirm && state.activeQuestion.multiSelect && state.isAnswered(state.activeQuestion.id);
+	if (!navigatesOnly) {
 		state.activateOption(state.activeQuestion.id, option.label);
 	}
 	ctx.emitProgress();

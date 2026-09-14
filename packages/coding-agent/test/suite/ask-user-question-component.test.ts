@@ -139,6 +139,35 @@ describe("AskUserQuestionComponent", () => {
 		expect(h.doneCalls[0]?.unanswered).toEqual(["auth"]);
 	});
 
+	it("selects the highlighted row when Enter confirms a multi-select question with nothing chosen", () => {
+		const h = mount();
+
+		h.component.handleInput(TAB);
+		h.component.handleInput(ENTER);
+		h.component.handleInput(ENTER);
+
+		expect(h.doneCalls).toHaveLength(1);
+		expect(h.doneCalls[0]?.status).toBe("answered");
+		expect(h.doneCalls[0]?.answers.extras).toEqual({ selected: ["Verbose logging"] });
+		expect(h.doneCalls[0]?.unanswered).toEqual(["auth"]);
+	});
+
+	it("keeps a selected option when the own-answer editor is committed empty", () => {
+		const request = buildRequest();
+		const h = mount({ ...request, questions: [request.questions[0]!] });
+
+		h.component.handleInput(SPACE);
+		h.component.handleInput(DOWN);
+		h.component.handleInput(DOWN);
+		h.component.handleInput(ENTER);
+		h.component.handleInput(ENTER);
+		h.component.handleInput(ENTER);
+
+		expect(h.doneCalls).toHaveLength(1);
+		expect(h.doneCalls[0]?.answers.auth).toEqual({ selected: ["OAuth"] });
+		expect(h.doneCalls[0]?.unanswered).toEqual([]);
+	});
+
 	it("keeps the options view reachable after moving down at its last row", () => {
 		const h = mount();
 
@@ -319,7 +348,10 @@ describe("AskUserQuestionComponent", () => {
 		expect(h.render()).toContain("Which extras should be enabled?");
 		expect(h.render()).not.toContain("use a vault token");
 
-		// Committing again on Q2 must not submit Q1's text as Q2's own answer.
+		// Committing Q2's own editor must not submit Q1's text as Q2's own answer.
+		h.component.handleInput(DOWN);
+		h.component.handleInput(DOWN);
+		h.component.handleInput(ENTER);
 		h.component.handleInput(ENTER);
 
 		const last = h.progressCalls[h.progressCalls.length - 1];
