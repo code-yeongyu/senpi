@@ -154,7 +154,7 @@ function capturedSpawn(originalSpawn, options, pinEnv) {
 					? originalSpawn(...args)
 					: originalSpawn(effective);
 		}
-		options.onChild?.(child);
+		options.onChild?.(child, Array.isArray(first) ? second : first);
 		return child;
 	};
 }

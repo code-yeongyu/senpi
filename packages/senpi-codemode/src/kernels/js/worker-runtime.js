@@ -7,6 +7,9 @@ import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect
 import { installShellCapture } from "./worker-shell-capture.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
+// How long a child gets to honour SIGTERM before SIGKILL. Short, because the
+// cell has already produced its value and the caller is waiting on settle.
+const CHILD_TERMINATION_GRACE_MS = 1_000;
 const INTERNAL_URL = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/iu;
 
 export class JsWorkerRuntime {
@@ -42,22 +45,66 @@ export class JsWorkerRuntime {
 			return value;
 		} finally {
 			this.#pendingDisplays = [];
-			this.#children.clear();
+			// A child still running here has lost its only owner: the cell that
+			// spawned it is over, nothing will await it again, and it would be
+			// reparented to init. Retire it the way timeout and abort cleanup
+			// already do, unless the cell asked for a detached process.
+			await this.#terminateChildren();
 			this.#hooks = null;
 		}
 	}
 
 	interrupt() {
-		for (const child of this.#children) {
-			if (child.exitCode === null && child.signalCode === null) child.kill();
-		}
+		// SIGTERM goes out synchronously so the caller's interrupt latency is
+		// unchanged; the SIGKILL escalation runs on its own.
+		void this.#terminateChildren();
 	}
 
-	#trackChild(child) {
+	#trackChild(child, spawnOptions) {
 		if (child === null || typeof child !== "object" || typeof child.kill !== "function") return;
+		// `detached: true` is the cell saying it wants the process to outlive it.
+		if (isPlainObject(spawnOptions) && spawnOptions.detached === true) return;
 		this.#children.add(child);
 		const forget = () => this.#children.delete(child);
 		if (child.exited instanceof Promise) child.exited.then(forget, forget);
+	}
+
+	#terminateChildren() {
+		const children = [...this.#children];
+		this.#children.clear();
+		const pending = [];
+		for (const child of children) {
+			if (child.exitCode !== null || child.signalCode !== null) continue;
+			try {
+				child.kill();
+			} catch {
+				continue;
+			}
+			pending.push(this.#killAfterGrace(child));
+		}
+		return pending.length === 0 ? undefined : Promise.all(pending);
+	}
+
+	async #killAfterGrace(child) {
+		const exited = child.exited instanceof Promise ? child.exited : null;
+		if (exited === null) return;
+		let timer;
+		const settled = exited.then(
+			() => true,
+			() => true,
+		);
+		const graced = new Promise(resolve => {
+			timer = setTimeout(() => resolve(false), CHILD_TERMINATION_GRACE_MS);
+		});
+		const exitedInTime = await Promise.race([settled, graced]);
+		clearTimeout(timer);
+		if (exitedInTime) return;
+		try {
+			child.kill("SIGKILL");
+		} catch {
+			return;
+		}
+		await settled;
 	}
 
 	async #drainPendingDisplays() {
@@ -114,7 +161,7 @@ export class JsWorkerRuntime {
 		const restoreShellCapture = installShellCapture({
 			isActive: () => this.#hooks !== null,
 			emitText: (stream, data) => this.#emitText(stream, data),
-			onChild: (child) => this.#trackChild(child),
+			onChild: (child, spawnOptions) => this.#trackChild(child, spawnOptions),
 		});
 		globalThis.__senpi_restore_console__ = () => {
 			console.log = originalLog;
