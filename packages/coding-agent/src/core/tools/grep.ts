@@ -78,6 +78,7 @@ export function createGrepToolDefinition(
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		name: "grep",
+		exposure: "eval",
 		label: "grep",
 		description: `Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
 		promptSnippet: grepToolSystemPromptContribution.snippet,

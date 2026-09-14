@@ -1,6 +1,6 @@
-// allow: SIZE_OK - extension loading, bundled aliases, and discovery are pre-existing cohesive runtime glue; this branch only scopes the extension cache by cwd.
+// allow: SIZE_OK - pre-existing extension API wiring, aliases, cache, and discovery glue; the native Bun filesystem importer lives in its own module.
 /**
- * Extension loader - loads TypeScript extension modules using jiti.
+ * Extension loader - native Bun imports in compiled binaries, lazy jiti on Node.
  *
  */
 
@@ -15,7 +15,6 @@ import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
 import type { KeyId } from "@earendil-works/pi-tui";
 import * as _bundledPiTui from "@earendil-works/pi-tui";
-import { createJiti } from "jiti/static";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
 // The virtualModules option then makes them available to extensions.
@@ -54,7 +53,7 @@ import type {
 } from "./types.ts";
 
 /** Modules available to extensions via virtualModules (for compiled binaries) */
-const VIRTUAL_MODULES: Record<string, unknown> = {
+const VIRTUAL_MODULES: Record<string, Record<string, unknown>> = {
 	typebox: _bundledTypebox,
 	"typebox/compile": _bundledTypeboxCompile,
 	"typebox/value": _bundledTypeboxValue,
@@ -195,12 +194,17 @@ function getAliases(): Record<string, string> {
 }
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
-type ExtensionModuleImporter = ReturnType<typeof createJiti>;
+type ExtensionModuleImporter = {
+	import(path: string, options: { default: true }): Promise<unknown>;
+};
 export type ExtensionFactoryResolver = (extensionPath: string, resolvedPath: string) => ExtensionFactory | undefined;
 
 const MAX_EXTENSION_CACHE_CWD_ENTRIES = 16;
 let nextExtensionCacheGeneration = 0;
 const extensionCacheByCwd = new Map<string, ExtensionCacheEntry>();
+// Bun's module registry must not own generation graphs. Live runtimes and the
+// existing factory cache retain wrappers; invalidation releases runtime ownership.
+const runtimeFactories = new WeakMap<ExtensionRuntime, Set<ExtensionFactory>>();
 
 interface ExtensionCacheToken {
 	cwd: string;
@@ -292,6 +296,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 				"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
 			for (const unsubscribe of eventBusUnsubscribers) unsubscribe();
 			eventBusUnsubscribers.clear();
+			runtimeFactories.delete(runtime);
 		},
 		trackEventBusSubscription: (unsubscribe) => {
 			let active = true;
@@ -685,13 +690,21 @@ function createExtensionAPI(
 	};
 }
 
-function createExtensionModuleImporter(): ExtensionModuleImporter {
+// Keep the Node-only transformer out of Bun's compiled dependency graph.
+const importNodeOnlyApi = (specifier: string): Promise<typeof import("jiti/static")> => import(specifier);
+
+async function createExtensionModuleImporter(): Promise<ExtensionModuleImporter> {
+	if (isBunBinary) {
+		const { createBunExtensionImporter } = await import("./bun-extension-importer.ts");
+		return createBunExtensionImporter(VIRTUAL_MODULES);
+	}
+	const { createJiti } = await importNodeOnlyApi("jiti/static");
 	return createJiti(import.meta.url, {
 		moduleCache: false,
 		// Compiled binaries and the bundled Node distribution use embedded modules.
 		// Source TypeScript reuses host modules and root tsconfig paths. Unbundled
 		// Node builds use dist aliases.
-		...(isBunBinary || isNodeSeaBinary || isBundledNode
+		...(isNodeSeaBinary || isBundledNode
 			? { virtualModules: VIRTUAL_MODULES, tryNative: false }
 			: isTypeScriptSourceRuntime
 				? { alias: getAliases(), virtualModules: VIRTUAL_MODULES, tsconfigPaths: true }
@@ -707,7 +720,7 @@ function isCurrentCacheToken(cacheToken: ExtensionCacheToken | undefined): cache
 
 async function loadExtensionModule(
 	extensionPath: string,
-	importer: ExtensionModuleImporter,
+	getImporter: () => Promise<ExtensionModuleImporter>,
 	cacheToken?: ExtensionCacheToken,
 ) {
 	if (isCurrentCacheToken(cacheToken)) {
@@ -717,6 +730,7 @@ async function loadExtensionModule(
 		}
 	}
 
+	const importer = await getImporter();
 	const module = await importer.import(extensionPath, { default: true });
 	const factory = module as ExtensionFactory;
 	if (typeof factory !== "function") {
@@ -776,6 +790,11 @@ async function initializeExtension(
 	try {
 		await factory(load.api);
 		load.commit();
+		if (isBunBinary) {
+			const factories = runtimeFactories.get(runtime) ?? new Set<ExtensionFactory>();
+			factories.add(factory);
+			runtimeFactories.set(runtime, factories);
+		}
 	} catch (error) {
 		load.discard();
 		throw error;
@@ -789,7 +808,7 @@ async function loadExtension(
 	cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
-	getImporter: () => ExtensionModuleImporter,
+	getImporter: () => Promise<ExtensionModuleImporter>,
 	factoryResolver?: ExtensionFactoryResolver,
 	cacheToken?: ExtensionCacheToken,
 	sharedHostEnabled = false,
@@ -799,7 +818,7 @@ async function loadExtension(
 	try {
 		const factory =
 			factoryResolver?.(extensionPath, resolvedPath) ??
-			(await loadExtensionModule(resolvedPath, getImporter(), cacheToken));
+			(await loadExtensionModule(resolvedPath, getImporter, cacheToken));
 		time(`${extensionPath} module import`, "extensions");
 		if (!factory) {
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
@@ -853,7 +872,7 @@ async function loadExtensionsInternal(
 	const resolvedCwd = cacheToken?.cwd ?? resolvePath(cwd);
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const resolvedRuntime = runtime ?? createExtensionRuntime();
-	let importer: ExtensionModuleImporter | undefined;
+	let importer: Promise<ExtensionModuleImporter> | undefined;
 	const getImporter = () => {
 		importer ??= createExtensionModuleImporter();
 		return importer;

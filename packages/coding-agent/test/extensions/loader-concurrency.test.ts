@@ -1,7 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createJiti } from "jiti/static";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadExtensions } from "../../src/core/extensions/loader.ts";
 
@@ -39,6 +38,8 @@ describe("extension loader import concurrency", () => {
 				);
 			}),
 		);
+		// Match the loader's asynchronous Node-only importer initialization.
+		const { createJiti } = await import("jiti/static");
 		const importer = createJiti(import.meta.url, { moduleCache: false });
 
 		for (let iteration = 0; iteration < 20; iteration++) {

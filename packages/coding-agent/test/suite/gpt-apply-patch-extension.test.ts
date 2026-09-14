@@ -462,8 +462,8 @@ describe("gpt-apply-patch builtin extension", () => {
 
 		await harness.session.prompt("test");
 
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
-		expect(providerToolNames).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
+		expect(providerToolNames).toEqual(["read", "bash", "apply_patch", "grep"]);
 	});
 
 	it("restores write and edit when the session switches away from an OpenAI GPT model", async () => {
@@ -496,6 +496,8 @@ describe("gpt-apply-patch builtin extension", () => {
 
 	it("preserves toolset changes made while on a GPT model when restoring non-GPT tools", async () => {
 		const harness = await createHarness({
+			// Start without grep so the later activation remains a real promotion.
+			initialActiveToolNames: ["read", "bash", "edit", "write"],
 			api: "openai-responses",
 			provider: "openai",
 			models: [
@@ -721,13 +723,15 @@ describe("gpt-apply-patch builtin extension", () => {
 
 		await harness.session.prompt("test");
 
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
-		expect(providerTools.map((tool) => tool.name)).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
+		expect(providerTools.map((tool) => tool.name)).toEqual(["read", "bash", "apply_patch", "grep"]);
 		expect(providerTools.find((tool) => tool.name === "apply_patch")?.freeform).toBeUndefined();
 	});
 
 	it("keeps tools promoted while a GPT model is active across a non-GPT round trip", async () => {
 		const harness = await createHarness({
+			// Start without grep so the later activation remains a real promotion.
+			initialActiveToolNames: ["read", "bash", "edit", "write"],
 			api: "anthropic-messages",
 			provider: "anthropic",
 			models: [{ id: "claude-sonnet" }, { id: "gpt-5.5" }],
@@ -758,7 +762,7 @@ describe("gpt-apply-patch builtin extension", () => {
 		});
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write", "grep"]);
 
 		// Deliberate edit-family disable while non-GPT.
 		harness.session.setActiveToolsByName(["read", "bash", "write"]);
@@ -785,7 +789,7 @@ describe("gpt-apply-patch builtin extension", () => {
 		});
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
 		expect(harness.session.getToolDefinition("apply_patch")?.freeform).toBeDefined();
 
 		harness.session.setActiveToolsByName(["read", "bash", "apply_patch", "grep"]);
@@ -852,7 +856,7 @@ describe("gpt-apply-patch builtin extension", () => {
 
 			await harness.session.bindExtensions({});
 
-			expect(harness.session.getActiveToolNames()).toEqual(["read", "bash"]);
+			expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "grep"]);
 		}
 	});
 });

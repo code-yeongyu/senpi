@@ -1,3 +1,22 @@
+## 2026-09-14 - Tip lines keep one blank line above them (senpi#1680)
+
+### What changed
+
+- New `packages/coding-agent/src/modes/interactive/tips/tip-line.ts` appends a tip as a `Spacer(1)` followed by its `Text`, so every surface that shows a tip renders one blank line above it.
+- `packages/coding-agent/src/modes/interactive/tips/startup-header.ts` and both working-tip paths of `showStatusIndicator` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts` (embedded spinner and standalone status row) append through it instead of adding the tip `Text` directly.
+
+### Why
+
+- The dim tip read as a continuation of the block above it: glued to the header's last line at startup, and to the last transcript entry while a turn runs.
+
+### Why an extension could not handle it
+
+- The startup header and the status row are host-owned containers; extensions cannot reposition their children.
+
+### Expected merge conflict zones
+
+- LOW: the `appendStartupHeader` body and the two tip `addChild` calls in `showStatusIndicator` (`packages/coding-agent/src/modes/interactive/interactive-mode.ts`); upstream pi ships no tips.
+
 ## 2026-09-13 - Extension commands paint no optimistic user echo
 
 ### What changed

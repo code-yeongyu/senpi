@@ -91,7 +91,7 @@ export interface CreateAgentSessionOptions {
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
 	 *
 	 * - "all": start with no tools enabled
-	 * - "builtin": disable the default built-in tools (read, bash, edit, write)
+	 * - "builtin": disable the default built-in tools (read, bash, edit, write, grep)
 	 *   but keep extension/custom tools enabled
 	 */
 	noTools?: "all" | "builtin";
@@ -100,7 +100,8 @@ export interface CreateAgentSessionOptions {
 	 *
 	 * When omitted, pi uses the `defaultTools` setting for the initial built-in
 	 * selection when configured. Otherwise it enables the default built-in tools
-	 * (read, bash, edit, write). Extension/custom tools remain enabled unless
+	 * (read, bash, edit, write, grep). Eval-exposed tools are withheld from direct
+	 * model calls when eval is registered. Extension/custom tools remain enabled unless
 	 * `noTools` changes that default. When provided, only the listed tool names are
 	 * enabled.
 	 */
@@ -363,7 +364,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	}
 	if (thinkingSelection) thinkingSelection = { ...thinkingSelection, level: thinkingLevel };
 
-	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
+	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write", "grep"];
 	const configuredDefaultToolNames = settingsManager.getDefaultTools();
 	const sessionDefaultToolNames =
 		options.tools === undefined && options.noTools === undefined ? configuredDefaultToolNames : undefined;

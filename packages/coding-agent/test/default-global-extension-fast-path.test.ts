@@ -13,7 +13,8 @@ const jitiMock = vi.hoisted(() => ({
 	importExtension: vi.fn<JitiImporter>(),
 }));
 
-vi.mock("jiti/static", () => ({
+// The Node-only module is resolved asynchronously only for custom shims.
+vi.mock("jiti/static", async () => ({
 	createJiti: jitiMock.createJiti,
 }));
 
@@ -114,6 +115,7 @@ describe("default global extension fast path", () => {
 
 		await loader.reload();
 
+		expect(loader.getExtensions().errors).toEqual([]);
 		const customExtension = loader.getExtensions().extensions.find((extension) => extension.path === customShimPath);
 		expect(customExtension?.commands.has("custom-diff")).toBe(true);
 		expect(jitiMock.createJiti).toHaveBeenCalledTimes(1);

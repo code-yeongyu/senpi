@@ -13,6 +13,21 @@ describe("extension loader", () => {
 		vi.resetModules();
 	});
 
+	it("leaves jiti unloaded when all extension factories are already available", async () => {
+		// Given: module evaluation itself is observed, not only createJiti calls.
+		const importJiti = vi.fn(async () => ({ createJiti: vi.fn() }));
+		vi.doMock("jiti/static", importJiti);
+		const { loadExtensions } = await import("../src/core/extensions/loader.ts");
+		// When
+		const result = await loadExtensions(["known.js"], "/tmp", undefined, undefined, {
+			factoryResolver: () => () => {},
+		});
+		// Then
+		expect(result.errors).toEqual([]);
+		expect(result.extensions).toHaveLength(1);
+		expect(importJiti).not.toHaveBeenCalled();
+	});
+
 	it("reuses one jiti importer when loading an extension batch", async () => {
 		const extensionFactory: ExtensionFactory = (pi: ExtensionAPI) => {
 			pi.registerCommand("mock-command", {
@@ -24,9 +39,11 @@ describe("extension loader", () => {
 			import: importExtension,
 		}));
 
-		vi.doMock("jiti/static", () => ({ createJiti }));
+		// Given: loading the Node-only module is asynchronous.
+		vi.doMock("jiti/static", async () => ({ createJiti }));
 		const { loadExtensions } = await import("../src/core/extensions/loader.ts");
 
+		// When
 		const result = await loadExtensions(["first.js", "second.js"], "/tmp");
 
 		expect(result.errors).toHaveLength(0);

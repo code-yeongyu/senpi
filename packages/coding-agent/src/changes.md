@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-14 - Activate builtin herdr pending-input reporting (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` registers the lifecycle reporter after `ask-user`; `builtin/herdr/index.ts` reads loaded extension paths at session start and bounded managed headers.
+- `packages/coding-agent/src/core/extensions/types.ts` and `runner.ts` expose optional read-only resolved extension paths, including event-only user extensions. Detailed API ownership is recorded in `core/extensions/changes.md`.
+
+### Why
+
+- Pending questions and host dialogs need explicit blocked state in herdr without requiring a separately installed user reporter or competing with one already loaded. Managed integration files remain installed and do not suppress the builtin.
+
+### Why an extension could not handle it
+
+- Lifecycle reporting stays in the builtin extension. Only the loaded-path handoff requires host code because factories cannot see other extensions' discovery identities.
+
+### Expected merge conflict zones
+
+- The `ExtensionContext` and `createContext()` getter lists and the builtin registration after `ask-user`. No interactive-mode or question component behavior changes in this increment.
+
 ## 2026-09-13 - Centralize standalone provider registration
 
 ### What changed

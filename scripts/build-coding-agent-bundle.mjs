@@ -22,7 +22,6 @@ const allowedExternalPackages = new Set([
 	"@earendil-works/chord/delta",
 	"@earendil-works/chord/node",
 	"@silvia-odwyer/photon-node",
-	"jiti",
 	// Optional native accelerators. Their callers fall back to JavaScript when absent.
 	"bufferutil",
 	"utf-8-validate",
@@ -31,30 +30,6 @@ const allowedExternalPackages = new Set([
 	// Optional debug output coloring.
 	"supports-color",
 ]);
-
-const lazyJitiPlugin = {
-	name: "lazy-jiti-transform",
-	setup(build) {
-		build.onResolve({ filter: /^jiti\/static$/ }, () => ({
-			namespace: "lazy-jiti",
-			path: "jiti/static",
-		}));
-		build.onLoad({ filter: /.*/, namespace: "lazy-jiti" }, () => ({
-			contents: `
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-let createJitiImpl;
-
-export function createJiti(...args) {
-	createJitiImpl ??= require("jiti").createJiti;
-	return createJitiImpl(...args);
-}
-`,
-			loader: "js",
-		}));
-	},
-};
 
 // Only standalone Bun isolates register these modules. esbuild follows the worker's
 // literal import even behind isBunBinary; keep that unreachable graph out of Node.
@@ -110,11 +85,7 @@ function commonBuildOptions() {
 		minifySyntax: true,
 		minifyWhitespace: true,
 		platform: "node",
-		// The source uses jiti/static so Bun embeds its Babel transform. The Node
-		// package replaces it with a synchronous lazy require so jiti loads only
-		// when importing an extension; Babel remains deferred until a cache miss
-		// needs transformation.
-		plugins: [lazyJitiPlugin, httpsProxyAgentNamedExportPlugin, bunRuntimeModulesPlugin],
+		plugins: [httpsProxyAgentNamedExportPlugin, bunRuntimeModulesPlugin],
 		sourcemap: false,
 		target: "node22.19",
 		// Do not apply the monorepo's source-oriented path aliases while bundling

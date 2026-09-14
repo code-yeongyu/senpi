@@ -7,6 +7,7 @@ import type {
 	TerminalToolContext,
 	TerminalToolResult,
 } from "../../src/core/extensions/builtin/terminal/tools/context.ts";
+import { normalizeToolExposure } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const command = `printf '%s|%s' "\${PI_SESSION_CWD-unset}" "\${PI_GOAL_STORE_FILE-unset}"`;
@@ -30,6 +31,11 @@ describe("terminal PTY bash session environment (#1663)", () => {
 	afterEach(async () => {
 		await manager.teardown();
 		harness.cleanup();
+	});
+
+	// #1678: the terminal replacement must preserve the core bash eval-only policy.
+	it("declares eval exposure on the replacement bash tool", () => {
+		expect(normalizeToolExposure(createPtyBashTool(terminal)).exposure).toBe("eval");
 	});
 
 	async function output(result: TerminalToolResult): Promise<string> {

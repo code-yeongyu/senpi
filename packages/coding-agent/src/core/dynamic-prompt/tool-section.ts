@@ -1,3 +1,4 @@
+import { getEvalOnlyGrepGuideline } from "../system-prompt.ts";
 import type { AvailableTool } from "./types.ts";
 
 const CATEGORY_ORDER = ["search", "other", "session", "command"] as const;
@@ -48,8 +49,14 @@ export function buildToolSection(options: {
 		lines.push("(none)", "");
 	}
 
-	const guidelines = options.promptGuidelines?.map((guideline) => guideline.trim()).filter((guideline) => guideline);
-	if (guidelines && guidelines.length > 0) {
+	const guidelines =
+		options.promptGuidelines?.map((guideline) => guideline.trim()).filter((guideline) => guideline) ?? [];
+	const evalOnlyGrepGuideline = getEvalOnlyGrepGuideline(
+		options.tools.map(({ name }) => name),
+		options.toolSnippets,
+	);
+	if (evalOnlyGrepGuideline) guidelines.unshift(evalOnlyGrepGuideline);
+	if (guidelines.length > 0) {
 		lines.push("## Tool Guidelines", "");
 		for (const guideline of guidelines) {
 			lines.push(`- ${guideline}`);

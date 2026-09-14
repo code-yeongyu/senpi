@@ -230,8 +230,9 @@ describe("prepareSenpiBundledWorkspaces", () => {
 		for (const workspace of ["chord", "agent", "ai", "client", "protocol", "pty", "telemetry", "tui", "senpi-codemode"]) {
 			writeBundledWorkspace(tempDir, workspace);
 		}
-		for (const name of ["cross-spawn", "which"]) {
-			writeJson(join(tempDir, "node_modules", name, "package.json"), { name, version: "1.0.0" });
+		// Installed copies carry the manifest versions: staging refuses any other version.
+		for (const [name, version] of [["cross-spawn", "7.0.6"], ["which", "2.0.2"]]) {
+			writeJson(join(tempDir, "node_modules", name, "package.json"), { name, version });
 		}
 		for (const name of ["@babel/parser", "@babel/types", "@babel/unlocked", "typebox"]) {
 			writeJson(join(tempDir, "packages", "senpi-codemode", "node_modules", name, "package.json"), {
@@ -298,8 +299,8 @@ describe("prepareSenpiBundledWorkspaces", () => {
 			"@earendil-works/pi-pty": "npm:@code-yeongyu/senpi-pty@2026.7.22",
 			"@earendil-works/pi-telemetry": "npm:@code-yeongyu/senpi-telemetry@2026.7.22",
 			"@earendil-works/pi-tui": "npm:@code-yeongyu/senpi-tui@2026.7.22",
-			"cross-spawn": "1.0.0",
-			which: "1.0.0",
+			"cross-spawn": "7.0.6",
+			which: "2.0.2",
 		});
 		const stagedAgentManifest = JSON.parse(
 			readFileSync(

@@ -260,6 +260,7 @@ import { recordTipShown } from "./tips/history-writer.ts";
 import { TIP_DEFINITIONS } from "./tips/registry.ts";
 import { appendStartupHeader } from "./tips/startup-header.ts";
 import { resolveStartupTipLine } from "./tips/startup-tip.ts";
+import { appendTipLine } from "./tips/tip-line.ts";
 import { resolveWorkingTipLine, WorkingTipCache, type WorkingTipLine } from "./tips/working-tip.ts";
 import { buildTmuxSetupWarning } from "./tmux-setup.ts";
 import { ToolArgsRevealController } from "./tool-args-reveal.ts";
@@ -3154,7 +3155,7 @@ export class InteractiveMode {
 		// then only carries the optional working tip instead of a second spinner line.
 		const workingTip = indicator.kind === "working" ? this.resolveTurnWorkingTip() : undefined;
 		if (embedded) {
-			if (workingTip) this.statusContainer.addChild(new Text(theme.fg("dim", workingTip.line), 1, 0));
+			if (workingTip) appendTipLine(this.statusContainer, theme.fg("dim", workingTip.line));
 			return;
 		}
 		if (!workingTip) {
@@ -3164,7 +3165,7 @@ export class InteractiveMode {
 
 		const wrapper = new Container();
 		wrapper.addChild(indicator);
-		wrapper.addChild(new Text(theme.fg("dim", workingTip.line), 1, 0));
+		appendTipLine(wrapper, theme.fg("dim", workingTip.line));
 		this.statusContainer.addChild(wrapper);
 	}
 

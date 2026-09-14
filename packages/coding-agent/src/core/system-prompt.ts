@@ -24,6 +24,16 @@ export interface BuildSystemPromptOptions {
 	skills?: Skill[];
 }
 
+/** Contributions include eval-only tools even when the selected model-facing list does not. */
+export function getEvalOnlyGrepGuideline(
+	selectedTools: string[],
+	toolSnippets?: Record<string, string>,
+): string | undefined {
+	return toolSnippets?.grep && !selectedTools.includes("grep")
+		? "Search file contents with tool.grep({ pattern, path }) inside eval; prefer it over rg/grep in shell"
+		: undefined;
+}
+
 /** Build the system prompt with tools, guidelines, and context */
 export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const {
@@ -101,7 +111,10 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 	const hasLs = tools.includes("ls");
 
 	// File exploration guidelines
-	if ((hasBash || hasPowerShell) && !hasGrep && !hasFind && !hasLs) {
+	const evalOnlyGrepGuideline = getEvalOnlyGrepGuideline(tools, toolSnippets);
+	if (evalOnlyGrepGuideline) {
+		addGuideline(evalOnlyGrepGuideline);
+	} else if ((hasBash || hasPowerShell) && !hasGrep && !hasFind && !hasLs) {
 		if (hasBash && hasPowerShell) {
 			addGuideline("Use bash or PowerShell for file operations like listing, searching, and finding files");
 		} else if (hasPowerShell) {

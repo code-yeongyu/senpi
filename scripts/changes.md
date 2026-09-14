@@ -1,5 +1,25 @@
 # changes
 
+## 2026-09-14 - Publish staging mirrors the dependency manifest exactly
+
+### What changed
+
+- `scripts/prepare-senpi-publish-placements.mjs` (new) owns `resolvePublishPlacements`: every `node_modules/...` entry of `publish-deps.lock.json`, top-level and nested, maps to its staged path; npm's workspace-local placements (`packages/coding-agent/node_modules/<pkg>`) are the staged tree's own `node_modules/<pkg>`, and when the root lock placed another version of the same package at the root, the workspace-local copy keeps the top-level slot while the root copy is re-nested under each staged dependent npm resolved to it (recursively), so npm's resolution survives the flattening without evaluating ranges.
+- `scripts/prepare-senpi-publish-dependencies.mjs` (new) owns `stagePublishDependencies`: each placement is staged from a version-matched installed copy (same nesting under the root install, hoisted at the root, already staged in place, or nested under another dependent), copied without whatever the installer nested inside it, and staged packages the manifest does not place are pruned at every nesting level.
+- `scripts/prepare-senpi-bundled-workspaces.mjs` `copyPublishDependencies` delegates to that module with the internal workspace set; the bundled and vendored workspace staging is unchanged.
+
+### Why
+
+- The manifest keeps the root lock's two-level placements while the staged tree has one level, and the developer's install may be bun-hoisted. The old top-level-only copy also let root placements overwrite npm's workspace-local ones, so the published 2026.9.13-2 tarball shipped `zod@3.25.76`, `https-proxy-agent@7.0.6` and `agent-base@7.1.4` next to a manifest declaring `zod@4.4.3` / `https-proxy-agent@9.1.0` and an `http-proxy-agent@9.1.0` that pins `agent-base@9.0.0`. After the linkedom migration the only `entities` entry is nested under `htmlparser2` (7.0.1); bun hoists it to the root, the old top-level-only copy never staged it, and a stale `entities@8`/`parse5` from the previous graph rode into the tarball, where `htmlparser2` resolved `entities/decode` without `fromCodePoint` and the packed engine failed to compile (#1677).
+
+### Why an extension could not handle it
+
+- `scripts/prepare-senpi-publish-placements.mjs`, `scripts/prepare-senpi-publish-dependencies.mjs` and `scripts/prepare-senpi-bundled-workspaces.mjs` build the tarball's dependency tree before any runtime extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `copyPublishDependencies` in `scripts/prepare-senpi-bundled-workspaces.mjs` (now a one-line delegate) and its `scripts/prepare-senpi-bundled-workspaces-copy.test.mjs` nested-entry assertion.
+
 ## 2026-09-13 - Retire webfetch compile-asset workarounds
 
 ### What changed
@@ -57,6 +77,25 @@
 ### Expected merge conflict zones
 
 - The Windows and non-Windows compile argv in `scripts/build-binaries.sh`.
+
+## 2026-09-13 - Keep jiti out of the native Bun extension graph
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` removes the obsolete lazy-jiti transform plugin and its external allowlist entry; the loader itself now owns the variable-specifier Node-only import. The Bun runtime-module stub remains unchanged.
+- `scripts/compiled-extension-load.test.ts` verifies relocated classic/shared-session extension loading after forced GC, helper reload, host identity, direct/per-cwd cached factory behavior and zero positive-output jiti inputs under the release graph flags. Windows uses legal special-character paths, `windows-*` build targets and `.exe` names through `scripts/compiled-extension-platform.ts`. The child summary reports only observed helper output, not prescribed counter constants.
+
+### Why
+
+- `scripts/build-coding-agent-bundle.mjs` no longer needs to replace a static jiti import. Native compiled extensions use Bun's module loader, while jiti remains an installed Node runtime dependency.
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` determines the distribution graph before an extension can run.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs`: plugin list and external package allowlist; preserve the separate Bun runtime-module stub.
 
 ## 2026-09-13 - Keep Bun provider registration outside Node bundles
 

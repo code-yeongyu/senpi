@@ -9,20 +9,21 @@ const state = vi.hoisted(() => {
 	});
 	return {
 		originalGetBuiltinModule,
-		createJiti: vi.fn((_id: unknown, _options: unknown) => ({
+		createJiti: vi.fn((_id: unknown, _options: JitiOptionsProbe) => ({
 			import: vi.fn(async () => () => {}),
 		})),
 	};
 });
 
-vi.mock("jiti/static", () => ({ createJiti: state.createJiti }));
+vi.mock("jiti/static", async () => ({ createJiti: state.createJiti }));
 
 import { loadExtensions } from "../../../src/core/extensions/loader.ts";
 
 interface JitiOptionsProbe {
-	alias?: unknown;
-	tryNative?: boolean;
-	virtualModules?: Record<string, unknown>;
+	readonly alias?: unknown;
+	readonly tryNative?: boolean;
+	readonly moduleCache?: boolean;
+	readonly virtualModules?: Record<string, unknown>;
 }
 
 afterAll(() => {
@@ -39,12 +40,13 @@ describe("Node SEA extension loading", () => {
 		expect(result.extensions).toHaveLength(1);
 		expect(state.createJiti).toHaveBeenCalledOnce();
 
-		const options = state.createJiti.mock.calls[0][1] as JitiOptionsProbe;
+		const options = state.createJiti.mock.calls[0]?.[1];
+		expect(options?.moduleCache).toBe(false);
 		// Source TypeScript also uses virtual modules, so tryNative: false is what
 		// proves the compiled-binary branch took precedence over the source branch.
-		expect(options.tryNative).toBe(false);
-		expect(options.alias).toBeUndefined();
-		expect(options.virtualModules?.typebox).toBeDefined();
-		expect(options.virtualModules?.["@earendil-works/pi-coding-agent"]).toBeDefined();
+		expect(options?.tryNative).toBe(false);
+		expect(options?.alias).toBeUndefined();
+		expect(options?.virtualModules?.typebox).toBeDefined();
+		expect(options?.virtualModules?.["@earendil-works/pi-coding-agent"]).toBeDefined();
 	});
 });

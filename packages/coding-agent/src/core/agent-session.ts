@@ -234,16 +234,17 @@ import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinki
 import { resetTimings, time } from "./timings.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
-import { createAllToolDefinitions, temporarilyDisabledToolNames } from "./tools/index.ts";
+import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
-/** Tools routed exclusively through eval while the registered eval tool is available. */
-const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "powershell", "workflow", "monitor"]);
+/** Externally registered tools routed through eval in addition to declared eval exposure. */
+const EVAL_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["workflow", "monitor"]);
 
 /** Sample eval-cell call for an eval-only tool, using the argument name that tool actually takes. */
 function evalHelperCall(name: string): string {
 	if (name === "bash" || name === "powershell") return `tool.${name}({ command: "..." })`;
+	if (name === "grep") return `tool.grep({ pattern: "...", path: "..." })`;
 	if (name === "workflow") return `tool.${name}({ action: "..." })`;
 	if (name === "monitor") return `tool.monitor({ description: "...", command: "...", filter: "..." })`;
 	return `tool.${name}({ ... })`;
@@ -1121,7 +1122,7 @@ export class AgentSession {
 	private _initialActiveToolNames?: string[];
 	private _defaultToolNames?: Set<string>;
 	private _evalOnlyToolNames?: ReadonlySet<string>;
-	/** Explicit config override; when supplied it wins over the fixed policy across reloads. */
+	/** Explicit config override; when supplied it wins over the fixed and declared policy across reloads. */
 	private readonly _evalOnlyToolNamesOverride?: ReadonlySet<string>;
 	/** Policy tools withheld from the model, retained so disarming can restore direct access. */
 	private readonly _withheldEvalOnlyToolNames = new Set<string>();
@@ -3273,9 +3274,12 @@ export class AgentSession {
 		return this._evalOnlyToolNames !== undefined && this._toolRegistry.has("eval");
 	}
 
-	/** Resolve the fixed eval-only policy, unless an SDK embedder supplied an override. */
+	/** Resolve fixed and declared eval-only tools, unless an SDK embedder supplied an override. */
 	private _resolveEvalOnlyToolNames(): ReadonlySet<string> {
-		return this._evalOnlyToolNamesOverride ?? EVAL_ONLY_TOOL_NAMES;
+		const declaredEvalNames = [...this._toolDefinitions.values()]
+			.filter(({ definition }) => normalizeToolExposure(definition).exposure === "eval")
+			.map(({ definition }) => definition.name);
+		return this._evalOnlyToolNamesOverride ?? new Set([...EVAL_ONLY_TOOL_NAMES, ...declaredEvalNames]);
 	}
 
 	/**
@@ -3576,13 +3580,18 @@ export class AgentSession {
 				`The workflow tool runs ONLY inside eval cells via ${evalHelperCall("workflow")}; hooks and permissions still apply.`,
 			);
 		}
-		// SDK embedders can arm names outside the built-in groups; they still need eval guidance.
+		// Declared tools and SDK overrides outside the built-in groups still need eval guidance.
 		const otherHelpers = [...registered]
-			.filter((name) => name !== "bash" && name !== "powershell" && name !== "workflow")
+			.filter((name) => name !== "bash" && name !== "powershell" && name !== "workflow" && name !== "grep")
 			.map(evalHelperCall);
 		if (otherHelpers.length > 0) {
 			sentences.push(
 				`These tools run ONLY inside eval cells via ${otherHelpers.join(" or ")}; hooks and permissions still apply.`,
+			);
+		}
+		if (registered.has("grep")) {
+			sentences.push(
+				`Text search runs ONLY inside eval cells via ${evalHelperCall("grep")}; it returns structured matches, respects .gitignore, and applies hooks and permissions - prefer it over rg/grep in tool.bash.`,
 			);
 		}
 		return sentences.length > 0 ? `${prompt}\n\n${sentences.join("\n\n")}` : prompt;
@@ -7538,12 +7547,9 @@ export class AgentSession {
 				}),
 			})),
 		].filter((tool) => isAllowedTool(tool.definition.name));
-		// Withheld tools stay in _baseToolDefinitions (and therefore in _toolRegistry, which
-		// getRegisteredTool serves to the Cursor exec bridge) but are dropped from the model-facing
-		// definitions so they never reach the prompt. See temporarilyDisabledToolNames.
 		const definitionRegistry = new Map<string, ToolDefinitionEntry>(
 			Array.from(this._baseToolDefinitions.entries())
-				.filter(([name]) => isAllowedTool(name) && !temporarilyDisabledToolNames.has(name))
+				.filter(([name]) => isAllowedTool(name))
 				.map(([name, definition]) => [
 					name,
 					{
@@ -7596,23 +7602,21 @@ export class AgentSession {
 			toolRegistry.set(tool.name, tool);
 		}
 		this._toolRegistry = toolRegistry;
+		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
 		this._publishEvalOnlyToolHints();
 		const isDirectlyExposed = (name: string): boolean => {
 			const entry = this._toolDefinitions.get(name);
-			return entry !== undefined && normalizeToolExposure(entry.definition).exposure === "direct";
+			if (!entry) return false;
+			const exposure = normalizeToolExposure(entry.definition).exposure;
+			return exposure === "direct" || exposure === "eval";
 		};
 
-		// A withheld tool is dropped from the DEFAULT selection only. An explicit activeToolNames
-		// request names the tool deliberately, and callers that do so (tests, SDK embedders,
-		// filesystem-policy wiring) still expect it to activate.
-		const hasExplicitActiveToolNames = options?.activeToolNames !== undefined;
 		const nextActiveToolNames = (
 			options?.activeToolNames
 				? [...options.activeToolNames]
 				: [...(this._requestedActiveToolNames ?? previousActiveToolNames)]
 		).filter((name) => {
 			if (!isAllowedTool(name)) return false;
-			if (!hasExplicitActiveToolNames && temporarilyDisabledToolNames.has(name)) return false;
 			const previousRegistrationIds = options?.previousActiveToolRegistrationIds;
 			if (!previousRegistrationIds) return true;
 			const current = this._toolDefinitions.get(name);
@@ -7699,7 +7703,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: ["read", "bash", "edit", "write", "grep"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
@@ -7737,7 +7741,7 @@ export class AgentSession {
 		// Capture the unfiltered request BEFORE the rebuild reassigns it, so a policy that
 		// disarms during this reload can still restore its withheld eval-only tools.
 		const requestedActiveToolNamesBeforeRebuild = [...(this._requestedActiveToolNames ?? this.getActiveToolNames())];
-		// Re-resolve the fixed policy (or SDK override) so reload cannot regress it.
+		// Re-resolve fixed and declared policy (or SDK override); the registry rebuild refreshes declarations again.
 		this._evalOnlyToolNames = this._resolveEvalOnlyToolNames();
 		this.syncQueueModesFromSettings();
 		resetApiProviders();

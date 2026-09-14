@@ -1,5 +1,6 @@
-import type { Component, Container } from "@earendil-works/pi-tui";
-import { Spacer, Text } from "@earendil-works/pi-tui";
+import type { Component, Container, Text } from "@earendil-works/pi-tui";
+import { Spacer } from "@earendil-works/pi-tui";
+import { appendTipLine } from "./tip-line.ts";
 
 /**
  * The tip must stay a sibling of the header, never part of its text:
@@ -15,11 +16,7 @@ export function appendStartupHeader(
 	container.addChild(new Spacer(1));
 	container.addChild(header);
 
-	let tipComponent: Text | undefined;
-	if (tipLine) {
-		tipComponent = new Text(tipLine, 1, 0);
-		container.addChild(tipComponent);
-	}
+	const tipComponent = tipLine ? appendTipLine(container, tipLine) : undefined;
 
 	container.addChild(new Spacer(1));
 	return tipComponent;

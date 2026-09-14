@@ -1,5 +1,29 @@
 # changes
 
+## 2026-09-14 - Restore grep as an eval-only default tool (#1678)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: remove the temporary grep catalog and default-selection filters, their import, and the now-unused explicit-selection flag. The catalog includes grep for codemode schema discovery; the declared eval-only policy alone controls model exposure and programmatic execution.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: add grep to both initial default lists so sessions without eval expose it directly. Configured defaults, explicit allowlists/exclusions, and find/ls selections are unchanged.
+- `packages/coding-agent/src/core/system-prompt.ts`: derive the eval-only search guideline from contributed grep snippets absent from the selected tool list, shared with the dynamic tool section. Prefer tool.grep inside eval over shell search, without recommending direct bash when it is withheld.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: the temporary filter hid grep from getAllTools(), which codemode uses for listTools, and prevented declared exposure from entering the eval-only policy.
+- `packages/coding-agent/src/core/agent-session.ts` and `packages/coding-agent/src/core/sdk.ts`: registration alone does not activate grep in their independently seeded defaults.
+- `packages/coding-agent/src/core/system-prompt.ts`: selected tools intentionally exclude eval-only grep and bash, while their contributions survive; guidance must preserve that distinction.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns the catalog, selection, and executable registry. `packages/coding-agent/src/core/sdk.ts` seeds the session defaults before extensions bind.
+- `packages/coding-agent/src/core/system-prompt.ts` owns the legacy fallback guidance and shared conditional search guideline consumed by dynamic prompt assembly.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: definitionRegistry, nextActiveToolNames, and _buildRuntime defaults. Preserve allowlist/exclusion predicates but do not restore temporary grep filters.
+- `packages/coding-agent/src/core/sdk.ts`: defaultActiveToolNames. Keep explicit and configured selection precedence intact.
+- `packages/coding-agent/src/core/system-prompt.ts`: file-exploration guidance and getEvalOnlyGrepGuideline. Contributions must not re-advertise withheld tools as direct calls.
 
 ## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
 
@@ -1635,6 +1659,8 @@
 
 ## 2026-08-29 - Withheld tools are filtered at the advertisement seam
 
+Historical entry, superseded by the 2026-09-14 eval-only grep restoration above. The temporary catalog and selection filters described below are removed; the eval-only policy now owns withholding.
+
 ### What changed
 
 - `agent-session.ts`: names in `temporarilyDisabledToolNames` are dropped from `definitionRegistry`
@@ -1663,10 +1689,7 @@
 
 ### Expected merge conflict zones
 
-- `agent-session.ts`: the `definitionRegistry` construction and the `nextActiveToolNames` filter
-  both gained a `temporarilyDisabledToolNames` guard alongside the existing `isAllowedTool` call.
-  Upstream edits to either filter will conflict; keep the upstream predicate change and re-apply
-  the withheld-name guard next to it.
+- `agent-session.ts`: the historical `definitionRegistry` and `nextActiveToolNames` temporary guards are now deleted. Keep upstream allowlist/exclusion predicates and the declared eval-only policy; do not reintroduce the temporary guards.
 
 - Model runtime credential admission counts the combined canonical environment and policy slot lane, admitting rotation for more than one live slot without acquiring leases during preflight.
 

@@ -1,5 +1,41 @@
 # core/tools changes
 
+## Restore grep to the registered tool surface (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/index.ts`: delete temporarilyDisabledToolNames and its temporary-withholding comment. Grep remains constructed as before; session defaults now activate it, and its declared eval exposure alone withholds it when eval is registered. Find and ls are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/index.ts`: the temporary export fed catalog and selection filters that hid grep from codemode discovery even though the executable registry still contained it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/index.ts`: an extension cannot remove a core export consumed by session registry construction; the temporary filter must be deleted at its source.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/index.ts`: allToolNames / ToolsOptions boundary. Preserve upstream tool names; do not reintroduce the deleted temporary set.
+
+## Declared eval exposure for builtin shells and grep (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/grep.ts`, and `packages/coding-agent/src/core/tools/powershell.ts`: the preceding S1 policy change declares exposure: "eval" on each tool definition. PowerShell wraps the shared shell definition and overrides its exposure. This entry records that prerequisite for the grep surface restoration; no additional runtime change is made here.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/grep.ts`, and `packages/coding-agent/src/core/tools/powershell.ts`: declarations let the session derive eval-only routing from registered definitions rather than a hardcoded builtin name set, while sessions without eval retain direct access.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/grep.ts`, and `packages/coding-agent/src/core/tools/powershell.ts`: the core factories own their exposure metadata before the session constructs its catalog; a later extension cannot retroactively supply that declaration to every caller.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/bash.ts` and `packages/coding-agent/src/core/tools/grep.ts`: returned definition metadata. `packages/coding-agent/src/core/tools/powershell.ts`: the createShellToolDefinition wrapper. Preserve exposure: "eval" alongside upstream factory changes.
+
 ## Session cwd and goal-store environment keys (2026-09-13)
 
 ### What changed
@@ -122,6 +158,8 @@
 
 ## grep is temporarily withheld from the model-facing tool surface (2026-08-29)
 
+Historical entry, superseded by the 2026-09-14 restoration above. The temporary set is deleted, not retained empty; grep withholding now comes only from the eval-only policy.
+
 ### What changed
 
 - `index.ts`: added `temporarilyDisabledToolNames`, currently holding `grep`. Tools named here are
@@ -142,9 +180,7 @@
 
 ### Expected merge conflict zones
 
-- `index.ts`: the `temporarilyDisabledToolNames` export sits directly below `allToolNames`, so an
-  upstream change that adds or removes a builtin tool name will conflict there. Resolve by keeping
-  both the upstream tool-name edit and this set; the set is intended to be emptied, not carried.
+- `index.ts`: the historical temporary export below `allToolNames` is now deleted. Keep upstream tool-name edits without restoring the set.
 
 ## Output spill streams capture early storage failures (2026-08-26)
 

@@ -38,7 +38,7 @@ function writeShrinkwrap(root, packages) {
 }
 
 describe("copyPublishDependencies", () => {
-	it("copies direct publish dependencies and skips internal workspaces and missing optional packages", () => {
+	it("stages every manifest entry, nested ones from the hoisted copy, and skips internal workspaces and missing optional packages", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-bundle-deps-"));
 		writePackage(tempDir, "typebox");
 		writePackage(tempDir, "@scope/pkg");
@@ -82,13 +82,15 @@ describe("copyPublishDependencies", () => {
 				),
 			/ENOENT/,
 		);
-		assert.throws(
-			() =>
+		// The manifest nests nested-only under typebox although the installer hoisted it.
+		assert.equal(
+			JSON.parse(
 				readFileSync(
-					join(tempDir, "packages", "coding-agent", "node_modules", "typebox", "node_modules", "nested-only"),
+					join(tempDir, "packages", "coding-agent", "node_modules", "typebox", "node_modules", "nested-only", "package.json"),
 					"utf8",
 				),
-			/ENOENT/,
+			).name,
+			"nested-only",
 		);
 	});
 
@@ -106,7 +108,8 @@ describe("copyPublishDependencies", () => {
 		// When
 		copyPublishDependencies(tempDir);
 
-		// Then: the transitive dependency rides along with its parent's directory copy.
+		// Then: the transitive dependency is staged at its manifest path (from the copy nested
+		// under the parent in the install; the parent's own copy excludes installer nesting).
 		assert.equal(
 			JSON.parse(
 				readFileSync(

@@ -91,17 +91,23 @@ describe("model usability budget", () => {
 		// declaring a switch, so an empty session keeps the cold-start contract - the
 		// switch wording would promise a compaction remedy with nothing to compact.
 		expect(error.projection.admission).toBe("start");
-		// Numbers re-derived from the merged runtime (PR #1626, upstream 71dca871):
-		// the merged default active tool set (read/bash/edit/write - the renderer
-		// split and strict-prefer schemas) estimates 758 active tool schema tokens
-		// (was 695 pre-merge), moving the 16000-window minimum 37464 -> 37527 and the
-		// shortfall 21464 -> 21527. Computed by replaying this scenario against both
-		// the pre-merge baseline and the merged worktree with
-		// local-ignore/senpi-sync-20260912/evidence/rederive-model-usability-budget.mjs
-		// (same harness + production estimators); message shape and fields unchanged.
-		expect(error.message).toBe(
-			'Model "faux/low-context" cannot start: context window 16000 tokens is 21527 tokens short of the 37527-token minimum (system prompt 1, active tool schemas 758, output reserve 4000, compaction reserve 16384, speculation lead 8192, safety margin 8192 [default]).',
-		);
+		// #1678: restored default grep adds 256 schema units. Assert the machine
+		// projection rather than pinning the human-readable error sentence.
+		expect(error.projection).toMatchObject({
+			model: "faux/low-context",
+			contextWindow: 16_000,
+			liveContextTokens: 0,
+			systemPromptTokens: 1,
+			activeToolSchemaTokens: 1_014,
+			outputReserveTokens: 4_000,
+			compactionReserveTokens: 16_384,
+			speculationLeadTokens: 8_192,
+			safetyMarginTokens: 8_192,
+			safetyMarginProfile: "default",
+			requiredTokens: 37_783,
+			shortfallTokens: 21_783,
+			usable: false,
+		});
 	});
 
 	it("rejects a downswitch before committing when live context exceeds the target budget", async () => {
@@ -134,13 +140,11 @@ describe("model usability budget", () => {
 			safetyMarginTokens: 8_192,
 			usable: false,
 		});
-		// liveContext = usage 321000 - system prompt 2083 - active tool schemas
-		// (695 pre-merge -> 758 merged, same +63 as the start-admission case above),
-		// so the exact value moved 318222 -> 318159 and this band shifts by the same
-		// +63: [318180, 318280] -> [318117, 318217], keeping the 100-token tolerance.
-		// Re-derived with the same rederive-model-usability-budget.mjs replay.
-		expect(error.projection.liveContextTokens).toBeGreaterThanOrEqual(318_117);
-		expect(error.projection.liveContextTokens).toBeLessThanOrEqual(318_217);
+		// The usage estimate includes the current prompt and schemas; live messages
+		// exclude them exactly, including restored grep's schema and guidance.
+		expect(error.projection.liveContextTokens).toBe(
+			321_000 - error.projection.systemPromptTokens - error.projection.activeToolSchemaTokens,
+		);
 		expect(error.projection.speculationLeadTokens).toBeGreaterThan(0);
 		expect(error.projection.requiredTokens).toBe(
 			error.projection.liveContextTokens +

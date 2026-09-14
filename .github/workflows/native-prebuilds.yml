@@ -13,15 +13,23 @@ on:
     paths:
       - '.github/workflows/native-prebuilds.yml'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'crates/senpi-pty/**'
+      - 'crates/senpi-grep/**'
       - 'packages/pty/**'
+      - 'packages/coding-agent/native/**'
+      - 'scripts/probe-native-grep*.mjs'
   push:
     branches: [main]
     paths:
       - '.github/workflows/native-prebuilds.yml'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'crates/senpi-pty/**'
+      - 'crates/senpi-grep/**'
       - 'packages/pty/**'
+      - 'packages/coding-agent/native/**'
+      - 'scripts/probe-native-grep*.mjs'
 
 permissions:
   contents: read
@@ -181,6 +189,7 @@ jobs:
           set -euo pipefail
 
           cargo test -p senpi-pty --target "${RUST_TARGET}" --locked
+          cargo test -p senpi-grep --target "${RUST_TARGET}" --locked
 
       - name: Rust manual PTY QA
         if: ${{ !matrix.cross_compile }}
@@ -195,9 +204,8 @@ jobs:
 
           output_dir="${RUNNER_TEMP}/native-prebuild-output"
           target_dir="${RUNNER_TEMP}/native-prebuild-target"
-
-          test -f "${NATIVE_PACKAGE_DIR}/Cargo.toml"
-          test -f "${NATIVE_PACKAGE_DIR}/package.json"
+          # Each matrix row builds both native crates into a shared target-dir/output-dir.
+          native_package_dirs=(crates/senpi-pty crates/senpi-grep)
 
           # @napi-rs/cli 3.7.2 resolves the built artifact from
           # <target-dir>/<napi-target>/release, but cargo-zigbuild strips the glibc-version suffix
@@ -213,23 +221,28 @@ jobs:
             ln -sfn "${plain_triple}" "${target_dir}/${NAPI_TARGET}"
           fi
 
-          args=(
-            build
-            --manifest-path "${NATIVE_PACKAGE_DIR}/Cargo.toml"
-            --package-json-path "${NATIVE_PACKAGE_DIR}/package.json"
-            --target "${NAPI_TARGET}"
-            --target-dir "${target_dir}"
-            --output-dir "${output_dir}"
-            --release
-            --strip
-            --platform
-          )
+          for native_package_dir in "${native_package_dirs[@]}"; do
+            test -f "${native_package_dir}/Cargo.toml"
+            test -f "${native_package_dir}/package.json"
 
-          if [[ "${NAPI_CROSS_COMPILE}" == "true" ]]; then
-            args+=(--cross-compile)
-          fi
+            args=(
+              build
+              --manifest-path "${native_package_dir}/Cargo.toml"
+              --package-json-path "${native_package_dir}/package.json"
+              --target "${NAPI_TARGET}"
+              --target-dir "${target_dir}"
+              --output-dir "${output_dir}"
+              --release
+              --strip
+              --platform
+            )
 
-          npm exec --yes --package "@napi-rs/cli@${NAPI_CLI_VERSION}" -- napi "${args[@]}" -- --locked
+            if [[ "${NAPI_CROSS_COMPILE}" == "true" ]]; then
+              args+=(--cross-compile)
+            fi
+
+            npm exec --yes --package "@napi-rs/cli@${NAPI_CLI_VERSION}" -- napi "${args[@]}" -- --locked
+          done
 
       - name: Node native load and lifecycle probe
         if: ${{ !matrix.cross_compile }}
@@ -242,17 +255,22 @@ jobs:
           while IFS= read -r node_file; do
             node_files+=("${node_file}")
           done < <(find "${output_dir}" -type f -name '*.node' | sort)
-          if [[ "${#node_files[@]}" -eq 0 ]]; then
-            echo "::error::expected one .node file for lifecycle probe, found none"
-            exit 1
-          fi
-          if [[ "${#node_files[@]}" -ne 1 ]]; then
-            echo "::error::expected one .node file for lifecycle probe, found ${#node_files[@]}"
+          pty_file=""
+          grep_file=""
+          for node_file in "${node_files[@]}"; do
+            case "$(basename "${node_file}")" in
+              senpi_pty.*) pty_file="${node_file}" ;;
+              senpi_grep.*) grep_file="${node_file}" ;;
+            esac
+          done
+          if [[ -z "${pty_file}" || -z "${grep_file}" ]]; then
+            echo "::error::expected senpi_pty.* and senpi_grep.* .node files for lifecycle probes"
             printf '%s\n' "${node_files[@]}"
             exit 1
           fi
 
-          node scripts/probe-native-pty-lifecycle.mjs "${node_files[0]}"
+          node scripts/probe-native-pty-lifecycle.mjs "${pty_file}"
+          node scripts/probe-native-grep.mjs "${grep_file}"
 
       - name: Stage artifact
         run: |
@@ -268,24 +286,36 @@ jobs:
             node_files+=("${node_file}")
           done < <(find "${output_dir}" -type f -name '*.node' | sort)
 
-          if [[ "${#node_files[@]}" -eq 0 ]]; then
-            echo "::error::napi build did not produce a .node file for ${NAPI_TARGET}"
-            exit 1
-          fi
-          if [[ "${#node_files[@]}" -ne 1 ]]; then
-            echo "::error::expected one .node file for ${NAPI_TARGET}, found ${#node_files[@]}"
+          if [[ "${#node_files[@]}" -ne 2 ]]; then
+            echo "::error::expected two .node files for ${NAPI_TARGET}, found ${#node_files[@]}"
             printf '%s\n' "${node_files[@]}"
             exit 1
           fi
 
-          cp "${node_files[0]}" "${artifact_dir}/"
+          pty_file=""
+          grep_file=""
+          for node_file in "${node_files[@]}"; do
+            case "$(basename "${node_file}")" in
+              senpi_pty.*) pty_file="${node_file}" ;;
+              senpi_grep.*) grep_file="${node_file}" ;;
+            esac
+          done
+          if [[ -z "${pty_file}" || -z "${grep_file}" ]]; then
+            echo "::error::expected senpi_pty.* and senpi_grep.* .node files for ${NAPI_TARGET}"
+            printf '%s\n' "${node_files[@]}"
+            exit 1
+          fi
+
+          cp "${pty_file}" "${artifact_dir}/"
+          cp "${grep_file}" "${artifact_dir}/"
           {
             echo "artifact=${{ matrix.artifact }}"
             echo "napi_target=${NAPI_TARGET}"
             echo "rust_target=${RUST_TARGET}"
             echo "node_platform=${NODE_PLATFORM}"
             echo "node_arch=${NODE_ARCH}"
-            echo "file=$(basename "${node_files[0]}")"
+            echo "file_senpi_pty=$(basename "${pty_file}")"
+            echo "file_senpi_grep=$(basename "${grep_file}")"
           } > "${artifact_dir}/manifest.txt"
 
       - name: Upload native prebuild

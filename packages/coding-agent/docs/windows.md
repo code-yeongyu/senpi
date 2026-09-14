@@ -30,7 +30,7 @@ Or enable both while comparing behavior:
 
 The `!` and `!!` editor commands still use Bash.
 
-Whenever the `eval` tool is available, both `bash` and `powershell` run only inside eval cells; see [Settings](settings.md#tools).
+Whenever the `eval` tool is available, `bash`, `powershell` and `grep` run only inside eval cells as `tool.bash(...)`, `tool.powershell(...)` and `tool.grep(...)`. They declare `exposure: "eval"` and remain directly callable when enabled without `eval`; see [Settings](settings.md#eval-only-tools).
 
 ## Custom Bash Path
 

@@ -1106,6 +1106,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getAgentDirFn();
 			},
+			get loadedExtensionPaths() {
+				runner.assertActive();
+				return runner.extensions.map((extension) => extension.resolvedPath);
+			},
 			get sessionManager() {
 				runner.assertActive();
 				return runner.sessionManager;

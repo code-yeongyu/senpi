@@ -16,6 +16,7 @@ import goalExtension from "./goal/index.ts";
 import gptAccountExtension from "./gpt-account.ts";
 import gptApplyPatchExtension from "./gpt-apply-patch/index.ts";
 import helpExtension from "./help/index.ts";
+import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
@@ -67,6 +68,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "permission-system", factory: permissionSystemExtension },
 	{ id: "gpt-apply-patch", factory: gptApplyPatchExtension },
 	{ id: "ask-user", factory: askUserExtension },
+	{ id: "herdr", factory: herdrExtension },
 	{ id: "imagegen", factory: imageGenExtension },
 	// Follows imagegen so the native injector's bypass wiring observes the registered client tool.
 	{ id: "openai-image-gen", factory: openaiImageGenExtension },

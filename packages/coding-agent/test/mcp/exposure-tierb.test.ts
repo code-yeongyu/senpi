@@ -151,15 +151,14 @@ describe("todo32 tier-B: resident token cost", () => {
 			(context) => {
 				const shapes = toolShapes(context);
 				residentNames = withoutMcpUtilityTools(names(shapes));
-				residentJson = JSON.stringify(
-					(context.tools ?? []).filter((tool) => withoutMcpUtilityTools([tool.name]).length > 0),
-				);
+				residentJson = JSON.stringify((context.tools ?? []).filter((tool) => residentNames.includes(tool.name)));
 				return fauxAssistantMessage("ok");
 			},
 		]);
 		await harness.session.prompt("go");
 		expect(residentNames).toEqual(["tool_search"]);
-		// Method: chars/4 char-per-token approximation over the serialized tools array.
+		// #1678: measure only the MCP resident set; core tools are separate senpi cost.
+		// Method: chars/4 approximation over the serialized MCP tools array.
 		const approxTokens = Math.ceil(residentJson.length / 4);
 		expect(approxTokens).toBeLessThan(1000);
 	});

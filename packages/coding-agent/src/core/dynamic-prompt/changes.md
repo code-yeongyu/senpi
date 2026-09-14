@@ -1,5 +1,23 @@
 # changes.md — dynamic-prompt
 
+## Eval-only grep search guidance (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/tool-section.ts`: include the shared eval-only grep guideline when grep contributes a snippet but is not selected for direct exposure. The dynamic builder and model presets receive it without adding a new prompt option; withheld grep/bash stay out of Available Tools.
+
+### Why
+
+- `packages/coding-agent/src/core/dynamic-prompt/tool-section.ts`: the selected list intentionally omits eval-only tools, but their callable guidance must survive and direct content search through tool.grep inside eval.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/dynamic-prompt/tool-section.ts`: core assembly owns the tool section passed to every prompt preset. An extension-only append would not keep the shared and legacy builders aligned.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/dynamic-prompt/tool-section.ts`: the shared guideline import and guideline assembly. Keep selected tool advertisement separate from contributed eval-only guidance.
+
 ## Observe edits and perceived results in the shared core (2026-09-09)
 
 ### What changed

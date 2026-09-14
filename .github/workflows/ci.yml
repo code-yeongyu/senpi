@@ -86,6 +86,11 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
       - name: Test shard
         timeout-minutes: 25
         run: npx vitest run --shard=${{ matrix.shard }}/3
@@ -163,6 +168,43 @@ jobs:
         run: bunx vitest run test/suite/app-server-daemon.test.ts
         working-directory: packages/coding-agent
 
+  compiled-extensions-windows:
+    name: Compiled extensions (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install archive tool
+        run: choco install zip --no-progress -y
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Verify native importer
+        shell: bash
+        run: npx vitest run test/extensions/bun-extension-importer.test.ts test/extensions/bun-extension-regressions.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Verify relocated compiled extensions
+        shell: bash
+        run: bun test scripts/compiled-extension-platform.test.ts scripts/compiled-extension-load.test.ts
+
   test-workspaces:
     name: Test (workspaces + scripts)
     runs-on: ubuntu-latest
@@ -238,6 +280,7 @@ jobs:
         test-coding-agent,
         hooks-trust-storage-windows,
         rpc-windows,
+        compiled-extensions-windows,
         test-workspaces,
       ]
     if: always()
@@ -266,6 +309,7 @@ jobs:
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
             echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
+            echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
