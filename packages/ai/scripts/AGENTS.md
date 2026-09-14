@@ -14,7 +14,7 @@ model-data.ts                  Shared manifest/schema layer: MODEL_DATA_SCHEMA_V
                                createModelDataManifest, validateGeneratedModelData, assertExactModelIds
 check-model-data.ts            Thin CLI over validateGeneratedModelData
 generate-image-models.ts       Image catalog (OpenRouter `/models?output_modalities=image`)
-generate-test-image.ts         Writes test/data/red-circle.png; requires the `canvas` native dep
+generate-test-image.ts         Writes test/data/red-circle.png using Photon WebAssembly; no native build required
 transform-cursor-agent-proto.mjs Rewrites protoc-gen-es enums to const objects for erasableSyntaxOnly
 ```
 

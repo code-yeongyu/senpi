@@ -1,3 +1,22 @@
+## 2026-09-14 - Refresh provider pins and remove native image-fixture tooling
+
+### What changed
+
+- `packages/ai/package.json` pins @anthropic-ai/sdk 0.125.0, @aws-sdk/client-bedrock-runtime 3.1131.0, @bufbuild/protobuf 2.15.0, @google/genai 2.22.0, @smithy/types 4.18.0, typebox 1.3.30 and yaml 2.9.1. OpenAI remains on the fork's 6.26.0 pin; Vitest remains 4.1.11.
+- `packages/ai/scripts/generate-test-image.ts` renders the opaque 200x200 red-circle fixture with the existing Photon WebAssembly package instead of canvas. `packages/ai/package.json` declares Photon 0.3.4 as its development dependency, replacing canvas.
+
+### Why
+
+- `packages/ai/package.json` aligns provider and schema versions across bundled consumers. `packages/ai/scripts/generate-test-image.ts` no longer needs a native graphics toolchain for a deterministic fixture (Refs #1656).
+
+### Why an extension could not handle it
+
+- Dependency resolution in `packages/ai/package.json` and fixture generation in `packages/ai/scripts/generate-test-image.ts` happen before the runtime extension boundary.
+
+### Expected merge conflict zones
+
+- Dependency sections in `packages/ai/package.json`; the drawing and PNG-encoding implementation in `packages/ai/scripts/generate-test-image.ts`.
+
 ## 2026-09-13 - Publish static provider module subpaths
 
 ### What changed

@@ -39,6 +39,24 @@
 
 - LOW: `detached-cell-manager.ts` settlement and lookup paths; `context-manager.ts` tool-call branch and lifecycle teardown; `image.ts` display collection. Behavior of active cells, the pull-based `nextToolCall` contract within its 256-message budget, and display ordering under the caps is unchanged.
 
+## 2026-09-14 - Refresh parser and schema pins
+
+### What changed
+
+- `packages/senpi-codemode/package.json` pins @babel/parser 8.0.5 and typebox 1.3.30.
+
+### Why
+
+- `packages/senpi-codemode/package.json` supplies the parser shipped with the source-only sidecar and shares TypeBox with the host runtime (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/package.json` is resolved before the extension can execute.
+
+### Expected merge conflict zones
+
+- Exact dependency versions in `packages/senpi-codemode/package.json`.
+
 ## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
 
 ### What changed

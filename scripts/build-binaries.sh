@@ -101,9 +101,6 @@ else
     echo "==> Skipping package build (--skip-build)"
 fi
 
-echo "==> Building trusted native dependencies..."
-npm rebuild canvas --foreground-scripts
-
 node scripts/prepare-bun-compile-assets.mjs
 
 echo "==> Building binaries..."

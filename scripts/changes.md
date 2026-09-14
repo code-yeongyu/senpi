@@ -62,6 +62,26 @@
 
 - Payload copying in `scripts/copy-codemode-sidecar.mjs`, RPC validation in `scripts/smoke-standalone-binary.mjs`, and compile flags in `scripts/build-binaries.sh`.
 
+## 2026-09-14 - Align dependency gates and omit publish-only sourcemaps
+
+### What changed
+
+- `scripts/generate-coding-agent-shrinkwrap.mjs` and `scripts/generate-coding-agent-install-lock.mjs` both allow the reviewed @google/genai 2.22.0 no-op preinstall script; protobufjs 7.6.5 and esbuild 0.28.2 remain unchanged.
+- `scripts/build-binaries.sh` removes the canvas native rebuild because the fixture generator now uses Photon. `scripts/qa/fork-preservation-check.mjs` expects the refreshed SDK pin by default.
+- `scripts/prepare-senpi-bundled-workspaces.mjs` and `scripts/prepare-senpi-publish-dependencies.mjs` route their tree-copy paths through `scripts/copy-publish-tree.mjs`, omitting sourcemaps from dependency, workspace and vendor staging while retaining workspace filters and source build artifacts. The root distribution is excluded by its manifest files policy.
+
+### Why
+
+- `scripts/qa/fork-preservation-check.mjs` must not reject the reviewed bump. `scripts/generate-coding-agent-shrinkwrap.mjs` and `scripts/generate-coding-agent-install-lock.mjs` must review the same exact SDK version. `scripts/build-binaries.sh` must not rebuild a removed dependency. `scripts/prepare-senpi-bundled-workspaces.mjs` must exclude bundled maps too: npm's root files exclusion does not apply to bundled dependency packages, so a manifest-only change cannot satisfy the zero-map package contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/generate-coding-agent-shrinkwrap.mjs`, `scripts/generate-coding-agent-install-lock.mjs`, `scripts/build-binaries.sh`, `scripts/prepare-senpi-bundled-workspaces.mjs`, and `scripts/qa/fork-preservation-check.mjs` run at build or publish time, before runtime extensions execute.
+
+### Expected merge conflict zones
+
+- SDK allowlist literals in `scripts/generate-coding-agent-shrinkwrap.mjs` and `scripts/generate-coding-agent-install-lock.mjs`; native rebuild section in `scripts/build-binaries.sh`; copying calls in `scripts/prepare-senpi-bundled-workspaces.mjs`; SDK default in `scripts/qa/fork-preservation-check.mjs`.
+
 ## 2026-09-13 - Retire webfetch compile-asset workarounds
 
 ### What changed

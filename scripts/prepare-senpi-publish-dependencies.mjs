@@ -5,9 +5,10 @@
 // produced: every entry lands at the placement resolvePublishPlacements() derives from the
 // manifest (nested entries included) with the manifest version, and anything the manifest
 // does not place is pruned.
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
+import { copyPublishTree } from "./copy-publish-tree.mjs";
 import { chainLockPath, resolvePublishPlacements } from "./prepare-senpi-publish-placements.mjs";
 export { lockPathPackageChain } from "./prepare-senpi-publish-placements.mjs";
 
@@ -99,8 +100,7 @@ function copyPackage(sourcePath, targetPath) {
 	mkdirSync(dirname(targetPath), { recursive: true });
 	// Only the package itself: whatever the installer nested inside it is its own placement,
 	// not the manifest's, and would shadow the entries staged here.
-	cpSync(sourcePath, targetPath, {
-		recursive: true,
+	copyPublishTree(sourcePath, targetPath, {
 		filter: (source) => !relative(sourcePath, source).split(sep).includes("node_modules"),
 	});
 }

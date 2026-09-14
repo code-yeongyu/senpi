@@ -51,6 +51,25 @@
 
 - The runtime dependency list in `packages/coding-agent/package.json`; regenerate locks rather than hand-merging them.
 
+## 2026-09-14 - Refresh dependency pins and exclude distribution sourcemaps
+
+### What changed
+
+- `packages/coding-agent/package.json` aligns provider SDK pins with pi-ai, pins claude-agent-sdk 0.3.270, typebox 1.3.30, zod 4.6.4, yaml 2.9.1, ignore 7.0.9, marked 18.0.13 and picomatch 4.0.7; removes unused glob and @opentelemetry/api declarations. OpenAI 6.26.0, signal-exit 3.0.7, Vitest 4.1.11 and the protobufjs override remain unchanged.
+- `packages/coding-agent/package.json` adds `!dist/**/*.map` to the publish files policy while retaining declarations, docs, images, examples and changelog. Publish staging also excludes dependency/vendor maps; generated npm, Bun, publish and installer locks track the new pins.
+
+### Why
+
+- `packages/coding-agent/package.json` owns the installed runtime closure and published asset contract. Excluding build-only maps reduces unpacked size without dropping runtime code or declarations (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json` is consumed before installation or runtime extension loading.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json` dependencies and files lists; regenerated lock artifacts.
+
 ## 2026-09-13 - Retire the heavyweight webfetch DOM dependency
 
 ### What changed
