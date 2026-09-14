@@ -14,6 +14,8 @@
 
 - Fixed the `/btw` panel having no off switch: a bare `/btw` now dismisses the panel (or cancels the in-flight side query), Escape is matched through the shared key matcher so it also works under the kitty keyboard protocol, and the panel footer names both.
 
+- Fixed Enter on an ask-user question submitting an empty answer: confirming a multi-select question with nothing chosen now selects the highlighted row instead of advancing to Submit and reporting `You have not answered all questions`, and committing an empty own-answer editor no longer erases an option that was already selected ([#1674](https://github.com/code-yeongyu/senpi/pull/1674) by [@sanguneo](https://github.com/sanguneo))
+
 ### Removed
 
 ## [2026.9.13-2] - 2026-09-13
