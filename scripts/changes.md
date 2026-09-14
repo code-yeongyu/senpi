@@ -19,6 +19,24 @@
 
 - `scripts/build-coding-agent-bundle.mjs`: external allowlist and common esbuild plugins.
 
+## 2026-09-14 - Reject expired release-age exceptions
+
+### What changed
+
+- `scripts/check-release-age-exceptions.mjs` reports structured errors for active marked/zod exclusions after 2026-09-15 UTC. Fixed-clock tests exercise the real npm validation and preinstall entry points at the cutoff and after exception removal.
+
+### Why
+
+- `scripts/check-release-age-exceptions.mjs` makes temporary install-policy exemptions expire observably instead of relying on a prose reminder (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/check-release-age-exceptions.mjs` runs before installation or runtime extension loading.
+
+### Expected merge conflict zones
+
+- The reviewed exception names and UTC cutoff in `scripts/check-release-age-exceptions.mjs`.
+
 ## 2026-09-14 - Publish staging mirrors the dependency manifest exactly
 
 ### What changed

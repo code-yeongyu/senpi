@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-09-14 - Enforce temporary release-age exception expiry
+
+### What changed
+
+- `package.json` runs the release-age exception guard in `check:pinned-deps` and `preinstall`. `.npmrc` identifies its enforced UTC cutoff for the reviewed marked/zod exceptions.
+
+### Why
+
+- `package.json` must reject stale exceptions rather than silently retaining them. `.npmrc` previously carried only a removal reminder for 2026-09-15 (Refs #1656).
+
+### Why an extension could not handle it
+
+- `package.json` and `.npmrc` govern dependency installation before extensions execute.
+
+### Expected merge conflict zones
+
+- `package.json` validation/install script chains and the dated `.npmrc` exception entries.
+
 ## 2026-09-14 - Exact dependency hygiene pins and portable fixture tooling
 
 ### What changed

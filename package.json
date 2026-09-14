@@ -25,7 +25,7 @@
 		"dev:tsc": "node scripts/run-workspaces.mjs --workspace packages/ai dev:tsc",
 		"check": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:entry-graphs && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && npm run check:claude-sdk-platform-lock && tsc --noEmit && node scripts/check-browser-smoke.mjs",
 		"check:browser-smoke": "node scripts/check-browser-smoke.mjs",
-		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
+		"check:pinned-deps": "node scripts/check-pinned-deps.mjs && node scripts/check-release-age-exceptions.mjs",
 		"check:runtime-deps": "node scripts/check-runtime-deps.mjs",
 		"check:package-install": "node scripts/coding-agent-consumer.mjs",
 		"check:shrinkwrap": "node scripts/generate-coding-agent-shrinkwrap.mjs --check",
@@ -55,7 +55,7 @@
 		"shrinkwrap:coding-agent": "node scripts/generate-coding-agent-shrinkwrap.mjs",
 		"install-lock:coding-agent": "node scripts/generate-coding-agent-install-lock.mjs",
 		"refresh-lock": "PI_ALLOW_LOCKFILE_CHANGE=1 npm install --package-lock-only --ignore-scripts && node scripts/regenerate-bun-lock-isolated.mjs && node scripts/hydrate-lock-registry-metadata.mjs && node scripts/generate-coding-agent-shrinkwrap.mjs && node scripts/generate-coding-agent-install-lock.mjs",
-		"preinstall": "node scripts/create-bin-stubs.mjs",
+		"preinstall": "node scripts/check-release-age-exceptions.mjs && node scripts/create-bin-stubs.mjs",
 		"prepare": "husky",
 		"hydrate:model-data": "node scripts/run-workspaces.mjs --workspace packages/ai hydrate-model-data",
 		"check:model-data": "node scripts/run-workspaces.mjs --workspace packages/ai check:model-data"
