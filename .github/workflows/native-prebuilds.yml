@@ -1,8 +1,20 @@
 name: Native Prebuilds
 
 on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: 'Git ref to check out for the prebuild'
+        required: false
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: 'Git ref to check out for the prebuild'
+        required: false
+        type: string
+        default: ''
       native_package_dir:
         description: 'Directory containing the native package Cargo.toml and package.json'
         required: false
@@ -135,6 +147,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
 
       - name: Setup Node.js
@@ -316,6 +329,10 @@ jobs:
             echo "node_arch=${NODE_ARCH}"
             echo "file_senpi_pty=$(basename "${pty_file}")"
             echo "file_senpi_grep=$(basename "${grep_file}")"
+            echo "source_sha=$(git rev-parse HEAD)"
+            echo "host=${NODE_PLATFORM}-${NODE_ARCH}"
+            echo "sha256_senpi_pty=$(sha256sum "${pty_file}" | cut -d' ' -f1)"
+            echo "sha256_senpi_grep=$(sha256sum "${grep_file}" | cut -d' ' -f1)"
           } > "${artifact_dir}/manifest.txt"
 
       - name: Upload native prebuild
