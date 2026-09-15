@@ -1,114 +1,110 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
-import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 
-const CHILD_GRACE_MS = 5_000;
+const kernelModulePath = fileURLToPath(new URL("../src/kernels/js/context-manager.ts", import.meta.url));
+const bunAvailable = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
 
-async function withKernel<T>(fn: (kernel: JavaScriptKernel) => Promise<T>): Promise<T> {
-	const kernel = new JavaScriptKernel({ sessionId: "child-lifecycle", cwd: process.cwd(), parallelPoolWidth: 2 });
+// Bun.$ ShellPromise exposes no pid/kill on Bun 1.4 (measured on 1.4.2), so shell-template
+// children cannot be signaled; the contracts below cover the Bun.spawn path, which is the
+// measured orphan source. The driver runs the kernel under bun so cells see Bun globals.
+
+type DriverReport = {
+	readonly resultOk: boolean;
+	readonly pid: number;
+	readonly aliveAfterSettle: boolean;
+};
+
+function driverSource(): string {
+	return [
+		'import { readFile, writeFile } from "node:fs/promises";',
+		`import { JavaScriptKernel } from ${JSON.stringify(kernelModulePath)};`,
+		"const [mode, reportPath] = process.argv.slice(2);",
+		"const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };",
+		"const deadWithin = async (pid, ms) => {",
+		"  const deadline = Date.now() + ms;",
+		"  while (Date.now() < deadline) { if (!alive(pid)) return true; await new Promise((r) => setTimeout(r, 100)); }",
+		"  return !alive(pid);",
+		"};",
+		'const kernel = new JavaScriptKernel({ sessionId: "child-lifecycle", cwd: process.cwd(), parallelPoolWidth: 1 });',
+		"let pid = Number.NaN;",
+		"let resultOk = false;",
+		'if (mode === "interrupt") {',
+		'  const pidPath = reportPath + ".pid";',
+		'  const code = `import { writeFileSync } from "node:fs";',
+		'const p = Bun.spawn(["sh", "-c", "trap \'\' TERM; sleep 60"]);',
+		'writeFileSync("${PID_PATH}", String(p.pid));',
+		'await new Promise(() => {})`.replace("${PID_PATH}", pidPath);',
+		'  const run = kernel.run({ cellId: "int", code, timeoutMs: 30_000 }).catch(() => undefined);',
+		"  const deadline = Date.now() + 15_000;",
+		"  while (Date.now() < deadline) {",
+		'    pid = await readFile(pidPath, "utf8").then((t) => Number(t.trim()), () => Number.NaN);',
+		"    if (Number.isInteger(pid) && pid > 0) break;",
+		"    await new Promise((r) => setTimeout(r, 50));",
+		"  }",
+		'  if (!Number.isInteger(pid) || pid <= 0) throw new Error("child never wrote its pid");',
+		'  await kernel.interrupt("child lifecycle test");',
+		"  await run;",
+		"  resultOk = true;",
+		"} else {",
+		'  const code = mode === "term-proof"',
+		'    ? \'const p = Bun.spawn(["sh", "-c", "trap \\\'\\\' TERM; sleep 60"]); return p.pid\'',
+		'    : \'const p = Bun.spawn(["sleep", "60"]); return p.pid\';',
+		'  const result = await kernel.run({ cellId: "settle", code, timeoutMs: 15_000 });',
+		"  resultOk = result.ok === true;",
+		"  pid = result.ok ? Number(result.valueRepr) : Number.NaN;",
+		"}",
+		"await kernel.close();",
+		'if (!Number.isInteger(pid) || pid <= 0) throw new Error("no child pid in result");',
+		"const dead = await deadWithin(pid, 6_000);",
+		'await writeFile(reportPath, JSON.stringify({ resultOk, pid, aliveAfterSettle: !dead }), "utf8");',
+	].join("\n");
+}
+
+async function runDriver(mode: "settle" | "term-proof" | "interrupt"): Promise<DriverReport> {
+	const root = await mkdtemp(join(tmpdir(), "senpi-child-lifecycle-"));
 	try {
-		return await fn(kernel);
+		const driverPath = join(root, "driver.ts");
+		const reportPath = join(root, "report.json");
+		await writeFile(driverPath, driverSource(), "utf8");
+		const run = spawnSync("bun", [driverPath, mode, reportPath], { encoding: "utf8", cwd: root, timeout: 90_000 });
+		if (run.status !== 0) throw new Error(`bun driver exited with ${run.status}: ${run.stderr.slice(-800)}`);
+		return JSON.parse(await readFile(reportPath, "utf8")) as DriverReport;
 	} finally {
-		await kernel.close();
+		await rm(root, { recursive: true, force: true });
 	}
-}
-
-function pidOf(result: Extract<KernelToHostMessage, { type: "result" }>): number {
-	const pid = Number(result.ok ? result.valueRepr : undefined);
-	if (!Number.isInteger(pid) || pid <= 0)
-		throw new Error(`expected a child pid, got ${result.ok ? result.valueRepr : "error"}`);
-	return pid;
-}
-
-function alive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function expectDeadWithin(pid: number, timeoutMs: number): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (!alive(pid)) return;
-		await new Promise((resolve) => setTimeout(resolve, 100));
-	}
-	expect(alive(pid), `child ${pid} is still alive after ${timeoutMs}ms`).toBe(false);
 }
 
 describe("eval cell child process lifecycle", () => {
-	it("kills a Bun.spawn child when the cell settles", async () => {
-		await withKernel(async (kernel) => {
-			const result = await kernel.run({
-				cellId: "spawn-settle",
-				code: 'const p = Bun.spawn(["sleep", "60"]); return p.pid',
-				timeoutMs: 10_000,
-			});
-			const pid = pidOf(result);
-			await expectDeadWithin(pid, CHILD_GRACE_MS);
-		});
-	}, 30_000);
+	it.skipIf(!bunAvailable)(
+		"kills a spawned child when the cell settles",
+		async () => {
+			const report = await runDriver("settle");
+			expect(report.resultOk).toBe(true);
+			expect(report.aliveAfterSettle, `child ${report.pid} survived cell settle`).toBe(false);
+		},
+		120_000,
+	);
 
-	it("kills a Bun.$ child when the cell settles", async () => {
-		await withKernel(async (kernel) => {
-			const result = await kernel.run({
-				cellId: "shell-settle",
-				code: "const p = Bun.$`sleep 60`; return p.pid",
-				timeoutMs: 10_000,
-			});
-			const pid = pidOf(result);
-			await expectDeadWithin(pid, CHILD_GRACE_MS);
-		});
-	}, 30_000);
+	it.skipIf(!bunAvailable)(
+		"escalates to SIGKILL when a settled cell's child ignores SIGTERM",
+		async () => {
+			const report = await runDriver("term-proof");
+			expect(report.resultOk).toBe(true);
+			expect(report.aliveAfterSettle, `term-proof child ${report.pid} survived cell settle`).toBe(false);
+		},
+		120_000,
+	);
 
-	it("escalates to SIGKILL when a settled cell's child ignores SIGTERM", async () => {
-		await withKernel(async (kernel) => {
-			const result = await kernel.run({
-				cellId: "term-proof-settle",
-				code: 'const p = Bun.spawn(["sh", "-c", "trap \'\' TERM; sleep 60"]); return p.pid',
-				timeoutMs: 10_000,
-			});
-			const pid = pidOf(result);
-			await expectDeadWithin(pid, CHILD_GRACE_MS);
-		});
-	}, 30_000);
-
-	it("escalates to SIGKILL for term-proof children on interrupt", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "senpi-codemode-child-int-"));
-		const pidFile = join(dir, "child.pid");
-		try {
-			await withKernel(async (kernel) => {
-				const run = kernel.run({
-					cellId: "term-proof-interrupt",
-					code: `import { writeFileSync } from "node:fs";
-const p = Bun.spawn(["sh", "-c", "trap '' TERM; sleep 60"]);
-writeFileSync(${JSON.stringify(pidFile)}, String(p.pid));
-await new Promise(() => {})`,
-					timeoutMs: 30_000,
-				});
-				const deadline = Date.now() + 15_000;
-				let pid = Number.NaN;
-				while (Date.now() < deadline) {
-					pid = await readFile(pidFile, "utf8").then(
-						(text) => Number(text.trim()),
-						() => Number.NaN,
-					);
-					if (Number.isInteger(pid) && pid > 0) break;
-					await new Promise((resolve) => setTimeout(resolve, 50));
-				}
-				if (!Number.isInteger(pid) || pid <= 0) throw new Error("child never wrote its pid");
-
-				await kernel.interrupt("child lifecycle test");
-				await run.catch(() => undefined);
-				await expectDeadWithin(pid, CHILD_GRACE_MS);
-			});
-		} finally {
-			await rm(dir, { recursive: true, force: true });
-		}
-	}, 45_000);
+	it.skipIf(!bunAvailable)(
+		"escalates to SIGKILL for term-proof children on interrupt",
+		async () => {
+			const report = await runDriver("interrupt");
+			expect(report.aliveAfterSettle, `term-proof child ${report.pid} survived interrupt`).toBe(false);
+		},
+		120_000,
+	);
 });
