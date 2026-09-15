@@ -1411,7 +1411,7 @@ export class SessionManager {
 			if (entry.type !== "session") entry.parentId = parentId;
 			parentId = entry.type === "session" ? null : entry.id;
 		}
-		this.residentStore.clear();
+		this.residentStore.spillResident();
 		this.mirrorTrimmed = true;
 		this.fileEntries = [header, ...retained]
 			.filter((entry): entry is FileEntry => entry !== undefined)

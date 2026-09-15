@@ -14,6 +14,7 @@
 
 - Large tool-result strings evicted from the resident store now persist to a per-session blob backing and hydrate on read instead of forcing a full session-JSONL reparse; `--no-session` never writes blobs.
 - Idle sessions release the memoized materialized entry views at the `agent_idle` boundary instead of pinning the entire session text between turns.
+- Compaction spills resident strings to the blob backing instead of dropping them, keeping post-compaction reads on the O(string) hydration path.
 
 ### Fixed
 

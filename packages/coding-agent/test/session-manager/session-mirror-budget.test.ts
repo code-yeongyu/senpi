@@ -74,7 +74,7 @@ describe("SessionManager resident mirror", () => {
 		}
 	});
 
-	it("batches compact-context recovery after resident eviction", () => {
+	it("recovers compact context from the blob backing after resident eviction", () => {
 		const session = SessionManager.create(tempDir, tempDir);
 		session.appendMessage(assistantMsg("ready"));
 		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
@@ -89,14 +89,14 @@ describe("SessionManager resident mirror", () => {
 		});
 		try {
 			session.buildContextEntries();
-			expect(loadCount).toBe(1);
+			expect(loadCount).toBe(0);
 			expect(session.getResidentStoreStats().blobBytes).toBeLessThanOrEqual(64 * 1024 * 1024);
 			const compactCache = (session as unknown as { compactEntriesCache: { entries: unknown[] } })
 				.compactEntriesCache;
 			expect(JSON.stringify(compactCache.entries)).not.toContain(LARGE_TEXT);
 			const firstReadCount = loadCount;
 			session.buildContextEntries();
-			expect(loadCount - firstReadCount).toBeLessThanOrEqual(1);
+			expect(loadCount - firstReadCount).toBe(0);
 		} finally {
 			restoreLoader();
 		}

@@ -54,6 +54,25 @@ export class ResidentStringStore {
 		}
 	}
 
+	/**
+	 * Unlike clear(), the blob backing itself survives: consumers of entries that
+	 * were spilled keep hydrating from it instead of falling back to a full JSONL
+	 * reload. Used where the store is emptied in place (post-compaction mirror
+	 * trim) rather than across a session switch.
+	 */
+	spillResident(): void {
+		const dir = this.blobsDir?.();
+		if (!dir) {
+			return;
+		}
+		for (const [id, text] of this.strings) {
+			if (this._writeBlob(id, text)) {
+				this.strings.delete(id);
+				this.bytes -= Buffer.byteLength(text, "utf8");
+			}
+		}
+	}
+
 	stats(): ResidentStoreStats {
 		return {
 			blobCount: this.strings.size,

@@ -86,6 +86,37 @@ describe("ResidentStringStore", () => {
 		}
 	});
 
+	it("spills resident strings to the backing and keeps the backing for hydration", () => {
+		const dir = tempDir("resident-store-spill-");
+		const blobs = join(dir, "blobs");
+		try {
+			const store = new ResidentStringStore({ maxBytes: 96 * KB, blobsDir: () => blobs });
+			const texts = ["a".repeat(40 * KB), "b".repeat(40 * KB)];
+			const tokens = texts.map((text) => store.externalize(text));
+
+			store.spillResident();
+
+			expect(store.stats().blobCount).toBe(0);
+			expect(store.stats().blobBytes).toBe(0);
+			expect(readdirSync(blobs).filter((file) => file.endsWith(".blob"))).toHaveLength(2);
+			for (const [index, token] of tokens.entries()) {
+				expect(store.materialize(token)).toBe(texts[index]);
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("leaves strings resident on spill without a backing directory", () => {
+		const store = new ResidentStringStore({ maxBytes: 64 * KB });
+		const text = "x".repeat(40 * KB);
+		const token = store.externalize(text);
+
+		store.spillResident();
+
+		expect(store.materialize(token)).toBe(text);
+	});
+
 	it("removes blob files on clear", () => {
 		const dir = tempDir("resident-store-clear-");
 		const blobs = join(dir, "blobs");
