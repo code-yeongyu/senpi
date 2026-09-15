@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Buffer } from "buffer";
 
 const RESIDENT_STRING_MIN_BYTES = 32 * 1024;
@@ -8,34 +10,56 @@ const OMIT_JSON_VALUE = Symbol("omit-json-value");
 export interface ResidentStoreStats {
 	blobCount: number;
 	blobBytes: number;
+	evictedCount?: number;
+	evictedBytes?: number;
+}
+
+export interface ResidentStringStoreOptions {
+	// Eviction only runs when a recoverable backing directory is configured;
+	// without one, dropping a string would leave consumers holding unreadable
+	// sentinel tokens, so strings stay resident beyond the budget instead.
+	maxBytes?: number;
+	blobsDir?: () => string | undefined;
 }
 
 export class ResidentStringStore {
 	private strings = new Map<string, string>();
 	private bytes = 0;
 	private nextId = 0;
-
-	/**
-	 * Externalized strings are a cache of the JSONL, not a second source of truth.
-	 * Keep at most 64 MiB by default; evicted values are materialized from disk by
-	 * SessionManager when a persisted entry is actually read.
-	 */
+	private evictedCount = 0;
+	private evictedBytes = 0;
 	private readonly maxBytes: number;
+	private blobsDir?: () => string | undefined;
 
-	constructor(maxBytes = DEFAULT_RESIDENT_STRING_BUDGET_BYTES) {
-		this.maxBytes = maxBytes;
+	constructor(options: ResidentStringStoreOptions = {}) {
+		this.maxBytes = options.maxBytes ?? DEFAULT_RESIDENT_STRING_BUDGET_BYTES;
+		this.blobsDir = options.blobsDir;
+	}
+
+	configure(options: { blobsDir?: () => string | undefined }): void {
+		this.blobsDir = options.blobsDir;
 	}
 
 	clear(): void {
 		this.strings.clear();
 		this.bytes = 0;
 		this.nextId = 0;
+		this.evictedCount = 0;
+		this.evictedBytes = 0;
+		const dir = this.blobsDir?.();
+		if (dir) {
+			try {
+				rmSync(dir, { force: true, recursive: true });
+			} catch {}
+		}
 	}
 
 	stats(): ResidentStoreStats {
 		return {
 			blobCount: this.strings.size,
 			blobBytes: this.bytes,
+			evictedCount: this.evictedCount,
+			evictedBytes: this.evictedBytes,
 		};
 	}
 
@@ -55,11 +79,7 @@ export class ResidentStringStore {
 		const id = `${this.nextId++}`;
 		this.strings.set(id, text);
 		this.bytes += Buffer.byteLength(text, "utf8");
-		while (this.bytes > this.maxBytes && this.strings.size > 0) {
-			const oldest = this.strings.entries().next().value as [string, string];
-			this.strings.delete(oldest[0]);
-			this.bytes -= Buffer.byteLength(oldest[1], "utf8");
-		}
+		this._enforceBudget();
 		return `${RESIDENT_STRING_PREFIX}${id}`;
 	}
 
@@ -69,7 +89,66 @@ export class ResidentStringStore {
 		}
 
 		const id = text.slice(RESIDENT_STRING_PREFIX.length);
-		return this.strings.get(id) ?? onMissing?.(id) ?? text;
+		const resident = this.strings.get(id);
+		if (resident !== undefined) {
+			// Map insertion order is the eviction order; a read refreshes recency.
+			this.strings.delete(id);
+			this.strings.set(id, resident);
+			return resident;
+		}
+		// Hydration is transient on purpose: the string must not re-enter the
+		// resident cache, or one bulk read would refill the entire budget. The
+		// caller's JSONL recovery remains the authority for a missing blob.
+		const hydrated = this._readBlob(id);
+		if (hydrated !== undefined) {
+			return hydrated;
+		}
+		return onMissing?.(id) ?? text;
+	}
+
+	private _enforceBudget(): void {
+		while (this.bytes > this.maxBytes && this.strings.size > 0) {
+			const [oldestId, oldest] = this.strings.entries().next().value as [string, string];
+			if (!this._writeBlob(oldestId, oldest)) {
+				return;
+			}
+			this.strings.delete(oldestId);
+			this.bytes -= Buffer.byteLength(oldest, "utf8");
+		}
+	}
+
+	private _writeBlob(id: string, text: string): boolean {
+		const dir = this.blobsDir?.();
+		if (!dir) {
+			return false;
+		}
+		const final = join(dir, `${id}.blob`);
+		const temp = `${final}.tmp`;
+		try {
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(temp, text, "utf8");
+			renameSync(temp, final);
+		} catch {
+			try {
+				rmSync(temp, { force: true });
+			} catch {}
+			return false;
+		}
+		this.evictedCount++;
+		this.evictedBytes += Buffer.byteLength(text, "utf8");
+		return true;
+	}
+
+	private _readBlob(id: string): string | undefined {
+		const dir = this.blobsDir?.();
+		if (!dir) {
+			return undefined;
+		}
+		try {
+			return readFileSync(join(dir, `${id}.blob`), "utf8");
+		} catch {
+			return undefined;
+		}
 	}
 }
 
@@ -100,9 +179,6 @@ function transformJsonValue(
 	if (value === null || typeof value === "boolean") {
 		return value;
 	}
-	if (typeof value === "bigint") {
-		throw new TypeError("Do not know how to serialize a BigInt");
-	}
 	if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol") {
 		return OMIT_JSON_VALUE;
 	}
@@ -131,7 +207,7 @@ function transformJsonValue(
 
 	const transformed: Record<string, unknown> = {};
 	for (const [key, item] of Object.entries(value)) {
-		const transformedItem = transformJsonValue(item, transformString, key, seen);
+		const transformedItem = transformJsonValue(item, transformString, String(key), seen);
 		if (transformedItem !== OMIT_JSON_VALUE) {
 			Object.defineProperty(transformed, key, {
 				configurable: true,

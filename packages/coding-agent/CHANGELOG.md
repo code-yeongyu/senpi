@@ -12,6 +12,9 @@
 
 - Default `read` calls on eligible `.json` files now return the agent package's structural view, with the same declaration-safe folding and numeric `offset`/`limit` rereads, so edits after a read still target real lines. TypeScript and JavaScript stay raw because the measured candidate missed their quality thresholds. Prose, explicit ranges and the existing size-limit continuations produce the same output as before. `ReadToolOptions.folder` selects the folder; `createReadToolDefinition`, `createCodingTools` and `createReadOnlyTools` default it to `selectedReadFolder`, and an options object without `folder` keeps reads verbatim. Compiled binaries produce byte-identical read output to the source build, and no parser dependency is added ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
+- Large tool-result strings evicted from the resident store now persist to a per-session blob backing and hydrate on read instead of forcing a full session-JSONL reparse; `--no-session` never writes blobs.
+- Idle sessions release the memoized materialized entry views at the `agent_idle` boundary instead of pinning the entire session text between turns.
+
 ### Fixed
 
 ### Removed

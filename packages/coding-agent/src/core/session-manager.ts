@@ -914,6 +914,13 @@ export class SessionManager {
 		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
+		// Lazily resolved: the session id only exists once the header loads or
+		// newSession() runs. Unpersisted sessions disable eviction entirely —
+		// dropping strings with no backing would lose them.
+		this.residentStore.configure({
+			blobsDir: () =>
+				this.persist && this.sessionId ? join(this.sessionDir, "resident-blobs", this.sessionId) : undefined,
+		});
 
 		if (sessionFile) {
 			this._setSessionFile(sessionFile, preloadedFileEntries);
@@ -1670,6 +1677,18 @@ export class SessionManager {
 	/** Returns the maintained non-header entry count without loading or materializing history. */
 	getEntryCount(): number {
 		return this.fullEntryCount;
+	}
+
+	/**
+	 * Release the memoized materialized views. Materialized entries hold the full
+	 * persisted strings, so views kept between turns pin the whole session text
+	 * in memory even while nothing runs. The next read rebuilds them from the
+	 * bounded resident store.
+	 */
+	dropMaterializedCaches(): void {
+		this.entriesCache = null;
+		this.branchCache = null;
+		this.compactEntriesCache = null;
 	}
 
 	private _materializeEntries(entries: readonly SessionEntry[]): SessionEntry[] {
