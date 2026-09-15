@@ -168,7 +168,14 @@ for platform in "${PLATFORMS[@]}"; do
     case "$platform" in
         windows-x64) pty_host="win32-x64" ;;
         windows-arm64) pty_host="win32-arm64" ;;
-        *) pty_host="$platform" ;;
+        darwin-x64) pty_host="darwin-x64" ;;
+        darwin-arm64) pty_host="darwin-arm64" ;;
+        linux-x64) pty_host="linux-x64" ;;
+        linux-arm64) pty_host="linux-arm64" ;;
+        *)
+            echo "Invalid platform: $platform"
+            exit 1
+            ;;
     esac
     pty_native_src="../pty/native/prebuilds/$pty_host/senpi_pty.$pty_host.node"
     if [[ -f "$pty_native_src" ]]; then

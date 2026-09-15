@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { loadNativePrebuildTargets } from "./stage-native-prebuilds.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const scriptPath = join(repoRoot, "scripts", "stage-native-prebuilds.mjs");
@@ -220,5 +221,27 @@ describe("stage-native-prebuilds", () => {
 		} finally {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("native prebuild host policy", () => {
+	it("keeps the pty freshness check and build-binaries host list aligned with the targets policy", async () => {
+		const policyHosts = Object.keys(loadNativePrebuildTargets()).sort();
+		assert.ok(policyHosts.length > 0, "expected native prebuild targets");
+
+		const { napiTargetByHost } = await import("../packages/pty/native/check-prebuild-fresh.mjs");
+		const freshHosts = [...(napiTargetByHost?.keys?.() ?? [])].sort();
+
+		const buildScript = readFileSync(join(repoRoot, "scripts", "build-binaries.sh"), "utf8");
+		const buildHosts = [
+			...new Set(
+				[...buildScript.matchAll(/^[ \t]*[A-Za-z0-9._-]+\)[ \t]*pty_host="([^"$]+)"/gm)].map(
+					(match) => match[1],
+				),
+			),
+		].sort();
+
+		assert.deepEqual(freshHosts, policyHosts);
+		assert.deepEqual(buildHosts, policyHosts);
 	});
 });

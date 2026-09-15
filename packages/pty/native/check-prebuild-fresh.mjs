@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, readFileSync } from "node:fs";
 import { access, copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,8 +9,9 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const defaultRootDir = join(scriptDir, "..", "..", "..");
 const NAPI_CLI_VERSION = "3.7.2";
+const NATIVE_PREBUILD_TARGETS_PATH = join(defaultRootDir, "scripts", "native-prebuild-targets.json");
 
-const napiTargetByHost = new Map([
+const NAPI_TARGET_TRIPLES = new Map([
 	["darwin-arm64", "aarch64-apple-darwin"],
 	["darwin-x64", "x86_64-apple-darwin"],
 	["linux-arm64", "aarch64-unknown-linux-gnu.2.17"],
@@ -18,6 +19,16 @@ const napiTargetByHost = new Map([
 	["win32-arm64", "aarch64-pc-windows-msvc"],
 	["win32-x64", "x86_64-pc-windows-msvc"],
 ]);
+
+export const napiTargetByHost = new Map(
+	Object.keys(JSON.parse(readFileSync(NATIVE_PREBUILD_TARGETS_PATH, "utf8"))).map((host) => {
+		const napiTarget = NAPI_TARGET_TRIPLES.get(host);
+		if (!napiTarget) {
+			throw new Error(`error: missing napi target triple for native prebuild host ${host}`);
+		}
+		return [host, napiTarget];
+	}),
+);
 
 export function getHost(platform = process.platform, arch = process.arch) {
 	return `${platform}-${arch}`;
