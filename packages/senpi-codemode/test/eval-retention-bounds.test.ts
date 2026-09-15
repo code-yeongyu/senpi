@@ -12,7 +12,7 @@ const DISPLAY_IMAGE_CAP = 8;
 const DISPLAY_IMAGE_BYTE_CAP = 24 * 1024 * 1024;
 const JSON_OUTPUT_CAP = 64;
 
-function managerResult(cellId: string, index: number): AgentToolResult<EvalToolDetails> {
+function managerResult(index: number): AgentToolResult<EvalToolDetails> {
 	return {
 		content: [{ type: "text", text: `output-${index}` }],
 		details: {
@@ -43,14 +43,12 @@ describe("detached cell registry retention", () => {
 		const total = TERMINAL_SNAPSHOT_CAP + 8;
 		for (let i = 0; i < total; i++) {
 			const cell = manager.create(`cell-${i}`, { language: "js", code: String(i), summary: `cell ${i}` });
-			manager.complete(cell, managerResult(`cell-${i}`, i));
+			manager.complete(cell, managerResult(i));
 		}
 
 		const oldestEvicted = total - TERMINAL_SNAPSHOT_CAP;
 		expect(() => manager.peek(`cell-${oldestEvicted - 1}`)).toThrow(/Unknown detached eval cell/);
-		await expect(manager.waitForTerminal(`cell-${oldestEvicted - 1}`)).rejects.toThrow(
-			/Unknown detached eval cell/,
-		);
+		await expect(manager.waitForTerminal(`cell-${oldestEvicted - 1}`)).rejects.toThrow(/Unknown detached eval cell/);
 
 		const retained = manager.peek(`cell-${oldestEvicted}`);
 		expect(retained.cellId).toBe(`cell-${oldestEvicted}`);
@@ -73,10 +71,10 @@ describe("detached cell registry retention", () => {
 		const total = TERMINAL_SNAPSHOT_CAP + 8;
 		for (let i = 0; i < total; i++) {
 			const cell = manager.create(`cell-${i}`, { language: "js", code: String(i), summary: `cell ${i}` });
-			manager.complete(cell, managerResult(`cell-${i}`, i));
+			manager.complete(cell, managerResult(i));
 		}
 		const recreated = manager.create("cell-0", { language: "js", code: "return 1", summary: "recreated" });
-		manager.complete(recreated, managerResult("cell-0", 999));
+		manager.complete(recreated, managerResult(999));
 		expect(manager.peek("cell-0").state).toBe("completed");
 	});
 });

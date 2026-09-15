@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-09-15 - Bound eval-cell, tool-call, and display retention (#1695)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts` moves settled cells out of the live registry into a 32-entry terminal snapshot LRU (`terminal-snapshot-store.ts`), keeping `peek`/`stop`/`waitForTerminal` answerable for recent cells while `dispose` clears both maps; the managed-cell factory moved to `managed-cell.ts`.
+- `packages/senpi-codemode/src/kernels/js/context-manager.ts` caps the pull-API pending tool-call queue at 256 (drop-oldest) and clears it on interrupt/reset/close/crash, mirroring the subprocess kernel; `packages/senpi-codemode/src/kernels/shared/subprocess-queue.ts` gains the same cap.
+- `packages/senpi-codemode/src/tool/image.ts` caps per-cell display buffers (8 images, 24 MB base64, 64 JSON outputs) with elision counters and a sink note; resize and result marshalling split into `image-resize.ts` and `tool-result-marshal.ts`.
+
+### Why
+
+- Long-lived sessions retained every settled cell (result + closures), every unconsumed tool-call message (full tool arguments), and every display payload for the session lifetime, growing idle session heaps to multiple GB.
+
+### Why an extension could not handle it
+
+- The live-cell registry, kernel message queues, and the per-cell output collector are all internal ownership boundaries; no extension hook sees settled cells, kernel bridge frames, or display messages before retention.
+
+### Expected merge conflict zones
+
+- LOW: `detached-cell-manager.ts` settlement and lookup paths; `context-manager.ts` tool-call branch and lifecycle teardown; `image.ts` display collection. Behavior of active cells, the pull-based `nextToolCall` contract within its 256-message budget, and display ordering under the caps is unchanged.
+
 ## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
 
 ### What changed

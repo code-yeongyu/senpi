@@ -2,6 +2,9 @@ import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { KernelResult, KernelRunInput, ToolCallMessage } from "./subprocess-contract.ts";
 import { createPendingRun, failureResult, type PendingRun, settlePendingRun } from "./subprocess-run.ts";
 
+// Same bound as the JS kernel's pull-API fallback queue (context-manager.ts); clears happen at run teardown.
+const MAX_PENDING_TOOL_CALLS = 256;
+
 export class SubprocessRunQueue {
 	readonly #queue: PendingRun[] = [];
 	readonly #pendingCalls: ToolCallMessage[] = [];
@@ -59,7 +62,10 @@ export class SubprocessRunQueue {
 	pushToolCall(message: ToolCallMessage): void {
 		const waiter = this.#callWaiters.shift();
 		if (waiter) waiter(message);
-		else this.#pendingCalls.push(message);
+		else {
+			this.#pendingCalls.push(message);
+			if (this.#pendingCalls.length > MAX_PENDING_TOOL_CALLS) this.#pendingCalls.shift();
+		}
 	}
 
 	handleMessage(
