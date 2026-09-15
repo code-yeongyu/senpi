@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-14 - Clickable pending questions and capture controls (#1645)
+
+### What changed
+
+- The interactive host renders clickable pending options and expanded question actions, commits selection feedback before answering, and owns capture leases across renderer replacement and terminal handoffs. Settings expose `terminal.mouse: off | whilePending | always`; default `whilePending` leaves no-question regular sessions uncaptured.
+- Public TUI, keybinding and settings guides plus one input tip describe clicks, selection bypass, tmux calibration and the herdr 0.9.0 short-frame limitation tracked by #1688. Exact source ownership is recorded in the interactive and core trackers.
+
+### Why
+
+- Pending questions should be directly answerable without taking over terminal selection outside their lifetime or changing existing keyboard paths.
+
+### Why an extension could not handle it
+
+- The built-in question components, renderer lifecycle and persisted terminal settings are host-owned; the lower-level cursor source belongs to the TUI package.
+
+### Expected merge conflict zones
+
+- Interactive lifecycle and question component wiring, terminal settings accessors, input tips and related public guides. No question wire format or default renderer changes.
+
 ## 2026-09-14 - Activate builtin herdr pending-input reporting (senpi#1645)
 
 ### What changed

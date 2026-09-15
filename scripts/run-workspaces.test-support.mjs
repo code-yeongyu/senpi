@@ -3,10 +3,10 @@
 // scripts append one JSON line per invocation, so a re-entered root or a doubled
 // workspace shows up as data rather than as a timing artifact.
 import { spawnSync } from "node:child_process";
-import { existsSync, watch } from "node:fs";
+import { on } from "node:events";
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const driverPath = fileURLToPath(new URL("./run-workspaces.mjs", import.meta.url));
@@ -18,19 +18,15 @@ fs.appendFileSync(process.env.RUN_WORKSPACES_MARKER_FILE, JSON.stringify({ name,
 process.exit(Number(exitCode));
 `;
 
-// A long-running fixture script: records its pid once running, then waits until
-// SIGTERM arrives and records that too. Ten seconds is only the safety net for a
-// driver that never forwards the signal. The pid marker is written to a temp
-// name and renamed into place: a directory watcher fires on creation, before
-// writeFileSync has written the content, and a reader that raced it saw an
-// empty file (CI, 'Script tests (bun)', 2026-09-07). rename is atomic, so the
-// marker never exists without its content.
+// A pipe retains readiness even when the OS drops directory-watch events (#1656).
+// Install the handler before publishing readiness; flush the termination record
+// before exiting. Ten seconds remains the safety net for a broken driver.
 export const WAITER_SOURCE = `
-const fs = require("node:fs");
-const marker = process.env.RUN_WORKSPACES_MARKER_FILE;
-fs.writeFileSync(marker + ".started.tmp", String(process.pid));
-fs.renameSync(marker + ".started.tmp", marker + ".started");
-process.on("SIGTERM", () => { fs.writeFileSync(marker + ".terminated", ""); process.exit(0); });
+const record = (event) => JSON.stringify({ event, pid: process.pid }) + "\\n";
+process.on("SIGTERM", () => {
+	process.stdout.write(record("terminated"), () => process.exit(0));
+});
+process.stdout.write(record("started"));
 setTimeout(() => process.exit(9), 10_000);
 `;
 
@@ -100,26 +96,21 @@ export function runDriver(fixture, args) {
 	});
 }
 
-export function waitForFile(path, timeoutMs) {
-	return new Promise((resolvePromise, reject) => {
-		const watcher = watch(dirname(path), () => {
-			if (!existsSync(path)) return;
-			finish();
-			resolvePromise();
-		});
-		const timer = setTimeout(() => {
-			finish();
-			reject(new Error(`timed out waiting for ${path}`));
-		}, timeoutMs);
-		function finish() {
-			clearTimeout(timer);
-			watcher.close();
+export async function waitForMarker(lines, event, timeoutMs) {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		for await (const [line] of on(lines, "line", { signal: controller.signal, close: ["close"] })) {
+			// Package-manager output shares stdout. Only the fixture's JSON records
+			// carry this prefix; malformed records fail rather than looking ready.
+			if (!line.startsWith('{"event":')) continue;
+			const marker = JSON.parse(line);
+			if (marker.event === event) return marker;
 		}
-		if (existsSync(path)) {
-			finish();
-			resolvePromise();
-		}
-	});
+		throw new Error(`driver output closed before ${event}`);
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 export function waitForClose(child, timeoutMs) {

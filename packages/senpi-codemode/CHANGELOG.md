@@ -10,6 +10,22 @@
 
 ### Fixed
 
+- Detached eval result cards no longer arm the 1 Hz repaint ticker (they render static with frozen elapsed time), and a live ticker whose row stops rendering now stops itself after 60 idle ticks and rearms on the next render, so transcript rebuilds and session switches cannot accumulate intervals on idle sessions ([#1696](https://github.com/code-yeongyu/senpi/issues/1696)).
+
+### Removed
+
+## [2026.9.15] - 2026-09-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Eval cells no longer abandon the processes they spawn. When a JavaScript cell settles, is interrupted, or times out, its `Bun.spawn`/`node:child_process` children and their descendants are terminated (SIGTERM then SIGKILL after a grace), unless the cell asked for a detached process; a child whose worker is lost while blocked is retired by the host instead. Python kernels sweep their process group when they close gracefully, and a parent-death watchdog takes the kernel and its subprocesses down when the host dies mid-cell ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+
 ### Removed
 
 ## [2026.9.13-2] - 2026-09-13

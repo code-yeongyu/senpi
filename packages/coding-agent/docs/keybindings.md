@@ -170,6 +170,8 @@ This routing remains configurable through the ordinary action bindings. For exam
 
 The question hint prefers `alt+up` (`option+up` on macOS). In tmux, Apple Terminal, Warp, and VS Code it shows the retained `alt+a` alternative. Both bindings remain active; there is no third fallback chord. On Windows and WSL, dequeue uses `alt+q`, so `alt+up` does not conflict with it. Tab completion and Shift+Tab thinking-level cycling are unchanged.
 
+Pending-question option buttons also accept a single unmodified left click. A single-question choice answers immediately; the keyboard alternatives remain empty Enter, digits, the question chords, and `/answer skip`. While mouse capture is active, use your terminal's selection bypass (usually Shift-drag; Option-drag in iTerm2/Terminal.app). `terminal.mouse: "off"` disables capture without changing these bindings. See [Mouse Input](tui.md#mouse-input) for tmux and herdr limitations.
+
 ### Tree Navigation
 
 | Keybinding id | Default | Description |

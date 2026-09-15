@@ -815,7 +815,10 @@ describe("AgentSession compaction characterization", () => {
 			throw new Error("Expected a successful assistant tool call and its appended tool result");
 		}
 		const assembledContext = estimateContextTokens([toolCallResponse, toolResult]);
-		expect(toolCallResponse.usage.totalTokens).toBeLessThan(threshold);
+		// shouldCompact() triggers on `tokens > contextWindow - reserve`, so a call-1 response that
+		// lands exactly on the threshold still did not require compaction. Asserting a strict `<`
+		// here made the test fail whenever the estimate rounded onto the boundary.
+		expect(toolCallResponse.usage.totalTokens).toBeLessThanOrEqual(threshold);
 		expect(assembledContext.tokens).toBeGreaterThan(threshold);
 		expect(compactionEndsAtCall2).toBe(1);
 		expect(call2Context).toContain("tool result threshold summary");
@@ -886,7 +889,9 @@ describe("AgentSession compaction characterization", () => {
 			throw new Error("Expected the terminating tool result in the persisted session context");
 		}
 		const persistedContext = estimateContextTokens(harness.sessionManager.buildSessionContext().messages);
-		expect(terminatingToolCall.usage.totalTokens).toBeLessThan(threshold);
+		// Same boundary as above: the tool call alone must not have been over the compaction
+		// trigger, and the trigger is a strict `>`.
+		expect(terminatingToolCall.usage.totalTokens).toBeLessThanOrEqual(threshold);
 		expect(persistedContext.tokens).toBeGreaterThan(threshold);
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);

@@ -45,6 +45,12 @@ export function splitCommand(commandLine: string): { readonly command: string; r
 	return { command, args };
 }
 
+function errorCode(error: unknown): string | undefined {
+	if (typeof error !== "object" || error === null) return undefined;
+	const code = Reflect.get(error, "code");
+	return typeof code === "string" ? code : undefined;
+}
+
 export function numberOrNull(value: unknown): number | null {
 	return typeof value === "number" ? value : null;
 }
@@ -78,6 +84,20 @@ export async function waitForExit(child: KernelChild, timeoutMs: number): Promis
 		timer = setTimeout(() => settle(false), timeoutMs);
 		timer.unref?.();
 	});
+}
+
+// A cell's own subprocess is spawned into the detached kernel's process group. When the
+// leader exits gracefully on close, kill the group so a Popen the cell left running does
+// not outlive the kernel; the group is addressed by the leader pid (== pgid) while members live.
+export function sweepProcessGroup(child: KernelChild): void {
+	if (child.pid === undefined || process.platform === "win32") return;
+	try {
+		process.kill(-child.pid, "SIGKILL");
+	} catch (error) {
+		// ESRCH means the group is already gone (the success case). Any other error
+		// (for example EPERM on a member we cannot signal) must not fail a graceful close.
+		if (errorCode(error) !== "ESRCH") return;
+	}
 }
 
 export async function hardKill(child: KernelChild, timeoutMs: number): Promise<void> {

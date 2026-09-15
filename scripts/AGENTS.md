@@ -45,6 +45,20 @@ cell grid. Prefixes encode role:
   `check-ts-relative-imports.mjs`, `check-browser-smoke.mjs`, `diff-model-catalog.mjs`,
   `publish-model-catalog.mjs`, `generate-thinking-capabilities.mjs` — `bun run check` chains them.
 
+## Release entry graph validation
+
+After a lifecycle-disabled install, run `npm rebuild canvas --foreground-scripts`
+(as the release builder does) to provide its native binding. Then run
+`bun test scripts/release-graph-codemode.test.ts` followed by
+`bun test scripts/release-graph-exclusions.test.ts`. The codemode suite rebuilds
+all workspace entries and prepares compile assets before measuring real Bun output
+contributions, so direct invocation also replaces stale `dist` from another branch.
+The CI `Test (workspaces + scripts)` job runs these commands in its
+`Fresh release entry graphs (codemode and exclusions)` step, before either script
+suite can invalidate generated output. These Bun `.ts` tests are not part of the
+Node `.mjs` script-test glob. Run them only in a checkout whose generated outputs
+you can rebuild; no source or package manifest is rewritten by this gate.
+
 ## changes.md tracker
 
 `scripts/changes.md` is the hand-written change tracker feeding CHANGELOG gates.

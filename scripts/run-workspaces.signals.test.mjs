@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { describe, it } from "node:test";
 import {
 	createFixture,
@@ -10,7 +11,7 @@ import {
 	THREE_WORKSPACES,
 	WAITER_SOURCE,
 	waitForClose,
-	waitForFile,
+	waitForMarker,
 	writeManifest,
 } from "./run-workspaces.test-support.mjs";
 
@@ -28,23 +29,31 @@ describe("run-workspaces signals", () => {
 		});
 		const driver = spawn(process.execPath, [driverPath, "--workspace", "@fixture/w", "wait"], {
 			cwd: fixture.root,
-			stdio: "ignore",
+			stdio: ["ignore", "pipe", "inherit"],
 			env: { ...process.env, RUN_WORKSPACES_MARKER_FILE: fixture.markerFile },
 		});
+		const lines = createInterface({ input: driver.stdout });
 		try {
-			await waitForFile(`${fixture.markerFile}.started`, 5_000);
-			const scriptPid = Number(await readFile(`${fixture.markerFile}.started`, "utf8"));
+			const { pid: scriptPid } = await waitForMarker(lines, "started", 5_000);
+			const terminated = waitForMarker(lines, "terminated", 2_000);
+			const closed = waitForClose(driver, 5_000);
+			const completed = Promise.all([terminated, closed]);
 
 			// When
 			driver.kill("SIGTERM");
-			const exit = await waitForClose(driver, 5_000);
+			const [marker, exit] = await completed;
 
 			// Then
-			await waitForFile(`${fixture.markerFile}.terminated`, 2_000);
+			assert.equal(marker.pid, scriptPid, "the ready script observed SIGTERM");
 			assert.equal(exit.signal, "SIGTERM", "the driver re-raises the signal after its child is gone");
 			assert.ok(scriptPid > 0, "the fixture recorded the pid of the script that observed SIGTERM");
 		} finally {
-			driver.kill("SIGKILL");
+			lines.close();
+			if (driver.exitCode === null && driver.signalCode === null) {
+				const closed = waitForClose(driver, 5_000);
+				driver.kill("SIGTERM");
+				await closed;
+			}
 			await fixture.dispose();
 		}
 	});

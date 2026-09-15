@@ -95,6 +95,8 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 			getFocusedComponent: () => focused,
 			hasOverlay: () => false,
 			requestRender: vi.fn(),
+			renderNow: vi.fn(),
+			acquireMouseCapture: vi.fn(() => vi.fn()),
 		},
 		keybindings: new KeybindingsManager(),
 		getNormalTerminalTitle: () => "senpi",

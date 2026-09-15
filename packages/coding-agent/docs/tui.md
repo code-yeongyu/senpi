@@ -24,7 +24,7 @@ interface Component {
 |--------|-------------|
 | `render(width)` | Return array of strings (one per line). Each line **must not exceed `width`**. |
 | `handleInput?(data)` | Receive keyboard input when component has focus. |
-| `handleMouse?(event)` | Receive normalized pointer input in fullscreen mode. |
+| `handleMouse?(event)` | Receive normalized pointer input in fullscreen mode, or scoped clicks in regular mode. |
 | `wantsKeyRelease?` | If true, component receives key release events (Kitty protocol). Default: false. |
 | `invalidate()` | Clear cached render state. Called on theme changes. |
 
@@ -181,6 +181,8 @@ Use `handle.unfocus()` when a visible overlay should stop owning input and let T
 ### Question Overlay and Async Widget
 
 When the agent asks a blocking question (`waitForAnswer: true`), a full-screen overlay appears with a tab for each question and a final Submit tab. Use digits or arrows to choose options, Space to toggle multi-select choices, and Enter to confirm and advance. The Submit tab contains the optional comment editor and accepts partial answers after confirmation; unanswered questions are reported back as unanswered. Esc backs out of an editor or asks for confirmation before discarding a draft.
+
+Pending option buttons are clickable in regular and fullscreen modes. A single-question single-select click writes the selected highlight before answering; multi-select clicks toggle choices. Click the header to expand, own answer to type a custom reply, or `+N more` to cycle requests. Expanded tabs and Submit are clickable too. Pressing without releasing, dragging away, double-clicking, or clicking a gap does not answer.
 
 Async questions (`waitForAnswer: false`) queue above the editor without taking focus or replacing earlier requests. The widget shows the pending count, the shown question and options, its countdown, and `+N more`. `alt+down` cycles requests from an empty composer; Tab still completes and Shift+Tab still cycles thinking. Each request keeps its own draft and idle deadline.
 
@@ -342,6 +344,14 @@ const clickable = new MouseRegion(content, (event) => {
 In fullscreen mode, unhandled wheel input scrolls the nearest `ScrollView`; unhandled primary-button drags retain transcript selection. OSC 8 links take precedence over parent click regions. `Input`, `Editor`, `SelectList`, and `SettingsList` include fullscreen mouse behavior.
 
 Regular mode supports scoped capture through `const release = tui.acquireMouseCapture("pending-question")`; the host releases it when the interactive surface closes and reapplies its intent to a replacement renderer after a mode switch. Only an acknowledged, unmodified left press followed by release in the same cell within 500 ms produces a click. Wheel, motion, other buttons, and modified reports are consumed without action. Native selection and scrollback remain unchanged outside the lease; while captured, use the terminal's selection bypass (usually Shift-drag, or Option-drag in iTerm2/Terminal.app). Unknown, stale, resized, or image-bearing frame placement disables click dispatch rather than guessing. Short frames use private cursor-position calibration; after external output the next render appends a fresh frame before recalibration, preserving diagnostics and scrollback. Keyboard paths remain available. This library foundation does not itself enable capture for every regular-mode component.
+
+The `terminal.mouse` setting defaults to `"whilePending"`: the host captures regular-mode input only while an async or blocking question is pending. `"off"` disables mouse capture in both modes; `"always"` keeps regular-mode capture active even without a question. Change it in `/settings` or settings JSON. The default `tuiMode` remains `"regular"`. While captured, wheel reports are consumed, not native scrollback; use the terminal's bypass modifier (Shift-drag on Ghostty/kitty/WezTerm/Alacritty/Windows Terminal, Option-drag on iTerm2/Terminal.app) or disable capture for native selection.
+
+### Multiplexers
+
+**tmux:** Short startup frames work even when tmux swallows private `ESC[?6n`. When `TMUX_PANE` is set, the terminal reads `tmux display-message -p -t "$TMUX_PANE" "#{cursor_y} #{cursor_x}"` twice at least 10 ms apart. Only matching numeric pane-relative readings within the total 750 ms query budget establish an anchor. Command errors, movement and timeout leave clicks disabled; no bare CPR is sent. Outside tmux the private cursor-query path is unchanged. Enable tmux mouse forwarding to deliver clicks.
+
+**herdr:** The builtin reporter shows a pending question as blocked and returns to working or idle after settlement. Mouse forwarding and `alt+up`, `alt+down`, digits and `/answer skip` were verified in herdr 0.9.0. Regular-mode clicks work on a viewport-filled frame. Fresh short frames have a known fail-closed limitation: the pane writes `ESC[?6n` but receives no private reply. In a 120x40 test, outer-client `ESC[<0;27;25M` then `ESC[<0;27;25m` did not answer that short frame; after filling the pane, `ESC[<0;27;34M` then `ESC[<0;27;34m` answered successfully. Use keyboard answers when the initial anchor is unavailable. Tracked in [#1688](https://github.com/code-yeongyu/senpi/issues/1688); unknown placement is never guessed.
 
 ## Line Width
 

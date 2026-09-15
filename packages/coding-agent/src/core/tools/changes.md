@@ -1,5 +1,45 @@
 # core/tools changes
 
+## Bash keeps its process group until the last descendant exits (2026-09-15)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts` (`createLocalShellOperations`): the exec `finally` no longer untracks the shell pid the moment the shell is gone. Both branches now call `noteDetachedChildExited(pid)`, which keeps the entry tracked when the shell's process group still has members, and the block ends with `pruneTrackedDetachedChildren()` so drained groups cannot accumulate across a session.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/bash.ts` spawns the shell `detached`, so a command that backgrounds work (`sleep 30 &`, `nohup server &`) leaves those descendants alive in the shell's group after the shell itself exits. Untracking on exit dropped shutdown's only handle on them, so SIGHUP/SIGTERM cleanup left them running ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/bash.ts` owns the spawn/wait/cleanup seam of the builtin shell backend; no extension hook runs inside that `finally`, and extensions cannot register a process group with the host's shutdown cleanup.
+
+### Expected merge conflict zones
+
+- LOW: the exec `finally` block in `createLocalShellOperations` inside `packages/coding-agent/src/core/tools/bash.ts`, which the fork already diverges in for the abort/kill-grace tracking (2026-07-18 entry below).
+
+## Re-export the grep tool from its engine-backed module (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/grep.ts`: reduced to `export * from "./grep/index.ts"`. The tool implementation now lives in the `grep/` directory (engine contract, native and ripgrep engines, pattern ladder, formatting, renderer), and this file stays as the import path every existing caller already uses.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/grep.ts`: the engine-backed tool is several modules, not one file, and callers plus extension consumers import it by this path; keeping the module as a re-export moves the implementation without breaking those imports (Refs #1678).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/grep.ts`: the builtin tool factory is constructed by core session setup, so its module boundary cannot be relocated from an extension.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/core/tools/grep.ts` resolves to this re-export on sync; upstream edits to the old single-file implementation must be replayed inside `packages/coding-agent/src/core/tools/grep/` instead.
+
+## Align Cursor grep output with the engine-backed renderer (2026-09-14)
+
+- Cursor `pi_grep` calls now use the supported grep schema and the engine renderer's structured footer.
+
 ## Restore grep to the registered tool surface (2026-09-14)
 
 ### What changed

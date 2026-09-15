@@ -14,6 +14,7 @@ import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 type HeaderFixture = {
 	isInitialized: boolean;
 	registerSignalHandlers(): void;
+	resumeQuestionMouseCapture(): void;
 	getChangelogForDisplay(): undefined;
 	fdPath: string | undefined;
 	session: { scopedModels: unknown[] };
@@ -88,6 +89,7 @@ function createHeaderFixture(): HeaderFixture {
 	return {
 		isInitialized: false,
 		registerSignalHandlers: () => {},
+		resumeQuestionMouseCapture: () => {},
 		getChangelogForDisplay: () => undefined,
 		fdPath: undefined,
 		session: { scopedModels: [] },

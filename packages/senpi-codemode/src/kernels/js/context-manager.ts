@@ -1,5 +1,5 @@
-import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
-import { INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
+import type { EvalStatusEvent, HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
+import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
 import type { KernelInterruptHandle } from "../../tool/types.ts";
 import { abandonedWorkerNote, awaitCooperativeSettlement, type WorkerRetirement } from "./interrupt-bounds.ts";
 import {
@@ -11,6 +11,7 @@ import {
 	type ToolCallMessage,
 } from "./kernel-contract.ts";
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
+import { terminateProcessTrees } from "./process-tree-host.ts";
 import { JavaScriptRunQueue, type PendingJavaScriptRun, stoppedResult } from "./run-queue.ts";
 import { bridgeError, WorkerStartupCancelledError } from "./worker-host.ts";
 import { WorkerSlot } from "./worker-slot.ts";
@@ -18,6 +19,9 @@ import { WorkerSlot } from "./worker-slot.ts";
 export { JavaScriptKernelClosedError, type JavaScriptKernelMode, type JavaScriptRunInput } from "./kernel-contract.ts";
 export type { JavaScriptKernelOptions } from "./local-module-loader.ts";
 export { type JavaScriptWorkerEntryUrlOptions, resolveJsWorkerEntryUrl } from "./worker-startup.ts";
+
+/** How long a lost worker's children get to honour SIGTERM before the host sends SIGKILL. */
+const WORKER_LOSS_CHILD_GRACE_MS = 1_000;
 
 export class JavaScriptKernel {
 	readonly #options: JavaScriptKernelOptions;
@@ -31,6 +35,8 @@ export class JavaScriptKernel {
 	#timeout: NodeJS.Timeout | null = null;
 	#toolWaiters: Array<(message: ToolCallMessage) => void> = [];
 	#pendingToolCalls: ToolCallMessage[] = [];
+	/** Live cell children the worker reported; retired by the host when the worker itself is lost. */
+	readonly #childPids = new Set<number>();
 
 	constructor(options: JavaScriptKernelOptions) {
 		this.#options = options;
@@ -208,6 +214,10 @@ export class JavaScriptKernel {
 			this.#runs.active?.interruptAck?.resolve();
 			return;
 		}
+		if (message.type === "status" && message.event.op === CHILD_LIFECYCLE_OP) {
+			this.#trackChildEvent(message.event);
+			return;
+		}
 		this.#options.onMessage?.(message);
 		this.#runs.active?.input.onMessage?.(message);
 		if (message.type === "tool-call") {
@@ -248,8 +258,28 @@ export class JavaScriptKernel {
 		this.#timeout = null;
 	}
 
+	#trackChildEvent(event: EvalStatusEvent): void {
+		const pid = event.pid;
+		if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return;
+		if (event.state === "spawned") this.#childPids.add(pid);
+		else if (event.state === "exited") this.#childPids.delete(pid);
+	}
+
+	/**
+	 * Retire the worker, then whatever cell children it still owned: a terminated or crashed worker never
+	 * reaches its own cell-end cleanup, and a pid `ps` no longer lists as our child was reused and is skipped.
+	 */
 	async #terminate(): Promise<WorkerRetirement> {
 		this.#clearTimeout();
-		return await this.#slot.retire();
+		const retirement = await this.#slot.retire();
+		await this.#retireWorkerChildren();
+		return retirement;
+	}
+
+	async #retireWorkerChildren(): Promise<void> {
+		if (this.#childPids.size === 0) return;
+		const pids = [...this.#childPids];
+		this.#childPids.clear();
+		await terminateProcessTrees(pids, { graceMs: WORKER_LOSS_CHILD_GRACE_MS, ownerPid: process.pid });
 	}
 }

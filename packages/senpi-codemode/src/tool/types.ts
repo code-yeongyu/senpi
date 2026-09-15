@@ -153,6 +153,7 @@ export interface EvalToolCallSummary {
 	readonly argsTruncated?: boolean;
 	readonly durationMs?: number;
 	readonly resultPreview?: string;
+	readonly details?: unknown;
 }
 
 export type EvalStatusEvent = { readonly op: string } & Readonly<Record<string, unknown>>;

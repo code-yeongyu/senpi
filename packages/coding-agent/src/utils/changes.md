@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-15 - Track detached children by process group until the last descendant exits (senpi#1697)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: the detached-child shutdown registry now stores `{ pid, pgid, leaderExited }` entries keyed by pid instead of bare pids. `trackDetachedChildPid()`/`untrackDetachedChildPid()` keep their signatures and route through that model; new `noteDetachedChildExited()` releases an entry on the leader's exit only when `process.kill(-pgid, 0)` reports the group empty (win32 keeps untrack-on-exit, having no such group); new `pruneTrackedDetachedChildren()` drops drained groups; new `listTrackedDetachedChildren()` exposes frozen copies for diagnostics and tests.
+- `packages/coding-agent/src/utils/shell.ts`: `killTrackedDetachedChildren()` prunes first, then SIGKILLs each tracked group (`kill(-pgid)`) and only falls back to `kill(pid)` while the leader is still known to be alive — it no longer reuses `killProcessTree()`'s unconditional direct-pid fallback. It stays synchronous, because shutdown paths call it and then `process.exit()` in the same tick.
+
+### Why
+
+- Detached shells are spawned into their own process group, and background descendants (`sleep 30 &`, `nohup server &`) keep running in that group after the shell exits. Releasing ownership at the leader's exit left those descendants running past shutdown, and re-killing a long-lived tracked pid directly risked signalling an unrelated process after pid reuse ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+
+### Why an extension could not handle it
+
+- The registry is a leaf utility shared by the bash tool, hook command runner, and every shutdown path (print, interactive, rpc, multi-session host); extensions run inside the process this registry cleans up after and cannot observe group membership on its behalf.
+
+### Expected merge conflict zones
+
+- MEDIUM: the tracked-children block in `packages/coding-agent/src/utils/shell.ts` (upstream carries a plain `Set<number>` with `killProcessTree` per pid); keep the group model and re-apply upstream edits inside it.
+
 ## 2026-09-11 - Parse versioned changelog entries for branded sources (senpi#1583)
 
 ### What changed

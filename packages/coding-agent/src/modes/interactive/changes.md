@@ -1,3 +1,81 @@
+## 2026-09-14 - Clickable-question guidance and multiplexer QA (#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/tips/catalog/input-tips.ts` adds one clickable-question tip. TUI, keyboard and settings guides describe scoped capture, selection bypass, fail-closed geometry and tmux's out-of-band cursor source.
+- herdr 0.9.0 passes outer SGR clicks on viewport-filled frames and all question keyboard paths; the builtin reports blocked then working/idle. Fresh short frames write `ESC[?6n` with no private reply: outer `ESC[<0;27;25M` + `ESC[<0;27;25m` did not answer at 120x40, whereas viewport `ESC[<0;27;34M` + `ESC[<0;27;34m` did. Follow-up #1688 tracks that limitation; no unsafe anchor fallback was added.
+
+### Why
+
+- Users need to know when capture is active and how to retain terminal-native selection or answer by keyboard when a multiplexer cannot calibrate a short frame.
+
+### Why an extension could not handle it
+
+- The host owns the built-in tip catalog and pending-question mouse leases. Terminal calibration lives below extension APIs; the herdr limitation is documented, not hidden by extension workarounds.
+
+### Expected merge conflict zones
+
+- The input-tip catalog and mouse/question paragraphs in the public guides. Defaults and keyboard bindings are unchanged.
+
+## 2026-09-14 - Host-owned pending-question mouse capture (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns one pending-question capture lease for the queue/blocking surface and a regular-mode always lease when configured. It releases capture during suspend, external editing, renderer replacement and shutdown, and reapplies intent after start. Widget clicks expand/select the shown request and synchronously write its highlighted selection before single-question submission.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts` exposes terminal.mouse with the shared value schema; the host recreates the renderer on a live change so off also disables fullscreen tracking. `tui-renderer.ts` forwards the mouse constructor option.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` must preserve capture intent across new renderer instances without enabling mouse for idle regular sessions or leaving it enabled during terminal handoff.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts` must make the capture policy discoverable and reversible in the existing settings surface.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns renderer replacement, terminal handoff and the question queue; extensions cannot safely lease the terminal across those boundaries.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts` owns the built-in settings list and cannot be augmented by the question extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: init/switchTuiMode, question mounting/refresh, suspend/external-editor handoffs and settings callbacks.
+- `packages/coding-agent/src/modes/interactive/components/settings-selector.ts`: settings config/callbacks, terminal section and change dispatch. No changes to the default renderer or keyboard bindings.
+
+## 2026-09-14 - Expanded question mouse actions (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts` routes committed primary option rows, own-answer and Submit through mouse regions; descriptions remain inert. Tab labels now have width-aware recorded spans in `ask-user-question-mouse.ts`. Presses claim a target without selecting, while one click activates; Input retains caret placement and the parent retains keyboard focus.
+
+### Why
+
+- The expanded surface needs the same direct choices as the collapsed widget, including multi-select toggles and explicit review before submission.
+
+### Why an extension could not handle it
+
+- The built-in component owns its per-question state, dynamic description rows and inline inputs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-question.ts`: child mounting and updateAll. Keyboard dispatch and response builders are unchanged; helper modules are fork-owned.
+
+## 2026-09-14 - Clickable pending-question widget (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts` renders sanitized, width-bounded option buttons with two-cell gaps, wrapping between buttons. It records the emitted spans and claims left presses without activating; single clicks route option, own-answer, expand and queue-next callbacks. The host can enable a terminal-specific selection-bypass hint.
+- Visibility coverage now asserts every wrapped option remains available rather than pinning the former single truncated options line. Keyboard behavior is unchanged.
+
+### Why
+
+- Pending choices should expose direct click targets without guessing columns from repeated labels or activating on a drag.
+
+### Why an extension could not handle it
+
+- The host-owned widget owns its rendered cells and hit testing. An extension cannot attach geometry to its committed layout.
+
+### Expected merge conflict zones
+
+- The fork-owned widget render and countdown update methods; no renderer or keyboard-dispatch changes in this increment.
+
 ## 2026-09-14 - Tip lines keep one blank line above them (senpi#1680)
 
 ### What changed

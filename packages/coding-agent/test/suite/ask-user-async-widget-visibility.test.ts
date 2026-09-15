@@ -74,17 +74,19 @@ describe("collapsed async ask-user widget content", () => {
 		const text = widgetLines(fake).join("\n");
 		expect(text).toContain("Question pending (1 unanswered)");
 		expect(text).toContain("Auth — Which auth method?");
-		expect(text).toContain("1 OAuth · 2 API key · own answer");
+		expect(text).toContain("[ OAuth ]  [ API key ]  [ own answer… ]");
 	});
 
 	it("counts the questions that wait behind the shown one", () => {
 		const two = createFakeInteractiveMode();
 		askPending(two, QUESTIONS.slice(0, 2));
-		expect(widgetLines(two).join("\n")).toContain("own answer · +1 more question");
+		expect(widgetLines(two).join("\n")).toContain("+1 more question");
+		expect(widgetLines(two).join("\n")).toContain("[ own answer… ]");
 
 		const three = createFakeInteractiveMode();
 		askPending(three, QUESTIONS);
-		expect(widgetLines(three).join("\n")).toContain("own answer · +2 more questions");
+		expect(widgetLines(three).join("\n")).toContain("+2 more questions");
+		expect(widgetLines(three).join("\n")).toContain("[ own answer… ]");
 	});
 
 	it("moves on to the next unanswered question when a partial draft collapses", () => {
@@ -98,7 +100,7 @@ describe("collapsed async ask-user widget content", () => {
 		const text = widgetLines(fake).join("\n");
 		expect(text).toContain("Question pending (1 unanswered)");
 		expect(text).toContain("Deploy — Where should it deploy?");
-		expect(text).toContain("1 Staging · 2 Production · own answer");
+		expect(text).toContain("[ Staging ]  [ Production ]  [ own answer… ]");
 		expect(text).not.toContain("Auth —");
 		expect(text).not.toContain("more question");
 	});
@@ -119,7 +121,7 @@ describe("collapsed async ask-user widget content", () => {
 		expect(text).toContain("to answer");
 	});
 
-	it("keeps a long question and a long option list to one truncated line each", () => {
+	it("keeps the question truncated and wraps every option between bounded buttons", () => {
 		const question =
 			"Which of the many equally plausible database engines should this service standardize on? ".repeat(3);
 		const options = Array.from({ length: 30 }, (_, index) => ({ label: `Engine number ${index + 1}` }));
@@ -127,11 +129,14 @@ describe("collapsed async ask-user widget content", () => {
 		askPending(fake, [{ id: "db", header: "Database", question, options, multiSelect: false }]);
 
 		const lines = widgetLines(fake);
-		expect(lines).toHaveLength(4);
+		expect(lines.length).toBeGreaterThan(4);
 		for (const line of lines) expect(line.length).toBeLessThanOrEqual(WIDGET_WIDTH);
 		expect(lines[1]).toContain("Database — Which of the many equally plausible");
 		expect(lines[1]?.match(/standardize on\?/g)).toHaveLength(1);
-		expect(lines[2]).toContain("1 Engine number 1 · 2 Engine number 2");
-		expect(lines[2]).not.toContain("Engine number 30");
+		expect(lines[2]).toContain("[ Engine number 1 ]  [ Engine number 2 ]");
+		for (let index = 1; index <= 30; index++) {
+			expect(lines.join("\n")).toContain(`[ Engine number ${index} ]`);
+		}
+		expect(lines.join("\n")).toContain("[ own answer… ]");
 	});
 });

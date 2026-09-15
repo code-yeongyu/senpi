@@ -1,5 +1,17 @@
 # Local fork changes
 
+## 2026-09-14 - Align Cursor grep frames with the engine contract (#1678)
+
+### What changed
+
+- Cursor `pi_grep` frames now forward only the supported grep schema fields and debug-log unknown flags.
+- The built-in tools documentation describes the grep text grammar, footer, `details` v1, engines, and environment overrides.
+- `GrepOperations` is documented as deprecated and removed from `GrepToolOptions`.
+
+### Why
+
+- Cursor calls must validate against the rebuilt engine-backed grep schema while preserving the existing protocol types.
+
 ## 2026-09-14 - Document eval-only grep and declared exposure (#1678)
 
 ### What changed

@@ -182,6 +182,7 @@ function createSettingsManagerStub() {
 		getAutocompleteMaxVisible: () => 10,
 		getQuietStartup: () => false,
 		getClearOnShrink: () => false,
+		getTerminalMouse: () => "whilePending",
 		getShowTerminalProgress: () => false,
 		getTuiMode: () => "regular",
 		getFullscreenExitOutput: () => "transcript",

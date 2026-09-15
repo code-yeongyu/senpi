@@ -54,10 +54,19 @@ describe("eval renderer live elapsed time", () => {
 		expect(early).not.toBe(later);
 	});
 
-	it.each(["pending", "detached"] as const)("ticks live for the non-terminal %s status", (status) => {
-		const details = detailsWithCell({ status, startedAt: STARTED_AT, durationMs: 0 });
+	it("ticks live for the non-terminal pending status", () => {
+		const details = detailsWithCell({ status: "pending", startedAt: STARTED_AT, durationMs: 0 });
 
 		expect(headerFor(details, STARTED_AT + 8_000)).toContain("8s");
+	});
+
+	it("freezes the elapsed time for the detached status", () => {
+		const details = detailsWithCell({ status: "detached", startedAt: STARTED_AT, durationMs: 2_000 });
+
+		const header = headerFor(details, STARTED_AT + 900_000);
+
+		expect(header).toContain("2s");
+		expect(header).not.toContain("15m");
 	});
 
 	it.each(["complete", "error", "cancelled"] as const)(

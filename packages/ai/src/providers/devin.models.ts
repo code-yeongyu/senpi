@@ -22,7 +22,12 @@ function devinModel(id: string, name: string, contextWindow: number): Model<"dev
 		api: "devin-agent",
 		provider: "devin",
 		baseUrl: DEVIN_DEFAULT_BASE_URL,
-		reasoning: true,
+		// Cascade's chat protocol has no request-side thinking field: effort is
+		// selected through the lane uid and a generic level is never forwarded.
+		// `reasoning: false` hides the dead thinking-level control; streamed
+		// thinking output still renders because it is message content, not a
+		// capability gate.
+		reasoning: false,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow,

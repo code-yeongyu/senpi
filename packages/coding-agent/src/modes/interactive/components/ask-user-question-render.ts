@@ -14,7 +14,7 @@ export function renderTitle(countdownLabel: string): string {
 	return theme.fg("accent", theme.bold("Ask user")) + suffix;
 }
 
-export function renderTabBar(state: AskUserQuestionState): string {
+export function renderTabLabels(state: AskUserQuestionState): string[] {
 	const tabs = state.request.questions.map((question, index) => {
 		const answered = state.isAnswered(question.id) ? theme.fg("success", " ✓") : "";
 		const label = `${question.header}${answered}`;
@@ -26,7 +26,11 @@ export function renderTabBar(state: AskUserQuestionState): string {
 		state.activeTabIndex === state.request.questions.length
 			? theme.fg("accent", theme.bold("→ Submit"))
 			: theme.fg("muted", "  Submit");
-	return [...tabs, submit].join("  ");
+	return [...tabs, submit];
+}
+
+export function renderTabBar(state: AskUserQuestionState): string {
+	return renderTabLabels(state).join("  ");
 }
 
 export function renderQuestionLine(question: QuestionRequest["questions"][number]): string {

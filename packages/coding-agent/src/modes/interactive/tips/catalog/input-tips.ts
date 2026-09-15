@@ -2,6 +2,12 @@ import type { TipDefinition } from "./types.ts";
 
 export const INPUT_TIPS = [
 	{
+		id: "click-pending-question",
+		bindings: [],
+		render: () =>
+			"Click a pending question's option to answer. Use the displayed selection-bypass modifier to select terminal text, or disable terminal.mouse in /settings.",
+	},
+	{
 		id: "queue-follow-up",
 		bindings: ["app.message.followUp"],
 		render: (keys) =>

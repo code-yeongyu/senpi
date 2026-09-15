@@ -9,9 +9,10 @@ import {
 	getShellConfig,
 	getShellEnv,
 	killProcessTree,
+	noteDetachedChildExited,
+	pruneTrackedDetachedChildren,
 	type ShellConfig,
 	trackDetachedChildPid,
-	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
@@ -169,15 +170,20 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				const pid = child.pid;
 				if (pid !== undefined) {
 					if (child.exitCode !== null || child.signalCode !== null) {
-						untrackDetachedChildPid(pid);
+						// The shell exited, but whatever it backgrounded (`sleep 30 &`,
+						// `nohup server &`) still runs in its process group: ownership is
+						// released only once that group is empty (senpi#1697).
+						noteDetachedChildExited(pid);
 					} else {
 						// The kill grace released the wait while the child is still
 						// alive (kill pending): keep it tracked so shutdown cleanup
 						// retries, and unref it so it cannot pin the event loop.
 						child.unref();
-						child.once("exit", () => untrackDetachedChildPid(pid));
+						child.once("exit", () => noteDetachedChildExited(pid));
 					}
 				}
+				// Groups kept past their shell's exit must not accumulate across a session.
+				pruneTrackedDetachedChildren();
 				if (timeoutHandle) clearTimeout(timeoutHandle);
 				if (signal) signal.removeEventListener("abort", onAbort);
 			}

@@ -35,9 +35,6 @@ const INTERNAL_DISPLAYS: ReadonlySet<DisplayOption> = new Set([
  */
 const IMAGE_BLIND_UIDS: ReadonlySet<string> = new Set(["swe-1-6", "swe-1-6-fast"]);
 
-const REASONING_LABEL = /think|thinking|minimal|high|medium|low|xhigh|max|reasoning/i;
-const NO_REASONING_LABEL = /\bno thinking\b/i;
-
 export interface DevinDiscoveryOptions {
 	apiKey: string | undefined;
 	baseUrl?: string;
@@ -101,20 +98,17 @@ function toModel(config: ClientModelConfig, uid: string, baseUrl: string, isRout
 		api: "devin-agent",
 		provider: "devin",
 		baseUrl,
-		reasoning: supportsThinking(config),
+		// The catalog's supportsThinking flag (and effort-sounding labels) describe
+		// whether the lane produces thinking output, not whether the client may pick
+		// a level: Cascade has no request-side thinking field, so the effort baked into
+		// the lane uid is the only control and a generic level is never forwarded.
+		reasoning: false,
 		input: supportsImages ? ["text", "image"] : ["text"],
 		cost: costOf(config),
 		contextWindow: config.maxTokens > 0 ? config.maxTokens : DEFAULT_CONTEXT_WINDOW,
 		maxTokens: maxOutputTokens > 0 ? maxOutputTokens : DEFAULT_MAX_TOKENS,
 		...(Object.keys(compat).length > 0 ? { compat } : {}),
 	};
-}
-
-function supportsThinking(config: ClientModelConfig): boolean {
-	const features = config.modelInfo?.modelFeatures;
-	if (features !== undefined) return features.supportsThinking;
-	if (NO_REASONING_LABEL.test(config.label)) return false;
-	return REASONING_LABEL.test(config.label);
 }
 
 /** Per-million rates from the cost dimensions; Devin bills cache writes at the input rate, so cacheWrite stays 0. */

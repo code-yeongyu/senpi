@@ -3,6 +3,7 @@ export type ShellCaptureStream = "stdout" | "stderr";
 export type ShellCaptureRestore = () => void;
 
 export interface ShellCaptureChild {
+	readonly pid?: number;
 	readonly exitCode: number | null;
 	readonly signalCode: string | null;
 	readonly exited: Promise<number>;
@@ -13,7 +14,7 @@ export interface ShellCaptureOptions {
 	readonly isActive: () => boolean;
 	readonly emitText: (stream: ShellCaptureStream, data: string) => void;
 	/** Receives every `Bun.spawn` child created while a cell is active so the runtime can kill it on interrupt. */
-	readonly onChild?: (child: ShellCaptureChild) => void;
+	readonly onChild?: (child: ShellCaptureChild, spawnOptions?: unknown) => void;
 }
 
 export function installShellCapture(options: ShellCaptureOptions): ShellCaptureRestore;

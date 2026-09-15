@@ -22,6 +22,7 @@ import type {
 	TerminalSessionOperationResult,
 	TerminalSessionOptions,
 	TerminalSessionSignal,
+	TerminalSessionTerminateOptions,
 } from "./session-types.ts";
 
 export type {
@@ -37,7 +38,14 @@ export type {
 	TerminalSessionOperationResult,
 	TerminalSessionOptions,
 	TerminalSessionSignal,
+	TerminalSessionTerminateOptions,
 } from "./session-types.ts";
+
+/** Default wait for a graceful exit before `terminate()` escalates to SIGKILL. */
+const DEFAULT_TERMINATE_GRACE_MS = 5000;
+/** Default wait for the exit after SIGKILL before `terminate()` reports failure. */
+const DEFAULT_FORCED_GRACE_MS = 1000;
+const FORCE_SIGNAL: TerminalSessionSignal = "SIGKILL";
 
 export class TerminalSession {
 	readonly options: TerminalSessionOptions;
@@ -55,7 +63,10 @@ export class TerminalSession {
 	private settledExit: TerminalSessionExit | null = null;
 	private rawTailBuffer = Buffer.alloc(0);
 	private rawByteCount = 0;
-	private killRequested = false;
+	// Last signal actually handed to the backend. Tracking the signal (instead of a
+	// boolean) keeps repeated kills idempotent while still letting an escalation
+	// (e.g. SIGKILL after an ignored SIGTERM) reach the process.
+	private lastSignal: TerminalSessionSignal | null = null;
 	private unsubscribeBackendData: (() => void) | null = null;
 
 	constructor(options: TerminalSessionOptions = {}, dependencies: TerminalSessionDependencies = {}) {
@@ -184,7 +195,14 @@ export class TerminalSession {
 
 	kill(signal: TerminalSessionSignal = "SIGTERM"): TerminalSessionOperationResult {
 		const handle = this.backendHandle;
-		if (this.killRequested || this.settledExit !== null) {
+		if (this.settledExit !== null) {
+			return {
+				ok: true,
+				idempotent: true,
+				note: "Terminal session has already exited.",
+			};
+		}
+		if (this.lastSignal === signal) {
 			return {
 				ok: true,
 				idempotent: true,
@@ -193,14 +211,33 @@ export class TerminalSession {
 		}
 		if (handle === null) return notStartedOperation("kill");
 
-		this.killRequested = true;
+		const previousSignal = this.lastSignal;
+		this.lastSignal = signal;
 		const result = normalizeOperationResult(handle.kill(signal), `Sent ${signal} to terminal session.`);
-		if (!result.ok) this.killRequested = false;
+		if (!result.ok) this.lastSignal = previousSignal;
 		return result;
 	}
 
 	stop(): TerminalSessionOperationResult {
 		return this.kill();
+	}
+
+	/**
+	 * Stop the session for real: signal (SIGTERM by default), wait `graceMs` for
+	 * the exit, then escalate to SIGKILL and wait `forcedGraceMs`. Resolves with
+	 * the settled exit, or `null` when the process outlived both waits (or was
+	 * never started).
+	 */
+	async terminate(options: TerminalSessionTerminateOptions = {}): Promise<TerminalSessionExit | null> {
+		if (this.settledExit !== null) return this.settledExit;
+		if (this.backendHandle === null) return null;
+
+		this.kill(options.signal ?? "SIGTERM");
+		const graceful = await this.waitExitWithin(normalizeGraceMs(options.graceMs, DEFAULT_TERMINATE_GRACE_MS));
+		if (graceful !== null) return graceful;
+
+		this.kill(FORCE_SIGNAL);
+		return await this.waitExitWithin(normalizeGraceMs(options.forcedGraceMs, DEFAULT_FORCED_GRACE_MS));
 	}
 
 	async waitExit(): Promise<TerminalSessionExit> {
@@ -216,7 +253,28 @@ export class TerminalSession {
 		const wait = handle.waitExit ?? handle.wait;
 		if (!wait) throw new Error("Terminal session backend does not expose waitExit or wait");
 		const exit = await wait.call(handle);
-		return normalizeTerminalExit(exit, backend, this.killRequested);
+		return normalizeTerminalExit(exit, backend, this.lastSignal !== null);
+	}
+
+	/** Await the settled exit for at most `graceMs`; `null` means it did not settle in time. */
+	private async waitExitWithin(graceMs: number): Promise<TerminalSessionExit | null> {
+		if (this.settledExit !== null) return this.settledExit;
+		const exitPromise = this.exitPromise;
+		if (exitPromise === null || graceMs <= 0) return this.settledExit;
+
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			return await Promise.race([
+				// Attaching the catch here also keeps a late backend rejection from
+				// surfacing as an unhandled rejection once the grace timer wins.
+				exitPromise.catch(() => null),
+				new Promise<null>((resolve) => {
+					graceTimer = setTimeout(() => resolve(null), graceMs);
+				}),
+			]);
+		} finally {
+			if (graceTimer !== undefined) clearTimeout(graceTimer);
+		}
 	}
 
 	private settleExit(exit: TerminalSessionExit): TerminalSessionExit {
@@ -245,6 +303,11 @@ export class TerminalSession {
 		this.rawTailBuffer =
 			next.byteLength <= this.rawTailLimit ? next : next.subarray(next.byteLength - this.rawTailLimit);
 	}
+}
+
+function normalizeGraceMs(value: number | undefined, fallback: number): number {
+	if (value === undefined || !Number.isFinite(value) || value < 0) return fallback;
+	return value;
 }
 
 export function createTerminalSession(

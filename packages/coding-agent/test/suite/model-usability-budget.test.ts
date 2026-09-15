@@ -91,21 +91,22 @@ describe("model usability budget", () => {
 		// declaring a switch, so an empty session keeps the cold-start contract - the
 		// switch wording would promise a compaction remedy with nothing to compact.
 		expect(error.projection.admission).toBe("start");
-		// #1678: restored default grep adds 256 schema units. Assert the machine
-		// projection rather than pinning the human-readable error sentence.
+		// #1678: the restored default grep, rebuilt on the engine contract, adds 240
+		// schema units. Assert the machine projection rather than pinning the
+		// human-readable error sentence.
 		expect(error.projection).toMatchObject({
 			model: "faux/low-context",
 			contextWindow: 16_000,
 			liveContextTokens: 0,
 			systemPromptTokens: 1,
-			activeToolSchemaTokens: 1_014,
+			activeToolSchemaTokens: 998,
 			outputReserveTokens: 4_000,
 			compactionReserveTokens: 16_384,
 			speculationLeadTokens: 8_192,
 			safetyMarginTokens: 8_192,
 			safetyMarginProfile: "default",
-			requiredTokens: 37_783,
-			shortfallTokens: 21_783,
+			requiredTokens: 37_767,
+			shortfallTokens: 21_767,
 			usable: false,
 		});
 	});

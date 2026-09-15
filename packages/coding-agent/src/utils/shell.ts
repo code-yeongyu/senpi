@@ -255,25 +255,121 @@ function hasUnsafeDisplayCharacter(str: string): boolean {
 	return false;
 }
 
+/** A detached child we own until its whole process group is gone. */
+export interface TrackedDetachedChild {
+	/** Pid of the process we spawned; on unix it is also its own process-group leader. */
+	readonly pid: number;
+	/** Process group shutdown must kill. Equal to `pid`, because we spawn detached. */
+	readonly pgid: number;
+	/** The leader exited but its group still has members, so `pid` must not be signalled. */
+	readonly leaderExited: boolean;
+}
+
+interface TrackedDetachedChildState {
+	readonly pid: number;
+	readonly pgid: number;
+	leaderExited: boolean;
+}
+
 /**
  * Detached child processes must be tracked so they can be killed on parent
  * shutdown signals (SIGHUP/SIGTERM).
+ *
+ * What is tracked on unix is the process GROUP, not the bare pid: every tracked child is
+ * spawned `detached`, so it leads its own group, and a command like `sleep 30 &` or
+ * `nohup server &` keeps running in that group long after the shell that started it exited.
+ * Dropping the entry on the leader's exit orphaned those descendants past shutdown
+ * ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
  */
-const trackedDetachedChildPids = new Set<number>();
+const trackedDetachedChildren = new Map<number, TrackedDetachedChildState>();
 
 export function trackDetachedChildPid(pid: number): void {
-	trackedDetachedChildPids.add(pid);
+	trackedDetachedChildren.set(pid, { pid, pgid: pid, leaderExited: false });
 }
 
 export function untrackDetachedChildPid(pid: number): void {
-	trackedDetachedChildPids.delete(pid);
+	trackedDetachedChildren.delete(pid);
+}
+
+/** Read-only snapshot of the tracked groups (diagnostics and tests; never module state). */
+export function listTrackedDetachedChildren(): readonly TrackedDetachedChild[] {
+	return Array.from(trackedDetachedChildren.values(), (entry) => Object.freeze({ ...entry }));
+}
+
+/**
+ * Record that a tracked child exited. Ownership is released only when its process group
+ * is empty; while descendants survive there, shutdown must still be able to kill them.
+ * Windows has no such group, so the entry is dropped on exit as before.
+ */
+export function noteDetachedChildExited(pid: number): void {
+	const entry = trackedDetachedChildren.get(pid);
+	if (entry === undefined) return;
+	if (process.platform === "win32" || !processGroupIsAlive(entry.pgid)) {
+		trackedDetachedChildren.delete(pid);
+		return;
+	}
+	entry.leaderExited = true;
+}
+
+/** Drop tracked groups that have no members left, so a long session cannot accumulate entries. */
+export function pruneTrackedDetachedChildren(): void {
+	if (process.platform === "win32") return;
+	for (const [pid, entry] of trackedDetachedChildren) {
+		if (trackedDetachedChildIsGone(entry)) trackedDetachedChildren.delete(pid);
+	}
+}
+
+function signalTargetExists(target: number): boolean {
+	try {
+		process.kill(target, 0);
+		return true;
+	} catch (error) {
+		// EPERM means the target exists but is not ours to signal; only ESRCH proves it is gone.
+		return (error as NodeJS.ErrnoException).code !== "ESRCH";
+	}
+}
+
+function processGroupIsAlive(pgid: number): boolean {
+	return signalTargetExists(-pgid);
+}
+
+function trackedDetachedChildIsGone(entry: TrackedDetachedChildState): boolean {
+	if (processGroupIsAlive(entry.pgid)) return false;
+	// A leader that already exited must not be probed by pid: that number can have been
+	// recycled onto an unrelated process. An empty group is proof enough.
+	return entry.leaderExited || !signalTargetExists(entry.pid);
 }
 
 export function killTrackedDetachedChildren(): void {
-	for (const pid of trackedDetachedChildPids) {
-		killProcessTree(pid);
+	pruneTrackedDetachedChildren();
+	for (const entry of trackedDetachedChildren.values()) {
+		if (process.platform === "win32") killWindowsProcessTree(entry.pid);
+		else killTrackedDetachedGroup(entry);
 	}
-	trackedDetachedChildPids.clear();
+	trackedDetachedChildren.clear();
+}
+
+/**
+ * Kill a tracked group on unix.
+ *
+ * The direct-pid fallback of `killProcessTree()` is deliberately not reused here: a tracked
+ * entry can outlive its leader by minutes, and signalling that stale pid could hit whatever
+ * unrelated process the kernel has since given the number to. Only a leader still known to
+ * be alive may be signalled directly.
+ */
+function killTrackedDetachedGroup(entry: TrackedDetachedChildState): void {
+	try {
+		process.kill(-entry.pgid, "SIGKILL");
+		return;
+	} catch {
+		// The group is already empty, or this child never led one.
+	}
+	if (entry.leaderExited) return;
+	try {
+		process.kill(entry.pid, "SIGKILL");
+	} catch {
+		// Process already dead.
+	}
 }
 
 /**

@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { it, type TestContext } from "node:test";
 import { ProcessTerminal, parseCursorPositionResponse } from "../src/terminal.ts";
 
-function scriptedTerminal(t: TestContext, response?: string, negotiate = false) {
+function scriptedTerminal(
+	t: TestContext,
+	response?: string,
+	negotiate = false,
+	options: { tmuxExecFile?: (file: string, args: readonly string[]) => string } = {},
+) {
 	t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
 	const old = process.env.PI_TUI_KEYBOARD_PROTOCOL;
 	process.env.PI_TUI_KEYBOARD_PROTOCOL = negotiate ? "1" : "0";
@@ -17,7 +22,7 @@ function scriptedTerminal(t: TestContext, response?: string, negotiate = false) 
 		if (text === "\x1b[?6n" && response) process.stdin.emit("data", response);
 		return true;
 	}) as typeof process.stdout.write);
-	const terminal = new ProcessTerminal();
+	const terminal = new ProcessTerminal(options);
 	terminal.start(
 		(data) => input.push(data),
 		() => {},
@@ -29,6 +34,100 @@ function scriptedTerminal(t: TestContext, response?: string, negotiate = false) 
 	});
 	return { terminal, writes, input, send: (data: string) => process.stdin.emit("data", data) };
 }
+function tmuxPane(t: TestContext) {
+	const old = process.env.TMUX_PANE;
+	process.env.TMUX_PANE = "%42";
+	t.after(() => {
+		if (old === undefined) delete process.env.TMUX_PANE;
+		else process.env.TMUX_PANE = old;
+	});
+}
+
+it("uses two matching tmux readings separated by at least 10ms (#1645)", async (t) => {
+	tmuxPane(t);
+	const calls: number[] = [];
+	const { terminal, writes } = scriptedTerminal(t, undefined, false, {
+		tmuxExecFile: (file, args) => {
+			assert.equal(file, "tmux");
+			assert.deepEqual(args, ["display-message", "-p", "-t", "%42", "#{cursor_y} #{cursor_x}"]);
+			calls.push(Date.now());
+			return "11 4\n";
+		},
+	});
+	const query = terminal.queryCursorPosition();
+	assert.equal(terminal.queryCursorPosition(), query);
+	assert.equal(calls.length, 1);
+	t.mock.timers.tick(9);
+	assert.equal(calls.length, 1);
+	t.mock.timers.tick(1);
+	assert.deepEqual(await query, { row: 12, column: 5 });
+	assert.deepEqual(calls, [0, 10]);
+	assert.ok(writes.includes("\x1b[?6n"));
+});
+
+for (const output of ["12 4", "bad", "-1 4", "1.5 4", "1 2 3", "9007199254740991 0"]) {
+	it(`fails closed for mismatched or malformed tmux output ${output}`, async (t) => {
+		tmuxPane(t);
+		let calls = 0;
+		const { terminal } = scriptedTerminal(t, undefined, false, {
+			tmuxExecFile: () => (++calls === 1 ? "11 4" : output),
+		});
+		const query = terminal.queryCursorPosition();
+		t.mock.timers.tick(10);
+		// Also bounds the pre-implementation private-only query for assertion-based RED.
+		t.mock.timers.tick(740);
+		assert.equal(await query, undefined);
+		assert.equal(calls, 2);
+	});
+}
+
+it("fails closed on tmux exec error without accepting private replies", async (t) => {
+	tmuxPane(t);
+	let calls = 0;
+	const { terminal, send } = scriptedTerminal(t, undefined, false, {
+		tmuxExecFile: () => {
+			calls++;
+			throw new Error("exec failed");
+		},
+	});
+	const query = terminal.queryCursorPosition();
+	send("\x1b[?12;5R");
+	t.mock.timers.tick(750);
+	assert.equal(await query, undefined);
+	assert.equal(calls, 1);
+});
+
+it("preserves the total timeout and restart-only recovery for tmux", async (t) => {
+	tmuxPane(t);
+	let calls = 0;
+	const { terminal } = scriptedTerminal(t, undefined, false, {
+		tmuxExecFile: () => {
+			calls++;
+			t.mock.timers.tick(750);
+			return "11 4";
+		},
+	});
+	const query = terminal.queryCursorPosition();
+	t.mock.timers.tick(750);
+	assert.equal(await query, undefined);
+	assert.equal(await terminal.queryCursorPosition(), undefined);
+	assert.equal(calls, 1);
+});
+
+it("never executes tmux outside a pane and retains private query bytes", async (t) => {
+	let calls = 0;
+	const { terminal, writes } = scriptedTerminal(t, "\x1b[?12;5R", false, {
+		tmuxExecFile: () => {
+			calls++;
+			return "11 4";
+		},
+	});
+	assert.equal(process.env.TMUX_PANE, undefined);
+	assert.deepEqual(await terminal.queryCursorPosition(), { row: 12, column: 5 });
+	assert.equal(calls, 0);
+	assert.equal(writes.filter((w) => w === "\x1b[?6n").length, 1);
+});
+
 it("rejects bare CPR-shaped function keys (#1645)", () => {
 	assert.equal(parseCursorPositionResponse("\x1b[1;2R"), undefined);
 });

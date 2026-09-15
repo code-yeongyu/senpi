@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-14 - tmux short-frame cursor source (#1645)
+
+### What changed
+
+- `packages/tui/src/terminal.ts` uses the extracted `packages/tui/src/tmux-cursor-query.ts` source for TMUX_PANE, with two stable CLI readings and a 750 ms total deadline. Tests inject the existing TmuxExecFile contract.
+
+### Why
+
+- tmux swallows private DECXCPR; regular-mode short frames need a pane-relative out-of-band anchor without bare CPR.
+
+### Why an extension could not handle it
+
+- Cursor queries and frame calibration are terminal-owned. The exact nearest source tracker also records the implementation.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts` cursor broker and options. No renderer or default setting changes.
+
 ## 2026-09-10 - Use native TypeScript builds for omob performance
 
 ### What changed

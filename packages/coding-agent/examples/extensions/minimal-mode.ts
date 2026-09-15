@@ -323,7 +323,7 @@ export default function (pi: ExtensionAPI) {
 
 		renderCall(args, theme, _context) {
 			const pattern = args.pattern || "";
-			const path = shortenPath(args.path || ".");
+			const path = Array.isArray(args.path) ? args.path.map(shortenPath).join(", ") : shortenPath(args.path || ".");
 			const glob = args.glob;
 			const limit = args.limit;
 

@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-14 - Terminal mouse capture setting (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts` adds persisted `getTerminalMouse`/`setTerminalMouse` accessors, defaulting to `whilePending`, validating writes and rejecting unknown values. `packages/coding-agent/src/core/terminal-settings.ts` extends the typed settings shape with the shared `off | whilePending | always` value schema.
+
+### Why
+
+- `packages/coding-agent/src/core/settings-manager.ts` must provide a durable opt-out for regular and fullscreen capture while keeping the default renderer unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/settings-manager.ts` owns global/project precedence and persisted terminal preferences; renderer construction happens before extension registration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: terminal-settings import and terminal accessors adjacent to clearOnShrink. The settings shape module is fork-owned.
+
 ## 2026-09-14 - Session-owned by-name activation and tool_search hidden hints (senpi#1682)
 
 ### What changed
@@ -17,6 +35,7 @@
 ### Expected merge conflict zones
 
 - LOW: two small additions in `_installAgentToolHooks` / `_activateLazyTool` and one call after `bindCore`; both are fork-owned regions.
+
 ## 2026-09-14 - Restore grep as an eval-only default tool (#1678)
 
 ### What changed
@@ -41,6 +60,24 @@
 - `packages/coding-agent/src/core/agent-session.ts`: definitionRegistry, nextActiveToolNames, and _buildRuntime defaults. Preserve allowlist/exclusion predicates but do not restore temporary grep filters.
 - `packages/coding-agent/src/core/sdk.ts`: defaultActiveToolNames. Keep explicit and configured selection precedence intact.
 - `packages/coding-agent/src/core/system-prompt.ts`: file-exploration guidance and getEvalOnlyGrepGuideline. Contributions must not re-advertise withheld tools as direct calls.
+
+## 2026-09-14 - Load standalone codemode from its sidecar only
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts` removes the compiled factory bypass and loads the staged codemode manifest entries through the ordinary extension importer. Compiled inventory retains `<builtin:codemode>` while resolved paths and assets remain on disk.
+
+### Why
+
+- `packages/coding-agent/src/core/resource-loader.ts` previously embedded codemode implementation in addition to shipping its source tree. The standalone distribution now ships that implementation once (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/resource-loader.ts` owns the host's builtin loading and compile-time dependency edge; the loaded extension cannot remove its own bundled factory.
+
+### Expected merge conflict zones
+
+- Bundled package registration and `loadExtensionFactories()` in `packages/coding-agent/src/core/resource-loader.ts`.
 
 ## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
 

@@ -874,7 +874,7 @@ describe("Coding Agent Tools", () => {
 			});
 
 			const output = getTextOutput(result);
-			expect(output).toContain("example.txt:2: match line");
+			expect(output).toContain("example.txt\n2: match line");
 		});
 
 		it("should respect global limit and include context lines", async () => {
@@ -890,10 +890,11 @@ describe("Coding Agent Tools", () => {
 			});
 
 			const output = getTextOutput(result);
-			expect(output).toContain("context.txt-1- before");
-			expect(output).toContain("context.txt:2: match one");
-			expect(output).toContain("context.txt-3- after");
-			expect(output).toContain("[1 matches limit reached. Use limit=2 for more, or refine pattern]");
+			expect(output).toContain("context.txt\n1- before");
+			expect(output).toContain("2: match one");
+			expect(output).toContain("3- after");
+			expect(output).toContain("[grep: matches=1 files=1");
+			expect(result.details).toMatchObject({ totalLimitReached: true });
 			// Ensure second match is not present
 			expect(output).not.toContain("match two");
 		});

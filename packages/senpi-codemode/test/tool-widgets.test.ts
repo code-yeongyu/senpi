@@ -124,9 +124,17 @@ describe("nested tool-call widgets", () => {
 	});
 
 	it("widget: grep renders the real call shape", () => {
-		const output = plain(render({ name: "grep", ok: true, args: { pattern: "needle", path: "src" } }));
+		const output = plain(
+			render({
+				name: "grep",
+				ok: true,
+				args: { pattern: "needle", path: "src" },
+				details: { matchCount: 4, fileCount: 2, engine: "native" },
+			}),
+		);
 
 		expect(output).toContain("/needle/");
+		expect(output).toContain("matches=4 files=2 (native)");
 		expect(output).not.toContain("tool.grep(");
 	});
 

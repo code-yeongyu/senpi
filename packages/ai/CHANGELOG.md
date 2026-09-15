@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.9.15] - 2026-09-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Devin models no longer advertise a controllable thinking level: Cascade's chat protocol has no request-side thinking field (SWE-2 effort is selected through the lane uid), so the generic `/efforts`/`/reasoning` selector and the footer thinking suffix were a no-op second control. Streamed thinking output still renders; lane selection is the single effort control ([#1710](https://github.com/code-yeongyu/senpi/issues/1710)).
+
+### Removed
+
 ## [2026.9.13-2] - 2026-09-13
 
 ### Breaking Changes

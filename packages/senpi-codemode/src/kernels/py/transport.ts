@@ -19,6 +19,7 @@ import {
 	numberOrNull,
 	signalOrNull,
 	splitCommand,
+	sweepProcessGroup,
 	waitForExit,
 	withTimeout,
 } from "./process.ts";
@@ -145,7 +146,10 @@ export class PythonKernelTransport {
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
 		}
-		if (!(await exited)) await hardKill(this.#child, hardKillWaitMs);
+		// hardKill kills the whole group; a graceful leader exit does not, so sweep it
+		// to retire any subprocess the cell left running in the kernel's process group.
+		if (await exited) sweepProcessGroup(this.#child);
+		else await hardKill(this.#child, hardKillWaitMs);
 	}
 
 	retire(): Promise<void> {

@@ -2533,7 +2533,9 @@ pi.registerTool({
 });
 ```
 
-**Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `PowerShellOperations`, `LsOperations`, `GrepOperations`, `FindOperations`
+**Operations interfaces:** `ReadOperations`, `WriteOperations`, `EditOperations`, `BashOperations`, `PowerShellOperations`, `LsOperations`, `FindOperations`.
+
+`GrepOperations` is deprecated and has been removed from `GrepToolOptions`; the engine-backed grep tool no longer supports filesystem or file-reading overrides. Use the engine selector and filesystem policy hooks instead.
 
 For `user_bash`, extensions can reuse pi's local shell backend via `createLocalBashOperations()` instead of reimplementing local process spawning, shell resolution, and process-tree termination.
 

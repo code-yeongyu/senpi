@@ -16,6 +16,7 @@ type UncaughtCrashThis = {
 	isShuttingDown: boolean;
 	showWarning: (message: string) => void;
 	ui: { stop: () => void };
+	pauseQuestionMouseCapture: () => void;
 	unregisterSignalHandlers: () => void;
 	emergencyTerminalExit: () => never;
 };
@@ -35,6 +36,7 @@ function createCrashContext(): UncaughtCrashThis {
 		isShuttingDown: false,
 		showWarning: vi.fn(),
 		ui: { stop: vi.fn() },
+		pauseQuestionMouseCapture: vi.fn(),
 		unregisterSignalHandlers: vi.fn(),
 		emergencyTerminalExit: vi.fn(() => {
 			throw new ProcessExitError(129);

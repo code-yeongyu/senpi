@@ -57,7 +57,12 @@ import {
 	type PromptCacheSettings,
 	type ThinkingBudgetsSettings,
 } from "./settings-shapes.ts";
-import type { BranchSummarySettings, TerminalSettings } from "./terminal-settings.ts";
+import {
+	type BranchSummarySettings,
+	isTerminalMouseMode,
+	type TerminalMouseMode,
+	type TerminalSettings,
+} from "./terminal-settings.ts";
 
 // `CompactionSettings` (now including `modelOverrides`), `CompactionModelOverride`,
 // `RetrySettings` and the rest of the public settings shapes live in their own modules;
@@ -1909,6 +1914,19 @@ export class SettingsManager {
 		}
 		this.globalSettings.terminal.imageWidthCells = Math.max(1, Math.floor(width));
 		this.markModified("terminal", "imageWidthCells");
+		this.save();
+	}
+
+	getTerminalMouse(): TerminalMouseMode {
+		const value = this.settings.terminal?.mouse;
+		return isTerminalMouseMode(value) ? value : "whilePending";
+	}
+
+	setTerminalMouse(mouse: TerminalMouseMode): void {
+		if (!isTerminalMouseMode(mouse)) throw new TypeError("Invalid terminal.mouse");
+		this.globalSettings.terminal ??= {};
+		this.globalSettings.terminal.mouse = mouse;
+		this.markModified("terminal", "mouse");
 		this.save();
 	}
 

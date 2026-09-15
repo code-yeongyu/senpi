@@ -11,6 +11,9 @@ vi.mock("@code-yeongyu/senpi", async () => await import("../../src/index.ts"));
 
 const PROBE_HINT = "tool.probe({ ... })";
 const GREP_HINT = 'tool.grep({ pattern: "...", path: "..." })';
+// The engine-backed grep always ends with the frozen footer; searched/elapsed vary per host.
+const NO_MATCH_TEXT =
+	/^No matches found\n\n\[grep: matches=0 files=0 searched=\d+ elapsedMs=\d+ engine=(?:native|rg) nextSkip=none\]$/;
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content
@@ -76,7 +79,7 @@ describe("default grep surface (#1678)", () => {
 			expect(harness.session.getAllTools().map(({ name }) => name)).toContain("grep");
 			expect(harness.session.getActiveToolNames()).not.toContain("grep");
 			const result = await harness.session.executeTool("grep", { pattern: "x" });
-			expect(textOf(result)).toBe("No matches found");
+			expect(textOf(result)).toMatch(NO_MATCH_TEXT);
 			expect(harness.session.getActiveToolNames()).not.toContain("grep");
 		} finally {
 			harness.cleanup();
@@ -87,7 +90,7 @@ describe("default grep surface (#1678)", () => {
 		const { harness } = await createProbeHarness({ withEval: false });
 		try {
 			expect(harness.session.getActiveToolNames()).toContain("grep");
-			expect(textOf(await harness.session.executeTool("grep", { pattern: "x" }))).toBe("No matches found");
+			expect(textOf(await harness.session.executeTool("grep", { pattern: "x" }))).toMatch(NO_MATCH_TEXT);
 		} finally {
 			harness.cleanup();
 		}

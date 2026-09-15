@@ -23,7 +23,7 @@ import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any, Callable
 from urllib.parse import unquote
 
@@ -1022,14 +1022,48 @@ def handle(message: dict[str, Any]) -> bool:
     return True
 
 
+def _terminate_process_group() -> None:
+    # The kernel is spawned into its own session (setsid), so its pid is its process
+    # group id and a cell's subprocesses inherit that group. Killing the group takes
+    # those children down with the kernel instead of orphaning them to init.
+    if os.name != "posix":
+        return
+    with contextlib.suppress(OSError):
+        os.killpg(os.getpgrp(), signal.SIGKILL)
+
+
+def _watch_parent(initial_ppid: int) -> None:
+    # A cell blocked in the main thread (for example a multiprocessing pool) never
+    # returns to the stdin loop, so it cannot notice the host closing its pipe. This
+    # daemon thread notices the reparenting instead and takes the whole group down.
+    while True:
+        time.sleep(1.0)
+        if os.getppid() != initial_ppid:
+            _terminate_process_group()
+            return
+
+
+def _start_parent_watch() -> None:
+    if os.name != "posix":
+        return
+    Thread(target=_watch_parent, args=(os.getppid(),), name="senpi-parent-watch", daemon=True).start()
+
+
 def main() -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    _start_parent_watch()
+    host_closed = False
     for raw in sys.stdin:
         try:
             if not handle(json.loads(raw)):
+                host_closed = True
                 break
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — process boundary serializes malformed input and interrupts.
             emit({"type": "init-failed", "error": bridge_error(exc)})
+    # Reaching here without a close frame means the host's pipe hit EOF: it is gone,
+    # so retire any subprocess the last cell left running before the interpreter exits.
+    if not host_closed:
+        _terminate_process_group()
 
 
 if __name__ == "__main__":

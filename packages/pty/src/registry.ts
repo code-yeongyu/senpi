@@ -1,5 +1,11 @@
-import { cleanupDetachedChildren, defaultKillProcess, getRuntimePlatform } from "./registry-detached.ts";
 import {
+	cleanupDetachedChildren,
+	DEFAULT_DETACHED_EXIT_GRACE_MS,
+	defaultKillProcess,
+	getRuntimePlatform,
+} from "./registry-detached.ts";
+import {
+	forceKillTerminalSession,
 	isTerminalSessionExited,
 	sessionIdPrefix,
 	stopTerminalSession,
@@ -38,6 +44,7 @@ import { SessionRegistryCapacityError } from "./registry-types.ts";
 const DEFAULT_MAX_SESSIONS = 32;
 const DEFAULT_COMMAND = "bash";
 const DEFAULT_STOP_EXIT_GRACE_MS = 5000;
+const DEFAULT_FORCED_EXIT_GRACE_MS = 1000;
 const MAX_STOP_EXIT_GRACE_MS = 2_147_483_647;
 
 export class SessionRegistry<TSession extends SessionRegistrySession = SessionRegistrySession> {
@@ -50,6 +57,8 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 	private sequence = 0;
 	readonly maxSessions: number;
 	private readonly stopExitGraceMs: number;
+	private readonly forcedExitGraceMs: number;
+	private readonly detachedExitGraceMs: number;
 
 	constructor(options: SessionRegistryOptions<TSession> = {}) {
 		this.maxSessions = normalizeMaxSessions(options.maxSessions);
@@ -59,6 +68,8 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 			options.stopExitGraceMs > 0
 				? Math.min(options.stopExitGraceMs, MAX_STOP_EXIT_GRACE_MS)
 				: DEFAULT_STOP_EXIT_GRACE_MS;
+		this.forcedExitGraceMs = normalizeGraceMs(options.forcedExitGraceMs, DEFAULT_FORCED_EXIT_GRACE_MS);
+		this.detachedExitGraceMs = normalizeGraceMs(options.detachedExitGraceMs, DEFAULT_DETACHED_EXIT_GRACE_MS);
 		this.createSession = options.createSession ?? null;
 		this.killProcess = options.killProcess ?? defaultKillProcess;
 		this.now = options.now ?? Date.now;
@@ -131,6 +142,12 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 
 	async teardown(): Promise<void> {
 		await this.stopAll();
+		// Dropping an entry is the registry forgetting the process exists, so no entry
+		// leaves here without having been escalated to SIGKILL first.
+		for (const entry of [...this.entries.values()]) {
+			this.refreshEntryState(entry);
+			if (entry.state !== "exited") await this.forceKillEntry(entry);
+		}
 		for (const id of [...this.entries.keys()]) this.removeEntry(id);
 	}
 
@@ -155,6 +172,7 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 			unsubscribeExit: null,
 			stopPromise: null,
 			detachedCleanupPromise: null,
+			forceKilled: false,
 		};
 		entry.unsubscribeExit =
 			session.onExit?.(() => {
@@ -202,14 +220,32 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 		await this.cleanupDetachedChildren(entry);
 		if (entry.state !== "exited") {
 			await stopTerminalSession(entry.session);
-			if (await waitForTerminalSessionExit(entry.session, this.stopExitGraceMs)) {
-				this.markExited(entry);
-			} else {
-				entry.state = "stopping";
-				entry.exitedAt = null;
-			}
+			if (await waitForTerminalSessionExit(entry.session, this.stopExitGraceMs)) this.markExited(entry);
+			else await this.forceKillEntry(entry);
 		}
 		return true;
+	}
+
+	/**
+	 * SIGKILL a session that outlived the graceful stop. Only a session that even
+	 * survives the forced signal (or exposes no way to be signalled) stays
+	 * `stopping`; everything else settles as `exited`.
+	 */
+	private async forceKillEntry(entry: StoredSessionRegistryEntry<TSession>): Promise<void> {
+		if (!entry.forceKilled) {
+			entry.forceKilled = true;
+			const delivered = await forceKillTerminalSession(entry.session);
+			if (delivered && (await waitForTerminalSessionExit(entry.session, this.forcedExitGraceMs))) {
+				this.markExited(entry);
+				return;
+			}
+		}
+		if (isTerminalSessionExited(entry.session)) {
+			this.markExited(entry);
+			return;
+		}
+		entry.state = "stopping";
+		entry.exitedAt = null;
 	}
 
 	private async cleanupDetachedChildren(entry: StoredSessionRegistryEntry<TSession>): Promise<void> {
@@ -219,7 +255,7 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 	}
 
 	private async cleanupDetachedChildrenOnce(session: TSession): Promise<void> {
-		await cleanupDetachedChildren(session, this.platform, this.killProcess);
+		await cleanupDetachedChildren(session, this.platform, this.killProcess, this.detachedExitGraceMs);
 	}
 
 	private refreshExitedStates(): void {
@@ -265,6 +301,11 @@ export class SessionRegistry<TSession extends SessionRegistrySession = SessionRe
 		this.sequence += 1;
 		return this.now() * 1000 + this.sequence;
 	}
+}
+
+function normalizeGraceMs(value: number | undefined, fallback: number): number {
+	if (value === undefined || !Number.isFinite(value) || value < 0) return fallback;
+	return Math.min(value, MAX_STOP_EXIT_GRACE_MS);
 }
 
 function normalizeMaxSessions(value: number | undefined): number {

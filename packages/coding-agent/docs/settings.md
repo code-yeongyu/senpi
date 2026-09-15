@@ -386,11 +386,14 @@ Both ambient-auth providers are explicit opt-in: a vendor CLI being logged in on
 | `terminal.showImages` | boolean | `true` | Show images in terminal (if supported) |
 | `terminal.imageWidthCells` | number | `60` | Preferred inline image width in terminal cells |
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when content shrinks (can cause flicker) |
+| `terminal.mouse` | `"off"`, `"whilePending"`, `"always"` | `"whilePending"` | Capture regular-mode clicks while a question is pending; `always` keeps capture active in regular mode, and `off` disables mouse capture in both regular and fullscreen modes. Editable in `/settings`. |
 | `terminal.hyperlinks` | boolean or `"auto"` | `"auto"` | Override OSC 8 hyperlink support (advanced, JSON-only) |
 | `terminal.images` | string or boolean | `"auto"` | Override image protocol support with `"kitty"`, `"iterm2"`, `false`, or `"auto"` (advanced, JSON-only) |
 | `terminal.trueColor` | boolean or `"auto"` | `"auto"` | Override truecolor support (advanced, JSON-only) |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max. Applies to `@file` attachments, `read`, and images returned by tools |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
+
+With `terminal.mouse: "whilePending"`, regular-mode native selection and scrollback are unchanged when no question is pending. During capture, use the terminal's selection bypass or set `"off"`; wheel reports are consumed. Unknown frame placement ignores clicks rather than guessing. See [Mouse Input](tui.md#mouse-input) for bypass modifiers, tmux calibration and the herdr short-frame limitation. This setting does not change `tuiMode`.
 
 ### Prompt Cache
 

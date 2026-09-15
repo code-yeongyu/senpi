@@ -35,6 +35,9 @@ describe("copy-codemode-sidecar", () => {
 			"CHANGELOG.md",
 			"LICENSE",
 			"src/index.ts",
+			"src/skill/bun-1-4/SKILL.md",
+			"node_modules/@babel/parser/package.json",
+			"node_modules/@babel/parser/lib/index.js",
 			"src/kernels/js/worker-entry.js",
 			"src/kernels/js/inline-worker-entry.js",
 			"src/kernels/py/prelude.py",
@@ -44,7 +47,7 @@ describe("copy-codemode-sidecar", () => {
 			assert.equal(existsSync(join(target, path)), true, `missing copied runtime file: ${path}`);
 		}
 		assert.equal(existsSync(join(target, "test")), false);
-		assert.equal(existsSync(join(target, "node_modules")), false);
+		assert.equal(existsSync(join(target, "node_modules", "@code-yeongyu", "senpi")), false);
 	});
 
 	it("replaces stale sidecar contents instead of merging them", () => {

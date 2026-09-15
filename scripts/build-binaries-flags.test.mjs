@@ -67,6 +67,6 @@ for (const { name, command } of commands) {
 		// Then
 		assert.ok(argv.includes("--no-compile-autoload-dotenv"));
 		assert.ok(argv.includes("--no-compile-autoload-bunfig"));
-		if (name === "package build:binary") assert.ok(argv.includes("--compile-autoload-package-json"));
+		assert.ok(argv.includes("--compile-autoload-package-json"));
 	});
 }

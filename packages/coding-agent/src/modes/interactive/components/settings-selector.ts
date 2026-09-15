@@ -21,6 +21,7 @@ import type {
 	TuiMode,
 	WarningSettings,
 } from "../../../core/settings-manager.ts";
+import { isTerminalMouseMode, TERMINAL_MOUSE_MODES, type TerminalMouseMode } from "../../../core/terminal-settings.ts";
 import {
 	getSelectListTheme,
 	getSettingsListTheme,
@@ -93,6 +94,7 @@ export interface SettingsConfig {
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
 	fullscreenCopyOnSelect: boolean;
+	terminalMouse?: TerminalMouseMode;
 	warnings: WarningSettings;
 }
 
@@ -128,6 +130,7 @@ export interface SettingsCallbacks {
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onTuiModeChange: (mode: TuiMode) => void;
+	onTerminalMouseChange?: (mode: TerminalMouseMode) => void;
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
 	onFullscreenCopyOnSelectChange: (enabled: boolean) => void;
@@ -663,6 +666,13 @@ export class SettingsSelectorComponent extends Container {
 				values: ["regular", "fullscreen"],
 			},
 			{
+				id: "terminal-mouse",
+				label: "Terminal mouse",
+				description: "Capture while questions are pending, always, or off (also disables fullscreen mouse)",
+				currentValue: config.terminalMouse ?? "whilePending",
+				values: [...TERMINAL_MOUSE_MODES],
+			},
+			{
 				id: "fullscreen-exit-output",
 				label: "Fullscreen exit output",
 				description: "Print the transcript or only a session resume hint when exiting fullscreen mode",
@@ -900,6 +910,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
+						break;
+					case "terminal-mouse":
+						if (isTerminalMouseMode(newValue)) callbacks.onTerminalMouseChange?.(newValue);
 						break;
 					case "tui-mode":
 						callbacks.onTuiModeChange(newValue as TuiMode);

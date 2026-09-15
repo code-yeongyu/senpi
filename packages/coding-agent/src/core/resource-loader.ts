@@ -117,7 +117,6 @@ const moduleRequire = createRequire(import.meta.url);
 const bundledBuiltinExtensions: ReadonlyArray<{
 	id: string;
 	resolvePackage: () => string;
-	resolveBinaryFactory?: () => Promise<ExtensionFactory>;
 }> = [
 	{
 		id: "codemode",
@@ -127,7 +126,6 @@ const bundledBuiltinExtensions: ReadonlyArray<{
 				"senpi-codemode/package.json",
 				join("node_modules", "@code-yeongyu", "senpi-codemode", "package.json"),
 			),
-		resolveBinaryFactory: async () => require("@code-yeongyu/senpi-codemode").default as ExtensionFactory,
 	},
 ];
 
@@ -1342,26 +1340,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
-		const bundledExtensionPaths: string[] = [];
 		for (const bundledExtension of bundledBuiltinExtensions) {
 			if (!activeBuiltinExtensionIds.has(bundledExtension.id)) {
 				continue;
 			}
 			try {
-				if (isBunBinary && bundledExtension.resolveBinaryFactory) {
-					const factory = await bundledExtension.resolveBinaryFactory();
-					const extensionPath = `<builtin:${bundledExtension.id}>`;
-					const extension = await loadExtensionFromFactory(
-						factory,
-						this.cwd,
-						this.eventBus,
-						runtime,
-						extensionPath,
-						sharedHostEnabled,
-					);
-					extensions.push(extension);
-					continue;
-				}
 				const packageJsonPath = bundledExtension.resolvePackage();
 				const entries = this.resolvePackageExtensionEntries(packageJsonPath);
 				if (entries.length === 0) {
@@ -1371,7 +1354,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 					});
 					continue;
 				}
-				bundledExtensionPaths.push(...entries);
+				const bundledResult = await loadExtensions(entries, this.cwd, this.eventBus, runtime, {
+					sharedHostEnabled,
+				});
+				for (const extension of bundledResult.extensions) {
+					if (isBunBinary) extension.path = `<builtin:${bundledExtension.id}>`;
+					extensions.push(extension);
+				}
+				errors.push(...bundledResult.errors);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "package resolution failed";
 				errors.push({
@@ -1379,14 +1369,6 @@ export class DefaultResourceLoader implements ResourceLoader {
 					error: `Bundled extension unavailable: ${message}`,
 				});
 			}
-		}
-
-		if (bundledExtensionPaths.length > 0) {
-			const bundledResult = await loadExtensions(bundledExtensionPaths, this.cwd, this.eventBus, runtime, {
-				sharedHostEnabled,
-			});
-			extensions.push(...bundledResult.extensions);
-			errors.push(...bundledResult.errors);
 		}
 
 		for (const [index, input] of this.extensionFactories.entries()) {

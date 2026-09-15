@@ -2,6 +2,7 @@
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const [outputRootArgument] = process.argv.slice(2);
@@ -44,4 +45,9 @@ for (const entry of manifest.files) {
 	cpSync(sourcePath, join(targetRoot, normalizedEntry), { recursive: true });
 }
 
-console.log(`[copy-codemode-sidecar] copied ${manifest.files.length + 1} entries to ${targetRoot}`);
+// Host API/typebox imports are provided by Jiti virtual modules. The JS rewriter's
+// parser is the sole external runtime dependency not supplied by the host.
+const parserRoot = dirname(createRequire(manifestPath).resolve("@babel/parser/package.json"));
+cpSync(parserRoot, join(targetRoot, "node_modules", "@babel", "parser"), { recursive: true });
+
+console.log(`[copy-codemode-sidecar] copied ${manifest.files.length + 1} entries and the JS parser to ${targetRoot}`);

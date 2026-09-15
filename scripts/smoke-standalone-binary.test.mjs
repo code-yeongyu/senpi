@@ -24,6 +24,28 @@ function writeExecutable(path, source) {
 }
 
 describe("smoke-standalone-binary", () => {
+	for (const enabled of [true, false]) {
+		it(`rejects ${enabled ? "duplicate" : "disabled"} codemode entries when RPC reports success`, () => {
+			// Given: a successful RPC envelope with invalid codemode membership.
+			tempDir = mkdtempSync(join(tmpdir(), "senpi-standalone-smoke-"));
+			const workerPath = join(tempDir, "worker.js");
+			writeFileSync(workerPath, "export {};\n");
+			const binaryPath = join(tempDir, "invalid-inventory");
+			const entry = { name: "codemode", path: "<builtin:codemode>", enabled };
+			const response = {
+				id: "standalone-smoke-surfaces", type: "response", command: "get_loaded_surfaces", success: true,
+				data: { extensions: enabled ? [entry, entry] : [entry], mcpServers: [] },
+			};
+			writeExecutable(binaryPath, `#!/usr/bin/env node\nprocess.stdout.write(process.argv.includes("--mode") ? ${JSON.stringify(`${JSON.stringify(response)}\n`)} : "ok");\n`);
+
+			// When: the standalone smoke evaluates the machine-consumed inventory.
+			const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8" });
+
+			// Then: a successful envelope cannot hide duplicate or disabled membership.
+			assert.notEqual(result.status, 0);
+			assert.equal(readFileSync(workerPath, "utf8"), "export {};\n");
+		});
+	}
 	it("fails a binary that still depends on the build-time worker file", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-standalone-smoke-"));
 		const workerPath = join(tempDir, "node_modules", "jsdom", "xhr-sync-worker.js");

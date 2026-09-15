@@ -1,5 +1,23 @@
 # TUI delta rendering fork changes
 
+## 2026-09-14 - Out-of-band tmux frame anchors (#1645)
+
+### What changed
+
+- `packages/tui/src/terminal.ts` selects an injectable tmux CLI cursor source when TMUX_PANE is set. `packages/tui/src/tmux-cursor-query.ts` accepts only two matching pane-relative numeric readings at least 10 ms apart within the existing 750 ms total budget. The private query is still written; its replies cannot override the tmux source.
+
+### Why
+
+- `packages/tui/src/terminal.ts`: tmux 3.7b swallows private DECXCPR, leaving fresh short frames unclickable. Errors, malformed output, movement and timeout still leave placement unknown; timeout remains restart-only recovery.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts` owns the cursor broker and renderer calibration lifecycle, below extension input handling. Bare CPR remains forbidden.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: constructor options, pending query state, issue/settlement and private-response interception. Outside tmux the private protocol bytes are unchanged. The existing large terminal module is not refactored; the new source is below 250 pure LOC.
+
 ## 2026-09-13 - Private cursor calibration and external-output recovery
 
 ### What changed

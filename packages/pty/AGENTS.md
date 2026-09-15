@@ -25,7 +25,7 @@ test/fixtures/*.mjs              Native-addon child processes for callback/worke
 - macOS quarantine is probed via `xattr -p` before loading a prebuild. Detection must never clear the attribute; an unreadable attribute is non-rejecting.
 - Unsupported or missing native bindings select the pipe fallback with a diagnostic; fallback behavior must never be presented as a real PTY.
 - Exit notification settles exactly once across native exit, child exit, startup failure, kill, and disposal races.
-- `kill()` is idempotent and detached-child cleanup owns the full process tree.
+- `kill()` is idempotent per delivered signal but never blocks an escalation: a stronger signal (SIGKILL after SIGTERM) must still reach the backend. Stop paths (`TerminalSession.terminate()`, `SessionRegistry.stop()`/`teardown()`, detached-child cleanup) escalate TERM -> bounded grace -> KILL, and detached-child cleanup owns the full process tree.
 - Bound retained raw output/tails; persistent sessions must not grow memory without limit.
 - Registry IDs, detached process metadata, stop, and removal remain explicit. The current registry has no caller-authorization model; do not claim owner isolation without adding one.
 

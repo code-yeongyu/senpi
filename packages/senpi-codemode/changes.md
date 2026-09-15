@@ -1,5 +1,24 @@
 # senpi-codemode fork changes
 
+## 2026-09-15 - Static detached cards and self-stopping live ticker (#1696)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/render.ts` narrows `isLiveCellStatus` to `pending`/`running`, so detached cell cards render static (frozen elapsed time) instead of arming the 1 Hz repaint ticker forever.
+- `PlainTextComponent` gains an idle guard: the ticker counts ticks since the last `render()` and stops itself after 60 (a live row repaints every tick, so 60 renderless ticks means the row was dropped by a transcript rebuild or session switch); the next `render()` rearms it.
+
+### Why
+
+- Detached snapshot cards never receive a terminal re-render, so their 1 Hz tickers ran for the session lifetime; rows dropped by transcript rebuilds had no dispose path and accumulated intervals. Measured idle sessions burned 2-8% CPU each on leaked repaint timers.
+
+### Why an extension could not handle it
+
+- The ticker is an internal component lifetime decision; extensions see neither the render component contract nor the host's row-replacement cycle.
+
+### Expected merge conflict zones
+
+- LOW: `render.ts` ticker block and `isLiveCellStatus`. Rendered output for pending/running/terminal cards is unchanged; detached cards keep their icon and label with a frozen elapsed value.
+
 ## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
 
 ### What changed

@@ -74,11 +74,22 @@ export interface SessionRegistryOptions<TSession extends SessionRegistrySession 
 	readonly now?: () => number;
 	readonly platform?: string;
 	/**
-	 * How long `stop()` waits for a killed session to report exit before marking
-	 * it `stopping` and returning. Guards against sessions whose exit never
-	 * settles (e.g. a surviving descendant holding the PTY open). Default 5s.
+	 * How long `stop()` waits for a killed session to report exit before it
+	 * escalates to SIGKILL (and, if that also fails, marks it `stopping`).
+	 * Guards against sessions whose exit never settles (e.g. a surviving
+	 * descendant holding the PTY open). Default 5s.
 	 */
 	readonly stopExitGraceMs?: number;
+	/**
+	 * How long `stop()` waits for the exit after escalating to SIGKILL before it
+	 * gives up and marks the entry `stopping`. Default 1s.
+	 */
+	readonly forcedExitGraceMs?: number;
+	/**
+	 * How long tracked detached children may take to exit after SIGTERM before
+	 * they are SIGKILLed. `0` escalates immediately. Default 1s.
+	 */
+	readonly detachedExitGraceMs?: number;
 }
 
 export type StoredSessionRegistryEntry<TSession extends SessionRegistrySession> = {
@@ -92,6 +103,8 @@ export type StoredSessionRegistryEntry<TSession extends SessionRegistrySession> 
 	unsubscribeExit: (() => void) | null;
 	stopPromise: Promise<boolean> | null;
 	detachedCleanupPromise: Promise<void> | null;
+	/** Set once the entry was SIGKILLed; a second forced kill would add nothing. */
+	forceKilled: boolean;
 };
 
 export class SessionRegistryCapacityError extends Error {

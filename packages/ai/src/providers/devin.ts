@@ -36,7 +36,13 @@ export function devinProvider(): Provider<"devin-agent"> {
 		refreshModels: async (context) => {
 			const stored = context.stored;
 			if (stored) {
-				const restored = stored.models.filter((model) => model.provider === "devin") as Model<"devin-agent">[];
+				// Restore-path normalization: catalogs persisted before the
+				// no-advertised-thinking-level fix still carry reasoning: true, which
+				// would re-expose the dead thinking-level control until the next
+				// successful discovery overwrites them.
+				const restored = stored.models
+					.filter((model) => model.provider === "devin")
+					.map((model) => ({ ...model, reasoning: false })) as Model<"devin-agent">[];
 				if (restored.length > 0) {
 					await context.publish({
 						update: () => {

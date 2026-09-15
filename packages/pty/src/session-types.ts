@@ -26,6 +26,15 @@ export interface TerminalSessionNativeOptions {
 	readonly timeoutMs?: number;
 }
 
+export interface TerminalSessionTerminateOptions {
+	/** Signal delivered first; defaults to SIGTERM. */
+	readonly signal?: TerminalSessionSignal;
+	/** How long to wait for a graceful exit before escalating to SIGKILL. Default 5000ms. */
+	readonly graceMs?: number;
+	/** How long to wait for the exit after SIGKILL before giving up. Default 1000ms. */
+	readonly forcedGraceMs?: number;
+}
+
 export interface TerminalSessionOperationResult {
 	readonly ok: boolean;
 	readonly note: string;

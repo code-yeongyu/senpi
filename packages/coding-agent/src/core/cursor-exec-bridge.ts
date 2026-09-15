@@ -72,6 +72,22 @@ function errorResult(toolCallId: string, toolName: string, text: string): ToolRe
 	};
 }
 
+function mapCursorPiGrepArgs(args: Record<string, unknown>): Record<string, unknown> {
+	const known = new Set(["pattern", "path", "glob", "ignoreCase", "literal", "context", "limit"]);
+	for (const key of Object.keys(args)) {
+		if (!known.has(key)) console.debug(`[cursor-exec] ignoring unknown pi_grep flag: ${key}`);
+	}
+	return omitUndefinedCursorArgs({
+		pattern: args.pattern,
+		path: args.path,
+		glob: args.glob,
+		ignoreCase: args.ignoreCase,
+		literal: args.literal,
+		context: args.context,
+		limit: args.limit,
+	});
+}
+
 function emptyResult(toolCallId: string, toolName: string): ToolResultMessage {
 	return {
 		role: "toolResult",
@@ -274,15 +290,17 @@ export function createCursorExecBridge(options: CursorExecBridgeOptions): Cursor
 			}),
 
 		piGrep: async (call) =>
-			executeTool(options, "grep", call.toolCallId, {
-				pattern: call.args.pattern,
-				path: call.args.path || undefined,
-				glob: call.args.glob || undefined,
-				ignoreCase: call.args.ignoreCase === true ? true : undefined,
-				literal: call.args.literal === true ? true : undefined,
-				context: call.args.context,
-				limit: cursorPiLimit(call.args.limit),
-			}),
+			executeTool(
+				options,
+				"grep",
+				call.toolCallId,
+				mapCursorPiGrepArgs({
+					...call.args,
+					ignoreCase: call.args.ignoreCase === true ? true : undefined,
+					literal: call.args.literal === true ? true : undefined,
+					limit: cursorPiLimit(call.args.limit),
+				}),
+			),
 
 		piFind: async (call) =>
 			executeTool(options, "find", call.toolCallId, {

@@ -5,6 +5,8 @@ import { isMultiplexerSession } from "./mux.ts";
 import { isNativeModifierPressed } from "./native-modifiers.ts";
 import { getNativePlatformHelper } from "./native-platform.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
+import { queryTmuxCursorPosition } from "./tmux-cursor-query.ts";
+import type { TmuxExecFile } from "./tmux-image-probe.ts";
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
@@ -233,6 +235,8 @@ export interface Terminal {
 }
 
 export interface ProcessTerminalOptions {
+	/** Injectable out-of-band tmux cursor source. */
+	tmuxExecFile?: TmuxExecFile;
 	/**
 	 * When set, stdout writes not issued by this terminal are hidden from the
 	 * screen while the terminal is started and forwarded to this handler
@@ -266,6 +270,7 @@ export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
  */
 export class ProcessTerminal implements Terminal {
 	private wasRaw = false;
+	private readonly tmuxExecFile?: TmuxExecFile;
 	private onExternalStdoutWrite?: (text: string) => void;
 	private originalStdoutWrite?: typeof process.stdout.write;
 	private rawStdoutWrite?: (data: string) => void;
@@ -278,6 +283,8 @@ export class ProcessTerminal implements Terminal {
 		resolve: (position: CursorPosition | undefined) => void;
 		timer: ReturnType<typeof setTimeout>;
 		issued: boolean;
+		tmuxPane?: string;
+		deadline: number;
 	};
 	private forwardingExternalWrite = false;
 	private inputHandler?: (data: string) => void;
@@ -310,6 +317,7 @@ export class ProcessTerminal implements Terminal {
 
 	constructor(options?: ProcessTerminalOptions) {
 		this.onExternalStdoutWrite = options?.onExternalStdoutWrite;
+		this.tmuxExecFile = options?.tmuxExecFile;
 	}
 
 	get kittyProtocolActive(): boolean {
@@ -329,7 +337,14 @@ export class ProcessTerminal implements Terminal {
 			this.cursorQueryTimedOut = true;
 			this.settleCursorQuery(undefined);
 		}, 750);
-		this.cursorQuery = { promise, resolve, timer, issued: false };
+		this.cursorQuery = {
+			promise,
+			resolve,
+			timer,
+			issued: false,
+			tmuxPane: process.env.TMUX_PANE,
+			deadline: Date.now() + 750,
+		};
 		this.issueCursorQuery();
 		return promise;
 	}
@@ -338,6 +353,14 @@ export class ProcessTerminal implements Terminal {
 		if (!this.keyboardNegotiationSettled || !this.cursorQuery || this.cursorQuery.issued) return;
 		this.cursorQuery.issued = true;
 		this.rawWrite("\x1b[?6n");
+		const pending = this.cursorQuery;
+		if (pending?.tmuxPane !== undefined) {
+			void queryTmuxCursorPosition(pending.tmuxPane, pending.deadline, this.tmuxExecFile).then((position) => {
+				if (this.cursorQuery !== pending) return;
+				if (Date.now() >= pending.deadline) this.cursorQueryTimedOut = true;
+				this.settleCursorQuery(this.cursorQueryTimedOut ? undefined : position);
+			});
+		}
 	}
 
 	private settleCursorQuery(position: CursorPosition | undefined): void {
@@ -561,7 +584,7 @@ export class ProcessTerminal implements Terminal {
 		if (!negotiationSequence) return false;
 		this.clearKeyboardProtocolNegotiationBuffer();
 		if (negotiationSequence.type === "cursor-position") {
-			if (this.cursorQuery?.issued) {
+			if (this.cursorQuery?.issued && this.cursorQuery.tmuxPane === undefined) {
 				const { type: _type, ...position } = negotiationSequence;
 				this.settleCursorQuery(position);
 			}

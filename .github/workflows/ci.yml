@@ -105,6 +105,73 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  grep-native-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install system dependencies
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y ripgrep
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Setup Rust
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build native grep crate
+        run: cargo build -p senpi-grep --release --locked
+
+      - name: Build native grep addon
+        run: npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+        working-directory: crates/senpi-grep
+
+      - name: Test grep with both engines
+        run: |
+          node_file=$(ls crates/senpi-grep/senpi_grep.*.node)
+          export SENPI_GREP_NATIVE_PATH="$PWD/$node_file"
+          cd packages/coding-agent
+          echo "engine=native"
+          SENPI_GREP_ENGINE=native bunx vitest run test/grep --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/grep-native-contract.json"
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          const report = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/grep-native-contract.json`, "utf8"));
+          const contract = report.testResults.find((file) => file.name.endsWith("/engine-contract.native.test.ts"));
+          assert.ok(contract?.assertionResults.length > 1, "native contract cases must run");
+          assert.ok(contract.assertionResults.every((test) => test.status === "passed"));
+          console.log(`engine=native engine-contract.native.test.ts: ${contract.assertionResults.length} passed, 0 skipped`);
+          NODE
+          echo "engine=rg"
+          SENPI_GREP_ENGINE=rg bunx vitest run test/grep
+
   hooks-trust-storage-windows:
     name: Hooks trust storage (Windows)
     runs-on: windows-latest
@@ -234,8 +301,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build workspace package entries
-        run: npm run build
+      # Codemode's graph suite rebuilds workspace entries and compile assets itself.
+      # Keep both graph checks ahead of script tests, which can invalidate dist.
+      - name: Fresh release entry graphs (codemode and exclusions)
+        run: |
+          npm rebuild canvas --foreground-scripts
+          bun test scripts/release-graph-codemode.test.ts
+          bun test scripts/release-graph-exclusions.test.ts
 
       - name: Node bundle isolation and RPC smoke
         run: |
@@ -283,6 +355,7 @@ jobs:
       [
         check,
         test-coding-agent,
+        grep-native-contract,
         hooks-trust-storage-windows,
         rpc-windows,
         compiled-extensions-windows,
@@ -312,6 +385,7 @@ jobs:
             echo "## Check and test (fan-in)"
             echo "- check: ${{ needs.check.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
             echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
             echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"

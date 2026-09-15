@@ -39,6 +39,29 @@
 
 - LOW: `copyPublishDependencies` in `scripts/prepare-senpi-bundled-workspaces.mjs` (now a one-line delegate) and its `scripts/prepare-senpi-bundled-workspaces-copy.test.mjs` nested-entry assertion.
 
+## 2026-09-14 - Ship standalone codemode once
+
+### What changed
+
+- `scripts/copy-codemode-sidecar.mjs` carries codemode's JS parser dependency beside its source tree; host API dependencies remain supplied by the extension importer.
+- `scripts/build-binaries.sh` enables package-json autoload in both release compile commands, matching the package's binary build so Bun can resolve the on-disk parser manifest. Dotenv and bunfig autoload remain disabled.
+- `scripts/smoke-standalone-binary.mjs` bounds child processes and reports explicit codemode loading diagnostics before checking the exactly-one-enabled inventory contract.
+- A sibling release-graph regression rejects positive codemode contributions, including workspace-relative metafile paths. It rebuilds workspace entries and compile assets on direct invocation, and CI runs it followed by the existing exclusions graph before script suites can invalidate `dist`.
+- Workflow coverage checks sidecar staging precedes smoke in the release command list; bundle contents are tested through actual Bun metadata rather than removed source spellings. Copier and inventory tests cover required skill/parser files, stale payload replacement, duplicates, and disabled entries.
+
+### Why
+
+- `scripts/copy-codemode-sidecar.mjs` must make the on-disk extension runnable without the removed bundled factory. `scripts/smoke-standalone-binary.mjs` must distinguish missing payloads from successful relocation (Refs #1656).
+- `scripts/build-binaries.sh` needs runtime package metadata for the native importer to resolve external dependencies; shipping their files alone is insufficient when package-json autoload is disabled.
+
+### Why an extension could not handle it
+
+- `scripts/copy-codemode-sidecar.mjs` stages release files before startup; `scripts/smoke-standalone-binary.mjs` verifies the standalone artifact externally. `scripts/build-binaries.sh` sets compiler options that loaded extensions cannot change.
+
+### Expected merge conflict zones
+
+- Payload copying in `scripts/copy-codemode-sidecar.mjs`, RPC validation in `scripts/smoke-standalone-binary.mjs`, and compile flags in `scripts/build-binaries.sh`.
+
 ## 2026-09-13 - Retire webfetch compile-asset workarounds
 
 ### What changed
