@@ -125,6 +125,6 @@ describe("consumeStreamWithIdleTimeout wall-clock budget", () => {
 	});
 
 	it("exposes a default wall-clock budget below the idle timeout", () => {
-		expect(DEFAULT_SUMMARIZATION_MAX_DURATION_MS).toBe(120_000);
+		expect(DEFAULT_SUMMARIZATION_MAX_DURATION_MS).toBe(900_000);
 	});
 });
