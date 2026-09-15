@@ -57,4 +57,31 @@ describe("binary release workflow", () => {
 		assert.match(resourceLoader, /resolveBinaryFactory/);
 		assert.match(resourceLoader, /require\(["'`]@code-yeongyu\/senpi-codemode["'`]\)/);
 	});
+
+	it("consumes native prebuilds before building binaries", () => {
+		assert.match(workflow, /uses:\s*\.\/\.github\/workflows\/native-prebuilds\.yml/);
+		assert.match(workflow, /^\s+needs:\s*prebuilds\s*$/m);
+
+		const sourceRefExpr =
+			"${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}";
+		const sourceRefMatch = workflow.match(/SOURCE_REF:\s*(\$\{\{[^}]+\}\})/);
+		assert.ok(sourceRefMatch, "expected SOURCE_REF expression");
+		assert.equal(sourceRefMatch[1], sourceRefExpr);
+
+		const withSourceRefMatch = workflow.match(
+			/uses:\s*\.\/\.github\/workflows\/native-prebuilds\.yml[\s\S]*?source_ref:\s*(\$\{\{[^}]+\}\})/,
+		);
+		assert.ok(withSourceRefMatch, "expected prebuilds.with.source_ref expression");
+		assert.equal(withSourceRefMatch[1], sourceRefMatch[1]);
+
+		const stageIdx = workflow.indexOf("scripts/stage-native-prebuilds.mjs");
+		const buildIdx = workflow.indexOf("./scripts/build-binaries.sh");
+		assert.notEqual(stageIdx, -1, "expected stage-native-prebuilds.mjs step");
+		assert.notEqual(buildIdx, -1, "expected build-binaries.sh step");
+		assert.ok(stageIdx < buildIdx, "stage step must precede build-binaries.sh");
+	});
+
+	it("forwards the prebuild run id to the publish dispatch", () => {
+		assert.match(workflow, /prebuild_run_id=\$\{\{ github\.run_id \}\}/);
+	});
 });

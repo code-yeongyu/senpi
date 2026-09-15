@@ -185,6 +185,19 @@ for platform in "${PLATFORMS[@]}"; do
         echo "  (no pi-pty prebuild for $pty_host — archive uses pipe fallback)"
     fi
 
+    grep_native_src="../coding-agent/native/prebuilds/$pty_host/senpi_grep.$pty_host.node"
+    if [[ -f "$grep_native_src" ]]; then
+        mkdir -p "$OUTPUT_DIR/$platform/native/prebuilds/$pty_host"
+        cp "$grep_native_src" "$OUTPUT_DIR/$platform/native/prebuilds/$pty_host/"
+    else
+        required="$(node -e 'const t=require(process.argv[1]); process.stdout.write(t[process.argv[2]] && t[process.argv[2]].required ? "true" : "false");' "$REPO_ROOT/scripts/native-prebuild-targets.json" "$pty_host")"
+        if [[ "$required" == "true" ]]; then
+            echo "ERROR: missing required senpi_grep prebuild for $pty_host" >&2
+            exit 1
+        fi
+        echo "  (no senpi_grep prebuild for $pty_host — archive uses pipe fallback)"
+    fi
+
     # Copy the selected architecture's native platform helpers next to the executable.
     native_platform="${platform/windows-/win32-}"
     native_path="native/${native_platform%-*}/prebuilds"
