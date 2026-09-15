@@ -41,7 +41,9 @@ function capturedShell(originalShell, options) {
 	const shell = (strings, ...expressions) => {
 		if (!options.isActive()) return originalShell(strings, ...expressions);
 		const promise = originalShell(isolateStdin(strings), ...expressions);
-		return captureShellPromise(promise, options.emitText);
+		const captured = captureShellPromise(promise, options.emitText);
+		options.onChild?.(captured);
+		return captured;
 	};
 	for (const key of Object.keys(originalShell)) shell[key] = originalShell[key];
 	for (const method of SHELL_CONFIG_METHODS) {

@@ -1,5 +1,24 @@
 # senpi-codemode fork changes
 
+## 2026-09-15 - Terminate eval cell child processes on settle (#1697)
+
+### What changed
+
+- `src/kernels/js/worker-runtime.js` replaces the clear-without-kill child-set teardown with a TERM-then-KILL escalation (1.5s grace) run at every cell settle and on interrupt; tracked children are stored as `{pid, alive}` entries covering both `Bun.spawn` results and `Bun.$` shell promises.
+- `src/kernels/js/worker-shell-capture.js` routes captured `Bun.$` shell promises through `onChild`, so shell-template children are tracked like spawned ones.
+
+### Why
+
+- Cells that started dev servers or watchers leaked them: the worker cleared its child set without killing, and `Bun.$` children were never tracked. Long sessions accumulated orphaned processes reparented to pid 1.
+
+### Why an extension could not handle it
+
+- Child tracking lives inside the worker's private runtime; extensions cannot observe or retire worker-spawned processes.
+
+### Expected merge conflict zones
+
+- LOW: `worker-runtime.js` child-tracking block, `worker-shell-capture.js` captured-shell wrapper. Settle semantics are unchanged for cells without live children (the retire path is a no-op).
+
 ## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
 
 ### What changed

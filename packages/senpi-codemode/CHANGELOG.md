@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Eval cells no longer leak spawned child processes: when a cell settles (success, error, timeout, or interrupt), every tracked `Bun.spawn`/`Bun.$` child still alive receives SIGTERM and then SIGKILL after a 1.5s grace, and `Bun.$` shell children are now tracked at all ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+
 ### Removed
 
 ## [2026.9.13-2] - 2026-09-13

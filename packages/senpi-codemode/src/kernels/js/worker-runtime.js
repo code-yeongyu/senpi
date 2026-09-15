@@ -8,6 +8,17 @@ import { installShellCapture } from "./worker-shell-capture.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
 const INTERNAL_URL = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/iu;
+// A well-behaved child exits on SIGTERM within this grace; only TERM-proof children pay the delay.
+const CHILD_TERM_GRACE_MS = 1_500;
+
+function signalChild(entry, signal) {
+	if (!entry.alive || entry.pid === undefined) return;
+	try {
+		process.kill(entry.pid, signal);
+	} catch {
+		entry.alive = false;
+	}
+}
 
 export class JsWorkerRuntime {
 	#cwd;
@@ -42,22 +53,38 @@ export class JsWorkerRuntime {
 			return value;
 		} finally {
 			this.#pendingDisplays = [];
-			this.#children.clear();
+			await this.#retireChildren();
 			this.#hooks = null;
 		}
 	}
 
 	interrupt() {
-		for (const child of this.#children) {
-			if (child.exitCode === null && child.signalCode === null) child.kill();
-		}
+		void this.#retireChildren();
 	}
 
 	#trackChild(child) {
 		if (child === null || typeof child !== "object" || typeof child.kill !== "function") return;
-		this.#children.add(child);
-		const forget = () => this.#children.delete(child);
+		const entry = { pid: typeof child.pid === "number" ? child.pid : undefined, alive: true };
+		this.#children.add(entry);
+		const forget = () => {
+			entry.alive = false;
+			this.#children.delete(entry);
+		};
 		if (child.exited instanceof Promise) child.exited.then(forget, forget);
+		else if (typeof child.then === "function") child.then(forget, forget);
+	}
+
+	async #retireChildren() {
+		if (this.#children.size === 0) return;
+		const entries = [...this.#children];
+		for (const entry of entries) signalChild(entry, "SIGTERM");
+		const deadline = Date.now() + CHILD_TERM_GRACE_MS;
+		while (Date.now() < deadline) {
+			if (entries.every((entry) => !entry.alive)) break;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		for (const entry of entries) signalChild(entry, "SIGKILL");
+		this.#children.clear();
 	}
 
 	async #drainPendingDisplays() {
