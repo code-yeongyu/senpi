@@ -1,3 +1,26 @@
+## Gemini 3.8/3.7 Flash reject MINIMAL: floor disabled and explicit minimal at LOW (2026-09-14)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: new exported `isGeminiMinimalUnsupportedFlashModel` exact-id predicate (`gemini-3.7-flash`, `gemini-3.8-flash`).
+- `packages/ai/src/api/google-generative-ai.ts`: `getDisabledThinkingConfig` returns `{ thinkingLevel: LOW }` for the shared predicate's models before the generic Flash `MINIMAL` branch; `getThinkingLevel` maps explicit `minimal` to `LOW` for them (`low`/`medium`/`high` already map correctly). Older Flash still floors at `MINIMAL`, Pro still floors at `LOW`.
+- `packages/ai/src/api/google-vertex.ts`: same two branches in `getDisabledThinkingConfig` and `getGemini3ThinkingLevel` against the Vertex `ThinkingLevel` enum.
+- Tests: `packages/ai/test/gemini-38-flash-thinking-minimum.test.ts` pins the wire `thinkingConfig` for omitted reasoning, explicit runtime off, explicit minimal/high, and the session-title option shape (no `reasoning` key) on both providers, plus older-Flash `MINIMAL` and Pro `LOW` preservation.
+
+### Why
+
+- `packages/ai/src/api/google-generative-ai.ts` and `packages/ai/src/api/google-vertex.ts` take the disabled wire form whenever `streamSimple` runs without `reasoning` (the session-title path omits it by construction). Both floored every Gemini 3 Flash at `MINIMAL`, but Google documents 3.8 and 3.7 Flash as rejecting `MINIMAL` and supporting `LOW`/`MEDIUM`/`HIGH`, so title and thinking-off turns on `google/gemini-3.8-flash` failed while older Flash worked. The exact-id predicate lives in `packages/ai/src/api/google-shared.ts`.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/google-generative-ai.ts` and `packages/ai/src/api/google-vertex.ts` own the disabled-branch decision and the `thinkingLevel` wire mapping. The model check belongs in `packages/ai/src/api/google-shared.ts` so direct SDK consumers and session-title requests receive the same correction without requiring an extension.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/google-shared.ts` around the new `isGeminiMinimalUnsupportedFlashModel` export beside `resolveGoogleThinkingLevel`.
+- LOW: `packages/ai/src/api/google-generative-ai.ts` around the `getDisabledThinkingConfig` floor and the `getThinkingLevel` minimal-only remap.
+- LOW: `packages/ai/src/api/google-vertex.ts` around the `getDisabledThinkingConfig` floor and the `getGemini3ThinkingLevel` minimal-only remap.
+
 ## Responses completion-phase watchdog: a dropped terminal event is a stall, not a five-minute wait (2026-09-13)
 
 ### What changed

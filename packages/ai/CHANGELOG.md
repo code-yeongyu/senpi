@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Fixed Gemini 3.7 and 3.8 Flash requests with omitted, disabled, or minimal reasoning sending unsupported `MINIMAL` thinking. Google and Vertex now use `LOW` for those requests while preserving higher levels and older model behavior.
+
 ### Removed
 
 ## [2026.9.13-2] - 2026-09-13
