@@ -1,5 +1,25 @@
 # changes
 
+## 2026-09-14 - Retain readiness through the ensure handoff (#1656)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` transfers the successful authenticated readiness-probe connection to the outer ensure scope, retains it through the endpoint lock's real commit and close, and releases it in final cleanup immediately before `ensureHost()` settles.
+- `packages/coding-agent/test/rpc-host-lifecycle.test.ts` wraps the real ownership-lock release, records readiness ownership before and after its commit, verifies a protocol exchange after handoff, and proves the transient host still idle-exits after that client detaches without a scheduling delay.
+- `packages/coding-agent/docs/rpc.md` documents the full idle-window handoff guarantee for newly spawned hosts.
+
+### Why
+
+- On a loaded Windows runner, lock release and state writes after the readiness probe detached could outlast the transient host's idle window. The supervisor then removed the named pipe before `ensureHost()` returned, so the first real client received `connect ENOENT`.
+
+### Why an extension could not handle it
+
+- `ensureHost()` owns the readiness connection and returns before any session extension can observe or influence the client handoff.
+
+### Expected merge conflict zones
+
+- LOW: the spawned-host readiness result, outer endpoint-lock cleanup, and probe socket lifetime in `packages/coding-agent/src/modes/rpc/host-ensure.ts`.
+
 ## 2026-09-14 - Keep bundled workers out of supervisor entry dispatch
 
 ### What changed
@@ -53,6 +73,26 @@
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/rpc/session-worker.ts` startup imports and initialization before `parentPort` message subscription.
+
+## 2026-09-13 - Preserve short readiness activity between supervisor idle ticks (#1656)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` delegates the authenticated public proxy to `packages/coding-agent/src/modes/rpc/host-client-proxy.ts` and updates its idle decider on connection edges, not only timer ticks.
+- The extracted proxy reports successful attachment and the first detachment; rejected authentication does not count as activity. Idle policy values and the readiness protocol are unchanged.
+- The lifecycle suite registers real-socket, controlled-clock regressions covering reconnect before expiry, exact idle expiry, and rejected authentication.
+
+### Why
+
+- A readiness connection could open and close between ticks. The next tick then treated time containing that connection as continuously idle, removed the Windows named pipe, and left the attaching client with `connect ENOENT`.
+
+### Why an extension could not handle it
+
+- The detached lifecycle supervisor owns the public listener and idle clock before any session extension runs.
+
+### Expected merge conflict zones
+
+- The public proxy construction in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, its extracted implementation in `packages/coding-agent/src/modes/rpc/host-client-proxy.ts`, and the lifecycle test registration.
 
 ## 2026-09-12 - Queued RPC input carries its source to extension `input` handlers
 

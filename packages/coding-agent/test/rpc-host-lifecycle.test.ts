@@ -25,7 +25,6 @@ import {
 	findInternalSupervisorArgs,
 	HOST_COLD_START_ENV,
 	HOST_IDLE_EXIT_MS_ENV,
-	IdleExitDecider,
 	INTERNAL_SUPERVISOR_FLAG,
 	resolveHostChildLaunch,
 	resolveHostPolicy,
@@ -46,7 +45,16 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "../src/modes/rpc/socket-transport.ts";
-import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
+import { registerIdleProxyTests } from "./helpers/lifecycle-idle-proxy.ts";
+import {
+	hermeticProviderEnv,
+	MOCK_API_KEY,
+	MOCK_MODEL,
+	MOCK_PROVIDER,
+	writeRpcModelsJson,
+} from "./helpers/rpc-hermetic.ts";
+
+registerIdleProxyTests();
 
 const roots: string[] = [];
 const peers: JsonlPeer[] = [];
@@ -56,6 +64,10 @@ const collisionChildFixture = join(import.meta.dirname, "fixtures", "rpc-collisi
 // Windows supervisor-exit observation is load-dependent; teardown is eventually
 // consistent within the watchdog fallback bound, so the affected waits allow 30s.
 const WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS = 30_000;
+// The turn-active case already opts into a 60s test budget. JsonlPeer.request/
+// waitFor default to 15s; that nested clock is what fired on Windows CI
+// (run 34823696518 attempt 3) while the test timeout still had headroom.
+const TURN_ACTIVE_TEST_MS = 60_000;
 
 afterEach(async () => {
 	for (const peer of peers.splice(0)) peer.destroy();
@@ -113,49 +125,6 @@ describe("host lifecycle policy resolution", () => {
 			coldStart: "transient",
 			idleExitMs: DEFAULT_HOST_IDLE_EXIT_MS,
 		});
-	});
-});
-
-describe("idle exit decision core", () => {
-	function fakeClock(start: number): { now: () => number; advance: (ms: number) => void } {
-		let current = start;
-		return { now: () => current, advance: (ms: number) => (current += ms) };
-	}
-
-	it("exits only after the window elapsed with continuous idle", () => {
-		const clock = fakeClock(1_000);
-		const decider = new IdleExitDecider(600, clock.now);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
-		clock.advance(599);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
-		clock.advance(1);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("exit");
-	});
-
-	it("activity resets the window; a connection or turn holds the host open", () => {
-		const clock = fakeClock(0);
-		const decider = new IdleExitDecider(600, clock.now);
-		decider.update({ connections: 0, activeTurns: 0 });
-		clock.advance(500);
-		expect(decider.update({ connections: 1, activeTurns: 0 })).toBe("active");
-		clock.advance(60_000);
-		expect(decider.update({ connections: 1, activeTurns: 0 })).toBe("active");
-		expect(decider.update({ connections: 0, activeTurns: 2 })).toBe("active");
-		clock.advance(60_000);
-		expect(decider.update({ connections: 0, activeTurns: 2 })).toBe("active");
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
-		clock.advance(599);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
-		clock.advance(1);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("exit");
-	});
-
-	it("an infinite window (persistent cold start) never exits", () => {
-		const clock = fakeClock(0);
-		const decider = new IdleExitDecider(Number.POSITIVE_INFINITY, clock.now);
-		decider.update({ connections: 0, activeTurns: 0 });
-		clock.advance(Number.MAX_SAFE_INTEGER);
-		expect(decider.update({ connections: 0, activeTurns: 0 })).toBe("idle");
 	});
 });
 
@@ -217,39 +186,65 @@ describe("ensureHost-spawned host lifecycle", () => {
 		expect(listInternalSocketDirs().filter((dir) => !internalBefore.includes(dir))).toEqual([]);
 	}, 45_000);
 
-	it("does not exit while a client is attached, then exits after it detaches", async () => {
+	it("keeps readiness attached through ownership lock release and returns an attachable host", async () => {
+		// Given: the real ownership-lock release records readiness ownership on both sides of its COMMIT.
 		const qa = scratch("conn");
-		await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
+		const readinessAcrossLockRelease: boolean[] = [];
+
+		// When: ensureHost starts a transient host and completes its ownership handoff.
+		const ensured = await ensureLifecycleHost(qa, {
+			policy: { idleExitMs: 600 },
+			releaseOwnershipLock: async (releaseLock, isReadinessRetained) => {
+				readinessAcrossLockRelease.push(isReadinessRetained());
+				await releaseLock();
+				readinessAcrossLockRelease.push(isReadinessRetained());
+			},
+		});
+
+		// Then: readiness spans the real lock release, the returned endpoint serves RPC,
+		// and detaching the only real client still lets the transient host idle-exit.
+		expect(ensured.reused).toBe(false);
+		expect(readinessAcrossLockRelease).toEqual([true, true]);
 		const entry = currentManaged();
 		const peer = await JsonlPeer.connect(qa.socket);
-		await delay(2_000);
-		await expectHostAlive(qa, entry.pidFile);
+		expect(await peer.request({ id: "handoff", type: "get_protocol_info" })).toMatchObject({ success: true });
 		peer.destroy();
 		await waitForHostExit(entry);
 	}, 45_000);
 
-	it("does not exit while a turn is active even with no connections; exits after the turn settles", async () => {
-		const qa = scratch("turn");
-		const model = await HeldAnthropicModel.start();
-		models.push(model);
-		writeRpcModelsJson(qa.agentDir, model.origin);
-		await ensureLifecycleHost(qa, {
-			policy: { idleExitMs: 800 },
-			hostArgs: ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
-		});
-		const entry = currentManaged();
-		const peer = await JsonlPeer.connect(qa.socket);
-		const opened = await peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
-		const sessionId = openedSessionId(opened);
-		const agentStart = peer.waitFor((value) => value.type === "agent_start" && value.sessionId === sessionId);
-		await peer.request({ id: "prompt", type: "prompt", sessionId, message: "hold this turn open" });
-		await agentStart;
-		peer.destroy();
-		await delay(2_500);
-		await expectHostAlive(qa, entry.pidFile);
-		model.release();
-		await waitForHostExit(entry, 20_000);
-	}, 60_000);
+	it(
+		"does not exit while a turn is active even with no connections; exits after the turn settles",
+		async () => {
+			const qa = scratch("turn");
+			const model = await HeldAnthropicModel.start();
+			models.push(model);
+			writeRpcModelsJson(qa.agentDir, model.origin);
+			await ensureLifecycleHost(qa, {
+				policy: { idleExitMs: 800 },
+				hostArgs: ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
+				env: { ANTHROPIC_API_KEY: MOCK_API_KEY },
+			});
+			const entry = currentManaged();
+			const peer = await JsonlPeer.connect(qa.socket);
+			const opened = await peer.request({ id: "open", type: "open_session", cwd: qa.cwd }, TURN_ACTIVE_TEST_MS);
+			const sessionId = openedSessionId(opened);
+			const agentStart = peer.waitFor(
+				(value) => value.type === "agent_start" && value.sessionId === sessionId,
+				TURN_ACTIVE_TEST_MS,
+			);
+			await peer.request(
+				{ id: "prompt", type: "prompt", sessionId, message: "hold this turn open" },
+				TURN_ACTIVE_TEST_MS,
+			);
+			await agentStart;
+			peer.destroy();
+			await delay(2_500);
+			await expectHostAlive(qa, entry.pidFile);
+			model.release();
+			await waitForHostExit(entry, 20_000);
+		},
+		TURN_ACTIVE_TEST_MS,
+	);
 
 	it("starts a fresh host transparently on the next ensure after an idle exit", async () => {
 		const qa = scratch("ensure");
@@ -678,6 +673,7 @@ async function ensureLifecycleHost(
 		hostArgs?: string[];
 		env?: Record<string, string>;
 		spawn?: { command: string; args: string[] };
+		releaseOwnershipLock?: (releaseLock: () => Promise<void>, isReadinessRetained: () => boolean) => Promise<void>;
 	} = {},
 ) {
 	const hostArgs = options.hostArgs ?? [];
@@ -697,6 +693,7 @@ async function ensureLifecycleHost(
 					...(options.env ?? {}),
 				},
 				hostArgs,
+				releaseOwnershipLock: options.releaseOwnershipLock,
 				spawn: options.spawn
 					? {
 							command: process.execPath,
@@ -722,11 +719,7 @@ async function ensureLifecycleHost(
 	}
 }
 
-/**
- * The transient supervisor can idle-exit between answering the handshake and
- * ensureHost returning, so the pidfile may already be gone; the returned pid is
- * still the identity every later liveness/exit probe needs.
- */
+/** The returned pid remains the fallback identity if shutdown removes the pidfile. */
 async function recordedPidFile(pidFilePath: string, pid: number): Promise<{ pid: number; processStartTime: string }> {
 	try {
 		return JSON.parse(await readFile(pidFilePath, "utf8")) as { pid: number; processStartTime: string };
@@ -985,19 +978,37 @@ class JsonlPeer {
 	}
 
 	waitFor(predicate: (value: RecordValue) => boolean, timeoutMs = 15_000): Promise<RecordValue> {
-		const existing = this.messages.find(predicate);
-		if (existing) return Promise.resolve(existing);
-		return new Promise((resolve, reject) => {
+		const pending = new Promise<RecordValue>((resolve, reject) => {
 			const waiter = {
 				predicate,
 				resolve,
 				timer: setTimeout(() => {
 					this.waiters.delete(waiter);
-					reject(new Error("Timed out waiting for RPC record"));
+					reject(
+						new Error(
+							`Timed out waiting for RPC record: ${JSON.stringify(
+								this.messages.map((value) => ({
+									type: value.type,
+									id: value.id,
+									command: value.command,
+								})),
+							)}`,
+						),
+					);
 				}, timeoutMs),
 			};
 			this.waiters.add(waiter);
+			const existing = this.messages.find(predicate);
+			if (!existing) return;
+			clearTimeout(waiter.timer);
+			this.waiters.delete(waiter);
+			resolve(existing);
 		});
+		// Arm-then-await: a sibling waiter can time out while this test is still
+		// awaiting another request. Mark handled at creation so Node does not blame
+		// the next test; the rejection still surfaces on the eventual await.
+		pending.catch(() => {});
+		return pending;
 	}
 
 	destroy(): void {
