@@ -4,6 +4,7 @@
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
 import type {
+	Api,
 	Context,
 	ImageContent,
 	Model,
@@ -50,6 +51,14 @@ export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
 				`Unsupported Google thinking level mapping for ${model.provider}/${model.id}: ${level} -> ${String(mapped)}`,
 			);
 	}
+}
+
+// Gemini 3.7/3.8 Flash reject MINIMAL and accept LOW/MEDIUM/HIGH
+// (https://ai.google.dev/gemini-api/docs/generate-content/thinking). Closed
+// exact-id set; do not extend to future versions without docs.
+export function isGeminiMinimalUnsupportedFlashModel(model: Pick<Model<Api>, "id">): boolean {
+	const id = model.id.toLowerCase();
+	return id === "gemini-3.7-flash" || id === "gemini-3.8-flash";
 }
 
 /**

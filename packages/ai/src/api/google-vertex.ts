@@ -33,6 +33,7 @@ import type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./goog
 import {
 	convertMessages,
 	convertTools,
+	isGeminiMinimalUnsupportedFlashModel,
 	isThinkingPart,
 	mapStopReason,
 	resolveGoogleFunctionCallingMode,
@@ -570,6 +571,9 @@ function getDisabledThinkingConfig(model: Model<"google-vertex">): ThinkingConfi
 	// Google docs: Gemini 3.1 Pro cannot disable thinking, and Gemini 3 Flash / Flash-Lite
 	// do not support full thinking-off either. For Gemini 3 models, use the lowest supported
 	// thinkingLevel without includeThoughts so hidden thinking remains invisible to pi.
+	if (isGeminiMinimalUnsupportedFlashModel(model)) {
+		return { thinkingLevel: ThinkingLevel.LOW };
+	}
 	if (isGemini3ProModel(model)) {
 		return { thinkingLevel: ThinkingLevel.LOW };
 	}
@@ -594,6 +598,9 @@ function getGemini3ThinkingLevel(
 			case "high":
 				return "HIGH";
 		}
+	}
+	if (effort === "minimal" && isGeminiMinimalUnsupportedFlashModel(model)) {
+		return "LOW";
 	}
 	switch (effort) {
 		case "minimal":

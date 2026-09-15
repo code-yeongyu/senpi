@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- Fixed automatic session titles failing with `Thinking level MINIMAL is not supported` on Gemini 3.7 and 3.8 Flash. Title requests now use the supported `LOW` level without changing the chat's reasoning setting.
+
 - Fixed native grep reporting duplicate files across overlapping roots and symlink aliases; each file is searched once and reported under its lexically smallest display path without canonicalizing every file ([#1678](https://github.com/code-yeongyu/senpi/issues/1678)).
 
 - Fixed deferred (search-exposed) tools never activating by name in sessions without the tool-search builtin: the session now promotes the tool itself when no catalog activator claims it ([#1682](https://github.com/code-yeongyu/senpi/issues/1682)).
