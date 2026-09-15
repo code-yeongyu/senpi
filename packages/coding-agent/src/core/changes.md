@@ -5945,3 +5945,42 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 - HIGH: `packages/coding-agent/src/core/agent-session.ts` (`prompt`, `steer`/`followUp`, `_queueUserInput`, compaction and retry blocks); `packages/coding-agent/src/core/settings-manager.ts` compaction/retry getters; `packages/coding-agent/src/core/session-manager.ts` loaders.
 - MEDIUM: `packages/coding-agent/src/core/model-runtime.ts` stream wrappers; `packages/coding-agent/src/core/model-registry.ts` availability methods; `packages/coding-agent/src/core/messages.ts` `convertToLlm`.
 - LOW: `packages/coding-agent/src/core/keybindings.ts` binding table; `packages/coding-agent/src/core/model-resolver.ts` defaults map; `packages/coding-agent/src/core/skills.ts` prompt text; `packages/coding-agent/src/core/agent-session-runtime.ts` import path.
+
+## 2026-09-15 - Resident store blob backing + idle materialized-view release
+
+### What changed
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: eviction now has a recoverable backing. When the resident budget is exceeded, the least-recently-used string is written to a lazily-resolved blob directory (temp file + rename) before being dropped from the map; `materialize` hydrates evicted strings from that directory without re-entering the resident cache, so a bulk read cannot refill the budget. Without a backing directory eviction is disabled entirely — strings stay resident beyond the budget because dropping them would leave consumers holding unreadable sentinel tokens (previously reachable for in-memory sessions over 64 MiB). `clear()` wipes the blob cache along with the map; `stats()` gained `evictedCount`/`evictedBytes`.
+- `packages/coding-agent/src/core/session-manager.ts`: persisted sessions configure the store with `<sessionDir>/resident-blobs/<sessionId>` (`--no-session` resolves to no directory and never writes blobs), and a new `dropMaterializedCaches()` releases `entriesCache`, `branchCache`, and `compactEntriesCache`.
+- `packages/coding-agent/src/core/agent-session.ts`: `_emitAgentIdleAfterDeferredTurns()` releases the memoized materialized views right before emitting `agent_idle`. Materialized entries hold the full persisted strings, so views kept between turns pinned the entire session text in resident memory while idle (measured: an idle session held ~1.1 GB dirty JS heap on macOS via `footprint`; the store budget alone bounded only its own map while the views re-pinned everything).
+
+### Why
+
+- The store's 64 MiB budget bounded only its own map. `getEntries()` memoizes fully materialized entries, so the last read before idle kept every large tool result alive, and recovery for evicted strings re-parsed the entire session JSONL per missing entry (`loadEntriesFromFile` inside `_materializeEntry`). The blob backing makes recovery O(string) via one small file read while the session file remains authoritative: a missing or corrupt blob falls back to the existing batched JSONL recovery unchanged.
+
+### Why an extension could not handle it
+
+- `entriesCache`/`branchCache`/`compactEntriesCache` are private `SessionManager` state and the `agent_idle` settle boundary is private `AgentSession` orchestration; no extension hook can release these views at the right time, and the recovery path lives inside the store's own materialization.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-resident-store.ts` internals; `packages/coding-agent/src/core/session-manager.ts` constructor tail and the block after `getEntries()`; `packages/coding-agent/src/core/agent-session.ts` `_emitAgentIdleAfterDeferredTurns` tail.
+
+## 2026-09-15 - Spill resident strings to the blob backing across compaction
+
+### What changed
+
+- `packages/coding-agent/src/core/session-resident-store.ts`: new `spillResident()` writes every resident string to the blob backing and empties the map while keeping the backing itself, unlike `clear()` which wipes both.
+- `packages/coding-agent/src/core/session-manager.ts`: `_trimMirrorAfterCompaction()` spills instead of clearing, so strings referenced by the retained mirror (and by branches over pre-compaction history) keep hydrating from the backing after compaction instead of falling back to the batched full-JSONL reload.
+
+### Why
+
+- The previous compaction path cleared the store, which also dropped the blob cache, pushing every post-compaction read of evicted strings back onto `_loadFullHistoryEntries()` (a full session-file parse). With the spill, compact-context recovery stays O(string) per entry across compaction boundaries.
+
+### Why an extension could not handle it
+
+- The mirror-trim path and the store's backing lifecycle are private `SessionManager`/store internals; extensions never see the spill point.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-resident-store.ts` (new method after `clear()`); `packages/coding-agent/src/core/session-manager.ts` `_trimMirrorAfterCompaction` one-line change.

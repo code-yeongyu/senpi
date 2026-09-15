@@ -1985,6 +1985,10 @@ export class AgentSession {
 		}
 		if (settlementEpoch !== this._settlementEpoch) return;
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		// Settling idle: release the memoized materialized session views. Materialized
+		// entries pin the full persisted strings, so keeping the views between turns
+		// holds the whole session text in resident memory while nothing runs.
+		this.sessionManager.dropMaterializedCaches();
 		this._emit({ type: "agent_idle" });
 	}
 
