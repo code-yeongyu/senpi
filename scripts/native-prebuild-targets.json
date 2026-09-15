@@ -1,0 +1,8 @@
+{
+	"win32-x64": { "required": true },
+	"win32-arm64": { "required": false },
+	"darwin-x64": { "required": true },
+	"darwin-arm64": { "required": true },
+	"linux-x64": { "required": true },
+	"linux-arm64": { "required": true }
+}
