@@ -1,3 +1,22 @@
+## 2026-09-11 - Guidance follows native capability or client credentials
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts` contributes the bundled skill and shared guidance when the native image-generation gate and enable predicate are active, falling back to the unchanged client credential resolver otherwise.
+- Focused harness regressions load the skill for OAuth-only sessions without an image key and verify switching away or disabling native generation. The arbitration matrix's two native-without-client-credentials rows now expect guidance and skill availability; other surface contracts remain unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts` withheld guidance from native-capable sessions that did not have separate image API credentials.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts` owns the bundled resource contribution and reuses the native builtin's existing gate rather than duplicating transport or credential policy.
+
+### Expected merge conflict zones
+
+- LOW: imports and the shared availability predicate in `packages/coding-agent/src/core/extensions/builtin/imagegen/index.ts`.
+
 ## 2026-09-10 - Sunburst stays the default model
 
 ### What changed

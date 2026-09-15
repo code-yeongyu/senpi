@@ -1,3 +1,22 @@
+## 2026-09-11 - Native image generation on Codex OAuth
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/gate.ts` recognizes `openai-codex-responses` on the exact `chatgpt.com` host without rewriting its API or base URL. Official `api.openai.com` Responses behavior, explicit compatibility overrides, global disable, and unrelated API exclusions remain unchanged. Codex proxies, lookalikes, malformed URLs, and an empty base URL do not default to native generation.
+- Focused suite tests cover the gate and harness lifecycle, including pinned Sunburst payload descriptors, native/client exclusivity, bypass, and model switches.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/gate.ts` previously rejected the Codex OAuth transport even though its official endpoint supports the existing native server tool.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/gate.ts` is already the owning builtin's capability gate; another injector would conflict with its arbitration pass.
+
+### Expected merge conflict zones
+
+- LOW: API discrimination and official-host detection in `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/gate.ts`.
+
 ## 2026-09-10 - Native tool follows the Sunburst default
 
 ### What changed
