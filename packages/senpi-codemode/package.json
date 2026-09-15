@@ -30,9 +30,9 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@babel/parser": "8.0.4",
+		"@babel/parser": "8.0.5",
 		"@earendil-works/pi-ai": "^2026.9.15",
-		"typebox": "1.3.27"
+		"typebox": "1.3.30"
 	},
 	"peerDependencies": {
 		"@code-yeongyu/senpi": "*"

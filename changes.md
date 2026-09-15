@@ -1,5 +1,42 @@
 # changes — senpi-monorepo root
 
+## 2026-09-14 - Enforce temporary release-age exception expiry
+
+### What changed
+
+- `package.json` runs the release-age exception guard in `check:pinned-deps` and `preinstall`. `.npmrc` identifies its enforced UTC cutoff for the reviewed marked/zod exceptions.
+
+### Why
+
+- `package.json` must reject stale exceptions rather than silently retaining them. `.npmrc` previously carried only a removal reminder for 2026-09-15 (Refs #1656).
+
+### Why an extension could not handle it
+
+- `package.json` and `.npmrc` govern dependency installation before extensions execute.
+
+### Expected merge conflict zones
+
+- `package.json` validation/install script chains and the dated `.npmrc` exception entries.
+
+## 2026-09-14 - Exact dependency hygiene pins and portable fixture tooling
+
+### What changed
+
+- `package.json` pins Biome 2.5.13, tsx 4.23.13 and the shared SDK override to 0.125.0; removes canvas from both build-trust lists. `pnpm-workspace.yaml` removes canvas from its build policies. `tsx` and `concurrently` remain required by the existing npm-compatible scripts. `biome.json` aligns its schema URL with Biome 2.5.13.
+- `.npmrc` temporarily exempts the explicitly reviewed marked 18.0.13 and zod 4.6.4 pins from the two-day release-age gate, with removal after 2026-09-15. Other packages retain the age policy.
+
+### Why
+
+- `biome.json` must use the schema shipped by the pinned formatter. `package.json` and `pnpm-workspace.yaml` must not retain native build permissions for the retired canvas fixture generator. `.npmrc` otherwise rejects the requested pins before peer resolution, despite their compatible peer ranges (Refs #1656).
+
+### Why an extension could not handle it
+
+- `package.json`, `pnpm-workspace.yaml`, and `.npmrc` control installation before any extension loads; `biome.json` governs static tooling.
+
+### Expected merge conflict zones
+
+- Exact versions and build-trust lists in `package.json`; canvas entries in `pnpm-workspace.yaml`; dated exceptions in `.npmrc`; schema URL in `biome.json`.
+
 ## Re-wire check:entry-graphs into the root check chain (2026-09-13)
 
 ### What changed

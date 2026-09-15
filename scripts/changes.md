@@ -19,6 +19,24 @@
 
 - `scripts/build-coding-agent-bundle.mjs`: external allowlist and common esbuild plugins.
 
+## 2026-09-14 - Reject expired release-age exceptions
+
+### What changed
+
+- `scripts/check-release-age-exceptions.mjs` reports structured errors for active marked/zod exclusions after 2026-09-15 UTC. Fixed-clock tests exercise the real npm validation and preinstall entry points at the cutoff and after exception removal.
+
+### Why
+
+- `scripts/check-release-age-exceptions.mjs` makes temporary install-policy exemptions expire observably instead of relying on a prose reminder (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/check-release-age-exceptions.mjs` runs before installation or runtime extension loading.
+
+### Expected merge conflict zones
+
+- The reviewed exception names and UTC cutoff in `scripts/check-release-age-exceptions.mjs`.
+
 ## 2026-09-14 - Publish staging mirrors the dependency manifest exactly
 
 ### What changed
@@ -61,6 +79,44 @@
 ### Expected merge conflict zones
 
 - Payload copying in `scripts/copy-codemode-sidecar.mjs`, RPC validation in `scripts/smoke-standalone-binary.mjs`, and compile flags in `scripts/build-binaries.sh`.
+
+## 2026-09-14 - Exclude sourcemaps from unhoisted publish dependencies
+
+### What changed
+
+- `scripts/prepare-senpi-publish-manifest.mjs` removes sourcemap files from the final staged dependency tree, including packages npm installed directly under coding-agent before workspace copying.
+
+### Why
+
+- `scripts/prepare-senpi-publish-manifest.mjs` selects every portable installed package for bundling. Tree-copy filters alone missed 44 maps in the unhoisted diff and http-proxy-agent packages, so the final manifest boundary also enforces the zero-map contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/prepare-senpi-publish-manifest.mjs` defines the tarball's installed dependency set before runtime extensions execute.
+
+### Expected merge conflict zones
+
+- Final staged-tree traversal in `scripts/prepare-senpi-publish-manifest.mjs`, after platform exclusions and before manifest serialization.
+
+## 2026-09-14 - Align dependency gates and omit publish-only sourcemaps
+
+### What changed
+
+- `scripts/generate-coding-agent-shrinkwrap.mjs` and `scripts/generate-coding-agent-install-lock.mjs` both allow the reviewed @google/genai 2.22.0 no-op preinstall script; protobufjs 7.6.5 and esbuild 0.28.2 remain unchanged.
+- `scripts/build-binaries.sh` removes the canvas native rebuild because the fixture generator now uses Photon. `scripts/qa/fork-preservation-check.mjs` expects the refreshed SDK pin by default.
+- `scripts/prepare-senpi-bundled-workspaces.mjs` and `scripts/prepare-senpi-publish-dependencies.mjs` route their tree-copy paths through `scripts/copy-publish-tree.mjs`, omitting sourcemaps from dependency, workspace and vendor staging while retaining workspace filters and source build artifacts. The root distribution is excluded by its manifest files policy.
+
+### Why
+
+- `scripts/qa/fork-preservation-check.mjs` must not reject the reviewed bump. `scripts/generate-coding-agent-shrinkwrap.mjs` and `scripts/generate-coding-agent-install-lock.mjs` must review the same exact SDK version. `scripts/build-binaries.sh` must not rebuild a removed dependency. `scripts/prepare-senpi-bundled-workspaces.mjs` must exclude bundled maps too: npm's root files exclusion does not apply to bundled dependency packages, so a manifest-only change cannot satisfy the zero-map package contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `scripts/generate-coding-agent-shrinkwrap.mjs`, `scripts/generate-coding-agent-install-lock.mjs`, `scripts/build-binaries.sh`, `scripts/prepare-senpi-bundled-workspaces.mjs`, and `scripts/qa/fork-preservation-check.mjs` run at build or publish time, before runtime extensions execute.
+
+### Expected merge conflict zones
+
+- SDK allowlist literals in `scripts/generate-coding-agent-shrinkwrap.mjs` and `scripts/generate-coding-agent-install-lock.mjs`; native rebuild section in `scripts/build-binaries.sh`; copying calls in `scripts/prepare-senpi-bundled-workspaces.mjs`; SDK default in `scripts/qa/fork-preservation-check.mjs`.
 
 ## 2026-09-13 - Retire webfetch compile-asset workarounds
 

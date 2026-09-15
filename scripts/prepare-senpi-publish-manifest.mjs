@@ -194,6 +194,10 @@ export function stagePublishManifest(repoRoot) {
 			rmSync(join(codingAgentNodeModules, packageName), { recursive: true, force: true });
 		}
 	}
+	// npm can install unhoisted packages here before staging; they bypass the tree-copy filter.
+	for (const file of readdirSync(codingAgentNodeModules, { recursive: true, withFileTypes: true })) {
+		if (file.isFile() && file.name.endsWith(".map")) rmSync(join(file.parentPath, file.name));
+	}
 	// Keep the original dependency keys so npm packs the modules at the import paths
 	// the compiled source uses. Resolve those keys through fork-owned aliases instead
 	// of attempting to fetch lockstep versions from the upstream-owned namespace.

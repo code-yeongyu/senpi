@@ -1,33 +1,30 @@
 #!/usr/bin/env node
 
-import { createCanvas } from "canvas";
-import { mkdirSync, writeFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { PhotonImage } from "@silvia-odwyer/photon-node";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const width = 200;
+const height = 200;
+// Mutable RGBA drawing buffer: opaque white, with a radius-50 red circle.
+const pixels = new Uint8Array(width * height * 4).fill(255);
+for (let y = 0; y < height; y++) {
+	for (let x = 0; x < width; x++) {
+		if ((x + 0.5 - 100) ** 2 + (y + 0.5 - 100) ** 2 < 50 ** 2) {
+			const offset = (y * width + x) * 4;
+			pixels[offset + 1] = 0;
+			pixels[offset + 2] = 0;
+		}
+	}
+}
 
-// Create a 200x200 canvas
-const canvas = createCanvas(200, 200);
-const ctx = canvas.getContext("2d");
-
-// Fill background with white
-ctx.fillStyle = "white";
-ctx.fillRect(0, 0, 200, 200);
-
-// Draw a red circle in the center
-ctx.fillStyle = "red";
-ctx.beginPath();
-ctx.arc(100, 100, 50, 0, Math.PI * 2);
-ctx.fill();
-
-// Save the image
-const buffer = canvas.toBuffer("image/png");
-const outputPath = join(__dirname, "..", "test", "data", "red-circle.png");
-
-// Ensure the directory exists
-mkdirSync(join(__dirname, "..", "test", "data"), { recursive: true });
-
-writeFileSync(outputPath, buffer);
+const image = new PhotonImage(pixels, width, height);
+const outputPath = fileURLToPath(new URL("../test/data/red-circle.png", import.meta.url));
+try {
+	mkdirSync(dirname(outputPath), { recursive: true });
+	writeFileSync(outputPath, image.get_bytes());
+} finally {
+	image.free();
+}
 console.log(`Generated test image at: ${outputPath}`);

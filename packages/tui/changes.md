@@ -18,6 +18,24 @@
 
 - `packages/tui/src/terminal.ts` cursor broker and options. No renderer or default setting changes.
 
+## 2026-09-14 - Align the markdown parser pin
+
+### What changed
+
+- `packages/tui/package.json` pins marked 18.0.13.
+
+### Why
+
+- `packages/tui/package.json` must share the markdown parser version used by coding-agent (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/tui/package.json` controls installation before rendering or extension loading.
+
+### Expected merge conflict zones
+
+- The marked dependency in `packages/tui/package.json`.
+
 ## 2026-09-10 - Use native TypeScript builds for omob performance
 
 ### What changed

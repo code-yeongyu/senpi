@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-14 - Align shared schema and file-policy pins
+
+### What changed
+
+- `packages/agent/package.json` pins typebox 1.3.30, yaml 2.9.1 and ignore 7.0.9.
+
+### Why
+
+- `packages/agent/package.json` must share schema and file-policy versions with the bundled coding-agent runtime (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/agent/package.json` controls installation before extension loading.
+
+### Expected merge conflict zones
+
+- Dependency pins in `packages/agent/package.json`.
+
 ## 2026-09-12 - Pin the chord dependency to upstream's published version
 
 ### What changed

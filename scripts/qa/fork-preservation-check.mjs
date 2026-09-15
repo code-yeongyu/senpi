@@ -48,7 +48,7 @@ const ASTRA_MIN_ROWS = 13;
 const CALVER = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 
 function parseArgs(argv) {
-	const args = { root: process.cwd(), anthropicSdk: "0.123.0" };
+	const args = { root: process.cwd(), anthropicSdk: "0.125.0" };
 	for (let index = 0; index < argv.length; index += 1) {
 		const flag = argv[index];
 		if (flag === "--root") args.root = argv[(index += 1)];

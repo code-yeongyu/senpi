@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { copyPublishTree } from "./copy-publish-tree.mjs";
 import { rewriteOwnedRegistryAliases, stagePublishManifest } from "./prepare-senpi-publish-manifest.mjs";
 import { stagePublishDependencies } from "./prepare-senpi-publish-dependencies.mjs";
 import { pinSenpiPeerDependency } from "./publish-manifest.mjs";
@@ -236,7 +237,7 @@ function copyVendoredTypeWorkspaces(repoRoot) {
 
 		const targetRoot = join(vendorRoot, workspace.target);
 		mkdirSync(dirname(targetRoot), { recursive: true });
-		cpSync(sourceRoot, targetRoot, { recursive: true });
+		copyPublishTree(sourceRoot, targetRoot);
 	}
 
 	const clientRoot = join(vendorRoot, "pi-client");
@@ -289,7 +290,7 @@ function copyNestedWorkspaceDependencies(repoRoot, manifest, workspace, targetRo
 
 		const targetPath = join(targetNodeModules, packageName);
 		mkdirSync(dirname(targetPath), { recursive: true });
-		cpSync(sourcePath, targetPath, { recursive: true });
+		copyPublishTree(sourcePath, targetPath);
 	}
 }
 
@@ -417,8 +418,7 @@ export function prepareSenpiBundledWorkspaces(repoRoot = root) {
 		const targetRoot = join(codingAgentNodeModules, ...workspace.targetParts);
 		rmSync(targetRoot, { recursive: true, force: true });
 		mkdirSync(dirname(targetRoot), { recursive: true });
-		cpSync(sourceRoot, targetRoot, {
-			recursive: true,
+		copyPublishTree(sourceRoot, targetRoot, {
 			filter: (sourcePath) => shouldCopyWorkspaceFile(sourceRoot, sourcePath, workspace.sourceOnly),
 		});
 		if (workspace.sourceOnly) {

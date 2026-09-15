@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-14 - Align the shared schema pin
+
+### What changed
+
+- `packages/protocol/package.json` pins typebox 1.3.30.
+
+### Why
+
+- `packages/protocol/package.json` must use the same schema implementation as its bundled runtime consumers (Refs #1656).
+
+### Why an extension could not handle it
+
+- `packages/protocol/package.json` controls dependency resolution before the protocol executes.
+
+### Expected merge conflict zones
+
+- The typebox dependency in `packages/protocol/package.json`.
+
 ## 2026-09-12 - Pin the chord dependency to upstream's published version
 
 ### What changed

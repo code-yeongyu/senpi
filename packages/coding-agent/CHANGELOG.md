@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Refreshed provider SDK and schema/parser dependency pins, removed unused dependencies and native canvas fixture tooling, and excluded distribution and bundled sourcemaps from the npm package while preserving declarations and documentation assets ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
+
 ### Fixed
 
 - RPC `close_session` acknowledgements and `session_closed` events, including worker-failure terminals, are published only after the session registry has removed the entry, so an immediate `list_sessions` never returns the closed session. Filesystem watchers are cancelled atomically with shutdown, every disposer is joined before process exit, reentrant RPC shutdown shares that join and keeps a failure exit code, and nonpersistent RPC probes do not start watchers ([#1656](https://github.com/code-yeongyu/senpi/issues/1656)).
