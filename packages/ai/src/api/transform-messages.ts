@@ -62,11 +62,25 @@ function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], p
 	return result;
 }
 
+function normalizeToolResultMediaData(content: (TextContent | ImageContent)[]): (TextContent | ImageContent)[] {
+	let changed = false;
+	const normalized = content.map((block) => {
+		if (block.type !== "image") return block;
+		const prefix = `data:${block.mimeType};base64,`;
+		if (!block.data.startsWith(prefix)) return block;
+		changed = true;
+		return { ...block, data: block.data.slice(prefix.length) };
+	});
+	return changed ? normalized : content;
+}
+
 function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model: Model<TApi>): Message[] {
 	const supportsImages = model.input.includes("image");
 	const supportsVideo = model.input.includes("video");
 	if (supportsImages && supportsVideo) {
-		return messages;
+		return messages.map((msg) =>
+			msg.role === "toolResult" ? { ...msg, content: normalizeToolResultMediaData(msg.content) } : msg,
+		);
 	}
 
 	return messages.map((msg) => {
@@ -86,7 +100,7 @@ function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model
 		}
 
 		if (msg.role === "toolResult") {
-			let content = msg.content;
+			let content = normalizeToolResultMediaData(msg.content);
 			if (!supportsVideo) {
 				content = replaceMediaWithPlaceholder(content, NO_VIDEO_TOOL_PLACEHOLDER, (b) =>
 					isVideoMimeType(b.mimeType),
