@@ -177,7 +177,7 @@ describe("required compaction deterministic fallback", () => {
 	});
 
 	it("fails closed for every non-required reason even when typed truncation recovery would fit", async () => {
-		const nonRequiredReasons = ["pre_prompt", "branch", "extension"] satisfies CompactionReason[];
+		const nonRequiredReasons = ["branch", "extension"] satisfies CompactionReason[];
 		for (const reason of nonRequiredReasons) {
 			const handlers = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 9_900 });
@@ -219,10 +219,87 @@ describe("required compaction deterministic fallback", () => {
 		}
 	});
 
+	it("recovers mandatory pre-prompt compaction after a typed summarizer failure", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: Responses stream ended before a terminal event",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+		};
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "pre_prompt",
+				willRetry: false,
+				requestId: "pre-prompt-required-recovery",
+				preparation,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		expect(result).toMatchObject({
+			compaction: {
+				firstKeptEntryId: preparation.firstKeptEntryId,
+				details: { retainedSuffix: "prepared" },
+			},
+		});
+		expect(result).not.toHaveProperty("cancel");
+		expect(harness.registration.getCallLog()).toHaveLength(1);
+	});
+
 	it("classifies a duration watchdog without sleeping", () => {
 		expect(classifyRequiredCompactionFallbackFailure(new StreamDurationBudgetError(120_000))).toBe(
 			"summarization-timeout",
 		);
+	});
+
+	it("advances past unsafe split-turn content to the earliest replay-safe suffix", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const preparedBoundaryId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: "Continue the current turn.",
+			timestamp: 4,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 5, stopReason: "toolUse" }),
+			content: [{ type: "toolCall", id: "unsafe-tool", name: "read", arguments: { path: "image.png" } }],
+		});
+		harness.sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "unsafe-tool",
+			toolName: "read",
+			content: [
+				{ type: "text", text: "Malformed image result" },
+				{ type: "image", mimeType: "image/png" },
+			] as never,
+			isError: false,
+			timestamp: 6,
+		});
+		const safeTailId = harness.sessionManager.appendMessage(
+			fauxAssistantMessage("Work continued safely.", { timestamp: 7 }),
+		);
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: preparedBoundaryId,
+		};
+
+		const result = createRequiredCompactionFallback(preparation, 100_000, "summarization-timeout", {}, branchEntries);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: safeTailId,
+			details: { retainedSuffix: "later-safe-boundary" },
+		});
 	});
 
 	it("rejects truncation-looking generic errors and requires structured summary-request provenance", () => {

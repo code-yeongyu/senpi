@@ -44,7 +44,7 @@ export function isAbortedAssistantMessage(event: { message: AgentMessage }): boo
 }
 
 export function isRequiredCompactionFallbackReason(reason: SessionBeforeCompactEvent["reason"]): boolean {
-	return reason === "manual" || reason === "threshold" || reason === "overflow";
+	return reason === "manual" || reason === "threshold" || reason === "overflow" || reason === "pre_prompt";
 }
 
 export function recentCheckpoint(ctx: ExtensionContext): checkpointState.AgentCheckpoint | null {

@@ -1,5 +1,30 @@
 # changes.md — builtin compaction policy
 
+## Recover stalled pre-prompt compaction across unsafe split turns (2026-09-16)
+
+### What changed
+
+- Mandatory `pre_prompt` compaction now enters the same deterministic failure
+  recovery route as manual, threshold, and overflow compaction.
+- When every prepared or earlier boundary retains unsafe split-turn content,
+  deterministic recovery now scans forward and selects the earliest suffix that
+  already passes the existing replay-safety, atomic tool-chain, and effective
+  token-budget checks.
+
+### Why
+
+- A resumed session above its compaction threshold could stall during provider
+  summarization, reject compaction, and then fail admission without attempting
+  the deterministic fallback.
+- Long split turns can contain an unsafe historical tool result with no later
+  user boundary. Scanning only prepared, user, and earlier boundaries retains
+  that unsafe result forever even when a later assistant boundary is safe.
+
+### Expected merge conflict zones
+
+- `extension-wiring.ts`: required fallback reason classification.
+- `deterministic-fallback.ts`: retained-suffix candidate ordering.
+
 ## Deterministic resume slice for an over-window restored context (2026-09-10)
 
 ### What changed
