@@ -224,7 +224,7 @@ describe("required compaction deterministic fallback", () => {
 
 	it("recovers mandatory pre-prompt compaction after a typed summarizer failure", async () => {
 		const handlers = createCompactionHandlers();
-		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const harness = createBlockingContext({ usageTokens: 9_600 });
 		harness.registration.setResponses([
 			fauxAssistantMessage("", {
 				stopReason: "error",
@@ -257,6 +257,40 @@ describe("required compaction deterministic fallback", () => {
 			},
 		});
 		expect(result).not.toHaveProperty("cancel");
+		expect(harness.registration.getCallLog()).toHaveLength(1);
+	});
+
+	it("preserves full context when proactive pre-prompt compaction fails below the hard cap", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_599 });
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: Responses stream ended before a terminal event",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+		};
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "pre_prompt",
+				willRetry: false,
+				requestId: "pre-prompt-proactive-fail-closed",
+				preparation,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		expect(result).toMatchObject({ cancel: true });
+		expect(result).not.toHaveProperty("compaction");
+		expect(harness.ctx.sessionManager.getBranch()).toEqual(branchEntries);
 		expect(harness.registration.getCallLog()).toHaveLength(1);
 	});
 
