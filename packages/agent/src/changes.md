@@ -1,3 +1,51 @@
+## 2026-09-16 - Stream throughput watchdog for in-progress provider streams (#1739)
+
+### What changed
+
+- `packages/agent/src/stream-throughput-watchdog.ts` (new): `StreamThroughputDegradedError`, `formatStreamThroughputDegradedMessage`, `estimateStreamedUnits`, the sliding-window `StreamRateMeter`, `createStreamThroughputWatchdog` and the shipped defaults (floor 8 units/s, 20s window, 5s grace, 16-unit minimum). One streamed unit is ~4 characters of a text or thinking delta, so a gateway that batches several tokens per delta is measured by volume rather than by event count.
+- `packages/agent/src/agent-loop.ts`: the assistant event reader creates the watchdog from `config.streamThroughput`, anchors it at the first stream event, records units from `text_delta` / `thinking_delta`, and excludes any wait that began while the stream reported pending local work (Cursor exec). A verdict closes the iterator, aborts the request controller with the error and rejects the read, so the turn ends as `stopReason: "error"` with that message and the request signal carries it.
+- `packages/agent/src/types.ts`: `AgentLoopConfig.streamThroughput` (floor / window / grace; a `0` floor or window disables the guard).
+- `packages/agent/src/agent.ts`: `AgentOptions.streamThroughput` and the matching public field, forwarded into every loop config so hosts can retune it per session.
+- `packages/agent/src/index.ts`: exports the watchdog module's public surface (the coding agent's interactive working line reuses `StreamRateMeter` and `estimateStreamedUnits`).
+
+### Why
+
+- Every other guard on a live stream detects SILENCE: the stream-start bound stops applying once the first event arrives (`useStartBound = !sawFirstEvent`) and the idle bound is re-armed by every event. A provider answering at ~2 tok/s therefore tripped nothing while the session was unusable (senpi#1739, reported for `gpt-6-astra`). Compaction already bounds this class with a wall-clock budget; the main turn cannot use a wall clock because tool-using turns are legitimately long, so the guard measures rate over a trailing window instead.
+
+### Why an extension could not handle it
+
+- The measurement has to happen between the provider iterator and the loop, on the same controller that can abort the in-flight request. No extension hook sits there, and an extension cannot fail the turn with a retryable error the session router understands.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` around `createAssistantEventReader` / `readNextAssistantEvent`, which upstream also edits for the idle and start bounds. Keep the split: silence -> start/idle errors, sustained low rate -> `StreamThroughputDegradedError`.
+- LOW: the new option field in `packages/agent/src/types.ts` and `packages/agent/src/agent.ts`.
+
+## 2026-09-16 - Forward thinking live in the empty-assistant recovery wrapper (#1733)
+
+### What changed
+
+- `packages/agent/src/empty-assistant-recovery.ts` commits an attempt (starts forwarding) on the first meaningful content event: non-blank `thinking_delta`, visible `text_delta`, `toolcall_start`, or a `text_end`/`thinking_end` carrying content. Previously only `toolcall_start` and visible `text_delta` committed, so a reasoning model's whole thinking phase was buffered.
+- `CommitPolicy.thinkingCommits` is false for the Kimi XTML lane (`hasKimiTextToolCallRecovery`): that thinking channel is the documented misrouting vector for text tool calls, and `wrapStreamWithKimiThinkingRecovery` forwards deltas untouched and only rewrites the finished message, so streaming it live would expose protocol fragments the recovery later removes (the #759 production incident). Kimi keeps the buffered contract until the thinking recovery sanitizes deltas and partials as they stream.
+- A committed attempt that ends as an empty stop or a `tool_use` stop without a tool call is not retried inside the wrapper. It ends as a `stopReason: "error"` message with `FORWARDED_EMPTY_RESPONSE_ERROR` / `FORWARDED_EMPTY_TOOL_USE_ERROR` (defined in pi-ai `utils/empty-response-errors.ts`), the streamed content preserved, and a `{ retries: 0, forwarded: true }` recovery diagnostic. pi-ai's retry classifier treats those two texts as retryable, so `AgentSession` drops the message from agent state and re-requests.
+- Uncommitted attempts keep the one silent retry and the terminal "twice" errors unchanged.
+
+### Why
+
+- Session data over seven days showed 79-83% of Claude and Kimi turns with thinking were held invisible for a median of 15-28 s (p90 31-52 s) until the first text delta, while the wrapper's silent retry fired 12 times in 58,801 assistant messages. oh-my-pi's `withReplaySafeStreamRetry` commits on `thinking_delta` and leaves post-commit empty stops to its session-level turn recovery; this mirrors that split with senpi's existing turn retry.
+
+### Why an extension could not handle it
+
+- The hold happens inside the agent loop's stream function wrapper, below `before_provider_request` and above every subscriber; no extension hook observes events before they are forwarded.
+
+### Rejected alternative
+
+- Replaying a retry after forwarding and splicing its events onto the first attempt's partial. A second `start` duplicates the partial message in the loop, and a message mixing attempt-one thinking with attempt-two content cannot be replayed to Anthropic, whose signed thinking blocks must be returned unmodified with the response that produced them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/empty-assistant-recovery.ts` forwarding gate and terminal handling; `packages/ai/src/utils/retry.ts` RETRYABLE pattern list. Preserve the split: uncommitted -> in-stream retry, committed -> retryable error.
+
 ## 2026-09-15 - Do not fold fields-only class bodies (#1639)
 
 ### What changed

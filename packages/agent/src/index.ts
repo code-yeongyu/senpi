@@ -152,4 +152,16 @@ export * from "./harness/utils/truncate.ts";
 export * from "./proxy.ts";
 export * from "./search/index.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
+export type { StreamThroughputOptions, StreamThroughputWatchdog } from "./stream-throughput-watchdog.ts";
+export {
+	createStreamThroughputWatchdog,
+	DEFAULT_STREAM_THROUGHPUT_FLOOR_TOKENS_PER_SECOND,
+	DEFAULT_STREAM_THROUGHPUT_GRACE_MS,
+	DEFAULT_STREAM_THROUGHPUT_WINDOW_MS,
+	estimateStreamedUnits,
+	formatStreamThroughputDegradedMessage,
+	STREAM_THROUGHPUT_MIN_UNITS,
+	StreamRateMeter,
+	StreamThroughputDegradedError,
+} from "./stream-throughput-watchdog.ts";
 export * from "./types.ts";

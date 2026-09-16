@@ -15,6 +15,7 @@ import {
 } from "./agent-loop.ts";
 import { ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
+import type { StreamThroughputOptions } from "./stream-throughput-watchdog.ts";
 import type {
 	AfterToolCallContext,
 	AfterToolCallResult,
@@ -128,6 +129,8 @@ export interface AgentOptions {
 	transport?: Transport;
 	timeoutMs?: number;
 	streamStartTimeoutMs?: number;
+	/** Sustained-throughput guard; see {@link AgentLoopConfig.streamThroughput}. */
+	streamThroughput?: StreamThroughputOptions;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
 	removedToolHints?: Record<string, string>;
@@ -246,6 +249,8 @@ export class Agent {
 	public timeoutMs?: number;
 	/** Optional bound on the wait for the first provider stream event. */
 	public streamStartTimeoutMs?: number;
+	/** Optional sustained-throughput guard for an in-progress stream. */
+	public streamThroughput?: StreamThroughputOptions;
 	/** Optional cap for provider-requested retry delays. */
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
@@ -289,6 +294,7 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.timeoutMs = runtimeOptions.timeoutMs;
 		this.streamStartTimeoutMs = runtimeOptions.streamStartTimeoutMs;
+		this.streamThroughput = runtimeOptions.streamThroughput;
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
 		this.removedToolHints = runtimeOptions.removedToolHints ?? {};
@@ -593,6 +599,7 @@ export class Agent {
 			thinkingBudgets: this.thinkingBudgets,
 			timeoutMs: this.timeoutMs,
 			streamStartTimeoutMs: this.streamStartTimeoutMs,
+			streamThroughput: this.streamThroughput,
 			initialRequestTimeoutMs: options.initialRequestTimeoutMs,
 			initialRequestStreamStartTimeoutMs: options.initialRequestStreamStartTimeoutMs,
 			maxRetryDelayMs: this.maxRetryDelayMs,

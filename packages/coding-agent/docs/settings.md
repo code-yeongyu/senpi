@@ -258,6 +258,9 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
 | `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables |
 | `retry.provider.streamRetryTimeoutMs` | number | `30000` | First-request liveness cap after a known provider stream/transport timeout; `0` disables the cap |
+| `retry.provider.minThroughputTokensPerSecond` | number | `8` | Sustained streamed-units floor for an in-progress stream; `0` disables the watchdog |
+| `retry.provider.throughputWindowMs` | number | `20000` | Observation window for that floor; `0` disables the watchdog |
+| `retry.provider.throughputGraceMs` | number | `5000` | Streaming after the first event that is never measured; `0` measures immediately |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay honored on the same model before the fallback chain engages (60s) |
 
@@ -268,6 +271,18 @@ Agent-level retries use exponential backoff shaped by the retry profile and capp
 After an exact provider stream/transport timeout, `retry.provider.streamRetryTimeoutMs` caps the retry's first
 provider request and defers queued user input from that request. The cap applies only to stream guards that are
 already enabled, never turns a disabled guard back on, and restores configured timeouts for later requests.
+
+`streamStartTimeoutMs` bounds the wait for the FIRST event and stops applying once it arrives; `timeoutMs` then
+bounds silence between events. Both are silence detectors, so a provider that keeps answering at a uselessly low
+rate trips neither. The throughput watchdog is the rate half: after the first stream event it ignores
+`retry.provider.throughputGraceMs` of streaming, then measures streamed text and thinking units (about one unit
+per token) over a trailing `retry.provider.throughputWindowMs`. A full window carrying at least 16 units whose
+sustained rate is below `retry.provider.minThroughputTokensPerSecond` aborts the in-flight request with
+`Provider stream throughput degraded: <n> tok/s over <n>s (floor <n> tok/s)`. Time the provider spends executing
+local tools does not count against the window, and the interactive working line shows the live rate
+(`Working (1m 12s • 2.1 tok/s • esc to interrupt)`) while the turn runs. That failure is retryable but never
+spends same-model attempts — replaying the payload cannot make the upstream faster — so it goes straight to the
+fallback chain; with no chain candidate the turn ends with that error instead of continuing to crawl.
 
 Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explicitly needed. Setting it above `0` can make SDK/provider retries handle out-of-usage-limit errors before senpi sees them, which may block the agent until the provider quota resets in some circumstances.
 
@@ -282,6 +297,9 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
       "timeoutMs": 3600000,
       "streamStartTimeoutMs": 300000,
       "streamRetryTimeoutMs": 30000,
+      "minThroughputTokensPerSecond": 8,
+      "throughputWindowMs": 20000,
+      "throughputGraceMs": 5000,
       "maxRetries": 0,
       "maxRetryDelayMs": 60000
     }
@@ -291,7 +309,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 
 #### Model fallback chains
 
-`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to every provider serving that model family. Bare selectors expand against the models you actually have: providers holding an OAuth credential are preferred, then a fixed precedence order, and OpenRouter is never chosen by expansion. Senpi ships bare default chains for `claude-fable-5-1` and `claude-fable-5`, so Fable 5.1 and Fable 5 keep a fallback chain whichever provider serves them; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
+`retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to every provider serving that model family. Bare selectors expand against the models you actually have: providers holding an OAuth credential are preferred, then a fixed precedence order, and OpenRouter is never chosen by expansion. Fallback chains are explicit user configuration only: Senpi ships no default and no wildcard lane, so a model without a configured chain never enters an implicit fallback lane and a failure that would fall back ends the turn instead. Set a key to `[]` to opt out of a chain you configured at a broader granularity, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
 
 ```json
 {
@@ -505,12 +523,24 @@ While a question is pending, the terminal title shows `? <header>` unless an act
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `sessionDir` | string | - | Directory where session files are stored. Accepts absolute or relative paths, plus `~`. |
+| `sessionShutdownHandlerWarnMs` | number | `2000` | Warn when a single extension's `session_shutdown` handler has run this long. Set to `0` to disable the warning. |
+| `sessionShutdownHandlerTimeoutMs` | number | `10000` | Hard cap for a single extension's `session_shutdown` handler. Set to `0` to disable the cap. |
 
 ```json
 { "sessionDir": ".senpi/sessions" }
 ```
 
 When multiple sources specify a session directory, precedence is `--session-dir`, `SENPI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in settings.json.
+
+#### Shutdown handler budget
+
+senpi bounds each extension's `session_shutdown` handler so one slow extension cannot hold quit, `/reload`, `/new`, `/resume` or a fork hostage. Past `sessionShutdownHandlerWarnMs` it logs one warning naming the extension; at `sessionShutdownHandlerTimeoutMs` it aborts the `signal` that handler received on the event, reports an extension error, and continues teardown with the next handler. The handler itself is not killed - it keeps running until the process exits - so extensions that persist durable state should observe `event.signal`.
+
+```json
+{ "sessionShutdownHandlerWarnMs": 2000, "sessionShutdownHandlerTimeoutMs": 10000 }
+```
+
+Only `session_shutdown` is bounded; other extension events (including ask-user and approval dialogs, which may legitimately wait for minutes) are unaffected.
 
 ### Model Cycling
 

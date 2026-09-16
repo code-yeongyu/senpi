@@ -1,5 +1,29 @@
 # claude-sdk-oauth
 
+## 2026-09-16 - Keep the binding across a provider excursion and report the recorded invalidation cause (senpi#1747)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/session-registry-wiring.ts`: the `model_select` handler no longer invalidates when the newly selected model belongs to another provider. It now uses the existing `keepBindingThenClose`, exactly like `thinking_level_select` and the in-provider `switchSessionModel` failure branch, so the live SDK session closes while the binding and its sidecar survive. The same file now also carries the ledger invalidation cause into process memory: `persistBindingInvalidation` records it as it appends the record, `session_start` re-reads it from the branch on a restart (clearing it for `new`), and the `message_end` marker retires it.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/session-binding.ts`: adds `invalidationReasonFromBranch`, which returns the reason of the newest binding ledger record when that record is an invalidation (a later marker retires it).
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/session-reattach.ts`: holds the pending invalidation reason per senpi session id (`rememberBindingInvalidation`, `bindingInvalidationReason`) next to the binding map it replaces.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/session-continuity.ts`: `ContinuityDecisionInput` accepts `invalidationReason`, and a `bootstrap`/`flatten` that would report the no-record default `registry_miss` reports the recorded cause instead (`model_selected`, `extensions_removed`, `assistant_rewritten` pass through the observation vocabulary; `compaction`, `tree_changed` and `fork` map to `tainted_compaction`, `branch_diverged` and `tainted_fork`). Classification is unchanged: no decision kind moves, and every other reason is left as decided.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/session-stream.ts`: passes the pending reason into the decision input.
+
+### Why
+
+- Cycling the model selector away from Claude and back re-sent the whole conversation (field reports of hundreds of KB per turn, one measured at 226 messages / ~881 KB) because the excursion destroyed a perfectly resumable binding. The module already had the non-destructive path for exactly this situation; the reattach path handles the return trip through `sentPrefixHash` / `commonPrefixLength` with `from: binding.sentCount`, so only the messages added while away are sent. Every safety net still decides the return trip: `identityDrift` flattens on `model_changed`, an unconfirmed SDK session id is refused, and a missing transcript or a diverged sent stream still flattens.
+- The invalidation reason was written to the ledger and never read back, so a genuine invalidation (`model_selected`, `compaction`, `tree_changed`, `extensions_removed`) surfaced to the user as `registry_miss` - the reason that is supposed to mean "no record was ever found".
+
+### Why an extension could not handle it
+
+- The model-selector lifecycle wiring, the binding ledger and the continuity decision table are this provider extension's own internals; no extension surface can observe or replace them.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `session_start` and `model_select` handlers in `session-registry-wiring.ts`.
+- LOW: the binding map in `session-reattach.ts`, the branch readers in `session-binding.ts`, the decision-input type and the `decideNativeContinuity` entry point in `session-continuity.ts`, the decision-input construction in `session-stream.ts`.
+
 ## 2026-09-11 - Detect same-tick settings rewrites
 
 ### What changed

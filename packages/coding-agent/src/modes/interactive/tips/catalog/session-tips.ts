@@ -30,7 +30,7 @@ export const SESSION_TIPS = [
 	{
 		id: "session-name",
 		bindings: [],
-		render: () => "Use /name <name> to label a session so it is easy to spot in the footer and in /resume.",
+		render: () => "Use /rename [name] to label a session so it is easy to spot in the footer and in /resume.",
 	},
 	{
 		id: "session-info",

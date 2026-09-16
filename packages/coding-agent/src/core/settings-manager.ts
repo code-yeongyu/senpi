@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { StreamThroughputOptions, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Transport } from "@earendil-works/pi-ai";
 import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
 import type {
@@ -71,6 +71,15 @@ export type * from "./settings-public-types.ts";
 
 export const DEFAULT_STREAM_START_TIMEOUT_MS = 300_000;
 export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
+
+/** Warn threshold for a single `session_shutdown` extension handler. */
+export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
+/**
+ * Hard cap for a single `session_shutdown` extension handler. Higher than the
+ * 2s warning because several extensions persist durable state at shutdown; a
+ * hung handler still must not hold quit/reload/new/resume hostage.
+ */
+export const DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS = 10_000;
 
 export type TuiMode = RendererTuiMode;
 export type FullscreenExitOutput = "transcript" | "resume-hint";
@@ -196,6 +205,8 @@ export interface Settings {
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	sessionShutdownHandlerWarnMs?: number; // Warn when one session_shutdown extension handler runs this long; 0 disables the warning
+	sessionShutdownHandlerTimeoutMs?: number; // Abort and skip a session_shutdown extension handler after this long; 0 disables the cap
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
@@ -1451,6 +1462,47 @@ export class SettingsManager {
 		this.save();
 	}
 
+	/**
+	 * How long one extension's `session_shutdown` handler may run before the host
+	 * warns about it. 0 disables the warning.
+	 */
+	getSessionShutdownHandlerWarnMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.sessionShutdownHandlerWarnMs, "sessionShutdownHandlerWarnMs") ??
+			DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS
+		);
+	}
+
+	setSessionShutdownHandlerWarnMs(warnMs: number): void {
+		if (!Number.isFinite(warnMs) || warnMs < 0) {
+			throw new Error(`Invalid sessionShutdownHandlerWarnMs setting: ${String(warnMs)}`);
+		}
+		this.globalSettings.sessionShutdownHandlerWarnMs = Math.floor(warnMs);
+		this.markModified("sessionShutdownHandlerWarnMs");
+		this.save();
+	}
+
+	/**
+	 * Hard cap on one extension's `session_shutdown` handler. On expiry the host
+	 * aborts that handler's `event.signal`, reports an extension error and moves
+	 * on to the next handler. 0 disables the cap (unbounded, pre-budget behavior).
+	 */
+	getSessionShutdownHandlerTimeoutMs(): number {
+		return (
+			parseTimeoutSetting(this.settings.sessionShutdownHandlerTimeoutMs, "sessionShutdownHandlerTimeoutMs") ??
+			DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS
+		);
+	}
+
+	setSessionShutdownHandlerTimeoutMs(timeoutMs: number): void {
+		if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+			throw new Error(`Invalid sessionShutdownHandlerTimeoutMs setting: ${String(timeoutMs)}`);
+		}
+		this.globalSettings.sessionShutdownHandlerTimeoutMs = Math.floor(timeoutMs);
+		this.markModified("sessionShutdownHandlerTimeoutMs");
+		this.save();
+	}
+
 	getProviderRetrySettings(): {
 		timeoutMs?: number;
 		maxRetries?: number;
@@ -1579,6 +1631,28 @@ export class SettingsManager {
 			return undefined;
 		}
 		return Math.min(DEFAULT_STREAM_START_TIMEOUT_MS, idleTimeoutMs);
+	}
+
+	/**
+	 * Sustained-throughput guard for an in-progress provider stream. The
+	 * stream-start bound stops applying at the first event and the idle bound is
+	 * re-armed by every event, so a provider that keeps answering at a uselessly
+	 * low rate trips neither (#1739). `retry.provider.minThroughputTokensPerSecond`
+	 * (floor, `0` disables), `retry.provider.throughputWindowMs` (`0` disables)
+	 * and `retry.provider.throughputGraceMs` override the agent defaults; an
+	 * unset knob keeps the shipped default. Returns undefined when nothing is
+	 * configured, so the agent loop applies its own defaults.
+	 */
+	getAgentStreamThroughputOptions(): StreamThroughputOptions | undefined {
+		const provider = this.settings.retry?.provider;
+		const options: StreamThroughputOptions = {
+			...(provider?.minThroughputTokensPerSecond === undefined
+				? {}
+				: { floorTokensPerSecond: provider.minThroughputTokensPerSecond }),
+			...(provider?.throughputWindowMs === undefined ? {} : { windowMs: provider.throughputWindowMs }),
+			...(provider?.throughputGraceMs === undefined ? {} : { graceMs: provider.throughputGraceMs }),
+		};
+		return Object.keys(options).length === 0 ? undefined : options;
 	}
 
 	getWebSocketConnectTimeoutMs(): number | undefined {

@@ -145,9 +145,12 @@ describe("session_before_compact error surfacing", () => {
 		// Given
 		const harness = createHarness();
 		harness.registration.setResponses([
+			// A refusal: it stays unauthorized for the deterministic fallback, so the
+			// provider detail is what reaches the cancel reason (issue #1741).
 			fauxAssistantMessage("", {
 				stopReason: "error",
 				errorMessage: "faux: request blocked by provider policy",
+				stopDetails: { type: "refusal" },
 			}),
 		]);
 

@@ -159,7 +159,9 @@ export async function generateSummaryMessage(options: {
 			...summarizationReasoningOptions(options.snapshot.model),
 			...(options.forbidToolCalls ? { toolChoice: "none" as const } : {}),
 		});
-		await consumeStreamWithIdleTimeout(responseStream, {
+		// Settlement rides inside the watchdog: a provider whose iterator ends
+		// without a terminal event used to park here with every timer cleared.
+		return await consumeStreamWithIdleTimeout(responseStream, {
 			idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 			maxDurationMs,
 			abort: () => requestController.abort(),
@@ -169,8 +171,8 @@ export async function generateSummaryMessage(options: {
 					options.onProgress?.(event.delta);
 				}
 			},
+			settle: async (): Promise<Message | undefined> => await responseStream.result(),
 		});
-		return await responseStream.result();
 	} finally {
 		if (options.signal) options.signal.removeEventListener("abort", onCallerAbort);
 	}

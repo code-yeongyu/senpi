@@ -4,6 +4,18 @@
 
 ### Breaking Changes
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.16] - 2026-09-16
+
+### Breaking Changes
+
 - Background `agent(..., handle=true)` now requires the host task tool to return structured `details.task_id` (`st_` plus lowercase hex) and an integer `details.run_epoch >= 0`. The result gains a `run_epoch` field next to `id` and `handle`, in every kernel language. A host that returns an error, or only a prose task id in its text, raises `invalid_task_handle`; the old regex scrape of the text is gone. Extra producer fields in `details` are accepted. Foreground text and JSON results are unchanged ([#1646](https://github.com/code-yeongyu/senpi/issues/1646)).
 
 ### Added

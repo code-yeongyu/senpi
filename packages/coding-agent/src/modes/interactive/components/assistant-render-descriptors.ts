@@ -1,4 +1,8 @@
-import { type AssistantMessage, SERVER_FALLBACK_ABORTED_DIAGNOSTIC } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	describeProviderStallForUser,
+	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
+} from "@earendil-works/pi-ai";
 import { formatDuration } from "../../../utils/duration.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "../../provider-native-rendering.ts";
 import { theme } from "../theme/theme.ts";
@@ -146,13 +150,16 @@ export function createAssistantRenderDescriptors(
 			addError(abortMessage);
 			break;
 		}
-		case "error":
-			if (
-				!options.hasToolCalls &&
-				!message.diagnostics?.some((entry) => entry.type === SERVER_FALLBACK_ABORTED_DIAGNOSTIC)
-			)
-				addError(`Error: ${message.errorMessage || "Unknown error"}`);
+		case "error": {
+			if (options.hasToolCalls) break;
+			if (message.diagnostics?.some((entry) => entry.type === SERVER_FALLBACK_ABORTED_DIAGNOSTIC)) break;
+			// A provider-stream stall carries the watchdog's own wording so the retry
+			// engine can classify it; the transcript gets the plain-language version,
+			// without the recovery advice a retry still in flight would contradict.
+			const stall = describeProviderStallForUser(message.errorMessage);
+			addError(stall ?? `Error: ${message.errorMessage || "Unknown error"}`);
 			break;
+		}
 		case "pending":
 		case "stop":
 		case "toolUse":

@@ -13,7 +13,7 @@ import {
 	sanitizeTerminalFailure,
 	stageContinuityDecision,
 } from "./session-observability.ts";
-import { bindingFromEntry, getBinding, reattachSession } from "./session-reattach.ts";
+import { bindingFromEntry, bindingInvalidationReason, getBinding, reattachSession } from "./session-reattach.ts";
 import {
 	type ClaudeSdkOauthSessionEntry,
 	closeSession,
@@ -98,6 +98,7 @@ async function createResidentAttempt(
 		transcriptAvailable,
 		crossAccountResumeSupported: auth.authLane !== "config-dir",
 		idleExpired: existing ? isIdleExpired(existing) : false,
+		invalidationReason: bindingInvalidationReason(sessionId),
 	});
 	const firstTurn =
 		existing === undefined && getBinding(sessionId) === undefined && !contextHasPriorAssistantMessage(input.context);

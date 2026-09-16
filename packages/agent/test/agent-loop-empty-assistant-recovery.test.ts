@@ -2,6 +2,8 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
 	createAssistantMessageEventStream,
+	FORWARDED_EMPTY_RESPONSE_ERROR,
+	isRetryableAssistantError,
 	type Message,
 	type Model,
 	Type,
@@ -130,8 +132,131 @@ function config(modelId = "kimi-test", toolCallFormat?: "antml"): AgentLoopConfi
 	return { model: model(modelId, toolCallFormat), convertToLlm: (messages) => messages.filter(isLlmMessage) };
 }
 
+/** Resolves once every queued microtask and every already-runnable macrotask has run. */
+function eventLoopDrained(): Promise<void> {
+	return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
+}
+
+/**
+ * Streams thinking, then parks until `release` resolves, then streams the visible text and the
+ * terminal stop. The park is the observable boundary: everything pushed before it is what a
+ * subscriber can see while the provider is still reasoning.
+ */
+function streamThinkingThenGatedText(thinking: string, text: string, release: Promise<void>) {
+	const stream = createAssistantMessageEventStream();
+	const final = assistant([
+		{ type: "thinking", thinking },
+		{ type: "text", text },
+	]);
+	void (async () => {
+		const partial: AssistantMessage = { ...final, content: [] };
+		stream.push({ type: "start", partial });
+		partial.content = [{ type: "thinking", thinking: "" }];
+		stream.push({ type: "thinking_start", contentIndex: 0, partial });
+		partial.content = [{ type: "thinking", thinking }];
+		stream.push({ type: "thinking_delta", contentIndex: 0, delta: thinking, partial });
+		stream.push({ type: "thinking_end", contentIndex: 0, content: thinking, partial });
+		await release;
+		partial.content = [
+			{ type: "thinking", thinking },
+			{ type: "text", text: "" },
+		];
+		stream.push({ type: "text_start", contentIndex: 1, partial });
+		partial.content = final.content;
+		stream.push({ type: "text_delta", contentIndex: 1, delta: text, partial });
+		stream.push({ type: "text_end", contentIndex: 1, content: text, partial });
+		stream.push({ type: "done", reason: "stop", message: final });
+	})();
+	return stream;
+}
+
 describe("agent loop empty assistant recovery", () => {
-	it("discards and retries the real zero-width Kimi fixture without forwarding attempt-one events", async () => {
+	it("forwards a wrapped model's thinking live, before any visible text has arrived", async () => {
+		let releaseText: (() => void) | undefined;
+		const textReleased = new Promise<void>((resolve) => {
+			releaseText = resolve;
+		});
+		const observed: string[] = [];
+		const stream = agentLoop(
+			[{ role: "user", content: "answer", timestamp: 1 }],
+			{ systemPrompt: "", messages: [], tools: [] },
+			config("claude-sonnet-test"),
+			undefined,
+			() => streamThinkingThenGatedText("Reasoning in progress.", "Final answer", textReleased),
+		);
+		const consumed = (async () => {
+			const events: AgentEvent[] = [];
+			for await (const event of stream) {
+				events.push(event);
+				if (event.type === "message_start" && event.message.role === "assistant") observed.push("message_start");
+				if (event.type === "message_update") observed.push(event.assistantMessageEvent.type);
+			}
+			return { events, messages: await stream.result() };
+		})();
+
+		// The provider is still reasoning (text is gated). Everything the wrapper forwards live has
+		// reached the subscriber once the event loop drains; nothing else can arrive until release.
+		await eventLoopDrained();
+		const seenWhileReasoning = [...observed];
+		releaseText?.();
+		const { events, messages } = await Promise.race([
+			consumed,
+			new Promise<never>((_resolve, reject) =>
+				setTimeout(() => reject(new Error("live thinking probe did not finish")), 500),
+			),
+		]);
+
+		expect(seenWhileReasoning).toEqual(["message_start", "thinking_start", "thinking_delta", "thinking_end"]);
+		const assistants = messages.filter((message) => message.role === "assistant");
+		expect(assistants).toHaveLength(1);
+		expect(assistants[0].stopReason).toBe("stop");
+		expect(visibleText(assistants[0])).toBe("Final answer");
+		const streamed = assistantStreamEvents(events);
+		expect(streamed.filter((event) => event.type === "thinking_delta")).toHaveLength(1);
+		expect(streamed.filter((event) => event.type === "text_delta" && event.delta === "Final answer")).toHaveLength(1);
+	});
+
+	it("ends a thinking-only stop as a retryable error after forwarding, without replaying a second start", async () => {
+		const thinkingOnly = assistant([{ type: "thinking", thinking: "Reasoned, then said nothing." }]);
+		let streamCalls = 0;
+		const stream = agentLoop(
+			[{ role: "user", content: "answer", timestamp: 1 }],
+			{ systemPrompt: "", messages: [], tools: [] },
+			config("claude-sonnet-test"),
+			undefined,
+			() => {
+				streamCalls += 1;
+				return streamContent(thinkingOnly);
+			},
+		);
+		const { events, messages } = await collectBounded(stream);
+		const assistants = messages.filter((message) => message.role === "assistant");
+		const streamed = assistantStreamEvents(events);
+
+		// The forwarded attempt cannot be replayed transparently: exactly one request, one start.
+		expect(streamCalls).toBe(1);
+		expect(
+			events.filter((event) => event.type === "message_start" && event.message.role === "assistant"),
+		).toHaveLength(1);
+		expect(
+			streamed.filter((event) => event.type === "thinking_delta" && event.delta === "Reasoned, then said nothing."),
+		).toHaveLength(1);
+		expect(assistants).toHaveLength(1);
+		const final = assistants[0];
+		expect(final).toMatchObject({ stopReason: "error", errorMessage: FORWARDED_EMPTY_RESPONSE_ERROR });
+		expect(final.content).toContainEqual(
+			expect.objectContaining({ type: "thinking", thinking: "Reasoned, then said nothing." }),
+		);
+		expect(final.diagnostics).toContainEqual({
+			type: "empty_assistant_response_recovery",
+			timestamp: expect.any(Number),
+			details: { retries: 0, forwarded: true },
+		});
+		// The session-level turn retry is what re-requests it, so the error must classify as retryable.
+		expect(isRetryableAssistantError(final)).toBe(true);
+	});
+
+	it("keeps the Kimi XTML lane on the buffered contract: discards and retries the zero-width fixture without forwarding attempt-one events", async () => {
 		const malformed = assistant([
 			{ type: "text", text: "\u200b" },
 			{ type: "thinking", thinking: REAL_MALFORMED_THINKING },

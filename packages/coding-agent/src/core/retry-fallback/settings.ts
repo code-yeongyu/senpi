@@ -4,6 +4,9 @@ export interface ProviderRetrySettings {
 	timeoutMs?: number;
 	streamStartTimeoutMs?: number;
 	streamRetryTimeoutMs?: number; // retry-continuation watchdog cap after a provider timeout; reconciled to max(cap, streamStartTimeoutMs) so a granted stream-start budget is never cut short; default: 30000, 0 disables
+	minThroughputTokensPerSecond?: number; // sustained streamed-units floor for an in-progress stream; default: 8, 0 disables the watchdog
+	throughputWindowMs?: number; // observation window for that floor; default: 20000, 0 disables the watchdog
+	throughputGraceMs?: number; // streaming after the first event that is never measured; default: 5000, 0 measures immediately
 	maxRetries?: number;
 	maxRetryDelayMs?: number;
 }

@@ -1,3 +1,59 @@
+## Plain-language provider-stall copy (2026-09-16)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: adds `describeProviderStallForUser(errorMessage, options)` and the `ProviderStallDescriptionOptions` type next to `PROVIDER_STREAM_STALL_ERROR_PATTERN`. It turns any of the four stall watchdog wordings (stream-start, idle, WebSocket liveness, Responses completion) into one user-facing sentence naming the model, what the provider failed to do, and the bound it blew; with `attempts` it adds the same-model retry count, and with `recovery` it adds the next step (`/fallback`, resend, or the matching `retry.provider.*` setting). Anything that is not a stall returns `undefined` so callers keep their verbatim error. The classifier patterns and every existing export are untouched.
+
+### Why
+
+- senpi#1740: the watchdog's own `Error.message` is a classifier token (`isProviderStreamStallError`, the turn-retry gate) that also leaked to users as the answer to a stalled turn (`Provider stream start timed out after 180000ms`). The wording therefore cannot change, and the replacement has to live next to the patterns it mirrors so the two never drift - the coding-agent session, the interactive transcript and print mode all read this one definition.
+
+### Why an extension could not handle it
+
+- The stall wording is produced inside the agent loop and consumed by the retry classifier in this package; an extension sees the assistant message only after the host has already decided what to print.
+
+### Expected merge conflict zones
+
+- LOW: one appended block at the end of the stall-classifier section in `packages/ai/src/utils/retry.ts`; no existing line changes.
+
+## Throughput-degraded provider streams classified apart from silence stalls (2026-09-16)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` accepts the agent-loop throughput verdict ("provider stream throughput degraded"), and a new anchored `isProviderStreamThroughputDegradedError(message)` matches the full wording `Provider stream throughput degraded: <n> tok/s over <n>s (floor <n> tok/s)` plus its optional settings hint. It is deliberately NOT part of `PROVIDER_STREAM_STALL_ERROR_PATTERN` / `isProviderStreamStallError`, and not a provider timeout.
+
+### Why
+
+- senpi#1739: a stall is silence, which a same-model retry can genuinely fix; a degraded stream is an upstream that answers too slowly, where replaying the same payload cannot raise the rate. `AgentSession` needs the two classes separated so the degraded one can skip the same-model budget and go straight to the fallback chain while staying retryable.
+
+### Why an extension could not handle it
+
+- Retry and fallback admission is decided inside `AgentSession` from this classifier; an extension observes the turn only after that decision.
+
+### Expected merge conflict zones
+
+- LOW: one alternation in the retryable list plus one new exported predicate in `packages/ai/src/utils/retry.ts`.
+## Shared empty-response error texts, forwarded empty stops admitted to the turn retry (2026-09-16)
+
+### What changed
+
+- `packages/ai/src/utils/empty-response-errors.ts` (new): `EMPTY_RESPONSE_ERROR`, `EMPTY_TOOL_USE_ERROR`, `FORWARDED_EMPTY_RESPONSE_ERROR`, `FORWARDED_EMPTY_TOOL_USE_ERROR` - the terminal texts the pi-agent-core empty-assistant recovery wrapper produces, so the producer and the retry classifier read one definition.
+- `packages/ai/src/index.ts`: re-exports that module from the package root.
+- `packages/ai/src/utils/retry.ts`: `RETRYABLE_PROVIDER_ERROR_PATTERN` accepts the two "after streaming thinking" texts (escaped literally via a local `escapeRegExp`), so `isRetryableErrorMessage` / `isRetryableAssistantError` admit them to the session turn retry. The "twice" texts are deliberately absent and stay non-retryable.
+- Tests: `packages/ai/test/retry.test.ts` (forwarded texts retryable, "twice" texts non-retryable).
+
+### Why
+
+- senpi#1733: the recovery wrapper now forwards a reasoning model's thinking live. An attempt that already forwarded reasoning and then stopped empty cannot be replayed inside the stream (a second `start` duplicates the partial; stitching attempt-one thinking onto attempt-two content breaks replay of signed thinking blocks), so the wrapper ends it as an error and the session's turn retry - which removes the errored message from agent state before re-requesting - owns the recovery. The classifier is where the session decides that, and it matches on wording.
+
+### Why an extension could not handle it
+
+- Retry admission is decided inside `AgentSession` from the classifier verdict; an extension observes the turn only after that decision.
+
+### Expected merge conflict zones
+
+- LOW: one import, one helper, and two alternations in `packages/ai/src/utils/retry.ts`; one export line in `packages/ai/src/index.ts`.
+
 ## Responses completion-phase watchdog: a dropped terminal event is a stall, not a five-minute wait (2026-09-13)
 
 ### What changed

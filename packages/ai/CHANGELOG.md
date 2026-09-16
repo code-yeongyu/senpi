@@ -6,6 +6,24 @@
 
 ### Added
 
+- `describeProviderStallForUser(errorMessage, options)` (`utils/retry.ts`, exported from the package root): turns a provider stream-stall watchdog message (stream-start, idle, WebSocket liveness or Responses completion) into one plain-language sentence naming the model, the stalled phase and the bound, optionally with the same-model attempts spent and the next step to take. Returns `undefined` for anything that is not a stall, so callers keep their verbatim error ([#1740](https://github.com/code-yeongyu/senpi/issues/1740)).
+
+- `EMPTY_RESPONSE_ERROR`, `EMPTY_TOOL_USE_ERROR`, `FORWARDED_EMPTY_RESPONSE_ERROR` and `FORWARDED_EMPTY_TOOL_USE_ERROR` (`utils/empty-response-errors.ts`, exported from the package root): the terminal error texts the pi-agent-core empty-assistant recovery wrapper produces, so the wrapper and the retry classifier share one definition ([#1733](https://github.com/code-yeongyu/senpi/issues/1733)).
+
+### Changed
+
+- `isRetryableErrorMessage` / `isRetryableAssistantError` classify `FORWARDED_EMPTY_RESPONSE_ERROR` and `FORWARDED_EMPTY_TOOL_USE_ERROR` as retryable, so a turn whose reasoning already streamed live before an empty stop is re-requested by the session's turn retry. The bounded "twice" variants stay non-retryable ([#1733](https://github.com/code-yeongyu/senpi/issues/1733)).
+
+### Fixed
+
+### Removed
+
+## [2026.9.16] - 2026-09-16
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 ### Fixed

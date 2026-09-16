@@ -55,12 +55,14 @@ import type {
 import {
 	cleanupSessionResources,
 	cursorOverflowCompactionSettings,
+	describeProviderStallForUser,
 	isClassifierRefusal,
 	isContextOverflow,
 	isCursorPayloadResourceExhausted,
 	isCursorQuotaResourceExhausted,
 	isCursorZeroTokenResourceExhausted,
 	isProviderStreamStallError,
+	isProviderStreamThroughputDegradedError,
 	isProviderTimeoutError,
 	isRecoverableLength,
 	isRetryableAssistantError,
@@ -561,6 +563,17 @@ export type AgentSessionEvent =
 			type: "server_fallback_aborted";
 			from: string;
 			to: string;
+			chainConfigured: boolean;
+	  }
+	/**
+	 * A turn ended on the throughput watchdog's verdict without a fallback model
+	 * to take it over. `chainConfigured` mirrors `server_fallback_aborted`: the
+	 * no-chain case has no other signal to offer the UI.
+	 */
+	| {
+			type: "stream_throughput_degraded";
+			model: string;
+			errorMessage: string;
 			chainConfigured: boolean;
 	  }
 	// Auth login flow (task 13) is additive with event-only completion. The
@@ -1779,11 +1792,13 @@ export class AgentSession {
 		if (event.type === "message_end" && event.message.role === "assistant") {
 			const message = event.message as AssistantMessage;
 			if (message.stopReason !== "error") return;
-			const kind = isProviderStreamStallError(message)
-				? "stall"
-				: isProviderTimeoutError(message)
-					? "timeout"
-					: "error";
+			const kind = isProviderStreamThroughputDegradedError(message)
+				? "throughput"
+				: isProviderStreamStallError(message)
+					? "stall"
+					: isProviderTimeoutError(message)
+						? "timeout"
+						: "error";
 			this._sessionLogger.warn("provider_error", {
 				kind,
 				error: message.errorMessage,
@@ -8008,6 +8023,24 @@ export class AgentSession {
 	}
 
 	/**
+	 * User-facing text for a turn that is really over. A provider-stream stall
+	 * carries the watchdog's own wording (`Provider stream start timed out after
+	 * 180000ms ...`), which the retry classifier needs on the message but which
+	 * explains nothing to the person reading the transcript and names no next
+	 * step (senpi#1740). Anything that is not a stall keeps its error verbatim.
+	 */
+	private _terminalFailureText(message: AssistantMessage, attempts: number): string | undefined {
+		const model = this.model ? `${this.model.provider}/${this.model.id}` : undefined;
+		return (
+			describeProviderStallForUser(message.errorMessage, {
+				attempts,
+				model,
+				recovery: this._retryFallback.hasConfiguredChain() ? "chain-exhausted" : "no-fallback-configured",
+			}) ?? message.errorMessage
+		);
+	}
+
+	/**
 	 * A 429-class failure with no usable fallback candidate must not fail the
 	 * turn with zero attempts: a provider answering 429 is asking for a retry.
 	 * No-hint and tier2 waits degrade to same-model in-turn retries under the
@@ -8207,6 +8240,46 @@ export class AgentSession {
 				return "not-handled";
 			}
 			this._retryAttempt++;
+		} else if (isProviderStreamThroughputDegradedError(message)) {
+			// The upstream IS answering, just uselessly slowly (#1739). Replaying the
+			// same payload on the same model cannot raise its rate, so - unlike the
+			// silence stalls - this class spends no same-model attempts and consults
+			// the chain immediately. The slow selector still gets the ordinary
+			// transient cooldown inside tryFallback.
+			switchedFallback = await tryFallback("transient", { errorMessage });
+			if (switchedFallback) {
+				// The fallback model starts with a fresh budget, as on every other hop.
+				this._retryAttempt = 1;
+			} else {
+				const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
+				if (exhaustedChainKey) {
+					this._emit({
+						type: "retry_fallback_exhausted",
+						chainKey: exhaustedChainKey,
+						lastError: errorMessage,
+					});
+				}
+				// No candidate: end the turn on the measured rate instead of sitting on
+				// the trickle, and tell the UI whether a chain exists at all.
+				this._emit({
+					type: "stream_throughput_degraded",
+					model: this.model ? formatSelector(this.model) : message.model,
+					errorMessage,
+					chainConfigured: this._retryFallback.hasConfiguredChain(),
+				});
+				if (this._retryAttempt > 0) {
+					this._emit({
+						type: "auto_retry_end",
+						success: false,
+						attempt: this._retryAttempt,
+						finalError: message.errorMessage,
+					});
+				}
+				this._retryAttempt = 0;
+				this._resetHintTierState();
+				this._resolveRetry();
+				return "not-handled";
+			}
 		} else {
 			// A provider-stream stall is an ordinary transient failure: it consumes
 			// the same bounded same-model budget (the resolved profile's turn
@@ -8397,7 +8470,7 @@ export class AgentSession {
 						type: "auto_retry_end",
 						success: false,
 						attempt: this._retryAttempt - 1,
-						finalError: message.errorMessage,
+						finalError: this._terminalFailureText(message, this._retryAttempt - 1),
 					});
 					this._retryAttempt = 0;
 					this._resetHintTierState();

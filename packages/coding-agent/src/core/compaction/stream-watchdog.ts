@@ -65,6 +65,79 @@ export const SUMMARIZATION_MAX_DURATION_PER_TOKEN_MS = 2;
 export const SUMMARIZATION_MAX_DURATION_CAP_MS = 1_800_000;
 
 /**
+ * Total wall clock ONE compaction may hold the session across every attempt,
+ * retry and overflow shrink.
+ *
+ * The per-attempt budget is deliberately proportional to the input, so a large
+ * session legally licenses a 690s attempt (345k tokens) or the full 30-minute
+ * ceiling (900k tokens), and each retry re-arms that budget from scratch: the
+ * user's wait grew with the very thing that made it slow, without bound (#1741).
+ * This cap is the session-health bound the per-attempt budget cannot be: it
+ * never scales with the input, and every attempt of one compaction shares it.
+ */
+export const SUMMARIZATION_TOTAL_BUDGET_MS = 900_000;
+
+/**
+ * Total budget for one compaction. Size never raises it; only an explicit
+ * `compaction.summarizationMaxDurationMs` override does, because an operator who
+ * deliberately allows a longer single attempt must not have that attempt cut
+ * short by the total. Clamped to {@link SUMMARIZATION_MAX_DURATION_CAP_MS}.
+ */
+export function summarizationTotalBudgetMs(attemptOverrideMs?: number): number {
+	const override =
+		attemptOverrideMs !== undefined && Number.isFinite(attemptOverrideMs) && attemptOverrideMs > 0
+			? Math.min(SUMMARIZATION_MAX_DURATION_CAP_MS, attemptOverrideMs)
+			: 0;
+	return Math.max(SUMMARIZATION_TOTAL_BUDGET_MS, override);
+}
+
+/**
+ * One compaction outlived {@link SUMMARIZATION_TOTAL_BUDGET_MS}. Distinct from
+ * {@link StreamDurationBudgetError}, which bounds a single attempt: this one says
+ * no further attempt may start, so recovery must come from the deterministic
+ * fallback rather than another provider request.
+ */
+export class SummarizationTotalBudgetError extends Error {
+	readonly totalBudgetMs: number;
+	constructor(totalBudgetMs: number) {
+		super(
+			`Compaction exceeded its ${totalBudgetMs}ms total wall-clock budget across every summarization attempt and retry`,
+		);
+		this.name = "SummarizationTotalBudgetError";
+		this.totalBudgetMs = totalBudgetMs;
+	}
+}
+
+export interface SummarizationDeadline {
+	readonly totalBudgetMs: number;
+	/** Time left before the whole compaction is out of budget; never negative. */
+	remainingMs(): number;
+	/**
+	 * Clamp one attempt's wall-clock budget to what the compaction has left, so a
+	 * retry started near the deadline cannot re-arm a full attempt budget. Throws
+	 * {@link SummarizationTotalBudgetError} once nothing is left.
+	 */
+	attemptBudgetMs(requestedMs: number): number;
+}
+
+export function createSummarizationDeadline(
+	totalBudgetMs: number,
+	now: () => number = Date.now,
+): SummarizationDeadline {
+	const startedMs = now();
+	const remainingMs = (): number => Math.max(0, totalBudgetMs - (now() - startedMs));
+	return {
+		totalBudgetMs,
+		remainingMs,
+		attemptBudgetMs: (requestedMs: number): number => {
+			const remaining = remainingMs();
+			if (remaining <= 0) throw new SummarizationTotalBudgetError(totalBudgetMs);
+			return Math.min(requestedMs, remaining);
+		},
+	};
+}
+
+/**
  * Total time one summarization attempt may hold the session, sized to its input.
  *
  * The budget never shrinks below {@link DEFAULT_SUMMARIZATION_MAX_DURATION_MS};
@@ -83,7 +156,7 @@ export function summarizationMaxDurationMs(estimatedInputTokens: number, overrid
 	return Math.min(SUMMARIZATION_MAX_DURATION_CAP_MS, Math.max(DEFAULT_SUMMARIZATION_MAX_DURATION_MS, scaled));
 }
 
-export interface ConsumeStreamWithIdleTimeoutOptions<T> {
+export interface ConsumeStreamWithIdleTimeoutOptions<T, R = void> {
 	/** Silence budget per read; the timer resets on every event. */
 	readonly idleTimeoutMs: number;
 	/** Total wall-clock budget for the whole stream; omit to leave it unbounded. */
@@ -93,6 +166,14 @@ export interface ConsumeStreamWithIdleTimeoutOptions<T> {
 	readonly onEvent?: (event: T) => void;
 	/** Caller cancellation; an abort here ends the wait without an idle error. */
 	readonly signal?: AbortSignal;
+	/**
+	 * Final settlement of the stream (its `result()`), awaited under the SAME
+	 * timers as iteration. A provider whose iterator ends without pushing a
+	 * terminal `done`/`error` event leaves `result()` pending forever; settling it
+	 * after the watchdog's timers were cleared parked compaction with no timer
+	 * armed at all (#1741).
+	 */
+	readonly settle?: () => Promise<R>;
 }
 
 const IDLE_TRIP = "idle-trip" as const;
@@ -104,19 +185,23 @@ const CALLER_ABORTED = "caller-aborted" as const;
  * event arrives within `idleTimeoutMs`. Caller aborts propagate as the
  * stream's own abort outcome, never masked as an idle timeout.
  */
-export async function consumeStreamWithIdleTimeout<T>(
+export function consumeStreamWithIdleTimeout<T>(
 	stream: AsyncIterable<T> | PromiseLike<AsyncIterable<T>>,
-	options: ConsumeStreamWithIdleTimeoutOptions<T>,
-): Promise<void> {
-	const { idleTimeoutMs, maxDurationMs, abort, onEvent, signal } = options;
+	options: ConsumeStreamWithIdleTimeoutOptions<T, void> & { settle?: undefined },
+): Promise<void>;
+export function consumeStreamWithIdleTimeout<T, R>(
+	stream: AsyncIterable<T> | PromiseLike<AsyncIterable<T>>,
+	options: ConsumeStreamWithIdleTimeoutOptions<T, R> & { settle: () => Promise<R> },
+): Promise<R>;
+export async function consumeStreamWithIdleTimeout<T, R>(
+	stream: AsyncIterable<T> | PromiseLike<AsyncIterable<T>>,
+	options: ConsumeStreamWithIdleTimeoutOptions<T, R>,
+): Promise<R | undefined> {
+	const { idleTimeoutMs, maxDurationMs, abort, onEvent, signal, settle } = options;
 	let iterator: AsyncIterator<T> | undefined;
 	let removeAbortListener: (() => void) | undefined;
 	let callerAbortPromise: Promise<typeof CALLER_ABORTED> | undefined;
-	if (signal?.aborted) {
-		return;
-	}
-	// One absolute deadline for the whole stream, not a per-read budget. Created
-	// only after the already-aborted early return so no timer is ever leaked.
+	// One absolute deadline for the whole stream, not a per-read budget.
 	let budgetPromise: Promise<typeof BUDGET_TRIP> | undefined;
 	let budgetTimer: ReturnType<typeof setTimeout> | undefined;
 	let budgetMs = 0;
@@ -127,14 +212,46 @@ export async function consumeStreamWithIdleTimeout<T>(
 		budgetTimer.unref?.();
 		budgetPromise = promise;
 	}
-	if (signal !== undefined) {
+	if (signal !== undefined && !signal.aborted) {
 		const { promise, resolve } = Promise.withResolvers<typeof CALLER_ABORTED>();
 		const onAbort = () => resolve(CALLER_ABORTED);
 		signal.addEventListener("abort", onAbort, { once: true });
 		removeAbortListener = () => signal.removeEventListener("abort", onAbort);
 		callerAbortPromise = promise;
 	}
+	// Settle the stream under the timers this call already armed. Every exit that
+	// is not a thrown watchdog error goes through here, so `result()` can never be
+	// awaited with no deadline in force.
+	const settleUnderWatchdogs = async (): Promise<R | undefined> => {
+		if (!settle) return undefined;
+		const { promise: idlePromise, resolve: resolveIdle } = Promise.withResolvers<typeof IDLE_TRIP>();
+		const timer = setTimeout(() => resolveIdle(IDLE_TRIP), idleTimeoutMs);
+		timer.unref?.();
+		const contenders: Array<Promise<{ settled: R } | typeof IDLE_TRIP | typeof BUDGET_TRIP>> = [
+			settle().then((value) => ({ settled: value })),
+			idlePromise,
+		];
+		if (budgetPromise) contenders.push(budgetPromise);
+		let outcome: { settled: R } | typeof IDLE_TRIP | typeof BUDGET_TRIP;
+		try {
+			outcome = await Promise.race(contenders);
+		} finally {
+			clearTimeout(timer);
+		}
+		if (outcome === IDLE_TRIP) {
+			abort();
+			throw new StreamIdleTimeoutError(idleTimeoutMs);
+		}
+		if (outcome === BUDGET_TRIP) {
+			abort();
+			throw new StreamDurationBudgetError(budgetMs);
+		}
+		return outcome.settled;
+	};
 	try {
+		// A caller that already cancelled still settles its stream - the terminal
+		// aborted message is what callers return - but under the same watchdogs.
+		if (signal?.aborted) return await settleUnderWatchdogs();
 		let resolvedStream: AsyncIterable<T>;
 		if (Symbol.asyncIterator in stream) {
 			resolvedStream = stream;
@@ -149,7 +266,7 @@ export async function consumeStreamWithIdleTimeout<T>(
 				abort();
 				throw new StreamDurationBudgetError(budgetMs);
 			}
-			if (resolution === CALLER_ABORTED) return;
+			if (resolution === CALLER_ABORTED) return await settleUnderWatchdogs();
 			resolvedStream = resolution;
 		}
 		iterator = resolvedStream[Symbol.asyncIterator]();
@@ -181,9 +298,9 @@ export async function consumeStreamWithIdleTimeout<T>(
 			}
 			if (result === CALLER_ABORTED) {
 				void iterator?.return?.();
-				return;
+				return await settleUnderWatchdogs();
 			}
-			if (result.done) return;
+			if (result.done) return await settleUnderWatchdogs();
 			onEvent?.(result.value);
 		}
 	} finally {

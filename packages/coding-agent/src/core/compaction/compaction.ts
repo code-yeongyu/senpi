@@ -764,13 +764,15 @@ export async function completeSummarization(
 			const responseStream = Promise.resolve(
 				streamFn ? streamFn(model, context, requestOptions) : streamSimple(model, context, requestOptions),
 			);
-			await consumeStreamWithIdleTimeout(responseStream, {
+			// Settlement rides inside the watchdog: a provider whose iterator ends
+			// without a terminal event used to park here with every timer cleared.
+			return await consumeStreamWithIdleTimeout(responseStream, {
 				idleTimeoutMs: DEFAULT_SUMMARIZATION_IDLE_TIMEOUT_MS,
 				maxDurationMs,
 				abort: () => requestController.abort(),
 				signal: callerSignal,
+				settle: async () => await (await responseStream).result(),
 			});
-			return await (await responseStream).result();
 		} finally {
 			if (callerSignal) callerSignal.removeEventListener("abort", onCallerAbort);
 		}

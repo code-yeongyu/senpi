@@ -43,6 +43,18 @@ describe("formatWorkingStatusMessage", () => {
 	test("combines message, elapsed time, and interrupt hint", () => {
 		expect(formatWorkingStatusMessage("Working", 427, "esc")).toBe("Working (7m 07s • esc to interrupt)");
 	});
+
+	// #1739: a crawling turn must be visible while it crawls, not only in the
+	// post-turn TPS toast.
+	test("shows the live streaming rate once one is measured", () => {
+		expect(formatWorkingStatusMessage("Working", 72, "esc", 2.1)).toBe(
+			"Working (1m 12s • 2.1 tok/s • esc to interrupt)",
+		);
+	});
+
+	test("omits the rate before the first stream event", () => {
+		expect(formatWorkingStatusMessage("Working", 7, "esc", undefined)).toBe("Working (7s • esc to interrupt)");
+	});
 });
 
 describe("formatToolHookStatusMessage", () => {

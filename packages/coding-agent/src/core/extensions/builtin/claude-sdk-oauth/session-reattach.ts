@@ -70,6 +70,23 @@ export function forgetBinding(senpiSessionId: string): void {
 	bindings.delete(senpiSessionId);
 }
 
+/**
+ * Reason the newest ledger record invalidated this session's binding. Held next
+ * to the binding it replaced so the next continuity decision can name the real
+ * cause instead of the no-record default: a restart re-reads it from the branch
+ * (session-registry-wiring), and a committed turn retires it with the marker.
+ */
+const bindingInvalidations = new Map<string, string>();
+
+export function rememberBindingInvalidation(senpiSessionId: string, reason: string | undefined): void {
+	if (reason === undefined) bindingInvalidations.delete(senpiSessionId);
+	else bindingInvalidations.set(senpiSessionId, reason);
+}
+
+export function bindingInvalidationReason(senpiSessionId: string): string | undefined {
+	return bindingInvalidations.get(senpiSessionId);
+}
+
 export function bindingFromEntry(
 	entry: Pick<
 		ClaudeSdkOauthSessionEntry,

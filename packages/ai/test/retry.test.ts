@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
 import {
+	EMPTY_RESPONSE_ERROR,
+	EMPTY_TOOL_USE_ERROR,
+	FORWARDED_EMPTY_RESPONSE_ERROR,
+	FORWARDED_EMPTY_TOOL_USE_ERROR,
+} from "../src/utils/empty-response-errors.ts";
+import {
 	isProviderStreamStallError,
 	isProviderTimeoutError,
 	isRetryableAssistantError,
@@ -314,6 +320,24 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: anthropicOrphanServerToolMessage }),
 			),
 		).toBe(true);
+	});
+
+	it("retries an empty outcome only when its reasoning was already forwarded live", () => {
+		// A forwarded attempt cannot be replayed inside the stream wrapper (a second `start`
+		// would duplicate the partial), so the turn retry owns it; the bounded "twice" errors
+		// already spent the wrapper's own retry and stay terminal.
+		for (const errorMessage of [FORWARDED_EMPTY_RESPONSE_ERROR, FORWARDED_EMPTY_TOOL_USE_ERROR]) {
+			expect(
+				isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage })),
+				errorMessage,
+			).toBe(true);
+		}
+		for (const errorMessage of [EMPTY_RESPONSE_ERROR, EMPTY_TOOL_USE_ERROR]) {
+			expect(
+				isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage })),
+				errorMessage,
+			).toBe(false);
+		}
 	});
 
 	it("keeps unrelated invalid_request errors non-retryable", () => {

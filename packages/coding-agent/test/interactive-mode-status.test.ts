@@ -728,7 +728,13 @@ describe("InteractiveMode.getWorkingIndicatorOptions", () => {
 			workingIndicatorOptions: undefined,
 			sessionManager: { getEntries: () => [], getEntryCount: () => 0 },
 			getWorkingElapsedSeconds: () => 7,
+			// No stream is in flight, so the borrowed rate reader answers undefined
+			// without touching the meter: the status line carries no tok/s segment.
+			streamingMessage: undefined,
 		};
+		fakeThis.getWorkingTokensPerSecond = (
+			InteractiveMode as any
+		).prototype.getWorkingTokensPerSecond.bind(fakeThis);
 
 		// When
 		const options = (InteractiveMode as any).prototype.getWorkingIndicatorOptions.call(fakeThis);
@@ -763,7 +769,13 @@ describe("InteractiveMode.getWorkingIndicatorOptions", () => {
 			workingIndicatorOptions: undefined,
 			sessionManager: { getEntries: () => [], getEntryCount: () => 0 },
 			getWorkingElapsedSeconds: () => 7,
+			// No stream is in flight, so the borrowed rate reader answers undefined
+			// without touching the meter: the status line carries no tok/s segment.
+			streamingMessage: undefined,
 		};
+		fakeThis.getWorkingTokensPerSecond = (
+			InteractiveMode as any
+		).prototype.getWorkingTokensPerSecond.bind(fakeThis);
 
 		// When
 		const options = (InteractiveMode as any).prototype.getWorkingIndicatorOptions.call(fakeThis);

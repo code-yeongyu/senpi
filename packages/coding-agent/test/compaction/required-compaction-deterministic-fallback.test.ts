@@ -133,10 +133,13 @@ describe("required compaction deterministic fallback", () => {
 		});
 	});
 
-	it("does not recover aborted or unrelated failures", async () => {
+	// Issue #1741 narrowed this: a terminal provider error that is NOT a refusal now
+	// authorizes the deterministic checkpoint instead of wedging the session. Aborts
+	// and refusals stay fail-closed.
+	it("does not recover aborted requests or provider refusals", async () => {
 		for (const testCase of [
 			{ reason: "threshold" as const, message: "upstream_stream_truncated", aborted: true, refusal: false },
-			{ reason: "threshold" as const, message: "unrelated provider refusal", aborted: false, refusal: false },
+			{ reason: "threshold" as const, message: "unrelated provider refusal", aborted: false, refusal: true },
 			{ reason: "threshold" as const, message: "upstream_stream_truncated", aborted: false, refusal: true },
 		]) {
 			const handlers = createCompactionHandlers();

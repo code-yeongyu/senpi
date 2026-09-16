@@ -65,6 +65,10 @@ export interface HarnessOptions {
 	models?: FauxModelDefinition[];
 	api?: string;
 	provider?: string;
+	/** Faux streaming rate; paces every delta by its estimated token count. */
+	tokensPerSecond?: number;
+	/** Faux delta size in estimated tokens (4 characters each). */
+	tokenSize?: { min?: number; max?: number };
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
@@ -125,6 +129,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		api: options.api,
 		provider: options.provider,
 		models: options.models,
+		...(options.tokensPerSecond === undefined ? {} : { tokensPerSecond: options.tokensPerSecond }),
+		...(options.tokenSize === undefined ? {} : { tokenSize: options.tokenSize }),
 	});
 	fauxProvider.setResponses([]);
 	const model = fauxProvider.getModel();
@@ -220,6 +226,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			return runner.emitContext(messages);
 		},
 		prepareNextTurnWithContext: options.prepareNextTurnWithContext,
+		// Mirrors core/sdk.ts: the stream throughput guard is settings-driven.
+		streamThroughput: settingsManager.getAgentStreamThroughputOptions(),
 	});
 	const extensionsResult = options.extensionFactories
 		? await createTestExtensionsResult(options.extensionFactories, tempDir)

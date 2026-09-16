@@ -79,8 +79,10 @@ describe("blocking compaction network-failure degradation", () => {
 	});
 
 	describe("Given a non-transient summarization failure", () => {
-		it("Then the failure still surfaces loudly as an extension error", async () => {
-			// Given: a deterministic provider rejection that retrying cannot fix.
+		it("Then a provider refusal still surfaces loudly as an extension error", async () => {
+			// Given: a refusal. Reducing context would not make the model comply, so
+			// this class keeps propagating instead of authorizing the deterministic
+			// fallback (issue #1741).
 			const { beforeAgentStart } = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 9_950 });
 			registrations.push(harness.registration);
@@ -88,6 +90,7 @@ describe("blocking compaction network-failure degradation", () => {
 				fauxAssistantMessage("", {
 					stopReason: "error",
 					errorMessage: "request blocked by provider policy",
+					stopDetails: { type: "refusal" },
 				}),
 			]);
 
@@ -96,6 +99,31 @@ describe("blocking compaction network-failure degradation", () => {
 			await expect(beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx)).rejects.toThrow(
 				"request blocked by provider policy",
 			);
+		});
+
+		// Issue #1741: a terminal provider error that is NOT a refusal used to
+		// propagate the same way, which left the context above the threshold and
+		// made every following prompt fail identically. It now recovers through the
+		// deterministic checkpoint, and the provider detail reaches the user as a
+		// warning instead of an unrecoverable turn.
+		it("Then a terminal provider error recovers deterministically and warns the user", async () => {
+			const { beforeAgentStart } = createCompactionHandlers();
+			const harness = createBlockingContext({ usageTokens: 9_950 });
+			registrations.push(harness.registration);
+			const notify = vi.fn();
+			(harness.ctx as unknown as { ui: { notify: typeof notify } }).ui = { notify };
+			harness.registration.setResponses([
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Codex error: stream ended with an error response",
+				}),
+			]);
+
+			await expect(beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx)).resolves.toBeUndefined();
+
+			expect(harness.registration.state.callCount).toBe(1);
+			expect(notify).toHaveBeenCalledTimes(1);
+			expect(notify.mock.calls[0]?.[0]).toContain("Codex error: stream ended with an error response");
 		});
 	});
 

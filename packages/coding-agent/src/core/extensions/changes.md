@@ -1,5 +1,27 @@
 # Core Extensions Changes
 
+## 2026-09-16 - Host budget for session_shutdown handlers (senpi#1732)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts` bounds each `session_shutdown` handler inside `emit`: the budget (warn 2s, hard cap 10s) is read once per shutdown emission from `SettingsManager`, every handler receives its own `AbortController` signal, a single warning names the extension and the elapsed ms at the warn threshold, and at the cap the runner aborts that signal, emits an extension error (`handler timed out after <N>ms`) and continues with the next handler instead of awaiting the hung one. All other events keep the uncapped sequential await.
+- `packages/coding-agent/src/core/extensions/types.ts` adds the additive optional `SessionShutdownEvent.signal` so a handler can observe the host cap; handlers that ignore it behave exactly as before.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/runner.ts` is the only place that awaits extension shutdown handlers, so it is the only place that can stop one hung extension from holding quit/reload/new/resume hostage.
+- `packages/coding-agent/src/core/extensions/types.ts` owns the event contract every extension consumes; the cancellation signal has to travel on the event.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/runner.ts` runs the handler loop; an extension can only budget itself, and the failure mode is precisely an extension that does not.
+- `packages/coding-agent/src/core/extensions/types.ts` is host-owned; an extension cannot add a field other extensions receive.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: the `emit` handler loop and the new private `resolveSessionShutdownBudget` / `runSessionShutdownHandler` methods placed directly above it; the `SettingsManager` import. Upstream's own shutdown cap (`SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS`) would land in the same loop - keep the settings-driven warn/cap pair.
+- `packages/coding-agent/src/core/extensions/types.ts`: the `SessionShutdownEvent` body after `targetSessionFile`.
+
 ## 2026-09-16 - Transient kernelTools capability (#1647)
 
 ### What changed

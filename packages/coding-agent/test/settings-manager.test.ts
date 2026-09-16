@@ -12,6 +12,8 @@ import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import {
 	__resetSelfWriteTrackerForTests,
 	__setSelfWriteTrackerClockForTests,
+	DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
+	DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
 	getInMemorySettingsPath,
 	getSettingsPath,
 	InMemorySettingsStorage,
@@ -420,6 +422,35 @@ describe("SettingsManager", () => {
 			expect(whenManager.getProviderStreamRetryTimeoutMs()).toBeUndefined();
 		});
 
+		// #1739: the throughput watchdog's knobs are agent-side defaults; the
+		// settings layer only forwards what the user actually configured.
+		it("should leave the stream throughput guard at the agent defaults when unconfigured", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamThroughputOptions()).toBeUndefined();
+		});
+
+		it("should forward configured stream throughput knobs, including a disabling zero", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({
+					retry: {
+						provider: { minThroughputTokensPerSecond: 0, throughputWindowMs: 30_000, throughputGraceMs: 0 },
+					},
+				}),
+			);
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamThroughputOptions()).toEqual({
+				floorTokensPerSecond: 0,
+				windowMs: 30_000,
+				graceMs: 0,
+			});
+		});
+
 		it("should default the agent stream idle timeout to httpIdleTimeoutMs", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
@@ -694,6 +725,76 @@ describe("SettingsManager", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(() => manager.getHttpIdleTimeoutMs()).toThrow("Invalid httpIdleTimeoutMs setting");
+		});
+	});
+
+	describe("session_shutdown handler budget", () => {
+		it("defaults to a 2s warning and a 10s hard cap", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getSessionShutdownHandlerWarnMs()).toBe(DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS);
+			expect(manager.getSessionShutdownHandlerTimeoutMs()).toBe(DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS);
+			expect(DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS).toBe(2000);
+			expect(DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS).toBe(10000);
+		});
+
+		it("uses merged global and project settings", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ sessionShutdownHandlerWarnMs: 500, sessionShutdownHandlerTimeoutMs: 5000 }),
+			);
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ sessionShutdownHandlerTimeoutMs: 0 }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getSessionShutdownHandlerWarnMs()).toBe(500);
+			expect(manager.getSessionShutdownHandlerTimeoutMs()).toBe(0);
+		});
+
+		it("persists both thresholds through their setters", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			manager.setSessionShutdownHandlerWarnMs(750);
+			manager.setSessionShutdownHandlerTimeoutMs(4500);
+			await manager.flush();
+
+			expect(manager.getSessionShutdownHandlerWarnMs()).toBe(750);
+			expect(manager.getSessionShutdownHandlerTimeoutMs()).toBe(4500);
+			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(savedSettings.sessionShutdownHandlerWarnMs).toBe(750);
+			expect(savedSettings.sessionShutdownHandlerTimeoutMs).toBe(4500);
+		});
+
+		it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])("rejects %s from a settings file", (invalidValue) => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({
+					sessionShutdownHandlerWarnMs: invalidValue,
+					sessionShutdownHandlerTimeoutMs: invalidValue,
+				}),
+			);
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(() => manager.getSessionShutdownHandlerWarnMs()).toThrow(
+				"Invalid sessionShutdownHandlerWarnMs setting",
+			);
+			expect(() => manager.getSessionShutdownHandlerTimeoutMs()).toThrow(
+				"Invalid sessionShutdownHandlerTimeoutMs setting",
+			);
+		});
+
+		it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])("rejects %s from the setters", (invalidValue) => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(() => manager.setSessionShutdownHandlerWarnMs(invalidValue)).toThrow(
+				"Invalid sessionShutdownHandlerWarnMs setting",
+			);
+			expect(() => manager.setSessionShutdownHandlerTimeoutMs(invalidValue)).toThrow(
+				"Invalid sessionShutdownHandlerTimeoutMs setting",
+			);
 		});
 	});
 

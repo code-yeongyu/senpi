@@ -96,6 +96,23 @@ export function storedBindingFromBinding(
 	};
 }
 
+/**
+ * Reason carried by the newest binding ledger record, when that record is an
+ * invalidation. A marker appended later retires it: the marker means a turn
+ * re-established the binding, so no cause is pending any more.
+ */
+export function invalidationReasonFromBranch(branch: readonly BranchEntry[]): string | undefined {
+	const index = newestBindingEntryIndex(branch);
+	if (index < 0) return undefined;
+	const data = branch[index]?.data;
+	return isBindingInvalidation(data) ? data.reason : undefined;
+}
+
+function isBindingInvalidation(value: unknown): value is BindingInvalidation {
+	if (typeof value !== "object" || value === null) return false;
+	return "invalidated" in value && value.invalidated === true && "reason" in value && typeof value.reason === "string";
+}
+
 export function bindingFromStoredBranch(
 	branch: readonly BranchEntry[],
 	stored: StoredBinding,

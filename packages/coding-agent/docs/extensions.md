@@ -379,7 +379,7 @@ user sends another prompt ◄─────────────────
   ├─► session_start { reason: "reload" }
   └─► resources_discover { reason: "reload" }
 
-/name or pi.setSessionName()
+/rename, /name, or pi.setSessionName()
   └─► session_info_changed
 
 /compact or auto-compaction
@@ -477,7 +477,7 @@ pi.on("session_start", async (event, ctx) => {
 
 #### session_info_changed
 
-Fired when the current session display name is set via `/name`, RPC, or `pi.setSessionName()`.
+Fired when the current session display name is set via `/rename`, `/name`, RPC, or `pi.setSessionName()`.
 
 ```typescript
 pi.on("session_info_changed", async (event, ctx) => {
@@ -619,9 +619,12 @@ Fired before a started session runtime is torn down. Use this to clean up resour
 pi.on("session_shutdown", async (event, ctx) => {
   // event.reason - "quit" | "reload" | "new" | "resume" | "fork"
   // event.targetSessionFile - destination session for session replacement flows
+  // event.signal - aborted when this handler exceeds the host's shutdown budget
   // Cleanup, save state, etc.
 });
 ```
+
+The host budgets each handler separately: a handler still running after `sessionShutdownHandlerWarnMs` (default 2000) logs a warning naming the extension, and at `sessionShutdownHandlerTimeoutMs` (default 10000) senpi aborts that handler's `event.signal`, reports an extension error, and continues teardown with the remaining handlers. Keep shutdown work short, and pass `event.signal` to anything that can block (subprocess waits, network calls, lock acquisition) so it stops when the host gives up on it. Both thresholds are settings; `0` disables either half. See [settings.md](settings.md#shutdown-handler-budget).
 
 ### Agent Events
 

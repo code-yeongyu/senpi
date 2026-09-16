@@ -1021,6 +1021,13 @@ export interface SessionShutdownEvent {
 	reason: "quit" | "reload" | "new" | "resume" | "fork";
 	/** Destination session file when shutting down due to session replacement. */
 	targetSessionFile?: string;
+	/**
+	 * Per-handler signal the host aborts when this handler exceeds
+	 * `sessionShutdownHandlerTimeoutMs`; teardown then continues without it.
+	 * Long shutdown work should observe it. Absent on hosts that predate the
+	 * shutdown handler budget.
+	 */
+	signal?: AbortSignal;
 }
 
 /** Fired when the user aborts the session outside an active agent run (retry backoff, compaction, or queued continuation), stopping in-flight work without an agent_end that carries abortSource. Extensions that track run-progress state (e.g. goal) use this to mark their state as user-interrupted. */

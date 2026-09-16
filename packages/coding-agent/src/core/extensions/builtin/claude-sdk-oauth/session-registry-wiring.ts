@@ -7,6 +7,7 @@ import {
 	BINDING_MARKER,
 	type BindingInvalidation,
 	bindingFromStoredBranch,
+	invalidationReasonFromBranch,
 	storedBindingFromBinding,
 	storedBindingFromEntry,
 } from "./session-binding.ts";
@@ -17,7 +18,13 @@ import {
 	isResidentAssistant,
 	isTerminalFailure,
 } from "./session-commit-boundary.ts";
-import { bindingFromEntry, forgetBinding, getBinding, rememberBinding } from "./session-reattach.ts";
+import {
+	bindingFromEntry,
+	forgetBinding,
+	getBinding,
+	rememberBinding,
+	rememberBindingInvalidation,
+} from "./session-reattach.ts";
 import {
 	closeSession,
 	getSession,
@@ -29,8 +36,13 @@ import { sentHashesForEntry, sentMessageHashes, sentMessages } from "./session-s
 
 const commitBoundary = new AssistantCommitBoundary();
 
-function persistBindingInvalidation(pi: Partial<Pick<ExtensionAPI, "appendEntry">>, reason: string): void {
+function persistBindingInvalidation(
+	pi: Partial<Pick<ExtensionAPI, "appendEntry">>,
+	sessionId: string,
+	reason: string,
+): void {
 	pi.appendEntry?.(BINDING_ENTRY_TYPE, { schemaVersion: 1, invalidated: true, reason } satisfies BindingInvalidation);
+	rememberBindingInvalidation(sessionId, reason);
 }
 
 async function invalidateBinding(
@@ -42,7 +54,7 @@ async function invalidateBinding(
 	forgetBinding(sessionId);
 	const sessionFile = ctx.sessionManager.getSessionFile?.();
 	if (sessionFile) await deleteStoredBinding(sessionFile);
-	persistBindingInvalidation(pi, reason);
+	persistBindingInvalidation(pi, sessionId, reason);
 }
 
 function keepBindingThenClose(sessionId: string, reason: string): void {
@@ -64,21 +76,26 @@ export function registerSessionRegistry(
 		if (event.reason === "reload") return;
 		const sessionId = ctx.sessionManager.getSessionId();
 		forgetBinding(sessionId);
+		rememberBindingInvalidation(sessionId, undefined);
 		const sessionFile = ctx.sessionManager.getSessionFile?.();
 		if (event.reason === "new") return;
 		if (event.reason === "fork") {
 			if (sessionFile) await deleteStoredBinding(sessionFile);
-			persistBindingInvalidation(pi, "fork");
+			persistBindingInvalidation(pi, sessionId, "fork");
 			return;
 		}
 		if (!sessionFile) return;
+		// A restart carries the ledger, not the process maps: the newest binding record
+		// says whether a cause is still pending (invalidation) or was retired (marker).
+		const branch = ctx.sessionManager.getBranch();
+		rememberBindingInvalidation(sessionId, invalidationReasonFromBranch(branch));
 		const stored = await readStoredBinding(sessionFile);
 		if (!stored) return;
 		if (stored.sessionId !== sessionId) {
 			await deleteStoredBinding(sessionFile);
 			return;
 		}
-		const binding = bindingFromStoredBranch(ctx.sessionManager.getBranch(), stored);
+		const binding = bindingFromStoredBranch(branch, stored);
 		if (!binding) {
 			await deleteStoredBinding(sessionFile);
 			return;
@@ -100,9 +117,12 @@ export function registerSessionRegistry(
 	});
 	pi.on("model_select", async (event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
+		// Leaving this provider is an excursion, not an invalidation: the live SDK
+		// session closes but the binding stays, so coming back to the same model
+		// reattaches at the recorded prefix instead of re-sending the whole
+		// conversation (senpi#1747). Identity drift still flattens on the way back.
 		if (event.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) {
-			closeSession(sessionId, "model_selected");
-			await invalidateBinding(pi, ctx, "model_selected");
+			keepBindingThenClose(sessionId, "model_selected");
 			return;
 		}
 		if (!(await switchSessionModel(sessionId, event.model.id))) {
@@ -160,6 +180,8 @@ export function registerSessionRegistry(
 		// not leave a marker-only entry that retires the still-valid older sidecar.
 		if (!recordFor("pending")) return;
 		pi.appendEntry(BINDING_ENTRY_TYPE, BINDING_MARKER);
+		// The marker is now the newest ledger record, so any earlier cause is retired.
+		rememberBindingInvalidation(sessionId, undefined);
 		const markerEntryId = ctx.sessionManager.getLeafId();
 		if (!markerEntryId) return;
 		const stored = recordFor(markerEntryId);

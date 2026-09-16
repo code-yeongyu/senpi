@@ -51,7 +51,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/settings` | Theme, message delivery, transport, and other preferences |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
-| `/name <name>` | Set session display name |
+| `/rename [name]` | Rename the current session (`/name` is an alias) |
 | `/session` | Show session file, ID, messages, tokens, and cost |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/trust` | Save project trust decision for future sessions |

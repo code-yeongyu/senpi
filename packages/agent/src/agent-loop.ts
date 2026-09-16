@@ -24,6 +24,11 @@ import {
 	shouldTerminateAssistantTurn,
 } from "./assistant-terminal-state.ts";
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
+import {
+	createStreamThroughputWatchdog,
+	estimateStreamedUnits,
+	type StreamThroughputWatchdog,
+} from "./stream-throughput-watchdog.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -494,6 +499,7 @@ async function streamAssistantResponse(
 			(error) => requestAbortController.abort(error),
 			config.streamStartTimeoutMs,
 			response,
+			createStreamThroughputWatchdog(config.streamThroughput),
 		);
 		try {
 			while (true) {
@@ -654,6 +660,12 @@ function normalizeTimeoutMs(timeoutMs: number | undefined): number | undefined {
 	return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined;
 }
 
+/** Streamed units carried by one assistant event; only text and thinking count. */
+function streamedUnitsOf(event: AssistantMessageEvent): number {
+	if (event.type === "text_delta" || event.type === "thinking_delta") return estimateStreamedUnits(event.delta);
+	return 0;
+}
+
 function createAssistantEventReader(
 	iterator: AsyncIterator<AssistantMessageEvent>,
 	timeoutMs: number | undefined,
@@ -661,6 +673,7 @@ function createAssistantEventReader(
 	onIdleTimeout?: (error: Error) => void,
 	streamStartTimeoutMs?: number,
 	stream?: Pick<AssistantMessageEventStream, "hasPendingLocalWork">,
+	throughput?: StreamThroughputWatchdog,
 ): AssistantEventReader {
 	const idleTimeoutMs = normalizeTimeoutMs(timeoutMs);
 	const startTimeoutMs = normalizeTimeoutMs(streamStartTimeoutMs);
@@ -693,6 +706,10 @@ function createAssistantEventReader(
 			const makeTimeoutError = useStartBound
 				? (ms: number) => new StreamStartTimeoutError(ms)
 				: (ms: number) => new StreamIdleTimeoutError(ms);
+			// A provider executing a server-requested tool locally (Cursor's exec
+			// channel) is not streaming; that span must not count against the rate.
+			const localWorkPending = throughput !== undefined && stream?.hasPendingLocalWork?.() === true;
+			const waitStartedAt = localWorkPending ? Date.now() : 0;
 			const result = await readNextAssistantEvent(
 				iterator,
 				readTimeoutMs,
@@ -702,7 +719,23 @@ function createAssistantEventReader(
 				stream,
 				signal,
 			);
-			if (!result.done) sawFirstEvent = true;
+			if (localWorkPending) throughput?.exclude(Date.now() - waitStartedAt);
+			if (!result.done) {
+				sawFirstEvent = true;
+				if (throughput !== undefined) {
+					// The rate clock starts at the first event, exactly where the
+					// stream-start bound stops applying.
+					throughput.start();
+					const degraded = throughput.record(streamedUnitsOf(result.value));
+					if (degraded !== undefined) {
+						closeAssistantIterator(iterator);
+						// Abort before rejecting: the caller inspects the request signal's
+						// reason, and the crawling upstream must be torn down either way.
+						onIdleTimeout?.(degraded);
+						throw degraded;
+					}
+				}
+			}
 			return result;
 		},
 		dispose: () => removeAbortListener?.(),

@@ -1,4 +1,4 @@
-import type { ContinuityReason } from "./session-observability.ts";
+import { type ContinuityReason, sanitizeReason } from "./session-observability.ts";
 import { sentHashPrefixDigest } from "./session-sync.ts";
 
 export type ContinuityEntrySnapshot = {
@@ -42,10 +42,12 @@ export type ContinuityDecisionInput = {
 	/** false only on the config-dir lane, whose per-account credential roots cannot share a transcript root, so cross-account resume is impossible there. */
 	crossAccountResumeSupported: boolean;
 	idleExpired?: boolean;
+	/** Reason the newest ledger record invalidated this session's binding, when one is pending. */
+	invalidationReason?: string;
 };
 
 export type ContinuityDecision =
-	| { kind: "bootstrap" }
+	| { kind: "bootstrap"; reason?: ContinuityReason }
 	| { kind: "delta"; from: number }
 	| { kind: "reattach"; sdkSessionId: string; from: number; reason: ContinuityReason }
 	| { kind: "fork"; sdkSessionId: string; atUuid: string; from: number; reason: ContinuityReason }
@@ -55,6 +57,32 @@ const PENDING_FORK_REASONS: Readonly<Record<string, ContinuityReason>> = {
 	assistant_rewritten: "assistant_rewritten",
 	compaction: "tainted_compaction",
 };
+
+/**
+ * Ledger invalidation reasons that are not themselves observation vocabulary,
+ * mapped onto the closest member. Reasons that ARE members (model_selected,
+ * extensions_removed, assistant_rewritten) pass through `sanitizeReason`, which
+ * also keeps an unknown ledger string from ever reaching an observation.
+ */
+const INVALIDATION_CAUSES: Readonly<Record<string, ContinuityReason>> = {
+	compaction: "tainted_compaction",
+	tree_changed: "branch_diverged",
+	fork: "tainted_fork",
+};
+
+/**
+ * `registry_miss` means what it says: no record was ever found. When the ledger
+ * recorded WHY the binding went away, the cold-seed names that cause instead.
+ * Classification is untouched - only the reason a `bootstrap`/`flatten` reports
+ * changes, and only when it would otherwise be the no-record default.
+ */
+function withRecordedInvalidation(decision: ContinuityDecision, input: ContinuityDecisionInput): ContinuityDecision {
+	if (input.invalidationReason === undefined) return decision;
+	const cause = INVALIDATION_CAUSES[input.invalidationReason] ?? sanitizeReason(input.invalidationReason);
+	if (decision.kind === "bootstrap") return { kind: "bootstrap", reason: cause };
+	if (decision.kind === "flatten" && decision.reason === "registry_miss") return { kind: "flatten", reason: cause };
+	return decision;
+}
 
 function commonPrefixLength(left: readonly string[], right: readonly string[]): number {
 	const limit = Math.min(left.length, right.length);
@@ -214,6 +242,10 @@ function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBi
  * session, new query).
  */
 export function decideNativeContinuity(input: ContinuityDecisionInput): ContinuityDecision {
+	return withRecordedInvalidation(decideFromState(input), input);
+}
+
+function decideFromState(input: ContinuityDecisionInput): ContinuityDecision {
 	const { entry, binding } = input;
 	if (!entry) {
 		if (!binding) return { kind: "bootstrap" };

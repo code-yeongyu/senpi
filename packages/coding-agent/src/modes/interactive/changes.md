@@ -1,3 +1,66 @@
+## 2026-09-16 - Stall transcripts read as stalls (senpi#1740)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`: the `error` stop-reason branch routes `message.errorMessage` through `describeProviderStallForUser` first and prints that sentence for a provider-stream stall, falling back to the previous `Error: <errorMessage>` line for everything else. The branch is now a block with two early `break`s (tool calls, server-fallback diagnostic) instead of one negated condition; the descriptors it emits are unchanged in kind and order. No recovery advice is printed here - the turn may still be retrying.
+
+### Why
+
+- senpi#1740: the transcript printed `Error: Provider stream start timed out after 180000ms (raise streamStartTimeoutMs ...)` for every stalled attempt, including attempts a retry or a fallback model later recovered, so the watchdog wording was what the user read as the answer.
+
+### Why an extension could not handle it
+
+- Assistant bubbles are built by the host renderer; an extension cannot rewrite a descriptor the host already emitted.
+
+### Expected merge conflict zones
+
+- LOW: the `case "error"` arm of `createAssistantRenderDescriptors` and one import block.
+
+## 2026-09-16 - Live tok/s on the working line and the throughput-degraded notice (#1739)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/working-status.ts`: `formatWorkingStatusSuffix` is now the single suffix builder and takes an optional live rate, so `formatWorkingStatusMessage` and `formatWorkingStatusMessageFrame` render `Working (1m 12s - 2.1 tok/s - esc to interrupt)` when a rate exists and the previous string when it does not.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a `StreamRateMeter` (pi-agent-core) is rebuilt at every assistant `message_start` with the configured throughput window, fed from `message_update` text/thinking deltas, and read only while an assistant message is streaming, so tool time never dilutes the displayed rate. A `stream_throughput_degraded` session event renders an error notice naming the measured rate and reuses the configured-chain-absent copy ("No fallback chain configured - set one with /fallback.").
+
+### Why
+
+- senpi#1739: a crawling turn was indistinguishable from a healthy one - the working line showed elapsed time only, and the builtin TPS extension reports tok/s only after `agent_end`, far too late to route. The rate must be visible while the turn crawls, and the no-fallback termination needs the same explanation the server-fallback abort already gives.
+
+### Why an extension could not handle it
+
+- The working line and its animation frames are owned by interactive mode; extensions can only post notifications after the turn ends.
+
+### Expected merge conflict zones
+
+- LOW: the working-status suffix helper and the `message_start` / `message_update` cases in `interactive-mode.ts`.
+
+## 2026-09-16 - /rename session command
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` handles `/rename [name]` and the `/name` alias: an argument sets the current session name immediately, and a bare command (or `app.session.renameCurrent`) opens an inline editor prefilled with the current name (Enter commits, Esc cancels, empty names are rejected).
+- `packages/coding-agent/src/modes/interactive/components/extension-input.ts` accepts `initialValue` and types it into the input so the cursor lands at the end of the prefill.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/session-tips.ts` points the session-name tip at `/rename [name]`.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns the composer, slash-command dispatch, and session-name writes, so the inline rename editor has to live there.
+- `packages/coding-agent/src/modes/interactive/components/extension-input.ts` is the existing single-line overlay the host already swaps in for extension prompts; rename reuse needs a prefill without moving the cursor to column 0.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/session-tips.ts` is the startup-tip catalog users see for session labeling.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` intercepts `/name` before extension commands run; an extension cannot replace that builtin or bind `app.session.renameCurrent` on the default editor.
+- `packages/coding-agent/src/modes/interactive/components/extension-input.ts` is the host overlay widget; extensions cannot add `initialValue` to it.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/session-tips.ts` is a host-owned tip catalog.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `app.session.resume` action registration, the `/name` slash-command branch, and `handleNameCommand`.
+- `packages/coding-agent/src/modes/interactive/components/extension-input.ts`: `ExtensionInputOptions` and Input construction.
+- `packages/coding-agent/src/modes/interactive/tips/catalog/session-tips.ts`: the `session-name` tip render string.
+
 ## 2026-09-14 - Clickable-question guidance and multiplexer QA (#1645)
 
 ### What changed

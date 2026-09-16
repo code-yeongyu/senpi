@@ -11,6 +11,8 @@ import { keyHint } from "./keybinding-hints.ts";
 export interface ExtensionInputOptions {
 	tui?: TUI;
 	timeout?: number;
+	/** Text the input opens with; the cursor lands at its end. */
+	initialValue?: string;
 }
 
 export class ExtensionInputComponent extends Container implements Focusable {
@@ -61,6 +63,11 @@ export class ExtensionInputComponent extends Container implements Focusable {
 		}
 
 		this.input = new Input();
+		if (opts?.initialValue) {
+			// Typed in, not assigned: Input.setValue() would leave the cursor at
+			// column 0, ahead of the prefill the caller wants the user to edit.
+			this.input.handleInput(opts.initialValue);
+		}
 		this.addChild(this.input);
 		this.addChild(new Spacer(1));
 		this.addChild(

@@ -1,5 +1,85 @@
 # changes
 
+## 2026-09-16 - Stalled turns end with recovery guidance (senpi#1740)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts` adds the private `_terminalFailureText(message, attempts)` and uses it for the `auto_retry_end.finalError` of an exhausted transient retry. A provider-stream stall is rewritten through `describeProviderStallForUser` (imported from `@earendil-works/pi-ai/compat`) with the stalled model selector, the attempts spent and a recovery hint chosen from `RetryFallbackController.hasConfiguredChain()` (`chain-exhausted` vs `no-fallback-configured`); every other failure keeps `message.errorMessage` verbatim. The assistant message itself is left untouched, so `isProviderStreamStallError` and the retry/fallback routing are unchanged.
+
+### Why
+
+- senpi#1740: when a provider accepted a request and never streamed a first event, the session's visible outcome was the watchdog's interpolated message (`Provider stream start timed out after 180000ms`). It names no cause and no next step, and the same string has to stay on the message because the retry classifier matches on it - so the rewrite belongs at the event the UI renders, not at the message.
+
+### Why an extension could not handle it
+
+- `auto_retry_end` is emitted by the session at the moment it gives the turn up; only the session knows the attempts spent and whether a fallback chain existed.
+
+### Expected merge conflict zones
+
+- LOW: one import specifier, one new private method before `_degradeRateLimitedWithoutFallback`, and one `finalError:` line in the generic transient-exhaustion branch of `_handleRetryableError`.
+
+## 2026-09-16 - Throughput-degraded streams skip same-model retries and fail over (senpi#1739)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_handleRetryableError` gains a branch for `isProviderStreamThroughputDegradedError` ahead of the generic transient path. It spends no same-model attempts, calls `tryFallback("transient")` immediately (which still notes the slow selector's cooldown), and, when no candidate exists, emits the new `stream_throughput_degraded` session event (`model`, `errorMessage`, `chainConfigured`) plus the usual `retry_fallback_exhausted` / `auto_retry_end` bookkeeping before ending the turn on that error. The `provider_error` session log gains the `throughput` kind.
+- `packages/coding-agent/src/core/settings-manager.ts`: `getAgentStreamThroughputOptions()` forwards `retry.provider.minThroughputTokensPerSecond`, `retry.provider.throughputWindowMs` and `retry.provider.throughputGraceMs` to the agent loop, returning undefined when nothing is configured so the agent defaults apply; a configured `0` floor or window is forwarded and disables the guard.
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: the three knobs on `ProviderRetrySettings`.
+- `packages/coding-agent/src/core/sdk.ts`: wires `streamThroughput` into the `Agent` next to `timeoutMs` / `streamStartTimeoutMs`.
+
+### Why
+
+- senpi#1739: a provider that keeps streaming at ~2 tok/s produced no error at all, so retry and fallback never ran and the session looked healthy. With the agent loop now failing such a stream, the session must route it: replaying the payload on the same model cannot make the upstream faster, and the stall policy's full same-model budget would waste minutes before the chain is consulted.
+
+### Why an extension could not handle it
+
+- Retry budget, fallback chain and turn termination all live in `AgentSession`; extensions observe the turn after those decisions and cannot skip the same-model budget.
+
+### Expected merge conflict zones
+
+- MEDIUM: the retry class chain in `_handleRetryableError` (`packages/coding-agent/src/core/agent-session.ts`), which upstream also edits for 429 tiers and stalls. Keep the throughput branch BEFORE the generic transient branch.
+- LOW: the settings getter and the `ProviderRetrySettings` fields.
+
+## 2026-09-16 - /rename session command
+
+### What changed
+
+- `packages/coding-agent/src/core/slash-commands.ts` adds the `/rename [name]` builtin and keeps `/name` as an alias that describes the same session-rename action.
+- `packages/coding-agent/src/core/keybindings.ts` registers unbound-by-default `app.session.renameCurrent` ("Rename the current session").
+
+### Why
+
+- `packages/coding-agent/src/core/slash-commands.ts` is the catalog `/help` and command discovery read, so the new command has to live there for the TUI to list it.
+- `packages/coding-agent/src/core/keybindings.ts` owns the bindable action table; a key that opens the current-session rename editor cannot be registered from an extension's command list.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/slash-commands.ts` is the host builtin catalog. An extension can add its own command, but it cannot replace the built-in `/name` row or insert `/rename` into that list.
+- `packages/coding-agent/src/core/keybindings.ts` owns first-class `app.session.*` ids that the interactive editor already dispatches; an extension cannot add `app.session.renameCurrent` there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/slash-commands.ts`: the `name` row in `BUILTIN_SLASH_COMMANDS`.
+- `packages/coding-agent/src/core/keybindings.ts`: `AppKeybindings` / `KEYBINDINGS` next to `app.session.resume`.
+
+## 2026-09-16 - session_shutdown handler budget settings (senpi#1732)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts` adds the typed `sessionShutdownHandlerWarnMs` (default 2000) and `sessionShutdownHandlerTimeoutMs` (default 10000) settings with `getSessionShutdownHandlerWarnMs`/`setSessionShutdownHandlerWarnMs` and `getSessionShutdownHandlerTimeoutMs`/`setSessionShutdownHandlerTimeoutMs`, validated through the existing `parseTimeoutSetting` path (finite, >= 0, 0 disables) exactly like `httpIdleTimeoutMs`, plus the exported `DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS` / `DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS` constants the extension runner falls back to.
+
+### Why
+
+- `packages/coding-agent/src/core/settings-manager.ts` owns global/project settings precedence and validation, so the host's shutdown-handler budget has to be a typed setting there for users to tune or disable it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/settings-manager.ts` is read by the extension runner during teardown; an extension cannot define a setting that bounds the host's own wait on extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: the `Settings` interface next to `httpIdleTimeoutMs`/`websocketConnectTimeoutMs`, the timeout default constants near `DEFAULT_STREAM_START_TIMEOUT_MS`, and the accessors directly after `setHttpIdleTimeoutMs`.
+
 ## 2026-09-16 - Export kernelTools storage (senpi#1647)
 
 ### What changed

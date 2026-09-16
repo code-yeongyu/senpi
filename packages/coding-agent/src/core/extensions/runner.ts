@@ -16,7 +16,11 @@ import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import { getSessionContextEntryId, SESSION_CONTEXT_ENTRY_ID, type SessionManager } from "../session-manager.ts";
-import { SettingsManager } from "../settings-manager.ts";
+import {
+	DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
+	DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
+	SettingsManager,
+} from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
@@ -272,9 +276,20 @@ export type ReloadHandler = () => Promise<void>;
 
 export type ShutdownHandler = () => void;
 
+/** Host budget applied to each individual `session_shutdown` handler. */
+interface SessionShutdownHandlerBudget {
+	/** Log a warning once the handler has run this long; 0 disables the warning. */
+	warnMs: number;
+	/** Abort the handler's signal and stop waiting for it after this long; 0 disables the cap. */
+	timeoutMs: number;
+}
+
 /**
  * Helper function to emit session_shutdown event to extensions.
  * Returns true if the event was emitted, false if there were no handlers.
+ *
+ * Each handler runs under the host's shutdown budget (see
+ * `ExtensionRunner.emit`), so a hung extension cannot hold teardown hostage.
  */
 export async function emitSessionShutdownEvent(
 	extensionRunner: ExtensionRunner,
@@ -1317,8 +1332,112 @@ export class ExtensionRunner {
 		);
 	}
 
+	/**
+	 * Host budget for `session_shutdown` handlers, read from settings once per
+	 * shutdown emission (teardown runs once per runner, so a settings edit takes
+	 * effect without a reload). A malformed value must never break teardown, so
+	 * an invalid setting is reported and the shipped defaults are used.
+	 */
+	private resolveSessionShutdownBudget(): SessionShutdownHandlerBudget {
+		try {
+			const settings = SettingsManager.create(this.cwd, this.getAgentDirFn(), {
+				projectTrusted: this.isProjectTrustedFn(),
+			});
+			return {
+				warnMs: settings.getSessionShutdownHandlerWarnMs(),
+				timeoutMs: settings.getSessionShutdownHandlerTimeoutMs(),
+			};
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			console.warn(
+				`Using the default session_shutdown handler budget (warn ${DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS}ms, hard cap ${DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS}ms): ${message}`,
+			);
+			return {
+				warnMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
+				timeoutMs: DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
+			};
+		}
+	}
+
+	/**
+	 * Runs one `session_shutdown` handler under the host budget. The handler sees
+	 * the budget through `event.signal`, which this runner aborts at the hard cap;
+	 * the host then stops waiting (the handler itself keeps running detached),
+	 * reports an extension error and lets teardown continue with the next handler.
+	 * Handler rejections are rethrown so emit()'s existing error path reports them
+	 * exactly as before.
+	 */
+	private async runSessionShutdownHandler(
+		extensionPath: string,
+		event: SessionShutdownEvent,
+		handler: (...args: unknown[]) => Promise<unknown>,
+		budget: SessionShutdownHandlerBudget,
+	): Promise<void> {
+		const controller = new AbortController();
+		const startedAt = Date.now();
+		let outcome: { ok: true } | { ok: false; error: unknown } | undefined;
+		// Settle the handler through a captured outcome so a late rejection after a
+		// timeout is already handled instead of becoming an unhandled rejection.
+		const settled = Promise.resolve(
+			handler({ ...event, signal: controller.signal }, this.createContext(extensionPath)),
+		).then(
+			() => {
+				outcome = { ok: true };
+			},
+			(error: unknown) => {
+				outcome = { ok: false, error };
+			},
+		);
+
+		if (budget.warnMs > 0 || budget.timeoutMs > 0) {
+			let warnTimer: ReturnType<typeof setTimeout> | undefined;
+			let capTimer: ReturnType<typeof setTimeout> | undefined;
+			let timedOut = false;
+			try {
+				timedOut = await new Promise<boolean>((resolve) => {
+					if (budget.warnMs > 0) {
+						warnTimer = setTimeout(() => {
+							const capNote = budget.timeoutMs > 0 ? ` (hard cap ${budget.timeoutMs}ms)` : "";
+							console.warn(
+								`Extension ${extensionPath} is still running its session_shutdown handler after ${Date.now() - startedAt}ms${capNote}.`,
+							);
+						}, budget.warnMs);
+					}
+					if (budget.timeoutMs > 0) {
+						capTimer = setTimeout(() => resolve(true), budget.timeoutMs);
+					}
+					void settled.then(() => resolve(false));
+				});
+			} finally {
+				clearTimeout(warnTimer);
+				clearTimeout(capTimer);
+			}
+			if (timedOut) {
+				controller.abort(new Error(`session_shutdown handler timed out after ${budget.timeoutMs}ms`));
+				this.emitError({
+					extensionPath,
+					event: "session_shutdown",
+					error: `handler timed out after ${budget.timeoutMs}ms`,
+				});
+				return;
+			}
+		} else {
+			await settled;
+		}
+
+		if (outcome && !outcome.ok) {
+			throw outcome.error;
+		}
+	}
+
 	async emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
 		let result: SessionBeforeEventResult | undefined;
+		// session_shutdown is the one host-bounded event: a hung handler must not hold
+		// Ctrl+C / quit / reload / new / resume hostage. Every other event still awaits
+		// its handlers without a cap (ask-user and approval dialogs legitimately block).
+		// The budget is resolved lazily so runners with no shutdown handler read no settings.
+		const isSessionShutdown = event.type === "session_shutdown";
+		let shutdownBudget: SessionShutdownHandlerBudget | undefined;
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get(event.type);
@@ -1326,6 +1445,16 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
+					if (isSessionShutdown) {
+						shutdownBudget ??= this.resolveSessionShutdownBudget();
+						await this.runSessionShutdownHandler(
+							ext.path,
+							event as SessionShutdownEvent,
+							handler,
+							shutdownBudget,
+						);
+						continue;
+					}
 					const handlerResult = await handler(event, this.createContext(ext.path));
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {

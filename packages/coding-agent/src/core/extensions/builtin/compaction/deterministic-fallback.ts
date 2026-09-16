@@ -1,5 +1,10 @@
 import { type CompactionPreparation, type CompactionResult, estimateTokens } from "../../../compaction/index.ts";
-import { StreamDurationBudgetError, StreamIdleTimeoutError } from "../../../compaction/stream-watchdog.ts";
+import {
+	StreamDurationBudgetError,
+	StreamIdleTimeoutError,
+	SummarizationTotalBudgetError,
+} from "../../../compaction/stream-watchdog.ts";
+import { CredentialFailoverError, TURN_RETRY_SUPPRESSION_PREFIX } from "../../../credential-pool/failover.ts";
 import { filterContextExcludedMessages } from "../../../messages.ts";
 import {
 	buildSessionContext,
@@ -16,6 +21,7 @@ import { capUtf8Bytes } from "./task-intent.ts";
 
 export type RequiredCompactionFallbackFailure =
 	| "summarization-timeout"
+	| "summarization-provider-failure"
 	| "upstream-stream-truncated"
 	| "summarization-overflow-exhausted"
 	| "summarization-empty-summary";
@@ -140,10 +146,40 @@ function isSafeBoundedValue(value: unknown, seen = new Set<object>(), depth = 0)
 	return true;
 }
 
+/**
+ * A provider or credential fault that ended the summary stream with no usable
+ * summary and no cheaper recovery left.
+ *
+ * Credential rotation rethrows EVERY terminal outcome as `CredentialFailoverError`,
+ * and once any event past `start` reached the caller it prepends the
+ * `senpi:no-turn-retry:` marker so the session layer never replays a partially
+ * delivered turn. That marker also disables session retry and model fallback, so
+ * before #1741 such an error left required compaction with no recovery at all:
+ * it applied no summary, authorized no fallback, and repeated identically on the
+ * next prompt because the context stayed above the threshold. Single-key
+ * providers have no rotation wrapper and surface the same outage as a
+ * non-transient `SummaryRequestError`, so the authorization keys on the outcome
+ * ("the summary stream is dead") rather than on the marker alone.
+ *
+ * Deliberately NOT authorized: user aborts (they resolve `undefined` upstream),
+ * policy refusals (reducing context would not make the model comply), missing
+ * credentials (a configuration fault with an actionable message), and ordinary
+ * bugs - destructive context reduction must never be a bug's recovery path.
+ */
+function isTerminalSummarizationProviderFailure(error: unknown): boolean {
+	if (error instanceof CredentialFailoverError) return true;
+	if (error instanceof Error && error.message.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return true;
+	return error instanceof SummaryRequestError && !error.transient && !error.refused && error.failureKind === undefined;
+}
+
 export function classifyRequiredCompactionFallbackFailure(
 	error: unknown,
 ): RequiredCompactionFallbackFailure | undefined {
-	if (error instanceof StreamDurationBudgetError || error instanceof StreamIdleTimeoutError) {
+	if (
+		error instanceof StreamDurationBudgetError ||
+		error instanceof StreamIdleTimeoutError ||
+		error instanceof SummarizationTotalBudgetError
+	) {
 		return "summarization-timeout";
 	}
 	if (error instanceof SummaryRequestError && error.transient && error.failureKind === "upstream-stream-truncated") {
@@ -155,7 +191,47 @@ export function classifyRequiredCompactionFallbackFailure(
 	if (error instanceof SummaryGenerationError && error.kind === "empty-summary") {
 		return "summarization-empty-summary";
 	}
+	if (isTerminalSummarizationProviderFailure(error)) {
+		return "summarization-provider-failure";
+	}
 	return undefined;
+}
+
+/**
+ * `senpi:no-turn-retry:` is a session-internal replay-suppression signal read by
+ * `_isRetryableError` / `_isHardErrorFallbackEligible`. It must stay on the error
+ * object those predicates inspect and must never reach user-visible text.
+ */
+export function stripTurnRetrySuppressionPrefix(message: string): string {
+	return message.replaceAll(TURN_RETRY_SUPPRESSION_PREFIX, "");
+}
+
+const FALLBACK_FAILURE_CAUSE: Record<RequiredCompactionFallbackFailure, string> = {
+	"summarization-timeout": "the summary stream ran out of its time budget",
+	"summarization-provider-failure": "the provider ended the summary stream with an error",
+	"upstream-stream-truncated": "the provider truncated the summary stream",
+	"summarization-overflow-exhausted": "the summary input stayed over the provider's context limit",
+	"summarization-empty-summary": "the provider returned no summary text",
+};
+
+/**
+ * What the user is told when a required compaction recovered through the
+ * deterministic checkpoint. States the outcome plainly and never carries the
+ * internal retry-suppression marker.
+ */
+export function formatRequiredCompactionFallbackNotice(
+	failureKind: RequiredCompactionFallbackFailure,
+	cause?: unknown,
+): string {
+	const detail = cause instanceof Error ? stripTurnRetrySuppressionPrefix(cause.message).trim() : "";
+	return [
+		`Compaction could not complete a provider summary: ${FALLBACK_FAILURE_CAUSE[failureKind]}.`,
+		"A deterministic checkpoint was applied and older transcript detail was dropped, so it is safe to continue.",
+		detail ? `Provider reported: ${capUtf8Bytes(detail, 512)}.` : "",
+		"Run /compact on a different model for a richer summary.",
+	]
+		.filter((part) => part.length > 0)
+		.join(" ");
 }
 
 export function createRequiredCompactionFallback(

@@ -25,7 +25,7 @@ For the JSONL file format and SessionManager API, see [Session Format](session-f
 |---------|-------------|
 | `/resume` | Browse and select previous sessions |
 | `/new` | Start a new session |
-| `/name <name>` | Set the current session display name |
+| `/rename [name]` | Rename the current session (`/name` is an alias) |
 | `/session` | Show session info |
 | `/tree` | Navigate the current session tree |
 | `/fork` | Create a new session from a previous user message |
@@ -51,10 +51,10 @@ When available, senpi uses the `trash` CLI for deletion instead of permanently r
 
 ## Naming Sessions
 
-Use `/name <name>` to set a human-readable session name:
+Use `/rename [name]` to set a human-readable session name. With an argument it sets the name immediately; without one it opens an inline editor prefilled with the current name (Enter commits, Esc cancels, empty names are rejected). `/name` is an alias.
 
 ```text
-/name Refactor auth module
+/rename Refactor auth module
 ```
 
 Set the name at startup with `--name` or `-n`:

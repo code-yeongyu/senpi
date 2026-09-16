@@ -28,6 +28,7 @@ import type {
 	ExtensionActions,
 	ExtensionContext,
 	ExtensionContextActions,
+	ExtensionError,
 	ExtensionUIContext,
 	ProviderConfig,
 } from "../src/core/extensions/types.ts";
@@ -1890,6 +1891,193 @@ describe("ExtensionRunner", () => {
 			const runner = new ExtensionRunner([a, b], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
 			await runner.emit({ type: "session_start", reason: "startup" });
 			expect(captured?.map((s) => s.name)).toEqual(["gamma"]);
+		});
+	});
+
+	describe("session_shutdown handler budget", () => {
+		/** Writes the host budget the runner reads at shutdown; an empty object keeps the shipped defaults. */
+		function writeShutdownBudget(budget: { warnMs?: number; timeoutMs?: number }): string {
+			const agentDir = path.join(tempDir, "agent");
+			fs.mkdirSync(agentDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(agentDir, "settings.json"),
+				JSON.stringify({
+					...(budget.warnMs === undefined ? {} : { sessionShutdownHandlerWarnMs: budget.warnMs }),
+					...(budget.timeoutMs === undefined ? {} : { sessionShutdownHandlerTimeoutMs: budget.timeoutMs }),
+				}),
+			);
+			return agentDir;
+		}
+
+		it("aborts a hung handler at the hard cap, reports it once, and still runs the next extension", async () => {
+			const agentDir = writeShutdownBudget({ warnMs: 0, timeoutMs: 50 });
+			let signalInsideHandler: AbortSignal | undefined;
+			let abortedInsideHandler = false;
+			const hung = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_shutdown", (event) => {
+						signalInsideHandler = event.signal;
+						event.signal?.addEventListener("abort", () => {
+							abortedInsideHandler = true;
+						});
+						return new Promise<void>(() => {});
+					});
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<hung-ext>",
+			);
+			let secondRan = false;
+			const second = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_shutdown", () => {
+						secondRan = true;
+					});
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<second-ext>",
+			);
+			const runner = new ExtensionRunner(
+				[hung, second],
+				createExtensionRuntime(),
+				tempDir,
+				sessionManager,
+				modelRegistry,
+			);
+			runner.bindCore(extensionActions, { ...extensionContextActions, getAgentDir: () => agentDir });
+			const errors: ExtensionError[] = [];
+			runner.onError((error) => errors.push(error));
+
+			const startedAt = Date.now();
+			await runner.emit({ type: "session_shutdown", reason: "quit" });
+			const elapsedMs = Date.now() - startedAt;
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0]).toMatchObject({ extensionPath: "<hung-ext>", event: "session_shutdown" });
+			expect(errors[0].error).toContain("timed out after 50ms");
+			expect(secondRan).toBe(true);
+			expect(abortedInsideHandler).toBe(true);
+			expect(signalInsideHandler?.aborted).toBe(true);
+			// The configured cap is 50ms; the ceiling only has to exclude "waited for the hung handler".
+			expect(elapsedMs).toBeLessThan(5_000);
+		});
+
+		it("warns once for a handler that outlives the warn threshold and emits no error", async () => {
+			const agentDir = writeShutdownBudget({ warnMs: 5, timeoutMs: 10_000 });
+			let releaseHandler: (() => void) | undefined;
+			const slow = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on(
+						"session_shutdown",
+						() =>
+							new Promise<void>((resolve) => {
+								releaseHandler = resolve;
+							}),
+					);
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<slow-ext>",
+			);
+			const runner = new ExtensionRunner([slow], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, { ...extensionContextActions, getAgentDir: () => agentDir });
+			const errors: ExtensionError[] = [];
+			runner.onError((error) => errors.push(error));
+			const warnings: string[] = [];
+			let firstWarningSeen: (() => void) | undefined;
+			const firstWarning = new Promise<void>((resolve) => {
+				firstWarningSeen = resolve;
+			});
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+				warnings.push(args.map((arg) => String(arg)).join(" "));
+				firstWarningSeen?.();
+			});
+
+			try {
+				const emitted = runner.emit({ type: "session_shutdown", reason: "reload" });
+				await firstWarning;
+				releaseHandler?.();
+				await emitted;
+			} finally {
+				warnSpy.mockRestore();
+			}
+
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain("<slow-ext>");
+			expect(warnings[0]).toContain("session_shutdown");
+			expect(errors).toEqual([]);
+		});
+
+		it("leaves a prompt handler's signal unaborted and stays silent", async () => {
+			const agentDir = writeShutdownBudget({});
+			let observedSignal: AbortSignal | undefined;
+			let observedReason: string | undefined;
+			const fast = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_shutdown", (event) => {
+						observedSignal = event.signal;
+						observedReason = event.reason;
+					});
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<fast-ext>",
+			);
+			const runner = new ExtensionRunner([fast], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, { ...extensionContextActions, getAgentDir: () => agentDir });
+			const errors: ExtensionError[] = [];
+			runner.onError((error) => errors.push(error));
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+			try {
+				await runner.emit({ type: "session_shutdown", reason: "new", targetSessionFile: "/tmp/next.jsonl" });
+			} finally {
+				warnSpy.mockRestore();
+			}
+
+			expect(observedReason).toBe("new");
+			expect(observedSignal).toBeInstanceOf(AbortSignal);
+			expect(observedSignal?.aborted).toBe(false);
+			expect(warnSpy).not.toHaveBeenCalled();
+			expect(errors).toEqual([]);
+		});
+
+		it("keeps the existing error shape when a shutdown handler throws", async () => {
+			const agentDir = writeShutdownBudget({});
+			const throwing = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_shutdown", () => {
+						throw new Error("shutdown boom");
+					});
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<throwing-ext>",
+			);
+			const runner = new ExtensionRunner(
+				[throwing],
+				createExtensionRuntime(),
+				tempDir,
+				sessionManager,
+				modelRegistry,
+			);
+			runner.bindCore(extensionActions, { ...extensionContextActions, getAgentDir: () => agentDir });
+			const errors: ExtensionError[] = [];
+			runner.onError((error) => errors.push(error));
+
+			await runner.emit({ type: "session_shutdown", reason: "quit" });
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toBe("<throwing-ext>");
+			expect(errors[0].event).toBe("session_shutdown");
+			expect(errors[0].error).toBe("shutdown boom");
+			expect(errors[0].stack).toBeDefined();
 		});
 	});
 });

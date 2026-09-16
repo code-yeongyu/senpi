@@ -1,3 +1,28 @@
+## Authorize the deterministic fallback for a provider-killed summary stream (2026-09-16)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: `RequiredCompactionFallbackFailure` gains `summarization-provider-failure`, and `classifyRequiredCompactionFallbackFailure` now recognizes a summary stream terminated by a provider or credential fault - any `CredentialFailoverError`, any error whose message carries the `senpi:no-turn-retry:` marker, and a non-transient, non-refused `SummaryRequestError` with no structured failure kind - plus `SummarizationTotalBudgetError` as `summarization-timeout`. User aborts, policy refusals, missing credentials and ordinary bugs stay unauthorized. Adds `stripTurnRetrySuppressionPrefix()` and `formatRequiredCompactionFallbackNotice()`.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: `SummaryRequestError` carries an explicit `refused` flag (set from `refusal`/`sensitive` stop details); `isRetryableSummaryAttempt` mirrors the new class so a marker-bearing or credential-failover error is never re-billed while genuinely transient failures still retry; `runExtensionCompaction` opens one `createSummarizationDeadline` for the whole compaction, re-clamps every attempt budget to what is left, and refuses a retry once the deadline passed.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: `generateSummaryMessage` returns the message settled inside `consumeStreamWithIdleTimeout` instead of awaiting `responseStream.result()` after the watchdog cleared its timers.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/transient-failure.ts`: a compaction-wide total-budget trip degrades like the other watchdog trips.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: `recoverRequiredCompaction` takes the context and the causing error, notifies the user once through `ctx.ui.notify` when the deterministic checkpoint is applied, and every compaction message built from an error message is stripped of the `senpi:no-turn-retry:` prefix.
+
+### Why
+
+- Issue #1741: a summarization stream killed by a credential-rotation or provider error classified as `undefined`, so the deterministic fallback that exists precisely for "summarization did not complete" never ran. The blocking route rethrew, the marker disabled both session retry and model fallback, the context stayed above the threshold, and the next prompt repeated the identical failure forever; the circuit breaker never debited because the failure was non-transient.
+- The marker is a session-internal replay-suppression signal. It must stay on the error object the session predicates read, and never appear in what the user is shown.
+
+### Why an extension could not handle it
+
+- The classification is this builtin's private authorization contract for destructive context reduction, and the retry predicate lives inside its own summarization loop; no external extension can observe a summary attempt's provenance or participate in required-compaction admission.
+
+### Expected merge conflict zones
+
+- LOW: `deterministic-fallback.ts` failure-kind union and classifier.
+- LOW: `speculative.ts` `SummaryRequestError` shape, `isRetryableSummaryAttempt`, and the summarization while-loop.
+- LOW: `speculative-summary.ts` stream settlement, `transient-failure.ts` predicate, `index.ts` `recoverRequiredCompaction` call sites.
+
 # changes.md — builtin compaction policy
 
 ## Recover stalled pre-prompt compaction across unsafe split turns (2026-09-16)

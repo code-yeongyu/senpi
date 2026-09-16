@@ -273,16 +273,14 @@ describe("provider idle recovery", () => {
 			await vi.advanceTimersByTimeAsync(1);
 			await vi.advanceTimersByTimeAsync(0);
 
-			expect(harness.eventsOfType("auto_retry_end")).toMatchObject([
-				{
-					success: false,
-					attempt: 1,
-					finalError: `Provider stream start timed out after ${DEFAULT_STREAM_START_TIMEOUT_MS}ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
-				},
-			]);
-			expect(harness.eventsOfType("auto_retry_end").map((event) => event.finalError)).not.toContain(
-				"Request was aborted",
-			);
+			expect(harness.eventsOfType("auto_retry_end")).toMatchObject([{ success: false, attempt: 1 }]);
+			// The verdict the user reads is the stream-start stall at the granted bound,
+			// rendered as recovery guidance rather than the watchdog wording (senpi#1740),
+			// and never the abort that tore the dead request down.
+			const finalError = harness.eventsOfType("auto_retry_end").at(-1)?.finalError ?? "";
+			expect(finalError).toContain("never started sending a response");
+			expect(finalError).toContain(`${DEFAULT_STREAM_START_TIMEOUT_MS / 1000}s`);
+			expect(finalError).not.toContain("Request was aborted");
 			expect(providerOptions).toEqual([
 				{
 					timeoutMs: DEFAULT_PROVIDER_IDLE_TIMEOUT_MS,

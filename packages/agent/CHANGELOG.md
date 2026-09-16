@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.16] - 2026-09-16
+
+### Breaking Changes
+
+### Added
+
 - Added structural read folders and a segmented read view, exported as `selectedReadFolder`, `createDefaultReadSummary`, `createSegmentedReadView` and the `ReadFolder` type. A folder is a pure, synchronous lexer over TS/JS/JSON that marks foldable interiors (bodies of four or more lines, comments of six or more) and refuses any fold that overlaps a declaration header: class heritage, decorators, parameter lists, return types, arrow-return object types, computed member names, destructuring targets and nested declaration headers stay visible, and class bodies made only of fields, static blocks or accessors are never folded. Ambiguous lexical input (unproved type-operator or angle syntax, unclosed literals, unicode-set regexes) yields `parse_failure` instead of a partial fold. The view keeps exact source slices, inserts an ellipsis line per elision and lists numeric `offset`/`limit` rereads in its footer; it unfolds breadth-first until 50 source lines are visible and returns `no_summary` for inputs under 100 lines, oversized skeletons or views with no byte saving. No parser runtime, WASM or subprocess is added ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Changed
@@ -13,6 +25,8 @@
 - Default `read` calls on eligible `.json` files now return the structural view. TypeScript and JavaScript stay raw: the measured candidate missed the required median saving for both, so only JSON is selected in the frozen `READ_FOLDER_SELECTION`. Explicit `offset`/`limit` requests, truncated input, markdown and `.txt` keep the verbatim path. `createReadTool()` with no options uses `selectedReadFolder`; passing an options object without `folder` reads raw, and a custom folder can be injected. The tool also honors an abort that arrives while the file bytes are being read ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
 
 ### Fixed
+
+- The empty-assistant recovery wrapper (`withEmptyAssistantRecovery`) no longer withholds a wrapped model's thinking until its first visible text or tool call. The attempt now starts forwarding on the first meaningful content event (a non-blank `thinking_delta`, a visible `text_delta`, `toolcall_start`, or a `text_end`/`thinking_end` with content), so reasoning streams live and the assistant `message_start` reaches subscribers when the provider's `start` event does. The Kimi XTML lane is the one exception: its thinking channel is where misrouted text tool calls land and `recoverKimiXtmlThinking` only rewrites the finished message, so a leaked protocol fragment forwarded live could not be retracted; that lane keeps the buffered contract. An attempt that never forwarded anything keeps the existing silent retry and bounded "twice" errors. An attempt that had already forwarded reasoning and then stopped empty (or reported `tool_use` without a tool call) is no longer replayed inside the stream; it ends as a retryable `error` that keeps the streamed content and carries the `empty_assistant_response_recovery` / `empty_tool_use_response_recovery` diagnostic with `{ retries: 0, forwarded: true }`, and the session's turn retry re-requests it ([#1733](https://github.com/code-yeongyu/senpi/issues/1733)).
 
 ### Removed
 

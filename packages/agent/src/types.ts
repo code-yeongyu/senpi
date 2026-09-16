@@ -16,6 +16,7 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
+import type { StreamThroughputOptions } from "./stream-throughput-watchdog.ts";
 
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
@@ -178,6 +179,15 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Unset or non-positive values disable the start bound.
 	 */
 	streamStartTimeoutMs?: number;
+
+	/**
+	 * Sustained-throughput guard for an in-progress stream. The start bound stops
+	 * applying once the first event arrives and the idle bound is re-armed by
+	 * every event, so a provider answering at a uselessly low rate trips neither.
+	 * Unset fields fall back to the shipped defaults (floor 8 units/s measured
+	 * over 20s after a 5s grace); a floor or window of `0` disables the guard.
+	 */
+	streamThroughput?: StreamThroughputOptions;
 
 	/** Provider/SDK timeout override for only the first request in this loop invocation. */
 	initialRequestTimeoutMs?: number;

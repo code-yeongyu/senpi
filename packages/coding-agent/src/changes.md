@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-16 - Print mode explains provider stalls (senpi#1740)
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the terminal `console.error` for an errored or aborted final assistant message routes `errorMessage` through `describeProviderStallForUser` first, so a headless run reports the stall in plain language and keeps every other error verbatim. The exit code and stdout path are unchanged.
+
+### Why
+
+- senpi#1740: `senpi -p` printed the stream watchdog's interpolated message as the whole failure output, which names no cause and no next step.
+
+### Why an extension could not handle it
+
+- Print mode's final output is written by the host after the session settles.
+
+### Expected merge conflict zones
+
+- LOW: one import line and the `console.error` call in the `mode === "text"` branch.
+
 ## 2026-09-16 - Export kernelTools storage (senpi#1647)
 
 ### What changed

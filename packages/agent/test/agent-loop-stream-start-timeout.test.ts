@@ -193,6 +193,11 @@ describe("agent loop stream-start timeout", () => {
 		expect(assistantMessage?.errorMessage).toBe("Idle timeout waiting for provider stream after 60ms");
 	});
 
+	// The gap stays above the throughput floor as well (a 6-character delta after
+	// 40ms is ~50 tok/s), so this pins the start bound alone: an inter-event gap
+	// longer than the start timeout is not a failure. Sustained trickle below the
+	// floor is the throughput watchdog's contract, in
+	// agent-loop-throughput-watchdog.test.ts.
 	it("lets slow-but-alive streams finish despite gaps above the start bound", async () => {
 		const config: AgentLoopConfig = {
 			model: createModel(),
