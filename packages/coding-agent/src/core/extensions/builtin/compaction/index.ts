@@ -82,9 +82,9 @@ import {
 	getPromptContextWindow,
 	isAbortedAssistantMessage,
 	isMonitorableMessageEvent,
-	isRequiredCompactionFallbackReason,
 	linkAbortSignal,
 	recentCheckpoint,
+	requiresDeterministicCompactionFallback,
 	withAdditionalTokens,
 } from "./extension-wiring.ts";
 import { isIneffectiveCompaction } from "./yield.ts";
@@ -684,7 +684,7 @@ export default function compactionExtension(
 				}
 				if (
 					warmFailure !== undefined &&
-					isRequiredCompactionFallbackReason(event.reason) &&
+					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
 					classifyRequiredCompactionFallbackFailure(warmFailure) !== undefined &&
 					!event.signal.aborted &&
 					speculativeGeneration === claimedGeneration &&
@@ -717,7 +717,7 @@ export default function compactionExtension(
 				const message = error instanceof Error ? error.message : String(error);
 				const failureKind = classifyRequiredCompactionFallbackFailure(error);
 				if (
-					isRequiredCompactionFallbackReason(event.reason) &&
+					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {

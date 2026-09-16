@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ContextUsage, ExtensionContext, MessageEndEvent, SessionBeforeCompactEvent } from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
+import { resolveEffectiveReserveTokens } from "./policy.ts";
 import type { SpeculativeCompactionResult, SpeculativeCompactionSnapshot } from "./speculative.ts";
 
 const IMAGE_PROMPT_TOKEN_ESTIMATE = 1_200;
@@ -43,8 +44,16 @@ export function isAbortedAssistantMessage(event: { message: AgentMessage }): boo
 	return event.message.role === "assistant" && "stopReason" in event.message && event.message.stopReason === "aborted";
 }
 
-export function isRequiredCompactionFallbackReason(reason: SessionBeforeCompactEvent["reason"]): boolean {
-	return reason === "manual" || reason === "threshold" || reason === "overflow";
+export function requiresDeterministicCompactionFallback(
+	event: SessionBeforeCompactEvent,
+	usage: ContextUsage | undefined,
+): boolean {
+	if (event.reason === "manual" || event.reason === "threshold" || event.reason === "overflow") return true;
+	if (event.reason !== "pre_prompt" || usage === undefined || usage.tokens === null || usage.contextWindow <= 0) {
+		return false;
+	}
+	const reserveTokens = resolveEffectiveReserveTokens(usage.contextWindow, event.preparation.settings);
+	return usage.tokens >= usage.contextWindow - reserveTokens;
 }
 
 export function recentCheckpoint(ctx: ExtensionContext): checkpointState.AgentCheckpoint | null {
