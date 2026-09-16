@@ -38,6 +38,30 @@ describe("credential error taxonomy", () => {
 	});
 
 	test.each([
+		["codex usage limit", new Error("Codex error: The usage limit has been reached")],
+		["claude session limit", new Error("You've hit your session limit \u00b7 resets 12am (Asia/Seoul)")],
+		["weekly limit", new Error("You've hit your weekly limit \u00b7 resets 5am (Asia/Seoul)")],
+	] as const)("%s fails over with a rate-limit cooldown", (_label, error) => {
+		// Subscription exhaustion reaches the pool as prose: no HTTP status, no
+		// `rate limit` wording. Without this vocabulary the failure default-denies
+		// to `fail_request`, so the exhausted credential is never blocked and the
+		// healthy sibling is never attempted.
+		const action = classifyCredentialFailure(error);
+		expect(action.kind).toBe("failover");
+		if (action.kind !== "failover" || action.block.reason !== "rate_limit") throw new Error("expected rate_limit");
+		expect(action.block.cooldownMs).toBe(COOLDOWN_BASE_MS);
+	});
+
+	test("overflow prose that names a limit still fails the request", () => {
+		// The rate-limit branch runs BEFORE the overflow branch, so the subscription
+		// vocabulary stays narrow: a provider that says `token limit` is reporting a
+		// context overflow, and blocking a healthy credential for it is wrong.
+		expect(classifyCredentialFailure(new Error("Your request exceeded model token limit: 262144")).kind).toBe(
+			"fail_request",
+		);
+	});
+
+	test.each([
 		["529", status(529, "overloaded")],
 		["500", status(500, "Internal Server Error")],
 		["503", status(503, "Service Unavailable")],
