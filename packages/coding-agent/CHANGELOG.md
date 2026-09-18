@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Credential pool: a stored key rejected by OpenCode Go with a status-less 401 ("Upstream request failed: Invalid credential") now fails over to a healthy sibling account instead of dead-ending the request on the rejected slot. The classifier had no wording for that rejection, so it fell through to the request-failure branch and never tried the sibling or blocked the bad slot.
+
 ### Removed
 
 ## [2026.9.18-6] - 2026-09-18

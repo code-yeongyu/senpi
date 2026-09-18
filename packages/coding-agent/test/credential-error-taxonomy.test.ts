@@ -70,6 +70,28 @@ describe("credential error taxonomy", () => {
 		expect(action).toEqual({ kind: "failover", block: { reason: "auth_error" } });
 	});
 
+	test("a status-less prose 401 credential rejection fails over instead of dead-ending the pool", () => {
+		// opencode-go reports a rejected key inside the provider stream; the error
+		// frame carries only this formatted message (AssistantMessage has no
+		// numeric status field), so the text is the only signal classification gets.
+		const rejection =
+			'OpenAI API error (401): {"type":"server_error","message":"Upstream request failed: Invalid credential"}';
+		expect(classifyCredentialFailure(new Error(rejection))).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+	});
+
+	test("an invalid-request body without credential wording still fails the request", () => {
+		// Widening the credential-wording alternation must not swallow OpenAI's
+		// generic `invalid_request_error` type used for malformed requests.
+		expect(
+			classifyCredentialFailure(
+				new Error('{"type":"invalid_request_error","message":"Missing required parameter: input"}'),
+			).kind,
+		).toBe("fail_request");
+	});
+
 	test("the server retry hint is a floor, not an override", () => {
 		// A hint shorter than the earned backoff must not shorten the cooldown.
 		expect(rateLimitCooldown(3, 1_000).cooldownMs).toBe(COOLDOWN_BASE_MS * 8);
