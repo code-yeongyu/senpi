@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { isOpenAiImageGenEnabled, supportsNativeOpenAiImageGeneration } from "../openai-image-gen/gate.ts";
 import { resolveImageGenAuth } from "./auth.ts";
 import { imageGenRegistryOverride } from "./state.ts";
 import { generateImageTool } from "./tool.ts";
@@ -21,6 +22,7 @@ Use the image generation tool currently available in this session.
 `;
 
 async function isImageGenActive(ctx: ExtensionContext): Promise<boolean> {
+	if (isOpenAiImageGenEnabled() && supportsNativeOpenAiImageGeneration(ctx.model)) return true;
 	const auth = await resolveImageGenAuth({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
 	return auth.kind !== "none";
 }
