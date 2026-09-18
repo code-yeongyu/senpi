@@ -152,6 +152,24 @@ export class SummaryRequestError extends Error {
 }
 
 const UPSTREAM_STREAM_TRUNCATED_PATTERN = /(?:^|[^A-Za-z0-9_])upstream_stream_truncated(?:[^A-Za-z0-9_]|$)/;
+const ESTABLISHED_IMAGE_FORMAT_REJECTION_PATTERN =
+	/unsupported image format|unsupported media type for base64 image|invalid data url for image/i;
+const OPENAI_INVALID_IMAGE_DATA_URL_PATTERN =
+	/Invalid 'input\[\d+\]\.(?:content|output)\[\d+\]\.image_url'\.[\s\S]*Expected a base64-encoded data URL[\s\S]*invalid base64/i;
+
+function isImageFormatRejection(error: unknown): boolean {
+	return (
+		error instanceof SummaryRequestError &&
+		(ESTABLISHED_IMAGE_FORMAT_REJECTION_PATTERN.test(error.message) ||
+			OPENAI_INVALID_IMAGE_DATA_URL_PATTERN.test(error.message))
+	);
+}
+
+function hasSummarizationImages(messages: AgentMessage[]): boolean {
+	return convertToLlm(messages).some(
+		(message) => Array.isArray(message.content) && message.content.some((block) => block.type === "image"),
+	);
+}
 
 /**
  * Only failures with no cheaper recovery earn another billed request.
@@ -315,6 +333,7 @@ export async function runExtensionCompaction(
 	const reasoningOverrideOffered = hasSummarizationReasoningOverride(requestSnapshot.model);
 	let toolUseRetrySpent = false;
 	let reasoningOverrideRetrySpent = false;
+	let imageFallbackSpent = false;
 
 	while (true) {
 		if (signal?.aborted) return undefined;
@@ -349,6 +368,7 @@ export async function runExtensionCompaction(
 						// near the deadline gets only what is left, and none starts past it.
 						maxDurationMs: deadline.attemptBudgetMs(attemptBudgetMs),
 						messages: currentMessages,
+						omitImages: imageFallbackSpent,
 						onProgress,
 						prompt,
 						signal,
@@ -377,6 +397,8 @@ export async function runExtensionCompaction(
 					return attempt;
 				},
 				(error) =>
+					!isImageFormatRejection(error) &&
+					!imageFallbackSpent &&
 					retryEligible &&
 					deadline.remainingMs() > 0 &&
 					allowSummarizationRetry(Date.now() - retryStartedMs, attemptBudgetMs) &&
@@ -386,6 +408,10 @@ export async function runExtensionCompaction(
 			);
 		} catch (error) {
 			if (signal?.aborted) return undefined;
+			if (!imageFallbackSpent && hasSummarizationImages(currentMessages) && isImageFormatRejection(error)) {
+				imageFallbackSpent = true;
+				continue;
+			}
 			throw error;
 		}
 		if (!response) return undefined;
