@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-18 - Ship Devin lazy modules beside the Node session worker
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` emits the Devin OAuth and API implementations as self-contained lazy entries beside their bundled loaders.
+- `scripts/node-bundle-devin-loaders.test.ts` relocates the production Node bundle and drives a shared-session prompt with synthetic OAuth credentials against a local HTTP endpoint, exercising both lazy imports in the actual session worker.
+
+### Why
+
+- Variable-specifier imports are intentionally invisible to esbuild. Without explicit entries, the relocated worker fails to resolve `devin.js`, then `devin-agent.js`, instead of reaching the provider transport.
+
+### Why an extension could not handle it
+
+- `scripts/build-coding-agent-bundle.mjs` determines shipped module membership before runtime extensions load. Keeping the fix here also preserves the browser-safe AI import boundary.
+
+### Expected merge conflict zones
+
+- LOW: the lazy entry-point map in `scripts/build-coding-agent-bundle.mjs`.
+
 ## 2026-09-17 - Compiled binaries carry the build epoch and short sha (#1782)
 
 ### What changed
