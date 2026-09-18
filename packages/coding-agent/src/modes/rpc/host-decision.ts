@@ -105,7 +105,7 @@ export type HostDecision =
 export type AttachOnlyDecision = Extract<HostDecision, { action: "start" | "reuse" | "refuse" }>;
 
 /** Why an ensure refused. The decision's own refusals plus the one only a pidfile can produce. */
-export type HostRefusalReason = "protocol" | "capability" | "foreign_writer" | "legacy_host";
+export type HostRefusalReason = "protocol" | "capability" | "foreign_writer" | "legacy_host" | "host_busy";
 
 /**
  * An ensure that found an unusable host and refused to act on it. A refusal is FINAL by design:
@@ -136,6 +136,8 @@ function refusalDetail(reason: HostRefusalReason, host: HostProtocolInfo | undef
 			return "its pidfile was written by another process, so this one may not signal it; stop that host explicitly instead";
 		case "legacy_host":
 			return "a host from before the per-socket daemon directory is still running on this endpoint; it is never signalled, and no second host is started beside it";
+		case "host_busy":
+			return "its socket accepts connections but did not answer inside the probe budget: a live host under load, which is never ended to make room for a replacement";
 		default:
 			return assertNever(reason);
 	}

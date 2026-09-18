@@ -41,7 +41,7 @@ import {
 import { handoffHost } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS, type HostColdStart, type HostLifecyclePolicyInput } from "./host-lifecycle.ts";
-import { probeProtocolInfo } from "./host-probe.ts";
+import { probeProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV, hostLaunchProfile } from "./protocol-identity.ts";
 import { createSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
@@ -182,6 +182,13 @@ async function ensureHostLocked(
 		// I1: the socket is silent, but the process behind it is alive. Only the process that WROTE
 		// this record may end it - anyone else refuses rather than signalling somebody else's host.
 		if (!startedByUs) throw new HostEnsureRefusedError(socket, "foreign_writer", protocol);
+		// ... and silent is not the same as gone. A host serving many sessions can miss a probe
+		// budget while its event loop is busy; its socket still ACCEPTS the connection. Ending it
+		// then would destroy every live session to replace a host that was never broken, so a
+		// reachable socket is refused instead of signalled - the caller retries or falls back.
+		if (await probeSocketReachable(socket, EXISTING_HOST_PROBE_TIMEOUT_MS)) {
+			throw new HostEnsureRefusedError(socket, "host_busy", protocol);
+		}
 		await stopManagedHost(registered.record, testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS, probe);
 	}
 	// A host from before this layout registered itself in the FLAT directory. Its files are another

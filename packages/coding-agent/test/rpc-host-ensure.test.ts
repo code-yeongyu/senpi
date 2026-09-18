@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
 import {
 	ProcessIdentityUnreadableError,
+	processIsLive,
 	processMatchesPidFile,
 	readProcessStartTime,
 	waitForStartTime,
@@ -208,6 +209,20 @@ describe("ensureHost", () => {
 		expect(Date.now() - startedAt).toBeLessThan(8_000);
 		await expectGone(old.pidFile);
 	}, 15_000);
+
+	// win32 reaches a host through a named pipe derived from a secret file, so a stand-in listener
+	// there would test the fixture's own derivation rather than this decision. The rule is
+	// platform-independent; the POSIX shards prove it.
+	it.skipIf(process.platform === "win32")("never signals a host whose socket still accepts connections", async () => {
+		// A daemon serving many sessions can miss the probe budget while its event loop is busy.
+		// Ending it would destroy every live session to replace a host that was never broken.
+		const qa = await scratch("busy-socket");
+		const busy = await startBusySocketHost(qa, "self");
+
+		await expect(ensureFixtureHost(qa, { stopTimeoutMs: 200 })).rejects.toThrow(/host_busy|accepts connections/);
+
+		expect(processIsLive(busy.pid)).toBe(true);
+	}, 30_000);
 
 	it("fails within the readiness budget and includes stderr diagnostics", async () => {
 		const qa = await scratch("readiness-failure");
@@ -725,13 +740,46 @@ async function startManagedProcess(qa: Qa, options: { writer: Writer; ignoreTerm
 	return register(qa, spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore" }), options.writer);
 }
 
+/**
+ * A host that is ALIVE and OWNS the socket, but never answers: it accepts every connection and then
+ * stays silent. That is a busy daemon, not a dead one, and the difference decides whether an ensure
+ * may end it. The path arrives by env (an `-e` script's argv is not worth relying on) and a stale
+ * path is removed first, so a reused scratch directory cannot fail the listen.
+ */
+async function startBusySocketHost(qa: Qa, writer: Writer): Promise<Managed> {
+	const script = [
+		'const net = require("node:net"), fs = require("node:fs");',
+		'try { fs.unlinkSync(process.env.BUSY_SOCKET) } catch {}',
+		'const server = net.createServer(() => {});',
+		'server.on("error", (error) => { process.stderr.write(String(error)); process.exit(1) });',
+		'server.listen(process.env.BUSY_SOCKET, () => process.stdout.write("listening\\n"));',
+		"setInterval(() => {}, 1000);",
+	].join(" ");
+	const child = spawn(process.execPath, ["-e", script], {
+		detached: true,
+		stdio: ["ignore", "pipe", "pipe"],
+		env: { ...process.env, BUSY_SOCKET: qa.socket },
+	});
+	await new Promise<void>((resolve, reject) => {
+		child.stdout?.once("data", () => resolve());
+		child.stderr?.once("data", (chunk: Buffer) => reject(new Error(`busy host failed to listen: ${chunk.toString("utf8")}`)));
+		child.once("exit", (code) => reject(new Error(`busy host exited before listening (code ${code})`)));
+	});
+	return register(qa, child, writer);
+}
+
 async function register(qa: Qa, child: ChildProcess, writer: Writer): Promise<Managed> {
 	children.push(child);
 	if (child.pid === undefined) throw new Error("managed host did not spawn");
-	// The child is live, so its identity must resolve; waitForStartTime returns undefined only when
-	// the probe is starved on a loaded host, which these fixtures do not exercise.
-	const processStartTime = await waitForStartTime(child.pid, 2_000);
-	if (processStartTime === undefined) throw new Error("managed host had no process identity");
+	// waitForStartTime returns undefined when every identity probe inside the budget is starved
+	// (a loaded windows-latest runner makes each Get-CimInstance call outlive its 1 s default) while
+	// the child is still alive. Production gives that wait 10 s; the fixture must not be stricter,
+	// and a live child with no identity yet is an observability gap, not a spawn failure (#1817).
+	const processStartTime = await waitForStartTime(child.pid, 10_000);
+	if (processStartTime === undefined) {
+		if (!processIsLive(child.pid)) throw new Error("managed host died before publishing its identity");
+		throw new Error(`managed host ${child.pid} is live but its identity probe was starved for 10 s`);
+	}
 	await writeRegistration(qa, { pid: child.pid, processStartTime }, await writerRecord(writer, child.pid));
 	await writeFile(daemonPaths(qa).settingsFile, `${JSON.stringify({ socket: qa.socket })}\n`, { mode: 0o600 });
 	return { pid: child.pid, pidFile: { pid: child.pid, processStartTime } };

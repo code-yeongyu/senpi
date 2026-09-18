@@ -36,6 +36,16 @@ export async function probeProtocolInfo(socketPath: string, timeoutMs: number): 
 }
 
 /**
+ * Whether the socket ACCEPTED a connection during the last probe, regardless of whether an answer
+ * arrived in time. A host under load can miss a probe budget while it is perfectly alive, and the
+ * difference decides whether an ensure may end it: a silent-but-connectable socket has an owner
+ * serving sessions behind it, and killing that owner destroys every one of them.
+ */
+export async function probeSocketReachable(socketPath: string, timeoutMs: number): Promise<boolean> {
+	return (await connectAndAsk(socketPath, { id: PROBE_REQUEST_ID, type: "get_protocol_info" }, timeoutMs)).connected;
+}
+
+/**
  * How many sessions the host holds right now, worker sessions included, or `undefined` when it
  * does not answer. A stop decision needs the number the host reports, not the one a client remembers.
  */
@@ -46,40 +56,48 @@ export async function probeSessionCount(socketPath: string, timeoutMs: number): 
 }
 
 /** Sends one command and returns its `data`, or `undefined` for any failure to get a usable answer. */
-export function requestOnSocket(
+export async function requestOnSocket(
 	socketPath: string,
 	command: Readonly<Record<string, unknown>>,
 	timeoutMs: number,
 ): Promise<unknown> {
-	return connectAndAsk(socketPath, { id: PROBE_REQUEST_ID, ...command }, timeoutMs);
+	return (await connectAndAsk(socketPath, { id: PROBE_REQUEST_ID, ...command }, timeoutMs)).answer;
+}
+
+/** One probe's outcome: whether the socket accepted a connection, and the answer if one arrived. */
+interface ProbeOutcome {
+	readonly connected: boolean;
+	readonly answer: unknown;
 }
 
 async function connectAndAsk(
 	socketPath: string,
 	request: Readonly<Record<string, unknown>>,
 	timeoutMs: number,
-): Promise<unknown> {
+): Promise<ProbeOutcome> {
 	let secret: Buffer | undefined;
 	if (process.platform === "win32") {
 		try {
 			secret = await readSocketSecret(socketSecretPath(socketPath));
 		} catch {
-			return undefined;
+			return { connected: false, answer: undefined };
 		}
 	}
 	return new Promise((resolveProbe) => {
 		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 		let buffer = "";
 		let settled = false;
+		let connected = false;
 		const finish = (value?: unknown): void => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timeout);
 			socket.destroy();
-			resolveProbe(value);
+			resolveProbe({ connected, answer: value });
 		};
 		const timeout = setTimeout(() => finish(), timeoutMs);
 		socket.once("connect", () => {
+			connected = true;
 			socket.write(`${JSON.stringify(request)}\n`);
 		});
 		socket.on("data", (chunk) => {
