@@ -471,6 +471,17 @@
   interrupt lands in `worker-slot.ts` / `worker-startup.ts` / `interrupt-bounds.ts` now.
 - LOW: `worker-core.js`, `worker-runtime.js`, `worker-shell-capture.js`, `detached-cell-*.ts`.
 
+## 2026-09-05 - Explain eval's run-only language requirement
+
+- The live and exported eval schemas describe `language` as required for runs,
+  with no default kernel, while keeping it optional for `peek` and `stop`.
+- Request parsing distinguishes an omitted language from an unsupported value
+  and lists the supported language identifiers for invalid values.
+- The README documents explicit language selection for runs and language-free
+  `peek`/`stop` requests.
+- Regression: `test/eval-request-language.test.ts` covers distinct diagnostics,
+  omitted run languages, and language-free control requests. Fixes #1395.
+
 ## 2026-09-05 - GPT eval dialect routes waits through tool.monitor
 
 ### What changed
