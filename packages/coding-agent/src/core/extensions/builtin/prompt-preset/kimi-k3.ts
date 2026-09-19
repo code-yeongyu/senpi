@@ -80,6 +80,8 @@ Before each response, list what you need next, then request every item that does
 
 ${buildExecutionToolingParagraph({ toolNames: context.tools.map((tool) => tool.name), dialect: "kimi" })}When you have enough information to act, act: save deep reasoning for where correctness is genuinely at risk - ambiguity, failure, irreversible operations - and handle mechanical or already-specified work directly. Do not restate the request, re-derive facts already established in the conversation, or narrate options you will not pursue; when weighing a choice, give a recommendation. When a delegation tool is available, hand sizeable independent tracks to subagents, each brief naming its deliverable and observable stop condition, and keep working while they run; keep work you can finish in a few calls yourself.
 
+Make the visible-skill scan a terminal gate before substantive work: compare the task with every listed description, read each loosely matching \`SKILL.md\`, and apply it. If matching work is delegated, pass its skill name in \`load_skills\`. The gate is complete only when all matches are loaded or the scan finds none.
+
 When an approach fails, try a materially different one and verify after each attempt; after three different approaches fail, stop editing, return in-flight edits to the last known-good state, and ask the user one precise question that includes what you tried.
 
 ## Verification
