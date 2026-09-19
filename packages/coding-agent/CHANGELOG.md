@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `Ctrl+V` pastes again on a published install. The released build could not load the native clipboard helper — inside a bundled chunk under Bun, `require.resolve` answers with the bare package name instead of a path, and the location built from that answer was never a file — so every paste read an empty clipboard, inserted nothing, and said nothing about why. Images and text both paste again; the unbundled entry was never affected. ([#1848](https://github.com/code-yeongyu/senpi/issues/1848))
+
 - The shared host opens sessions faster still. Every session it opened was rediscovering the same installed packages; the host now resolves them once and reuses the answer until its settings change. Measured on the daemon over its socket: eight sessions opened at once finish about 30% sooner than the previous release, and a single open about 25% sooner. ([#1844](https://github.com/code-yeongyu/senpi/issues/1844))
 
 - The shared host opens a session faster. Every session it opened was building its own copy of the same model catalog; the host now builds one and hands it to each session, and each session refreshes only the providers it added. Measured on the daemon over its socket: a single open is about 40% faster, and eight opened at once finish about 15% sooner. ([#1844](https://github.com/code-yeongyu/senpi/issues/1844))

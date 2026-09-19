@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 import { getNativeModuleCandidates } from "../src/native-module-path.ts";
@@ -21,6 +21,29 @@ describe("getNativeModuleCandidates", () => {
 
 		assert.equal(candidates[0], join(packageRoot, nativePath));
 		assert.ok(candidates.includes(join(dirname(bundledModule), "..", nativePath)));
+	});
+
+	it("ignores a resolver that answers with the bare specifier instead of a path", () => {
+		const bundledModule = resolve("virtual", "pi-coding-agent", "dist", "bundle", "chunks", "chunk.js");
+		const execPath = resolve("virtual", "node", "node.exe");
+		const nativePath = join("native", "darwin", "prebuilds", "darwin-arm64", "darwin-platform.node");
+
+		const candidates = getNativeModuleCandidates(nativePath, {
+			moduleUrl: pathToFileURL(bundledModule).href,
+			execPath,
+			// Bun returns the specifier unchanged from a bundled chunk rather than throwing.
+			resolvePackage: (specifier) => specifier,
+		});
+
+		assert.ok(
+			candidates.every((candidate) => isAbsolute(candidate)),
+			`relative candidate leaked: ${candidates.join(", ")}`,
+		);
+		assert.deepEqual(candidates, [
+			join(dirname(bundledModule), "..", nativePath),
+			join(dirname(bundledModule), nativePath),
+			join(dirname(execPath), nativePath),
+		]);
 	});
 
 	it("keeps standalone binary fallbacks when the TUI package is unavailable", () => {

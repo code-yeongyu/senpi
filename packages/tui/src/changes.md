@@ -1,5 +1,23 @@
 # TUI delta rendering fork changes
 
+## 2026-09-19 - Native helper lookup rejects a non-path resolver answer (senpi#1848)
+
+### What changed
+
+- `packages/tui/src/native-module-path.ts`: `getNativeModuleCandidates` resolves the TUI package through `import.meta.resolve` first and falls back to `moduleRequire.resolve`, and it drops the package-anchored candidate unless the resolved entry is absolute.
+
+### Why
+
+- senpi#1848: inside an esbuild chunk under Bun, `require.resolve` returns the bare specifier instead of throwing. `dirname()` of that specifier produced the relative candidate `native/<platform>/prebuilds/...`, which `require` reads as a package id, and the remaining candidates are anchored at the chunk directory, so the published bundle never found `*-platform.node`. `loadNativePlatformHelper` then negative-caches `undefined` for the life of the process, leaving `getNativeClipboard()` undefined and every clipboard read null — a silent no-op paste. The unbundled build is unaffected because its module directory sits inside the package.
+
+### Why an extension could not handle it
+
+- Native helper discovery is internal to the TUI package and runs before any extension is loaded.
+
+### Expected merge conflict zones
+
+- LOW: the single `try` block in `getNativeModuleCandidates`; the candidate list order and the standalone-binary fallbacks are unchanged.
+
 ## 2026-09-17 - Repeated dollar mentions and styled skill tokens (senpi#1778)
 
 ### What changed
