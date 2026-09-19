@@ -1,20 +1,10 @@
 import type { ExtensionContext } from "@code-yeongyu/senpi";
-import { EVAL_SUMMARY_MAX_LENGTH, type EvalControlInput, type EvalToolInput, type EvalToolRequest } from "./types.ts";
+import { clampEvalSummary } from "./eval-summary.mjs";
+import { type EvalControlInput, type EvalToolInput, type EvalToolRequest } from "./types.ts";
+
+export { clampEvalSummary };
 
 const NON_INTERACTIVE_MODES = new Set(["print", "json"]);
-
-const ELLIPSIS = "...";
-
-// Harness-side enforcement of the schema maxLength: the tool advertises the limit, but an
-// over-limit value is force-truncated here (prepareArguments runs before schema validation)
-// instead of failing the call.
-export function clampEvalSummary(value: unknown): string | undefined {
-	if (typeof value !== "string") return undefined;
-	const normalized = value.trim().replace(/\s+/gu, " ");
-	if (normalized.length === 0) return undefined;
-	if (normalized.length <= EVAL_SUMMARY_MAX_LENGTH) return normalized;
-	return `${normalized.slice(0, EVAL_SUMMARY_MAX_LENGTH - ELLIPSIS.length)}${ELLIPSIS}`;
-}
 
 export function parseEvalRequest(params: unknown): EvalToolRequest {
 	if (!isRecord(params)) throw new TypeError("eval parameters must be an object");

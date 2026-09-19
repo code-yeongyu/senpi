@@ -8,6 +8,10 @@
 	"types": "./src/index.ts",
 	"exports": {
 		".": "./src/index.ts",
+		"./eval-summary": {
+			"types": "./src/tool/eval-summary.d.mts",
+			"import": "./src/tool/eval-summary.mjs"
+		},
 		"./package.json": "./package.json"
 	},
 	"files": [

@@ -8,6 +8,9 @@ import {
 	defaultCodemodeSettings,
 } from "../config/settings.ts";
 import type { TruncationMeta } from "../output/output-meta.ts";
+import { EVAL_SUMMARY_MAX_LENGTH } from "./eval-summary.mjs";
+
+export { EVAL_SUMMARY_MAX_LENGTH };
 
 export const evalLanguageOrder = ["js", "py", "rb", "jl"] as const;
 export type EvalLanguage = (typeof evalLanguageOrder)[number];
@@ -16,8 +19,6 @@ export type EnabledEvalLanguages = Readonly<Record<EvalLanguage, boolean>>;
 export function enabledLanguageList(enabled: EnabledEvalLanguages): EvalLanguage[] {
 	return evalLanguageOrder.filter((language) => enabled[language]);
 }
-
-export const EVAL_SUMMARY_MAX_LENGTH = 80;
 
 /** The deadlines the schema teaches the model; every number comes from the resolved settings. */
 export interface EvalDeadlineSeconds {
