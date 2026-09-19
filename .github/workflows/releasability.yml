@@ -33,20 +33,10 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # `npm run check` leads with `biome check --write`, which would silently
-      # fix format drift (#697) instead of failing on it. Run biome read-only,
-      # then the remaining check sub-scripts verbatim from the check script.
-      - name: Biome check (read-only)
-        run: npx biome check --error-on-warnings .
-
-      - name: Remaining check sub-scripts
-        run: >
-          npm run check:pinned-deps
-          && npm run check:ts-imports
-          && npm run check:shrinkwrap
-          && npm run check:install-lock:coding-agent
-          && npx tsc --noEmit
-          && node scripts/check-browser-smoke.mjs
+      # `npm run check` is read-only (#1443): its biome invocation reports format
+      # drift instead of silently rewriting it, so the gate can fail here.
+      - name: Check
+        run: npm run check
 
       - name: Workflow summary
         if: always()

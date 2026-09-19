@@ -8,9 +8,9 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
-# Run the check script (formatting, linting, and type checking)
+# Run the autofixing check script (formatting, linting, and type checking)
 echo "Running formatting, linting, and type checking..."
-npm run check
+npm run check:fix
 if [ $? -ne 0 ]; then
   echo "❌ Checks failed. Please fix the errors before committing."
   exit 1

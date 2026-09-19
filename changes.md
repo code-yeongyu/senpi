@@ -1,5 +1,26 @@
 # changes — senpi-monorepo root
 
+## Root check verifies formatting instead of rewriting it (2026-09-17)
+
+### What changed
+
+- `package.json`: the root `check` script now runs `biome check --error-on-warnings .` (read-only) instead of `biome check --write --error-on-warnings .`, so format drift fails the script rather than being silently repaired. A new `check:fix` script keeps the autofix form (`biome check --write --error-on-warnings . && npm run check`) for local use.
+- `.husky/pre-commit`: runs `npm run check:fix`, preserving the hook's existing autofix-then-verify behavior now that `check` no longer writes.
+- `.github/workflows/releasability.yml`: drops the hand-inlined read-only biome step plus its verbatim copy of the remaining check sub-scripts and calls `npm run check` directly; that workaround existed only because `check` autofixed, and its copy had already drifted from the real chain (missing `check:entry-graphs` and `check:claude-sdk-platform-lock`).
+
+### Why
+
+- #1443: the CI `Static checks` job runs `npm run check`, whose leading `biome check --write` reformats offending files inside the runner and exits 0. The rewrite is discarded when the runner exits, so a formatting regression could never fail CI while drift accumulated on main. Root `AGENTS.md` also requires the local check and CI to stay in sync; with autofix in the shared script they disagreed by construction.
+
+### Why an extension could not handle it
+
+- The root `package.json` script chain, the Husky hook, and the workflow step are build-time and repository-policy gates that execute before any Senpi runtime loads; no runtime extension participates in them.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script string in root `package.json` and the adjacent `check:fix` entry.
+- LOW: the check invocation line in `.husky/pre-commit`.
+
 ## Make B.AI credentials available to development environments (2026-09-18)
 
 ### What changed
