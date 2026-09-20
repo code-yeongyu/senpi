@@ -391,6 +391,29 @@ The provider id is resolved inside the package before any extension loads, and t
 
 - LOW: the `editAssistantMessage` / `_navigateTree` heads in `agent-session.ts` (one added method and one widened parameter type); the fork-only `edited-user-message.ts`.
 - Coverage: `test/suite/tree-edit-user-message.test.ts`.
+## 2026-09-21 - Reuse prose subscription-limit classification from PR #1769
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: recognizes the
+  narrow usage/session/weekly/daily/hourly limit vocabulary from PR #1769.
+- The prerequisite retains that PR's taxonomy and failover regressions.
+
+### Why
+
+- The quota-routing feature needs the same classification when a subscription
+  limit is reported after preflight. Reusing the existing implementation avoids
+  a competing expression and keeps its dependency separately reviewable.
+
+### Why an extension could not handle it
+
+- Classification controls the native credential failover runner before an
+  extension could select a healthy replacement account.
+
+### Expected merge conflict zones
+
+- LOW: the rate-limit expression. This prerequisite incorporates PR #1769's
+  combined implementation/tests and should be dropped when that PR is integrated.
 
 ## 2026-09-20 - A fallback rung too small for the transcript is repaired, not rejected (senpi#1873)
 
