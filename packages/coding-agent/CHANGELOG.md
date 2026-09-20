@@ -18,6 +18,8 @@
 
 - Sending `.` to continue now resumes a blocked goal. Previously, the conversation continued but the goal stayed blocked until you ran `/goal resume`. ([#1871](https://github.com/code-yeongyu/senpi/issues/1871))
 
+- Hidden diagnostics no longer duplicate the terminal screen when mouse capture is enabled. Messages saved only to the debug log leave the current frame intact; errors actually printed to the terminal still reset mouse targeting. ([#1879](https://github.com/code-yeongyu/senpi/issues/1879))
+
 - An extension's `import value from "./data.json" with { type: "file" }` returns the file path again. The loader rewrites a static import of a CommonJS-shaped file so that Node's export interop keeps working, and that rewrite rebuilt the statement without the attributes that followed the specifier, so a .json, .toml or .txt asset came back parsed or as text instead of as a path. The attributes now travel with the rewritten import. ([#1864](https://github.com/code-yeongyu/senpi/issues/1864))
 
 - `senpi` starts about five seconds faster. The command was still booting the unbundled module graph while `pi`, the other name the same package installs, had already moved onto the pre-linked bundle shipped for exactly this reason. Measured on a real TUI launch, with ready meaning the editor accepts a keystroke: 6.3 s to 1.2 s, and the work done before `main()` runs drops from 5.3 s to 0.3 s. `--version` and `--help` produce the same bytes on both Node and Bun. ([#1868](https://github.com/code-yeongyu/senpi/issues/1868))

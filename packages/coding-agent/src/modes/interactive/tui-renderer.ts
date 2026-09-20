@@ -1,6 +1,7 @@
 import type { Terminal } from "@earendil-works/pi-tui";
 import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
 import { appendHiddenTuiStdout } from "../../core/hidden-stdout-log.ts";
+import { observeVisibleStderrWrites } from "../../core/output-guard.ts";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { keyDisplayText } from "./components/keybinding-hints.ts";
@@ -21,7 +22,12 @@ export function createInteractiveTui(options: InteractiveTuiOptions & { readonly
 export function createInteractiveTui(options: InteractiveTuiOptions & { readonly tuiMode: "regular" }): TuiMainScreen;
 export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen;
 export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
-	const terminal = options.terminal ?? new ProcessTerminal({ onExternalStdoutWrite: appendHiddenTuiStdout });
+	const terminal =
+		options.terminal ??
+		new ProcessTerminal({
+			onExternalStdoutWrite: appendHiddenTuiStdout,
+			observeExternalStderrWrites: observeVisibleStderrWrites,
+		});
 	if (options.tuiMode === "fullscreen") {
 		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
 		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
