@@ -97,14 +97,13 @@ export function streamInternalModel(
 		const { apiKey, ...neutral } = effectiveOptions;
 		effectiveOptions = neutral;
 	}
-	const settings = config.settings;
-	// Without a session fallback policy, preserve the native stream and its
-	// original rejection/cancellation semantics after removing the OAuth snapshot.
-	if (!settings?.getRetryFallbackSettings().modelFallback) {
-		return config.streamFn
-			? config.streamFn(model, context, effectiveOptions)
-			: runtime.streamSimple(model, context, effectiveOptions);
-	}
+	const settings: InternalModelSettings = config.settings ?? {
+		getRetryFallbackSettings: (): ResolvedRetryFallbackSettings => ({
+			modelFallback: false,
+			chains: {},
+			revertPolicy: "cooldown-expiry",
+		}),
+	};
 	const agentDir = config.agentDir ?? getAgentDir();
 	let cooldowns = config.cooldowns ?? cooldownsByRuntime.get(runtime);
 	if (!cooldowns) {
@@ -143,6 +142,15 @@ export function streamInternalModel(
 			});
 		},
 	});
+	// A session without model fallback, or a model without a configured fallback
+	// chain, must keep the native stream exactly as the caller supplied it. This
+	// preserves rejection identity and synchronous-throw semantics; wrapping the
+	// native stream here would relabel its failure into an error event.
+	if (!settings.getRetryFallbackSettings().modelFallback || !controller.hasConfiguredChain()) {
+		return config.streamFn
+			? config.streamFn(model, context, effectiveOptions)
+			: runtime.streamSimple(model, context, effectiveOptions);
+	}
 	return lazyStream(model, async () =>
 		(async function* () {
 			if (cooldowns.isSuppressed(`${model.provider}/${model.id}`)) {
@@ -161,10 +169,26 @@ export function streamInternalModel(
 							maxRetries: 0,
 						}
 					: effectiveOptions;
-				const stream =
-					changed || !config.streamFn
-						? runtime.streamSimple(current.model, context, requestOptions)
-						: await config.streamFn(current.model, context, requestOptions);
+				let stream: AssistantMessageEventStream;
+				try {
+					stream =
+						changed || !config.streamFn
+							? runtime.streamSimple(current.model, context, requestOptions)
+							: await config.streamFn(current.model, context, requestOptions);
+				} catch (streamError) {
+					// A synchronous throw from the native stream must reach the caller
+					// as the original error, not as a lazy-wrapped error event: summary
+					// consumers otherwise relabel it and change their reported message.
+					if (
+						effectiveOptions.signal?.aborted ||
+						!(await controller.tryFallback("hard-error", {
+							errorMessage: streamError instanceof Error ? streamError.message : String(streamError),
+						}))
+					) {
+						throw streamError;
+					}
+					continue;
+				}
 				let committed = false;
 				let failure: Extract<AssistantMessageEvent, { type: "error" }> | undefined;
 				for await (const event of stream) {

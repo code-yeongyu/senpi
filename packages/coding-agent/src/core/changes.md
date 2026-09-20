@@ -404,9 +404,11 @@ The provider id is resolved inside the package before any extension loads, and t
   helper and native title/summary/remote-compaction/side-query/vision regressions.
 - `packages/coding-agent/test/compaction/before-compact-error-surfacing.test.ts`:
   the session fixture now supplies its required `getSessionId` contract.
-- When no session fallback policy is provided or it is disabled, the internal
-  helper delegates the original stream directly, preserving rejection identity
-  and cancellation rather than creating another error-conversion layer.
+- When no session fallback policy is provided, it is disabled, or the active
+  model has no configured fallback chain, the internal helper delegates the
+  original stream directly, preserving rejection identity, synchronous-throw
+  semantics, and cancellation rather than relabeling failures through another
+  lazy error-event layer.
 
 ### Why
 
