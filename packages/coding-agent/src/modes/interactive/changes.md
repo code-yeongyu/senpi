@@ -52,6 +52,44 @@
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: QuestionOverlayOptions, showQuestionOverlay, and showAsyncQuestion.
 
+## 2026-09-20 - Keep hidden diagnostics from duplicating the frame (senpi#1879)
+
+### What changed
+
+- `tui-renderer.ts` connects the terminal's stderr observer to the output guard's visible destination.
+
+### Why
+
+- A diagnostic saved only in the debug log must not append another complete TUI frame.
+
+### Why an extension could not handle it
+
+- This connection belongs to the default terminal composition root, before any extension renders.
+
+### Expected merge conflict zones
+
+- Default terminal construction. Real visible fallback errors still require mouse-anchor invalidation.
+
+## 2026-09-20 - Group adjacent exploration calls (senpi#1870)
+
+### What changed
+
+- A transcript projection groups built-in read, search and listing cards without changing the original component array or call-ID routing.
+- Repeated reads retain their requested ranges and call count. The compact preview is bounded; expansion restores original results. Failures remain visible.
+- Session replay preserves text and tool order, including hidden reasoning inside compatible groups.
+
+### Why
+
+- Reading one file in several chunks previously added one full card per request.
+
+### Why an extension could not handle it
+
+- Grouping belongs to the transcript that owns live insertion, replay, expansion and progressive rendering.
+
+### Expected merge conflict zones
+
+- Interactive transcript construction and assistant-message replay. Custom tool renderers and semantic skill/memory read cards retain their existing presentation.
+
 ## 2026-09-17 - Remember the detected terminal background (senpi#1781)
 
 ### What changed

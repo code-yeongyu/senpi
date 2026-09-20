@@ -67,7 +67,7 @@ function getPiDocsClassification(absolutePath: string): CompactReadClassificatio
 	}
 	return undefined;
 }
-function getCompactReadClassification(
+export function getCompactReadClassification(
 	args: ReadRenderArgs | undefined,
 	cwd: string,
 ): CompactReadClassification | undefined {
