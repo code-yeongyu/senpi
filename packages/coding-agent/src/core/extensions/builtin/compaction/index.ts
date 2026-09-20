@@ -978,9 +978,18 @@ export default function compactionExtension(
 						...(auth.baseUrl ? { baseUrl: auth.baseUrl } : {}),
 					}
 				: model;
+		const selectedAuthorization = Object.entries(event.headers ?? {}).find(
+			([key]) => key.toLowerCase() === "authorization",
+		)?.[1];
 		const headers = createOpenAiRemoteCompactionHeaders(
 			effectiveModel,
-			{ ...auth, headers: event.headers ?? auth.headers },
+			{
+				...auth,
+				...(model.provider === "openai-codex" && selectedAuthorization?.startsWith("Bearer ")
+					? { apiKey: selectedAuthorization.slice(7) }
+					: {}),
+				headers: event.headers ?? auth.headers,
+			},
 			ctx.sessionManager.getSessionId(),
 		);
 		if (!headers) return undefined;

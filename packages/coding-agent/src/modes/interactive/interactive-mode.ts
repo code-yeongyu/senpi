@@ -86,6 +86,7 @@ import {
 } from "../../core/cache-stats.ts";
 import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
+import { formatAccountSwitchNotice } from "../../core/credential-pool/account-notices.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
 import { formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
 import { askUserRenderers } from "../../core/extensions/builtin/ask-user/render.ts";
@@ -5604,6 +5605,24 @@ export class InteractiveMode {
 					why: event.chainConfigured
 						? "Retrying on your configured fallback chain."
 						: "No fallback chain configured — set one with /fallback.",
+				});
+				break;
+
+			case "account_failover": {
+				const notice = formatAccountSwitchNotice(event);
+				this.showNoticeBox({
+					title: notice.title,
+					tone: "warning",
+					why: notice.why,
+				});
+				break;
+			}
+
+			case "internal_model_fallback":
+				this.showNoticeBox({
+					title: `⇆ Model fallback · ${event.source} · ${event.from} → ${event.to}`,
+					tone: "warning",
+					why: `Internal ${event.source} request switched models (${event.reason}); the active session model is unchanged.`,
 				});
 				break;
 

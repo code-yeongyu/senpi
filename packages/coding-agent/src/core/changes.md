@@ -391,6 +391,118 @@ The provider id is resolved inside the package before any extension loads, and t
 
 - LOW: the `editAssistantMessage` / `_navigateTree` heads in `agent-session.ts` (one added method and one widened parameter type); the fork-only `edited-user-message.ts`.
 - Coverage: `test/suite/tree-edit-user-message.test.ts`.
+## 2026-09-20 - Auxiliary requests stream through one internal fallback seam
+
+### What changed
+
+- `packages/coding-agent/src/core/internal-model-request.ts` (new): `streamInternalModel` gives title, compaction, branch summary, /btw, and look_at a per-request fallback lane that never mutates the agent's selected chat model. It strips a pre-resolved Codex OAuth `apiKey` only at the internal seam, drops `apiKey`/`headers`/`extraBody`/`env`/`reasoningEffort` on a cross-provider fallback, and excludes text-only fallback models while the context contains images.
+- `packages/coding-agent/src/core/agent-session.ts`: new `_streamInternalModel` helper and the title, blocking compaction, and branch-summary `streamFn` call sites now route through it.
+- `packages/coding-agent/src/core/extensions/types.ts` and `runner.ts`: the extension context gains an optional `getRetryFallbackSettings()` so builtins pass session settings into the helper instead of deriving a global `SettingsManager`.
+- `compaction/speculative-summary.ts`, `compaction/openai-remote.ts`, `compaction/index.ts`, `btw/index.ts`, and `look-at/runner.ts`: auxiliary lanes use the helper; remote Codex compaction uses the public `ModelRuntime.requestWithCredentialRotation` seam.
+- `packages/coding-agent/test/suite/internal-model-request.test.ts` and
+  `packages/coding-agent/test/suite/codex-auxiliary-routing.test.mjs`: portable
+  helper and native title/summary/remote-compaction/side-query/vision regressions.
+- `packages/coding-agent/test/compaction/before-compact-error-surfacing.test.ts`:
+  the session fixture now supplies its required `getSessionId` contract.
+- When no session fallback policy is provided or it is disabled, the internal
+  helper delegates the original stream directly, preserving rejection identity
+  and cancellation rather than creating another error-conversion layer.
+
+### Why
+
+Auxiliary lanes previously called the runtime directly. Routing them through this seam while keeping their selector local means a resolved credential or provider-specific body can never cross into a different provider, and the failures never re-select the whole session.
+
+### Why an extension could not handle it
+
+Title and branch-summary generation originate inside AgentSession, and native
+remote compaction requires the selected credential before its HTTP request.
+The shared internal seam covers these core requests and builtins together.
+
+### Expected merge conflict zones
+
+- LOW: the additive import plus `_streamInternalModel` and the three `streamFn` call sites in `agent-session.ts`, the new `internal-model-request.ts`, and the `getRetryFallbackSettings` addition in `extensions/types.ts`/`runner.ts`.
+
+## 2026-09-20 - Codex quota admission precedes paid usage
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/codex-quota.ts`: validates fresh
+  read-only usage responses and distinguishes included quota, confirmed
+  exhaustion, and unknown availability. Credits are admitted only after every
+  normal bucket is confirmed exhausted.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: checks
+  the full account inventory, including cooling accounts and accounts leased
+  by another recovery probe, before filtering generation candidates. Streams
+  and non-streaming requests share selection, health persistence, and notices.
+- `packages/coding-agent/src/core/model-runtime.ts`: lazily loads quota readers,
+  resolves OAuth through native account-specific refresh, preserves explicit
+  request-key bypass, carries affinity/purpose, and provides the typed
+  `requestWithCredentialRotation` HTTP seam. Payload provenance uses the
+  selected Codex credential, not a stale caller snapshot.
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: recognizes
+  subscription usage-limit prose as an account rate limit. This overlaps the
+  narrow classification repair proposed in upstream PR #1769.
+- Portable regressions:
+  `packages/coding-agent/test/suite/codex-quota.test.ts`,
+  `packages/coding-agent/test/suite/codex-runtime-routing.test.ts`, and
+  `packages/coding-agent/test/suite/account-notices.test.ts`.
+
+### Why
+
+- Generation cooldown and probe ownership are not evidence of exhausted
+  quota. Omitting those accounts could spend credits while normal quota
+  remained. Unknown or denied quota must not authorize spending either.
+- Explicit keys are a caller contract; only internal request adapters may
+  discard a previously resolved OAuth snapshot to delegate account selection.
+
+### Why an extension could not handle it
+
+- Account admission, credential refresh, payload provenance, and pre-output
+  failover belong to ModelRuntime and must also cover noninteractive workers.
+
+### Expected merge conflict zones
+
+- MEDIUM: ModelRuntime request preparation and credential-pool selection.
+- LOW: new quota module and portable regressions. Coordinate the classifier
+  line with PR #1769 rather than submitting two independent copies.
+
+## 2026-09-20 - Account-switch notices are fault-isolated
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/account-notices.ts` (new): the
+  `emitAccountSwitch` / `subscribeAccountSwitch` / `formatAccountSwitchNotice` surface.
+  `emitAccountSwitch` wraps each subscriber in its own try/catch and attaches a rejection
+  handler to async observers. Failures produce a fixed, credential-free diagnostic,
+  never stop provider selection, never drop later observers, and never surface exception text.
+  Delivery snapshots the observer collection so a failing observer that removes
+  itself cannot shift a session listener array and skip its next peer.
+- `packages/coding-agent/src/core/agent-session.ts`: each session subscribes at construction
+  and converts a module-level `account_failover` whose `sessionId` matches into a session
+  event, forwarding `provider`/`from`/`to`/`reason` plus the optional `sessionId`/`source`.
+  The `AgentSessionEvent` union gains `account_failover` and `internal_model_fallback`.
+  `dispose()` unsubscribes the account-switch listener alongside the settings-source listener.
+
+### Why
+
+- The credential-pool selector notifies these listeners from its synchronous path. A throwing
+  listener previously aborted selection with zero provider attempts and silenced every later
+  observer; a rejected async observer became an unhandled rejection. The session-scoped
+  subscription keeps one account switch from leaking across sessions, and dispose keeps the
+  module-level set from retaining dead sessions.
+
+### Why an extension could not handle it
+
+- The emit runs inside the credential-pool selector before any provider attempt, and the
+  constructor/dispose subscription in `agent-session.ts` sits below every extension of the
+  session. Neither seam is reachable from extension code.
+
+### Expected merge conflict zones
+
+- LOW: the new `credential-pool/account-notices.ts` (fork-only) and the additive seams in
+  `agent-session.ts` - the import block, the `AgentSessionEvent` union entries, the
+  constructor subscription, and the dispose cleanup.
+
 ## 2026-09-21 - Reuse prose subscription-limit classification from PR #1769
 
 ### What changed

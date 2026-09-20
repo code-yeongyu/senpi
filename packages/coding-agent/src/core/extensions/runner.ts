@@ -1209,6 +1209,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getCompactionSettingsFn();
 			},
+			getRetryFallbackSettings: () => {
+				runner.assertActive();
+				return runner.sessionSettingsFn.getRetryFallbackSettings();
+			},
 			getPromptCacheSafeWaitSeconds: () => {
 				runner.assertActive();
 				return runner.getPromptCacheSafeWaitSecondsFn();

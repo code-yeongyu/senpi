@@ -12,6 +12,7 @@ import {
 	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
+import { formatAccountSwitchNotice } from "../core/credential-pool/account-notices.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 import { toJsonEvent } from "./json-event.ts";
@@ -134,6 +135,11 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 				console.error(`Model fallback exhausted: ${event.chainKey} (${event.lastError})`);
 			} else if (event.type === "retry_fallback_reverted") {
 				console.error(`Model fallback reverted: ${event.from} -> ${event.to}`);
+			} else if (event.type === "account_failover") {
+				const notice = formatAccountSwitchNotice(event);
+				console.error(notice.why ? `${notice.title} — ${notice.why}` : notice.title);
+			} else if (event.type === "internal_model_fallback") {
+				console.error(`Model fallback (${event.source}): ${event.from} -> ${event.to} (${event.reason})`);
 			}
 			if (mode === "json") {
 				writeRawStdout(`${JSON.stringify(toJsonEvent(event))}\n`);

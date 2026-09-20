@@ -73,6 +73,28 @@ The login command is interactive mode's own command handler; an extension cannot
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `commandContextActions` navigation and assistant-edit neighbours.
 - `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts`: edit-related imports and proxy navigation/edit property cases.
+## 2026-09-20 - Account-switch and internal-model fallback notices render in the TUI
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the session event switch
+  gains `account_failover` (rendered via `formatAccountSwitchNotice`) and
+  `internal_model_fallback` (a notice stating the internal request switched models while the
+  active session model is unchanged). Neither branch mutates main model or footer state.
+
+### Why
+
+- Both events report account/model routing changes the user should see without the host
+  treating an internal fallback as a session-model switch.
+
+### Why an extension could not handle it
+
+- They are engine-emitted session events rendered by the host's own event dispatcher, before
+  any extension widget can intercept them.
+
+### Expected merge conflict zones
+
+- LOW: the two new case arms after `server_fallback_aborted` in the session event switch.
 
 ## 2026-09-20 - Surface a held model switch (senpi#1873)
 

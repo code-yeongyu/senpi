@@ -10,6 +10,11 @@
 
 ### Fixed
 
+- Automatic Codex OAuth account selection now checks included quota before using paid credits, including cooling and temporarily leased accounts. Unknown quota cannot authorize paid usage.
+- Title generation, compaction, branch summaries, side queries, and vision requests retain account rotation and configured model fallback without changing the active chat model. Explicit request keys remain pinned, and remote compaction keeps its local-summary fallback.
+- Account switches are reported in the terminal and session events without credential material. Failing or self-removing notice listeners cannot interrupt routing or other listeners.
+- Subscription-limit prose triggers credential failover rather than ending the request ([#1769](https://github.com/code-yeongyu/senpi/pull/1769) by [@orientpine](https://github.com/orientpine)).
+
 ### Removed
 
 ## [2026.9.22-4] - 2026-09-22
