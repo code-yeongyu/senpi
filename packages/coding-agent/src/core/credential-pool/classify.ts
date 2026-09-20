@@ -40,7 +40,14 @@ export function rateLimitCooldown(
 
 const INVALID_KEY_TEXT = /invalid[ _-]?(?:api[ _-]?)?key|authentication[_ ]?error|invalid x-api-key|unauthorized/i;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
-const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
+// Subscription exhaustion reaches the pool as prose with no HTTP status: Codex reports
+// `The usage limit has been reached`, Claude reports `You've hit your session limit`.
+// The alternation stays narrow because this branch runs BEFORE the overflow branch - a
+// broad `<word> limit` match would read the provider overflow prose catalogued in
+// `utils/overflow.ts` (`token limit`, `context limit`, `byte limit`) as a rate limit and
+// block a healthy credential for a request that was merely too large.
+const RATE_LIMIT_TEXT =
+	/rate[ _-]?limit|too many requests|resource_exhausted|\b(?:usage|session|weekly|daily|hourly)[ _-]?limit\b/i;
 const BILLING_TEXT =
 	/billing|credits?[ _-]?(?:required|exhausted|balance)|insufficient[ _-]?(?:funds|quota|credit)|payment[ _-]?required|quota[ _-]?exhausted/i;
 const OVERLOAD_TEXT = /overloaded/i;
