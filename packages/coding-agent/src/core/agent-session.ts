@@ -49,6 +49,7 @@ import {
 import type {
 	Api,
 	AssistantMessage,
+	AssistantMessageEventStream,
 	AuthResult,
 	Context,
 	ImageContent,
@@ -116,6 +117,7 @@ import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from ".
 import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import type { CompactionModelSelector } from "./compaction-settings-access.ts";
+import { emitAccountSwitch, subscribeAccountSwitch } from "./credential-pool/account-notices.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
@@ -217,6 +219,7 @@ import type {
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
+import { streamInternalModel } from "./internal-model-request.ts";
 import {
 	isManualContinueSubmission,
 	MANUAL_CONTINUE_CUSTOM_TYPE,
@@ -476,6 +479,23 @@ export type AgentSessionEvent =
 			from: string;
 			to: string;
 			chainConfigured: boolean;
+	  }
+	| {
+			type: "account_failover";
+			provider: string;
+			from: string;
+			to: string;
+			reason: string;
+			sessionId?: string;
+			source?: string;
+	  }
+	| {
+			type: "internal_model_fallback";
+			source: string;
+			from: string;
+			to: string;
+			reason: string;
+			chainKey: string;
 	  }
 	// Auth login flow (task 13) is additive with event-only completion. The
 	// login_start command responds immediately, then the OAuth URL and the
@@ -913,6 +933,7 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _unsubscribeSettingsSource?: () => void;
+	private _unsubscribeAccountSwitch?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _agentEventQueue: Promise<void> = Promise.resolve();
 	/**
@@ -1124,6 +1145,18 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		this._unsubscribeSettingsSource = this.settingsManager.subscribeToSourceSelection((source) => {
 			this._emit({ type: "settings_source_selected", ...source });
+		});
+		this._unsubscribeAccountSwitch = subscribeAccountSwitch((event) => {
+			if (event.sessionId !== this.sessionId) return;
+			this._emit({
+				type: "account_failover",
+				provider: event.provider,
+				from: event.from,
+				to: event.to,
+				reason: event.reason,
+				...(event.sessionId === undefined ? {} : { sessionId: event.sessionId }),
+				...(event.source === undefined ? {} : { source: event.source }),
+			});
 		});
 		const noModelFallback =
 			config.resourceLoader.getExtensions().runtime.flagValues.get("no-model-fallback") === true ||
@@ -1655,6 +1688,10 @@ export class AgentSession {
 
 	private _emit(event: AgentSessionEvent): void {
 		this._logSessionEvent(event);
+		if (event.type === "account_failover") {
+			emitAccountSwitch(event, this._eventListeners);
+			return;
+		}
 		for (const l of this._eventListeners) {
 			l(event);
 		}
@@ -3088,6 +3125,8 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
+		this._unsubscribeAccountSwitch?.();
+		this._unsubscribeAccountSwitch = undefined;
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
 		this._eventListeners = [];
@@ -4529,7 +4568,7 @@ export class AgentSession {
 				baseOptions: this._buildSessionTitleBaseOptions(),
 				retry: sessionTitleRetryPolicy(this.settingsManager.getRetrySettings()),
 				signal: abortController.signal,
-				streamFn: this.agent.streamFunction,
+				streamFn: (model, context, options) => this._streamInternalModel(model, context, options, "title"),
 			});
 			if (abortController.signal.aborted) {
 				return;
@@ -4569,6 +4608,27 @@ export class AgentSession {
 			timeoutMs: this.agent.timeoutMs,
 			maxRetryDelayMs: this.agent.maxRetryDelayMs,
 		};
+	}
+
+	private _streamInternalModel(
+		model: Model<Api>,
+		context: Context,
+		options: SimpleStreamOptions = {},
+		purpose: string,
+	): AssistantMessageEventStream | Promise<AssistantMessageEventStream> {
+		return streamInternalModel(
+			this._modelRuntime,
+			model,
+			context,
+			{ ...options, purpose, affinitySessionId: this.sessionId },
+			{
+				settings: this.settingsManager,
+				cooldowns: this._selectorCooldowns,
+				streamFn: this.agent.streamFunction,
+				notify: (event) => this._emit(event),
+				agentDir: this._agentDir,
+			},
+		);
 	}
 
 	/**
@@ -6101,7 +6161,7 @@ export class AgentSession {
 			signal,
 			extraBody,
 			this.thinkingLevel,
-			this.agent.streamFunction,
+			(model, context, options) => this._streamInternalModel(model, context, options, "compaction"),
 			env,
 			this.agent.transformContext,
 			this.settingsManager.getRetrySettings(),
@@ -9498,7 +9558,8 @@ export class AgentSession {
 					customInstructions,
 					replaceInstructions,
 					reserveTokens: branchSummarySettings.reserveTokens,
-					streamFn: this.agent.streamFunction,
+					streamFn: (model, context, options) =>
+						this._streamInternalModel(model, context, options, "branch summary"),
 					retry: this.settingsManager.getRetrySettings(),
 					callbacks: this._summarizationRetryCallbacks({
 						source: "branchSummary",
