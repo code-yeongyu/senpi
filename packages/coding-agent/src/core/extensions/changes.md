@@ -94,12 +94,18 @@
 
 ### What changed
 
-- `src/core/extensions/types.ts`: `ExtensionContext` gains an optional `getRetryFallbackSettings(): RetryFallbackSettings` getter.
-- `src/core/extensions/runner.ts`: `createContext()` exposes that getter from the already-bound `sessionSettingsFn`, so an extension auxiliary request reads the active session's resolved fallback configuration rather than reconstructing one from the global agent directory.
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext` gains an optional `getRetryFallbackSettings(): RetryFallbackSettings` getter.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createContext()` exposes that getter from the already-bound `sessionSettingsFn`, so an extension auxiliary request reads the active session's resolved fallback configuration rather than reconstructing one from the global agent directory.
 
 ### Why
 
 Title/compaction/btw/vision auxiliary requests need the session's configured fallback chains, including SDK in-memory settings, without each builtin importing `SettingsManager` and reaching for `getAgentDir()`.
+
+### Why an extension could not handle it
+
+Only the host binds the active session settings into the extension context.
+An external extension cannot add a typed context capability or access SDK
+in-memory overrides through the global settings file.
 
 ### Expected merge conflict zones
 
