@@ -68,6 +68,30 @@ describe("generic credential failover runner", () => {
 		]);
 	});
 
+	test("a prose subscription limit rotates to the sibling credential", async () => {
+		const attempts: string[] = [];
+		const persisted: string[] = [];
+		const stream = runCredentialFailover<Event, RunSlot>({
+			listSlots: () => [{ name: "alpha" }, { name: "beta" }],
+			select: firstAvailable,
+			runAttempt: (slot) => {
+				attempts.push(slot.name);
+				return slot.name === "alpha"
+					? failWith(new Error("Codex error: The usage limit has been reached"))
+					: events({ type: "text_delta" });
+			},
+			isCommittedOutput: committedUnlessBookkeeping,
+			persistBlock: (slot, block) => {
+				persisted.push(`${slot.name}:${block.reason}`);
+			},
+		});
+		// A provider that reports exhaustion as prose must cost the pool exactly one
+		// slot, not the whole request.
+		expect(await collect(stream)).toEqual([{ type: "text_delta" }]);
+		expect(attempts).toEqual(["alpha", "beta"]);
+		expect(persisted).toEqual(["alpha:rate_limit"]);
+	});
+
 	test("an UNKNOWN event type sets the committed-output barrier: no rotation, provider text kept verbatim", async () => {
 		const attempts: string[] = [];
 		const persisted: string[] = [];
