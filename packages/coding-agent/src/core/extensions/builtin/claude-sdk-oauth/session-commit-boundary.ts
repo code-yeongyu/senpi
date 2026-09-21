@@ -1,3 +1,4 @@
+import { clampEvalSummary } from "@code-yeongyu/senpi-codemode/eval-summary";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./account-management.ts";
 import { sessionSyncDigest } from "./session-sync.ts";
@@ -6,13 +7,35 @@ export type AssistantCommitOutcome = "clean" | "rewritten" | "not-resident";
 
 type ContentBlock = AssistantMessage["content"][number];
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+/**
+ * The eval tool's prepareArguments shim normalizes run summaries before schema
+ * validation. That harness-owned normalization mutates the committed tool-call
+ * arguments after the provider-final boundary, so continuity must fingerprint
+ * the same effective arguments on both sides. Keep other tools fail-closed.
+ */
+function semanticToolCallArguments(name: string, args: unknown): unknown {
+	if (name !== "eval" || !isRecord(args) || args.action === "peek" || args.action === "stop") return args;
+	if (typeof args.summary !== "string") return args;
+
+	const summary = clampEvalSummary(args.summary);
+	const canonical = { ...args };
+	if (summary === undefined) delete canonical.summary;
+	else canonical.summary = summary;
+	return canonical;
+}
+
 /**
  * Only the payload the model produced is fingerprinted. Everything the stream
  * pipeline stamps around it (thinking timing, content-block indices, partial
  * JSON) can legitimately differ between the last `message_update` and `message_end`
  * without any extension rewriting the answer; hashing such fields marked plain
  * turns `assistant_rewritten` and forced a full re-send on the next turn
- * (senpi#691, oh-my-openagent#7925). An unknown block shape stays fail-closed.
+ * (senpi#691, oh-my-openagent#7925). Harness-owned argument normalization is
+ * canonicalized to the effective tool input; unknown block shapes stay fail-closed.
  */
 function semanticContentBlock(block: ContentBlock): unknown {
 	switch (block.type) {
@@ -21,7 +44,12 @@ function semanticContentBlock(block: ContentBlock): unknown {
 		case "thinking":
 			return { type: block.type, thinking: block.thinking, thinkingSignature: block.thinkingSignature };
 		case "toolCall":
-			return { type: block.type, id: block.id, name: block.name, arguments: block.arguments };
+			return {
+				type: block.type,
+				id: block.id,
+				name: block.name,
+				arguments: semanticToolCallArguments(block.name, block.arguments),
+			};
 		default:
 			return block;
 	}
