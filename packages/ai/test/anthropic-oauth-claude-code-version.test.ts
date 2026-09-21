@@ -41,10 +41,12 @@ vi.mock("@anthropic-ai/sdk", () => {
 			mockState.constructorOptions = options;
 		}
 
-		messages = {
-			create: () => ({
-				asResponse: async () => createSseResponse(),
-			}),
+		beta = {
+			messages: {
+				create: () => ({
+					asResponse: async () => createSseResponse(),
+				}),
+			},
 		};
 	}
 
@@ -52,7 +54,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 });
 
 function parseClaudeCliVersion(userAgent: string | null | undefined): readonly [number, number, number] {
-	const match = /^claude-cli\/(\d+)\.(\d+)\.(\d+)$/.exec(userAgent ?? "");
+	const match = /^claude-cli\/(\d+)\.(\d+)\.(\d+) \(external, cli\)$/.exec(userAgent ?? "");
 	if (!match) throw new Error(`user-agent is not a claude-cli version: ${String(userAgent)}`);
 	return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
@@ -77,7 +79,9 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 
 		const stream = streamAnthropic(model, context, { apiKey: "sk-ant-oat01-test-token" });
-		await stream.result();
+		const result = await stream.result();
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.stopReason).toBe("stop");
 
 		const userAgent = mockState.constructorOptions?.defaultHeaders?.["user-agent"];
 		expect(mockState.constructorOptions?.defaultHeaders?.["x-app"]).toBe("cli");
