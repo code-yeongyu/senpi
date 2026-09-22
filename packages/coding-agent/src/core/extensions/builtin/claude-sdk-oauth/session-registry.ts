@@ -100,6 +100,8 @@ export interface ClaudeSdkOauthSessionEntry {
 	taintedReason: string | null;
 	/** Wave C seam: a divergence boundary recorded for the next continuity decision. */
 	pendingForkReason: string | null;
+	/** senpi#1975: first diverged field path the commit boundary named for the pending fork, when it named one. */
+	pendingForkDivergedPath: string | null;
 	lastUsedAt: number;
 }
 
@@ -225,6 +227,7 @@ export class ClaudeSdkOauthSessionRegistry {
 			branchInfo: null,
 			taintedReason: null,
 			pendingForkReason: null,
+			pendingForkDivergedPath: null,
 			lastUsedAt: now,
 		};
 		let entry!: ClaudeSdkOauthSessionEntry;
@@ -319,8 +322,11 @@ export async function switchSessionModel(senpiSessionId: string, modelId: string
 	return switchEntryModel(sessionRegistry, senpiSessionId, modelId);
 }
 
-export function recordPendingFork(senpiSessionId: string, reason: string): void {
+export function recordPendingFork(senpiSessionId: string, reason: string, divergedPath?: string): void {
 	annotatePendingFork(sessionRegistry, senpiSessionId, reason);
+	const entry = sessionRegistry.get(senpiSessionId);
+	// A pending fork recorded without a path (e.g. compaction) must not inherit the previous rewrite's path.
+	if (entry) entry.pendingForkDivergedPath = divergedPath ?? null;
 }
 
 export function recordBranchInfo(senpiSessionId: string, info: SessionBranchInfo): void {

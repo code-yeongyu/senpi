@@ -12,6 +12,8 @@ export type BindingInvalidation = {
 	readonly schemaVersion: 1;
 	readonly invalidated: true;
 	readonly reason: string;
+	/** senpi#1975: first diverged field path, present only on assistant_rewritten records. Paths only, never values. */
+	readonly divergedPath?: string;
 };
 
 type BranchEntry = {

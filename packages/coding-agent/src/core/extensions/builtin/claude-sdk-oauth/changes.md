@@ -1,3 +1,27 @@
+## 2026-09-22 - An assistant_rewritten decision names the first diverged path (senpi#1975)
+
+### What changed
+
+- `session-commit-boundary.ts`: `captureProviderFinal` keeps the provider-final SEMANTIC projection (the `semanticContentBlock` output, not the raw message) per key alongside the digest, and `commit()` now returns `{ outcome, divergedPath? }`. On `rewritten`, `divergedPath` is the first differing path between the two projections, computed by a bounded structural walk: `content.length` when block counts differ, then per block `content[i].type`, `content[i].text` / `.thinking` / `.thinkingSignature`, and for toolCall blocks `.id` / `.name` / `.arguments.<dotted key path>` (objects dot-separated, arrays indexed `[n]`, first difference wins, depth-capped), then top-level `api` / `provider` / `model`. Paths only — no conversation value ever leaves the boundary. The digest input literal is unchanged, so stored/sidecar hashes stay comparable.
+- `session-registry-wiring.ts` (`message_end`): on `rewritten`, `recordPendingFork(sessionId, "assistant_rewritten", divergedPath)` and the `BindingInvalidation` ledger record carries `divergedPath` when present.
+- `session-registry.ts`: registry entries carry `pendingForkDivergedPath` (set by `recordPendingFork`, cleared whenever a pending fork is recorded without one, so a later `compaction` fork never reports a stale path).
+- `session-observability.ts`: `ContinuityObservation.divergedPath`, `observeSessionSyncDecision` passes it through on resume/cold-seed decisions, and `emitContinuityObservation` logs it on the `claude_sdk_oauth_session_continuity` event when present.
+- `session-stream.ts`: the resident attempt passes the entry's `pendingForkDivergedPath` into the observation (reads the entry directly; `ContinuityEntrySnapshot` needs no new field).
+- `session-binding.ts`: `BindingInvalidation` gains optional `divergedPath` (schema-compatible; records without it are unchanged and still validate).
+
+### Why
+
+- The decision said only THAT the committed assistant differed from what the provider streamed, not WHERE. Each instance of the class cost a multi-week hand-diff of transcripts (#691 2026-08, #1472 2026-09: 11/11 rewrite events in one session before the mutating field was found by hand). The path turns the next instance into a one-line diagnosis.
+
+### Why this cannot be expressed externally
+
+- The comparison happens inside the `message_end` commit boundary against the in-flight provider-final capture that no extension can see; only the boundary can compute the path.
+
+### Expected merge conflict zones
+
+- LOW: `session-commit-boundary.ts` (whole file), the `message_end` handler hunk in `session-registry-wiring.ts`, `recordPendingFork` in `session-registry.ts`, the observation type/log lines in `session-observability.ts`, the one pass-through line in `session-stream.ts`, the `BindingInvalidation` type.
+- MEDIUM: `test/suite/regressions/7925-…resident-commit-boundary.test.ts` and `…691-…thinking-timing.test.ts` (return-shape assertions upgraded to `{ outcome, divergedPath }`), and `session-continuity.ts` untouched on purpose (two concurrent lanes edit its decision logic).
+
 ## 2026-09-22 - An append-only tail keeps the restart binding (senpi#1964)
 
 ### What changed
