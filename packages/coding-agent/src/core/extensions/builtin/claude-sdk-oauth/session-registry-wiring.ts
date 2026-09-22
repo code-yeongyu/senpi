@@ -40,8 +40,14 @@ function persistBindingInvalidation(
 	pi: Partial<Pick<ExtensionAPI, "appendEntry">>,
 	sessionId: string,
 	reason: string,
+	divergedPath?: string,
 ): void {
-	pi.appendEntry?.(BINDING_ENTRY_TYPE, { schemaVersion: 1, invalidated: true, reason } satisfies BindingInvalidation);
+	pi.appendEntry?.(BINDING_ENTRY_TYPE, {
+		schemaVersion: 1,
+		invalidated: true,
+		reason,
+		...(divergedPath !== undefined ? { divergedPath } : {}),
+	} satisfies BindingInvalidation);
 	rememberBindingInvalidation(sessionId, reason);
 }
 
@@ -49,12 +55,13 @@ async function invalidateBinding(
 	pi: Partial<Pick<ExtensionAPI, "appendEntry">>,
 	ctx: Pick<ExtensionContext, "sessionManager">,
 	reason: string,
+	divergedPath?: string,
 ): Promise<void> {
 	const sessionId = ctx.sessionManager.getSessionId();
 	forgetBinding(sessionId);
 	const sessionFile = ctx.sessionManager.getSessionFile?.();
 	if (sessionFile) await deleteStoredBinding(sessionFile);
-	persistBindingInvalidation(pi, sessionId, reason);
+	persistBindingInvalidation(pi, sessionId, reason, divergedPath);
 }
 
 function keepBindingThenClose(sessionId: string, reason: string): void {
@@ -151,13 +158,13 @@ export function registerSessionRegistry(
 			return;
 		}
 		const outcome = commitBoundary.commit(sessionId, event.message, modelId);
-		if (outcome === "rewritten") {
-			recordPendingFork(sessionId, "assistant_rewritten");
-			await invalidateBinding(pi, ctx, "assistant_rewritten");
+		if (outcome.outcome === "rewritten") {
+			recordPendingFork(sessionId, "assistant_rewritten", outcome.divergedPath);
+			await invalidateBinding(pi, ctx, "assistant_rewritten", outcome.divergedPath);
 			return;
 		}
 		// Only an assistant this provider actually produced may anchor a record.
-		if (outcome !== "clean") return;
+		if (outcome.outcome !== "clean") return;
 		const sessionFile = ctx.sessionManager.getSessionFile?.();
 		if (!sessionFile || !pi.appendEntry) return;
 		const context = ctx.sessionManager.buildSessionContext();

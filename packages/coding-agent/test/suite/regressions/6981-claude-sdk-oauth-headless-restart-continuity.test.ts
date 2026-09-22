@@ -59,7 +59,12 @@ describe("issue #6981 headless restart continuity", () => {
 		expect(extension.persisted).toEqual([
 			{
 				customType: BINDING_ENTRY_TYPE,
-				data: { schemaVersion: 1, invalidated: true, reason: "assistant_rewritten" },
+				data: {
+					schemaVersion: 1,
+					invalidated: true,
+					reason: "assistant_rewritten",
+					divergedPath: "content[0].text",
+				},
 			},
 		]);
 		expect(getBinding(SESSION_ID)).toBeUndefined();

@@ -168,16 +168,25 @@ describe("oh-my-openagent#7925 resident commit boundary", () => {
 		const committed = { ...streamed, content: [thinking, text, toolCall] };
 		const boundary = new AssistantCommitBoundary();
 		boundary.captureProviderFinal("metadata", streamed);
-		expect(boundary.commit("metadata", committed, MODEL_ID)).toBe("clean");
+		expect(boundary.commit("metadata", committed, MODEL_ID)).toEqual({ outcome: "clean" });
 
 		const rewrites = {
-			text: [thinking, { ...text, text: "other" }, toolCall],
-			thinking: [{ ...thinking, thinking: "else" }, text, toolCall],
-			arguments: [thinking, text, { ...toolCall, arguments: { text: "bye" } }],
+			text: { content: [thinking, { ...text, text: "other" }, toolCall], divergedPath: "content[1].text" },
+			thinking: {
+				content: [{ ...thinking, thinking: "else" }, text, toolCall],
+				divergedPath: "content[0].thinking",
+			},
+			arguments: {
+				content: [thinking, text, { ...toolCall, arguments: { text: "bye" } }],
+				divergedPath: "content[2].arguments.text",
+			},
 		};
-		for (const [label, content] of Object.entries(rewrites)) {
+		for (const [label, rewrite] of Object.entries(rewrites)) {
 			boundary.captureProviderFinal(label, streamed);
-			expect(boundary.commit(label, { ...committed, content }, MODEL_ID), label).toBe("rewritten");
+			expect(boundary.commit(label, { ...committed, content: rewrite.content }, MODEL_ID), label).toEqual({
+				outcome: "rewritten",
+				divergedPath: rewrite.divergedPath,
+			});
 		}
 	});
 });

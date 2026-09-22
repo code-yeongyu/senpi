@@ -48,7 +48,7 @@ describe("issue #691: Claude SDK OAuth thinking timing continuity", () => {
 			const timingEnriched = assistantMessage(timing);
 			timingOnlyCommit.captureProviderFinal(key, streamed);
 
-			expect(timingOnlyCommit.commit(key, timingEnriched, streamed.model)).toBe("clean");
+			expect(timingOnlyCommit.commit(key, timingEnriched, streamed.model)).toEqual({ outcome: "clean" });
 			expect(timingEnriched.content[0]).toMatchObject(timing);
 		}
 
@@ -58,7 +58,10 @@ describe("issue #691: Claude SDK OAuth thinking timing continuity", () => {
 		thinkingBlock.thinking = "changed reasoning";
 		const thinkingCommit = new AssistantCommitBoundary();
 		thinkingCommit.captureProviderFinal("thinking", streamed);
-		expect(thinkingCommit.commit("thinking", changedThinking, streamed.model)).toBe("rewritten");
+		expect(thinkingCommit.commit("thinking", changedThinking, streamed.model)).toEqual({
+			outcome: "rewritten",
+			divergedPath: "content[0].thinking",
+		});
 
 		const changedSignature = assistantMessage();
 		const signatureBlock = changedSignature.content[0];
@@ -66,7 +69,10 @@ describe("issue #691: Claude SDK OAuth thinking timing continuity", () => {
 		signatureBlock.thinkingSignature = "changed signature";
 		const signatureCommit = new AssistantCommitBoundary();
 		signatureCommit.captureProviderFinal("signature", streamed);
-		expect(signatureCommit.commit("signature", changedSignature, streamed.model)).toBe("rewritten");
+		expect(signatureCommit.commit("signature", changedSignature, streamed.model)).toEqual({
+			outcome: "rewritten",
+			divergedPath: "content[0].thinkingSignature",
+		});
 
 		const textCommit = new AssistantCommitBoundary();
 		textCommit.captureProviderFinal("text", streamed);
@@ -76,6 +82,6 @@ describe("issue #691: Claude SDK OAuth thinking timing continuity", () => {
 				assistantMessage({ startedAt: 100, endedAt: 200 }, "changed answer"),
 				streamed.model,
 			),
-		).toBe("rewritten");
+		).toEqual({ outcome: "rewritten", divergedPath: "content[1].text" });
 	});
 });

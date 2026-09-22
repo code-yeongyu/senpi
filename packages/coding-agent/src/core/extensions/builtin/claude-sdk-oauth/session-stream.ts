@@ -168,6 +168,7 @@ async function createResidentAttempt(
 		? flattenResult.blocks
 		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
 	const payloadBytes = flattenResult ? serializedPayloadBytes(flattenResult.blocks) : undefined;
+	const divergedPath = existing?.pendingForkDivergedPath ?? undefined;
 	const staged = stageContinuityDecision(
 		observeSessionSyncDecision({
 			kind: observedKind,
@@ -179,6 +180,7 @@ async function createResidentAttempt(
 			...(flattenResult?.collapsedDirectives !== undefined
 				? { collapsedDirectives: flattenResult.collapsedDirectives }
 				: {}),
+			...(divergedPath !== undefined ? { divergedPath } : {}),
 		}),
 		input.onContinuityDecision,
 		// The pending close cause is consumed only when the staged observation

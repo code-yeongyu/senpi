@@ -242,7 +242,12 @@ describe("Claude SDK OAuth binding lifecycle security", () => {
 		expect(getBinding(sessionId)).toBeUndefined();
 		expect(extension.persisted).toContainEqual({
 			customType: BINDING_ENTRY_TYPE,
-			data: { schemaVersion: 1, invalidated: true, reason: "assistant_rewritten" },
+			data: {
+				schemaVersion: 1,
+				invalidated: true,
+				reason: "assistant_rewritten",
+				divergedPath: "content[0].text",
+			},
 		});
 		expect(existsSync(bindingSidecarPath(sessionFile))).toBe(false);
 	});

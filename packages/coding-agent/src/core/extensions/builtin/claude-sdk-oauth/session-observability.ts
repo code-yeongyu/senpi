@@ -57,6 +57,8 @@ export type ContinuityObservation = {
 	deltaMessages?: number;
 	payloadBytes?: number;
 	collapsedDirectives?: number;
+	/** senpi#1975: first diverged field path an assistant_rewritten decision named. Paths only, never values. */
+	divergedPath?: string;
 };
 
 export type ContinuityObservabilityBoundary = {
@@ -210,6 +212,7 @@ export function observeSessionSyncDecision(input: {
 	senpiSessionId: string;
 	payloadBytes?: number;
 	collapsedDirectives?: number;
+	divergedPath?: string;
 }): ContinuityObservation {
 	if (input.kind === "incremental") {
 		return { kind: "delta", reason: "prefix_matched", deltaMessages: input.deltaMessages };
@@ -221,6 +224,7 @@ export function observeSessionSyncDecision(input: {
 			kind: "fork",
 			reason: retainedCause ?? (input.reason === undefined ? "branch_resume" : sanitizeReason(input.reason)),
 			deltaMessages: input.deltaMessages,
+			...(input.divergedPath !== undefined ? { divergedPath: input.divergedPath } : {}),
 		};
 	}
 	// Peek, not consume: the staged observation is emitted only when the
@@ -234,6 +238,7 @@ export function observeSessionSyncDecision(input: {
 		deltaMessages: input.deltaMessages,
 		...(input.payloadBytes !== undefined ? { payloadBytes: input.payloadBytes } : {}),
 		...(input.collapsedDirectives !== undefined ? { collapsedDirectives: input.collapsedDirectives } : {}),
+		...(input.divergedPath !== undefined ? { divergedPath: input.divergedPath } : {}),
 	};
 }
 
@@ -270,5 +275,6 @@ export function emitContinuityObservation(
 		kind: observation.kind,
 		reason: observation.reason,
 		...(observation.deltaMessages === undefined ? {} : { count: observation.deltaMessages }),
+		...(observation.divergedPath === undefined ? {} : { divergedPath: observation.divergedPath }),
 	});
 }
