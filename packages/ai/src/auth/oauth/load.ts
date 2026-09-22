@@ -13,7 +13,7 @@ const importOAuthModule = (specifier: string): Promise<unknown> => {
 
 type OAuthFlowLoaders = {
 	anthropic: () => OAuthAuth | Promise<OAuthAuth>;
-	openaiCodex: () => OAuthAuth | Promise<OAuthAuth>;
+	chatgptSubscription: () => OAuthAuth | Promise<OAuthAuth>;
 	githubCopilot: () => OAuthAuth | Promise<OAuthAuth>;
 	openrouter: () => OAuthAuth | Promise<OAuthAuth>;
 	kimiCoding: () => OAuthAuth | Promise<OAuthAuth>;
@@ -35,9 +35,10 @@ export const loadAnthropicOAuth = async (): Promise<OAuthAuth> => {
 	return ((await importOAuthModule("./anthropic.ts")) as { anthropicOAuth: OAuthAuth }).anthropicOAuth;
 };
 
-export const loadOpenAICodexOAuth = async (): Promise<OAuthAuth> => {
-	if (bundledLoaders) return bundledLoaders.openaiCodex();
-	return ((await importOAuthModule("./openai-codex.ts")) as { openaiCodexOAuth: OAuthAuth }).openaiCodexOAuth;
+export const loadChatGptSubscriptionOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.chatgptSubscription();
+	return ((await importOAuthModule("./chatgpt-subscription.ts")) as { chatgptSubscriptionOAuth: OAuthAuth })
+		.chatgptSubscriptionOAuth;
 };
 
 export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> => {

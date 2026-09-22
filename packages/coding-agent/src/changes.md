@@ -2616,8 +2616,8 @@ other provider-bound image transport behavior that owns the same payload path.
 
 - Real-CLI QA (senpi-qa Channel 2, TUI in a pty, isolated sandbox, `PI_OFFLINE=1`): with Fable 5 served only by
   `claude-sdk-oauth` and no `retry.fallbackChains` configured, `/fallback` renders
-  `claude-sdk-oauth/claude-fable-5 -> kimi-coding/k3:max, claude-sdk-oauth/claude-opus-5:xhigh,
-  claude-sdk-oauth/claude-opus-4-8:xhigh` where the previous default produced no chain at all. That QA run is
+  `anthropic-subscription/claude-fable-5 -> kimi-coding/k3:max, anthropic-subscription/claude-opus-5:xhigh,
+  anthropic-subscription/claude-opus-4-8:xhigh` where the previous default produced no chain at all. That QA run is
   what surfaced both the fan-out cap and the display scoping above; neither was visible to unit fixtures.
 
 ### Expected merge conflict zones on next upstream sync

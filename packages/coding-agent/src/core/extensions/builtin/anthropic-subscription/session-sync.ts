@@ -1,0 +1,190 @@
+import { createHash } from "node:crypto";
+import type { Context, Message } from "@earendil-works/pi-ai";
+import { appendSdkContentBlocks } from "./content-blocks.ts";
+import type { AnthropicSubscriptionAuthLane } from "./options.ts";
+import type { ContentBlockParam, Options } from "./sdk-boundary.ts";
+import type { AnthropicSubscriptionSessionEntry } from "./session-registry.ts";
+import { HOST_TOOL_POLICY_FINGERPRINT, mapPiToolNameToSdk } from "./tools.ts";
+
+export type SentMessage = Extract<Message, { role: "user" | "toolResult" }>;
+
+export type SessionConfigFingerprint = {
+	systemPromptHash: string;
+	toolsetHash: string;
+};
+
+const sentHashesByEntry = new WeakMap<AnthropicSubscriptionSessionEntry, string[]>();
+
+function stableValue(value: unknown, seen = new WeakSet<object>()): unknown {
+	if (typeof value === "function") return `[function:${value.name}:${value.toString()}]`;
+	if (typeof value === "bigint") return value.toString();
+	if (value === null || typeof value !== "object") return value;
+	if (seen.has(value)) return "[circular]";
+	seen.add(value);
+	const normalized = Array.isArray(value)
+		? value.map((item) => stableValue(item, seen))
+		: Object.fromEntries(
+				Object.entries(value as Record<string, unknown>)
+					.filter(([, item]) => item !== undefined)
+					.sort(([left], [right]) => left.localeCompare(right))
+					.map(([key, item]) => [key, stableValue(item, seen)]),
+			);
+	seen.delete(value);
+	return normalized;
+}
+
+function digest(value: unknown): string {
+	return createHash("sha256")
+		.update(JSON.stringify(stableValue(value)))
+		.digest("hex");
+}
+
+export function sessionSyncDigest(value: unknown): string {
+	return digest(value);
+}
+
+/**
+ * A user message with no content blocks carries nothing to transmit and is
+ * transient: it is present for a single provider call and gone by the next.
+ * Hashing one shifts every later index, so the following turn reports
+ * `sent_stream_diverged` and re-sends the whole history even though the
+ * conversation never changed. Tool results are never filtered - an empty tool
+ * result is a real observation, and its id and name stay hash-significant.
+ */
+function isContentlessUserMessage(message: SentMessage): boolean {
+	if (message.role !== "user") return false;
+	// Only a literal zero-block array is content-less. Whitespace-only text and
+	// explicit empty-text blocks still emit transport blocks, so they must stay
+	// hash-significant to keep divergence detection fail-closed.
+	return Array.isArray(message.content) && message.content.length === 0;
+}
+
+export function sentMessages(context: Context): SentMessage[] {
+	return context.messages.filter(isTransmittedMessage);
+}
+
+/**
+ * The one selection rule for "message the provider was sent". Branch-derived and
+ * context-derived hashes MUST share it: a content-less user message that only one
+ * side skips shifts every later index and reports a false divergence.
+ */
+export function isTransmittedMessage(message: { role: string }): message is SentMessage {
+	if (message.role !== "user" && message.role !== "toolResult") return false;
+	return !isContentlessUserMessage(message as SentMessage);
+}
+
+/**
+ * Applies the transmitted-message rule itself, so no caller can produce a hash
+ * list that disagrees with another caller's by forgetting the filter.
+ */
+export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
+	const hashes = messages.filter(isTransmittedMessage).map((message) =>
+		digest(
+			message.role === "user"
+				? { role: message.role, content: message.content }
+				: {
+						role: message.role,
+						toolCallId: message.toolCallId,
+						toolName: message.toolName,
+						content: message.content,
+					},
+		),
+	);
+	return hashes;
+}
+
+export function sentHashPrefixDigest(hashes: readonly string[], count = hashes.length): string {
+	return digest(hashes.slice(0, count));
+}
+
+/** Pure divergence guard: every non-proven continuation resolves to cold-seed. */
+
+export function sentHashesForEntry(entry: AnthropicSubscriptionSessionEntry): readonly string[] | undefined {
+	return sentHashesByEntry.get(entry);
+}
+
+export function recordSyncedStream(entry: AnthropicSubscriptionSessionEntry, hashes: readonly string[]): void {
+	const copy = [...hashes];
+	sentHashesByEntry.set(entry, copy);
+	entry.sentCount = copy.length;
+	entry.syncedPrefixHash = sentHashPrefixDigest(copy);
+	entry.branchInfo = null;
+}
+
+const GENERATED_DATE_LINE = /\nCurrent date: \d{4}-\d{2}-\d{2}(?=\nCurrent working directory: [^\n]*)/;
+
+/**
+ * The generated date line advances at UTC midnight while the conversation is
+ * unchanged; hashing it verbatim retires a live session at midnight for no
+ * semantic reason. Only that exact date-plus-cwd pair is neutralized - cwd and
+ * every other prompt region stay fail-closed. Extension appends legitimately
+ * follow the cwd line (oh-my-openagent#7884), so the pair is matched wherever
+ * it appears, not only at the end of the prompt.
+ */
+function fingerprintSystemPrompt(systemPrompt: Options["systemPrompt"]): unknown {
+	if (typeof systemPrompt !== "string") return systemPrompt ?? null;
+	return systemPrompt.replace(GENERATED_DATE_LINE, "\nCurrent date: <session-date>");
+}
+
+export function configFingerprint(
+	options: Options,
+	context: Context,
+	authLane: AnthropicSubscriptionAuthLane,
+	accountName: string,
+): SessionConfigFingerprint {
+	return {
+		systemPromptHash: digest(fingerprintSystemPrompt(options.systemPrompt)),
+		toolsetHash: digest({
+			tools: options.tools ?? [],
+			reasoning: {
+				thinking: options.thinking,
+				effort: options.effort,
+				maxThinkingTokens: options.maxThinkingTokens,
+			},
+			contextTools: (context.tools ?? []).map((tool) => ({
+				name: tool.name,
+				description: tool.description,
+				parameters: tool.parameters,
+			})),
+			cwd: options.cwd,
+			authLane,
+			accountName,
+			permissionMode: options.permissionMode,
+			// Bump HOST_TOOL_POLICY_FINGERPRINT in tools.ts when denial copy or hooks change.
+			hostToolPolicy: HOST_TOOL_POLICY_FINGERPRINT,
+			settingSources: options.settingSources,
+			extraArgs: options.extraArgs,
+			pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+			includePartialMessages: options.includePartialMessages,
+		}),
+	};
+}
+
+function appendContent(blocks: ContentBlockParam[], content: string | readonly unknown[]): void {
+	// The delta path has always transmitted a whole-content empty string as an
+	// empty text block; keep that wire shape so resident sessions see the same
+	// payload as before the shared mapper (prompt-bridge intentionally skips it).
+	if (content === "") {
+		blocks.push({ type: "text", text: "" });
+		return;
+	}
+	appendSdkContentBlocks(blocks, content);
+}
+
+export function buildDeltaPromptBlocks(
+	messages: readonly SentMessage[],
+	customToolNameToSdk?: ReadonlyMap<string, string>,
+): ContentBlockParam[] {
+	const blocks: ContentBlockParam[] = [];
+	for (const [index, message] of messages.entries()) {
+		if (index > 0) blocks.push({ type: "text", text: "\n\n" });
+		if (message.role === "toolResult") {
+			blocks.push({
+				type: "text",
+				text: `Tool result (${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):\n`,
+			});
+		}
+		appendContent(blocks, message.content);
+	}
+	return blocks;
+}

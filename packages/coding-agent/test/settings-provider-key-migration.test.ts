@@ -23,7 +23,7 @@ describe("settings provider-key migration (senpi#1989)", () => {
 	it("rewrites the provider prefix of defaultModel and favoriteModels", () => {
 		const out = migrate({
 			defaultModel: "openai-codex/gpt-5.6-sol",
-			favoriteModels: ["claude-sdk-oauth/opus", "anthropic/claude"],
+			favoriteModels: ["anthropic-subscription/opus", "anthropic/claude"],
 		}) as Record<string, unknown>;
 		expect(out.defaultModel).toBe("chatgpt-subscription/gpt-5.6-sol");
 		expect(out.favoriteModels).toEqual(["anthropic-subscription/opus", "anthropic/claude"]);
@@ -31,7 +31,7 @@ describe("settings provider-key migration (senpi#1989)", () => {
 
 	it("rewrites the keys of modelThinkingLevels / modelServiceTiers", () => {
 		const out = migrate({
-			modelThinkingLevels: { "claude-sdk-oauth/opus": "high", "anthropic/x": "low" },
+			modelThinkingLevels: { "anthropic-subscription/opus": "high", "anthropic/x": "low" },
 			modelServiceTiers: { "openai-codex/gpt-5.6-sol": "priority" },
 		}) as Record<string, Record<string, unknown>>;
 		expect(out.modelThinkingLevels).toEqual({ "anthropic-subscription/opus": "high", "anthropic/x": "low" });
@@ -40,7 +40,9 @@ describe("settings provider-key migration (senpi#1989)", () => {
 
 	it("rewrites retry.fallbackChains keys and the providers named inside rungs", () => {
 		const out = migrate({
-			retry: { fallbackChains: { "claude-sdk-oauth/opus": ["claude-sdk-oauth/opus", "anthropic/claude"] } },
+			retry: {
+				fallbackChains: { "anthropic-subscription/opus": ["anthropic-subscription/opus", "anthropic/claude"] },
+			},
 		}) as { retry: { fallbackChains: Record<string, string[]> } };
 		expect(out.retry.fallbackChains).toEqual({
 			"anthropic-subscription/opus": ["anthropic-subscription/opus", "anthropic/claude"],

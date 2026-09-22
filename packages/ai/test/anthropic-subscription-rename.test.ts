@@ -9,7 +9,7 @@ import { resolvePromptCacheTtlSeconds } from "../src/utils/prompt-cache-ttl.ts";
  * Provider rename: `claude-sdk-oauth` -> `anthropic-subscription` (display name
  * "Claude SDK OAuth" -> "Anthropic Subscription"). The wire api id
  * `claude-sdk-oauth` is intentionally FROZEN (see
- * packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/api-id.ts),
+ * packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/api-id.ts),
  * and so is every persisted token derived from the old provider id: stored
  * credentials still carry the managed-sentinel material `claude-sdk-oauth-managed`
  * verbatim, so matchers must accept BOTH the canonical and the legacy material.

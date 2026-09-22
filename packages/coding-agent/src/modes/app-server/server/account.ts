@@ -7,7 +7,7 @@ import {
 	pinCredentialAccount,
 	removeCredentialAccount,
 } from "../../../core/credential-accounts.ts";
-import type { ProviderAccountEvent } from "../../../core/extensions/builtin/claude-sdk-oauth/account-events.ts";
+import type { ProviderAccountEvent } from "../../../core/extensions/builtin/anthropic-subscription/account-events.ts";
 import { resolvePath } from "../../../utils/paths.ts";
 import type {
 	AccountReadParams,

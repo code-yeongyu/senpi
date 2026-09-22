@@ -257,7 +257,7 @@ bunx --cwd packages/coding-agent vitest \
   test/suite/vendored-builtins.test.ts \
   test/extensions/loader-concurrency.test.ts \
   test/mcp/ \
-  test/suite/claude-sdk-oauth-extension.test.ts \
+  test/suite/anthropic-subscription-extension.test.ts \
   test/suite/terminal-extension.test.ts \
   test/compaction/ \
   test/ttsr/

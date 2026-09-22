@@ -10,11 +10,11 @@ import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { renameCredentialAccount } from "../../../src/core/credential-accounts.ts";
 import {
-	type ClaudeSdkOauthCredential,
+	type AnthropicSubscriptionCredential,
 	SENTINEL_OAUTH_FIELDS,
-} from "../../../src/core/extensions/builtin/claude-sdk-oauth/accounts.ts";
-import { createOAuthConfig } from "../../../src/core/extensions/builtin/claude-sdk-oauth/oauth-login.ts";
-import { composedProvider } from "../../support/claude-sdk-oauth-provider.ts";
+} from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { createOAuthConfig } from "../../../src/core/extensions/builtin/anthropic-subscription/oauth-login.ts";
+import { composedProvider } from "../../support/anthropic-subscription-provider.ts";
 
 const fresh = { type: "oauth" as const, access: "fake-access", refresh: "fake-refresh", expires: 4102444800000 };
 const flow: OAuthAuth = {
@@ -64,7 +64,8 @@ describe("committed account receipts", () => {
 			const storage = AuthStorage.inMemory();
 			const models = createModels({ credentials: storage });
 			const config = createOAuthConfig({
-				readCurrent: async () => storage.get("anthropic-subscription") as ClaudeSdkOauthCredential | undefined,
+				readCurrent: async () =>
+					storage.get("anthropic-subscription") as AnthropicSubscriptionCredential | undefined,
 				readAnthropicCredential: async () => (importFirst ? fresh : undefined),
 				loginFlow: flow,
 			});
@@ -80,7 +81,7 @@ describe("committed account receipts", () => {
 				{ providerId: "anthropic-subscription", name: first, origin: "provider" },
 				{ providerId: "anthropic-subscription", name: "second", origin: "provider" },
 			]);
-			const saved = storage.get("anthropic-subscription") as ClaudeSdkOauthCredential;
+			const saved = storage.get("anthropic-subscription") as AnthropicSubscriptionCredential;
 			expect(saved).toMatchObject(SENTINEL_OAUTH_FIELDS);
 			expect(saved.accounts?.map(({ name, displayName }) => ({ name, displayName }))).toEqual([
 				{ name: first, displayName: "Personal" },

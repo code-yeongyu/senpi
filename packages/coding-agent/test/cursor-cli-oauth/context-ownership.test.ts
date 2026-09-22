@@ -18,7 +18,7 @@ import {
 	estimateTokens,
 	shouldCompact,
 } from "../../src/core/compaction/compaction.ts";
-import { registerSessionRegistry } from "../../src/core/extensions/builtin/claude-sdk-oauth/session-registry-wiring.ts";
+import { registerSessionRegistry } from "../../src/core/extensions/builtin/anthropic-subscription/session-registry-wiring.ts";
 import {
 	addAccount,
 	type CursorCliAccountSlot,

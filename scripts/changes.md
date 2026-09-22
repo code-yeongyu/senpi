@@ -1,3 +1,21 @@
+## 2026-09-22 - point the bundle oauth module map at the renamed provider module (senpi#1989)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: the bundled OAuth module map key and its dist path follow the provider rename (`openai-codex` -> `chatgpt-subscription`), matching the renamed `packages/ai/src/auth/oauth/chatgpt-subscription.ts`.
+
+### Why
+
+The bundle resolves OAuth modules by provider id. Leaving the map keyed by the old id while the module file moved would break OAuth module resolution in the bundled binary only - the workspace build would still pass, so the failure would surface after packaging rather than in CI.
+
+### Why an extension could not handle it
+
+The bundle script runs at build time, outside the extension runtime entirely.
+
+### Expected merge conflict zones
+
+- `scripts/build-coding-agent-bundle.mjs` oauth module map, against any other bundled OAuth provider.
+
 # changes
 
 ## 2026-09-22 - Compiled loader probe pins one module generation per source version (senpi#1948)

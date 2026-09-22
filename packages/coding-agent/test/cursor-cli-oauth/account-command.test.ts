@@ -1,7 +1,7 @@
 import type { Credential } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
-import { subscribeProviderAccountEvents } from "../../src/core/extensions/builtin/claude-sdk-oauth/account-events.ts";
+import { subscribeProviderAccountEvents } from "../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import {
 	type CursorCliAccountCommandDeps,
 	registerCursorCliAccountCommand,

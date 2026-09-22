@@ -404,7 +404,7 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 // its Responses Lite GPT-5.6 models.
 // https://developers.openai.com/api/docs/guides/tools-tool-search#add-tools-at-a-specific-point-in-the-input
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
-const OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]);
+const CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS = new Set(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]);
 const OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000;
 // OpenAI budgets input and output separately: the Responses API rejects a request with
 // `context_too_large` once the prompt alone exceeds (documented context window - max output),
@@ -532,7 +532,7 @@ const OPENAI_PRIORITY_TIER_MODEL_IDS = new Set([
 // OpenAI priority list but restricted to GPT-5.6 reasoning models that ship on
 // the Codex Responses API; older Codex-only SKUs (gpt-5.3-codex-spark) are
 // Priority-ineligible.
-const OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS = new Set([
+const CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS = new Set([
 	"gpt-6-astra",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
@@ -1005,11 +1005,11 @@ function applyOpenAIGrammarToolCompatMetadata(model: Model<Api>): void {
 
 function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
-	const isOpenAICodex = model.provider === "chatgpt-subscription" && model.api === "openai-codex-responses";
-	if (!(isOpenAIResponses || isOpenAICodex) || !OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) return;
+	const isChatGptSubscription = model.provider === "chatgpt-subscription" && model.api === "openai-codex-responses";
+	if (!(isOpenAIResponses || isChatGptSubscription) || !OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) return;
 	const supportsAdditionalTools =
 		(isOpenAIResponses && OPENAI_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id)) ||
-		(isOpenAICodex && OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
+		(isChatGptSubscription && CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
 	model.compat = {
 		...(model.compat as OpenAIResponsesCompat | undefined),
 		...(supportsAdditionalTools ? { supportsAdditionalTools: true } : {}),
@@ -3496,7 +3496,7 @@ async function generateModels() {
 	}
 	const codexFastVariants: Model<Api>[] = [];
 	for (const model of allModels) {
-		if (model.provider !== "chatgpt-subscription" || !OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS.has(model.id)) continue;
+		if (model.provider !== "chatgpt-subscription" || !CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS.has(model.id)) continue;
 		codexFastVariants.push({
 			...model,
 			id: `${model.id}-fast`,

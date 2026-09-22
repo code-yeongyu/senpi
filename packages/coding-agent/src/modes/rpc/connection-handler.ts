@@ -35,8 +35,8 @@ import { UserEditError } from "../../core/edited-user-message.ts";
 import {
 	emitProviderAccountsChanged,
 	subscribeProviderAccountEvents,
-} from "../../core/extensions/builtin/claude-sdk-oauth/account-events.ts";
-import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../core/extensions/builtin/claude-sdk-oauth/account-management.ts";
+} from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../core/extensions/builtin/anthropic-subscription/account-management.ts";
 import {
 	isMcpControlInventoryChanged,
 	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
@@ -1027,7 +1027,7 @@ export function createRpcConnectionHandler(
 				signal: controller.signal,
 			});
 			session.modelRegistry.refresh();
-			if (provider === CLAUDE_SDK_OAUTH_PROVIDER_ID) emitProviderAccountsChanged(provider);
+			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
 			outputEvent({ type: "auth_login_end", provider, success: true });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);

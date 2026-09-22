@@ -1,6 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OPENAI_CODEX_MODELS } from "../../../ai/src/providers/openai-codex.models.ts";
+import { CHATGPT_SUBSCRIPTION_MODELS } from "../../../ai/src/providers/chatgpt-subscription.models.ts";
 import { readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
 import type { AgentEndEvent } from "../../src/core/extensions/types.ts";
@@ -18,7 +18,7 @@ const CODEX_POLICY_ERROR =
 // Codex catalog stamps on every message. Reading the catalog back keeps the two
 // pinned together: renaming the api in `packages/ai` fails here instead of
 // silently disarming the #1520 guard while every hardcoded case stays green.
-const CODEX_CATALOG_APIS = [...new Set(Object.values(OPENAI_CODEX_MODELS).map((model) => model.api))];
+const CODEX_CATALOG_APIS = [...new Set(Object.values(CHATGPT_SUBSCRIPTION_MODELS).map((model) => model.api))];
 
 // `fauxAssistantMessage` hardcodes `api`, so the Codex identity this predicate
 // now requires has to be applied to the returned message.

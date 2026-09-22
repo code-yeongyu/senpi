@@ -109,10 +109,10 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts`: new `upsertAccount()` — a same-name slot is replaced in place (fresh token material, block stamps cleared, `displayName` preserved); unknown names still append.
-- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/oauth-login.ts`: a re-login now targets an existing slot instead of minting `account-N+1` — a lone slot or the pool's one `auth_error`-blocked slot is refreshed in place; anything else stays append-only unless the user types an existing name, so a blank or headless re-login never overwrites the newest working slot in a multi-account pool. The Anthropic import is now a move: accepting it removes the grant from the `anthropic` provider so two stores never refresh one single-use token.
-- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/index.ts`: wires `removeAnthropicCredential` through the locked auth.json backend.
-- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/{affinity,guidance,stream-guidance}.ts`: `AllAccountsBlockedError` carries the dominant block reason and the all-blocked guidance names an authentication failure explicitly, so the outer credential-pool classifier maps it to `auth_error` instead of laundering it into a rate-limit cooldown via the generic "(rate limit or auth errors)" wording.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: new `upsertAccount()` — a same-name slot is replaced in place (fresh token material, block stamps cleared, `displayName` preserved); unknown names still append.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts`: a re-login now targets an existing slot instead of minting `account-N+1` — a lone slot or the pool's one `auth_error`-blocked slot is refreshed in place; anything else stays append-only unless the user types an existing name, so a blank or headless re-login never overwrites the newest working slot in a multi-account pool. The Anthropic import is now a move: accepting it removes the grant from the `anthropic` provider so two stores never refresh one single-use token.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/index.ts`: wires `removeAnthropicCredential` through the locked auth.json backend.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/{affinity,guidance,stream-guidance}.ts`: `AllAccountsBlockedError` carries the dominant block reason and the all-blocked guidance names an authentication failure explicitly, so the outer credential-pool classifier maps it to `auth_error` instead of laundering it into a rate-limit cooldown via the generic "(rate limit or auth errors)" wording.
 - `packages/coding-agent/src/core/credential-pool/{state-store,rotation-stream}.ts` and `packages/coding-agent/src/core/credential-accounts.ts`: stored-lane sidecar health is bound to a credential revision (HMAC over the installation key and slot material, never raw material) — the stored-lane twin of the env revision rule — so a re-login or token refresh retires the block the old material earned. Legacy rows without a revision are retired on first read.
 - Tests: new `test/claude-sdk-oauth-login-refresh.test.ts` (refresh matrix, import move, dominant reason) and `test/credential-pool-stored-revision.test.ts` (legacy/foreign/current revision, revision stamping); `test/credential-error-taxonomy.test.ts` gains the guidance→classifier composition cases; `test/credential-accounts.test.ts` and `test/model-runtime-credential-rotation.test.ts` fixtures now stamp the matching revision for blocks that must apply.
 
@@ -127,7 +127,7 @@
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/oauth-login.ts` (login naming and the import branch).
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts` (login naming and the import branch).
 - `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` (stored-lane listing and `persistBlock`).
 
 ## Type-check the qa scripts (2026-09-16)

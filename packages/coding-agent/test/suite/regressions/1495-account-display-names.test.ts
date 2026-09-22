@@ -10,9 +10,9 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { getCredentialAccounts, renameCredentialAccount } from "../../../src/core/credential-accounts.ts";
-import { subscribeProviderAccountEvents } from "../../../src/core/extensions/builtin/claude-sdk-oauth/account-events.ts";
-import { getProviderAccounts } from "../../../src/core/extensions/builtin/claude-sdk-oauth/account-management.ts";
-import { emptyCredential } from "../../../src/core/extensions/builtin/claude-sdk-oauth/accounts.ts";
+import { subscribeProviderAccountEvents } from "../../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { getProviderAccounts } from "../../../src/core/extensions/builtin/anthropic-subscription/account-management.ts";
+import { emptyCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 
 const dirs: string[] = [];
 afterEach(() => {

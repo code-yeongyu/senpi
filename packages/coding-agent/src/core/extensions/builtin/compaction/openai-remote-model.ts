@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { arch, platform, release } from "node:os";
-import { type Api, extractOpenAiCodexAccountId, type Model } from "@earendil-works/pi-ai";
+import { type Api, extractChatGptSubscriptionAccountId, type Model } from "@earendil-works/pi-ai";
 
 export type OpenAiRemoteCompactionModel = Model<"openai-responses"> | Model<"openai-codex-responses">;
 
@@ -36,7 +36,7 @@ function defaultOpenAiRemoteCompactionBaseUrl(model: OpenAiRemoteCompactionModel
 	return model.api === "openai-codex-responses" ? "https://chatgpt.com/backend-api" : "https://api.openai.com/v1";
 }
 
-function isTrustedOpenAiCodexBaseUrl(baseUrl: string | undefined): boolean {
+function isTrustedChatGptSubscriptionBaseUrl(baseUrl: string | undefined): boolean {
 	try {
 		const url = new URL(baseUrl || "https://chatgpt.com/backend-api");
 		if (url.protocol === "https:" && url.hostname === "chatgpt.com") return true;
@@ -66,7 +66,7 @@ export function isOpenAiRemoteCompactionModel(model: Model<Api> | undefined): mo
 		const compat = model.compat as Model<"openai-responses">["compat"] | undefined;
 		if (compat?.supportsRemoteCompactionV2 !== true) return false;
 	}
-	return identity.api !== "openai-codex-responses" || isTrustedOpenAiCodexBaseUrl(model.baseUrl);
+	return identity.api !== "openai-codex-responses" || isTrustedChatGptSubscriptionBaseUrl(model.baseUrl);
 }
 
 export function matchesOpenAiRemoteCompactionIdentity(
@@ -163,7 +163,7 @@ export function createOpenAiRemoteCompactionHeaders(
 		// This matches the final Codex request contract: header hooks may add
 		// routing headers, but cannot replace configured OAuth identity.
 		headers.set("authorization", `Bearer ${auth.apiKey}`);
-		const accountId = extractOpenAiCodexAccountId(auth.apiKey);
+		const accountId = extractChatGptSubscriptionAccountId(auth.apiKey);
 		if (accountId) headers.set("chatgpt-account-id", accountId);
 		else headers.delete("chatgpt-account-id");
 	} else if (!headers.has("authorization") && auth.apiKey) {

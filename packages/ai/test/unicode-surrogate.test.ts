@@ -20,7 +20,7 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("github-copilot"),
 	resolveApiKey("chatgpt-subscription"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, chatgptSubscriptionToken] = oauthTokens;
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
 const qwenTokenPlanCnApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_CN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -836,30 +836,30 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 	});
 
 	describe("OpenAI Codex Provider Unicode Handling", () => {
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle emoji in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await testEmojiInToolResults(llm, { apiKey: openaiCodexToken });
+				await testEmojiInToolResults(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle real-world LinkedIn comment data with emoji",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await testRealWorldLinkedInData(llm, { apiKey: openaiCodexToken });
+				await testRealWorldLinkedInData(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle unpaired high surrogate (0xD83D) in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await testUnpairedHighSurrogate(llm, { apiKey: openaiCodexToken });
+				await testUnpairedHighSurrogate(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 	});

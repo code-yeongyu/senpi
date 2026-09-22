@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../src/core/extensions/builtin/anthropic-subscription/index.ts";
 import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
 import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
 
@@ -40,7 +40,7 @@ describe("RPC auth and connection handler contracts", () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);
 		cleanup = harness.cleanup;
-		harness.authStorage.registerOAuthProvider(CLAUDE_SDK_OAUTH_PROVIDER_ID, {
+		harness.authStorage.registerOAuthProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, {
 			name: "Scripted OAuth",
 			async login() {
 				return {
@@ -73,10 +73,10 @@ describe("RPC auth and connection handler contracts", () => {
 		const changed = collected.waitFor((message) => message.type === "auth_accounts_changed");
 
 		await handler.handleInputLine(
-			JSON.stringify({ id: "add", type: "login_start", provider: CLAUDE_SDK_OAUTH_PROVIDER_ID }),
+			JSON.stringify({ id: "add", type: "login_start", provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID }),
 		);
 		await collected.waitFor((message) => message.type === "auth_login_end" && message.success === true);
-		expect(await changed).toEqual({ type: "auth_accounts_changed", provider: CLAUDE_SDK_OAUTH_PROVIDER_ID });
+		expect(await changed).toEqual({ type: "auth_accounts_changed", provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID });
 
 		// Account management is provider-neutral: a provider with no stored
 		// credential and no numbered env slots simply has no accounts. It is no
@@ -91,7 +91,11 @@ describe("RPC auth and connection handler contracts", () => {
 		});
 
 		await handler.handleInputLine(
-			JSON.stringify({ id: "accounts", type: "get_provider_accounts", provider: CLAUDE_SDK_OAUTH_PROVIDER_ID }),
+			JSON.stringify({
+				id: "accounts",
+				type: "get_provider_accounts",
+				provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+			}),
 		);
 		expect(await collected.waitFor((message) => message.id === "accounts")).toMatchObject({
 			type: "response",

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	closeOpenAICodexWebSocketSessions,
-	resetOpenAICodexWebSocketDebugStats,
+	closeChatGptSubscriptionWebSocketSessions,
+	resetChatGptSubscriptionWebSocketDebugStats,
 	stream as streamOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import {
@@ -47,8 +47,8 @@ const completed = { type: "response.completed" };
 
 afterEach(() => {
 	vi.unstubAllGlobals();
-	closeOpenAICodexWebSocketSessions();
-	resetOpenAICodexWebSocketDebugStats();
+	closeChatGptSubscriptionWebSocketSessions();
+	resetChatGptSubscriptionWebSocketDebugStats();
 	vi.useRealTimers();
 	vi.restoreAllMocks();
 });

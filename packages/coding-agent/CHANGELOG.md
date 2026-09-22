@@ -15,6 +15,8 @@
 
 ### Changed
 
+- Internal code names now follow the subscription provider rename: TypeScript symbols, module files and the builtin extension directory read `anthropic-subscription` instead of `claude-sdk-oauth`, and `chatgpt-subscription` instead of `openai-codex` in `@earendil-works/pi-ai`. Nothing you can observe changes — provider ids, the wire api id, stored files, diagnostics ids and env-var names stay byte-identical. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
 - Upgrading across the subscription provider rename is now covered end to end: an agent directory written by an older senpi keeps its logins, settings, custom models and saved accounts, and is migrated exactly once. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
 
 - Settings, credentials, sessions and `models.json` written before the subscription provider rename keep working: the old provider ids are resolved on read everywhere they are stored, and senpi tells you once which ids to update in `models.json`. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))

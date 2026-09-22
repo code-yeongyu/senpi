@@ -21,7 +21,7 @@ event-stream.ts          EventStream<T,R> — the async-iteration primitive behi
 json-parse.ts            repairJson / parseJsonWithRepair / parseStreamingJson
 provider-env.ts          getProviderEnvValue — the only sanctioned ProviderEnv read
 node-http-proxy.ts       Proxy URL resolution from env (no Node imports; pure URL logic)
-openai-codex-auth.ts     Codex auth helpers shared by api/ and auth/
+chatgpt-subscription-auth.ts     Codex auth helpers shared by api/ and auth/
 error-body.ts, stop-details.ts, estimate.ts, diagnostics.ts, validation.ts,
 sanitize-unicode.ts, visible-text.ts, text.ts, block-symbols.ts, headers.ts,
 hash.ts, uuid.ts, abort.ts, abort-signals.ts, pi-user-agent.ts,

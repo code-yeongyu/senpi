@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
-import { resolveAccountsDirectory } from "../src/core/extensions/builtin/claude-sdk-oauth/config-dir-credentials.ts";
+import { resolveAccountsDirectory } from "../src/core/extensions/builtin/anthropic-subscription/config-dir-credentials.ts";
 
 // No Windows CI covers the account-directory move (test-coding-agent runs on
 // ubuntu-latest only), so the cross-device / sharing-violation fallback can

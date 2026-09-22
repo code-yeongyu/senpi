@@ -12,7 +12,7 @@ that never retries an already-started response.
   failures moved the session to SSE.
 - `websocketSseFallbackSessions` is currently a process-lifetime
   `Set<string>`. Once added, a session has no production recovery path.
-- `closeOpenAICodexWebSocketSessions` closes sockets but leaves fallback and
+- `closeChatGptSubscriptionWebSocketSessions` closes sockets but leaves fallback and
   debug state behind.
 - PR #597 fixed the SSE request-affinity tuple. This plan fixes the remaining
   client-controlled exposure: permanent degradation after a transient failure.
@@ -41,7 +41,7 @@ RED: current permanent fallback sends the post-cooldown request through SSE.
 
 ### 2. Cleanup clears degradation state
 
-Trigger fallback, call `closeOpenAICodexWebSocketSessions(sessionId)`, then
+Trigger fallback, call `closeChatGptSubscriptionWebSocketSessions(sessionId)`, then
 issue a fresh same-session request with a working WebSocket.
 
 PASS: WebSocket is attempted immediately and stale fallback/debug state is

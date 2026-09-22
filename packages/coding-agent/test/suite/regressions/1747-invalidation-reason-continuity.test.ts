@@ -1,15 +1,15 @@
 import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import { BINDING_ENTRY_TYPE } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-binding.ts";
-import type { ContinuityObservation } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-observability.ts";
+import { BINDING_ENTRY_TYPE } from "../../../src/core/extensions/builtin/anthropic-subscription/session-binding.ts";
+import type { ContinuityObservation } from "../../../src/core/extensions/builtin/anthropic-subscription/session-observability.ts";
 import {
 	overrideContinuityObservabilityBoundary,
 	resetContinuityObservabilityBoundary,
-} from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-observability.ts";
-import { forgetBinding } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-reattach.ts";
-import { closeSession } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-registry.ts";
-import { registerSessionRegistry } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-registry-wiring.ts";
-import { streamClaudeSdkOauth } from "../../../src/core/extensions/builtin/claude-sdk-oauth/stream.ts";
+} from "../../../src/core/extensions/builtin/anthropic-subscription/session-observability.ts";
+import { forgetBinding } from "../../../src/core/extensions/builtin/anthropic-subscription/session-reattach.ts";
+import { closeSession } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
+import { registerSessionRegistry } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry-wiring.ts";
+import { streamAnthropicSubscription } from "../../../src/core/extensions/builtin/anthropic-subscription/stream.ts";
 import type { ExtensionContext } from "../../../src/core/extensions/types.ts";
 import {
 	assistant,
@@ -18,14 +18,14 @@ import {
 	emit,
 	fakeExtension,
 	sessionFixture,
-} from "../../helpers/claude-sdk-oauth-restart-fixture.ts";
+} from "../../helpers/anthropic-subscription-restart-fixture.ts";
 import {
 	installScriptedSdk,
 	installSingleAccountLane,
 	resetScriptedSdk,
 	sdkMessage,
 	type TurnScript,
-} from "../../helpers/claude-sdk-oauth-scripted-sdk.ts";
+} from "../../helpers/anthropic-subscription-scripted-sdk.ts";
 
 /**
  * senpi#1747: the ledger records WHY a binding was invalidated, and nothing ever
@@ -110,7 +110,7 @@ async function restartAndPrompt(sessionId: string, invalidation?: string): Promi
 		{ type: "session_start", reason: "resume" },
 		eventContext(sessionId, sessionFile, branch),
 	);
-	await streamClaudeSdkOauth(model, conversation, { sessionId, streamKind: "main" }).result();
+	await streamAnthropicSubscription(model, conversation, { sessionId, streamKind: "main" }).result();
 	return observed;
 }
 

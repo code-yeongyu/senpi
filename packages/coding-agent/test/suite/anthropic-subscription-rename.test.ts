@@ -1,10 +1,10 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../src/core/extensions/builtin/claude-sdk-oauth/account-management.ts";
-import { CLAUDE_SDK_OAUTH_API_ID } from "../../src/core/extensions/builtin/claude-sdk-oauth/api-id.ts";
-import { registerClaudeSdkOauthExtension } from "../../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
-import { CLAUDE_SDK_OAUTH_NAME } from "../../src/core/extensions/builtin/claude-sdk-oauth/oauth-login.ts";
-import { isResidentAssistant } from "../../src/core/extensions/builtin/claude-sdk-oauth/session-commit-boundary.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../src/core/extensions/builtin/anthropic-subscription/account-management.ts";
+import { CLAUDE_SDK_OAUTH_API_ID } from "../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
+import { registerAnthropicSubscriptionExtension } from "../../src/core/extensions/builtin/anthropic-subscription/index.ts";
+import { ANTHROPIC_SUBSCRIPTION_NAME } from "../../src/core/extensions/builtin/anthropic-subscription/oauth-login.ts";
+import { isResidentAssistant } from "../../src/core/extensions/builtin/anthropic-subscription/session-commit-boundary.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../src/core/provider-display-names.ts";
 import { rankFamilyModels } from "../../src/core/retry-fallback/expansion.ts";
@@ -33,7 +33,7 @@ function captureRegisterProviderCall(): { args: [string, ProviderRegistration] }
 		getFlag: () => undefined,
 		on: () => {},
 	} as unknown as ExtensionAPI;
-	registerClaudeSdkOauthExtension(pi, {
+	registerAnthropicSubscriptionExtension(pi, {
 		readAmbientAuthStatus: async () => false,
 		readSettings: () => ({}),
 	});
@@ -77,11 +77,11 @@ describe("anthropic-subscription provider rename", () => {
 	});
 
 	it("exposes the new provider id through the frozen symbol", () => {
-		expect(CLAUDE_SDK_OAUTH_PROVIDER_ID).toBe("anthropic-subscription");
+		expect(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID).toBe("anthropic-subscription");
 	});
 
 	it("carries the Anthropic Subscription login label", () => {
-		expect(CLAUDE_SDK_OAUTH_NAME).toBe("Anthropic Subscription (Claude Pro/Max)");
+		expect(ANTHROPIC_SUBSCRIPTION_NAME).toBe("Anthropic Subscription (Claude Pro/Max)");
 	});
 
 	it("maps the anthropic-subscription display name", () => {

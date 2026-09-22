@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { emitProviderAccountFailover } from "../../src/core/extensions/builtin/claude-sdk-oauth/account-events.ts";
+import { emitProviderAccountFailover } from "../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import type { RpcEnvelope } from "../../src/modes/app-server/rpc/envelope.ts";
 import { ServerCore } from "../../src/modes/app-server/server/server-core.ts";
 

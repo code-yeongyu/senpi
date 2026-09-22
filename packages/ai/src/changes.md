@@ -1,3 +1,26 @@
+## 2026-09-22 - rename the subscription-provider symbols and modules (senpi#1989)
+
+### What changed
+
+- `packages/ai/src/providers/openai-codex.ts` -> `packages/ai/src/providers/chatgpt-subscription.ts` and `packages/ai/src/providers/openai-codex.models.ts` -> `packages/ai/src/providers/chatgpt-subscription.models.ts`; `packages/ai/src/auth/oauth/openai-codex.ts` -> `packages/ai/src/auth/oauth/chatgpt-subscription.ts`; the catalog shard `packages/ai/src/providers/data/.manifest.json` regenerated for the renamed shard.
+- `packages/ai/src/index.ts` and `packages/ai/src/bun-oauth.ts`: exports follow the renamed modules and symbols.
+- `packages/ai/src/providers/all.ts`: imports and the provider factory name follow the rename.
+- `packages/ai/src/auth/oauth/load.ts`: the lazy OAuth module id and its dynamic import follow the renamed file.
+- `packages/ai/src/api/openai-codex-responses.ts`: only the debug-stats SYMBOL renamed (`OpenAICodexWebSocketDebugStats` -> `ChatGptSubscriptionWebSocketDebugStats`). The module path, the `openai-codex-responses` api id and `OpenAICodexResponsesOptions` are FROZEN and unchanged.
+
+### Why
+
+The provider ids were renamed in earlier commits; the symbols, module names and the catalog shard still spelled the old ids, so the tree read as though two different providers existed. This commit is behaviour-free: every persisted VALUE is byte-identical, including the seven frozen tokens and the `LEGACY_PROVIDER_IDS` map keys. Symbols that HOLD a frozen value were renamed while their string contents were not, and symbols that NAME the wire api were left alone entirely.
+
+### Why an extension could not handle it
+
+These are the ai package's own provider factories, OAuth module registry and export surface, all resolved before any extension loads.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/all.ts` and `packages/ai/src/index.ts` export lists, against any other provider addition.
+- `packages/ai/src/auth/oauth/load.ts` module map, against any other OAuth provider.
+
 ## 2026-09-22 - legacy provider id read helpers (senpi#1989)
 
 ### What changed
@@ -58,13 +81,13 @@ Slot repair runs inside `packages/ai`'s pooled-credential mutations (`repairMana
 
 ### What changed
 
-- `packages/ai/src/providers/openai-codex.ts`: provider `id` -> `chatgpt-subscription`, `name` -> `ChatGPT Subscription`, OAuth label -> `ChatGPT Subscription (Plus/Pro)`. The function still returns `Provider<"openai-codex-responses">`.
-- `packages/ai/src/providers/openai-codex.models.ts`: the catalog aggregator flattens under the new provider id.
+- `packages/ai/src/providers/chatgpt-subscription.ts`: provider `id` -> `chatgpt-subscription`, `name` -> `ChatGPT Subscription`, OAuth label -> `ChatGPT Subscription (Plus/Pro)`. The function still returns `Provider<"openai-codex-responses">`.
+- `packages/ai/src/providers/chatgpt-subscription.models.ts`: the catalog aggregator flattens under the new provider id.
 - `packages/ai/src/types.ts`: `"chatgpt-subscription"` added to `KnownProvider`; `"openai-codex"` is RETAINED as a documented legacy member so configuration written by an older build still type-checks.
-- `packages/ai/src/auth/oauth/openai-codex.ts`: every user-visible label and error string now reads "ChatGPT Subscription", including the login select prompt.
+- `packages/ai/src/auth/oauth/chatgpt-subscription.ts`: every user-visible label and error string now reads "ChatGPT Subscription", including the login select prompt.
 - `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`, `packages/ai/src/api/azure-openai-responses.ts` and `packages/ai/src/api/openai-responses-shared.ts`: the provider comparisons that gate tool-call handling match `model.provider`, so each moved to the new id.
 - `packages/ai/src/live-api-gates.ts`: the env-switch map is keyed by PROVIDER ID, so its key moved with the provider.
-- Catalog data (`packages/ai/src/providers/data/openai-codex.json`, its manifest) carries the new provider id; `packages/ai/src/models.generated.ts` is regenerated output.
+- Catalog data (`packages/ai/src/providers/data/chatgpt-subscription.json`, its manifest) carries the new provider id; `packages/ai/src/models.generated.ts` is regenerated output.
 
 ### Why
 
@@ -372,7 +395,7 @@ The provider id is resolved inside this package before any extension loads: the 
 - `packages/ai/src/api/openai-codex-responses.ts`: `parseWebSocket` runs the heartbeat for the life of the request and fails the stream with the liveness error (socket closed `liveness_timeout`). `WebSocketLike` gains optional `readyState` and `ping`; the Bun proxy-aware wrapper forwards both, so `isWebSocketReusable` sees the inner socket's state on Bun. Parked connections are now watched: `parkSessionWebSocket` attaches `close`/`error` listeners that evict the cache entry immediately (`parked_close`), `unparkSessionWebSocket` detaches them on reuse, and the idle TTL goes through the same `evictSessionWebSocket`.
 - `packages/ai/src/api/openai-responses.ts`: `parseWebSocket` runs the same heartbeat; this transport had no idle bound of its own at all.
 - `packages/ai/src/utils/retry.ts`: `PROVIDER_STREAM_STALL_ERROR_PATTERN` accepts the liveness wording, so the failure takes the bounded same-model stall retry like the agent-loop idle timeout does.
-- Tests: `packages/ai/test/openai-codex-websocket-liveness.test.ts` (dead after two unanswered pings well inside the idle budget; pongs alone keep a silent stream alive; no ping API leaves the idle timeout in charge; a parked socket that closes is evicted even without `readyState`), `packages/ai/test/openai-codex-websocket-bun-wrapper.test.ts` (the Bun wrapper never reuses a closed or non-open parked socket), and two classifier rows in `retry.test.ts`.
+- Tests: `packages/ai/test/chatgpt-subscription-websocket-liveness.test.ts` (dead after two unanswered pings well inside the idle budget; pongs alone keep a silent stream alive; no ping API leaves the idle timeout in charge; a parked socket that closes is evicted even without `readyState`), `packages/ai/test/chatgpt-subscription-websocket-bun-wrapper.test.ts` (the Bun wrapper never reuses a closed or non-open parked socket), and two classifier rows in `retry.test.ts`.
 
 ### Why
 
@@ -1867,9 +1890,9 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
   `supportsThinkingTokenBudget` budget field upstream generalized is retained through the shared
   resolver rather than the pin's inline compat table.
 - `packages/ai/src/api/openai-codex-responses.ts`: the fork splits WebSocket fallback/debug state into
-  `openai-codex-responses/fallback-state.ts` and re-exports `OpenAICodexWebSocketDebugStats` from there;
-  ChatGPT account identity resolves through `extractOpenAiCodexAccountId` with an `accountId ?? apiKey`
-  affinity fallback, cache-affinity headers come from `applyOpenAICodexCacheAffinityHeaders`, the same
+  `openai-codex-responses/fallback-state.ts` and re-exports `ChatGptSubscriptionWebSocketDebugStats` from there;
+  ChatGPT account identity resolves through `extractChatGptSubscriptionAccountId` with an `accountId ?? apiKey`
+  affinity fallback, cache-affinity headers come from `applyChatGptSubscriptionCacheAffinityHeaders`, the same
   `supportsMax`/`supportsXhigh`/`clampMaxForOpenAI` ladder applies, and `extraBody` merges under
   `OPENAI_RESPONSES_RESERVED_BODY_KEYS`.
 - `packages/ai/src/api/azure-openai-responses.ts`: accepts upstream's `tool_choice` forwarding while
@@ -1995,7 +2018,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
   `hasKimiTextToolCallRecovery`, the XTML recovery stream parser), context provenance,
   `env-api-keys`, `auth/headers`, prompt-cache TTL constants, server-fallback receipts, stop details,
   tool-pair repair, visible text, block symbols (`kCursorExecResolved`), wire identity
-  (`getWireIdentity` / `setWireIdentity`, the senpi branding seam), and `extractOpenAiCodexAccountId`.
+  (`getWireIdentity` / `setWireIdentity`, the senpi branding seam), and `extractChatGptSubscriptionAccountId`.
 
 ### Why
 
@@ -2311,7 +2334,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `packages/ai/src/api/azure-openai-responses.ts`: `max` maps through `supportsMax` (clamped to `high`
   otherwise), `thinkingLevelMap` wins for adapter options, and `cacheRetention: "none"` omits
   `prompt_cache_key`.
-- `packages/ai/src/api/openai-prompt-cache.ts`: `applyOpenAICodexCacheAffinityHeaders()` applies the
+- `packages/ai/src/api/openai-prompt-cache.ts`: `applyChatGptSubscriptionCacheAffinityHeaders()` applies the
   complete Codex affinity tuple (`session-id`, `thread-id`, `x-client-request-id`) beside the clamped
   `prompt_cache_key`.
 
@@ -2365,7 +2388,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
   `wire-identity.ts` module (default token `senpi`).
 - `packages/ai/src/api/openai-codex-responses.ts` builds the Codex `originator` and `User-Agent` from
   the dynamic identity instead of the previously hardcoded `senpi` strings.
-- `packages/ai/src/auth/oauth/openai-codex.ts` derives the OAuth flow's default `originator` from the
+- `packages/ai/src/auth/oauth/chatgpt-subscription.ts` derives the OAuth flow's default `originator` from the
   same identity.
 
 ### Why
@@ -2383,7 +2406,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - LOW: additive root exports in `packages/ai/src/index.ts`.
 - MEDIUM: `packages/ai/src/api/openai-codex-responses.ts` header builders and the originator default in
-  `packages/ai/src/auth/oauth/openai-codex.ts`, where upstream hardcodes `pi`.
+  `packages/ai/src/auth/oauth/chatgpt-subscription.ts`, where upstream hardcodes `pi`.
 
 ## Request-option and content contract: metadata hooks, affinity, native blocks (2026-08-07)
 
@@ -3226,7 +3249,7 @@ LOW in `auth/types.ts` (additive optional field on `OAuthAuth`); LOW in `models.
 
 ### Coverage
 
-- `../test/openai-codex-fallback-recovery.test.ts` proves the immediate SSE
+- `../test/chatgpt-subscription-fallback-recovery.test.ts` proves the immediate SSE
   cooldown boundary, post-cooldown WebSocket recovery, and immediate recovery
   after production cleanup.
 - Existing Codex stream tests retain the post-start no-fallback guard,
@@ -3262,7 +3285,7 @@ LOW in `auth/types.ts` (additive optional field on `OAuthAuth`); LOW in `models.
 
 ### Coverage
 
-- `../test/openai-codex-cache-affinity.test.ts` drives the real SSE and
+- `../test/chatgpt-subscription-cache-affinity.test.ts` drives the real SSE and
   WebSocket request builders, pins the complete header/body mapping, and
   preserves the disabled-cache boundary.
 
@@ -4323,12 +4346,12 @@ provider request builders in `packages/ai`, below any extension-visible surface.
 ## 2026-05-11 - Senpi-branded Codex originator and User-Agent
 
 ### What changed and why
-- `providers/openai-codex-responses.ts` `buildBaseCodexHeaders()`: changed the hardcoded `originator: "pi"` and the `User-Agent: "pi (…)"` string to `"senpi"`. Upstream chose `"pi"` as the Codex CLI identity; this fork's identity is `senpi`.
-- `auth/oauth/openai-codex.ts` `createAuthorizationFlow()`: changed the default `originator` parameter from `"pi"` to `"senpi"` and updated the JSDoc on `loginOpenAICodex` accordingly. Callers can still pass their own originator.
+- `providers/chatgpt-subscription-responses.ts` `buildBaseCodexHeaders()`: changed the hardcoded `originator: "pi"` and the `User-Agent: "pi (…)"` string to `"senpi"`. Upstream chose `"pi"` as the Codex CLI identity; this fork's identity is `senpi`.
+- `auth/oauth/chatgpt-subscription.ts` `createAuthorizationFlow()`: changed the default `originator` parameter from `"pi"` to `"senpi"` and updated the JSDoc on `loginChatGptSubscription` accordingly. Callers can still pass their own originator.
 
 ### Files modified
-- `providers/openai-codex-responses.ts`
-- `auth/oauth/openai-codex.ts`
+- `providers/chatgpt-subscription-responses.ts`
+- `auth/oauth/chatgpt-subscription.ts`
 
 ### Why the higher-level extension system couldn't handle this alone
 - The originator + User-Agent headers are built inside `pi-ai`'s Codex header constructor before the request leaves the library. Coding-agent extensions cannot intercept the header construction step.
@@ -4389,7 +4412,7 @@ provider request builders in `packages/ai`, below any extension-visible surface.
 - `providers/openai-responses.ts`
 - `providers/openai-completions.ts`
 - `providers/azure-openai-responses.ts`
-- `providers/openai-codex-responses.ts`
+- `providers/chatgpt-subscription-responses.ts`
 - `providers/mistral.ts`
 - `providers/google.ts`
 - `providers/google-vertex.ts`

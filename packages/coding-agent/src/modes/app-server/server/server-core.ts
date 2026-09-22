@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getAgentDir, VERSION } from "../../../config.ts";
-import { subscribeProviderAccountEvents } from "../../../core/extensions/builtin/claude-sdk-oauth/account-events.ts";
+import { subscribeProviderAccountEvents } from "../../../core/extensions/builtin/anthropic-subscription/account-events.ts";
 import {
 	type ClassifiedIncoming,
 	populateNotificationEnvelope,

@@ -37,6 +37,7 @@ import type {
 	Usage,
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
+import { extractChatGptSubscriptionAccountId } from "../utils/chatgpt-subscription-auth.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import {
 	appendAssistantMessageDiagnostic,
@@ -47,21 +48,20 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import { extractOpenAiCodexAccountId } from "../utils/openai-codex-auth.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import {
+	type ChatGptSubscriptionWebSocketDebugStats,
 	clearWebSocketFallbackState,
 	getOrCreateWebSocketDebugStats,
 	getWebSocketDebugStats,
 	isWebSocketSseFallbackActive,
-	type OpenAICodexWebSocketDebugStats,
 	recordWebSocketFailure,
 	recordWebSocketSseFallback,
 } from "./openai-codex-responses/fallback-state.ts";
 import { buildCodexReasoning, type CodexReasoningSummaryInput } from "./openai-codex-responses/reasoning.ts";
-import { applyOpenAICodexCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import { applyChatGptSubscriptionCacheAffinityHeaders, clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import {
 	applyExtraBody,
@@ -940,19 +940,21 @@ interface CachedWebSocketConnection {
 	continuation?: CachedWebSocketContinuationState;
 }
 
-export type { OpenAICodexWebSocketDebugStats } from "./openai-codex-responses/fallback-state.ts";
+export type { ChatGptSubscriptionWebSocketDebugStats } from "./openai-codex-responses/fallback-state.ts";
 
 const websocketSessionCache = new Map<string, Map<string, CachedWebSocketConnection>>();
 
-export function getOpenAICodexWebSocketDebugStats(sessionId: string): OpenAICodexWebSocketDebugStats | undefined {
+export function getChatGptSubscriptionWebSocketDebugStats(
+	sessionId: string,
+): ChatGptSubscriptionWebSocketDebugStats | undefined {
 	return getWebSocketDebugStats(sessionId);
 }
 
-export function resetOpenAICodexWebSocketDebugStats(sessionId?: string): void {
+export function resetChatGptSubscriptionWebSocketDebugStats(sessionId?: string): void {
 	clearWebSocketFallbackState(sessionId);
 }
 
-export function closeOpenAICodexWebSocketSessions(sessionId?: string): void {
+export function closeChatGptSubscriptionWebSocketSessions(sessionId?: string): void {
 	const closeEntry = (entry: CachedWebSocketConnection) => {
 		unparkSessionWebSocket(entry);
 		closeWebSocketSilently(entry.socket, 1000, "debug_close");
@@ -970,7 +972,7 @@ export function closeOpenAICodexWebSocketSessions(sessionId?: string): void {
 	clearWebSocketFallbackState();
 }
 
-registerSessionResourceCleanup(closeOpenAICodexWebSocketSessions);
+registerSessionResourceCleanup(closeChatGptSubscriptionWebSocketSessions);
 
 type WebSocketConstructor = new (
 	url: string,
@@ -1484,7 +1486,7 @@ function buildCachedWebSocketRequestBody(entry: CachedWebSocketConnection, body:
 }
 
 function recordWebSocketRequestStats(
-	stats: OpenAICodexWebSocketDebugStats | undefined,
+	stats: ChatGptSubscriptionWebSocketDebugStats | undefined,
 	requestBody: RequestBody,
 	reused: boolean,
 	useCachedContext: boolean,
@@ -1651,7 +1653,7 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 // ============================================================================
 
 function extractAccountId(token: string): string | undefined {
-	return extractOpenAiCodexAccountId(token);
+	return extractChatGptSubscriptionAccountId(token);
 }
 
 function buildBaseCodexHeaders(
@@ -1693,7 +1695,7 @@ function buildSSEHeaders(
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
 
-	applyOpenAICodexCacheAffinityHeaders(headers, sessionId);
+	applyChatGptSubscriptionCacheAffinityHeaders(headers, sessionId);
 
 	return headers;
 }
@@ -1711,6 +1713,6 @@ function buildWebSocketHeaders(
 	headers.delete("OpenAI-Beta");
 	headers.delete("openai-beta");
 	headers.set("OpenAI-Beta", OPENAI_BETA_RESPONSES_WEBSOCKETS);
-	applyOpenAICodexCacheAffinityHeaders(headers, requestId);
+	applyChatGptSubscriptionCacheAffinityHeaders(headers, requestId);
 	return headers;
 }

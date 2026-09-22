@@ -5,7 +5,7 @@ import {
 	classifyCredentialFailure,
 	rateLimitCooldown,
 } from "../src/core/credential-pool/classify.ts";
-import { allAccountsBlockedGuidance } from "../src/core/extensions/builtin/claude-sdk-oauth/guidance.ts";
+import { allAccountsBlockedGuidance } from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
 
 function status(code: number, message = `HTTP ${code}`): Error {
 	const error = new Error(message);

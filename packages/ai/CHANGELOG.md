@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Internal module and symbol names now follow the subscription provider rename: `openai-codex.ts` -> `chatgpt-subscription.ts` (provider, OAuth flow and auth utils), `openaiCodexOAuth` -> `chatgptSubscriptionOAuth`, and the rest of the identifier family likewise; the model-data shard and manifest entry renamed with them. The wire api id `openai-codex-responses`, its adapter files and every persisted token are unchanged. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
+
 - Pooled-credential slot repair keeps recognizing the managed sentinel after the `claude-sdk-oauth` -> `anthropic-subscription` provider rename: matchers accept both `anthropic-subscription-managed` and the legacy `claude-sdk-oauth-managed` material that existing stored credentials carry verbatim. ([#1989](https://github.com/code-yeongyu/senpi/issues/1989))
 
 ### Fixed
@@ -3608,7 +3610,7 @@
 
 ### Fixed
 
-- Fixed Bun runtime detection for dynamic imports in browser-compatible modules (stream.ts, openai-codex-responses.ts, openai-codex.ts) ([#922](https://github.com/badlogic/pi-mono/pull/922) by [@dannote](https://github.com/dannote))
+- Fixed Bun runtime detection for dynamic imports in browser-compatible modules (stream.ts, openai-codex-responses.ts, chatgpt-subscription.ts) ([#922](https://github.com/badlogic/pi-mono/pull/922) by [@dannote](https://github.com/dannote))
 - Fixed streaming functions to use `model.api` instead of hardcoded API types
 - Fixed Google providers to default tool call arguments to an empty object when omitted
 - Fixed OpenAI Responses streaming to handle `arguments.done` events on OpenAI-compatible endpoints ([#917](https://github.com/badlogic/pi-mono/pull/917) by [@williballenthin](https://github.com/williballenthin))
@@ -3621,7 +3623,7 @@
 ### Added
 
 - Added `headers` option to `StreamOptions` for custom HTTP headers in API requests. Supported by all providers except Amazon Bedrock (which uses AWS SDK auth). Headers are merged with provider defaults and `model.headers`, with `options.headers` taking precedence.
-- Added `originator` option to `loginOpenAICodex()` for custom OAuth client identification
+- Added `originator` option to `loginChatGptSubscription()` for custom OAuth client identification
 - Browser compatibility for pi-ai: replaced top-level Node.js imports with dynamic imports for browser environments ([#873](https://github.com/badlogic/pi-mono/issues/873))
 
 ### Fixed

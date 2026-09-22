@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	resolveAccountsDirectory,
 	writeConfigDirCredential,
-} from "../src/core/extensions/builtin/claude-sdk-oauth/config-dir-credentials.ts";
+} from "../src/core/extensions/builtin/anthropic-subscription/config-dir-credentials.ts";
 
 const LEGACY = "claude-sdk-oauth-accounts";
 const CANON = "anthropic-subscription-accounts";

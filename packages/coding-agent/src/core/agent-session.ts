@@ -129,7 +129,7 @@ import {
 import { areExperimentalFeaturesEnabled } from "./experimental.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
-import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "./extensions/builtin/claude-sdk-oauth/account-management.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
 import {
 	type ModelUsabilityAdmission,
 	ModelUsabilityBudgetError,
@@ -8144,7 +8144,7 @@ export class AgentSession {
 	 * escalate to the fallback chain when that budget runs out.
 	 */
 	private _isClaudeSdkSameModelRemintError(message: AssistantMessage): boolean {
-		if (this.model?.provider !== CLAUDE_SDK_OAUTH_PROVIDER_ID) return false;
+		if (this.model?.provider !== ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) return false;
 		return this._isClaudeSdkSessionLockError(message) || this._isClaudeSdkInvalidRequestError(message);
 	}
 
@@ -8156,8 +8156,8 @@ export class AgentSession {
 	 */
 	private _isClaudeSdkAuthMissError(message: AssistantMessage): boolean {
 		return (
-			this.model?.provider === CLAUDE_SDK_OAUTH_PROVIDER_ID &&
-			message.errorMessage === providerNotConfiguredMessage(CLAUDE_SDK_OAUTH_PROVIDER_ID)
+			this.model?.provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID &&
+			message.errorMessage === providerNotConfiguredMessage(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID)
 		);
 	}
 

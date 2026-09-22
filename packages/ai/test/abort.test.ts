@@ -10,7 +10,7 @@ import { BASETEN_LIVE_TEST_FLAG, getLiveEnvApiKey, QWEN_TOKEN_PLAN_LIVE_TEST_FLA
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
-const [openaiCodexToken] = await Promise.all([resolveApiKey("chatgpt-subscription")]);
+const [chatgptSubscriptionToken] = await Promise.all([resolveApiKey("chatgpt-subscription")]);
 const anthropicOAuthToken = getLiveEnvApiKey("ANTHROPIC_OAUTH_TOKEN", "PI_ENABLE_ANTHROPIC_OAUTH_LIVE");
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -350,14 +350,14 @@ describe("AI Providers Abort Tests", () => {
 	});
 
 	describe("OpenAI Codex Provider Abort", () => {
-		it.skipIf(!openaiCodexToken)("should abort mid-stream", { retry: 3 }, async () => {
+		it.skipIf(!chatgptSubscriptionToken)("should abort mid-stream", { retry: 3 }, async () => {
 			const llm = getModel("chatgpt-subscription", "gpt-5.5");
-			await testAbortSignal(llm, { apiKey: openaiCodexToken });
+			await testAbortSignal(llm, { apiKey: chatgptSubscriptionToken });
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle immediate abort", { retry: 3 }, async () => {
+		it.skipIf(!chatgptSubscriptionToken)("should handle immediate abort", { retry: 3 }, async () => {
 			const llm = getModel("chatgpt-subscription", "gpt-5.5");
-			await testImmediateAbort(llm, { apiKey: openaiCodexToken });
+			await testImmediateAbort(llm, { apiKey: chatgptSubscriptionToken });
 		});
 	});
 

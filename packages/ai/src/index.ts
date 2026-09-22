@@ -36,7 +36,10 @@ export type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./api/
 export type { GoogleVertexOptions } from "./api/google-vertex.ts";
 export * from "./api/lazy.ts";
 export type { MistralOptions } from "./api/mistral-conversations.ts";
-export type { OpenAICodexResponsesOptions, OpenAICodexWebSocketDebugStats } from "./api/openai-codex-responses.ts";
+export type {
+	ChatGptSubscriptionWebSocketDebugStats,
+	OpenAICodexResponsesOptions,
+} from "./api/openai-codex-responses.ts";
 export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
 export { convertResponsesMessages } from "./api/openai-responses-shared.ts";
@@ -114,13 +117,13 @@ export {
 	isCursorExecResolved,
 	kCursorExecResolved,
 } from "./utils/block-symbols.ts";
+export { extractChatGptSubscriptionAccountId } from "./utils/chatgpt-subscription-auth.ts";
 export * from "./utils/diagnostics.ts";
 export { dropFailedAssistantTurns } from "./utils/drop-failed-assistant-turns.ts";
 export * from "./utils/empty-response-errors.ts";
 export { estimateContextTokens } from "./utils/estimate.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
-export { extractOpenAiCodexAccountId } from "./utils/openai-codex-auth.ts";
 export * from "./utils/overflow.ts";
 export {
 	isAnthropicApiBaseUrl,

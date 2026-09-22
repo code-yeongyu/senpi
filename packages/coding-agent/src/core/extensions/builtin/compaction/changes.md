@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: doc comment names the `anthropic-subscription` main lane. The lane-detection comparisons already route through `CLAUDE_SDK_OAUTH_PROVIDER_ID` and follow the constant's new value; the frozen tokens in this file (`claude-sdk-oauth-compact` entry type, `claude_sdk_oauth_compact_boundary` diagnostic, `senpi.claude-sdk-oauth.compact-boundary.v1` schema) are untouched.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: doc comment names the `anthropic-subscription` main lane. The lane-detection comparisons already route through `ANTHROPIC_SUBSCRIPTION_PROVIDER_ID` and follow the constant's new value; the frozen tokens in this file (`claude-sdk-oauth-compact` entry type, `claude_sdk_oauth_compact_boundary` diagnostic, `senpi.claude-sdk-oauth.compact-boundary.v1` schema) are untouched.
 - `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: comment names the provider by its new id.
 
 ### Why
@@ -1234,8 +1234,8 @@ These are corrections to the lane-policy gate itself, not new behavior an extens
 ### Scope
 
 - Senpi compaction remains FULLY active for every non-`claude-sdk-oauth` provider; that is pinned by the
-  characterization block in `test/claude-sdk-oauth-compaction-alignment.test.ts`.
-- Coverage: `test/compaction/lane-policy.test.ts`, `test/claude-sdk-oauth-compaction-alignment.test.ts`,
+  characterization block in `test/anthropic-subscription-compaction-alignment.test.ts`.
+- Coverage: `test/compaction/lane-policy.test.ts`, `test/anthropic-subscription-compaction-alignment.test.ts`,
   `test/compaction-checkpoint-oneshot.test.ts`, `test/compaction/checkpoint-directive-characterization.test.ts`.
 
 ### Expected merge conflict zones

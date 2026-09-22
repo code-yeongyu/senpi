@@ -230,7 +230,7 @@ const lazyResult = await build({
 		"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
 		"session-worker": join(codingAgentDistDir, "modes", "rpc", "session-worker.js"),
 		"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
-		"openai-codex": join(aiDistDir, "auth", "oauth", "openai-codex.js"),
+		"chatgpt-subscription": join(aiDistDir, "auth", "oauth", "chatgpt-subscription.js"),
 		openrouter: join(aiDistDir, "auth", "oauth", "openrouter.js"),
 		radius: join(aiDistDir, "auth", "oauth", "radius.js"),
 		xai: join(aiDistDir, "auth", "oauth", "xai.js"),

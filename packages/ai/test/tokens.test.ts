@@ -16,7 +16,7 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("github-copilot"),
 	resolveApiKey("chatgpt-subscription"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, chatgptSubscriptionToken] = oauthTokens;
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
 const qwenTokenPlanCnApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_CN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -364,12 +364,12 @@ describe("Token Statistics on Abort", () => {
 	});
 
 	describe("OpenAI Codex Provider", () => {
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should include token stats when aborted mid-stream",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await testTokensOnAbort(llm, { apiKey: openaiCodexToken });
+				await testTokensOnAbort(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 	});

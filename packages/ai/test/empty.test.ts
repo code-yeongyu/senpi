@@ -16,7 +16,7 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("github-copilot"),
 	resolveApiKey("chatgpt-subscription"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, chatgptSubscriptionToken] = oauthTokens;
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
 const qwenTokenPlanCnApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_CN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -822,39 +822,39 @@ describe("AI Providers Empty Message Tests", () => {
 	});
 
 	describe("OpenAI Codex Provider Empty Messages", () => {
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle empty content array",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await testEmptyMessage(llm, { apiKey: openaiCodexToken });
+				await testEmptyMessage(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle empty string content",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await testEmptyStringMessage(llm, { apiKey: openaiCodexToken });
+				await testEmptyStringMessage(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle whitespace-only content",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await testWhitespaceOnlyMessage(llm, { apiKey: openaiCodexToken });
+				await testWhitespaceOnlyMessage(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle empty assistant message in conversation",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const llm = getModel("chatgpt-subscription", "gpt-5.5");
-				await testEmptyAssistantMessage(llm, { apiKey: openaiCodexToken });
+				await testEmptyAssistantMessage(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 	});

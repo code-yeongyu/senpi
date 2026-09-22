@@ -6,12 +6,12 @@ import {
 	selectSlot,
 } from "@earendil-works/pi-ai/auth/pool/select";
 import { describe, expect, test } from "vitest";
-import type { AccountSlot } from "../src/core/extensions/builtin/claude-sdk-oauth/accounts.ts";
+import type { AccountSlot } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
 	rendezvousOrder as sdkRendezvousOrder,
 	selectAccount,
-} from "../src/core/extensions/builtin/claude-sdk-oauth/affinity.ts";
-import { TURN_RETRY_SUPPRESSION_PREFIX as SDK_PREFIX } from "../src/core/extensions/builtin/claude-sdk-oauth/failover.ts";
+} from "../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
+import { TURN_RETRY_SUPPRESSION_PREFIX as SDK_PREFIX } from "../src/core/extensions/builtin/anthropic-subscription/failover.ts";
 
 /** The exact hash the anthropic-subscription oracle uses, injected into the pool engine. */
 const sha256Hasher: SlotHasher = (input) => createHash("sha256").update(input).digest().readBigUInt64BE(0);

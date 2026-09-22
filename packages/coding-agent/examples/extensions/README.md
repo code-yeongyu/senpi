@@ -53,7 +53,7 @@ cp permission-gate.ts ~/.senpi/agent/extensions/
 | `handoff.ts` | Transfer context to a new focused session via `/handoff <goal>` |
 | `qna.ts` | Extracts questions from last response into editor via `ctx.ui.setEditorText()` |
 | `status-line.ts` | Shows turn progress in footer via `ctx.ui.setStatus()` with themed colors |
-| `openai-codex-usage/` | Shows OpenAI Codex rate-limit usage through `ctx.ui.setStatus()` |
+| `chatgpt-subscription-usage/` | Shows OpenAI Codex rate-limit usage through `ctx.ui.setStatus()` |
 | `github-issue-autocomplete.ts` | Adds `#1234` issue completions by stacking a custom autocomplete provider that preloads open issues from `gh issue list` |
 | `widget-placement.ts` | Shows widgets above and below the editor via `ctx.ui.setWidget()` placement |
 | `hidden-thinking-label.ts` | Customizes the collapsed thinking label via `ctx.ui.setHiddenThinkingLabel()` |

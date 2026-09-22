@@ -8,9 +8,9 @@
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	closeOpenAICodexWebSocketSessions,
-	getOpenAICodexWebSocketDebugStats,
-	resetOpenAICodexWebSocketDebugStats,
+	closeChatGptSubscriptionWebSocketSessions,
+	getChatGptSubscriptionWebSocketDebugStats,
+	resetChatGptSubscriptionWebSocketDebugStats,
 	stream as streamOpenAICodexResponses,
 } from "../../../ai/src/api/openai-codex-responses.ts";
 import type { Context, Model, Tool } from "../../../ai/src/types.ts";
@@ -167,8 +167,8 @@ describe("codex continuation state across model switches", () => {
 
 	afterEach(() => {
 		vi.unstubAllGlobals();
-		closeOpenAICodexWebSocketSessions();
-		resetOpenAICodexWebSocketDebugStats();
+		closeChatGptSubscriptionWebSocketSessions();
+		resetChatGptSubscriptionWebSocketDebugStats();
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
@@ -239,7 +239,7 @@ describe("codex continuation state across model switches", () => {
 			sentBodies,
 		);
 		await sendFollowUp(sessionId, codexModel("gpt-5.1-codex"), [namedTool("edit")], history);
-		expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({
+		expect(getChatGptSubscriptionWebSocketDebugStats(sessionId)).toMatchObject({
 			requests: 2,
 			lastPreviousResponseId: "resp_1",
 		});
@@ -251,7 +251,7 @@ describe("codex continuation state across model switches", () => {
 
 		// Then: the continuation cache and the active model are untouched.
 		expect(harness.session.model?.id).toBe("faux-1");
-		expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({
+		expect(getChatGptSubscriptionWebSocketDebugStats(sessionId)).toMatchObject({
 			requests: 2,
 			lastPreviousResponseId: "resp_1",
 		});

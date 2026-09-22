@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
+import { chatgptSubscriptionOAuth } from "../src/auth/oauth/chatgpt-subscription.ts";
 import { getModel, getProviders } from "../src/compat.ts";
 import { MODELS } from "../src/models.generated.ts";
 import { builtinModels } from "../src/providers/all.ts";
-import { OPENAI_CODEX_MODELS } from "../src/providers/openai-codex.models.ts";
+import { CHATGPT_SUBSCRIPTION_MODELS } from "../src/providers/chatgpt-subscription.models.ts";
 import type { KnownProvider } from "../src/types.ts";
 
 /**
@@ -29,7 +29,7 @@ describe("chatgpt-subscription provider rename", () => {
 	});
 
 	it("catalog rows carry the chatgpt-subscription provider id", () => {
-		const models = Object.values(OPENAI_CODEX_MODELS);
+		const models = Object.values(CHATGPT_SUBSCRIPTION_MODELS);
 		expect(models.length).toBeGreaterThan(0);
 		for (const model of models) {
 			expect(model.provider).toBe("chatgpt-subscription");
@@ -62,14 +62,14 @@ describe("chatgpt-subscription provider rename", () => {
 	});
 
 	it("oauth flow carries the ChatGPT Subscription label", () => {
-		expect(openaiCodexOAuth.name).toBe("ChatGPT Subscription (Plus/Pro)");
-		expect(openaiCodexOAuth.isSubscription).toBe(true);
+		expect(chatgptSubscriptionOAuth.name).toBe("ChatGPT Subscription (Plus/Pro)");
+		expect(chatgptSubscriptionOAuth.isSubscription).toBe(true);
 	});
 
 	it("login select prompt says Select ChatGPT Subscription login method", async () => {
 		let captured: unknown;
 		await expect(
-			openaiCodexOAuth.login({
+			chatgptSubscriptionOAuth.login({
 				signal: new AbortController().signal,
 				prompt: async (prompt) => {
 					captured = prompt;

@@ -24,7 +24,7 @@ import {
 import * as idle from "./idle.ts";
 import * as idleRetry from "./idle-retry.ts";
 import {
-	CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE,
+	ANTHROPIC_SUBSCRIPTION_COMPACT_ENTRY_TYPE,
 	collectCompactBoundaryEntries,
 	createCompactionLanePolicy,
 	SDK_NATIVE_LANE_REJECTION_REASON,
@@ -1063,7 +1063,7 @@ export default function compactionExtension(
 
 	pi.on("message_end", async (event, ctx) => {
 		for (const entry of collectCompactBoundaryEntries(event.message)) {
-			pi.appendEntry(CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE, entry);
+			pi.appendEntry(ANTHROPIC_SUBSCRIPTION_COMPACT_ENTRY_TYPE, entry);
 		}
 		if (isAbortedAssistantMessage(event)) {
 			invalidateSpeculativeCompaction(ctx);

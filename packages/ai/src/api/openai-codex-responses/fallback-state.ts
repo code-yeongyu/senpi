@@ -2,7 +2,7 @@ import { formatThrownValue } from "../../utils/diagnostics.ts";
 
 export const CODEX_WEBSOCKET_FALLBACK_COOLDOWN_MS = 60_000;
 
-export interface OpenAICodexWebSocketDebugStats {
+export interface ChatGptSubscriptionWebSocketDebugStats {
 	requests: number;
 	connectionsCreated: number;
 	connectionsReused: number;
@@ -19,10 +19,10 @@ export interface OpenAICodexWebSocketDebugStats {
 	lastWebSocketError?: string;
 }
 
-const websocketDebugStats = new Map<string, OpenAICodexWebSocketDebugStats>();
+const websocketDebugStats = new Map<string, ChatGptSubscriptionWebSocketDebugStats>();
 const websocketSseFallbackUntil = new Map<string, number>();
 
-export function getOrCreateWebSocketDebugStats(sessionId: string): OpenAICodexWebSocketDebugStats {
+export function getOrCreateWebSocketDebugStats(sessionId: string): ChatGptSubscriptionWebSocketDebugStats {
 	let stats = websocketDebugStats.get(sessionId);
 	if (!stats) {
 		stats = {
@@ -42,7 +42,7 @@ export function getOrCreateWebSocketDebugStats(sessionId: string): OpenAICodexWe
 	return stats;
 }
 
-export function getWebSocketDebugStats(sessionId: string): OpenAICodexWebSocketDebugStats | undefined {
+export function getWebSocketDebugStats(sessionId: string): ChatGptSubscriptionWebSocketDebugStats | undefined {
 	const stats = websocketDebugStats.get(sessionId);
 	return stats ? { ...stats } : undefined;
 }

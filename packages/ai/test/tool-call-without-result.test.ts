@@ -17,7 +17,7 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("github-copilot"),
 	resolveApiKey("chatgpt-subscription"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, chatgptSubscriptionToken] = oauthTokens;
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
 const qwenTokenPlanCnApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_CN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -366,12 +366,12 @@ describe("Tool Call Without Result Tests", () => {
 	});
 
 	describe("OpenAI Codex Provider", () => {
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should filter out tool calls without corresponding tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
 				const model = getModel("chatgpt-subscription", "gpt-5.5");
-				await testToolCallWithoutResult(model, { apiKey: openaiCodexToken });
+				await testToolCallWithoutResult(model, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 	});

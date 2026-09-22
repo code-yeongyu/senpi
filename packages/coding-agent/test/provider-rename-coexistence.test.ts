@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage, readStoredCredential } from "../src/core/auth-storage.ts";
-import { resolveAccountsDirectory } from "../src/core/extensions/builtin/claude-sdk-oauth/config-dir-credentials.ts";
+import { resolveAccountsDirectory } from "../src/core/extensions/builtin/anthropic-subscription/config-dir-credentials.ts";
 import { ModelConfig } from "../src/core/model-config.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
@@ -39,8 +39,8 @@ function oldBinaryAgentDir(): string {
 			{
 				defaultProvider: "claude-sdk-oauth",
 				defaultModel: "openai-codex/gpt-5.6-sol",
-				favoriteModels: ["claude-sdk-oauth/opus"],
-				modelThinkingLevels: { "claude-sdk-oauth/opus": "high" },
+				favoriteModels: ["anthropic-subscription/opus"],
+				modelThinkingLevels: { "anthropic-subscription/opus": "high" },
 				providers: { "claude-sdk-oauth": { maxConcurrency: 3 } },
 				claudeSdkOauthProvider: { tokenInjection: "config-dir" },
 			},

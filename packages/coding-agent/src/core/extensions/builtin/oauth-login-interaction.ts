@@ -11,7 +11,7 @@
  * command for the same provider. Every dialog is also bound to the per-prompt
  * `AuthPrompt.signal`, so a manual-code dialog is released without cancelling
  * the login when the provider's local callback server wins the race
- * (`loginOpenAICodex`). `auth_url` opens the browser only in the TUI, because
+ * (`loginChatGptSubscription`). `auth_url` opens the browser only in the TUI, because
  * an RPC client renders the notice on its own machine.
  */
 

@@ -25,7 +25,7 @@ import { MOONSHOTAI_MODELS } from "./providers/moonshotai.models.ts";
 import { MOONSHOTAI_CN_MODELS } from "./providers/moonshotai-cn.models.ts";
 import { NVIDIA_MODELS } from "./providers/nvidia.models.ts";
 import { OPENAI_MODELS } from "./providers/openai.models.ts";
-import { OPENAI_CODEX_MODELS } from "./providers/openai-codex.models.ts";
+import { CHATGPT_SUBSCRIPTION_MODELS } from "./providers/chatgpt-subscription.models.ts";
 import { OPENCODE_MODELS } from "./providers/opencode.models.ts";
 import { OPENCODE_GO_MODELS } from "./providers/opencode-go.models.ts";
 import { OPENGATEWAY_MODELS } from "./providers/opengateway.models.ts";
@@ -69,7 +69,7 @@ export const MODELS: {
 	readonly "moonshotai-cn": typeof MOONSHOTAI_CN_MODELS;
 	readonly "nvidia": typeof NVIDIA_MODELS;
 	readonly "openai": typeof OPENAI_MODELS;
-	readonly "chatgpt-subscription": typeof OPENAI_CODEX_MODELS;
+	readonly "chatgpt-subscription": typeof CHATGPT_SUBSCRIPTION_MODELS;
 	readonly "opencode": typeof OPENCODE_MODELS;
 	readonly "opencode-go": typeof OPENCODE_GO_MODELS;
 	readonly "opengateway": typeof OPENGATEWAY_MODELS;
@@ -112,7 +112,7 @@ export const MODELS: {
 	"moonshotai-cn": MOONSHOTAI_CN_MODELS,
 	"nvidia": NVIDIA_MODELS,
 	"openai": OPENAI_MODELS,
-	"chatgpt-subscription": OPENAI_CODEX_MODELS,
+	"chatgpt-subscription": CHATGPT_SUBSCRIPTION_MODELS,
 	"opencode": OPENCODE_MODELS,
 	"opencode-go": OPENCODE_GO_MODELS,
 	"opengateway": OPENGATEWAY_MODELS,

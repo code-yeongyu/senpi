@@ -1,8 +1,8 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
-	CLAUDE_SDK_OAUTH_COMPACT_BOUNDARY_DIAGNOSTIC,
-	CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE,
+	ANTHROPIC_SUBSCRIPTION_COMPACT_BOUNDARY_DIAGNOSTIC,
+	ANTHROPIC_SUBSCRIPTION_COMPACT_ENTRY_TYPE,
 	collectCompactBoundaryEntries,
 	createCompactionLanePolicy,
 	isSdkNativeCompactionLane,
@@ -186,7 +186,7 @@ describe("compaction lane policy — compact_boundary mirroring", () => {
 	it("collects boundary entries carried as assistant-message diagnostics", () => {
 		const message = assistantMessageWithDiagnostics([
 			{
-				type: CLAUDE_SDK_OAUTH_COMPACT_BOUNDARY_DIAGNOSTIC,
+				type: ANTHROPIC_SUBSCRIPTION_COMPACT_BOUNDARY_DIAGNOSTIC,
 				timestamp: 5,
 				details: {
 					type: "system",
@@ -221,6 +221,6 @@ describe("compaction lane policy — compact_boundary mirroring", () => {
 	});
 
 	it("names the senpi custom entry type used for mirrored boundaries", () => {
-		expect(CLAUDE_SDK_OAUTH_COMPACT_ENTRY_TYPE).toBe("claude-sdk-oauth-compact");
+		expect(ANTHROPIC_SUBSCRIPTION_COMPACT_ENTRY_TYPE).toBe("claude-sdk-oauth-compact");
 	});
 });

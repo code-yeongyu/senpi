@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mapSdkToolNameToPi, resolveSdkTools } from "../../src/core/extensions/builtin/anthropic-subscription/tools.ts";
 import askUserExtension from "../../src/core/extensions/builtin/ask-user/index.ts";
 import { getPendingQuestions } from "../../src/core/extensions/builtin/ask-user/registry.ts";
 import { askUserRenderers } from "../../src/core/extensions/builtin/ask-user/render.ts";
 import { WAIT_FLAG_STEER_TEXT } from "../../src/core/extensions/builtin/ask-user/schema.ts";
-import { mapSdkToolNameToPi, resolveSdkTools } from "../../src/core/extensions/builtin/claude-sdk-oauth/tools.ts";
 import type { ExtensionAPI, ExtensionContext, QuestionResponse } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./harness.ts";
 

@@ -542,7 +542,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `packages/coding-agent/install-lock/package.json` and `packages/coding-agent/install-lock/package-lock.json`: regenerated from the refreshed root lock.
 - `packages/coding-agent/publish-deps.lock.json`: regenerated shrinkwrap for the same tree.
 - `packages/coding-agent/test/mermaid.test.ts`: the two tests covering the partial-render warning path now use input that still warns under grok-mermaid 0.2.3, which learned to render the `:::className` node syntax the old fixtures relied on failing.
-- `packages/coding-agent/test/suite/claude-sdk-oauth-naming.test.ts`: asserts the upstream package name without pinning its version, since the naming boundary is the subject of the test.
+- `packages/coding-agent/test/suite/anthropic-subscription-naming.test.ts`: asserts the upstream package name without pinning its version, since the naming boundary is the subject of the test.
 
 ### Why
 
@@ -915,7 +915,7 @@ amplification or dropping classic per-event backpressure.
 
 ## 2026-07-29 — OpenAI Codex usage extension example
 
-- Changed: added a standalone `examples/extensions/openai-codex-usage/` example that resolves Senpi-managed Codex OAuth, fetches the remaining five-hour and weekly limits, and publishes them through `ctx.ui.setStatus()`. Missing windows render as unavailable; sanitized HTTP/network/parse failures replace stale values with an unavailable status. The poller is single-flight, abortable, and cleared on model changes, shutdown, or `/usage`.
+- Changed: added a standalone `examples/extensions/chatgpt-subscription-usage/` example that resolves Senpi-managed Codex OAuth, fetches the remaining five-hour and weekly limits, and publishes them through `ctx.ui.setStatus()`. Missing windows render as unavailable; sanitized HTTP/network/parse failures replace stale values with an unavailable status. The poller is single-flight, abortable, and cleared on model changes, shutdown, or `/usage`.
 - Why: users can see provider limits with the built-in footer or any custom footer that consumes extension statuses, without coupling usage retrieval to one footer implementation or presenting unknown/stale percentages as current.
 - Extension boundary: the example uses public model-registry, lifecycle, command, and status APIs; no core footer or authentication source changes are required. Deterministic fake-API and fake-timer tests cover toggle, model-change, abort, scheduled polling, and shutdown cleanup.
 - Merge-conflict risk: low. The change adds an isolated example directory, one test, one catalog row, documentation, and this record.

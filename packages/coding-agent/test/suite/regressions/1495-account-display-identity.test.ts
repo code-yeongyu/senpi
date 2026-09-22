@@ -11,13 +11,16 @@ import { listRotationSlots } from "../../../src/core/credential-pool/rotation-st
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
 import {
 	type AccountSlot,
-	type ClaudeSdkOauthCredential,
+	type AnthropicSubscriptionCredential,
 	emptyCredential,
 	refreshSlot,
-} from "../../../src/core/extensions/builtin/claude-sdk-oauth/accounts.ts";
-import { rendezvousOrder, selectAccount } from "../../../src/core/extensions/builtin/claude-sdk-oauth/affinity.ts";
-import { runFailover } from "../../../src/core/extensions/builtin/claude-sdk-oauth/failover.ts";
-import { decideNativeContinuity } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-continuity.ts";
+} from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	rendezvousOrder,
+	selectAccount,
+} from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
+import { runFailover } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
+import { decideNativeContinuity } from "../../../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
 
 const provider = "anthropic-subscription";
 const hasher = (value: string) => createHash("sha256").update(value).digest().readBigUInt64BE(0);
@@ -50,7 +53,7 @@ it("keeps HRW, pins, sidecar health and Claude restart bindings keyed by the imm
 		const rotationBefore = await listRotationSlots(sources);
 		await renameCredentialAccount(storage, provider, "default", "Personal");
 		await renameCredentialAccount(storage, provider, "second", "Work");
-		const after = (storage.get(provider) as ClaudeSdkOauthCredential).accounts!;
+		const after = (storage.get(provider) as AnthropicSubscriptionCredential).accounts!;
 		for (const session of ["one", "two", "three"]) {
 			expect(rendezvousOrder(session, after).map((slot) => slot.name)).toEqual(
 				rendezvousOrder(session, accounts).map((slot) => slot.name),
@@ -111,7 +114,7 @@ it("refreshes and fails over by name while preserving display metadata and slot 
 	const attempted: string[] = [];
 	const transitions: string[] = [];
 	const events = runFailover({
-		accounts: (storage.get(provider) as ClaudeSdkOauthCredential).accounts!,
+		accounts: (storage.get(provider) as AnthropicSubscriptionCredential).accounts!,
 		store: storage,
 		providerId: provider,
 		now: () => 1000,

@@ -22,7 +22,7 @@ import {
 	Type,
 } from "@earendil-works/pi-ai/compat";
 import {
-	getOpenAICodexWebSocketDebugStats,
+	getChatGptSubscriptionWebSocketDebugStats,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../../ai/src/api/openai-codex-responses.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -198,7 +198,7 @@ function percentile(values: number[], percentileValue: number): number {
 }
 
 function getWebSocketStatsSnapshot(sessionId: string): WebSocketStatsSnapshot {
-	const stats = getOpenAICodexWebSocketDebugStats(sessionId);
+	const stats = getChatGptSubscriptionWebSocketDebugStats(sessionId);
 	return {
 		requests: stats?.requests ?? 0,
 		connectionsCreated: stats?.connectionsCreated ?? 0,
@@ -284,7 +284,7 @@ async function main(): Promise<void> {
 		throw new Error("Model chatgpt-subscription/gpt-5.5 not found");
 	}
 	const baseModel = { ...model, maxTokens: args.maxTokens };
-	const streamSimpleOpenAICodexResponsesForRegistry = (
+	const streamSimpleChatGptSubscriptionForRegistry = (
 		registryModel: Model<Api>,
 		context: Context,
 		options?: SimpleStreamOptions,
@@ -294,7 +294,7 @@ async function main(): Promise<void> {
 		api: "openai-codex-responses",
 		baseUrl: baseModel.baseUrl,
 		apiKey: "!echo source-provider-override-uses-auth-storage",
-		streamSimple: streamSimpleOpenAICodexResponsesForRegistry,
+		streamSimple: streamSimpleChatGptSubscriptionForRegistry,
 		models: [baseModel],
 	});
 
@@ -448,7 +448,7 @@ async function main(): Promise<void> {
 			`max ${(Math.max(...turnElapsedMs) / 1000).toFixed(2)}s`,
 		].join(" | "),
 	);
-	const websocketStats = getOpenAICodexWebSocketDebugStats(session.sessionId);
+	const websocketStats = getChatGptSubscriptionWebSocketDebugStats(session.sessionId);
 	const requestedWebsocket =
 		args.transport === "websocket" || args.transport === "websocket-cached" || args.transport === "auto";
 	const observedWebsocket = Boolean(websocketStats && websocketStats.requests > 0);

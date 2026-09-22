@@ -4,13 +4,13 @@ import {
 	overrideAuthLaneBoundary,
 	queryWithAuthLane,
 	resetAuthLaneBoundary,
-} from "../../../src/core/extensions/builtin/claude-sdk-oauth/auth-lane.ts";
+} from "../../../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
 import type {
 	Options,
 	SDKMessage,
 	SdkQuery,
-} from "../../../src/core/extensions/builtin/claude-sdk-oauth/sdk-boundary.ts";
-import type { ClaudeSdkOauthTokenInjection } from "../../../src/core/extensions/builtin/claude-sdk-oauth/settings.ts";
+} from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
+import type { AnthropicSubscriptionTokenInjection } from "../../../src/core/extensions/builtin/anthropic-subscription/settings.ts";
 
 const EXPECTED_ERROR =
 	"authentication_failed: No Anthropic Subscription accounts configured for the managed lane; " +
@@ -20,7 +20,7 @@ async function consume(messages: AsyncGenerator<SDKMessage>): Promise<void> {
 	for await (const _message of messages) void _message;
 }
 
-function loggedOutLane(lane: ClaudeSdkOauthTokenInjection | undefined): {
+function loggedOutLane(lane: AnthropicSubscriptionTokenInjection | undefined): {
 	messages: AsyncGenerator<SDKMessage>;
 	query: SdkQuery;
 } {

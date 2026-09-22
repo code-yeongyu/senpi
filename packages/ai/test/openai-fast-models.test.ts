@@ -29,7 +29,7 @@ const PRIORITY_TIER_MODEL_IDS = [
 	"o4-mini",
 ] as const;
 
-const OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
+const CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
 const GPT_56_SOL_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-sol-fast"] as const;
 const GPT_6_ASTRA_MODEL_IDS = ["gpt-6-astra", "gpt-6-astra-fast"] as const;
 const GPT_6_ASTRA_THINKING_LEVEL_MAP = {
@@ -130,14 +130,14 @@ describe("OpenAI -fast priority-tier catalog variants", () => {
 
 	it("ships a -fast variant for openai-codex priority-eligible models", () => {
 		const codexCatalogIds = getModels("chatgpt-subscription").map((model) => model.id);
-		for (const id of OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS) {
+		for (const id of CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS) {
 			expect(codexCatalogIds, `codex base model ${id} should exist`).toContain(id);
 			expect(codexCatalogIds, `codex ${id}-fast should exist`).toContain(`${id}-fast`);
 		}
 	});
 
 	it("clones the codex base model with upstreamModelId, priority tier, and base cost rates", () => {
-		for (const id of OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS) {
+		for (const id of CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS) {
 			const base = getModel("chatgpt-subscription", id);
 			const fast = getModel("chatgpt-subscription", `${id}-fast`);
 			expect(base, `${id} should exist`).toBeDefined();

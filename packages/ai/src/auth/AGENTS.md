@@ -27,7 +27,7 @@ anthropic.ts         Anthropic OAuth flow
 cursor.ts            Cursor OAuth flow
 github-copilot.ts    Copilot device flow
 kimi-coding.ts       Kimi coding-plan flow
-openai-codex.ts      Codex flow
+chatgpt-subscription.ts      Codex flow
 openrouter.ts        OpenRouter flow
 radius.ts            Radius flow
 xai.ts               xAI flow
@@ -39,7 +39,7 @@ xai.ts               xAI flow
 - One entry per provider id in the store; an entry may pool sibling credential slots under `accounts` while its flat top-level fields stay a valid credential (the downgrade projection older binaries read). Persistent stores are injected by the app, never assumed.
 - OAuth flows register through `registerBundledOAuthFlowLoaders`; don't import flow modules eagerly from browser-reachable code.
 - Auth resolution order in `helpers.ts` (stored credential, then env) is load-bearing; don't reorder.
-- `oauth/openai-codex.ts` and `oauth/radius.ts` carry `// NEVER convert to top-level imports - breaks browser/Vite builds` on their dynamic imports. Keep both the imports and the comments.
+- `oauth/chatgpt-subscription.ts` and `oauth/radius.ts` carry `// NEVER convert to top-level imports - breaks browser/Vite builds` on their dynamic imports. Keep both the imports and the comments.
 - `resolveProviderAuth` / `resolveProviderAuthWithSignal` in `resolve.ts` is the cross-provider choke point (credential, env, OAuth refresh, error paths); it raises `ModelsError` with a `ModelsErrorCode`, not bare `Error`.
 
 ## WHERE TO LOOK
@@ -50,4 +50,4 @@ xai.ts               xAI flow
 | Header semantics | `headers.ts` |
 | Credential persistence | `credential-store.ts` + app-side injected store |
 | Env-vs-credential precedence | `helpers.ts`, `resolve.ts` |
-| Codex auth token helpers shared with `../api/` | `../utils/openai-codex-auth.ts` |
+| Codex auth token helpers shared with `../api/` | `../utils/chatgpt-subscription-auth.ts` |

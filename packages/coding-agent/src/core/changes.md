@@ -44,7 +44,7 @@ CLI parsing and the interactive login command are core surfaces that run before 
 
 ### What changed
 
-- `packages/coding-agent/src/core/settings-manager.ts`: `migrateSettings` now rewrites every provider-keyed settings field from the legacy subscription ids to the canonical ones on first parse - the settings block key (`claudeSdkOauthProvider` -> `anthropicSubscriptionProvider`, `openaiCodexProvider` -> `chatgptSubscriptionProvider`), `defaultProvider`, the provider prefix of `defaultModel`, every `favoriteModels` entry, the `${provider}/${id}` keys of `modelThinkingLevels`/`modelServiceTiers`/`modelLastOnThinkingLevels`, and every `retry.fallbackChains` key plus the providers named inside each rung. Driven by the shared `normalizeProviderId`/`normalizeModelRef` helpers so no second map drifts.
+- `packages/coding-agent/src/core/settings-manager.ts`: `migrateSettings` now rewrites every provider-keyed settings field from the legacy subscription ids to the canonical ones on first parse - the settings block key (`claudeSdkOauthProvider` -> `anthropicSubscriptionProvider`, `chatgptSubscriptionProvider` -> `chatgptSubscriptionProvider`), `defaultProvider`, the provider prefix of `defaultModel`, every `favoriteModels` entry, the `${provider}/${id}` keys of `modelThinkingLevels`/`modelServiceTiers`/`modelLastOnThinkingLevels`, and every `retry.fallbackChains` key plus the providers named inside each rung. Driven by the shared `normalizeProviderId`/`normalizeModelRef` helpers so no second map drifts.
 
 ### Why
 
@@ -1258,12 +1258,12 @@ runtime it registered into is private or shared.
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: `_isClaudeSdkSameModelRemintError` matches ONLY the Claude SDK lane's session-lock and bare `invalid_request` quirks (`this.model?.provider === CLAUDE_SDK_OAUTH_PROVIDER_ID`); the provider-agnostic stream-stall watchdog class is no longer swallowed, so a stall for ANY provider consumes the ordinary shared same-model budget and escalates to the fallback chain exactly as before. The auth-miss exclusion is `_isClaudeSdkAuthMissError`, an exact-message, Claude-lane-scoped check built on the shared `providerNotConfiguredMessage()` helper, so another provider's auth miss still hops the configured fallback chain. Supersedes the 2026-09-02 "Keep Claude SDK stalls and invalid_request on the same model" entry above.
+- `packages/coding-agent/src/core/agent-session.ts`: `_isClaudeSdkSameModelRemintError` matches ONLY the Claude SDK lane's session-lock and bare `invalid_request` quirks (`this.model?.provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID`); the provider-agnostic stream-stall watchdog class is no longer swallowed, so a stall for ANY provider consumes the ordinary shared same-model budget and escalates to the fallback chain exactly as before. The auth-miss exclusion is `_isClaudeSdkAuthMissError`, an exact-message, Claude-lane-scoped check built on the shared `providerNotConfiguredMessage()` helper, so another provider's auth miss still hops the configured fallback chain. Supersedes the 2026-09-02 "Keep Claude SDK stalls and invalid_request on the same model" entry above.
 - `packages/ai/src/auth/resolve.ts` + `packages/ai/src/models.ts`: `PROVIDER_NOT_CONFIGURED_PREFIX` / `providerNotConfiguredMessage()` export the exact auth-miss wording; `packages/coding-agent/src/core/model-runtime.ts` throws through the helper instead of its own literal, so the session-layer guard can never drift from the throw sites (the `TURN_RETRY_SUPPRESSION_PREFIX` pattern).
-- `packages/coding-agent/src/core/auth-storage.ts`: every auth.json parse drops pool slots whose `access`/`refresh` equal the provider's `<providerId>-managed` sentinel and clears a pin naming one; the mutable store writes the repair back once inside its existing lock. `packages/coding-agent/src/core/credential-pool/classify.ts` classifies that auth miss as `failover`/`auth_error` so one bad slot can never dead-end a pool. `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/accounts.ts` never lists a sentinel-material slot as an account.
+- `packages/coding-agent/src/core/auth-storage.ts`: every auth.json parse drops pool slots whose `access`/`refresh` equal the provider's `<providerId>-managed` sentinel and clears a pin naming one; the mutable store writes the repair back once inside its existing lock. `packages/coding-agent/src/core/credential-pool/classify.ts` classifies that auth miss as `failover`/`auth_error` so one bad slot can never dead-end a pool. `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts` never lists a sentinel-material slot as an account.
 - `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` MERGES a provider-owned pool onto the value read under the credential lock (stored slots and their block state win; only genuinely new names are appended) instead of whole-writing a snapshot read before the browser round trip; `managedSentinelMaterial` / `isManagedSentinelSlot` / `repairManagedSentinelSlots` implement the repair algebra. A flat `current` keeps the whole-write shape because the provider's accounts already carry this login.
 - `packages/coding-agent/src/modes/interactive/components/login-dialog.ts`: every `(to cancel)` / `(to close)` hint row routes through one tracked live hint, so `showWaiting` / `showInfo` replace a previous hint instead of painting beside it, and content-clearing paths reset the tracked hint.
-- Tests: `test/suite/retry-fallback-hard-error.test.ts` (Claude-lane tests run under a `claude-sdk-oauth` faux provider, plus new guards proving a non-Claude `invalid_request` and a non-Claude auth miss still hop the chain), `test/auth-storage.test.ts`, `test/credential-error-taxonomy.test.ts`, `test/model-runtime-credential-rotation.test.ts`, `test/claude-sdk-oauth-accounts.test.ts`, `packages/ai/test/credential-pool-mutations.test.ts`, `test/suite/regressions/5433-extension-oauth-prompt-input.test.ts` (the bare-`>` line was a tautology; it now asserts exactly one live `>` row and one live hint row).
+- Tests: `test/suite/retry-fallback-hard-error.test.ts` (Claude-lane tests run under a `claude-sdk-oauth` faux provider, plus new guards proving a non-Claude `invalid_request` and a non-Claude auth miss still hop the chain), `test/auth-storage.test.ts`, `test/credential-error-taxonomy.test.ts`, `test/model-runtime-credential-rotation.test.ts`, `test/anthropic-subscription-accounts.test.ts`, `packages/ai/test/credential-pool-mutations.test.ts`, `test/suite/regressions/5433-extension-oauth-prompt-input.test.ts` (the bare-`>` line was a tautology; it now asserts exactly one live `>` row and one live hint row).
 
 ### Why
 
@@ -1366,7 +1366,7 @@ runtime it registered into is private or shared.
 
 ### Why
 
-- Auth wiring failures were classified as hard-error and immediately switched `claude-sdk-oauth/claude-opus-5` onto a different provider (for example `opengateway/anthropic/claude-opus-5`) instead of staying on Claude SDK OAuth or its sibling accounts.
+- Auth wiring failures were classified as hard-error and immediately switched `anthropic-subscription/claude-opus-5` onto a different provider (for example `opengateway/anthropic/claude-opus-5`) instead of staying on Claude SDK OAuth or its sibling accounts.
 
 ### Why an extension could not handle it
 
@@ -1994,7 +1994,7 @@ runtime it registered into is private or shared.
 
 - `packages/coding-agent/src/core/messages.ts`: `convertToLlm` runs the shared `dropFailedAssistantTurns` from `@earendil-works/pi-ai` as its final step, removing assistant turns with `stopReason` `error`/`aborted` and the tool results orphaned by that drop from the returned `Message[]`. `convertToLlmForTransport` inherits the drop through `convertToLlm`.
 - `packages/coding-agent/test/convert-to-llm-drops-failed-turns.test.ts` (new): `convertToLlm` on `[user, assistant(error, "PARTIAL" + toolCall), toolResult, user]` yields no `PARTIAL` text and no orphaned tool call; same for an aborted turn.
-- `packages/coding-agent/test/claude-sdk-oauth-prompt-bridge.test.ts`: regression pinning that `buildPromptBlocks` over `convertToLlm`-processed history renders no failed-turn text and no orphaned tool call id.
+- `packages/coding-agent/test/anthropic-subscription-prompt-bridge.test.ts`: regression pinning that `buildPromptBlocks` over `convertToLlm`-processed history renders no failed-turn text and no orphaned tool call id.
 
 ### Why
 
@@ -2007,7 +2007,7 @@ runtime it registered into is private or shared.
 ### Expected merge conflict zones
 
 - LOW: the tail of `convertToLlm` in `packages/coding-agent/src/core/messages.ts` (the new `dropFailedAssistantTurns` return).
-- LOW: `packages/coding-agent/test/claude-sdk-oauth-prompt-bridge.test.ts` (one new `it` before the stream test).
+- LOW: `packages/coding-agent/test/anthropic-subscription-prompt-bridge.test.ts` (one new `it` before the stream test).
 
 ## 2026-09-04 - Restore the selected model, not its upstream wire id, on resume
 

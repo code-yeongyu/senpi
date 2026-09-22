@@ -7,7 +7,7 @@ export function clampOpenAIPromptCacheKey(key: string | undefined): string | und
 	return chars.slice(0, OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH).join("");
 }
 
-export function applyOpenAICodexCacheAffinityHeaders(headers: Headers, sessionId: string | undefined): void {
+export function applyChatGptSubscriptionCacheAffinityHeaders(headers: Headers, sessionId: string | undefined): void {
 	if (!sessionId) return;
 	headers.set("session-id", sessionId);
 	headers.set("thread-id", sessionId);

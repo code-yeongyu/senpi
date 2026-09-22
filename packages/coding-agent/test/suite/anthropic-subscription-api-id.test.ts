@@ -1,7 +1,7 @@
 import { type Api, type Model, resolvePromptCacheTtlSeconds } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { CLAUDE_SDK_OAUTH_API_ID } from "../../src/core/extensions/builtin/claude-sdk-oauth/api-id.ts";
-import { registerClaudeSdkOauthExtension } from "../../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
+import { CLAUDE_SDK_OAUTH_API_ID } from "../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
+import { registerAnthropicSubscriptionExtension } from "../../src/core/extensions/builtin/anthropic-subscription/index.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 
 type ProviderRegistration = {
@@ -20,7 +20,7 @@ function captureRegisterProviderCall(): { args: [string, ProviderRegistration] }
 		getFlag: () => undefined,
 		on: () => {},
 	} as unknown as ExtensionAPI;
-	registerClaudeSdkOauthExtension(pi, {
+	registerAnthropicSubscriptionExtension(pi, {
 		readAmbientAuthStatus: async () => false,
 		readSettings: () => ({}),
 	});

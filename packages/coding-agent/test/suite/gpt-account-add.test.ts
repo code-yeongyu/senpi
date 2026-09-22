@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
-import { subscribeProviderAccountEvents } from "../../src/core/extensions/builtin/claude-sdk-oauth/account-events.ts";
+import { subscribeProviderAccountEvents } from "../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import gptAccountExtension, { type GptAccountExtensionDeps } from "../../src/core/extensions/builtin/gpt-account.ts";
 import {
 	type Command,

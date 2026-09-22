@@ -364,7 +364,7 @@ The generator produces the committed catalog shards that ship inside this packag
 
 ### What changed
 
-- `packages/ai/scripts/generate-models.ts`: `toOpenAiInputCap` maps the documented OpenAI window tiers to their prompt budgets for provider `openai` (400,000 -> 272,000; 1,050,000 -> 922,000 when `maxTokens` is 128,000), `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` and the Azure flagship overrides use the 922,000 cap. Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/openai-codex.json`, `packages/ai/src/providers/data/azure-openai-responses.json`, `packages/ai/src/providers/data/.manifest.json` (the same run picked up one OpenRouter price refresh).
+- `packages/ai/scripts/generate-models.ts`: `toOpenAiInputCap` maps the documented OpenAI window tiers to their prompt budgets for provider `openai` (400,000 -> 272,000; 1,050,000 -> 922,000 when `maxTokens` is 128,000), `GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW` and the Azure flagship overrides use the 922,000 cap. Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/chatgpt-subscription.json`, `packages/ai/src/providers/data/azure-openai-responses.json`, `packages/ai/src/providers/data/.manifest.json` (the same run picked up one OpenRouter price refresh).
 
 ### Why
 
@@ -521,7 +521,7 @@ The generator produces the committed catalog shards that ship inside this packag
 
 - `packages/ai/scripts/generate-models.ts`: hand-added `gpt-6-astra` entries for the `openai` and `openai-codex` providers (published pricing 10/50/1/12.5 per MTok with the >272k long-context tiers, 272k default context, 128k output, text+image input, `thinkingLevelMap` with `off`/`minimal` null and low through high, with xhigh/max merged by `supportsOpenAiXhigh`/`supportsOpenAiMax`); the id joins the tool-search, additional-tools, short-context-cap, long-context-pricing, and Priority `-fast` sets; a post-metadata override keeps `off`/`minimal` unavailable.
 - `packages/ai/src/models.ts`: `XHIGH_MODEL_IDS` gains `gpt-6-astra`; the sol-only max-effort family check is generalized to `OPENAI_MAX_MODEL_IDS` (`gpt-5.6-sol`, `gpt-6-astra`).
-- Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/openai-codex.json`, and `packages/ai/src/providers/data/.manifest.json` with only the Astra entries (plus their `-fast` variants) changing.
+- Regenerated `packages/ai/src/providers/data/openai.json`, `packages/ai/src/providers/data/chatgpt-subscription.json`, and `packages/ai/src/providers/data/.manifest.json` with only the Astra entries (plus their `-fast` variants) changing.
 - `packages/ai/test/gpt-6-astra-catalog.test.ts`: catalog entries, pricing tiers, context limits, thinking levels, xhigh/max support, and `-fast` variants.
 
 ### Why
@@ -1164,7 +1164,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `src/context-provenance.ts`: added request-local, non-enumerable message/item provenance tokens.
 - `src/api/openai-responses-shared.ts`: preserves those tokens while converting messages to Responses input items.
 - `src/types.ts` and `src/index.ts`: expose the typed provenance helpers needed by coding-agent's replay boundary.
-- `src/utils/openai-codex-auth.ts`: centralizes browser-safe ChatGPT account-ID extraction so normal Codex requests
+- `src/utils/chatgpt-subscription-auth.ts`: centralizes browser-safe ChatGPT account-ID extraction so normal Codex requests
   and remote compaction canonicalize the same wire tenant across bearer-token refreshes.
 
 ### Why
@@ -1181,7 +1181,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `src/api/openai-responses-shared.ts`
 - `src/index.ts`
 - `src/types.ts`
-- `src/utils/openai-codex-auth.ts`
+- `src/utils/chatgpt-subscription-auth.ts`
 
 ### Expected merge conflict zones
 
@@ -1320,7 +1320,7 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 - `test/fireworks-models.test.ts`
 - `test/github-copilot-oauth.test.ts`
 - `test/oauth-device-code.test.ts`
-- `test/openai-codex-stream.test.ts`
+- `test/chatgpt-subscription-stream.test.ts`
 
 ### Expected merge conflict zones
 

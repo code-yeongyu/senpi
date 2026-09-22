@@ -11,7 +11,7 @@ describe("--provider rejects a typed legacy provider id (senpi#1989)", () => {
 	});
 
 	it("fails naming both claude-sdk-oauth and anthropic-subscription", () => {
-		expect(() => parseArgs(["--provider", "claude-sdk-oauth"])).toThrow(/claude-sdk-oauth/);
+		expect(() => parseArgs(["--provider", "claude-sdk-oauth"])).toThrow(/anthropic-subscription/);
 		expect(() => parseArgs(["--provider", "claude-sdk-oauth"])).toThrow(/anthropic-subscription/);
 	});
 

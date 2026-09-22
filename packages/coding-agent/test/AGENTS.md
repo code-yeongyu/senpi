@@ -31,8 +31,8 @@ fixtures/, goldens/ Shared deterministic inputs and snapshots
 model-runtime*.test.ts / models-store.test.ts / remote-catalog-provider.test.ts / runtime-credentials.test.ts
                    Model/catalog/auth runtime coverage
 claude-sdk-oauth-*.test.ts
-                   Flat cluster (51 files) at test/ root covering the Claude SDK
-                   OAuth provider extension
+                   Flat cluster at `test/anthropic-subscription-*.test.ts` covering the Claude SDK
+                   OAuth provider extension (historically named `claude-sdk-oauth-*.test.ts`)
 ```
 
 The flat `test/*.test.ts` root cluster (~350 files) is legacy/feature-focused placement.

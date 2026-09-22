@@ -23,13 +23,15 @@ function writeGlobal(agent: string, settings: unknown): void {
 const LEGACY_SETTINGS = {
 	defaultProvider: "claude-sdk-oauth",
 	defaultModel: "openai-codex/gpt-5.6-sol",
-	favoriteModels: ["claude-sdk-oauth/opus", "anthropic/claude-opus-4"],
-	modelThinkingLevels: { "claude-sdk-oauth/opus": "high", "anthropic/claude-opus-4": "low" },
+	favoriteModels: ["anthropic-subscription/opus", "anthropic/claude-opus-4"],
+	modelThinkingLevels: { "anthropic-subscription/opus": "high", "anthropic/claude-opus-4": "low" },
 	modelServiceTiers: { "openai-codex/gpt-5.6-sol": "priority" },
-	modelLastOnThinkingLevels: { "claude-sdk-oauth/opus": "medium" },
-	retry: { fallbackChains: { "claude-sdk-oauth/opus": ["claude-sdk-oauth/opus", "anthropic/claude-opus-4"] } },
+	modelLastOnThinkingLevels: { "anthropic-subscription/opus": "medium" },
+	retry: {
+		fallbackChains: { "anthropic-subscription/opus": ["anthropic-subscription/opus", "anthropic/claude-opus-4"] },
+	},
 	claudeSdkOauthProvider: { tokenInjection: "config-dir" },
-	openaiCodexProvider: { someSetting: true },
+	chatgptSubscriptionProvider: { someSetting: true },
 };
 afterEach(() => {
 	for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -63,6 +65,9 @@ describe("settings provider-key migration, proved off disk (senpi#1989)", () => 
 		// the settings blocks themselves
 		expect(s.anthropicSubscriptionProvider).toEqual({ tokenInjection: "config-dir" });
 		expect(s.chatgptSubscriptionProvider).toEqual({ someSetting: true });
+		// Both LEGACY settings-block keys must be gone after migration. These are
+		// legacy KEY STRINGS, not symbols — a symbol sweep must not rewrite them,
+		// or this contradicts the two assertions above.
 		expect("claudeSdkOauthProvider" in s).toBe(false);
 		expect("openaiCodexProvider" in s).toBe(false);
 	});

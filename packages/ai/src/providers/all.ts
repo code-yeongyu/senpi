@@ -10,6 +10,7 @@ import { azureOpenAIResponsesProvider } from "./azure-openai-responses.ts";
 import { baiProvider } from "./bai.ts";
 import { basetenProvider } from "./baseten.ts";
 import { cerebrasProvider } from "./cerebras.ts";
+import { chatgptSubscriptionProvider } from "./chatgpt-subscription.ts";
 import { cloudflareAIGatewayProvider } from "./cloudflare-ai-gateway.ts";
 import { cloudflareWorkersAIProvider } from "./cloudflare-workers-ai.ts";
 import { cursorProvider } from "./cursor.ts";
@@ -32,7 +33,6 @@ import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
 import { nvidiaProvider } from "./nvidia.ts";
 import { ollamaProvider } from "./ollama.ts";
 import { openaiProvider } from "./openai.ts";
-import { openaiCodexProvider } from "./openai-codex.ts";
 import { openaiImagesProvider } from "./openai-images.ts";
 import { opencodeProvider } from "./opencode.ts";
 import { opencodeGoProvider } from "./opencode-go.ts";
@@ -178,7 +178,7 @@ export function builtinProviders(): Provider[] {
 		moonshotaiCnProvider(),
 		nvidiaProvider(),
 		openaiProvider(),
-		openaiCodexProvider(),
+		chatgptSubscriptionProvider(),
 		ollamaProvider(),
 		opencodeProvider(),
 		opencodeGoProvider(),

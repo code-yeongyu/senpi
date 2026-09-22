@@ -11,8 +11,8 @@ import {
 import type { AuthStorage } from "./auth-storage.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
 import { CredentialSlotRepository, type CredentialSlotState, slotHealth } from "./credential-pool/state-store.ts";
-import { emitProviderAccountsChanged } from "./extensions/builtin/claude-sdk-oauth/account-events.ts";
-import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/claude-sdk-oauth/accounts.ts";
+import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
+import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscription/accounts.ts";
 
 export type CredentialAccountSource = "login" | "import" | "env";
 
