@@ -21,6 +21,8 @@ export type ContinuityBindingSnapshot = {
 	sentHashes: readonly string[];
 	sentPrefixHash?: string;
 	lastAssistantUuid: string | null;
+	/** Assistant boundaries as [index, uuid] entries, mirroring the runtime `ContinuityBinding`; a legacy fork anchors inside the hash-proven shared prefix (senpi#1974). */
+	assistantUuidByIndex?: readonly (readonly [number, string])[];
 	accountName: string;
 	modelId: string;
 	systemPromptHash: string;
@@ -102,6 +104,23 @@ function boundaryBefore(entry: ContinuityEntrySnapshot, count: number): { index:
 		if (uuid) return { index: candidate, uuid };
 	}
 	return undefined;
+}
+
+/**
+ * Same boundary search for a detached binding's entry list: the newest index at
+ * or below `cap` (index >= 1 mirrors `boundaryBefore` — an assistant at index 0
+ * would precede every user message, which no valid SDK lineage has). Entry order
+ * is not guaranteed, so this scans every entry instead of walking down.
+ */
+function newestBoundaryWithin(
+	entries: readonly (readonly [number, string])[] | undefined,
+	cap: number,
+): { index: number; uuid: string } | undefined {
+	let boundary: { index: number; uuid: string } | undefined;
+	for (const [index, uuid] of entries ?? []) {
+		if (index >= 1 && index <= cap && (!boundary || index > boundary.index)) boundary = { index, uuid };
+	}
+	return boundary;
 }
 
 function forkOrFlatten(
@@ -225,12 +244,22 @@ function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBi
 		};
 	}
 	if (!binding.lastAssistantUuid) return { kind: "flatten", reason: "registry_miss" };
+	// Invariant (senpi#1974): a fork's atUuid and from name the SAME mapped
+	// boundary — the newest assistant index inside the hash-proven shared prefix —
+	// so the SDK forks after an assistant the current history still contains and
+	// senpi re-sends exactly that boundary's suffix. lastAssistantUuid maps at
+	// binding.sentCount, which can lie past the divergence; no mapped boundary
+	// inside the prefix means the lineage cannot be trusted, so flatten instead of
+	// pairing an unrelated old-branch assistant with a smaller offset.
+	const reason: ContinuityReason = shared < binding.sentCount ? "history_rolled_back" : "sent_stream_diverged";
+	const boundary = newestBoundaryWithin(binding.assistantUuidByIndex, shared);
+	if (!boundary) return { kind: "flatten", reason };
 	return {
 		kind: "fork",
 		sdkSessionId: binding.sdkSessionId,
-		atUuid: binding.lastAssistantUuid,
-		from: shared,
-		reason: shared < binding.sentCount ? "history_rolled_back" : "sent_stream_diverged",
+		atUuid: boundary.uuid,
+		from: boundary.index,
+		reason,
 	};
 }
 
