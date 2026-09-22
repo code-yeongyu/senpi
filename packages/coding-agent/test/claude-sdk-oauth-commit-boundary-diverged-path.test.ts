@@ -57,9 +57,7 @@ function assistantWith(content: AssistantMessage["content"], model = MODEL_ID): 
 }
 
 function toolCallAssistant(summary: string): AssistantMessage {
-	return assistantWith([
-		{ type: "toolCall", id: "toolu_eval", name: "eval", arguments: { summary }, partialJson: "{}", index: 0 },
-	]);
+	return assistantWith([{ type: "toolCall", id: "toolu_eval", name: "eval", arguments: { summary } }]);
 }
 
 describe("issue #1975: assistant_rewritten names the first diverged path", () => {
@@ -73,6 +71,22 @@ describe("issue #1975: assistant_rewritten names the first diverged path", () =>
 		expect(result).toEqual({ outcome: "rewritten", divergedPath: "content[0].arguments.summary" });
 		expect(JSON.stringify(result)).not.toContain("Z9");
 		expect(JSON.stringify(result)).not.toContain(SUMMARY_80.slice(0, 40));
+	});
+
+	it("names the path when a shim mutates the captured arguments in place (#1472 class)", () => {
+		const boundary = new AssistantCommitBoundary();
+		const streamed = toolCallAssistant(SUMMARY_80);
+		boundary.captureProviderFinal("in-place", streamed);
+
+		// A shim mutating the same object after capture is the original #1472
+		// defect shape: a referenced projection would follow the mutation.
+		if (streamed.content[0]?.type !== "toolCall") throw new Error("expected a toolCall block");
+		streamed.content[0].arguments.summary = SUMMARY_92;
+
+		expect(boundary.commit("in-place", streamed, MODEL_ID)).toEqual({
+			outcome: "rewritten",
+			divergedPath: "content[0].arguments.summary",
+		});
 	});
 
 	it("keeps a clean commit path-free", () => {

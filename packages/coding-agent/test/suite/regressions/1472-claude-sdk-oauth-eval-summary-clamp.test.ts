@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 import { createEvalTool } from "../../../../senpi-codemode/src/tool/eval-tool.ts";
 import { EVAL_SUMMARY_MAX_LENGTH } from "../../../../senpi-codemode/src/tool/types.ts";
 import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../../src/core/extensions/builtin/claude-sdk-oauth/account-management.ts";
-import { AssistantCommitBoundary } from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-commit-boundary.ts";
+import {
+	AssistantCommitBoundary,
+	type AssistantCommitResult,
+} from "../../../src/core/extensions/builtin/claude-sdk-oauth/session-commit-boundary.ts";
 
 const MODEL_ID = "claude-opus-5";
 const UNUSED = () => Promise.reject(new Error("not reached: this regression only prepares arguments"));
@@ -49,7 +52,10 @@ function runSummary(summary: string): Record<string, unknown> {
 // The provider streams the message, senpi prepares the same message's tool call for execution,
 // and the commit boundary then fingerprints that message — so the regression drives one object
 // through the real order rather than comparing two hand-written copies.
-function commitAfterPreparing(message: AssistantMessage): { outcome: string; executed: Record<string, unknown> } {
+function commitAfterPreparing(message: AssistantMessage): {
+	outcome: AssistantCommitResult;
+	executed: Record<string, unknown>;
+} {
 	const boundary = new AssistantCommitBoundary();
 	boundary.captureProviderFinal("session-1", message);
 	const executed = prepareToolArguments(evalTool.prepareArguments, toolCallOf(message).arguments);
@@ -66,7 +72,7 @@ describe("issue #1472: preparing eval arguments must not break Claude SDK contin
 
 		const { outcome, executed } = commitAfterPreparing(message);
 
-		expect(outcome).toBe("clean");
+		expect(outcome).toEqual({ outcome: "clean" });
 		expect(toolCallOf(message).arguments.summary).toBe(summary);
 		expect(executed.summary).toHaveLength(EVAL_SUMMARY_MAX_LENGTH);
 		expect(executed.summary).toMatch(/\.\.\.$/);
@@ -78,7 +84,7 @@ describe("issue #1472: preparing eval arguments must not break Claude SDK contin
 
 		const { outcome, executed } = commitAfterPreparing(message);
 
-		expect(outcome).toBe("clean");
+		expect(outcome).toEqual({ outcome: "clean" });
 		expect(toolCallOf(message).arguments.summary).toBe(summary);
 		expect(executed.summary).toBe(summary);
 	});
@@ -88,7 +94,7 @@ describe("issue #1472: preparing eval arguments must not break Claude SDK contin
 
 		const { outcome } = commitAfterPreparing(message);
 
-		expect(outcome).toBe("clean");
+		expect(outcome).toEqual({ outcome: "clean" });
 		expect(toolCallOf(message).arguments).toEqual({ action: "peek", cell_id: "cell-1" });
 	});
 
@@ -99,7 +105,10 @@ describe("issue #1472: preparing eval arguments must not break Claude SDK contin
 
 		toolCallOf(message).arguments.summary = "delete the cache state";
 
-		expect(boundary.commit("session-1", message, MODEL_ID)).toBe("rewritten");
+		expect(boundary.commit("session-1", message, MODEL_ID)).toEqual({
+			outcome: "rewritten",
+			divergedPath: "content[0].arguments.summary",
+		});
 	});
 
 	it("still reports a genuine code rewrite as rewritten", () => {
@@ -109,6 +118,9 @@ describe("issue #1472: preparing eval arguments must not break Claude SDK contin
 
 		toolCallOf(message).arguments.code = "return 2";
 
-		expect(boundary.commit("session-1", message, MODEL_ID)).toBe("rewritten");
+		expect(boundary.commit("session-1", message, MODEL_ID)).toEqual({
+			outcome: "rewritten",
+			divergedPath: "content[0].arguments.code",
+		});
 	});
 });

@@ -73,6 +73,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The captured projection must be a snapshot, not a reference: the rewrite
+ * class this exists for (#1472, #1975) mutates tool-call arguments in place
+ * between `message_update` and `message_end`, and a shared reference would
+ * follow the mutation and blind the structural walk to exactly that case.
+ */
+function snapshotProjection(value: unknown, depth: number): unknown {
+	if (depth > MAX_DIVERGENCE_DEPTH) return value;
+	if (Array.isArray(value)) return value.map((item) => snapshotProjection(item, depth + 1));
+	if (!isRecord(value)) return value;
+	return Object.fromEntries(Object.keys(value).map((key) => [key, snapshotProjection(value[key], depth + 1)]));
+}
+
 function fieldOf(block: unknown, field: string): unknown {
 	return isRecord(block) ? block[field] : undefined;
 }
@@ -157,7 +170,7 @@ export class AssistantCommitBoundary {
 	captureProviderFinal(key: string, message: AssistantMessage): void {
 		this.providerFinalByKey.set(key, {
 			hash: assistantContentHash(message),
-			projection: semanticProjection(message),
+			projection: snapshotProjection(semanticProjection(message), 0) as AssistantSemanticProjection,
 		});
 	}
 
