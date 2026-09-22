@@ -1,6 +1,7 @@
 import { BoundedAsyncQueue, SESSION_STREAM_QUEUE_CAPACITY } from "./bounded-queue.ts";
 import { sdkResultFailure } from "./errors.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
+import type { ContinuityMetrics } from "./session-observability.ts";
 import { bindingFromEntry, forgetBinding, rememberBinding } from "./session-reattach.ts";
 import {
 	type ClaudeSdkOauthSessionEntry,
@@ -11,13 +12,43 @@ import {
 import { submitSessionTurn } from "./session-registry-pump.ts";
 import { recordSyncedStream, sentHashPrefixDigest } from "./session-sync.ts";
 
-type StagedContinuityDecision = { emit(): void };
+type StagedContinuityDecision = { emit(metrics?: ContinuityMetrics): void };
+
+type SuccessfulSdkResult = Extract<SDKMessage, { type: "result"; subtype: "success" }>;
+
+function lastSuccessfulResult(messages: readonly SDKMessage[]): SuccessfulSdkResult | undefined {
+	let last: SuccessfulSdkResult | undefined;
+	for (const message of messages) {
+		if (message.type === "result" && message.subtype === "success" && sdkResultFailure(message) === undefined) {
+			last = message;
+		}
+	}
+	return last;
+}
 
 function successfulTurn(messages: readonly SDKMessage[]): boolean {
-	return messages.some(
-		(message) =>
-			message.type === "result" && message.subtype === "success" && sdkResultFailure(message) === undefined,
-	);
+	return lastSuccessfulResult(messages) !== undefined;
+}
+
+/**
+ * The retained attempt's cache/token cost, read from its last successful
+ * result: absent fields were not reported (an absent value is never a measured
+ * zero), so they stay undefined rather than being zero-filled (senpi#1976).
+ */
+function attemptContinuityMetrics(messages: readonly SDKMessage[]): ContinuityMetrics | undefined {
+	const result = lastSuccessfulResult(messages);
+	if (result === undefined) return undefined;
+	const metrics: ContinuityMetrics = {};
+	// The SDK types usage as always present; an older CLI can still omit the
+	// whole object, so treat it as partial and let absent fields stay undefined.
+	const usage: Partial<SuccessfulSdkResult["usage"]> | undefined = result.usage;
+	if (typeof usage?.cache_read_input_tokens === "number") metrics.cacheRead = usage.cache_read_input_tokens;
+	if (typeof usage?.cache_creation_input_tokens === "number") {
+		metrics.cacheWrite = usage.cache_creation_input_tokens;
+	}
+	if (typeof usage?.input_tokens === "number") metrics.inputTokens = usage.input_tokens;
+	if (typeof result.num_turns === "number") metrics.numTurns = result.num_turns;
+	return metrics;
 }
 
 function recordAssistantUuid(entry: ClaudeSdkOauthSessionEntry, sentCount: number, message: SDKMessage): void {
@@ -105,8 +136,9 @@ export function createSessionTurnAttempt(
 				// attempt throws to the catch below. Both stay silent so the turn yields
 				// exactly one continuity observation - this retained attempt, or the
 				// single terminal observation residentSessionMessages emits when every
-				// attempt fails.
-				staged.emit();
+				// attempt fails. The retained attempt's result usage rides along
+				// (senpi#1976); a turn without a successful result passes undefined.
+				staged.emit(attemptContinuityMetrics(turn.messages));
 			} catch (error) {
 				// The queue failed (completion rejected: pump failure, query end,
 				// attribution error). The payload was still pushed, so the retry needs

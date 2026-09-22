@@ -6,9 +6,12 @@
 
 ### Added
 
+- Continuity observations on the Claude resident lane now carry the retained attempt's cache cost (`cacheRead`, `cacheWrite`, `inputTokens`, `numTurns`) on the observation, the `claude_sdk_oauth_session_continuity` session.log line, and the assistant diagnostic details, so a cold re-send's token bill is provable from one log line and a warm delta turn shows its cache read. ([#1976](https://github.com/code-yeongyu/senpi/issues/1976))
 - RPC `open_session` accepts an optional `durableSessionId`, so a client that already owns a stable id for the conversation can create the session under that id instead of mapping to a host-minted one. Advertised as host capability `durable_session_id`; applies to session creation only, since re-opening an existing session file keeps that file's header id. A malformed id is refused with `invalid_session_id` and an id a live session already holds with `session_id_in_use`. ([#1951](https://github.com/code-yeongyu/senpi/issues/1951))
 
 ### Changed
+
+- The resident-lane continuity notice no longer labels an expected context rebuild as lost continuity: an accepted compaction, a model switch, session-tree navigation, and the documented config-dir residual now read `Session context rebuilt (<reason>)`, while defect-shaped reasons keep `Session continuity lost - resent the full conversation (<reason>)`; both append the re-send's cache cost (`cache read 25.4K / write 41.5K tokens`) when the diagnostic carries it. ([#1976](https://github.com/code-yeongyu/senpi/issues/1976))
 
 ### Fixed
 

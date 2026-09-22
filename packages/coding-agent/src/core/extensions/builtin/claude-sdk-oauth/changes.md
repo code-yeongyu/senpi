@@ -1,3 +1,20 @@
+## 2026-09-22 - Continuity observations carry the retained attempt's cache metrics (senpi#1976)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/session-observability.ts`: `ContinuityObservation` gains optional `cacheRead` / `cacheWrite` / `inputTokens` / `numTurns`, and `stageContinuityDecision`'s `emit` accepts a `ContinuityMetrics` argument that is merged into the staged observation at emit time. `emitContinuityObservation` logs the fields under the same keys on the `claude_sdk_oauth_session_continuity` line; absent fields stay absent, never 0-filled.
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/session-turn-attempt.ts`: the retained attempt reads usage (`cache_read_input_tokens`, `cache_creation_input_tokens`, `input_tokens`) and `num_turns` from its LAST successful result message and passes them to `staged.emit`. A discarded attempt still emits nothing; a turn without a successful result passes `undefined`. The whole `usage` object is treated as runtime-optional even though the SDK types it always-present - an older CLI that omits it must not crash the turn (the no-usage control test caught exactly that).
+- No `stream.ts` change: `recordContinuity` already spreads the observation into the diagnostic details, so the new fields reach the RPC/desktop surfaces unchanged (pinned by the new scripted test).
+
+### Why
+
+- senpi#1976: a cold re-send's cost was invisible on the continuity surfaces - observation, session.log line and diagnostic details carried only kind/reason/count/payloadBytes, so proving that one `registry_miss` re-send burned ~397K cache-write tokens required correlating a separate usage dump with transcript timestamps. A warm delta turn's cache read was equally invisible.
+
+### Expected merge conflict zones
+
+- LOW: the `ContinuityObservation` type block and the `claude_sdk_oauth_session_continuity` log payload in `session-observability.ts`.
+- LOW: the emit closure in `stageContinuityDecision` and the single `staged.emit` call site in `session-turn-attempt.ts`.
+
 ## 2026-09-22 - An append-only tail keeps the restart binding (senpi#1964)
 
 ### What changed

@@ -51,12 +51,24 @@ export type ContinuityReason =
 	| "timeout_retry"
 	| "other";
 
+/** Cache/token cost of the retained attempt's final successful result; absent fields were not reported. */
+export type ContinuityMetrics = {
+	cacheRead?: number;
+	cacheWrite?: number;
+	inputTokens?: number;
+	numTurns?: number;
+};
+
 export type ContinuityObservation = {
 	kind: ContinuityKind;
 	reason: ContinuityReason;
 	deltaMessages?: number;
 	payloadBytes?: number;
 	collapsedDirectives?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	inputTokens?: number;
+	numTurns?: number;
 };
 
 export type ContinuityObservabilityBoundary = {
@@ -239,7 +251,8 @@ export function observeSessionSyncDecision(input: {
 
 export type StagedContinuityDecision = {
 	observation: ContinuityObservation;
-	emit: () => void;
+	/** Enriches the staged observation with the retained attempt's metrics at emit time (senpi#1976). */
+	emit: (metrics?: ContinuityMetrics) => void;
 };
 
 /** Stages an attempt's decision; `emit` fires only when the attempt is retained. */
@@ -251,11 +264,11 @@ export function stageContinuityDecision(
 	let emitted = false;
 	return {
 		observation,
-		emit: () => {
+		emit: (metrics?: ContinuityMetrics) => {
 			if (emitted) return;
 			emitted = true;
 			beforeEmit?.();
-			emitContinuityObservation(observation, onDecision);
+			emitContinuityObservation(metrics === undefined ? observation : { ...observation, ...metrics }, onDecision);
 		},
 	};
 }
@@ -270,5 +283,9 @@ export function emitContinuityObservation(
 		kind: observation.kind,
 		reason: observation.reason,
 		...(observation.deltaMessages === undefined ? {} : { count: observation.deltaMessages }),
+		...(observation.cacheRead === undefined ? {} : { cacheRead: observation.cacheRead }),
+		...(observation.cacheWrite === undefined ? {} : { cacheWrite: observation.cacheWrite }),
+		...(observation.inputTokens === undefined ? {} : { inputTokens: observation.inputTokens }),
+		...(observation.numTurns === undefined ? {} : { numTurns: observation.numTurns }),
 	});
 }
