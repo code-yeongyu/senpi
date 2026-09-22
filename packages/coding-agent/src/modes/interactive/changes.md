@@ -1,3 +1,22 @@
+## 2026-09-22 - The continuity notice distinguishes expected rebuilds from lost continuity (senpi#1976)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/continuity-notice.ts`: exports `EXPECTED_REBUILD_REASONS` (`tainted_compaction`, `model_changed`, `branch_diverged`, `tainted_fork`, `cross_root_unsupported`) and `classifyContinuityReason`; those reasons render `Session context rebuilt (<reason>)` while every other flatten reason keeps `Session continuity lost - resent the full conversation (<reason>)`. A ` - cache read <n> / write <n> tokens` clause is appended when the diagnostic details carry `cacheRead`/`cacheWrite` (token counts truncated to one decimal - a cost figure never rounds up; only the known sides render). The resume-fallback label, the disabled render-once behavior, and silence for healthy kinds are unchanged.
+- `packages/coding-agent/test/claude-sdk-oauth-diagnostic-render.test.ts`: one assertion REALIGNED, not deleted - "renders a muted notice for a flatten diagnostic" used `tainted_compaction` and asserted the "Session continuity" family; it now asserts "Session context rebuilt" for the same reason, because the old assertion pinned the wording senpi#1976 fixes.
+
+### Why
+
+- senpi#1976 (oh-my-openagent#8424 wording complaint): an accepted compaction or a user model switch re-sends the conversation by design, but read exactly like the defect-shaped reasons (`assistant_rewritten`, `registry_miss`, ...), training users to ignore the line that reports real continuity loss. The cache-cost suffix makes the re-send's token bill visible at the moment it is paid.
+
+### Why an extension could not handle it
+
+- The notice is rendered by `ContinuityNoticeTracker` inside the transcript component; extensions can attach diagnostics but cannot rewrite how an existing diagnostic type is drawn.
+
+### Expected merge conflict zones
+
+- LOW: the label block in `continuity-notice.ts` (`KIND_LABELS` was replaced by the classification export plus label constants), the `ContinuityDetails` parser fields, and the suffix composition in `noticeFor`.
+
 ## 2026-09-21 - Transcript explains transport drops and never renders the replay marker (senpi#1628)
 
 ### What changed

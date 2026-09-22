@@ -189,7 +189,7 @@ describe("Continuity notice rendering", () => {
 			]),
 		);
 
-		expect(notice).toContain("Session continuity");
+		expect(notice).toContain("Session context rebuilt");
 		expect(notice).toContain("tainted_compaction");
 	});
 
