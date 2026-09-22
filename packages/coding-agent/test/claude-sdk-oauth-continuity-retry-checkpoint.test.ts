@@ -51,13 +51,20 @@ describe("claude-sdk-oauth retry checkpoint continuity", () => {
 	it("ignores a checkpoint whose pre-turn prefix no longer matches", () => {
 		const decision = decideNativeContinuity(
 			input({
-				binding: restored({ unansweredTurnDigest: sentHashPrefixDigest(["h1", "h2-rewritten", "h3"]) }),
+				binding: restored({
+					unansweredTurnDigest: sentHashPrefixDigest(["h1", "h2-rewritten", "h3"]),
+					assistantUuidByIndex: [
+						[1, "uuid-a1"],
+						[2, "uuid-a2"],
+					],
+				}),
 				currentHashes: ["h1", "h2-rewritten", "h3"],
 			}),
 		);
 
-		// Falls through to the pre-existing divergence branch, which owns this shape.
-		expect(decision).toMatchObject({ kind: "fork", reason: "history_rolled_back", atUuid: "uuid-a2" });
+		// Falls through to the divergence branch, which owns this shape: the fork
+		// anchors at the newest boundary INSIDE the shared prefix (senpi#1974).
+		expect(decision).toMatchObject({ kind: "fork", reason: "history_rolled_back", atUuid: "uuid-a1", from: 1 });
 	});
 
 	it("ignores a checkpoint whose restored prefix digest no longer matches", () => {

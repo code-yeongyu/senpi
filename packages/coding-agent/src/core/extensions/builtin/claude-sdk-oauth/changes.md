@@ -1,4 +1,24 @@
-## 2026-09-22 - An append-only tail keeps the restart binding (senpi#1964)
+## 2026-09-22 - A detached-binding fork names one boundary for atUuid and from (senpi#1974)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/claude-sdk-oauth/session-continuity.ts`: `ContinuityBindingSnapshot` gains the optional `assistantUuidByIndex` entries field (same `readonly (readonly [number, string])[]` shape the runtime `ContinuityBinding` in `session-reattach.ts` already carries, so `admitRestoredBinding`'s structural passthrough needs no other edit). The legacy `decideFromBinding` branch (no `sentPrefixHash`) no longer pairs `atUuid: binding.lastAssistantUuid` with `from: shared`: a new `newestBoundaryWithin(entries, cap)` helper returns the newest mapped boundary with `index >= 1 && index <= shared` — the same strictly-before-the-divergence cap `boundaryBefore` gives the live entry path — and the fork uses that entry's uuid AND index. When no mapped boundary lies inside the shared prefix the decision fails closed to `flatten` with the same reason (`history_rolled_back` / `sent_stream_diverged`). The `sentPrefixHash` branch, `forkOrFlatten`, `retryCheckpointDecision` and the `!lastAssistantUuid` flatten are untouched (the latter belongs to senpi#1973).
+- `packages/coding-agent/test/claude-sdk-oauth-continuity-legacy-fork-pairing.test.ts`: new file (the decision test file is at the 250-pure-LOC ceiling) with the two issue fixtures: a diverged binding whose map carries `[2, a2], [4, a4]` must fork at `a2`/`from 2` (previously `a4` with `from 2`), and a map of only `[4, a4]` must flatten.
+- `packages/coding-agent/test/claude-sdk-oauth-continuity-retry-checkpoint.test.ts`: one assertion was REALIGNED, not deleted. "ignores a checkpoint whose pre-turn prefix no longer matches" had pinned the defective contract (`fork` at `uuid-a2`, whose index sits outside the shared prefix, with `from` unpinned); its binding now carries `assistantUuidByIndex [[1, uuid-a1], [2, uuid-a2]]` and the assertion pins the safe pairing `fork / history_rolled_back / atUuid uuid-a1 / from 1` - strictly more than before.
+- `packages/coding-agent/test/claude-sdk-oauth-restart-binding-drift.test.ts`: "lets a sent-stream divergence dominate the drift reason" (oh-my-openagent#7884) was the second pin of the same defect - its map-less binding forked at `uuid-a2` outside the shared prefix, and its `not.toBe("flatten")` guard failed once that shape fails closed. Its binding also carries `[[1, uuid-a1], [2, uuid-a2]]` now; both original assertions are untouched and the divergence still dominates the drift reason on the fork path.
+
+### Why
+
+- `lastAssistantUuid` maps the assistant committed at `binding.sentCount`, but `from` was the common-prefix length, which can be strictly smaller. `session-stream.ts` then built the reattach binding with `assistantUuidByIndex.filter(([index]) => index <= decision.from)` and `lastAssistantUuid: decision.atUuid`, so the SDK forked after an assistant from OUTSIDE the shared prefix while senpi re-sent the application history from `shared` - the new branch retained an unrelated old-branch assistant and appended replacement user history after it (offline SDK-lineage demonstration: oh-my-openagent#8424 finding 6).
+- Every producer that reaches this branch already carries the map: persisted sidecar bindings always have `sentPrefixHash` (schema v1 requires it) and take the other branch, while every in-memory binding is built by `bindingFromEntry`, which copies the live entry's full map. So the search fails closed only where the pairing was unsafe, and the flatten fallback is the recovery gap senpi#1973 owns for the no-boundary shape.
+
+### Expected merge conflict zones
+
+- LOW: the `assistantUuidByIndex` field in `ContinuityBindingSnapshot` and the `newestBoundaryWithin` helper next to `boundaryBefore`.
+- MEDIUM: the legacy fork block at the tail of `decideFromBinding` - the senpi#1973 lane rebases onto this merge and must keep the boundary search.
+- MEDIUM: the realigned assertion in `claude-sdk-oauth-continuity-retry-checkpoint.test.ts` conflicts with any edit to that case.
+
+
 
 ### What changed
 
