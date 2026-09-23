@@ -38,6 +38,8 @@ export type CredentialAccountDetail = CredentialAccountSummary & {
 	readonly email?: string;
 	/** Present only on a blocked account whose block carries a reason. */
 	readonly blockReason?: CredentialAccountBlockReason;
+	/** When a stored OAuth account's access token expires (epoch ms); absent for keys and env accounts. */
+	readonly expiresAt?: number;
 };
 
 const ACCOUNT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -136,7 +138,7 @@ export async function summarizeCredentialAccounts(
 	repository: CredentialSlotRepository = new CredentialSlotRepository(),
 ): Promise<CredentialAccountSummary[]> {
 	const details = await describeCredentialAccounts(provider, stored, env, repository);
-	return details.map(({ email: _email, blockReason: _blockReason, ...summary }) => summary);
+	return details.map(({ email: _email, blockReason: _blockReason, expiresAt: _expiresAt, ...summary }) => summary);
 }
 
 async function describeCredentialAccounts(
@@ -171,6 +173,7 @@ async function describeCredentialAccounts(
 			// A block belongs to the material that earned it; a re-login starts clean.
 			const applicable = persisted?.credentialRevision === revision ? persisted : undefined;
 			const email = credentialIdentity(slot.identity)?.email;
+			const expiresAt = credential.type === "oauth" && typeof slot.expires === "number" ? slot.expires : undefined;
 			const blocked = slotBlocked(slot, applicable, now);
 			const blockReason = blocked ? slotBlockReason(slot, applicable, now) : undefined;
 			summaries.push({
@@ -180,6 +183,7 @@ async function describeCredentialAccounts(
 				source: slot.source ?? "login",
 				blocked,
 				...(blockReason === undefined ? {} : { blockReason }),
+				...(expiresAt === undefined ? {} : { expiresAt }),
 				pinned: pinned === slot.name,
 			});
 		}

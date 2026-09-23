@@ -88,6 +88,41 @@ describe("/account command", () => {
 		expect(notices.at(-1)).toEqual({ message: "Provider account not found: missing", type: "error" });
 	});
 
+	it("names an OAuth account whose access token has lapsed, so an account that stopped refreshing stands out", async () => {
+		const now = Date.now();
+		await storage.modify("anthropic", async () => ({
+			type: "oauth",
+			access: "live-access",
+			refresh: "live-refresh",
+			expires: now + 3 * 3_600_000,
+			accounts: [
+				{
+					name: "live",
+					source: "login",
+					access: "live-access",
+					refresh: "live-refresh",
+					expires: now + 3 * 3_600_000,
+				},
+				{
+					name: "stale",
+					source: "login",
+					access: "stale-access",
+					refresh: "stale-refresh",
+					expires: now - 8 * 86_400_000,
+				},
+			],
+		}));
+		const { ctx, notices } = createContext();
+
+		await registeredCommand().handler("anthropic list", ctx);
+
+		const output = notices.at(-1)?.message ?? "";
+		expect(output).toContain("live | login | available");
+		expect(output).not.toMatch(/live \| login \| available \| expired/);
+		expect(output).toContain("stale | login | available | token expired 8d ago");
+		expect(output).not.toContain("stale-access");
+	});
+
 	it("shows usage without a provider argument", async () => {
 		const { ctx, notices } = createContext();
 

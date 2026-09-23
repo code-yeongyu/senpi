@@ -1,8 +1,8 @@
-## 2026-09-23 - /account list shows the account email and why an account is blocked
+## 2026-09-23 - /account list shows the account email, why an account is blocked, and a lapsed token
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: list rows add the login email after the label when known, and a blocked row names its reason: `blocked (log in again)`, `blocked (rate limited)` or `blocked (account disabled)`. Rows without either keep their previous text.
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: list rows add the login email after the label when known, and a blocked row names its reason: `blocked (log in again)`, `blocked (rate limited)` or `blocked (account disabled)`. An OAuth account whose access token has lapsed ends with `token expired <age> ago`; the token renews on next use, so days of lapse flag an account whose refresh token has stopped working. Rows without any of these keep their previous text.
 
 ### Why
 
