@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
 import {
 	accountDisplayName,
+	credentialIdentity,
 	listSlots,
 	type PooledCredential,
 	pinSlot,
@@ -16,6 +17,9 @@ import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscripti
 
 export type CredentialAccountSource = "login" | "import" | "env";
 
+/** Why a blocked account is out of rotation; auth and billing blocks only clear with a new login. */
+export type CredentialAccountBlockReason = "auth_error" | "rate_limit" | "account_disabled";
+
 /** Account metadata safe to surface: names and health only, never key material. */
 export type CredentialAccountSummary = {
 	readonly name: string;
@@ -23,6 +27,17 @@ export type CredentialAccountSummary = {
 	readonly source: CredentialAccountSource;
 	readonly blocked: boolean;
 	readonly pinned: boolean;
+};
+
+/**
+ * A summary plus the detail a local account list renders. Kept off the summary
+ * so the app-server and RPC wire shapes, which serialize summaries, stay as they are.
+ */
+export type CredentialAccountDetail = CredentialAccountSummary & {
+	/** The login's reported account email, when the provider reported one. */
+	readonly email?: string;
+	/** Present only on a blocked account whose block carries a reason. */
+	readonly blockReason?: CredentialAccountBlockReason;
 };
 
 const ACCOUNT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -72,6 +87,21 @@ function slotBlocked(slot: object, sidecar: CredentialSlotState | undefined, now
 	return blockedUntil !== undefined && blockedUntil > now;
 }
 
+function isBlockReason(value: string | undefined): value is CredentialAccountBlockReason {
+	return value === "auth_error" || value === "rate_limit" || value === "account_disabled";
+}
+
+/** The reason recorded by whichever source blocked the slot; the sidecar wins when both did. */
+function slotBlockReason(
+	slot: object,
+	sidecar: CredentialSlotState | undefined,
+	now: number,
+): CredentialAccountBlockReason | undefined {
+	if (slotHealth(sidecar, now) === "blocked" && isBlockReason(sidecar?.blockReason)) return sidecar.blockReason;
+	const reason = stringField(slot, "blockReason");
+	return isBlockReason(reason) ? reason : undefined;
+}
+
 /**
  * Lists a provider's credential accounts for ANY provider, not just one lane.
  * Stored slots own the listing when a credential exists; env slots are listed
@@ -88,6 +118,16 @@ export async function getCredentialAccounts(
 	return summarizeCredentialAccounts(provider, storage.get(provider), env, repository ?? defaultRepository(storage));
 }
 
+/** {@link getCredentialAccounts} plus each account's email and block reason, for local account lists. */
+export async function getCredentialAccountDetails(
+	storage: AuthStorage,
+	provider: string,
+	env: NodeJS.ProcessEnv = process.env,
+	repository?: CredentialSlotRepository,
+): Promise<CredentialAccountDetail[]> {
+	return describeCredentialAccounts(provider, storage.get(provider), env, repository ?? defaultRepository(storage));
+}
+
 /** Storage-free variant for callers that already hold the credential (e.g. auth check). */
 export async function summarizeCredentialAccounts(
 	provider: string,
@@ -95,10 +135,20 @@ export async function summarizeCredentialAccounts(
 	env: NodeJS.ProcessEnv = process.env,
 	repository: CredentialSlotRepository = new CredentialSlotRepository(),
 ): Promise<CredentialAccountSummary[]> {
+	const details = await describeCredentialAccounts(provider, stored, env, repository);
+	return details.map(({ email: _email, blockReason: _blockReason, ...summary }) => summary);
+}
+
+async function describeCredentialAccounts(
+	provider: string,
+	stored: Credential | undefined,
+	env: NodeJS.ProcessEnv,
+	repository: CredentialSlotRepository,
+): Promise<CredentialAccountDetail[]> {
 	const credential = pooledFrom(stored);
 	const now = Date.now();
 	const pinned = pinnedName(credential);
-	const summaries: CredentialAccountSummary[] = [];
+	const summaries: CredentialAccountDetail[] = [];
 
 	if (credential) {
 		const state = await repository.listSlots(provider, "stored");
@@ -120,11 +170,16 @@ export async function summarizeCredentialAccounts(
 			});
 			// A block belongs to the material that earned it; a re-login starts clean.
 			const applicable = persisted?.credentialRevision === revision ? persisted : undefined;
+			const email = credentialIdentity(slot.identity)?.email;
+			const blocked = slotBlocked(slot, applicable, now);
+			const blockReason = blocked ? slotBlockReason(slot, applicable, now) : undefined;
 			summaries.push({
 				name: slot.name,
 				...(displayName === undefined ? {} : { displayName }),
+				...(email === undefined ? {} : { email }),
 				source: slot.source ?? "login",
-				blocked: slotBlocked(slot, applicable, now),
+				blocked,
+				...(blockReason === undefined ? {} : { blockReason }),
 				pinned: pinned === slot.name,
 			});
 		}
