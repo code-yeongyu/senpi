@@ -86,6 +86,11 @@ export class AssistantMessageComponent extends Container {
 		this.refreshContent();
 	}
 
+	/** Transcript-only reasoning/empty streaming heads may sit inside a compact exploration group. */
+	get isExplorationDetail(): boolean {
+		return this.renderDescriptors.every((part) => part.kind === "spacer" || part.kind === "thinking-label");
+	}
+
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
 		this.renderDescriptors = [];

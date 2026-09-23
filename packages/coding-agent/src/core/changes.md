@@ -18,6 +18,24 @@ Account selection lives in the credential pool and `ModelRuntime`; extensions on
 
 - LOW: `getApiKeyAndHeaders` in `model-registry.ts`; the new methods sit next to `getAuth` in `model-runtime.ts`; the `select` callback in `streamWithCredentialRotation`.
 
+## 2026-09-23 — Observe stderr below hidden diagnostic redirects (senpi#1879)
+
+### What changed
+
+- `packages/coding-agent/src/core/output-guard.ts` exposes a shared visible-stderr subscription. It follows the underlying writer across guard installation and restoration, retaining callback and backpressure behavior.
+
+### Why
+
+- Hidden diagnostics were invalidating mouse geometry even though no bytes reached the terminal.
+
+### Why an extension could not handle it
+
+- The output guard owns the actual stderr destination and its redacted failure fallback.
+
+### Expected merge conflict zones
+
+- Stderr takeover and restoration. Multiple subscribers and both teardown orders must remain safe.
+
 ## 2026-09-23 - Namespaced calls to deferred tools activate the unique match (senpi#2025)
 
 ### What changed

@@ -1,5 +1,23 @@
 # TUI delta rendering fork changes
 
+## 2026-09-23 — Let hosts observe the real stderr destination (senpi#1879)
+
+### What changed
+
+- `packages/tui/src/terminal.ts` accepts a host-owned stderr subscription and releases it on stop. `packages/tui/src/stderr-observer.ts` retains direct-stream observation for ordinary terminals without replacing a later writer during cleanup.
+
+### Why
+
+- A host can redirect stderr to a diagnostic log. Observing calls above that redirect falsely reports visible output and duplicates the working frame.
+
+### Why an extension could not handle it
+
+- Mouse geometry is invalidated inside the terminal, below extension components.
+
+### Expected merge conflict zones
+
+- Terminal construction, external-write observation and stop cleanup. Visible stdout/stderr must continue invalidating stale hit targets.
+
 ## 2026-09-22 - Render-error diagnostics follow the host log directory (senpi#2000)
 
 ### What changed

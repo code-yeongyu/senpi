@@ -128,6 +128,11 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/** Read-only presentation state; execution routing continues to own this original card. */
+	get presentationSnapshot() {
+		return { identity: this.identity, state: this.createRenderState(), presentation: this.presentation };
+	}
+
 	markExecutionStarted(): void {
 		this.executionStarted = true;
 		this.updateSpinnerAnimation();
