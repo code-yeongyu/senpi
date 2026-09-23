@@ -212,6 +212,53 @@ describe("credential pool slot algebra", () => {
 		expect(stored).toEqual(authoritative.accounts?.[0]);
 	});
 
+	// code-yeongyu/oh-my-openagent#8673: a re-login that refreshes an existing slot
+	// in place must persist; the merge used to keep the stored (revoked) slot.
+	test("a same-name re-login with newer material replaces the stored slot and lifts its block", () => {
+		type BlockableSlot = CredentialSlot & { blockedUntil?: number; blockReason?: string };
+		const revoked: BlockableSlot = {
+			name: "default",
+			source: "login",
+			access: "revoked-access",
+			refresh: "revoked-refresh",
+			expires: 999,
+			blockReason: "auth_error",
+		};
+		const sibling: CredentialSlot = {
+			name: "work",
+			source: "login",
+			access: "work-a",
+			refresh: "work-r",
+			expires: 5_000,
+		};
+		const current: PooledCredential = { ...sentinelPool(), pinned: "work", accounts: [revoked, sibling] };
+		const refreshed: CredentialSlot = {
+			name: "default",
+			source: "login",
+			access: "fresh-access",
+			refresh: "fresh-refresh",
+			expires: 9_999,
+		};
+		const providerLoginResult: PooledCredential = { ...current, accounts: [refreshed, sibling] };
+
+		const next = appendLoginSlot(current, providerLoginResult) as PooledCredential;
+
+		expect(names(next)).toEqual(["default", "work"]);
+		expect(next.accounts?.[0]).toEqual(refreshed);
+		expect(next.accounts?.[1]).toBe(sibling);
+		expect(next.pinned).toBe("work");
+	});
+
+	test("a same-name slot without newer material keeps the stored copy", () => {
+		const current = sentinelPool();
+		const echoed: PooledCredential = {
+			...current,
+			accounts: [{ name: "default", source: "login", access: "echo-a", refresh: "echo-r", expires: 999 }],
+		};
+
+		expect(appendLoginSlot(current, echoed)).toBe(current);
+	});
+
 	test("a provider-owned pool onto a flat current keeps the whole-write shape", () => {
 		const flat: PooledCredential = { type: "oauth", access: "legacy-a", refresh: "legacy-r", expires: 999 };
 		const providerLoginResult: PooledCredential = {
