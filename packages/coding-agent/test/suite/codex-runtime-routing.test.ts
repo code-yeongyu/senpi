@@ -27,7 +27,7 @@ async function fixture() {
 		expires: 9e12,
 	}));
 	const credentials = AuthStorage.inMemory({
-		"openai-codex": {
+		"chatgpt-subscription": {
 			type: "oauth",
 			access: token("exhausted"),
 			refresh: "test-refresh-exhausted",
@@ -42,8 +42,8 @@ async function fixture() {
 		modelsPath: null,
 		allowModelNetwork: false,
 	});
-	const provider = runtime.getProvider("openai-codex");
-	const model = runtime.getModels().find((candidate) => candidate.provider === "openai-codex");
+	const provider = runtime.getProvider("chatgpt-subscription");
+	const model = runtime.getModels().find((candidate) => candidate.provider === "chatgpt-subscription");
 	if (!provider || !model) throw new Error("Codex builtin is required");
 	const fetchUsage = vi.fn(async (_url: unknown, init?: RequestInit) => {
 		const exhausted = new Headers(init?.headers).get("authorization") === `Bearer ${token("exhausted")}`;
@@ -62,7 +62,7 @@ async function fixture() {
 
 it.each(["exhausted", "external"])("explicit %s credentials bypass Codex rotation", async (name) => {
 	const f = await fixture();
-	const faux = fauxProvider({ provider: "openai-codex" });
+	const faux = fauxProvider({ provider: "chatgpt-subscription" });
 	try {
 		await f.runtime.registerNativeProvider(
 			{
@@ -115,17 +115,19 @@ it("an account reserved by another half-open probe cannot authorize paid usage",
 	const f = await fixture();
 	try {
 		const repository = new CredentialSlotRepository(join(f.dir, "credential-pool-state.json"));
-		const credentialRevision = await repository.storedCredentialRevision("openai-codex", "exhausted", {
+		const credentialRevision = await repository.storedCredentialRevision("chatgpt-subscription", "exhausted", {
 			access: token("exhausted"),
 			refresh: "test-refresh-exhausted",
 		});
-		await repository.mutateSlotState("openai-codex", "stored", "exhausted", () => ({
+		await repository.mutateSlotState("chatgpt-subscription", "stored", "exhausted", () => ({
 			credentialRevision,
 			blockedUntil: 1,
 			blockReason: "rate_limit",
 			lease: { id: "another-request", expiresAt: 9e12 },
 		}));
-		expect((await repository.listSlots("openai-codex", "stored")).exhausted?.lease?.id).toBe("another-request");
+		expect((await repository.listSlots("chatgpt-subscription", "stored")).exhausted?.lease?.id).toBe(
+			"another-request",
+		);
 		f.fetchUsage.mockImplementation(async (_url, init) => {
 			const included = new Headers(init?.headers).get("authorization") === `Bearer ${token("exhausted")}`;
 			return Response.json({

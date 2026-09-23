@@ -1,3 +1,4 @@
+import { normalizeProviderId } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import type { RotationSlot, RotationSources } from "./rotation-stream.ts";
 
@@ -59,7 +60,7 @@ export async function admitCodexQuota(
 	sources: Pick<RotationSources, "providerId" | "modelId" | "signal" | "getCodexUsage">,
 	slots: RotationSlot[],
 ): Promise<RotationSlot[]> {
-	if (sources.providerId !== "openai-codex") return slots;
+	if (normalizeProviderId(sources.providerId) !== "chatgpt-subscription") return slots;
 	const getUsage = sources.getCodexUsage;
 	if (!getUsage) throw new Error("Codex quota admission unavailable: missing quota reader");
 	const assessed = await Promise.all(

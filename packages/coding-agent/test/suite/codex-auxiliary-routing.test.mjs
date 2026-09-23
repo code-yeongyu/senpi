@@ -19,7 +19,7 @@ import { generateBranchSummary } from "../../src/core/compaction/branch-summariz
 
 const fallbackSettings = {
   retry: { enabled: true, maxRetries: 0, modelFallback: true, fallbackRevertPolicy: "never",
-    fallbackChains: { "openai-codex/gpt-6-astra": ["openrouter/deepseek/deepseek-v4-pro-0813:max"] } },
+    fallbackChains: { "chatgpt-subscription/gpt-6-astra": ["openrouter/deepseek/deepseek-v4-pro-0813:max"] } },
 };
 
 const token = (name) => `test.${Buffer.from(JSON.stringify({
@@ -42,13 +42,13 @@ async function fixture(t, allExhausted = false) {
     name, access: token(name), refresh: `test-refresh-${name}`, expires: 9e12,
   }));
   const credentials = AuthStorage.inMemory({
-    "openai-codex": { type: "oauth", ...accounts[0], pinned: "exhausted", accounts },
+    "chatgpt-subscription": { type: "oauth", ...accounts[0], pinned: "exhausted", accounts },
     openrouter: { type: "api_key", key: "test-openrouter-key" },
   });
   const runtime = await ModelRuntime.create({ credentials, agentDir: dir, modelsPath: null, allowModelNetwork: false });
   const attempts = [];
   const attemptedModels = [];
-  const provider = runtime.getProvider("openai-codex");
+  const provider = runtime.getProvider("chatgpt-subscription");
   const produce = (model, _context, options) => {
     attempts.push(options.apiKey);
     attemptedModels.push(`${model.provider}/${model.id}`);
@@ -77,7 +77,7 @@ async function fixture(t, allExhausted = false) {
     if (sources) sources.getCodexUsage = async (slot) => usage(allExhausted || slot.name === "exhausted" ? 100 : 0);
     return sources;
   };
-  return { runtime, model: runtime.getModel("openai-codex", "gpt-6-astra"), attempts, attemptedModels, dir, credentials };
+  return { runtime, model: runtime.getModel("chatgpt-subscription", "gpt-6-astra"), attempts, attemptedModels, dir, credentials };
 }
 
 async function makeSession(t, f) {
@@ -149,7 +149,7 @@ test("native title generation uses the configured model fallback after account e
   await session._generateSessionTitle("Repair credential account selection", f.model, new AbortController());
   assert.ok(session.sessionManager.getSessionName());
   assert.deepEqual(f.attemptedModels, ["openrouter/deepseek/deepseek-v4-pro-0813"]);
-  assert.equal(session.model.provider, "openai-codex");
+  assert.equal(session.model.provider, "chatgpt-subscription");
 });
 
 test("speculative summary uses the configured model fallback without Codex generation", async (t) => {
@@ -247,11 +247,11 @@ function remoteRequest(f, model, runtime, fetchImpl) {
   }, undefined, { fetch: fetchImpl });
 }
 
-for (const provider of ["openai-codex", "openai"]) {
+for (const provider of ["chatgpt-subscription", "openai"]) {
   for (const status of [401, 402, 403, 429]) {
     test(`legacy ${provider} remote HTTP ${status} preserves local fallback`, async (t) => {
       const f = await fixture(t);
-      const model = provider === "openai-codex" ? f.model : {
+      const model = provider === "chatgpt-subscription" ? f.model : {
         ...f.model, provider, api: "openai-responses", baseUrl: "https://example.invalid/v1",
         compat: { supportsWebSocket: false, supportsRemoteCompactionV2: false },
       };
@@ -330,7 +330,7 @@ test("the native side-query command falls back without changing the main model",
   };
   await command.handler("Which account can serve this request?", ctx);
   assert.deepEqual(f.attemptedModels, ["openrouter/deepseek/deepseek-v4-pro-0813"]);
-  assert.equal(ctx.model.provider, "openai-codex");
+  assert.equal(ctx.model.provider, "chatgpt-subscription");
   assert.equal(notices.some((notice) => notice.kind === "error"), false);
   assert.ok(notices.some((notice) => notice.kind === "info" && notice.message.length > 0));
 });
@@ -341,7 +341,7 @@ function visionContext(f) {
     agentDir: f.dir, cwd: f.dir,
     getRetryFallbackSettings: () => SettingsManager.inMemory(fallbackSettings).getRetryFallbackSettings(),
     getImageSettings: () => ({ blockImages: false, autoResize: false }),
-    getLookAtSettings: () => ({ models: ["openai-codex/gpt-6-astra:low"] }),
+    getLookAtSettings: () => ({ models: ["chatgpt-subscription/gpt-6-astra:low"] }),
     sessionManager: { getSessionId: () => "vision-test" },
     modelRegistry: {
       modelRuntime: f.runtime, getAvailable: () => [f.model],

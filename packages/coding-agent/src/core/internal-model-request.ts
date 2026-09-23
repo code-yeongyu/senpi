@@ -8,6 +8,7 @@ import {
 	lazyStream,
 	type Model,
 	type ModelsSimpleStreamOptions,
+	normalizeProviderId,
 } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { RetryFallbackController } from "./retry-fallback/controller.ts";
@@ -93,7 +94,7 @@ export function streamInternalModel(
 	config: StreamInternalModelConfig = {},
 ): AssistantMessageEventStream | Promise<AssistantMessageEventStream> {
 	let effectiveOptions = options;
-	if (model.provider === "openai-codex" && runtime.isUsingOAuth(model.provider)) {
+	if (normalizeProviderId(model.provider) === "chatgpt-subscription" && runtime.isUsingOAuth(model.provider)) {
 		const { apiKey, ...neutral } = effectiveOptions;
 		effectiveOptions = neutral;
 	}
