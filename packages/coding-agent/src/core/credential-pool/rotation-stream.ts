@@ -240,7 +240,7 @@ export async function requestWithCredentialRotation<T>(
 	options: Omit<CredentialRotationOptions, "runAttempt"> & { runAttempt: (slot: RotationSlot) => Promise<T> },
 ): Promise<T> {
 	let result: { value: T } | undefined;
-	for await (const event of runRotation({
+	for await (const event of runRotation<{ value: T }>({
 		...options,
 		runAttempt: async function* (slot) {
 			yield { value: await options.runAttempt(slot) };
@@ -256,7 +256,10 @@ export async function requestWithCredentialRotation<T>(
 
 function runRotation<TEvent>(
 	options: Omit<CredentialRotationOptions, "runAttempt"> &
-		Pick<RunCredentialFailoverOptions<TEvent, RotationSlot>, "runAttempt" | "isCommittedOutput" | "errorFromEvent">,
+		Pick<
+			RunCredentialFailoverOptions<TEvent, RotationSlot>,
+			"runAttempt" | "isCommittedOutput" | "isStreamStart" | "errorFromEvent"
+		>,
 ): AsyncGenerator<TEvent> {
 	const { sources, runAttempt } = options;
 	const hasher = options.hasher ?? sha256SlotHasher;
