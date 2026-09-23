@@ -13,7 +13,10 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
-import { extractChatGptSubscriptionAccountId } from "../../utils/chatgpt-subscription-auth.ts";
+import {
+	extractChatGptSubscriptionAccountId,
+	extractChatGptSubscriptionIdentity,
+} from "../../utils/chatgpt-subscription-auth.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import { getWireIdentity } from "../../wire-identity.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
@@ -302,6 +305,7 @@ function getAccountId(accessToken: string): string | null {
 
 function credentialsFromToken(token: OAuthToken): OAuthCredential {
 	const accountId = getAccountId(token.access);
+	const identity = extractChatGptSubscriptionIdentity(token.access);
 	if (!accountId) {
 		throw new Error("Failed to extract accountId from token");
 	}
@@ -312,6 +316,7 @@ function credentialsFromToken(token: OAuthToken): OAuthCredential {
 		refresh: token.refresh,
 		expires: token.expires,
 		accountId,
+		...(identity === undefined ? {} : { identity }),
 	};
 }
 
