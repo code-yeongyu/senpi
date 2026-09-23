@@ -75,7 +75,9 @@ export function toolContext(active: Model<Api> | undefined, modelRegistry: Model
 		hasUI: false,
 		cwd: process.cwd(),
 		agentDir: AGENT_DIR,
-		sessionManager: Object.create(null) as ExtensionContext["sessionManager"],
+		sessionManager: Object.assign(Object.create(null), {
+			getSessionId: () => "test-session",
+		}) as ExtensionContext["sessionManager"],
 		modelRegistry,
 		model: active,
 		serviceTier: undefined,

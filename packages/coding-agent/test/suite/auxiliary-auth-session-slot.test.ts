@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { sha256SlotHasher } from "../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../../src/core/credential-pool/state-store.ts";
+import { resolveImageGenAuth } from "../../src/core/extensions/builtin/imagegen/auth.ts";
+import { buildNativeEntries } from "../../src/core/extensions/builtin/websearch/websearch/native.ts";
+import { resolveSessionLoginEntries } from "../../src/core/extensions/builtin/websearch/websearch/session-login-entries.ts";
 import { ModelRegistry } from "../../src/core/model-registry.ts";
 import { ModelRuntime } from "../../src/core/model-runtime.ts";
 
@@ -153,5 +156,77 @@ describe("auxiliary auth follows the session's account", () => {
 		const models = registry();
 
 		expect(await models.getApiKeyAndHeaders(model(models))).toMatchObject({ ok: true, apiKey: "first-access" });
+	});
+});
+
+describe("builtin tools thread the session into auxiliary auth", () => {
+	it("native web search resolves its route's key for the calling session", async () => {
+		const calls: unknown[][] = [];
+		const model = { id: "gpt-5", provider: "openai", api: "openai-responses", baseUrl: "https://api.openai.com/v1" };
+		await buildNativeEntries(
+			model,
+			{
+				getApiKeyAndHeaders: async (...args: unknown[]) => {
+					calls.push(args);
+					return { ok: true, apiKey: "key" };
+				},
+			},
+			undefined,
+			undefined,
+			"session-websearch",
+		);
+
+		expect(calls).toEqual([[model, { sessionId: "session-websearch" }]]);
+	});
+
+	it("web search entries that rely on a Google login resolve that login's key for the calling session", async () => {
+		const calls: unknown[][] = [];
+		const model = {
+			id: "gemini-2.5-flash",
+			provider: "google",
+			api: "google-generative-ai",
+			baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+		};
+		await resolveSessionLoginEntries(
+			{ strategy: "priority", fallback: false, auto: false, providers: [{ id: "gem", provider: "google" }] },
+			{
+				model,
+				modelRegistry: {
+					getApiKeyAndHeaders: async (...args: unknown[]) => {
+						calls.push(args);
+						return { ok: true, apiKey: "google-key" };
+					},
+				},
+				sessionManager: { getSessionId: () => "session-login-search" },
+			},
+			undefined,
+		);
+
+		expect(calls).toEqual([[model, { sessionId: "session-login-search" }]]);
+	});
+
+	it("image generation resolves a gateway's key for the calling session", async () => {
+		const calls: unknown[][] = [];
+		const gateway = {
+			id: "gpt-image-1",
+			provider: "my-gateway",
+			api: "openai-responses",
+			baseUrl: "https://gateway.example.test/v1",
+		};
+		await resolveImageGenAuth({
+			env: {},
+			sessionId: "session-imagegen",
+			modelRegistry: {
+				authStorage: { get: () => undefined },
+				getAll: () => [gateway],
+				getApiKeyAndHeaders: async (...args: unknown[]) => {
+					calls.push(args);
+					return { ok: true, apiKey: "gateway-key" };
+				},
+				getProviderAuth: async () => undefined,
+			},
+		});
+
+		expect(calls).toContainEqual([gateway, { sessionId: "session-imagegen" }]);
 	});
 });

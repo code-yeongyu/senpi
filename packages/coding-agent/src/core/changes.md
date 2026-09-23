@@ -8,7 +8,7 @@
 
 ### Why
 
-Compaction, `/btw`, look-at and cache keepalive send the key `getApiKeyAndHeaders` returns directly, which bypasses rotation, and that key was always the flat projection. The account shown in the footer (the session's pick) and the account those requests used differed, and a pool whose flat account had an expired refresh token failed compaction with "summarization credentials unavailable" while the session itself ran on a healthy account.
+Compaction, `/btw`, look-at, cache keepalive, native web search and image-generation gateways send the key `getApiKeyAndHeaders` returns directly, which bypasses rotation, and that key was always the flat projection. The account shown in the footer (the session's pick) and the account those requests used differed, and a pool whose flat account had an expired refresh token failed compaction with "summarization credentials unavailable" while the session itself ran on a healthy account.
 
 ### Why an extension could not handle it
 

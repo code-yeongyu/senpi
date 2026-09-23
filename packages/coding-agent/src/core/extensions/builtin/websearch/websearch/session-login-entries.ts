@@ -8,6 +8,8 @@ const SESSION_LOGIN_PROVIDERS: ReadonlySet<SearchProvider> = new Set(["chatgpt-s
 interface SessionLoginContext {
 	model: NativeModelInfo | undefined;
 	modelRegistry: NativeModelRegistry;
+	/** The calling session, so a login's key belongs to the account that session uses. */
+	sessionManager?: { getSessionId(): string };
 }
 
 interface LoginCredential {
@@ -29,10 +31,17 @@ function candidateModels(entry: SearchProviderEntry, context: SessionLoginContex
 	return [...requested, ...models];
 }
 
-async function googleLogin(model: NativeModelInfo, registry: NativeModelRegistry): Promise<LoginCredential | null> {
+async function googleLogin(
+	model: NativeModelInfo,
+	registry: NativeModelRegistry,
+	sessionId: string | undefined,
+): Promise<LoginCredential | null> {
 	const root = googleLoginEndpoint(model);
 	if (!root) return null;
-	const auth = await registry.getApiKeyAndHeaders(model);
+	const auth =
+		sessionId === undefined
+			? await registry.getApiKeyAndHeaders(model)
+			: await registry.getApiKeyAndHeaders(model, { sessionId });
 	if (!auth.ok || !auth.apiKey) return null;
 	const baseUrl = auth.baseUrl ? auth.baseUrl.replace(/\/+$/, "") : root;
 	if (!isAllowedProviderBaseUrl(baseUrl)) return null;
@@ -44,8 +53,9 @@ async function subscriptionLogin(
 	model: NativeModelInfo,
 	registry: NativeModelRegistry,
 	id: string,
+	sessionId: string | undefined,
 ): Promise<LoginCredential | null> {
-	const entry = await buildNativeEntry(model, registry, id);
+	const entry = await buildNativeEntry(model, registry, id, sessionId);
 	if (!entry?.apiKey || !entry.baseUrl || entry.provider !== "chatgpt-subscription") return null;
 	return {
 		apiKey: entry.apiKey,
@@ -60,12 +70,13 @@ async function resolveSessionLogin(
 	context: SessionLoginContext,
 	signal: AbortSignal | undefined,
 ): Promise<SearchProviderEntry | null> {
+	const sessionId = context.sessionManager?.getSessionId();
 	for (const candidate of candidateModels(entry, context)) {
 		signal?.throwIfAborted();
 		const login =
 			entry.provider === "google"
-				? await googleLogin(candidate, context.modelRegistry)
-				: await subscriptionLogin(candidate, context.modelRegistry, entry.id ?? entry.provider);
+				? await googleLogin(candidate, context.modelRegistry, sessionId)
+				: await subscriptionLogin(candidate, context.modelRegistry, entry.id ?? entry.provider, sessionId);
 		signal?.throwIfAborted();
 		if (!login) continue;
 		return { ...entry, ...login, model: entry.model ?? login.model };
