@@ -1,4 +1,5 @@
 import type { OAuthAuth } from "@earendil-works/pi-ai";
+import { appendLoginSlot } from "@earendil-works/pi-ai/auth/pool/slots";
 import { describe, expect, it } from "vitest";
 import {
 	type AccountSlot,
@@ -57,6 +58,23 @@ describe("re-login refreshes the dead slot instead of appending (omo#7084)", () 
 		expect(slots[0]?.refresh).toBe("new-refresh");
 		expect(slots[0]?.blockReason).toBeUndefined();
 		expect(slots[0]?.blockedUntil).toBeUndefined();
+		expect(selectAccount(slots).name).toBe("default");
+	});
+
+	// code-yeongyu/oh-my-openagent#8673: the refresh must survive the store merge
+	// that Models.login persists through, not only the provider's return value.
+	it("the refreshed slot survives appendLoginSlot, the persistence path Models.login uses", async () => {
+		const stored = credentialWith([blockedDefault]);
+		const config = createOAuthConfig({
+			readCurrent: async () => stored,
+			loginFlow: fakeFlow(fresh),
+		});
+		const loginResult = await config.login({ onPrompt: async () => "" });
+		const persisted = appendLoginSlot(stored, loginResult as AnthropicSubscriptionCredential);
+		const slots = listAccounts(persisted as never);
+		expect(slots.map((entry) => entry.name)).toEqual(["default"]);
+		expect(slots[0]?.access).toBe("new-access");
+		expect(slots[0]?.blockReason).toBeUndefined();
 		expect(selectAccount(slots).name).toBe("default");
 	});
 

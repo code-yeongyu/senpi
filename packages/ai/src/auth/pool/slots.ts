@@ -314,17 +314,33 @@ function providedSlots(credential: Credential): CredentialSlot[] | undefined {
  * `current` wins for every name it already holds: the provider built its
  * object from a snapshot taken BEFORE the interactive browser round trip, so a
  * sibling account that rotated its refresh token or earned a rate-limit block
- * during that window must not be rewound to the snapshot. Only names that do
- * not exist yet are appended.
+ * during that window must not be rewound to the snapshot. Names that do not
+ * exist yet are appended.
+ *
+ * The one exception is a same-name slot whose material is strictly newer than
+ * the stored one: that is this login refreshing an existing account in place
+ * (re-login recovery of an auth-blocked slot), so the provided slot replaces
+ * the stored copy and the stale token and its block are dropped. A snapshot
+ * sibling is never newer than what concurrent writers stored, so it still loses.
  */
 function mergeProvidedPool(
 	current: PooledCredential,
 	existing: readonly CredentialSlot[],
 	provided: readonly CredentialSlot[],
 ): PooledCredential {
+	const providedByName = new Map(provided.map((slot) => [slot.name, slot]));
+	const merged = existing.map((slot) => {
+		const candidate = providedByName.get(slot.name);
+		return candidate && hasNewerMaterial(candidate, slot) ? candidate : slot;
+	});
 	const known = new Set(existing.map((slot) => slot.name));
 	const added = provided.filter((slot) => !known.has(slot.name));
-	return added.length === 0 ? current : { ...current, accounts: [...existing, ...added] };
+	const refreshed = merged.some((slot, index) => slot !== existing[index]);
+	return added.length === 0 && !refreshed ? current : { ...current, accounts: [...merged, ...added] };
+}
+
+function hasNewerMaterial(candidate: CredentialSlot, stored: CredentialSlot): boolean {
+	return candidate.expires !== undefined && (stored.expires === undefined || candidate.expires > stored.expires);
 }
 
 /**
