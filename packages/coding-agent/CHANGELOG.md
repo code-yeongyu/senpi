@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- `senpi -p "task"` no longer hangs before the first request when stdin is an inherited socket or other non-pipe descriptor that never closes, as agent harnesses and CI steps provide. When the prompt comes from arguments, such a stdin gets 1 s to start sending and is otherwise skipped with a note on stderr; shell pipes and redirected files are still read to EOF.
+
 ### Removed
 
 ## [2026.9.23-5] - 2026-09-23

@@ -1,3 +1,23 @@
+## 2026-09-23 - Print mode stops waiting forever on an inherited stdin nobody closes
+
+### What changed
+
+- `packages/coding-agent/src/utils/piped-stdin.ts` (new): `readPipedStdin` and `classifyStdin`, moved out of `main.ts`. Shell pipes and redirected files are still read to EOF. Any other non-TTY stdin (a socket or character device) is read to EOF only when it is the sole prompt source; when positional messages or `@file` arguments already carry the prompt it gets `PIPED_STDIN_GRACE_MS` (1 s) to send its first byte, and after that the run continues without it, pausing and unref'ing the handle and printing one dim stderr line.
+- `packages/coding-agent/src/main.ts`: calls the helper with `hasPromptArgs` and the stderr note; the local `readPipedStdin` is gone.
+- `test/piped-stdin.test.ts` (new).
+
+### Why
+
+- `senpi -p "task"` launched by an agent harness or CI step inherits a stdin socket that stays open and never receives data (Node's `spawn` hands children a socketpair, and harness shells keep theirs open). The old reader waited for `end` unconditionally, so the run hung before the first model request with no output: `omo -p "Reply OK"` took 3 s with `</dev/null` and blocked until killed with the harness stdin, every time.
+
+### Why an extension could not handle it
+
+- The read happens in `main()` before the session, the print mode, or any extension host exists, and it decides the initial message.
+
+### Expected merge conflict zones
+
+- LOW: the `readPipedStdin` call in `main()` and the removed local helper near the top of `main.ts`; upstream's copy of the old function will conflict if it changes.
+
 ## 2026-09-23 - `resolvedToolName` on toolcall_start/toolcall_end JSON and RPC records (senpi#2068)
 
 ### What changed
