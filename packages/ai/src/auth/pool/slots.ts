@@ -8,6 +8,31 @@ export const DEFAULT_SLOT_NAME = "default";
 
 export type CredentialSlotSource = "login" | "import" | "env";
 
+/**
+ * Account identity a provider reports at login. Two logins with the same `id` are
+ * the same account, so the second refreshes the first's slot instead of adding one.
+ */
+export type CredentialIdentity = {
+	/** Provider-scoped account key; the only field used for matching. */
+	id: string;
+	/** Presentation only (account lists); never used for matching. */
+	email?: string;
+};
+
+/** Validates identity read from untrusted storage or a provider response. */
+export function credentialIdentity(value: unknown): CredentialIdentity | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { id, email } = value as { id?: unknown; email?: unknown };
+	if (typeof id !== "string" || id.trim() === "") return undefined;
+	return typeof email === "string" && email.trim() !== "" ? { id, email } : { id };
+}
+
+/** Replaces `target`'s identity with `identity`, or drops it when there is none. */
+function withIdentity<T extends object>(target: T, identity: CredentialIdentity | undefined): T {
+	const { identity: _replaced, ...rest } = target as T & { identity?: unknown };
+	return (identity === undefined ? rest : { ...rest, identity }) as T;
+}
+
 export type CredentialSlot = {
 	/** Immutable operational identity. */
 	name: string;
@@ -20,6 +45,8 @@ export type CredentialSlot = {
 	expires?: number;
 	/** Provider-scoped values this account carries (a Kimi region, a Cloudflare account id). */
 	env?: ProviderEnv;
+	/** Recorded at login when the provider reports one; absent on slots from older builds. */
+	identity?: CredentialIdentity;
 };
 
 export type PooledCredential = Credential & {
@@ -226,11 +253,15 @@ function slotMirrorsFlat(credential: PooledCredential, slot: CredentialSlot): bo
 /** Rewrites the flat top-level projection to carry the given slot's material. */
 function projectFlatFields(credential: PooledCredential, slot: CredentialSlot): PooledCredential {
 	const env = slot.env === undefined ? {} : { env: slot.env };
+	const identity = credentialIdentity(slot.identity);
 	if (credential.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return credential;
-		return { ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
+		return withIdentity(
+			{ ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env },
+			identity,
+		);
 	}
-	return { ...credential, key: slot.key, ...env };
+	return withIdentity({ ...credential, key: slot.key, ...env }, identity);
 }
 
 /**
@@ -274,14 +305,20 @@ export function projectSlot(credential: PooledCredential | undefined, name: stri
 	if (!slot) return undefined;
 	const { accounts: _accounts, pinned: _pinned, ...flat } = credential;
 	const env = slot.env === undefined ? {} : { env: slot.env };
+	const identity = credentialIdentity(slot.identity);
 	if (flat.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return undefined;
-		return { ...flat, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
+		return withIdentity(
+			{ ...flat, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env },
+			identity,
+		);
 	}
-	return { ...flat, key: slot.key, ...env };
+	return withIdentity({ ...flat, key: slot.key, ...env }, identity);
 }
 
 function slotFromFlatCredentialNamed(credential: Credential, name: string): CredentialSlot {
+	const identity = credentialIdentity((credential as { identity?: unknown }).identity);
+	const identityField = identity === undefined ? {} : { identity };
 	if (credential.type === "oauth") {
 		return {
 			name,
@@ -290,9 +327,30 @@ function slotFromFlatCredentialNamed(credential: Credential, name: string): Cred
 			refresh: credential.refresh,
 			expires: credential.expires,
 			...credentialSlotEnv(credential),
+			...identityField,
 		};
 	}
-	return { name, source: "login", key: credential.key, ...credentialSlotEnv(credential) };
+	return { name, source: "login", key: credential.key, ...credentialSlotEnv(credential), ...identityField };
+}
+
+/**
+ * A re-login of an account the pool already holds: the slot keeps its name,
+ * display name and source, takes the login's material, and drops everything
+ * else it carried (including lane-persisted block state), because a block
+ * belongs to the material that earned it.
+ */
+function refreshSlotInPlace(current: PooledCredential, known: CredentialSlot, flat: Credential): PooledCredential {
+	const { name: _name, source: _source, ...material } = slotFromFlatCredentialNamed(flat, known.name);
+	const replaced: CredentialSlot = {
+		name: known.name,
+		...(known.displayName === undefined ? {} : { displayName: known.displayName }),
+		source: known.source ?? "login",
+		...material,
+	};
+	if (!Array.isArray(current.accounts) || current.accounts.length === 0) return projectFlatFields(current, replaced);
+	const accounts = current.accounts.map((slot) => (slot.name === known.name ? replaced : slot));
+	const base = slotMirrorsFlat(current, known) ? projectFlatFields(current, replaced) : current;
+	return { ...base, accounts };
 }
 
 function nextLoginSlotName(credential: PooledCredential): string {
@@ -347,7 +405,7 @@ function mergeProvidedPool(
 export function appendLoginSlot(
 	current: PooledCredential | undefined,
 	flat: Credential,
-	onAllocated?: (name: string, origin: "generated" | "provider") => void,
+	onAllocated?: (name: string, origin: "generated" | "provider" | "updated") => void,
 ): Credential {
 	const provided = providedSlots(flat);
 	if (provided) {
@@ -370,6 +428,16 @@ export function appendLoginSlot(
 		// A pool merges onto the stored pool; a flat current keeps the whole-write
 		// shape because the provider's accounts already carry this login.
 		return storedAccounts ? mergeProvidedPool(current, storedAccounts, provided) : flat;
+	}
+	const identity = credentialIdentity((flat as { identity?: unknown }).identity);
+	const known =
+		identity === undefined
+			? undefined
+			: listSlots(current).find((slot) => credentialIdentity(slot.identity)?.id === identity.id);
+	if (known) {
+		const refreshed = refreshSlotInPlace(current, known, flat);
+		onAllocated?.(known.name, "updated");
+		return refreshed;
 	}
 	const name = nextLoginSlotName(current);
 	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
@@ -458,7 +526,11 @@ export function mergeRefreshedSlot(current: PooledCredential, name: string, refr
 
 export function mergeRefreshed(current: PooledCredential, refreshed: Credential): Credential {
 	if (!Array.isArray(current.accounts) || current.accounts.length === 0) {
-		return refreshed;
+		// A token exchange does not re-report the account; keep the identity the login recorded.
+		const identity = credentialIdentity((current as { identity?: unknown }).identity);
+		if (identity === undefined || refreshed.type !== "oauth" || credentialIdentity(refreshed.identity))
+			return refreshed;
+		return { ...refreshed, identity };
 	}
 	if (refreshed.type !== "oauth" || current.type !== "oauth") return refreshed;
 	const target = current.accounts.find((slot) => slot.access === current.access || slot.refresh === current.refresh);

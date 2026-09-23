@@ -1,7 +1,7 @@
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import {
-	type CredentialAccountSummary,
-	getCredentialAccounts,
+	type CredentialAccountDetail,
+	getCredentialAccountDetails,
 	pinCredentialAccount,
 	removeCredentialAccount,
 } from "../../../credential-accounts.ts";
@@ -19,14 +19,30 @@ function usage(ctx: ExtensionCommandContext): void {
 	);
 }
 
-function statusOf(account: CredentialAccountSummary): string {
-	const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
+const BLOCK_REASON_LABELS: Record<NonNullable<CredentialAccountDetail["blockReason"]>, string> = {
+	auth_error: "log in again",
+	account_disabled: "account disabled",
+	rate_limit: "rate limited",
+};
+
+function statusOf(account: CredentialAccountDetail): string {
+	const health = account.blocked
+		? account.blockReason === undefined
+			? "blocked"
+			: `blocked (${BLOCK_REASON_LABELS[account.blockReason]})`
+		: "available";
+	const states = [
+		accountLabel(account),
+		...(account.email === undefined ? [] : [account.email]),
+		account.source,
+		health,
+	];
 	if (account.pinned) states.push("pinned");
 	return states.join(" | ");
 }
 
 async function showAccounts(ctx: ExtensionCommandContext, provider: string): Promise<void> {
-	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, provider);
+	const accounts = await getCredentialAccountDetails(ctx.modelRegistry.authStorage, provider);
 	const lines = [`Credential accounts for ${provider}:`];
 	if (accounts.length === 0) lines.push("  (none)");
 	for (const account of accounts) lines.push(`  ${statusOf(account)}`);

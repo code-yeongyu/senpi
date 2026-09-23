@@ -1,3 +1,25 @@
+## 2026-09-23 - A re-login of a known account refreshes its slot instead of adding login-N
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: `CredentialSlot` gains an optional `identity` (`CredentialIdentity`: `id`, optional `email`), validated by the exported `credentialIdentity()`. `appendLoginSlot` matches a login's `identity.id` against the stored slots and, on a match, replaces that slot's material in place (name, display name and source kept; lane block fields dropped) and reports it through `onAllocated` as `"updated"`; a legacy flat credential with the same identity stays flat. Logins or slots without an identity keep today's append-as-`login-N` behavior. `projectFlatFields` and `projectSlot` carry the projected slot's identity, and `mergeRefreshed` keeps a flat credential's identity across a token refresh.
+- `packages/ai/src/auth/oauth/anthropic.ts`: the authorization-code exchange records `account.uuid` + `organization.uuid` as the identity id and `account.email_address` as its email when the response carries them; nothing changes when it does not.
+- `packages/ai/src/auth/types.ts`: `AccountLoginReceipt.origin` gains `"updated"`.
+- `packages/ai/src/models.ts`: `Models.login` passes the `"updated"` origin through to `onAccountCommitted`.
+
+### Why
+
+Logging in again with the same Claude account appended a new `login-N` slot every time, because no identity was recorded, and there was no way to re-authenticate one stored slot. A slot whose refresh token died stayed dead (auth blocks only clear when a login rewrites the slot), so users accumulated duplicates of one account next to a dead one.
+
+### Why an extension could not handle it
+
+Slot allocation happens inside `appendLoginSlot` under the credential-store write, and the token response is parsed inside the bundled OAuth flow; neither exposes a hook.
+
+### Expected merge conflict zones
+
+- MEDIUM: `auth/pool/slots.ts` `appendLoginSlot`, `projectFlatFields`, `projectSlot`, `mergeRefreshed` and the `CredentialSlot` type.
+- LOW: `auth/oauth/anthropic.ts` `exchangeAuthorizationCode` return; the receipt origin unions in `auth/types.ts` and `models.ts`.
+
 ## 2026-09-23 - claudeCodeVersion follows the pinned claude-agent-sdk (senpi#2033)
 
 ### What changed

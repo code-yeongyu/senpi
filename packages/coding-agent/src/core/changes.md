@@ -1,3 +1,21 @@
+## 2026-09-23 - Local account lists carry the login email and the block reason
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: new `getCredentialAccountDetails()` returns `CredentialAccountDetail` (a `CredentialAccountSummary` plus optional `email` from the slot's recorded identity and `blockReason`: `auth_error` / `rate_limit` / `account_disabled`, present only on a blocked account; the pool sidecar wins over lane-persisted state). `getCredentialAccounts()` / `summarizeCredentialAccounts()` return the unchanged summary shape, so the app-server, RPC and `auth check` payloads do not change.
+
+### Why
+
+`/account <provider> list` showed name, source and available/blocked only, so duplicates of one account were indistinguishable and a dead account looked like a rate-limited one.
+
+### Why an extension could not handle it
+
+Block state is resolved here from the sidecar revision match; the builtin `/account` extension reads it through this module.
+
+### Expected merge conflict zones
+
+- LOW: `summarizeCredentialAccounts` (now a projection of `describeCredentialAccounts`) and the summary types.
+
 ## 2026-09-23 - Namespaced calls to deferred tools activate the unique match (senpi#2025)
 
 ### What changed

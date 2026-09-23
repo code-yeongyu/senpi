@@ -6,6 +6,7 @@
  */
 
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
+import type { CredentialIdentity } from "../pool/slots.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import {
 	type CallbackListenerApis,
@@ -73,6 +74,30 @@ async function postJson(url: string, body: Record<string, string | number>, sign
 	return responseBody;
 }
 
+type AuthorizationCodeTokenResponse = {
+	access_token: string;
+	refresh_token: string;
+	expires_in: number;
+	account?: { uuid?: unknown; email_address?: unknown };
+	organization?: { uuid?: unknown };
+};
+
+/**
+ * The authorization-code exchange names the account and organization the tokens
+ * belong to. The pair is the identity: one Claude account can hold tokens for
+ * several organizations, and each organization is its own subscription.
+ */
+function anthropicAccountIdentity(data: AuthorizationCodeTokenResponse): CredentialIdentity | undefined {
+	const account = typeof data.account?.uuid === "string" ? data.account.uuid.trim() : "";
+	if (account === "") return undefined;
+	const organization = typeof data.organization?.uuid === "string" ? data.organization.uuid.trim() : "";
+	const email = typeof data.account?.email_address === "string" ? data.account.email_address.trim() : "";
+	return {
+		id: organization === "" ? account : `${account}/${organization}`,
+		...(email === "" ? {} : { email }),
+	};
+}
+
 async function exchangeAuthorizationCode(
 	code: string,
 	state: string,
@@ -100,20 +125,22 @@ async function exchangeAuthorizationCode(
 		);
 	}
 
-	let tokenData: { access_token: string; refresh_token: string; expires_in: number };
+	let tokenData: AuthorizationCodeTokenResponse;
 	try {
-		tokenData = JSON.parse(responseBody) as { access_token: string; refresh_token: string; expires_in: number };
+		tokenData = JSON.parse(responseBody) as AuthorizationCodeTokenResponse;
 	} catch (error) {
 		throw new Error(
 			`Token exchange returned invalid JSON. url=${TOKEN_URL}; body=${responseBody}; details=${formatErrorDetails(error)}`,
 		);
 	}
 
+	const identity = anthropicAccountIdentity(tokenData);
 	return {
 		type: "oauth",
 		refresh: tokenData.refresh_token,
 		access: tokenData.access_token,
 		expires: Date.now() + tokenData.expires_in * 1000 - 5 * 60 * 1000,
+		...(identity === undefined ? {} : { identity }),
 	};
 }
 

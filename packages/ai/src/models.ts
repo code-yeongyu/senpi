@@ -588,7 +588,7 @@ class ModelsImpl implements MutableModels {
 		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal });
 		const credential = await raceWithAbortSignal(loginOperation, signal);
 		let committedName: string | undefined;
-		let committedOrigin: "generated" | "provider" | undefined;
+		let committedOrigin: "generated" | "provider" | "updated" | undefined;
 		let mutationStarted = false;
 		let markMutationStarted: (() => void) | undefined;
 		const started = new Promise<void>((resolve) => {
