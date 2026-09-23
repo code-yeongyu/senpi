@@ -36,11 +36,22 @@ type WebSearchTool = ReturnType<typeof defineTool<typeof Params, SearchRenderDet
 
 async function configWithNativeRoute(
 	config: WebsearchConfig,
-	ctx: { model: NativeModelInfo | undefined; modelRegistry: NativeModelRegistry } | undefined,
+	ctx:
+		| {
+				model: NativeModelInfo | undefined;
+				modelRegistry: NativeModelRegistry;
+				sessionManager?: { getSessionId(): string };
+		  }
+		| undefined,
 	signal: AbortSignal | undefined,
 ): Promise<WebsearchConfig> {
 	if (!config.auto) return config;
-	const nativeEntries = await buildNativeEntries(ctx?.model, ctx?.modelRegistry, signal);
+	const nativeEntries = await buildNativeEntries(
+		ctx?.model,
+		ctx?.modelRegistry,
+		signal,
+		ctx?.sessionManager?.getSessionId(),
+	);
 	return nativeEntries.length > 0 ? { ...config, providers: [...nativeEntries, ...config.providers] } : config;
 }
 

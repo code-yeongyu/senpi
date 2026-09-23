@@ -17,7 +17,10 @@ Use the image generation tool currently available in this session.
 `;
 
 async function isImageGenActive(ctx: ExtensionContext): Promise<boolean> {
-	const auth = await resolveImageGenAuth({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
+	const auth = await resolveImageGenAuth({
+		modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry,
+		sessionId: ctx.sessionManager.getSessionId(),
+	});
 	return auth.kind !== "none";
 }
 
