@@ -273,6 +273,7 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager: Object.assign(Object.create(null), {
+			getSessionId: () => "test-session",
 			getEntries: () => [],
 		}) as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
@@ -353,6 +354,7 @@ async function expectSpeculativeCompactionInvalidatedBy(
 	const ctx = createExtensionContext({
 		model: currentModel,
 		sessionManager: Object.assign(Object.create(null), {
+			getSessionId: () => "test-session",
 			getEntries: () => branchEntries,
 			getBranch: () => branchEntries,
 		}) as ExtensionContext["sessionManager"],
@@ -1107,6 +1109,7 @@ describe("builtin compaction extension threshold regressions", () => {
 		const ctx = createExtensionContext({
 			model,
 			sessionManager: Object.assign(Object.create(null), {
+				getSessionId: () => "test-session",
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 				getBranch: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 			}) as ExtensionContext["sessionManager"],
@@ -1167,6 +1170,7 @@ describe("builtin compaction extension threshold regressions", () => {
 		const ctx = createExtensionContext({
 			model,
 			sessionManager: Object.assign(Object.create(null), {
+				getSessionId: () => "test-session",
 				getEntries: () => branchEntries,
 				getBranch: () => branchEntries,
 			}) as ExtensionContext["sessionManager"],
@@ -1218,6 +1222,7 @@ describe("builtin compaction extension threshold regressions", () => {
 		const ctx = createExtensionContext({
 			model,
 			sessionManager: Object.assign(Object.create(null), {
+				getSessionId: () => "test-session",
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 				getBranch: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 			}) as ExtensionContext["sessionManager"],

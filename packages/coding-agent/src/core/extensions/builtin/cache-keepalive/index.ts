@@ -172,7 +172,9 @@ export function createCacheKeepAliveExtension(
 					.getAllTools()
 					.filter((tool) => activeToolNames.has(tool.name))
 					.map(({ name, description, parameters }) => ({ name, description, parameters }));
-				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model);
+				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model, {
+					sessionId: current.sessionManager.getSessionId(),
+				});
 				if (pingGeneration !== generation) {
 					inFlight = false;
 					arm();

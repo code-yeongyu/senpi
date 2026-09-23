@@ -656,6 +656,41 @@ export class ModelRuntime implements Models {
 		};
 	}
 
+	/**
+	 * Auth for a request a session makes outside the rotation stream (compaction,
+	 * /btw, look-at, cache keepalive). Those callers send the resolved key directly,
+	 * which bypasses rotation, so it must be the account the session's own turns
+	 * use: the pin, else the session's rendezvous winner among accounts the pool has
+	 * not blocked, exactly as `streamWithCredentialRotation` selects. A failure of
+	 * that account is reported, never answered from another account. A provider
+	 * without a pool, a runtime key override, or rotation disabled by policy keeps
+	 * `getAuth(model)`.
+	 */
+	async getSessionAuth(model: Model<Api>, sessionId: string): Promise<AuthResult | undefined> {
+		const slotAuth = await this.sessionSlotAuth(model, sessionId);
+		return slotAuth === undefined ? this.getAuth(model) : this.getAuth(model, slotAuth);
+	}
+
+	private async sessionSlotAuth(
+		model: Model<Api>,
+		sessionId: string,
+	): Promise<{ apiKey?: string; slotName?: string } | undefined> {
+		// The policy gates of couldRotateCredentials, read directly: its fast path consults
+		// an availability snapshot that a runtime which has not refreshed yet does not hold.
+		if (this.credentials.hasRuntimeApiKey(model.provider)) return undefined;
+		if (this.config.getProvider(model.provider)?.credentials?.rotation === false) return undefined;
+		const sources = await this.credentialRotationSources(model, undefined);
+		if (!sources) return undefined;
+		const { rotation } = await this.loadCredentialPool();
+		const slot = rotation.selectSessionSlot(
+			await rotation.listRotationSlots(sources, { acquireLeases: false }),
+			sessionId,
+			sources.policy?.affinity !== false,
+		);
+		if (!slot) return undefined;
+		return slot.lane === "env" ? { apiKey: slot.envKey } : { slotName: slot.name };
+	}
+
 	private enqueueCredentialOperation<T>(providerId: string, signal: AbortSignal, task: () => Promise<T>): Promise<T> {
 		const previous = this.credentialOperations.get(providerId) ?? Promise.resolve();
 		let markStarted: (() => void) | undefined;

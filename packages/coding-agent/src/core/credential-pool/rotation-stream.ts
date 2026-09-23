@@ -5,7 +5,7 @@ import { listSlots as listCredentialSlots, type PooledCredential } from "@earend
 import { resolveConfigValue } from "../resolve-config-value.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
-import { type RunSlot, runCredentialFailover } from "./failover.ts";
+import { isAvailable, type RunSlot, runCredentialFailover } from "./failover.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { acquireHalfOpenLease, type CredentialSlotRepository, type CredentialSlotState } from "./state-store.ts";
 
@@ -197,6 +197,37 @@ function blockPatch(
 	return { ...base, blockReason: block.reason };
 }
 
+/** The pin when present, else the affinity key's rendezvous winner (or the first candidate without affinity). */
+function pickRotationSlot<TSlot extends RotationSlot>(
+	candidates: readonly TSlot[],
+	affinityKey: string,
+	useAffinity: boolean,
+	hasher: SlotHasher,
+): TSlot | undefined {
+	const pinned = candidates.find((candidate) => candidate.pinned === true);
+	if (pinned) return pinned;
+	return (useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates)[0];
+}
+
+/**
+ * The account a session's next streamed request would start on: the same pick
+ * `streamWithCredentialRotation` makes, over the accounts the pool has not blocked.
+ */
+export function selectSessionSlot(
+	slots: readonly RotationSlot[],
+	sessionId: string,
+	useAffinity: boolean,
+	now: number = Date.now(),
+	hasher: SlotHasher = sha256SlotHasher,
+): RotationSlot | undefined {
+	return pickRotationSlot(
+		slots.filter((slot) => isAvailable(slot, now)),
+		sessionId,
+		useAffinity,
+		hasher,
+	);
+}
+
 export type CredentialRotationOptions = {
 	sources: RotationSources;
 	/** Stable session key keeps a session on its slot; absent, each request distributes. */
@@ -226,11 +257,7 @@ export function streamWithCredentialRotation(
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources),
 		select: (candidates) => {
-			const pinned = candidates.find((candidate) => candidate.pinned === true);
-			if (pinned) return pinned;
-			const ordered = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
-
-			const winner = ordered[0];
+			const winner = pickRotationSlot(candidates, affinityKey, useAffinity, hasher);
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
 			return winner;
 		},
