@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/credential-accounts.ts`: new `getCredentialAccountDetails()` returns `CredentialAccountDetail` (a `CredentialAccountSummary` plus optional `email` from the slot's recorded identity and `blockReason`: `auth_error` / `rate_limit` / `account_disabled`, present only on a blocked account; the pool sidecar wins over lane-persisted state). `getCredentialAccounts()` / `summarizeCredentialAccounts()` return the unchanged summary shape, so the app-server, RPC and `auth check` payloads do not change.
+- `packages/coding-agent/src/core/credential-accounts.ts`: new `getCredentialAccountDetails()` returns `CredentialAccountDetail` (a `CredentialAccountSummary` plus optional `email` from the slot's recorded identity and `blockReason`: `auth_error` / `rate_limit` / `account_disabled`, present only on a blocked account; the pool sidecar wins over lane-persisted state) and `expiresAt` (a stored OAuth account's access-token expiry). `getCredentialAccounts()` / `summarizeCredentialAccounts()` return the unchanged summary shape, so the app-server, RPC and `auth check` payloads do not change.
 
 ### Why
 
