@@ -1,3 +1,23 @@
+## 2026-09-23 - A same-name re-login refresh survives the provider-pool merge (oh-my-openagent#8673)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: `mergeProvidedPool` keeps `current` for every existing name EXCEPT a same-name provided slot whose `expires` is strictly newer than the stored slot's (or the stored slot has none). That slot replaces the stored copy, dropping the stale token and any block fields it carried. `current` is still returned by identity when nothing was added or replaced.
+- `packages/ai/test/credential-pool-mutations.test.ts`: a same-name re-login with newer material replaces the stored slot and lifts its block while a sibling and the pin stay untouched; an echo with equal material keeps `current`.
+- `packages/coding-agent/test/suite/regressions/7084-anthropic-subscription-login-refresh.test.ts`: the provider's refreshed pool is pushed through `appendLoginSlot`, the persistence path `Models.login` uses, instead of being asserted only as the provider's return value.
+
+### Why
+
+- The anthropic-subscription recovery path (omo#7084) refreshes an auth-blocked slot in place: the provider returns its pool with that slot's fresh tokens under the SAME name. The 2026-09-10 merge treated every known name as stored-wins, so `Models.login` persisted `current` unchanged: the exchanged tokens were discarded, `blockReason: "auth_error"` stayed on disk, the account stayed "blocked until re-login", and the UI still reported a successful login. A pre-login snapshot of a sibling is never newer than what concurrent writers stored, so the 2026-09-10 guarantee (no rewinding a rotated or blocked sibling) still holds.
+
+### Why an extension could not handle it
+
+- The merge runs inside the shared credential-store mutation that `Models.login` performs after the provider returns; an extension cannot change what the runtime writes under the credential lock.
+
+### Expected merge conflict zones
+
+- LOW: `mergeProvidedPool`, its JSDoc, and the new `hasNewerMaterial` helper directly below it in `auth/pool/slots.ts`.
+
 ## 2026-09-23 - Cursor variant grouping derived from the live catalog (senpi#2038)
 
 ### What changed
