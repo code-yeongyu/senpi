@@ -6,6 +6,7 @@ import {
 	convertResponsesMessages,
 	getContextProvenance,
 	type Model,
+	normalizeProviderId,
 	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
@@ -850,7 +851,10 @@ export async function runOpenAiRemoteCompaction(
 			};
 
 			const runtime = ctx.modelRegistry?.modelRuntime;
-			if (requestModel.provider === "openai-codex" && runtime?.requestWithCredentialRotation) {
+			if (
+				normalizeProviderId(requestModel.provider) === "chatgpt-subscription" &&
+				runtime?.requestWithCredentialRotation
+			) {
 				try {
 					return await runtime.requestWithCredentialRotation(
 						requestModel,

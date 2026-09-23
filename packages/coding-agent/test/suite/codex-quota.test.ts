@@ -32,7 +32,7 @@ describe("Codex paid quota admission", () => {
 		const lookedUp: string[] = [];
 		const slots = await admitCodexQuota(
 			{
-				providerId: "openai-codex",
+				providerId: "chatgpt-subscription",
 				getCodexUsage: async (slot) => {
 					lookedUp.push(slot.name);
 					return quota(slot.name === "cooling" ? used : 100, slot.name === "paid");
@@ -51,7 +51,7 @@ describe("Codex paid quota admission", () => {
 	it.each(["auth_error", "account_disabled"] as const)("treats %s quota as unknown", async (blockReason) => {
 		const slots = await admitCodexQuota(
 			{
-				providerId: "openai-codex",
+				providerId: "chatgpt-subscription",
 				getCodexUsage: async () => quota(100, true),
 			},
 			[
@@ -65,7 +65,7 @@ describe("Codex paid quota admission", () => {
 	it("does not confuse denial with quota exhaustion", async () => {
 		const slots = await admitCodexQuota(
 			{
-				providerId: "openai-codex",
+				providerId: "chatgpt-subscription",
 				getCodexUsage: async () => quota(20, true, false),
 			},
 			[{ name: "denied", lane: "stored" }],
@@ -76,7 +76,7 @@ describe("Codex paid quota admission", () => {
 	it.each(["error", "malformed"])("preserves healthy included quota when another account is %s", async (mode) => {
 		const slots = await admitCodexQuota(
 			{
-				providerId: "openai-codex",
+				providerId: "chatgpt-subscription",
 				getCodexUsage: async (slot) => {
 					if (slot.name === "unknown") {
 						if (mode === "error") throw new Error("test transport failure");
@@ -93,7 +93,7 @@ describe("Codex paid quota admission", () => {
 	it("requires exhaustion of matching model-specific quota as well", async () => {
 		const slots = await admitCodexQuota(
 			{
-				providerId: "openai-codex",
+				providerId: "chatgpt-subscription",
 				modelId: "test-model",
 				getCodexUsage: async () => ({
 					...quota(100, true),
@@ -112,7 +112,7 @@ describe("Codex paid quota admission", () => {
 		await expect(
 			admitCodexQuota(
 				{
-					providerId: "openai-codex",
+					providerId: "chatgpt-subscription",
 					signal: controller.signal,
 					getCodexUsage: async () => {
 						throw reason;

@@ -10,7 +10,7 @@ import { createHarness } from "./harness.ts";
 
 const event: AccountSwitchNotice = {
 	type: "account_failover",
-	provider: "openai-codex",
+	provider: "chatgpt-subscription",
 	from: "slot-a",
 	to: "slot-b",
 	reason: "quota exhausted",

@@ -1,4 +1,4 @@
-import type { Tool } from "@earendil-works/pi-ai";
+import { normalizeProviderId, type Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { createWarmAnchorSnapshot, isWarmSummaryAnchorValid } from "../../../compaction/warm-anchor.ts";
 import type { ExtensionAPI, ExtensionContext, SessionBeforeCompactEvent, SessionCompactEvent } from "../../types.ts";
@@ -985,7 +985,8 @@ export default function compactionExtension(
 			effectiveModel,
 			{
 				...auth,
-				...(model.provider === "openai-codex" && selectedAuthorization?.startsWith("Bearer ")
+				...(normalizeProviderId(model.provider) === "chatgpt-subscription" &&
+				selectedAuthorization?.startsWith("Bearer ")
 					? { apiKey: selectedAuthorization.slice(7) }
 					: {}),
 				headers: event.headers ?? auth.headers,

@@ -17,7 +17,7 @@ import {
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
 	type DeferredHandle,
-	extractOpenAiCodexAccountId,
+	extractChatGptSubscriptionAccountId,
 	lazyStream,
 	type Model,
 	type Models,
@@ -179,7 +179,7 @@ function withPayloadRequestMetadata(options: StreamOptions, model: Model<Api>): 
 			if (["authorization", "chatgpt-account-id"].includes(name.toLowerCase())) delete headers[name];
 		}
 		headers.authorization = `Bearer ${options.apiKey}`;
-		const accountId = extractOpenAiCodexAccountId(options.apiKey);
+		const accountId = extractChatGptSubscriptionAccountId(options.apiKey);
 		if (accountId) headers["chatgpt-account-id"] = accountId;
 	}
 	return {

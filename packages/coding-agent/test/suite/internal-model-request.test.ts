@@ -108,7 +108,7 @@ function makeRuntime(
 			},
 			getModels: () => defaultModels(),
 			getModel: (provider, id) => (provider === primary.provider && id === primary.id ? primary : undefined),
-			isUsingOAuth: (provider) => provider === "openai-codex",
+			isUsingOAuth: (provider) => provider === "chatgpt-subscription",
 			isFallbackEligible: () => true,
 			hasConfiguredAuth: () => true,
 			...overrides,
@@ -120,7 +120,7 @@ type RuntimeModel = Model<Api>;
 
 describe("streamInternalModel", () => {
 	it("strips a pre-resolved Codex OAuth apiKey before dispatch", async () => {
-		const primary = model("openai-codex", "model");
+		const primary = model("chatgpt-subscription", "model");
 		const { runtime, captured } = makeRuntime(primary, [() => eventStream([okEvent()])]);
 
 		const events: AssistantMessageEvent[] = [];

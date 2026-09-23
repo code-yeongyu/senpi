@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AssistantMessageEvent, Credential } from "@earendil-works/pi-ai";
+import { type AssistantMessageEvent, type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
 import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import { listSlots as listCredentialSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { resolveConfigValue } from "../resolve-config-value.ts";
@@ -7,9 +7,8 @@ import { emitAccountSwitch } from "./account-notices.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { admitCodexQuota, preferredCodexQuotaTier } from "./codex-quota.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
-import { type RunSlot, runCredentialFailover } from "./failover.ts";
-import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { type RunCredentialFailoverOptions, type RunSlot, runCredentialFailover } from "./failover.ts";
+import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { acquireHalfOpenLease, type CredentialSlotRepository, type CredentialSlotState } from "./state-store.ts";
 
 /** The exact hash the claude-sdk-oauth affinity oracle uses, so pools never remap. */
@@ -265,6 +264,7 @@ function runRotation<TEvent>(
 	const useAffinity = sources.policy?.affinity !== false;
 	const now = sources.now ?? Date.now;
 	const selectionKey = `${sources.providerId}\0${sources.sessionId ?? affinityKey}`;
+	const codexProvider = normalizeProviderId(sources.providerId) === "chatgpt-subscription";
 	let previous = sources.selectionState?.get(selectionKey);
 	let previousFailure: string | undefined;
 	let admitted: RotationSlot[] = [];
@@ -274,8 +274,7 @@ function runRotation<TEvent>(
 			const slots = await listRotationSlots(sources);
 			// A different caller's probe lease hides a generation candidate, not
 			// its remaining normal quota. Assess the full inventory before filtering.
-			const inventory =
-				sources.providerId === "openai-codex" ? await listRotationSlots(sources, { acquireLeases: false }) : slots;
+			const inventory = codexProvider ? await listRotationSlots(sources, { acquireLeases: false }) : slots;
 			previous ??=
 				inventory.find((slot) => slot.pinned)?.name ??
 				(useAffinity ? rendezvousOrder(affinityKey, inventory, hasher) : inventory)[0]?.name;
@@ -291,7 +290,7 @@ function runRotation<TEvent>(
 
 			const winner = pinned ?? ordered[0];
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
-			if (sources.providerId === "openai-codex" && previous && previous !== winner.name) {
+			if (codexProvider && previous && previous !== winner.name) {
 				const prior = admitted.find((slot) => slot.name === previous);
 				const reason =
 					previousFailure ??
