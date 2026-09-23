@@ -6,11 +6,15 @@
 
 ### Added
 
+- The interactive TUI shows consecutive `read`, `grep`, `find`, and `ls` calls as one exploration cell, the way Codex does: `• Explored` followed by lines such as `Read a.ts, b.ts`, `Search <pattern> in <dir>`, and `List <dir>`, with no line ranges or output. Reading one file three times now shows its name once instead of three cards. A failed call stays in the cell and is counted as ` · 1 failed`. Press the tool-expand key (default `ctrl+o`) or click the header to see the original cards. Any other tool, assistant text, or your next message ends the cell, and resumed sessions show the same cells. ([#2042](https://github.com/code-yeongyu/senpi/issues/2042))
+
 ### Changed
 
 - The GPT-5.6 and GPT-6 system prompts no longer demand a failing test before every behavior change. They now read the tests that already cover the area as the behavior of record, reproduce a bug before fixing it, let the run prove the change, and add a test only where the repository keeps tests for that behavior and a regression would otherwise pass unnoticed - the stance the Claude and Kimi prompts already had. Sessions on those models stop producing tests that only restate a small change. ([#2035](https://github.com/code-yeongyu/senpi/issues/2035))
 
 ### Fixed
+
+- Hidden diagnostics no longer duplicate the terminal screen when mouse capture is enabled. Messages saved only to the debug log leave the current frame intact; errors actually printed to the terminal still reset mouse targeting. ([#1879](https://github.com/code-yeongyu/senpi/issues/1879))
 
 - `/mcp auth <server>` opens the system browser and keeps the complete authorization URL in the transcript instead of replacing it with a progress notice. Browser launch failures leave manual authorization usable, and the MCP documentation now names the supported `auth`, `auth-start`, and `auth-complete` commands. ([oh-my-openagent#6724](https://github.com/code-yeongyu/oh-my-openagent/issues/6724))
 

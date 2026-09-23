@@ -16,6 +16,24 @@ Block state is resolved here from the sidecar revision match; the builtin `/acco
 
 - LOW: `summarizeCredentialAccounts` (now a projection of `describeCredentialAccounts`) and the summary types.
 
+## 2026-09-23 — Observe stderr below hidden diagnostic redirects (senpi#1879)
+
+### What changed
+
+- `packages/coding-agent/src/core/output-guard.ts` exposes a shared visible-stderr subscription. It follows the underlying writer across guard installation and restoration, retaining callback and backpressure behavior.
+
+### Why
+
+- Hidden diagnostics were invalidating mouse geometry even though no bytes reached the terminal.
+
+### Why an extension could not handle it
+
+- The output guard owns the actual stderr destination and its redacted failure fallback.
+
+### Expected merge conflict zones
+
+- Stderr takeover and restoration. Multiple subscribers and both teardown orders must remain safe.
+
 ## 2026-09-23 - Namespaced calls to deferred tools activate the unique match (senpi#2025)
 
 ### What changed

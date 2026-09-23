@@ -4,6 +4,7 @@ import { setKittyProtocolActive } from "./keys.ts";
 import { isMultiplexerSession } from "./mux.ts";
 import { isNativeModifierPressed } from "./native-modifiers.ts";
 import { getNativePlatformHelper } from "./native-platform.ts";
+import { observeProcessStderrWrites } from "./stderr-observer.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
 import { queryTmuxCursorPosition } from "./tmux-cursor-query.ts";
 import type { TmuxExecFile } from "./tmux-image-probe.ts";
@@ -244,6 +245,8 @@ export interface ProcessTerminalOptions {
 	 * interleave with frames and desynchronize differential rendering.
 	 */
 	onExternalStdoutWrite?: (text: string) => void;
+	/** Observe actual stderr delivery when a host redirects diagnostics before they reach the terminal. */
+	observeExternalStderrWrites?: (listener: () => void) => () => void;
 }
 
 const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
@@ -274,7 +277,8 @@ export class ProcessTerminal implements Terminal {
 	private onExternalStdoutWrite?: (text: string) => void;
 	private originalStdoutWrite?: typeof process.stdout.write;
 	private rawStdoutWrite?: (data: string) => void;
-	private originalStderrWrite?: typeof process.stderr.write;
+	private readonly observeExternalStderrWrites: (listener: () => void) => () => void;
+	private stopExternalStderrObservation?: () => void;
 	private readonly externalWriteObservers = new Set<() => void>();
 	private keyboardNegotiationSettled = false;
 	private cursorQueryTimedOut = false;
@@ -317,6 +321,7 @@ export class ProcessTerminal implements Terminal {
 
 	constructor(options?: ProcessTerminalOptions) {
 		this.onExternalStdoutWrite = options?.onExternalStdoutWrite;
+		this.observeExternalStderrWrites = options?.observeExternalStderrWrites ?? observeProcessStderrWrites;
 		this.tmuxExecFile = options?.tmuxExecFile;
 	}
 
@@ -387,13 +392,8 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	private installExternalStderrObserver(): void {
-		if (this.originalStderrWrite || this.externalWriteObservers.size === 0) return;
-		const original = process.stderr.write;
-		this.originalStderrWrite = original;
-		process.stderr.write = ((...args: Parameters<typeof process.stderr.write>): boolean => {
-			this.noteExternalWrite();
-			return original.apply(process.stderr, args);
-		}) as typeof process.stderr.write;
+		if (this.stopExternalStderrObservation || this.externalWriteObservers.size === 0) return;
+		this.stopExternalStderrObservation = this.observeExternalStderrWrites(() => this.noteExternalWrite());
 	}
 
 	private rawWrite(data: string): void {
@@ -421,8 +421,8 @@ export class ProcessTerminal implements Terminal {
 			const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
 			const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
 			const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(encoding);
-			this.noteExternalWrite();
 			if (!handler || this.forwardingExternalWrite) {
+				this.noteExternalWrite();
 				rawWrite(text);
 				cb?.(null);
 				return true;
@@ -431,6 +431,7 @@ export class ProcessTerminal implements Terminal {
 			try {
 				handler(text);
 			} catch {
+				this.noteExternalWrite();
 				rawWrite(text);
 			} finally {
 				this.forwardingExternalWrite = false;
@@ -751,10 +752,8 @@ export class ProcessTerminal implements Terminal {
 
 	stop(): void {
 		this.settleCursorQuery(undefined);
-		if (this.originalStderrWrite) {
-			process.stderr.write = this.originalStderrWrite;
-			this.originalStderrWrite = undefined;
-		}
+		this.stopExternalStderrObservation?.();
+		this.stopExternalStderrObservation = undefined;
 		if (this.clearProgressInterval()) {
 			this.rawWrite(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
