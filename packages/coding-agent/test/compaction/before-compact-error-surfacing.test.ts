@@ -90,6 +90,7 @@ function createHarness(options?: { withAuth?: boolean }): Harness {
 		cwd: process.cwd(),
 		isProjectTrusted: () => true,
 		sessionManager: {
+			getSessionId: () => "test-session",
 			getEntries: () => [],
 			getBranch: () => [],
 		} as unknown as ExtensionContext["sessionManager"],
