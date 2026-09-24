@@ -124,7 +124,10 @@ export const generateImageTool = defineTool<typeof Params, GenerateImageDetails>
 			return failure(NATIVE_BYPASS_MESSAGE, "provider_native_bypass", context);
 		}
 
-		const auth = await resolveImageGenAuth({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
+		const auth = await resolveImageGenAuth({
+			modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry,
+			sessionId: ctx.sessionManager.getSessionId(),
+		});
 		if (auth.kind === "none") {
 			return failure(auth.reason, "missing_config", context);
 		}

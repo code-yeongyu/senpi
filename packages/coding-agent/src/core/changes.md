@@ -1,3 +1,23 @@
+## 2026-09-23 - Auxiliary requests authenticate as the session's account
+
+### What changed
+
+- `packages/coding-agent/src/core/model-registry.ts`: `getApiKeyAndHeaders(model, { sessionId })` resolves through `ModelRuntime.getSessionAuth` when a session id is given; without one it keeps resolving the flat credential.
+- `packages/coding-agent/src/core/model-runtime.ts`: new `getSessionAuth(model, sessionId)`. For a provider holding a pool it resolves the account the session's streamed turns would start on - the pin, else the session's rendezvous winner among accounts the pool has not blocked - and reports that account's failure instead of answering from another account. A runtime key override, `credentials.rotation: false`, or a provider without a pool keeps `getAuth(model)`.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` and `failover.ts`: the stream's pick (`pickRotationSlot`) and availability rule (`isAvailable`) are shared with the new `selectSessionSlot`, so the two selections cannot drift.
+
+### Why
+
+Compaction, `/btw`, look-at, cache keepalive, native web search and image-generation gateways send the key `getApiKeyAndHeaders` returns directly, which bypasses rotation, and that key was always the flat projection. The account shown in the footer (the session's pick) and the account those requests used differed, and a pool whose flat account had an expired refresh token failed compaction with "summarization credentials unavailable" while the session itself ran on a healthy account.
+
+### Why an extension could not handle it
+
+Account selection lives in the credential pool and `ModelRuntime`; extensions only see the resolved key.
+
+### Expected merge conflict zones
+
+- LOW: `getApiKeyAndHeaders` in `model-registry.ts`; the new methods sit next to `getAuth` in `model-runtime.ts`; the `select` callback in `streamWithCredentialRotation`.
+
 ## 2026-09-23 - Streaming tool-call events name the tool a call resolves to (senpi#2068)
 
 ### What changed

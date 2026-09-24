@@ -1,3 +1,21 @@
+## 2026-09-23 - Compaction authenticates as the session's account
+
+### What changed
+
+- `speculative.ts` `runExtensionCompaction` and the OpenAI remote-compaction paths (`index.ts` `before_provider_request`, `openai-remote.ts`) passes `sessionId: <this session>` to `getApiKeyAndHeaders`, so the key it sends belongs to the account the session's own turns use instead of the flat credential.
+
+### Why
+
+See "Auxiliary requests authenticate as the session's account" in `src/core/changes.md`.
+
+### Why an extension could not handle it
+
+This is the builtin's own auth call.
+
+### Expected merge conflict zones
+
+- LOW: the single `getApiKeyAndHeaders` call.
+
 ## 2026-09-22 - claude-sdk-oauth provider id renamed to anthropic-subscription in compaction comments (senpi#1989)
 
 ### What changed

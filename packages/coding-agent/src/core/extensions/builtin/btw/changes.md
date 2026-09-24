@@ -1,3 +1,21 @@
+## 2026-09-23 - /btw authenticates as the session's account
+
+### What changed
+
+- `index.ts` passes `sessionId: <this session>` to `getApiKeyAndHeaders`, so the key it sends belongs to the account the session's own turns use instead of the flat credential.
+
+### Why
+
+See "Auxiliary requests authenticate as the session's account" in `src/core/changes.md`.
+
+### Why an extension could not handle it
+
+This is the builtin's own auth call.
+
+### Expected merge conflict zones
+
+- LOW: the single `getApiKeyAndHeaders` call.
+
 # changes — btw
 
 ## 2026-09-13 - Explicit off switch: bare /btw and kitty-safe Escape

@@ -272,7 +272,9 @@ export async function runExtensionCompaction(
 	onProgress?: CompactionProgressCallback,
 ): Promise<CompactionResult | undefined> {
 	if (signal?.aborted) return undefined;
-	const auth = await context.modelRegistry?.getApiKeyAndHeaders(snapshot.model);
+	const auth = await context.modelRegistry?.getApiKeyAndHeaders(snapshot.model, {
+		sessionId: context.sessionManager.getSessionId(),
+	});
 	if (signal?.aborted) return undefined;
 	// A provider is authenticated for summarization by either a resolved key or a
 	// credential request header: `headers`-authenticated providers (models.json and

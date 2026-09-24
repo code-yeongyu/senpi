@@ -82,7 +82,7 @@ export class CredentialFailoverError extends Error {
 	}
 }
 
-function isAvailable(slot: RunSlot, now: number): boolean {
+export function isAvailable(slot: RunSlot, now: number): boolean {
 	if (slot.blockReason === "auth_error" || slot.blockReason === "account_disabled") return false;
 	if (slot.blockedUntil !== undefined && slot.blockedUntil > now) return false;
 	// A live lease marks the one caller admitted to run the half-open probe.

@@ -1,3 +1,21 @@
+## 2026-09-23 - Native web search authenticates as the session's account
+
+### What changed
+
+- `websearch/native.ts` (`buildNativeEntries` / `NativeEntryOptions.sessionId`) and `websearch/tool.ts` (the tool's session) passes `sessionId: <this session>` to `getApiKeyAndHeaders`, so the key it sends belongs to the account the session's own turns use instead of the flat credential.
+
+### Why
+
+See "Auxiliary requests authenticate as the session's account" in `src/core/changes.md`.
+
+### Why an extension could not handle it
+
+This is the builtin's own auth call.
+
+### Expected merge conflict zones
+
+- LOW: the single `getApiKeyAndHeaders` call.
+
 # changes.md — websearch (vendored)
 
 ## Senpi merge repair (2026-08-13)

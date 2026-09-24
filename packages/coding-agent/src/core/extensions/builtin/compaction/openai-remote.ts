@@ -98,7 +98,10 @@ type OpenAiRemoteCompactionContext = {
 	getSystemPrompt(): string;
 	model: Model<Api> | undefined;
 	modelRegistry: {
-		getApiKeyAndHeaders(model: Model<Api>): Promise<
+		getApiKeyAndHeaders(
+			model: Model<Api>,
+			options?: { sessionId?: string },
+		): Promise<
 			| {
 					ok: true;
 					apiKey?: string;
@@ -570,7 +573,7 @@ export async function runOpenAiRemoteCompaction(
 		return undefined;
 	}
 
-	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model, { sessionId: ctx.sessionManager.getSessionId() });
 	if (!auth.ok) {
 		emit?.({
 			version: 1,

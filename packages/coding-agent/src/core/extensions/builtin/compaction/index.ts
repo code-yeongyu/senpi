@@ -968,7 +968,7 @@ export default function compactionExtension(
 	pi.on("before_provider_request", async (event, ctx) => {
 		const model = event.model ?? ctx.model;
 		if (!isOpenAiRemoteCompactionModel(model)) return undefined;
-		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model, { sessionId: ctx.sessionManager.getSessionId() });
 		if (!auth.ok) return undefined;
 		const effectiveModel =
 			auth.upstreamModelId || auth.baseUrl
