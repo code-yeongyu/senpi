@@ -11,7 +11,7 @@ import {
 // Engine stdout is the trust boundary: every payload the service hands out is shape-checked here.
 
 type FieldKind = "string" | "boolean" | "number";
-type FieldSpec = Readonly<Record<string, FieldKind | `${FieldKind}?`>>;
+export type FieldSpec = Readonly<Record<string, FieldKind | `${FieldKind}?`>>;
 
 const METHOD_NAMES: ReadonlySet<string> = new Set(ENGINE_METHODS);
 const ERROR_CODE_NAMES: ReadonlySet<string> = new Set(ERROR_CODES);
@@ -61,7 +61,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function matches(value: unknown, spec: FieldSpec): value is Record<string, unknown> {
+export function matches(value: unknown, spec: FieldSpec): value is Record<string, unknown> {
 	if (!isRecord(value)) return false;
 	return Object.entries(spec).every(([key, kind]) => {
 		const field = value[key];
@@ -70,7 +70,7 @@ function matches(value: unknown, spec: FieldSpec): value is Record<string, unkno
 	});
 }
 
-function isStringArray(value: unknown): value is readonly string[] {
+export function isStringArray(value: unknown): value is readonly string[] {
 	return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 

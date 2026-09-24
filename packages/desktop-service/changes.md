@@ -1,5 +1,24 @@
 # senpi-desktop-service fork changes
 
+## 2026-09-25 - computer.run runtime and desktop facade over the engine client (senpi#2128)
+
+### What changed
+
+- `packages/desktop-service/src/run/`: `runComputerCode` runs model code in a `node:vm` context inside the coding-agent process (`microtaskMode: "afterEvaluate"`, each synchronous stretch bounded by the run budget, the vm resumed from `setImmediate` after each host promise settles). Its globals are the `desktop` facade (root, window handles, element handles), `wait`, `assert`, `console`, and `tool.*`, which is bridged to an injected `executeTool`. The runtime also enforces the read-only guard from the `-protocol` tier tables, displays inline and artifact-only captures, and collects the run's audit events.
+- `packages/desktop-service/src/service/parse.ts`: exports its shape helpers so the run layer parses engine results with them.
+
+### Why
+
+- Todo 20 of the computer-use plan: `computer.run` and direct `call` chains need a runtime over the engine client. AD-9 replaced oh-my-pi's Bun worker with an in-process `node:vm` context.
+
+### Why an extension could not handle it
+
+- This package is fork-only. It is the runtime the computer-use extension is built on.
+
+### Expected merge conflict zones
+
+- None in this package: it does not exist upstream.
+
 ## 2026-09-24 - DesktopService JSON-RPC client over the engine child (senpi#2128)
 
 ### What changed
