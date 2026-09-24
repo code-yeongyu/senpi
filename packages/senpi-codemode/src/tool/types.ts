@@ -1,4 +1,4 @@
-import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/senpi";
+import type { AgentToolResult, AgentToolUpdateCallback, KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { type TSchema, type TUnsafe, Type } from "typebox";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
 import {
@@ -141,6 +141,8 @@ export interface EvalKernelRunInput {
 	readonly timeoutMs?: number;
 	readonly onStarted?: () => void;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
+	/** Globals of the tools active when the cell was submitted; kernels without preludes ignore them. */
+	readonly kernelPreludes?: readonly KernelPreludeContribution[];
 }
 
 export interface KernelInterruptHandle {

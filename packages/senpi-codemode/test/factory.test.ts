@@ -25,6 +25,7 @@ describe("senpi-codemode extension factory", () => {
 			"session_before_switch",
 			"session_before_fork",
 			"model_select",
+			"turn_start",
 		]);
 	});
 });

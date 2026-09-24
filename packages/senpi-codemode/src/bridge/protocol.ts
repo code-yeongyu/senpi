@@ -37,6 +37,15 @@ const hostToKernelMessageSchema = Type.Union([
 		cellId: Type.String({ minLength: 1 }),
 		code: Type.String(),
 		timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
+		/** Python only: active tool globals to install before the cell and deactivated ones to remove. */
+		preludes: Type.Optional(
+			Type.Object({
+				install: Type.Array(
+					Type.Object({ exports: Type.Array(Type.String({ minLength: 1 })), python: Type.String() }),
+				),
+				remove: Type.Array(Type.String({ minLength: 1 })),
+			}),
+		),
 	}),
 	Type.Object({
 		type: Type.Literal("tool-reply"),

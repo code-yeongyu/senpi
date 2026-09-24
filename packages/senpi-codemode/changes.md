@@ -1,5 +1,30 @@
 # senpi-codemode fork changes
 
+## 2026-09-24 - Active tools' kernelPrelude globals in js and py cells (#2128)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/kernel-preludes.ts`: `activeKernelPreludes` reads `pi.getAllTools()` filtered by `pi.getActiveTools()` per cell; `promptKernelPreludes` is the prompt snapshot (an unreadable registry documents nothing, like the monitor probe).
+- `packages/senpi-codemode/src/index.ts`: the session eval tool receives the per-cell source and the prompt snapshot; a `turn_start` handler re-registers eval when the documented contribution set changed.
+- `packages/senpi-codemode/src/tool/{eval-tool-options,eval-tool,run-eval-cell,types}.ts`: `kernelPreludes` / `promptKernelPreludes` options; each cell's `EvalKernelRunInput` carries the active contributions.
+- `packages/senpi-codemode/src/kernels/shared/kernel-prelude-plan.ts`: `KernelPreludeTracker` turns the active set into install + remove lists per kernel.
+- `packages/senpi-codemode/src/kernels/js/{local-module-loader,context-manager}.ts`: `prepareCell` appends `delete globalThis[name]` for deactivated exports and each active contribution's `javascript` guarded by a missing-export check.
+- `packages/senpi-codemode/src/kernels/py/{kernel,transport}.ts`, `src/bridge/protocol.ts`, `src/kernels/py/prelude.py`: the `run` frame carries optional `preludes` (`install` python snippets + `remove` names); `apply_preludes` pops removed names from the namespace and `exec`s a missing contribution before the cell compiles.
+- `packages/senpi-codemode/src/prompt/{eval-prompt,eval-prompt-template}.ts`, `src/bridges/schema-bridge.ts`: `buildEvalPrompt` renders each active contribution's `documentation` line in the prelude helper list.
+- Tests: `test/eval-prelude-contribution.test.ts` (real js worker + real python kernel with a fixture tool), `test/factory.test.ts` lists the new `turn_start` subscription.
+
+### Why
+
+- A host tool (computer use) needs a typed kernel global without codemode importing its package or gaining options: the global is contributed through the tool's own definition and is visible exactly while the tool is active.
+
+### Why an extension could not handle it
+
+- Kernel globals, cell preparation, and the eval prompt are owned by this package; another extension cannot inject code into its kernels.
+
+### Expected merge conflict zones
+
+- LOW: fork-only package; `run` frame schema, `prepareCell`, `run_cell`, and the prelude helper block of the prompt template.
+
 ## 2026-09-24 - Eval language errors list the enabled kernels
 
 ### What changed

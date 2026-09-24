@@ -1,5 +1,6 @@
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import type { BridgeConnectionConfig } from "../../bridge/protocol.ts";
 import {
 	RESERVED_AGENT_TOOL,
@@ -8,6 +9,7 @@ import {
 	TIMEOUT_PAUSE_OP,
 	TIMEOUT_RESUME_OP,
 } from "../../bridge/reserved.ts";
+import { type KernelPreludePlan, KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import type { JavaScriptKernelOptions as BaseJavaScriptKernelOptions } from "./kernel-contract.ts";
 import { rewriteImports } from "./rewrite-imports.ts";
 
@@ -99,14 +101,26 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 	].join("\n");
 }
 
+/** Removes deactivated exports, then installs each contribution only while one of its exports is missing. */
+function contributionPrelude(plan: KernelPreludePlan): string {
+	const removals = plan.remove.map((name) => `delete globalThis[${JSON.stringify(name)}];`);
+	const installs = plan.install.map((contribution) => {
+		const missing = contribution.exports.map((name) => `!globalThis[${JSON.stringify(name)}]`).join(" || ");
+		return `if (${missing}) {\n${contribution.javascript}\n}`;
+	});
+	return [...removals, ...installs].join("\n");
+}
+
 export class LocalModuleLoader {
 	readonly #prelude: string;
+	readonly #contributions = new KernelPreludeTracker();
 
 	constructor(options: LocalModuleLoaderOptions) {
 		this.#prelude = loaderPrelude(runtimeContext(options));
 	}
 
-	prepareCell(code: string): string {
-		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude: this.#prelude, code: rewriteImports(code) })}`;
+	prepareCell(code: string, contributions: readonly KernelPreludeContribution[] = []): string {
+		const prelude = `${this.#prelude}\n${contributionPrelude(this.#contributions.plan(contributions))}`;
+		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude, code: rewriteImports(code) })}`;
 	}
 }

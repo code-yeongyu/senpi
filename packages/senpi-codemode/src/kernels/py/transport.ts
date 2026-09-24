@@ -9,6 +9,7 @@ import {
 	type KernelToHostMessage,
 } from "../../bridge/protocol.ts";
 import { applySessionEnvironment, type SessionEnvironment } from "../session-env.ts";
+import type { KernelPreludePlan } from "../shared/kernel-prelude-plan.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import {
 	defaultSpawn,
@@ -30,6 +31,7 @@ export interface PythonTransportRunInput {
 	readonly cellId: string;
 	readonly code: string;
 	readonly timeoutMs?: number;
+	readonly preludePlan?: KernelPreludePlan;
 }
 
 export interface PythonTransportOptions {
@@ -115,7 +117,11 @@ export class PythonKernelTransport {
 	}
 
 	run(input: PythonTransportRunInput): void {
-		this.#write({ type: "run", cellId: input.cellId, code: input.code, timeoutMs: input.timeoutMs });
+		const preludes = input.preludePlan && {
+			install: input.preludePlan.install.map(({ exports, python }) => ({ exports: [...exports], python })),
+			remove: [...input.preludePlan.remove],
+		};
+		this.#write({ type: "run", cellId: input.cellId, code: input.code, timeoutMs: input.timeoutMs, preludes });
 	}
 
 	interrupt(reason: string): void {

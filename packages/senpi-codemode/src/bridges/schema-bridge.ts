@@ -1,3 +1,4 @@
+import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { type Static, Type } from "typebox";
 import { Check, Errors } from "typebox/value";
 
@@ -12,6 +13,7 @@ export interface EvalSchemaToolInfo {
 	readonly name: string;
 	readonly description?: string | undefined;
 	readonly parameters?: unknown;
+	readonly kernelPrelude?: KernelPreludeContribution | undefined;
 }
 
 export interface RunEvalSchemaOptions {
