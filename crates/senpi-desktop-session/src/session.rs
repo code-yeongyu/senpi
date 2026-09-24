@@ -11,6 +11,7 @@ use senpi_desktop_core::error::{CoreResult, DesktopError};
 use senpi_desktop_core::types::{DesktopCapabilities, DesktopSessionOptions};
 use tokio::time::{timeout_at, Instant};
 
+use crate::mutate::SessionSafety;
 use crate::request::{Op, Response};
 use crate::selection::BackendFactory;
 use crate::timeouts::SessionTimeouts;
@@ -45,14 +46,29 @@ pub struct Session {
 }
 
 impl Session {
+    /// [`Session::start_supervised`] under [`SessionSafety::fail_closed`]:
+    /// every mutating request is refused `StopPathUnavailable`.
+    ///
+    /// # Errors
+    /// See [`Session::start_supervised`].
+    pub fn start(factory: impl BackendFactory, timeouts: SessionTimeouts) -> CoreResult<Self> {
+        Self::start_supervised(factory, timeouts, SessionSafety::fail_closed())
+    }
+
     /// Starts the session thread and waits until it has built the probe
     /// backend, so [`Session::capabilities`] is truthful from the first call.
+    /// Mutating requests are gated on `safety.supervisor` and audited to
+    /// `safety.audit`.
     ///
     /// # Errors
     /// `Internal` when the thread cannot be spawned or dies while building the
     /// backend. A backend that cannot be constructed is not an error: the
     /// session reports `DesktopCapabilities::unavailable()`.
-    pub fn start(factory: impl BackendFactory, timeouts: SessionTimeouts) -> CoreResult<Self> {
+    pub fn start_supervised(
+        factory: impl BackendFactory,
+        timeouts: SessionTimeouts,
+        safety: SessionSafety,
+    ) -> CoreResult<Self> {
         let capabilities = Arc::new(Mutex::new(DesktopCapabilities::unavailable()));
         let (queue, requests) = flume::unbounded();
         let (ready_tx, ready_rx) = flume::bounded(1);
@@ -60,7 +76,7 @@ impl Session {
         thread::Builder::new()
             .name(THREAD_NAME.to_owned())
             .spawn(move || {
-                let worker = Worker::new(Box::new(factory), shared);
+                let worker = Worker::new(Box::new(factory), shared, safety);
                 // `start` is blocked on this receiver until it arrives.
                 ready_tx.send(()).unwrap_or(());
                 serve(worker, &requests);
@@ -146,7 +162,8 @@ fn serve(mut worker: Worker, requests: &flume::Receiver<Message>) {
     }
 }
 
-fn guarded(request: impl FnOnce() -> CoreResult<Response>) -> CoreResult<Response> {
+/// Runs `request`, turning a panic into `Internal`.
+pub(crate) fn guarded<T>(request: impl FnOnce() -> CoreResult<T>) -> CoreResult<T> {
     catch_unwind(AssertUnwindSafe(request))
         .unwrap_or_else(|_| Err(DesktopError::internal("the desktop backend panicked")))
 }

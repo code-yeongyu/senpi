@@ -6,10 +6,12 @@ use parking_lot::Mutex;
 use senpi_desktop_core::ax::{AxBackend, AxRegistry};
 use senpi_desktop_core::backend::Backend;
 use senpi_desktop_core::error::{CoreResult, DesktopError, ErrorCode};
+use senpi_desktop_core::protocol_results::AuditEvent;
 use senpi_desktop_core::types::{
     DesktopCapabilities, DesktopSessionOptions, DesktopWindow, DisplaySelector, Target,
 };
 
+use crate::mutate::SessionSafety;
 use crate::pointer::FrameCache;
 use crate::request::{Op, Response};
 use crate::selection::BackendFactory;
@@ -23,7 +25,11 @@ pub(crate) struct Worker {
     pub(crate) registry: AxRegistry,
     pub(crate) frames: FrameCache,
     capabilities: Arc<Mutex<DesktopCapabilities>>,
+    pub(crate) safety: SessionSafety,
 }
+
+/// A mutating request's reply and the audit event it emitted.
+pub(crate) type Audited = (Response, AuditEvent);
 
 impl Worker {
     /// Builds the probe backend that answers `capabilities` before
@@ -31,6 +37,7 @@ impl Worker {
     pub(crate) fn new(
         factory: Box<dyn BackendFactory>,
         capabilities: Arc<Mutex<DesktopCapabilities>>,
+        safety: SessionSafety,
     ) -> Self {
         let backend = factory.create(DisplaySelector::All);
         let mut worker = Self {
@@ -40,6 +47,7 @@ impl Worker {
             registry: AxRegistry::default(),
             frames: FrameCache::default(),
             capabilities,
+            safety,
         };
         worker.refresh_capabilities();
         worker
@@ -73,20 +81,19 @@ impl Worker {
                 "desktop session is not open; call session.open first",
             ));
         }
+        let served = |audited: CoreResult<Audited>| audited.map(|(response, _audit)| response);
+        // Every mutating request goes through `mutate`; reads bypass it.
         match op {
             Op::Displays => Ok(Response::Displays(self.backend()?.displays()?)),
             Op::Windows => Ok(Response::Windows(self.backend()?.windows()?)),
             Op::Capture(params) => self.capture(&params),
-            Op::Click(params) => self.click(&params),
-            Op::MoveMouse(params) => self.move_mouse(&params),
-            Op::Drag(params) => self.drag(&params),
-            Op::Scroll(params) => self.scroll(&params),
-            Op::TypeText(params) => self.type_text(&params),
-            Op::KeyChord(params) => self.key_chord(&params),
-            Op::RaiseWindow(params) => {
-                self.backend()?.raise_window(&params.window_id)?;
-                Ok(Response::Unit)
-            }
+            Op::Click(params) => served(self.click(&params)),
+            Op::MoveMouse(params) => served(self.move_mouse(&params)),
+            Op::Drag(params) => served(self.drag(&params)),
+            Op::Scroll(params) => served(self.scroll(&params)),
+            Op::TypeText(params) => served(self.type_text(&params)),
+            Op::KeyChord(params) => served(self.key_chord(&params)),
+            Op::RaiseWindow(params) => served(self.raise_window(&params.window_id)),
             Op::AxSnapshot(params) => self.ax_snapshot(&params),
             Op::AxQuery(params) => self.ax_query(&params),
             Op::AxElementAt(params) => self.ax_element_at(&params),
@@ -95,10 +102,10 @@ impl Worker {
             Op::AxAttributes(params) => self.ax_attributes(&params.ref_),
             Op::AxChildren(params) => self.ax_children(&params.ref_),
             Op::AxParent(params) => self.ax_parent(&params.ref_),
-            Op::AxPerform(params) => self.ax_perform(&params.ref_, &params.action),
-            Op::AxSetValue(params) => self.ax_set_value(&params.ref_, &params.value),
-            Op::AxFocus(params) => self.ax_focus(&params.ref_),
-            Op::AxClick(params) => self.ax_click(&params),
+            Op::AxPerform(params) => served(self.ax_perform(&params.ref_, &params.action)),
+            Op::AxSetValue(params) => served(self.ax_set_value(&params.ref_, &params.value)),
+            Op::AxFocus(params) => served(self.ax_focus(&params.ref_)),
+            Op::AxClick(params) => served(self.ax_click(&params)),
         }
     }
 

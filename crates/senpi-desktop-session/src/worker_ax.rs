@@ -2,7 +2,7 @@
 //! registry; a ref older than the previous snapshot fails `StaleRef`.
 
 use senpi_desktop_core::ax::{self, register_node, AxHandle};
-use senpi_desktop_core::backend::PointerEvent;
+use senpi_desktop_core::backend::{DeliveryMode, PointerEvent};
 use senpi_desktop_core::error::{CoreResult, DesktopError};
 use senpi_desktop_core::frame::FrameGeometry;
 use senpi_desktop_core::protocol_params::{
@@ -10,9 +10,12 @@ use senpi_desktop_core::protocol_params::{
 };
 use senpi_desktop_core::types::{AxNode, Target};
 
+use senpi_desktop_safety::MutatingAction;
+
+use crate::mutate::Mutation;
 use crate::pointer::ParsedPointerOptions;
 use crate::request::Response;
-use crate::worker::Worker;
+use crate::worker::{Audited, Worker};
 
 /// Attribute values longer than this are cut with an ellipsis.
 const ATTRIBUTE_MAX_CHARS: usize = 200;
@@ -109,31 +112,69 @@ impl Worker {
         Ok(Response::MaybeNode(node))
     }
 
-    pub(crate) fn ax_perform(&mut self, reference: &str, action: &str) -> CoreResult<Response> {
-        let handle = self.registry.resolve(reference)?;
-        let backend = self.ax_parts()?.0;
-        if action.eq_ignore_ascii_case("press") {
-            ax::ax_press(backend, &handle)?;
-        } else {
-            backend.perform(&handle, action)?;
-        }
-        Ok(Response::Unit)
+    /// The audit target of an AX request: the window its ref belongs to, or
+    /// the ref itself once it expired.
+    fn ref_target(&self, reference: &str) -> String {
+        self.registry
+            .target(reference)
+            .unwrap_or_else(|_| reference.to_owned())
     }
 
-    pub(crate) fn ax_set_value(&mut self, reference: &str, value: &str) -> CoreResult<Response> {
-        let handle = self.registry.resolve(reference)?;
-        self.ax_parts()?.0.set_value(&handle, value)?;
-        Ok(Response::Unit)
+    pub(crate) fn ax_perform(&mut self, reference: &str, action: &str) -> CoreResult<Audited> {
+        let mutation = Mutation::new(
+            MutatingAction::AxPerform,
+            self.ref_target(reference),
+            DeliveryMode::Background,
+        );
+        self.mutate(&mutation, |worker| {
+            let handle = worker.registry.resolve(reference)?;
+            let backend = worker.ax_parts()?.0;
+            if action.eq_ignore_ascii_case("press") {
+                ax::ax_press(backend, &handle)?;
+            } else {
+                backend.perform(&handle, action)?;
+            }
+            Ok(Response::Unit)
+        })
     }
 
-    pub(crate) fn ax_focus(&mut self, reference: &str) -> CoreResult<Response> {
-        let handle = self.registry.resolve(reference)?;
-        self.ax_parts()?.0.focus(&handle)?;
-        Ok(Response::Unit)
+    pub(crate) fn ax_set_value(&mut self, reference: &str, value: &str) -> CoreResult<Audited> {
+        let mutation = Mutation {
+            text: Some(value),
+            ..Mutation::new(
+                MutatingAction::AxSetValue,
+                self.ref_target(reference),
+                DeliveryMode::Background,
+            )
+        };
+        self.mutate(&mutation, |worker| {
+            let handle = worker.registry.resolve(reference)?;
+            worker.ax_parts()?.0.set_value(&handle, value)?;
+            Ok(Response::Unit)
+        })
+    }
+
+    pub(crate) fn ax_focus(&mut self, reference: &str) -> CoreResult<Audited> {
+        let mutation = Mutation::new(
+            MutatingAction::AxFocus,
+            self.ref_target(reference),
+            DeliveryMode::Background,
+        );
+        self.mutate(&mutation, |worker| {
+            let handle = worker.registry.resolve(reference)?;
+            worker.ax_parts()?.0.focus(&handle)?;
+            Ok(Response::Unit)
+        })
     }
 
     /// Clicks the centre of the element's bounds in the window containing it.
-    pub(crate) fn ax_click(&mut self, params: &AxClickParams) -> CoreResult<Response> {
+    pub(crate) fn ax_click(&mut self, params: &AxClickParams) -> CoreResult<Audited> {
+        let mode = ParsedPointerOptions::requested_mode(params.opts.as_ref());
+        let mutation = Mutation::new(MutatingAction::AxClick, self.ref_target(&params.ref_), mode);
+        self.mutate(&mutation, |worker| worker.ax_click_now(params))
+    }
+
+    fn ax_click_now(&mut self, params: &AxClickParams) -> CoreResult<Response> {
         let options = ParsedPointerOptions::parse(params.opts.as_ref())?;
         let handle: AxHandle = self.registry.resolve(&params.ref_)?;
         let bounds = self
