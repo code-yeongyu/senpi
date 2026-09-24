@@ -204,6 +204,7 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
+import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type {
 	ApplyCompactionOptions,
@@ -3143,6 +3144,7 @@ export class AgentSession {
 			description: definition.description,
 			parameters: definition.parameters,
 			promptGuidelines: definition.promptGuidelines,
+			kernelPrelude: projectKernelPrelude(definition.name, definition.kernelPrelude),
 			sourceInfo,
 			...normalizeToolExposure(definition),
 		}));

@@ -195,7 +195,7 @@ export class JavaScriptKernel {
 		this.#slot.postMessage({
 			type: "run",
 			cellId: next.input.cellId,
-			code: this.#moduleLoader.prepareCell(next.input.code),
+			code: this.#moduleLoader.prepareCell(next.input.code, next.input.kernelPreludes),
 			timeoutMs: next.input.timeoutMs,
 		});
 	}

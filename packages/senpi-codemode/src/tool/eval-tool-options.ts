@@ -1,4 +1,10 @@
-import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext, ToolDefinition } from "@code-yeongyu/senpi";
+import type {
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	ExtensionContext,
+	KernelPreludeContribution,
+	ToolDefinition,
+} from "@code-yeongyu/senpi";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
@@ -58,6 +64,10 @@ export interface CreateEvalToolOptions {
 	readonly runtimes?: EvalRuntimes;
 	/** Absolute path of the active bun-1-4 skill; the prompt names it as MUST READ on a bun kernel. */
 	readonly bunSkillPath?: string;
+	/** Kernel globals of the tools active when a cell is submitted; read once per cell. */
+	readonly kernelPreludes?: () => readonly KernelPreludeContribution[];
+	/** Contributions whose documentation lines the description lists; snapshot taken when the tool is (re)registered. */
+	readonly promptKernelPreludes?: readonly KernelPreludeContribution[];
 }
 
 export interface EvalCellInvocation {

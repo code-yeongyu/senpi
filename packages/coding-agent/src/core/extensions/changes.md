@@ -18,6 +18,27 @@
 
 - The `BeforeAgentStartEvent` interface, the `emitBeforeAgentStart` options object, and the `triggerTurn` call site in `agent-session.ts`.
 
+
+## 2026-09-24 - ToolDefinition.kernelPrelude: eval-kernel globals for active tools (#2128)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `KernelPreludeContribution` (`javascript`, `python`, `documentation`, `exports`); `ToolDefinition` gains optional `kernelPrelude` next to `promptGuidelines`, and `ToolInfo` picks it.
+- `packages/coding-agent/src/core/extensions/kernel-prelude.ts` (fork-only): `projectKernelPrelude` and `KernelPreludeCollisionError`; an export that shadows a built-in eval kernel global (`display`, `print`, `tool`, ...) or a `__` kernel internal throws, naming the tool and the export.
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports `KernelPreludeContribution`.
+
+### Why
+
+- The bundled codemode extension is loaded through the ordinary importer with no options, so a tool that wants a typed kernel global (the computer-use `desktop` object) needs a host-API channel codemode already reads: `getAllTools()`. Codemode installs the globals of active tools only, so activation through `tool_search`, a by-name call, or a command decides visibility without registration-order coupling.
+
+### Why an extension could not handle it
+
+- `ToolDefinition` and `ToolInfo` are the host's tool contract; an extension cannot add a field that the host projects to other extensions.
+
+### Expected merge conflict zones
+
+- LOW: the block after `ToolExposure`, the `promptGuidelines` neighbourhood of `ToolDefinition`, and the `ToolInfo` pick in `types.ts`; the type re-export list in `index.ts`.
+
 ## 2026-09-24 - before_agent_start handlers opt in to the preview pass with `previewSafe` (senpi#2115)
 
 ### What changed
