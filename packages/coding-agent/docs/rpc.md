@@ -2391,8 +2391,14 @@ zero until completion when a provider does not report usage during streaming.
 
 Example starting a tool call:
 ```json
-{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"toolcall_start","contentIndex":1,"id":"call_abc123","toolName":"write"}}
+{"type":"message_update","usage":{...},"assistantMessageEvent":{"type":"toolcall_start","contentIndex":1,"id":"call_abc123","toolName":"write"},"resolvedToolName":"write"}
 ```
+
+`toolcall_start` and `toolcall_end` records carry a top-level `resolvedToolName`: the tool the call
+will run, by the same rule the agent applies before executing it. A gateway-namespaced or recased
+call such as `mcp__1a2b__Edit` streams with `toolName: "mcp__1a2b__Edit"` and `resolvedToolName: "edit"`;
+an exact or unresolvable name reports itself. Title and render the call by `resolvedToolName`, which is
+also the `toolName` of its `tool_execution_*` events.
 
 `message_update` intentionally omits the former cumulative `message` field and
 `assistantMessageEvent.partial`. Clients that need a live partial message must assemble it

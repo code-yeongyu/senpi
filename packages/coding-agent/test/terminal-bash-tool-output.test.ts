@@ -76,6 +76,11 @@ describe.skipIf(process.platform === "win32")("PTY bash tool model-facing output
 		const text = resultText(result);
 		expect(text.length).toBeLessThan(TERMINAL_TOOL_MAX_BYTES * 2);
 		expect(text).toContain("earlier output dropped");
+		const marker = result.content.at(-1);
+		expect(marker).toMatchObject({ type: "text", audience: "model" });
+		expect(marker?.text).toContain("earlier output dropped");
+		const visible = result.content.filter((part) => !("audience" in part));
+		expect(visible.map((part) => part.text).join("\n")).not.toContain("earlier output dropped");
 	});
 
 	it("strips ANSI sequences and collapses spinner frames in foreground results", async () => {

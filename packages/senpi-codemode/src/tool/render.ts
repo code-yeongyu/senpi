@@ -9,8 +9,9 @@ import {
 	type ToolRenderResultOptions,
 	truncateToVisualLines,
 } from "@code-yeongyu/senpi";
-import { formatTruncationWarning, stripOutputNotice, type TruncationMeta } from "../output/output-meta.ts";
-import { clampEvalSummary } from "./eval-request.ts";
+import type { TruncationMeta } from "../output/output-meta.ts";
+import { displayCode } from "./display-code.ts";
+import { normalizeEvalSummary } from "./eval-request.ts";
 import {
 	JSON_TREE_MAX_DEPTH_COLLAPSED,
 	JSON_TREE_MAX_DEPTH_EXPANDED,
@@ -65,6 +66,7 @@ type RenderBlock =
 	| { readonly kind: "dynamic"; readonly render: (width: number) => readonly string[] };
 
 const CODE_PREVIEW_LINES = 4;
+const SUMMARY_PREVIEW_LINES = 3;
 const OUTPUT_PREVIEW_LINES = 8;
 const STATUS_PREVIEW_COUNT = 3;
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
@@ -183,6 +185,22 @@ function renderAllVisualLines(text: string, width: number): string[] {
 	return truncateToVisualLines(text, Number.POSITIVE_INFINITY, width).visualLines.map((line) => line.trimEnd());
 }
 
+// A summary has no length limit, so a collapsed block shows its first lines and marks the cut.
+function summaryVisualLines(summary: string, width: number, expanded: boolean): string[] {
+	const lines = renderAllVisualLines(summary, width);
+	if (expanded || lines.length <= SUMMARY_PREVIEW_LINES) return lines;
+	const kept = renderAllVisualLines(summary, Math.max(1, width - 1)).slice(0, SUMMARY_PREVIEW_LINES);
+	kept[SUMMARY_PREVIEW_LINES - 1] = `${kept[SUMMARY_PREVIEW_LINES - 1] ?? ""}\u2026`;
+	return kept;
+}
+
+function summaryBlock(summary: string, theme: Theme | undefined, expanded: boolean): RenderBlock {
+	return {
+		kind: "dynamic",
+		render: (width) => summaryVisualLines(summary, width, expanded).map((line) => style(theme, "muted", line)),
+	};
+}
+
 function renderTextBlock(block: Extract<RenderBlock, { kind: "text" }>, width: number): string[] {
 	if (block.maxVisualLines === undefined) return renderAllVisualLines(block.text, width);
 	const result = truncateToVisualLines(block.text, block.maxVisualLines, width);
@@ -287,7 +305,7 @@ function languageForHighlighter(language: EvalLanguage): "python" | "javascript"
 
 function highlightedCode(code: string, language: EvalLanguage, theme: Theme | undefined): string {
 	const normalizedCode = code.trim().length > 0 ? code : "...";
-	const lines = highlightCode(normalizedCode, languageForHighlighter(language));
+	const lines = highlightCode(displayCode(normalizedCode, language), languageForHighlighter(language));
 	return (theme === undefined ? lines.map((line) => line.replace(/\u001b\[[0-9;]*m/gu, "")) : lines).join("\n");
 }
 
@@ -619,11 +637,9 @@ function renderCell(cell: EvalCellResult, environment: RenderEnvironment, badges
 	if (cell.summary !== undefined) {
 		appendLines(
 			lines,
-			renderPrefixed(style(environment.theme, "muted", cell.summary), environment, {
-				prefix: "│ ",
-				continuation: "│ ",
-				color: "muted",
-			}),
+			summaryVisualLines(cell.summary, Math.max(1, environment.width - 2), environment.expanded).map(
+				(line) => `${style(environment.theme, "muted", "│ ")}${style(environment.theme, "muted", line)}`,
+			),
 		);
 	}
 	const innerWidth = Math.max(1, environment.width - 2);
@@ -645,7 +661,7 @@ function renderCell(cell: EvalCellResult, environment: RenderEnvironment, badges
 	for (const line of codePreview.lines) {
 		appendLines(lines, renderPrefixed(line, environment, { prefix: "│ ", continuation: "│ ", color: "borderMuted" }));
 	}
-	const output = stripOutputNotice(cell.output, environment.meta).trimEnd();
+	const output = cell.output.trimEnd();
 	if (output.length > 0) {
 		appendLines(lines, renderPrefixed("output", environment, { prefix: "├─ ", continuation: "│  ", color: "dim" }));
 		const outputColor: ThemeColor = cell.status === "error" ? "error" : "toolOutput";
@@ -757,24 +773,13 @@ function renderDetailedLines(
 				context.environment.width,
 			),
 		);
-	if (details.notice !== undefined)
-		appendLines(
-			lines,
-			renderAllVisualLines(style(context.environment.theme, "dim", details.notice), context.environment.width),
-		);
-	const warning = formatTruncationWarning(details.meta) ?? (details.truncated ? "[eval output truncated]" : null);
-	if (warning !== null)
-		appendLines(
-			lines,
-			renderAllVisualLines(style(context.environment.theme, "warning", warning), context.environment.width),
-		);
 	return lines;
 }
 
 function textOutput(result: AgentToolResult<EvalResultDetails>, showImageFallback: boolean): string {
 	const lines: string[] = [];
 	for (const part of result.content) {
-		if (part.type === "text") lines.push(part.text);
+		if (part.type === "text" && part.audience !== "model") lines.push(part.text);
 		else if (showImageFallback && part.type === "image") {
 			lines.push(`[image: ${sanitizeTerminalLabel(part.mimeType)}]`);
 		}
@@ -884,11 +889,11 @@ function resultMetadata(
 	return [{ kind: "text", text: style(theme, "muted", metadata.join(" | ")) }];
 }
 
-// The call renderer reads the assistant message's raw arguments, which now keep the provider's
-// original summary (senpi#1472 detached preparation from the message). The advertised display
-// limit is enforced here instead, idempotently: an already-clamped value is returned unchanged.
+// The call renderer reads the assistant message's raw arguments, which keep the provider's
+// original summary (senpi#1472 detached preparation from the message), so it normalizes here,
+// idempotently: an already-normalized value is returned unchanged.
 function displaySummary(summary: string | undefined): string | undefined {
-	return clampEvalSummary(summary);
+	return normalizeEvalSummary(summary);
 }
 
 export function renderEvalCall(
@@ -915,10 +920,14 @@ export function renderEvalCall(
 			{ kind: "text", text: style(theme, "toolTitle", `eval ${args.language}${reset}${timeout}`) },
 			...(displaySummary(args.summary) === undefined
 				? []
-				: [{ kind: "text" as const, text: style(theme, "muted", displaySummary(args.summary) ?? "") }]),
+				: [summaryBlock(displaySummary(args.summary) ?? "", theme, context.expanded)]),
 			{
 				kind: "text",
-				text: style(theme, "mdCodeBlock", args.code.trim().length > 0 ? args.code : "..."),
+				text: style(
+					theme,
+					"mdCodeBlock",
+					args.code.trim().length > 0 ? displayCode(args.code, args.language) : "...",
+				),
 				maxVisualLines: context.expanded ? undefined : CODE_PREVIEW_LINES,
 				collapseKind: "code",
 				theme,
@@ -1006,14 +1015,12 @@ export function renderEvalResult(
 	const status = resultStatus(details, options, context.isError);
 	const blocks: RenderBlock[] = [
 		{ kind: "text", text: resultHeader(details, status, theme) },
-		...(details?.summary === undefined
-			? []
-			: [{ kind: "text" as const, text: style(theme, "muted", details.summary) }]),
+		...(details?.summary === undefined ? [] : [summaryBlock(details.summary, theme, expanded)]),
 		...resultMetadata(details, options, theme, status),
 		{ kind: "blank" },
 	];
 	const rawOutput = textOutput(result, context.showImages && imageProtocol === null);
-	const output = stripOutputNotice(rawOutput, details?.meta).trimEnd();
+	const output = rawOutput.trimEnd();
 	const hasRenderedImage =
 		context.showImages && imageProtocol !== null && result.content.some((part) => part.type === "image");
 	if (output.length > 0) {
@@ -1070,10 +1077,6 @@ export function renderEvalResult(
 	const calls = toolCallRows(details);
 	const nestedCalls = nestedToolCallBlock(details, theme, context.cwd, expanded);
 	if (calls.length > 0) blocks.push({ kind: "blank" }, nestedCalls ?? { kind: "toolCalls", calls, expanded, theme });
-	if (details?.notice !== undefined)
-		blocks.push({ kind: "blank" }, { kind: "text", text: style(theme, "dim", details.notice) });
-	const warning = formatTruncationWarning(details?.meta) ?? (details?.truncated ? "[eval output truncated]" : null);
-	if (warning !== null) blocks.push({ kind: "blank" }, { kind: "text", text: style(theme, "warning", warning) });
 	component.setBlocks(blocks);
 	return component;
 }

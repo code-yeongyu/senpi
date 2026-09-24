@@ -28,6 +28,54 @@ afterEach(() => {
 	}
 });
 
+describe("SettingsManager runtime overrides (--no-model-fallback, omo#8700)", () => {
+	it("keeps an override after a save of an unrelated setting", () => {
+		const { agentDir, projectDir } = createPaths();
+		const manager = SettingsManager.create(projectDir, agentDir);
+		manager.applyOverrides({ retry: { modelFallback: false } });
+
+		manager.setDefaultThinkingLevel("high");
+
+		expect(manager.getRetryFallbackSettings().modelFallback).toBe(false);
+	});
+
+	it("keeps an override across reload()", async () => {
+		const { agentDir, projectDir } = createPaths();
+		const manager = SettingsManager.create(projectDir, agentDir);
+		manager.applyOverrides({ retry: { modelFallback: false }, askUser: { enabled: false } });
+
+		await manager.reload();
+
+		expect(manager.getRetryFallbackSettings().modelFallback).toBe(false);
+		expect(manager.getAskUserSettings().enabled).toBe(false);
+	});
+
+	it("lets an explicit in-session setter win for exactly the key it sets", () => {
+		const { agentDir, projectDir } = createPaths();
+		const manager = SettingsManager.create(projectDir, agentDir);
+		manager.applyOverrides({ retry: { modelFallback: false }, askUser: { enabled: false } });
+
+		manager.setModelFallbackEnabled(true);
+
+		expect(manager.getRetryFallbackSettings().modelFallback).toBe(true);
+		expect(manager.getAskUserSettings().enabled).toBe(false);
+	});
+
+	it("never writes an override to the settings file", async () => {
+		const { agentDir, projectDir } = createPaths();
+		const manager = SettingsManager.create(projectDir, agentDir);
+		manager.applyOverrides({ retry: { modelFallback: false } });
+
+		manager.setDefaultThinkingLevel("high");
+		await manager.flush();
+
+		const written = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8")) as {
+			retry?: { modelFallback?: boolean };
+		};
+		expect(written.retry?.modelFallback).toBeUndefined();
+	});
+});
+
 describe("SettingsManager retry fallback settings", () => {
 	// Fallback chains ship EMPTY by default (2026-09-05 "require explicit fallback
 	// chains"): no implicit lanes, no wildcard escape route — a model falls back only

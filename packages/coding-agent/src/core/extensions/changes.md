@@ -1,5 +1,30 @@
 # Core Extensions Changes
 
+## 2026-09-23 - Entry renderers can replace the card directly before them (senpi#2051)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `EntryRendererOptions` with an optional `replaces(previous, next)` predicate; `registerEntryRenderer` takes it as an optional third argument, and `Extension` gains an optional `entryRendererOptions` map.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `registerEntryRenderer` stores the options next to the renderer (a re-registration without options clears them).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getEntryRendererOptions(customType)` returns the options of the extension that owns the renderer `getEntryRenderer` resolves.
+- `packages/coding-agent/src/core/extensions/index.ts` and `packages/coding-agent/src/index.ts` export `EntryRendererOptions`.
+
+### Why
+
+- A Goal wait appends a `goal-cache-warmup` entry when it is scheduled and another when it wakes; a reload used to append a third. Every entry became its own transcript card, so one wait rendered as a stack. The goal extension needs to say "this entry updates the card before it" without the host hard-coding a goal rule.
+
+### Why an extension could not handle it
+
+- An entry renderer only sees its own entry; the transcript container that decides whether a card is added or replaced is host-owned.
+
+### Extension impact
+
+- Additive and optional: existing `registerEntryRenderer(type, renderer)` calls behave exactly as before.
+
+### Expected merge conflict zones
+
+- The `EntryRenderer` type block and the `registerEntryRenderer` declaration in `types.ts`; `registerEntryRenderer` in `loader.ts`; `getEntryRenderer` in `runner.ts`; the rendering export lists in both `index.ts` files.
+
 ## 2026-09-22 - One extension module generation per source version, not per session (senpi#1948)
 
 ### What changed

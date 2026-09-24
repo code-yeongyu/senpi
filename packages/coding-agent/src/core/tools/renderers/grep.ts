@@ -14,7 +14,6 @@ import type { GrepEngineMatch } from "../grep/engine.ts";
 import { displayPath } from "../grep/format.ts";
 import type { GrepToolDetails } from "../grep.ts";
 import { getTextOutput, invalidArgText, linkPath, renderToolPath, str } from "../render-utils.ts";
-import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
 const COLLAPSED_LINE_BUDGET = 15;
 
@@ -69,26 +68,6 @@ function formatMatchRow(match: GrepEngineMatch, theme: Theme): string {
 	return match.isContext ? theme.fg("dim", row) : theme.fg("accent", row);
 }
 
-function truncationHeader(details: GrepToolDetails, theme: Theme): string | undefined {
-	const warnings: string[] = [];
-	if (details.totalLimitReached) warnings.push(`${details.matchCount} matches limit`);
-	if (details.fileLimitReached) warnings.push("file page limit");
-	if (details.perFileLimitReached) warnings.push("per-file limit");
-	if (details.truncation?.truncated) {
-		warnings.push(`${formatSize(details.truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
-	}
-	if (details.linesTruncated) warnings.push("some lines truncated");
-	if (warnings.length === 0) return undefined;
-	return theme.fg("warning", `truncated: ${warnings.join(", ")}`);
-}
-
-function footerLine(details: GrepToolDetails, theme: Theme): string {
-	return theme.fg(
-		"muted",
-		`[grep: matches=${details.matchCount ?? "n/a"} files=${details.fileCount} nextSkip=${details.nextSkip ?? "none"}]`,
-	);
-}
-
 function noMatchText(details: GrepToolDetails): string {
 	if (details.status === "pageEnd") return `No more results (skip=${details.skip})`;
 	if (details.status === "partial") return "No matches found in searched portion";
@@ -127,9 +106,6 @@ function formatGroupedResult(
 	cwd: string,
 ): string {
 	const lines: string[] = [];
-	const truncated = truncationHeader(details, theme);
-	if (truncated) lines.push(truncated);
-
 	const groups = groupsFromDetails(details);
 	if (groups.length === 0) {
 		lines.push(theme.fg("toolOutput", noMatchText(details)));
@@ -155,7 +131,6 @@ function formatGroupedResult(
 		if (hiddenGroups > 0) lines.push(overflowHint(hiddenGroups, hiddenGroups === 1 ? "file" : "files", theme));
 	}
 
-	lines.push(footerLine(details, theme));
 	return `\n${lines.join("\n")}`;
 }
 

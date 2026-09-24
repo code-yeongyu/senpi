@@ -4,6 +4,7 @@ import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import { safeRegExp, TERMINAL_OUTPUT_TOOL } from "../shared.ts";
 import {
 	errorResult,
+	noticedResult,
 	resolveTerminalId,
 	type TerminalToolContext,
 	type TerminalToolResult,
@@ -79,8 +80,13 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 
 			const delta = runtime.readDelta();
 			const formatted = formatTerminalToolOutput(applyFilter(delta.text, input.filter));
-			const dropped = delta.droppedChars > 0 ? `[${delta.droppedChars} earlier chars dropped]\n` : "";
-			return textResult(`${prefix}${statusLine(runtime)}\n${dropped}${formatted.text || "(no new output)"}`, extra);
+			const droppedNotice = delta.droppedChars > 0 ? `[${delta.droppedChars} earlier chars dropped]` : undefined;
+			const dropped = droppedNotice === undefined ? "" : `${droppedNotice}\n`;
+			return noticedResult(
+				`${prefix}${statusLine(runtime)}\n${dropped}${formatted.text || "(no new output)"}`,
+				[droppedNotice, formatted.marker],
+				extra,
+			);
 		},
 		renderCall: renderBashOutputCall,
 		renderResult: renderBashOutputResult,

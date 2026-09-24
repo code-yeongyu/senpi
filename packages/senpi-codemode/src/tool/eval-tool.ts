@@ -8,7 +8,7 @@ import {
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { EvalDetachedCellManager } from "./detached-cell-manager.ts";
 import { executeEvalControl } from "./detached-eval-result.ts";
-import { clampEvalSummary, isEvalControlRequest, parseEvalRequest } from "./eval-request.ts";
+import { isEvalControlRequest, normalizeEvalSummary, parseEvalRequest } from "./eval-request.ts";
 import type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 import { runEvalCell } from "./run-eval-cell.ts";
 import {
@@ -109,7 +109,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 			const record = args as Record<string, unknown>;
 			if (record.action === "peek" || record.action === "stop" || record.action === "list")
 				return args as EvalToolRequest;
-			const summary = clampEvalSummary(record.summary);
+			const summary = normalizeEvalSummary(record.summary);
 			if (summary === undefined) delete record.summary;
 			else record.summary = summary;
 			return args as EvalToolRequest;

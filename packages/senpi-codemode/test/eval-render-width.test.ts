@@ -146,7 +146,7 @@ describe.each(WIDTHS)("eval renderer width %i", (width) => {
 		// Then
 		expectLinesWithinWidth(lines, width, "truncated preview");
 		expect(visibleText).toContain("earlier output lines");
-		expect(visibleText).toContain("[eval output truncated]");
+		expect(visibleText).not.toContain("[eval output truncated]");
 		expect(visibleText).not.toContain(outputLines[0]);
 	});
 
@@ -295,6 +295,6 @@ describe("eval renderer cell detail width", () => {
 		expect.soft(text).toContain("read 12 chars");
 		expect.soft(text).toContain("worker-cell done");
 		expect.soft(text).toContain("display[1]");
-		expect.soft(text).toContain("Showing lines 10-12 of 12");
+		expect.soft(text).not.toContain("Showing lines 10-12 of 12");
 	});
 });

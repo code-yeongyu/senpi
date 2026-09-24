@@ -1,4 +1,5 @@
 import type { ModelThinkingLevel, ThinkingLevelMap } from "../types.ts";
+import aliasData from "./cursor-variant-aliases.json" with { type: "json" };
 import {
 	CURSOR_MODEL_CAPABILITIES,
 	type CursorModelCapability,
@@ -29,10 +30,17 @@ export interface CursorCatalogEntry {
 	readonly thinkingMode?: boolean;
 	readonly representativeVariantId?: string;
 	readonly legacyAliases: readonly string[];
+	/**
+	 * Derived-group variant ids: normalized thinking level -> the exact server-listed
+	 * variant id the live catalog serves. Present only on identities derived at
+	 * runtime from ids the static alias table does not list (senpi#2038).
+	 */
+	readonly variantIds?: Readonly<Partial<Record<ModelThinkingLevel, string>>>;
 }
 
 const ALL_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const FALLBACK_WINDOW = 200000;
+const STATIC_TARGETS = new Set(Object.values(aliasData.aliases).map((alias) => alias.targetId));
 
 interface GroupMember {
 	readonly raw: CursorCatalogRawEntry;
@@ -99,12 +107,120 @@ function pickRepresentative(members: readonly GroupMember[]): string {
 	return sorted[0].alias.legacyVariantId;
 }
 
+function normalizeDerivedLevel(token: string): ModelThinkingLevel | undefined {
+	switch (token) {
+		case "none":
+			return "off";
+		case "extra-high":
+			return "xhigh";
+		case "minimal":
+		case "low":
+		case "medium":
+		case "high":
+		case "xhigh":
+		case "max":
+			return token;
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * Every level is explicit: an unobserved level maps to `null` (unsupported), because the
+ * shared model contract treats an absent ordinary level as supported and would otherwise
+ * offer levels the server never listed.
+ */
+function buildDerivedLevelMap(members: readonly GroupMember[]): ThinkingLevelMap {
+	const map = Object.fromEntries(ALL_LEVELS.map((level) => [level, null])) as Record<
+		ModelThinkingLevel,
+		string | null
+	>;
+	for (const member of members) {
+		const level = member.alias.level;
+		if (level !== undefined && member.level !== undefined && map[level] === null) {
+			map[level] = member.level;
+		}
+	}
+	return map;
+}
+
+function buildDerivedVariantIds(
+	members: readonly GroupMember[],
+): Readonly<Partial<Record<ModelThinkingLevel, string>>> {
+	const map: Partial<Record<ModelThinkingLevel, string>> = {};
+	for (const member of members) {
+		const level = member.alias.level;
+		if (level !== undefined && map[level] === undefined) map[level] = member.raw.id;
+	}
+	return map;
+}
+
+/**
+ * Derive variant-group aliases for raw ids the static alias table does not list.
+ * A family (shared base id, with the `-thinking` infix as a separate identity for
+ * Claude-style ids) is derived only when at least two distinct levels are observed
+ * among its unlisted non-fast members in the same batch; `-fast` variants,
+ * single-level families, and level-less ids stay flat exactly as today. Ids the
+ * static table already covers are never re-derived, so static output stays
+ * byte-identical (senpi#2038).
+ */
+export function deriveCursorVariantAliases(ids: readonly string[]): ReadonlyMap<string, CursorVariantAlias> {
+	const families = new Map<
+		string,
+		{ targetId: string; levels: Set<ModelThinkingLevel>; members: [string, ModelThinkingLevel, string][] }
+	>();
+	const rawIds = new Set(ids);
+	for (const id of ids) {
+		if (getCursorVariantAlias(id) !== undefined) continue;
+		const parsed = parseCursorVariantId(id);
+		if (parsed.fast || parsed.level === undefined || parsed.baseId === "") continue;
+		const level = normalizeDerivedLevel(parsed.level);
+		if (level === undefined) continue;
+		const targetId = parsed.thinking === true ? `${parsed.baseId}-thinking` : parsed.baseId;
+		const family = families.get(targetId) ?? { targetId, levels: new Set(), members: [] };
+		family.levels.add(level);
+		family.members.push([id, level, parsed.level]);
+		families.set(targetId, family);
+	}
+	const derived = new Map<string, CursorVariantAlias>();
+	for (const family of families.values()) {
+		// A derived target must not shadow a static identity, a static alias key, or a raw id.
+		if (
+			family.levels.size < 2 ||
+			STATIC_TARGETS.has(family.targetId) ||
+			getCursorVariantAlias(family.targetId) !== undefined ||
+			rawIds.has(family.targetId)
+		)
+			continue;
+		const chosen = new Map<ModelThinkingLevel, string>();
+		for (const [id, level, suffix] of family.members) {
+			const previous = chosen.get(level);
+			if (previous === undefined) {
+				chosen.set(level, id);
+				continue;
+			}
+			const previousSuffix = parseCursorVariantId(previous).level;
+			if (
+				(suffix === level && previousSuffix !== level) ||
+				((suffix === level) === (previousSuffix === level) && id < previous)
+			) {
+				chosen.set(level, id);
+			}
+		}
+		for (const [level, id] of chosen) {
+			derived.set(id, { targetId: family.targetId, legacyVariantId: id, encoding: "legacy-variant", level });
+		}
+	}
+	return derived;
+}
+
 /** Normalize a raw Cursor catalog (live discovery, CLI scrape, or stored cache) into selectable identities. */
 export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntry[]): CursorCatalogEntry[] {
+	const derived = deriveCursorVariantAliases(rawEntries.map((raw) => raw.id));
 	const groups = new Map<string, GroupMember[]>();
 	const order: string[] = [];
 	for (const raw of rawEntries) {
-		const alias = getCursorVariantAlias(raw.id);
+		const alias = getCursorVariantAlias(raw.id) ?? derived.get(raw.id);
 		if (!alias) {
 			const parsed = parseCursorVariantId(raw.id);
 			const key = `unknown${parsed.baseId}${raw.id}`;
@@ -139,7 +255,8 @@ export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntr
 		const members = groups.get(key) as GroupMember[];
 		const first = members[0];
 		const baseParsed = parseCursorVariantId(first.alias.targetId);
-		const baseId = baseParsed.baseId;
+		const derivedGroup = members.every((member) => derived.has(member.raw.id));
+		const baseId = derivedGroup ? parseCursorVariantId(first.raw.id).baseId : baseParsed.baseId;
 		const capability = CURSOR_MODEL_CAPABILITIES[baseId];
 		const isGrouped = members.length > 1 || first.alias.targetId !== first.raw.id;
 		const efforts = members.filter((member) => member.level !== undefined && member.level !== "none");
@@ -150,7 +267,7 @@ export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntr
 				id: first.alias.targetId,
 				name: cleanName(members, baseId, thinkingMode),
 				reasoning: true,
-				thinkingLevelMap: buildLevelMap(members, capability),
+				thinkingLevelMap: derivedGroup ? buildDerivedLevelMap(members) : buildLevelMap(members, capability),
 				window: capability?.window ?? FALLBACK_WINDOW,
 				...(capability?.maxWindow !== undefined ? { maxWindow: capability.maxWindow } : {}),
 				input: [...new Set(members.flatMap((member) => member.raw.input))],
@@ -159,6 +276,7 @@ export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntr
 				...(thinkingMode !== undefined ? { thinkingMode } : {}),
 				representativeVariantId: pickRepresentative(members),
 				legacyAliases: members.map((member) => member.alias.legacyVariantId).sort(),
+				...(derivedGroup ? { variantIds: buildDerivedVariantIds(members) } : {}),
 			});
 			continue;
 		}

@@ -1,3 +1,23 @@
+## 2026-09-23 - Claude Code model-support report in the release and nightly gates (senpi#2053)
+
+### What changed
+
+- `scripts/check-claude-code-model-support.mjs` (new): lists Anthropic catalog Claude ids the pinned bundled Claude Code binary does not embed (`--strict` exits 1); `--sdk-currency` exits 1 when `@anthropic-ai/claude-agent-sdk` trails the newest published release.
+- `scripts/release-artifacts.mjs`: `runClaudeCodeModelSupportReport` runs the report (non-strict); `scripts/release.mjs` calls it right after `runGenerateModels`.
+- `.github/workflows/releasability.yml`: `model-catalog-regen` runs the report `--strict` after regeneration; new `claude-sdk-currency` job, wired into `report-failure`. `.github/workflows/ci.yml`: new `claude-executable-windows` job in the `Check and test` fan-in.
+
+### Why
+
+- The release regenerates the catalog from the network after PR CI ran, so a new Claude id can enter there; the log and the nightly gate must say when the pinned Claude Code does not know it (oh-my-openagent#8700).
+
+### Why an extension could not handle it
+
+- Release and CI tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the import list and the artifact-step sequence in `scripts/release.mjs`; `scripts/release-artifacts.mjs` beside `runGenerateImageModels`; the job lists of `ci.yml` and `releasability.yml`.
+
 ## 2026-09-22 - point the bundle oauth module map at the renamed provider module (senpi#1989)
 
 ### What changed

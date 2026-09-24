@@ -2,7 +2,6 @@ import { prepareToolArguments } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createEvalTool } from "../../../../senpi-codemode/src/tool/eval-tool.ts";
-import { EVAL_SUMMARY_MAX_LENGTH } from "../../../../senpi-codemode/src/tool/types.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../../src/core/extensions/builtin/anthropic-subscription/account-management.ts";
 import { CLAUDE_SDK_OAUTH_API_ID } from "../../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
 import { AssistantCommitBoundary } from "../../../src/core/extensions/builtin/anthropic-subscription/session-commit-boundary.ts";
@@ -61,20 +60,19 @@ function commitAfterPreparing(message: AssistantMessage): { outcome: string; exe
 }
 
 describe("issue #1472: preparing eval arguments must not break Claude SDK continuity", () => {
-	it("commits an over-limit summary as clean and still clamps the executed arguments", () => {
-		const summary = "s".repeat(EVAL_SUMMARY_MAX_LENGTH + 1);
+	it("commits a whitespace-padded summary as clean and still normalizes the executed arguments", () => {
+		const summary = "  inspect   the cache\nstate  ";
 		const message = evalAssistant(runSummary(summary));
 
 		const { outcome, executed } = commitAfterPreparing(message);
 
 		expect(outcome).toBe("clean");
 		expect(toolCallOf(message).arguments.summary).toBe(summary);
-		expect(executed.summary).toHaveLength(EVAL_SUMMARY_MAX_LENGTH);
-		expect(executed.summary).toMatch(/\.\.\.$/);
+		expect(executed.summary).toBe("inspect the cache state");
 	});
 
-	it("leaves a summary at the limit untouched on both sides", () => {
-		const summary = "s".repeat(EVAL_SUMMARY_MAX_LENGTH);
+	it("leaves a long summary untouched on both sides", () => {
+		const summary = "s".repeat(300);
 		const message = evalAssistant(runSummary(summary));
 
 		const { outcome, executed } = commitAfterPreparing(message);

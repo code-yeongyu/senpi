@@ -18,6 +18,82 @@ Account selection lives in the credential pool and `ModelRuntime`; extensions on
 
 - LOW: `getApiKeyAndHeaders` in `model-registry.ts`; the new methods sit next to `getAuth` in `model-runtime.ts`; the `select` callback in `streamWithCredentialRotation`.
 
+## 2026-09-23 - Streaming tool-call events name the tool a call resolves to (senpi#2068)
+
+### What changed
+
+- `packages/coding-agent/src/core/tool-call-display-name.ts` (new): `SessionMessageUpdateEvent` (`message_update` plus optional `resolvedToolName`) and `withResolvedToolName`, which reads the streamed name of a `toolcall_start` (its `partial` block) or `toolcall_end` (its `toolCall`) and attaches the resolved one. Other `message_update` records pass through untouched.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSessionEvent`'s `message_update` member is `SessionMessageUpdateEvent`; the listener emit point annotates through `resolveToolCallName` (senpi#2064), the same rule and callable-name set the agent loop uses. Extension events are unchanged.
+
+### Why
+
+- RPC clients (the desktop app) render a call from the streamed events and only learned the resolved name at `tool_execution_start`, so a `mcp__<id>__Edit` call showed that name until execution began. A client cannot resolve it itself: the rule needs the session's callable names, and a real tool may be named `mcp__server__tool`.
+
+### Why an extension could not handle it
+
+- Listener events are emitted by the session; an extension cannot add a field to the RPC record stream.
+
+### Expected merge conflict zones
+
+- LOW: the `AgentSessionEvent` union head and the `this._emit(...)` line after extension dispatch in `_processAgentEvent`.
+
+## 2026-09-23 - Expose the session's tool-call name resolution for display (senpi#2064)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: public `resolveToolCallName(requested)` returns the tool a call named `requested` runs, by the same `resolveToolNameAlias` rule over `_callableToolNames` that `resolveUnknownToolCall` uses, without activating anything; unresolved names come back unchanged.
+
+### Why
+
+- The TUI builds a tool card from the streamed assistant `toolCall.name` before execution starts. It needs the agent's own answer to render a gateway-namespaced or recased call as the resolved tool from its first frame.
+
+### Why an extension could not handle it
+
+- The callable-name set (active, lazily activatable, and `tool_search` catalog names) is private session state.
+
+### Expected merge conflict zones
+
+- LOW: one method after `getToolDefinition` in `agent-session.ts`.
+
+## 2026-09-23 - Settings overrides survive saves and reloads (senpi#2052)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `applyOverrides` merges into a private, never-persisted `runtimeOverrides` layer, and every recompute (`save`, `saveProjectSettings`, `reload`, `setProjectTrusted`) goes through `mergedSettings()` = global, then project, then that layer. `markModified` / `markProjectModified` drop the override for exactly the key an explicit setter writes.
+- `packages/coding-agent/src/core/settings-overrides.ts` (new): `withoutOverride` removes one field or one nested key from the layer without mutating it.
+
+### Why
+
+- An override lived only in the resolved view, so the first save of anything (the thinking level, for example) or a reload rebuilt that view from disk and dropped it. `--no-model-fallback` / `SENPI_NO_FALLBACK=1` therefore stopped working mid-session and a Claude version-floor 400 walked the whole fallback chain (oh-my-openagent#8700); `--no-ask-user`, `--theme` and SDK `applyOverrides` callers had the same hole.
+
+### Why an extension could not handle it
+
+- Overrides are the settings manager's own state; an extension can only read the resolved settings the manager hands out.
+
+### Expected merge conflict zones
+
+- LOW: `applyOverrides`, the recompute call sites, `markModified` / `markProjectModified`, and the private field list in `packages/coding-agent/src/core/settings-manager.ts`.
+
+## 2026-09-23 - Migrate legacy provider ids in models.json on disk (senpi#2044)
+
+### What changed
+
+- `packages/coding-agent/src/core/models-json-migration.ts` (new): `migrateModelsJsonProviderIds` rewrites a models.json whose `providers` keys or `disabledProviders` entries use a legacy provider id (`openai-codex`, `claude-sdk-oauth`) to the canonical id, once. It edits only the affected JSONC tokens so comments and formatting survive, proves the result re-parses to the migrated document (falling back to a full re-serialization only when it does not), drops a legacy entry shadowed by its canonical entry, keeps the original bytes as `models.json.backup-<stamp>`, writes through a temp file with the original mode, refuses to replace a file that changed after it was read, and removes its temp and backup on any failure.
+- `packages/coding-agent/src/core/model-config.ts`: `load` and `loadSync` run the migration after a successful parse (`parseAndMigrate`); the in-memory read boundary is unchanged. The per-launch "models.json uses renamed provider ids" warning is gone; a warning remains only when the rewrite fails, and it names the reason. The pre-validation normalization loop in `parse` now skips non-array `models`, non-object `modelOverrides` and non-object entries, so a shape error such as `"models": "x"` is reported by the schema validator as `Invalid models.json schema` instead of crashing with `(record.models ?? []).map is not a function`.
+- Tests: `packages/coding-agent/test/suite/regressions/issue-2044-models-json-provider-id-migration.test.ts`; `packages/coding-agent/test/read-boundary-models-json.test.ts` now expects no warning for a migrated file; `packages/coding-agent/test/suite/no-sync-in-session-path.ledger.json` records the migration's one-shot, KB-scale sync read and two writes on the session path.
+
+### Why
+
+The read boundary added for senpi#1989 normalized legacy ids in memory but never rewrote models.json, so every launch repeated the warning and each user had to hand-edit the file. auth.json, settings.json and the account directory were already migrated in place; models.json was the last persisted surface left read-only. This reverses the "Nothing here rewrites state" stance of the 2026-09-22 read-boundary entry for models.json only.
+
+### Why an extension could not handle it
+
+`ModelConfig` loads models.json inside the model runtime before any extension binds, and the file path is owned by core.
+
+### Expected merge conflict zones
+
+- LOW: `parse`/`load`/`loadSync` in `packages/coding-agent/src/core/model-config.ts` and its import list.
+
 ## 2026-09-23 — Observe stderr below hidden diagnostic redirects (senpi#1879)
 
 ### What changed
@@ -35,6 +111,26 @@ Account selection lives in the credential pool and `ModelRuntime`; extensions on
 ### Expected merge conflict zones
 
 - Stderr takeover and restoration. Multiple subscribers and both teardown orders must remain safe.
+
+## 2026-09-23 - Legacy Cursor variant references resolve through runtime-derived groups (senpi#2038)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `resolveLegacyCursorReference`, `resolveStoredModelReference`, and `cursorLegacyAliasesForModel` additionally resolve Cursor ids the static alias table does not list through `compat.cursorReasoning.variantIds` - the variant ids the pi-ai runtime derivation observed for the identity. A reverse lookup through those ids yields the thinking level; it is case-insensitive like `findExactModelReferenceMatch` (which resolved these ids before grouping) and forwards the catalog spelling as `legacyVariantId`, because the selection descriptor allowlists exact ids, so `cursor/grok-4.7-xhigh`, a stored `grok-4.7-medium`, and the `cursor/grok-4.7-*` glob projection all resolve onto the derived `grok-4.7` identity with a `{ source: "legacy-variant" }` selection instead of falling through to fuzzy matches or `undefined`. Static-table behavior is untouched: the static alias branch runs first and is unchanged, `-fast` variants never appear in `variantIds` and stay flat, and the direct `getModel` fallback still wins for stored flat ids.
+- The reverse lookup accepts the actual registered API ids for both providers (`cursor`/`cursor-agent` and `cursor-cli-oauth`/`cursor-cli-oauth`). Unique exact models take precedence over derived (but not static) aliases in `resolveLegacyCursorReference`, `parseModelPattern`, and stored restore, including unqualified references to other providers.
+- Tests: `packages/coding-agent/test/suite/regressions/2038-cursor-derived-variants.test.ts` builds the catalog over `packages/ai/test/fixtures/cursor-usable-models-unlisted-20260923.json` and pins legacy variant, explicit level, stored reference, flat fast id, glob projection, both provider/API pairs, and exact-match precedence; `2038-cursor-derived-reference-boundaries.test.ts` pins mixed-case references and the static-alias-key boundary in both lanes.
+
+### Why
+
+- Cursor ships suffix variant ids (grok-4.7-low/-medium/-high/-xhigh) that the frozen 2026-08-18 alias table cannot know. pi-ai now derives those groups at catalog time (senpi#2038), but the resolver consulted only the static table, so a legacy reference either fuzzy-matched a flat `-fast` model (`cursor/grok-4.7:low` landed on `grok-4.7-xhigh-fast` with thinking off) or resolved to `undefined` on restore. The resolver is the only layer that maps a user-typed or stored id onto a scoped model with a thinking selection. The first reverse lookup also excluded the CLI lane's registered API and displaced exact raw models; both defects are fixed without changing static alias precedence.
+
+### Why an extension could not handle it
+
+- `parseModelPattern`, `resolveStoredModelReference`, and the glob projection run inside core model selection before extensions bind; an extension can register providers but cannot change how the resolver maps patterns and stored ids onto models.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the cursor helper block after `legacySelection` (`derivedCursorVariantIds` / `derivedCursorVariantMatch` / `derivedResolution` / `cursorLegacySelection`), the body of `resolveLegacyCursorReference` (exact-match gate), the derived branch of `resolveStoredModelReference` (direct-model gate), the tail of `cursorLegacyAliasesForModel`, `resolveDerivedCursorVariant`, and the alias-projection line in `resolveModelScopeFromModels`; the `@earendil-works/pi-ai` import list.
 
 ## 2026-09-23 - Namespaced calls to deferred tools activate the unique match (senpi#2025)
 

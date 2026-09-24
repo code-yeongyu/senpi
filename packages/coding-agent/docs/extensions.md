@@ -2035,6 +2035,14 @@ pi.registerEntryRenderer("status-card", (entry, { expanded }, theme) => {
 pi.appendEntry("status-card", { title: "Indexed files", count: 17 });
 ```
 
+Pass an optional third argument to let a newer entry update the card before it instead of adding a second card. `replaces(previous, next)` is consulted only when the card directly before the new entry (nothing visible in between) renders an entry of the same custom type; returning `true` swaps that card for the new one, both live and when a session is resumed.
+
+```typescript
+pi.registerEntryRenderer("status-card", renderStatusCard, {
+  replaces: (previous, next) => previous.data?.jobId === next.data?.jobId,
+});
+```
+
 ### pi.registerShortcut(shortcut, options)
 
 Register a keyboard shortcut. See [keybindings.md](keybindings.md) for the shortcut format and built-in keybindings.

@@ -2,6 +2,24 @@
 
 Vendored from [`code-yeongyu/pi-rules`](https://github.com/code-yeongyu/pi-rules) (see `external-versions.json`).
 
+## 2026-09-23 - Project-rules activations name the tool call they were injected into (senpi#2057)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/rules/index.ts`: the `project-rules` rule-activation entry carries `toolCallId` from the `tool_result` event whose content received the rules.
+
+### Why
+
+- The interactive TUI folds the notice into the Explored group of that call instead of rendering a standalone card that splits the group; the desktop app reads the same field.
+
+### Why an extension could not handle it
+
+- The rules extension owns the entry; only it knows which tool result received the injection.
+
+### Expected merge conflict zones
+
+- The `appendRuleActivation({...})` call at the end of the `tool_result` handler in `index.ts`.
+
 ## 2026-09-22 - claude-sdk-oauth provider id renamed to anthropic-subscription in the prompt-rebuild comment (senpi#1989)
 
 ### What changed
@@ -70,3 +88,24 @@ Vendored rule constants; nothing for an extension to override.
 ## Conflict zones
 
 Re-vendoring overwrites these files; this is a MANUAL_PACKAGES entry in `scripts/sync-builtin-extensions.mjs` (metadata only, no auto file-sync). Re-apply the parameter-property patches after re-running the transform, then re-check `npm run check`. The same applies to the environment resolver (`config.ts`, `index.ts`, `rules/types.ts`), the complete-result budget plus `<project_rules>` envelope (`rules/constants.ts`, `rules/formatter.ts`), the static-selection filter, and the dynamic `DYNAMIC_CONTEXT_SCOPE` in `index.ts`. Dropping the resolver makes the documented `PI_RULES_*` values inert; dropping complete-result budgeting makes Senpi's wrapper exceed the configured limit; dropping the envelope or static-selection adaptation silently removes project rules on the `claude-agent-sdk` lane or subsequent prompts; dropping the live-context scope reintroduces repeated dynamic instructions for each distinct matching target. Re-run `test/rules-env-config.test.ts`, `test/rules-before-agent-start.test.ts`, `test/rules-dynamic-cross-target-dedup.test.ts`, and `test/claude-agent-sdk-project-instructions.test.ts` after every re-vendor.
+
+
+## 2026-09-23 — Address injected project rules only to the model
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/rules/index.ts`: Add audience model to the appended rules text part. Keep appendRuleActivation and its display-only entry unchanged. Cover truncated-rule continuation text with the same whole-part marker.
+
+### Why
+
+Injected instructions and their continuation notices are model context, not tool output for the user.
+
+### Why an extension could not handle it
+
+This built-in extension is the producer and therefore must declare the audience itself.
+
+### Expected merge conflict zones
+
+The single appended text-part literal after appendRuleActivation; a separate lane will add toolCallId to the unchanged activation call.
+
+- Covered production paths: `packages/coding-agent/src/core/extensions/builtin/rules/index.ts`.

@@ -12,6 +12,44 @@
 
 ### Removed
 
+## [2026.9.23-5] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `tool_execution_start` names the tool a call resolves to, matching `tool_execution_end` and the tool result, and the `[auto-corrected]` tool-name notice is a model-only text part. ([#2064](https://github.com/code-yeongyu/senpi/issues/2064))
+
+### Removed
+
+## [2026.9.23-4] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-3] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.9.23-2] - 2026-09-23
 
 ### Breaking Changes

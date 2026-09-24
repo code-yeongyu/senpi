@@ -8,6 +8,46 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.9.23-5] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-4] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Eval cards no longer display truncation or full-output artifact footer warnings. Model-facing eval text and grouping are unchanged; content explicitly addressed only to the model is omitted from the text fallback. ([#2041](https://github.com/code-yeongyu/senpi/issues/2041))
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-3] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Dense one-line JavaScript eval cells are previewed in the TUI broken at statement, block, and long-array boundaries with indentation, keeping the original tokens and comments. Unparseable, non-JavaScript, and already readable cells are shown as sent, and the code that runs is unchanged. ([#2050](https://github.com/code-yeongyu/senpi/issues/2050))
+- The `eval` `summary` guide asks for a progress update saying what the agent is doing and why, in the language the user writes in, and summaries no longer have a length limit (the 80-character truncation is gone). A collapsed eval block shows the first three summary lines; expanding it shows the rest. ([#2050](https://github.com/code-yeongyu/senpi/issues/2050))
 - Codemode CI tests use at most two fork workers, matching the coding-agent suite's interpreter-heavy test scheduling. Test deadlines, assertions, and local worker defaults are unchanged. ([#2039](https://github.com/code-yeongyu/senpi/issues/2039))
 
 ### Fixed

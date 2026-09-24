@@ -278,6 +278,56 @@ jobs:
         shell: bash
         run: bun test scripts/compiled-extension-platform.test.ts scripts/compiled-extension-load.test.ts
 
+  # omo#8700: npm installs Claude Code on Windows as a claude.cmd shim around bin\claude.exe. The
+  # shim-resolution test only runs on a real Windows host, under Node and under Bun (the omo engine
+  # runtime); the JSON check fails the job if that file was skipped instead of executed.
+  claude-executable-windows:
+    name: Claude Code executable (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Claude executable resolution tests (Node)
+        shell: bash
+        run: npx vitest run test/anthropic-subscription-executable-path-lookup.test.ts test/anthropic-subscription-executable-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-node.json
+        working-directory: packages/coding-agent
+
+      - name: Run Claude executable shim test (Bun)
+        shell: bash
+        run: bunx --bun vitest run test/anthropic-subscription-executable-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-bun.json
+        working-directory: packages/coding-agent
+
+      - name: Require the Windows shim test to have executed
+        shell: bash
+        run: |
+          for report in vitest-node.json vitest-bun.json; do
+            node -e '
+              const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+              const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith("anthropic-subscription-executable-windows.test.ts"));
+              const passed = file ? file.assertionResults.filter((a) => a.status === "passed").length : 0;
+              const other = file ? file.assertionResults.filter((a) => a.status !== "passed").length : 0;
+              console.log(process.argv[1] + ": windows shim test passed=" + passed + " other=" + other);
+              if (passed === 0 || other !== 0) process.exit(1);
+            ' "$report"
+          done
+        working-directory: packages/coding-agent
+
   test-workspaces:
     name: Test (workspaces + scripts)
     runs-on: ubuntu-latest
@@ -365,6 +415,7 @@ jobs:
         hooks-trust-storage-windows,
         rpc-windows,
         compiled-extensions-windows,
+        claude-executable-windows,
         test-workspaces,
       ]
     if: always()
@@ -395,6 +446,7 @@ jobs:
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
             echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
             echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"
+            echo "- claude-executable-windows: ${{ needs.claude-executable-windows.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 

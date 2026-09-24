@@ -26,13 +26,13 @@ describe("read boundary (e): models.json overlay keys (senpi#1989)", () => {
 		expect(cfg.getError()).toBeUndefined(); // never hard-errors
 	});
 
-	it("emits ONE warning naming the rename, and none when the file is already canonical", () => {
+	it("warns about nothing once the legacy ids are migrated on disk (senpi#2044), nor for a canonical file", () => {
 		const legacy = ModelConfig.loadSync(
 			modelsJson({ providers: { "claude-sdk-oauth": overlay("https://a"), "openai-codex": overlay("https://b") } }),
 		);
-		expect(legacy.getWarnings()).toHaveLength(1);
-		expect(legacy.getWarnings()[0]).toContain("claude-sdk-oauth -> anthropic-subscription");
-		expect(legacy.getWarnings()[0]).toContain("openai-codex -> chatgpt-subscription");
+		expect(legacy.getWarnings()).toHaveLength(0);
+		expect(legacy.getProvider("anthropic-subscription")).toMatchObject({ baseUrl: "https://a" });
+		expect(legacy.getProvider("chatgpt-subscription")).toMatchObject({ baseUrl: "https://b" });
 
 		const canonical = ModelConfig.loadSync(
 			modelsJson({ providers: { "anthropic-subscription": overlay("https://a") } }),

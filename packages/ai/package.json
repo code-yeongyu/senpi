@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-ai",
-	"version": "2026.9.23-2",
+	"version": "2026.9.23-5",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -84,7 +84,7 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "0.127.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1136.0",
-		"@earendil-works/pi-telemetry": "^2026.9.23-2",
+		"@earendil-works/pi-telemetry": "^2026.9.23-5",
 		"@google/genai": "2.23.0",
 		"@smithy/node-http-handler": "4.12.1",
 		"http-proxy-agent": "9.1.0",

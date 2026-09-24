@@ -36,6 +36,7 @@ import type {
 	ContextEventResult,
 	ContextUsage,
 	EntryRenderer,
+	EntryRendererOptions,
 	Extension,
 	ExtensionActions,
 	ExtensionCommandContext,
@@ -1003,6 +1004,12 @@ export class ExtensionRunner {
 			}
 		}
 		return undefined;
+	}
+
+	/** Options registered alongside the renderer `getEntryRenderer` returns for this custom type. */
+	getEntryRendererOptions(customType: string): EntryRendererOptions | undefined {
+		const owner = this.extensions.find((ext) => ext.entryRenderers?.has(customType));
+		return owner?.entryRendererOptions?.get(customType);
 	}
 
 	private resolveRegisteredCommands(): ResolvedCommand[] {

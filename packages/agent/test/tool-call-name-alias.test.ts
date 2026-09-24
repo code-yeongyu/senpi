@@ -85,7 +85,7 @@ async function callOnce(
 	calledName: string,
 	tools: AgentTool[],
 	overrides: Partial<AgentLoopConfig> = {},
-): Promise<{ result: ToolResultMessage; endToolNames: string[] }> {
+): Promise<{ result: ToolResultMessage; startToolNames: string[]; endToolNames: string[] }> {
 	const context: AgentContext = { systemPrompt: "", messages: [], tools };
 	let request = 0;
 	const stream = agentLoop(
@@ -107,14 +107,16 @@ async function callOnce(
 					: assistant([{ type: "text", text: "done" }], "stop"),
 			),
 	);
+	const startToolNames: string[] = [];
 	const endToolNames: string[] = [];
 	for await (const event of stream) {
+		if (event.type === "tool_execution_start") startToolNames.push(event.toolName);
 		if (event.type === "tool_execution_end") endToolNames.push(event.toolName);
 	}
 	const messages = await stream.result();
 	const result = messages.find((message): message is ToolResultMessage => message.role === "toolResult");
 	if (!result) throw new Error("expected a tool result");
-	return { result, endToolNames };
+	return { result, startToolNames, endToolNames };
 }
 
 function textOf(result: ToolResultMessage): string {
@@ -128,7 +130,7 @@ describe("tool-call name alias resolution", () => {
 		const seenByHook: string[] = [];
 
 		// when
-		const { result, endToolNames } = await callOnce(
+		const { result, startToolNames, endToolNames } = await callOnce(
 			"mcp__686f__LazyWeather",
 			[weatherTool("lazy_weather", execute)],
 			{
@@ -144,10 +146,12 @@ describe("tool-call name alias resolution", () => {
 		expect(result.isError).toBe(false);
 		expect(result.toolName).toBe("lazy_weather");
 		expect(seenByHook).toEqual(["lazy_weather"]);
+		expect(startToolNames).toEqual(["lazy_weather"]);
 		expect(endToolNames).toEqual(["lazy_weather"]);
 		expect(result.content[0]).toEqual({
 			type: "text",
 			text: '[auto-corrected] no tool is named "mcp__686f__LazyWeather"; ran "lazy_weather". Call tools by their exact listed name.',
+			audience: "model",
 		});
 		expect(textOf(result)).toContain("lazy_weather:Seoul");
 	});
@@ -182,13 +186,14 @@ describe("tool-call name alias resolution", () => {
 		const lazy = weatherTool("lazy_weather", execute);
 		const resolver = vi.fn(async (name: string) => (name === "mcp__686f__lazy_weather" ? lazy : undefined));
 
-		const { result, endToolNames } = await callOnce("mcp__686f__lazy_weather", [], {
+		const { result, startToolNames, endToolNames } = await callOnce("mcp__686f__lazy_weather", [], {
 			resolveUnknownToolCall: resolver,
 		});
 
 		expect(resolver).toHaveBeenCalledWith("mcp__686f__lazy_weather", expect.anything());
 		expect(execute).toHaveBeenCalledOnce();
 		expect(result.toolName).toBe("lazy_weather");
+		expect(startToolNames).toEqual(["lazy_weather"]);
 		expect(endToolNames).toEqual(["lazy_weather"]);
 		expect(textOf(result)).toContain("[auto-corrected]");
 	});

@@ -115,7 +115,7 @@ describe("grep TUI renderer", () => {
 		expect(text).toContain("skip 20");
 	});
 
-	it("renders grouped matches with a file header, 12: row, and footer from details", () => {
+	it("renders grouped matches with a file header and 12: row, without a statistics footer", () => {
 		const text = renderResult(
 			{
 				content: [{ type: "text", text: "" }],
@@ -126,9 +126,8 @@ describe("grep TUI renderer", () => {
 		expect(text).toContain("src/a.ts");
 		expect(text).toContain("12:");
 		expect(text).toContain("const needle = true;");
-		expect(text).toMatch(/matches=2/);
-		expect(text).toMatch(/files=2/);
-		expect(text).toContain("nextSkip=20");
+		expect(text).not.toContain("[grep: matches=");
+		expect(text).not.toContain("nextSkip=");
 	});
 
 	it("hides context rows when collapsed and shows them when expanded", () => {
@@ -138,7 +137,7 @@ describe("grep TUI renderer", () => {
 
 		expect(collapsed).toContain("src/a.ts");
 		expect(collapsed).toContain("12:");
-		expect(collapsed).toContain("nextSkip=20");
+		expect(collapsed).not.toContain("nextSkip=");
 		expect(collapsed).not.toContain("13-");
 		expect(collapsed).not.toContain("after");
 
@@ -148,7 +147,7 @@ describe("grep TUI renderer", () => {
 		expect(expanded).toContain("7:");
 	});
 
-	it("puts truncation status in the header, not a bottom notice", () => {
+	it("omits renderer-owned truncation warnings while preserving matches", () => {
 		const text = renderResult(
 			{
 				content: [{ type: "text", text: "" }],
@@ -160,8 +159,8 @@ describe("grep TUI renderer", () => {
 			},
 			true,
 		);
-		const header = text.trimStart().split("\n")[0] ?? "";
-		expect(header.toLowerCase()).toContain("truncated");
+		expect(text.toLowerCase()).not.toContain("truncated");
+		expect(text).toContain("const needle = true;");
 		expect(text).not.toContain("[Truncated:");
 	});
 

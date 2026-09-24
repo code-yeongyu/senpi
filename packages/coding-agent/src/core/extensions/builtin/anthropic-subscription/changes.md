@@ -1,3 +1,24 @@
+## 2026-09-23 - version-floor remedy names the binary that ran; Windows npm shims; promoted-model guard (senpi#2053)
+
+### What changed
+
+- `executable.ts`: `ExecutableResolution` carries `source` (`override` | `bundled` | `path`); `resolveClaudeCodeRun` returns executable + source (`resolveClaudeCodeExecutable` delegates to it). `ExecutableDeps` gains optional `readText`, supplied by the default deps; a skipped PATH batch file is listed in `tried`.
+- `executable-path-lookup.ts`: on win32 a `.cmd`/`.bat` hit is parsed as an npm cmd-shim and resolves to the native `.exe` it wraps; a batch file wrapping no native binary (or unreadable) is skipped via `onSkip` and the PATH walk continues.
+- `stream.ts` keeps the resolved run for its error path; `stream-guidance.ts` / `guidance.ts` `claudeCodeVersionFloorGuidance(text, ran?)` return a per-source remedy naming the executable.
+- `executable-model-support.ts` (new): `bundledClaudeCodeBinary` (platform sidecar only, never PATH), `binaryEmbedsTokens` (chunked whole-token scan), and the append-only `OBSERVED_CLAUDE_CODE_MODEL_FLOORS` ledger used by regression 8700-claude-code-promoted-model-support.
+
+### Why
+
+- The version-floor hint blamed "the bundled Claude Code binary" and told users to update senpi/omo even when CLAUDE_CODE_EXECUTABLE or PATH supplied the binary (oh-my-openagent#8700). On Windows, npm installs Claude Code as `claude.cmd`; the lookup returned the batch file, whose `--version` probe cannot run without a shell and which the SDK cannot spawn, so an updated Claude Code was ignored. Twice a promoted Claude model shipped on a pinned Claude Code that predates it; the bundled binary embeds its model ids, so the pin is checkable offline.
+
+### Why an extension could not handle it
+
+- This IS the extension's executable resolution and guidance.
+
+### Expected merge conflict zones
+
+- `describeClaudeCodeExecutable` / `resolveClaudeCodeExecutable` and `defaultDeps` in `executable.ts`; `findExecutableOnPath` in `executable-path-lookup.ts`; the executable line and catch block of `stream.ts`; `claudeCodeVersionFloorGuidance` in `guidance.ts`.
+
 ## 2026-09-23 - a newer claude on PATH beats the bundled binary (senpi#2033)
 
 ### What changed

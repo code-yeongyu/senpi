@@ -70,6 +70,52 @@ describe("findExecutableOnPath", () => {
 		]);
 	});
 
+	it("resolves an npm claude.cmd shim to the native claude.exe it wraps on win32 (omo#8700)", () => {
+		const shim = "C:\\Users\\u\\AppData\\Roaming\\npm\\claude.cmd";
+		const target = "C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe";
+		const found = findExecutableOnPath(
+			"claude",
+			deps({
+				platform: "win32",
+				env: envOf({ PATH: "C:\\Users\\u\\AppData\\Roaming\\npm" }),
+				isFile: (path) => path === shim || path === target,
+				readText: (path) =>
+					path === shim
+						? '@ECHO off\r\nGOTO start\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n'
+						: undefined,
+			}),
+		);
+		expect(found).toBe(target);
+	});
+
+	it("skips a batch file that wraps no native binary and keeps searching PATH", () => {
+		const skipped: string[] = [];
+		const found = findExecutableOnPath(
+			"claude",
+			deps({
+				platform: "win32",
+				env: envOf({ PATH: "C:\\tools;C:\\Users\\u\\.local\\bin" }),
+				isFile: (path) => path === "C:\\tools\\claude.cmd" || path === "C:\\Users\\u\\.local\\bin\\claude.exe",
+				readText: () => "@node %~dp0\\cli.js %*",
+				onSkip: (path) => skipped.push(path),
+			}),
+		);
+		expect(found).toBe("C:\\Users\\u\\.local\\bin\\claude.exe");
+		expect(skipped).toEqual(["C:\\tools\\claude.cmd"]);
+	});
+
+	it("never returns a batch file when its text cannot be read", () => {
+		const found = findExecutableOnPath(
+			"claude",
+			deps({
+				platform: "win32",
+				env: envOf({ PATH: "C:\\tools" }),
+				isFile: (path) => path === "C:\\tools\\claude.cmd",
+			}),
+		);
+		expect(found).toBeUndefined();
+	});
+
 	it("falls back to the Windows default PATHEXT and strips quoted PATH entries", () => {
 		const probed: string[] = [];
 		const found = findExecutableOnPath(

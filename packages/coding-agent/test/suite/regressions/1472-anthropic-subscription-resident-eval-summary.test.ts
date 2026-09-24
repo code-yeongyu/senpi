@@ -17,7 +17,6 @@ import { prepareToolArguments } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEvalTool } from "../../../../senpi-codemode/src/tool/eval-tool.ts";
-import { EVAL_SUMMARY_MAX_LENGTH } from "../../../../senpi-codemode/src/tool/types.ts";
 import { bindingFromStoredBranch } from "../../../src/core/extensions/builtin/anthropic-subscription/session-binding.ts";
 import { readStoredBinding } from "../../../src/core/extensions/builtin/anthropic-subscription/session-binding-store.ts";
 import { registerSessionRegistry } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry-wiring.ts";
@@ -31,7 +30,8 @@ import {
 	sessionFixture,
 } from "../../helpers/anthropic-subscription-restart-fixture.ts";
 
-const LONG_SUMMARY = "s".repeat(EVAL_SUMMARY_MAX_LENGTH + 12);
+// Preparation still normalizes whitespace, so the executed summary differs from the message.
+const RAW_SUMMARY = "  inspect   the cache\nstate  ";
 const UNUSED = () => Promise.reject(new Error("not reached: this regression only prepares arguments"));
 
 const evalTool = createEvalTool({
@@ -49,7 +49,7 @@ function evalAssistant(): AssistantMessage {
 				type: "toolCall",
 				id: "call-1",
 				name: "eval",
-				arguments: { language: "js", code: "return 1", summary: LONG_SUMMARY },
+				arguments: { language: "js", code: "return 1", summary: RAW_SUMMARY },
 			},
 		],
 		stopReason: "toolUse",
@@ -87,8 +87,8 @@ describe("issue #1472: preparing eval arguments keeps the restart binding admiss
 		const stored = await readStoredBinding(sessionFile);
 		expect(stored).toBeDefined();
 		expect(bindingFromStoredBranch(branch, stored!)).toMatchObject({ sdkSessionId: stored!.sdkSessionId });
-		expect(toolCallOf(message).arguments.summary).toBe(LONG_SUMMARY);
-		expect(executed.summary).toHaveLength(EVAL_SUMMARY_MAX_LENGTH);
+		expect(toolCallOf(message).arguments.summary).toBe(RAW_SUMMARY);
+		expect(executed.summary).toBe("inspect the cache state");
 	});
 
 	it("still rejects the stored binding when the committed assistant genuinely changed", async () => {

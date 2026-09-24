@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { resolveToCwd } from "../../../core/tools/path-utils.ts";
 import { findRenderers, grepRenderers, lsRenderers, readRenderers } from "../../../core/tools/renderers/index.ts";
+import { getCompactReadClassification, type ReadRenderArgs } from "../../../core/tools/renderers/read.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../../utils/paths.ts";
 import type { ToolExecutionComponent } from "./tool-execution.ts";
 
@@ -24,7 +25,20 @@ function stringArg(args: unknown, ...keys: string[]): string | undefined {
 	return undefined;
 }
 
-/** Group only the built-in read/grep/find/ls presentation; custom renderers and other tools stay cards. */
+function isReadRenderArgs(args: unknown): args is ReadRenderArgs {
+	return args !== null && typeof args === "object";
+}
+
+/** A skill load or a memory recall is a semantic card, not file exploration; it keeps its own line. */
+function isSemanticRead(args: unknown, cwd: string): boolean {
+	const kind = getCompactReadClassification(isReadRenderArgs(args) ? args : undefined, cwd)?.kind;
+	return kind === "skill" || kind === "memory";
+}
+
+/**
+ * Group only the built-in read/grep/find/ls presentation; custom renderers, semantic reads, and other
+ * tools stay cards.
+ */
 export function explorationCall(component: ToolExecutionComponent): ExplorationCall | undefined {
 	const { identity, state, presentation } = component.presentationSnapshot;
 	if (presentation !== "classic") return undefined;
@@ -38,7 +52,10 @@ export function explorationCall(component: ToolExecutionComponent): ExplorationC
 	const pending = state.isPartial;
 	const failed = state.result?.isError ?? false;
 	const path = stringArg(state.args, "file_path", "path");
-	if (toolName === "read") return { action: "Read", label: path ? basename(path) : "", pending, failed };
+	if (toolName === "read") {
+		if (isSemanticRead(state.args, identity.cwd)) return undefined;
+		return { action: "Read", label: path ? basename(path) : "", pending, failed };
+	}
 	if (toolName === "grep") {
 		const pattern = stringArg(state.args, "pattern") ?? "";
 		const dir = path ? formatPathRelativeToCwdOrAbsolute(resolveToCwd(path, identity.cwd), identity.cwd) : "";

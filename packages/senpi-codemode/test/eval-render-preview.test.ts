@@ -110,7 +110,7 @@ describe("eval renderer preview", () => {
 		expect(renderLines(component)).toContain("1 earlier tool call");
 	});
 
-	it("Given truncated details when rendered then eval output truncated marker is shown", () => {
+	it("Given truncated details when rendered then only the output collapse hint is shown", () => {
 		// Given
 		const outputLines = Array.from({ length: 10 }, (_, index) => `truncated-line-${index + 1}`);
 		const givenResult = evalResult(
@@ -129,7 +129,7 @@ describe("eval renderer preview", () => {
 		// Then
 		const lines = renderLines(component);
 		const outputCollapseLines = lines.filter((line) => line.includes("earlier") && line.includes("output"));
-		expect.soft(lines).toContain("[eval output truncated]");
+		expect.soft(lines).not.toContain("[eval output truncated]");
 		expect.soft(outputCollapseLines).toEqual(["2 earlier output lines"]);
 	});
 

@@ -1,4 +1,5 @@
 import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
+import { isModelOnlyText } from "../../../core/tools/model-only-text.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
 import { GrokToolRow } from "../grok/tool-row.ts";
 import { theme } from "../theme/theme.ts";
@@ -253,7 +254,9 @@ export class ToolExecutionComponent extends Container {
 			expanded: this.expanded,
 			showImages: this.showImages,
 			spinnerFrame: this.spinnerFrame,
-			result: this.result,
+			result: this.result
+				? { ...this.result, content: this.result.content.filter((part) => !isModelOnlyText(part)) }
+				: undefined,
 		};
 	}
 

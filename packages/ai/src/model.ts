@@ -4,6 +4,7 @@ import type {
 	BedrockCompat,
 	CacheRetention,
 	ModelCost,
+	ModelThinkingLevel,
 	OpenAICompletionsCompat,
 	OpenAIResponsesCompat,
 	ProviderId,
@@ -85,5 +86,13 @@ export interface CursorAgentCompat {
 		thinkingMode?: boolean;
 		/** Exact catalog variant sent when no explicit selection exists. */
 		representativeVariantId: string;
+		/**
+		 * Derived-group variant ids: normalized thinking level -> the exact
+		 * server-listed variant id observed in the live catalog. Present only on
+		 * identities derived at runtime from ids the static alias table does not
+		 * list; explicit selections resolve through it before any capability
+		 * lookup (senpi#2038).
+		 */
+		variantIds?: Readonly<Partial<Record<ModelThinkingLevel, string>>>;
 	};
 }

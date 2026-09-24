@@ -1,3 +1,5 @@
+import type { TextContent } from "@earendil-works/pi-ai";
+import { modelOnlyText } from "../model-only-text.ts";
 import type { GrepToolDetails } from "./index.ts";
 
 export function displayPath(path: string): string {
@@ -5,10 +7,10 @@ export function displayPath(path: string): string {
 }
 
 /** now supplies the elapsed duration, allowing deterministic text in renderer tests. */
-export function formatGrepText(
+export function formatGrepContent(
 	result: GrepToolDetails,
 	{ now = () => result.scan.elapsedMs }: { now?: () => number } = {},
-): string {
+): TextContent[] {
 	const blocks: string[] = [];
 	if (result.matches.length) {
 		for (const file of result.fileMatches) {
@@ -53,8 +55,7 @@ export function formatGrepText(
 		notes.push("Regex unsupported by the native engine; matched with ripgrep --pcre2.");
 	if (scan.patternKind === "literal") notes.push(`Pattern searched literally: ${scan.effectivePattern}`);
 	if (scan.patternKind === "sanitized") notes.push(`Pattern sanitized: ${scan.effectivePattern}`);
-	notes.push(
-		`[grep: matches=${result.matchCount ?? "n/a"} files=${result.fileCount} searched=${scan.filesSearched} elapsedMs=${Math.max(0, Math.round(now()))} engine=${result.engine} nextSkip=${result.nextSkip ?? "none"}]`,
-	);
-	return `${blocks.join("\n\n")}\n\n${notes.join("\n")}`;
+	const footer = `[grep: matches=${result.matchCount ?? "n/a"} files=${result.fileCount} searched=${scan.filesSearched} elapsedMs=${Math.max(0, Math.round(now()))} engine=${result.engine} nextSkip=${result.nextSkip ?? "none"}]`;
+	const body = `${blocks.join("\n\n")}\n${notes.length ? `\n${notes.join("\n")}` : ""}`;
+	return [{ type: "text", text: body }, modelOnlyText(footer)];
 }

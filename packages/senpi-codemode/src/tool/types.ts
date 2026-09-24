@@ -17,8 +17,6 @@ export function enabledLanguageList(enabled: EnabledEvalLanguages): EvalLanguage
 	return evalLanguageOrder.filter((language) => enabled[language]);
 }
 
-export const EVAL_SUMMARY_MAX_LENGTH = 80;
-
 /** The deadlines the schema teaches the model; every number comes from the resolved settings. */
 export interface EvalDeadlineSeconds {
 	readonly runBudgetSeconds: number;
@@ -79,9 +77,8 @@ function evalInputProperties<Language extends TSchema>(languageSchema: Language,
 		code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
 		summary: Type.Optional(
 			Type.String({
-				maxLength: EVAL_SUMMARY_MAX_LENGTH,
 				description:
-					"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
+					"REQUIRED for run. One line in the language the user writes in: a progress update saying what you are doing and why, not a label for the code; shown in the TUI while the cell runs.",
 			}),
 		),
 		timeout: Type.Optional(Type.Number({ minimum: 1, description: timeoutFieldDescription(deadlines) })),

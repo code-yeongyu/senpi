@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-23 - Windows Claude Code executable job and SDK currency gate (senpi#2053)
+
+### What changed
+
+- `.github/workflows/ci.yml`: new `claude-executable-windows` job (windows-latest, Node 24 + Bun 1.4.2) runs the Claude executable path-lookup tests and the real-file npm `claude.cmd` shim test under Node and Bun, then fails if the shim test was skipped instead of passing; it is part of the `Check and test` fan-in.
+- `.github/workflows/releasability.yml`: `model-catalog-regen` runs `scripts/check-claude-code-model-support.mjs --strict` after regeneration; new nightly `claude-sdk-currency` job runs it `--sdk-currency` and reports through `report-failure`.
+
+### Why
+
+- The Windows shim resolution only exists on a real Windows host, and no existing Windows job ran the Claude executable tests (oh-my-openagent#8700). A pinned Claude Agent SDK behind the newest release is how new Claude models shipped unusable twice; the nightly gate turns that into a tracked issue without redding PR bases.
+
+### Why an extension could not handle it
+
+- CI workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the job list and the `Check and test` needs/summary in `ci.yml`; the `report-failure` needs/env/results in `releasability.yml`.
+
 ## 2026-09-17 - Run the `senpi host` named-pipe cell on the Windows RPC job (senpi#1782)
 
 ### What changed

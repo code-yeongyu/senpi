@@ -12,6 +12,7 @@ type JsonMessageUpdateEvent = {
 	type: "message_update";
 	usage: Usage;
 	assistantMessageEvent: ToJsonAssistantMessageEvent<MessageUpdateEvent["assistantMessageEvent"]>;
+	resolvedToolName?: string;
 };
 
 /** Session event shape emitted by the JSON and RPC stdout protocols. */
@@ -57,5 +58,6 @@ export function toJsonEvent(event: AgentSessionEvent): JsonAgentSessionEvent {
 		type: "message_update",
 		usage: event.message.usage,
 		assistantMessageEvent: toJsonAssistantMessageEvent(event.assistantMessageEvent),
+		...(event.resolvedToolName === undefined ? {} : { resolvedToolName: event.resolvedToolName }),
 	};
 }

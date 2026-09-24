@@ -11,7 +11,7 @@ import { getSessionClaudeAccountPin } from "./account-command.ts";
 import { queryWithAuthLane } from "./auth-lane.ts";
 import { buildCustomToolServers } from "./custom-tools.ts";
 import { sdkAssistantFailure, sdkResultFailure, sdkResultFailureUsage } from "./errors.ts";
-import { defaultExecutableDeps, resolveClaudeCodeExecutable } from "./executable.ts";
+import { type ClaudeCodeRun, defaultExecutableDeps, resolveClaudeCodeRun } from "./executable.ts";
 import { buildAnthropicSubscriptionQueryOptions } from "./options.ts";
 import { buildPromptBlocks, buildPromptStream } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
@@ -58,6 +58,7 @@ export function streamAnthropicSubscription(
 		};
 		if (options?.signal?.aborted) onAbort();
 		else options?.signal?.addEventListener("abort", onAbort, { once: true });
+		let claudeCodeRun: ClaudeCodeRun | undefined;
 
 		try {
 			// Resident before the synchronous SDK member below (getSdkBoundary().query)
@@ -71,7 +72,8 @@ export function streamAnthropicSubscription(
 			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
 			const toolLessRequest = options?.toolChoice === "none";
 			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
-			const executable = resolveClaudeCodeExecutable(defaultExecutableDeps());
+			claudeCodeRun = resolveClaudeCodeRun(defaultExecutableDeps());
+			const executable = claudeCodeRun.executable;
 			const buildOptions = (authLane: Parameters<typeof buildAnthropicSubscriptionQueryOptions>[0]["authLane"]) => {
 				const queryOptions = buildAnthropicSubscriptionQueryOptions({
 					model,
@@ -225,7 +227,7 @@ export function streamAnthropicSubscription(
 			// throw before the result reaches this loop, so account for it here.
 			const billed = sdkResultFailureUsage(error);
 			if (billed) updateUsage(model, output, billed);
-			output.errorMessage = withAuthGuidance(error, errorMessage(error));
+			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 		} finally {
 			options?.signal?.removeEventListener("abort", onAbort);

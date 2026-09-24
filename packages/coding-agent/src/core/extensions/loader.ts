@@ -42,6 +42,7 @@ import {
 } from "./extension-module-cache.ts";
 import type {
 	EntryRenderer,
+	EntryRendererOptions,
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
@@ -482,10 +483,17 @@ function createExtensionAPI(
 			extension.markdownTransformer = transformer;
 		},
 
-		registerEntryRenderer<T>(customType: string, renderer: EntryRenderer<T>): void {
+		registerEntryRenderer<T>(
+			customType: string,
+			renderer: EntryRenderer<T>,
+			options?: EntryRendererOptions<T>,
+		): void {
 			assertActive();
 			extension.entryRenderers ??= new Map();
 			extension.entryRenderers.set(customType, renderer as EntryRenderer);
+			extension.entryRendererOptions ??= new Map();
+			if (options === undefined) extension.entryRendererOptions.delete(customType);
+			else extension.entryRendererOptions.set(customType, options as EntryRendererOptions);
 		},
 
 		registerReadClassifier(classifier: ReadClassifier): () => void {

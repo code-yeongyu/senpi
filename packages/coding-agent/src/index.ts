@@ -84,6 +84,7 @@ export type {
 	CustomToolCallEvent,
 	EditToolCallEvent,
 	EntryRenderer,
+	EntryRendererOptions,
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
