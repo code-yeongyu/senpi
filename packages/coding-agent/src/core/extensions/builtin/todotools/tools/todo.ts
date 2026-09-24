@@ -304,9 +304,8 @@ export function registerTodoTool(pi: ExtensionAPI, accessors: TodoAccessors): vo
 			const entry = normalized.entry;
 			const corrections = normalized.corrections;
 			const readOnly = entry.op === "view";
-			const errors: string[] = [];
 			const applied = readOnly
-				? { phases: previousPhases, errors }
+				? { phases: previousPhases, errors: [] as string[] }
 				: applyParams(clonePhases(previousPhases), entry, corrections);
 			if (applied.errors.length > 0) throw new Error(formatSummary(previousPhases, applied.errors, readOnly));
 			const completedTasks = readOnly ? [] : getCompletionTransitions(previousPhases, applied.phases);

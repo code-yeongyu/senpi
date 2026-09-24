@@ -19,7 +19,6 @@
 
 - A read of a file inside a skill directory other than its `SKILL.md` - a `references/` document, a script, a template - is labeled by its skill as `<skill>/<path inside the skill>` (for example `read ulw-plan/references/stance-calibration.md`) on the read card and in the `Explored` group, instead of the full install path on the card and the bare file name in the group. A session running inside the skill directory keeps its cwd-relative paths. ([#2082](https://github.com/code-yeongyu/senpi/issues/2082))
 - The `rules` builtin no longer re-injects an `AGENTS.md` / `CLAUDE.md` that pi already loaded into the system prompt when a file read reaches it, uses only the higher-priority root `AGENTS.md` / `CLAUDE.md` for a nested file, keeps only the first home-level single-file rule, resolves symlinked project paths, and `/rules show` without an id reports that an id is required. ([#2079](https://github.com/code-yeongyu/senpi/issues/2079))
-- Todo type guards no longer accept the legacy `cancelled` status without migrating it to `abandoned`. ([#2079](https://github.com/code-yeongyu/senpi/issues/2079))
 
 ### Removed
 

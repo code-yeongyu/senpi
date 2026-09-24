@@ -1,25 +1,8 @@
 # todotools Fork Tracker
 
-## 2026-09-24 - Sound todo type guards from pi-todotools 0.2.1 (senpi#2079)
+## 2026-09-24 - Pin pi-todotools 0.2.1, no port (senpi#2079)
 
-### What changed
-
-- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-storage.ts`: `isTodoItem` accepts only the four canonical statuses and `isTodoPhase` checks its tasks with `isTodoItem`, instead of both delegating to the migrating parsers. The legacy `cancelled` -> `abandoned` migration stays on the persisted-state parse path (`getLatestPhasesFromBranchEntries`).
-- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the read-only `view` path builds its empty error list without a type assertion (type-only).
-- `packages/coding-agent/test/suite/todo-type-guards.test.ts` pins that a `cancelled` item fails the guards while the parse path still migrates it.
-- The rest of pi-todotools 0.2.1 (Pi TUI `invalidate` peer compatibility, toolchain refresh) has no counterpart in this diverged port.
-
-### Why
-
-The guards delegated to `parseTodoItem`, which accepts `cancelled` and returns a migrated copy, but the guard then narrowed the original value. A `cancelled` item passed `isTodoItem` while its `status` was not a `TodoStatus`, so `isTodoPhaseArray` in the goal todo gate could accept unmigrated data.
-
-### Why an extension could not handle it
-
-The guards are exported by this builtin and used by the goal todo gate; a caller cannot fix a guard that lies about its narrowing.
-
-### Expected merge conflict zones
-
-- LOW in `todo-storage.ts` `isTodoItem` / `isTodoPhase`.
+This builtin is fully diverged from pi-todotools (sync verdict DIVERGED-BY-DESIGN), so the 0.2.1 changes (stricter `isTodoItem` / `isTodoPhase` guards, Pi TUI `invalidate` compatibility, toolchain refresh) are not ported. Only `external-versions.json` changes.
 
 ## 2026-09-04 - Task_Management stops re-sending the tool description
 

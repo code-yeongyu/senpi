@@ -5,7 +5,7 @@
 - `packages/coding-agent/src/core/extensions/builtin/external-versions.json`: every entry moves to the 2026-09-24 release (bash-timeout 0.1.2, gpt-apply-patch 0.1.3, todowrite 0.2.1, goal 0.3.1, websearch 0.4.0, webfetch 0.1.3, nested-agents-md 0.1.1, rules 0.2.0), and `anthropic-web-search` (pi-anthropic-web-search 0.1.1), `openai-web-search` (pi-openai-web-search 0.1.1) and `anthropic-bash` (pi-anthropic-bash 0.1.1) are recorded for the first time.
 - `packages/coding-agent/scripts/sync-builtin-extensions.mjs`: the three single-file builtins join `MANUAL_PACKAGES`, so a manifest refresh keeps them.
 - The three new entries need no code change. `anthropic-bash` matches upstream except the `ExtensionAPI` import. The web-search copies differ from upstream only where upstream loosens types for its `*` peer range (structural model records, `unknown` compat readers, bracket property access) and prefixes its status/widget keys; senpi reads the typed in-tree `Model` whose `compat` flags are schema-validated booleans, mirroring pi-ai's own `compat ?? endpoint` default, and keeps its unprefixed keys.
-- Per-builtin ports are recorded in `rules/changes.md`, `websearch/changes.md`, `todotools/changes.md` and `goal/changes.md`; the in-sync builtins note it in their own tracker.
+- Per-builtin ports are recorded in `rules/changes.md`, `websearch/changes.md` and `goal/changes.md`; the in-sync and diverged builtins note it in their own tracker.
 
 ### Why
 
