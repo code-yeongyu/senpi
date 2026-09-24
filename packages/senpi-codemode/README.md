@@ -162,6 +162,13 @@ into the cell carries the tool's expected parameters, so the cell can correct th
 arguments and retry instead of falling back to one-at-a-time tool calls.
 `tool_schema()` exposes the same catalog up front.
 
+A tool may also contribute globals of its own through `ToolDefinition.kernelPrelude`
+(JavaScript and Python snippets that call the ordinary `tool.<name>()`, one
+documentation line, and the exported names). While the tool is active, each
+JavaScript and Python cell installs any missing export first and the eval prompt
+lists the documentation line; once the tool is deactivated, the next cell deletes
+those names. Exports that shadow a built-in helper are rejected by the host.
+
 `agent()` is available only when the configured task tool is active in the
 session. `output()` similarly requires the configured task-output tool and
 returns immediately: a running task reports its current status, while completed

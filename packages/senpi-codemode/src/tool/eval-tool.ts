@@ -54,6 +54,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		...(options.hostLine === undefined ? {} : { hostLine: options.hostLine }),
 		...(options.runtimes?.js === undefined ? {} : { jsRuntime: options.runtimes.js }),
 		...(options.bunSkillPath === undefined ? {} : { bunSkillPath: options.bunSkillPath }),
+		...(options.promptKernelPreludes === undefined ? {} : { kernelPreludes: options.promptKernelPreludes }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
 	const cellManager =

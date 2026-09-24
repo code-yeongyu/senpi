@@ -18,6 +18,25 @@
 
 # Local fork changes
 
+## 2026-09-24 - getAllTools projects ToolDefinition.kernelPrelude (#2128)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getAllTools()` projects `kernelPrelude` through `projectKernelPrelude`, which throws `KernelPreludeCollisionError` when an export would shadow a built-in eval kernel global.
+- `packages/coding-agent/src/index.ts`: re-exports the `KernelPreludeContribution` type for extensions (codemode consumes it).
+
+### Why
+
+- Codemode reads kernel globals for active tools from `getAllTools()` per cell; rejecting a colliding export at projection keeps a bad contribution from silently replacing `display`/`tool` in every later cell.
+
+### Why an extension could not handle it
+
+- `getAllTools()` is the host's tool projection; only the session decides which `ToolDefinition` fields other extensions see.
+
+### Expected merge conflict zones
+
+- LOW: the object literal in `AgentSession.getAllTools` and the extension-import block near `getToolSearchService` in `agent-session.ts`; the extension type re-export list in `src/index.ts`.
+
 ## 2026-09-23 - claude-agent-sdk 0.3.280 (senpi#2033)
 
 ### What changed
