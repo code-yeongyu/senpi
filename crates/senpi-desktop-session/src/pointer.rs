@@ -27,6 +27,12 @@ impl ParsedPointerOptions {
             mode: DeliveryMode::parse(options.delivery_mode.as_deref()),
         })
     }
+
+    /// The delivery mode alone, known before the options are validated so
+    /// the input transaction can capture what that mode disturbs.
+    pub(crate) fn requested_mode(options: Option<&PointerOptions>) -> DeliveryMode {
+        DeliveryMode::parse(options.and_then(|options| options.delivery_mode.as_deref()))
+    }
 }
 
 struct CapturedFrame {
@@ -52,6 +58,11 @@ impl FrameCache {
         };
         self.latest.insert(target.key().to_owned(), frame);
         id
+    }
+
+    /// The id of the latest capture of the target keyed `target_key`.
+    pub(crate) fn latest_id(&self, target_key: &str) -> Option<&str> {
+        self.latest.get(target_key).map(|frame| frame.id.as_str())
     }
 
     /// The geometry of `target`'s latest capture; a named `frame_id` must be
