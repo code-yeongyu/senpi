@@ -45,6 +45,7 @@ import type {
 	ResumptionChannelCounts,
 	SystemAbortOptions,
 } from "./monitor-continuation-types.ts";
+import { findParkedGoalWait, type ParkedGoalWait } from "./parked-wait.ts";
 import { buildContinuationPrompt, buildGoalStallNotice, buildTruncationRecoveryPrompt } from "./prompt.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { resetContinuationStreak } from "./store.ts";
@@ -259,12 +260,24 @@ export class MonitorAwareGoalContinuation {
 	 * Re-arms the monitor-delayed backstop a reload tore down with the retired
 	 * generation, so a later wake-source drain can still deliver the goal
 	 * continuation. No-op unless the goal is active, a wake source is live, and
-	 * no continuation is already scheduled.
+	 * no continuation is already scheduled. A wait the branch still records as
+	 * parked is restored as-is (iteration, cache snapshot, original due time) so
+	 * a reload never appends a second card or pushes the wake past the cache TTL.
 	 */
 	rearmMonitorBackstop(goal: Goal): void {
 		if (goal.status !== "active" || this.#activeWakeSourceCount() === 0) return;
 		this.#goal = goal;
-		this.#schedule(goal, "monitor");
+		this.#schedule(goal, "monitor", false, this.#parkedWait(goal.id));
+	}
+
+	/** A retired ctx throws from its getters (see `#ctxHasUI`); it has no branch to restore from. */
+	#parkedWait(goalId: string): ParkedGoalWait | undefined {
+		try {
+			return findParkedGoalWait(this.#ctx?.sessionManager?.getBranch() ?? [], goalId);
+		} catch (error) {
+			if (isStaleExtensionContextError(error)) return undefined;
+			throw error;
+		}
 	}
 
 	/** Temporarily prevents a scheduled continuation from racing unresolved direct-input admission. */
@@ -332,7 +345,7 @@ export class MonitorAwareGoalContinuation {
 		this.#resetContinuationState();
 	}
 
-	#schedule(goal: Goal, kind: DelayedContinuationKind, repark = false): void {
+	#schedule(goal: Goal, kind: DelayedContinuationKind, repark = false, parked?: ParkedGoalWait): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
 		// A live wake source arms the periodic backstop only: the normal resumption
 		// is the drain fire in #setWakeSourceCount, and the backstop re-checks the
@@ -343,18 +356,25 @@ export class MonitorAwareGoalContinuation {
 		const askUserWaitMs = kind === "monitor" ? this.#askUserWaitMs() : undefined;
 		const delayMs =
 			kind === "monitor"
-				? (askUserWaitMs ??
+				? (parked?.delayMs ??
+					askUserWaitMs ??
 					resolveGoalMonitorContinuationDelayMs(this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.()))
 				: GOAL_USER_GRACE_DELAY_MS;
 		this.#scheduledDelayMs = delayMs;
+		let remainingMs = delayMs;
 		if (kind === "monitor") {
-			if (!repark) this.#cacheWarmIteration += 1;
+			if (parked !== undefined) this.#cacheWarmIteration = parked.iteration;
+			else if (!repark) this.#cacheWarmIteration += 1;
 			this.#scheduledCacheWarmIteration = this.#cacheWarmIteration;
 			const iteration = this.#scheduledCacheWarmIteration;
-			const cache = estimateCacheWarmMetrics(this.#ctx?.model, process.env, this.#lastTurnUsage);
+			const cache =
+				parked !== undefined
+					? parked.cache
+					: estimateCacheWarmMetrics(this.#ctx?.model, process.env, this.#lastTurnUsage);
 			const wakeSources = this.#wakeSourceSnapshot();
 			this.#scheduledCache = cache;
-			this.#scheduledAtMs = Date.now();
+			this.#scheduledAtMs = parked !== undefined ? parked.dueAtMs - delayMs : Date.now();
+			if (parked !== undefined) remainingMs = Math.max(0, parked.dueAtMs - Date.now());
 			const scheduleData = createGoalCacheWarmScheduleData({
 				goalId: goal.id,
 				delayMs,
@@ -367,7 +387,7 @@ export class MonitorAwareGoalContinuation {
 			this.#pi.events?.emit(GOAL_CONTINUATION_SCHEDULED_EVENT, scheduleData);
 			// Progress adjusts this wait; it is not another cache-warm iteration
 			// or transcript entry for every keystroke in the answer composer.
-			if (!repark)
+			if (!repark && parked === undefined)
 				this.#appendWarmupEntry({
 					phase: "scheduled",
 					...scheduleData,
@@ -380,10 +400,10 @@ export class MonitorAwareGoalContinuation {
 		this.#scheduledContinuationKind = kind;
 		this.#pi.events?.emit(GOAL_CONTINUATION_TIMER_STATE_EVENT, { armed: true, kind });
 		if (this.#directInputHolds.size > 0) {
-			this.#heldTimer = { kind, remainingMs: delayMs, heldAtMs: Date.now(), totalMs: delayMs, drainFire: false };
+			this.#heldTimer = { kind, remainingMs, heldAtMs: Date.now(), totalMs: delayMs, drainFire: false };
 			return;
 		}
-		this.#armTimer(kind, delayMs, delayMs);
+		this.#armTimer(kind, remainingMs, delayMs);
 	}
 
 	/**

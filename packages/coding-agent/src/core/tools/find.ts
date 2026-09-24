@@ -1,11 +1,13 @@
 import { createInterface } from "node:readline";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { TextContent } from "@earendil-works/pi-ai";
 import { spawn } from "child_process";
 import path from "path";
 import { type Static, Type } from "typebox";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { modelOnlyText } from "./model-only-text.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { findRenderers } from "./renderers/find.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -161,7 +163,6 @@ export function createFindToolDefinition(
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};
 							const notices: string[] = [];
 							if (resultLimitReached) {
@@ -172,12 +173,14 @@ export function createFindToolDefinition(
 								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 								details.truncation = truncation;
 							}
+							const content: TextContent[] = [{ type: "text", text: truncation.content }];
 							if (notices.length > 0) {
-								resultOutput += `\n\n[${notices.join(". ")}]`;
+								content[0].text += "\n";
+								content.push(modelOnlyText(`[${notices.join(". ")}]`));
 							}
 							settle(() =>
 								resolve({
-									content: [{ type: "text", text: resultOutput }],
+									content,
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);
@@ -291,7 +294,6 @@ export function createFindToolDefinition(
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};
 							const notices: string[] = [];
 							if (resultLimitReached) {
@@ -304,12 +306,14 @@ export function createFindToolDefinition(
 								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 								details.truncation = truncation;
 							}
+							const content: TextContent[] = [{ type: "text", text: truncation.content }];
 							if (notices.length > 0) {
-								resultOutput += `\n\n[${notices.join(". ")}]`;
+								content[0].text += "\n";
+								content.push(modelOnlyText(`[${notices.join(". ")}]`));
 							}
 							settle(() =>
 								resolve({
-									content: [{ type: "text", text: resultOutput }],
+									content,
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);

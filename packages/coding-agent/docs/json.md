@@ -49,6 +49,7 @@ type JsonAgentSessionEvent =
       type: "message_update";
       usage: Usage;
       assistantMessageEvent: JsonAssistantMessageEvent<AssistantMessageEvent>;
+      resolvedToolName?: string; // toolcall_start and toolcall_end only
     };
 ```
 
@@ -113,7 +114,9 @@ Followed by events as they occur:
 the latest cumulative provider-reported usage and may remain zero when a provider only reports
 usage at completion. Use `contentIndex` and `delta` to assemble live text, thinking, or tool-call
 arguments if needed. A `toolcall_start` event also includes the constant-sized `id` and `toolName`
-fields. `message_end` contains the final authoritative message.
+fields. `toolcall_start` and `toolcall_end` records carry a top-level `resolvedToolName`: the tool
+the call will run. It differs from the requested name when senpi resolves a gateway-namespaced or
+recased name (`mcp__<id>__Edit` runs `edit`), and equals it otherwise, including when nothing resolves. `message_end` contains the final authoritative message.
 
 ## Example
 

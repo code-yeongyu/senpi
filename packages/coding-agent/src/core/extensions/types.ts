@@ -1728,6 +1728,15 @@ export type EntryRenderer<T = unknown> = (
 	theme: Theme,
 ) => Component | undefined;
 
+export interface EntryRendererOptions<T = unknown> {
+	/**
+	 * Return true when `next` should replace `previous` in place instead of rendering as a
+	 * second card. Only consulted when `previous` is the transcript card directly before
+	 * `next` (nothing visible in between) and both carry this renderer's custom type.
+	 */
+	readonly replaces?: (previous: CustomEntry<T>, next: CustomEntry<T>) => boolean;
+}
+
 // ============================================================================
 // Command Registration
 // ============================================================================
@@ -1953,7 +1962,11 @@ export interface ExtensionAPI {
 	registerMarkdownTransformer(transformer: MarkdownTransformer): void;
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
-	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
+	registerEntryRenderer<T = unknown>(
+		customType: string,
+		renderer: EntryRenderer<T>,
+		options?: EntryRendererOptions<T>,
+	): void;
 
 	/** Register a compact read classifier; removed on unregister, failed load, or runtime invalidation. */
 	registerReadClassifier(classifier: ReadClassifier): () => void;
@@ -2569,6 +2582,7 @@ export interface Extension {
 	messageRenderers: Map<string, MessageRenderer>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
+	entryRendererOptions?: Map<string, EntryRendererOptions>;
 	commands: Map<string, RegisteredCommand>;
 	/** Optional for compatibility with extension records created before RPC requests. */
 	rpcHandlers?: Map<string, ExtensionRpcRequestHandler>;

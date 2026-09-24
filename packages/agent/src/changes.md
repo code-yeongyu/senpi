@@ -1,3 +1,22 @@
+## 2026-09-23 - A resolved tool-call name is invisible outside the model's view (senpi#2064)
+
+### What changed
+
+- `packages/agent/src/tool-name-alias.ts`: owns `resolveCallTool` (exact name, then the host `resolveUnknownToolCall`, then the alias rule) and `withToolNameCorrection`, moved out of `agent-loop.ts`. The `[auto-corrected]` notice is now a model-only text part (`audience: "model"`, senpi#2041): the model still receives the exact text, renderers omit it.
+- `packages/agent/src/agent-loop.ts`: the sequential and parallel executors resolve the tool before emitting `tool_execution_start`, so the start event names the tool that runs, matching `tool_execution_end` and the tool result. `prepareToolCall` takes the resolved tool.
+
+### Why
+
+- After senpi#2025 the call ran as the resolved tool, but the user still saw the correction: the start event and the transcript carried the requested `mcp__<id>__Edit` name, and the notice was plain visible text.
+
+### Why an extension could not handle it
+
+- Tool resolution and event emission happen inside the agent loop before any hook runs.
+
+### Expected merge conflict zones
+
+- LOW: the `tool_execution_start` emit sites in `executeToolCallsSequential`/`executeToolCallsParallel` and the head of `prepareToolCall` in `agent-loop.ts`; `tool-name-alias.ts` (fork-only).
+
 ## 2026-09-23 - Resolve gateway-namespaced and recased tool-call names (senpi#2025)
 
 ### What changed

@@ -372,7 +372,27 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			let payload: unknown = {
 				model: model.id,
-				context,
+				context: {
+					...context,
+					messages: context.messages.map((message) =>
+						message.role === "toolResult"
+							? {
+									...message,
+									content: message.content.map((part) =>
+										part.type === "text"
+											? {
+													type: part.type,
+													text: part.text,
+													...(part.textSignature === undefined
+														? {}
+														: { textSignature: part.textSignature }),
+												}
+											: part,
+									),
+								}
+							: message,
+					),
+				},
 				options: {
 					temperature: options?.temperature,
 					maxTokens: options?.maxTokens,

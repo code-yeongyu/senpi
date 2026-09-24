@@ -203,6 +203,48 @@ describe("ToolExecutionComponent parity", () => {
 		expect(component.render(120)).toEqual([]);
 	});
 
+	test("omits model-only text before custom renderers without mutating stored content (#2041)", () => {
+		const toolDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderResult: (result) =>
+				new Text(
+					result.content
+						.filter((part) => part.type === "text")
+						.map((part) => part.text)
+						.join("\n"),
+					0,
+					0,
+				),
+		};
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"model-only",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const result: Parameters<ToolExecutionComponent["updateResult"]>[0] = {
+			content: [
+				{ type: "text", text: "visible body" },
+				{ type: "text", text: "hidden instruction", audience: "model" },
+			],
+			details: {},
+			isError: false,
+		};
+		component.updateResult(result, false);
+		for (const expanded of [false, true]) {
+			component.setExpanded(expanded);
+			const rendered = stripAnsi(component.render(120).join("\n"));
+			expect(rendered).toContain("visible body");
+			expect(rendered).not.toContain("hidden instruction");
+		}
+		expect(result.content).toHaveLength(2);
+		expect(result.content[1]).toMatchObject({ audience: "model", text: "hidden instruction" });
+		component.dispose();
+	});
+
 	test("advances pending render frames for self-rendered write calls while args stream", () => {
 		vi.useFakeTimers();
 		try {
@@ -349,7 +391,7 @@ describe("ToolExecutionComponent parity", () => {
 		}
 	});
 
-	test("bash renderer does not duplicate final full output truncation details", async () => {
+	test("bash renderer omits final model-only notices and renderer-owned warnings", async () => {
 		const operations: BashOperations = {
 			exec: async (_command, _cwd, { onData }) => {
 				for (let i = 1; i <= 4000; i++) {
@@ -379,10 +421,9 @@ describe("ToolExecutionComponent parity", () => {
 		component.updateResult({ ...result, isError: false }, false);
 
 		const rendered = stripAnsi(component.render(200).join("\n"));
-		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(1);
-		expect(rendered).toMatch(/line-4000[^\n]*\n[^\S\n]*\n \[Full output:/);
-		expect(rendered).not.toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n \[Full output:/);
-		expect(rendered).toContain("Truncated: showing 2000 of 4000 lines");
+		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(0);
+		expect(rendered).toContain("line-4000");
+		expect(rendered).not.toContain("Truncated:");
 		expect(rendered).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
 	});
 

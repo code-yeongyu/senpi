@@ -4,6 +4,8 @@ export interface ProjectRulesActivationDetails {
 	readonly kind: "project-rules";
 	readonly targetPath: string;
 	readonly rules: readonly string[];
+	/** The tool call whose result the rules were injected into; absent on entries written before it existed. */
+	readonly toolCallId?: string;
 }
 
 export interface TtsrActivationDetails {
@@ -32,7 +34,13 @@ function parseProjectRulesActivation(value: object): ProjectRulesActivationDetai
 	const targetPath = Reflect.get(value, "targetPath");
 	const rules = stringList(Reflect.get(value, "rules"));
 	if (typeof targetPath !== "string" || targetPath.length === 0 || rules === undefined) return undefined;
-	return { kind: "project-rules", targetPath, rules };
+	const toolCallId = Reflect.get(value, "toolCallId");
+	return {
+		kind: "project-rules",
+		targetPath,
+		rules,
+		...(typeof toolCallId === "string" && toolCallId.length > 0 ? { toolCallId } : {}),
+	};
 }
 
 function parseTtsrActivation(value: object): TtsrActivationDetails | undefined {

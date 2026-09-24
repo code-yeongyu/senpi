@@ -1,3 +1,4 @@
+import type { CustomEntry } from "../../../session-manager.ts";
 import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { EntryRenderer } from "../../types.ts";
 import {
@@ -20,6 +21,18 @@ export const renderGoalCacheWarmupEntry: EntryRenderer<GoalCacheWarmupEntryData>
 		expandedLine: expandedLine(data),
 	};
 });
+
+/**
+ * One card per wait cycle: a cache-warm entry for the same Goal that directly follows the
+ * previous card (a reload re-arm, or the wake that ends the wait) replaces it in place.
+ */
+export function isSameGoalCacheWarmCard(
+	previous: CustomEntry<GoalCacheWarmupEntryData>,
+	next: CustomEntry<GoalCacheWarmupEntryData>,
+): boolean {
+	const goalId = next.data?.goalId;
+	return typeof goalId === "string" && goalId.length > 0 && previous.data?.goalId === goalId;
+}
 
 function titleLine(data: GoalCacheWarmupEntryData): string {
 	const wakeSources =

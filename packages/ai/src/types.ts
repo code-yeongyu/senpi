@@ -438,6 +438,11 @@ export interface TextSignatureV1 {
 export interface TextContent {
 	type: "text";
 	text: string;
+	/**
+	 * When set, this part is addressed to the model only: renderers and downstream UIs omit it.
+	 * Absent means visible to everyone. Provider adapters send the text unchanged.
+	 */
+	audience?: "model";
 	textSignature?: string; // e.g., for OpenAI responses, message metadata (legacy id string or TextSignatureV1 JSON)
 }
 

@@ -1,3 +1,25 @@
+## 2026-09-23 — PTY bash truncation markers are model-only text parts (senpi#2063)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/output-format.ts`: `formatTerminalToolOutput` also returns the kept output (`body`) and the truncation `marker` separately; `text` is unchanged. New `splitModelOnlyNotices(text, notices)` turns line-delimited notices into `audience: "model"` parts whose "\n"-join is byte-identical to `text`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: `TerminalToolResult.content` is `TextContent[]`; new `noticedResult`.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: the final foreground result emits the `[Showing lines A-B of N; earlier output dropped]` marker as a model-only part; streaming progress updates (display-only) use the body without the marker.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash-output.ts`: the `[N earlier chars dropped]` notice and the truncation marker are model-only parts.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/render.ts`: the bash_output/monitor result renderer joins visible text parts and skips model-only parts.
+
+### Why
+
+#2062 made built-in tool notices model-only, but the live `bash` tool is this PTY builtin, whose formatter appended its own marker to the body, so every truncated bash card still showed `earlier output dropped` in the TUI and desktop. A scripted run against the published 2026.9.23-4 bundle showed the marker; after this change it is gone while the model's tool messages stay byte-identical (26,875 bytes, same content).
+
+### Why an extension could not handle it
+
+This is the terminal builtin's own result shape; the notice has to be split where the result is built.
+
+### Expected merge conflict zones
+
+`tools/bash.ts` near the final `textResult`/`noticedResult` return and the progress emitter; `tools/bash-output.ts` read-delta return; `tools/render.ts` `setResult`.
+
 ## 2026-09-21 - Stop parked-session file polling (#1902)
 
 ### What changed

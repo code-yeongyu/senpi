@@ -1,6 +1,6 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
-import type { EntryRenderer } from "../../../core/extensions/types.ts";
+import type { EntryRenderer, EntryRendererOptions } from "../../../core/extensions/types.ts";
 import type { CustomEntry } from "../../../core/session-manager.ts";
 import { theme } from "../theme/theme.ts";
 
@@ -19,6 +19,10 @@ export class CustomEntryComponent extends Container {
 		this.entry = entry;
 		this.renderer = renderer;
 		this.rebuild();
+	}
+
+	get customEntry(): CustomEntry<unknown> {
+		return this.entry;
 	}
 
 	hasContent(): boolean {
@@ -59,4 +63,26 @@ export class CustomEntryComponent extends Container {
 		this.addChild(new Spacer(1));
 		this.addChild(component);
 	}
+}
+
+/**
+ * Index of the card `entry` replaces in place: the transcript card directly before
+ * `insertIndex` (skipping only `isTransient` children such as a status line), when it
+ * renders an entry of the same custom type and the renderer's `replaces` option accepts
+ * the pair. Returns -1 when `entry` becomes a new card.
+ */
+export function replacedEntryCardIndex(
+	children: readonly Component[],
+	insertIndex: number,
+	entry: CustomEntry<unknown>,
+	options: EntryRendererOptions | undefined,
+	isTransient: (child: Component) => boolean = () => false,
+): number {
+	if (options?.replaces === undefined) return -1;
+	let previousIndex = insertIndex - 1;
+	while (previousIndex >= 0 && isTransient(children[previousIndex] as Component)) previousIndex--;
+	const previous = children[previousIndex];
+	if (!(previous instanceof CustomEntryComponent)) return -1;
+	if (previous.customEntry.customType !== entry.customType) return -1;
+	return options.replaces(previous.customEntry, entry) ? previousIndex : -1;
 }

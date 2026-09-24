@@ -27,6 +27,17 @@ export function runGenerateModels(dryRun, runCommand, log, dryRunLog) {
 	runCommand("npm", ["--prefix", "packages/ai", "run", "generate-models"]);
 }
 
+// omo#8700: the catalog just regenerated from the network may carry a Claude id the pinned Claude Code
+// predates. Report it in the release log; the blocking check is the promoted-model regression test.
+export function runClaudeCodeModelSupportReport(dryRun, runCommand, log, dryRunLog) {
+	if (dryRun) {
+		dryRunLog("node scripts/check-claude-code-model-support.mjs");
+		return;
+	}
+	log("node scripts/check-claude-code-model-support.mjs");
+	runCommand("node", ["scripts/check-claude-code-model-support.mjs"]);
+}
+
 export function runGenerateImageModels(dryRun, runCommand, log, dryRunLog) {
 	if (dryRun) {
 		dryRunLog("npm --prefix packages/ai run generate-image-models");

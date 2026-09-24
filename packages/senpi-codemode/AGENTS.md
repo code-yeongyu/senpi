@@ -31,7 +31,7 @@ test/                            Vitest contracts and the omp parity ledger
 - Session generations fence old kernels and callbacks; a retired generation
   never emits into a newer session.
 - One kernel per language preserves state and runs cells FIFO; queued cells may detach within the session-wide `maxDetachedCells` cap (default 15). Per-cell callbacks own output.
-- Evals require a `summary` in the user's conversational language; detached cells carry it and the old `title` field stays dropped.
+- Evals require a `summary` in the language the user writes in, with no length limit; detached cells carry it and the old `title` field stays dropped.
 - Every cell settles exactly once: success, error, timeout, abort, bridge failure, kernel crash.
 - Timeout and abort cleanup retires child work before ownership is released.
 - The bridge binds loopback only, requires a per-session bearer token, limits

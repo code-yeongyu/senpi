@@ -175,7 +175,7 @@ import { BranchSummaryMessageComponent } from "./components/branch-summary-messa
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { ContinuityNoticeTracker } from "./components/continuity-notice.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
-import { CustomEntryComponent } from "./components/custom-entry.ts";
+import { CustomEntryComponent, replacedEntryCardIndex } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DaxnutsComponent } from "./components/daxnuts.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
@@ -5803,12 +5803,24 @@ export class InteractiveMode {
 			return;
 		}
 
-		if (this.streamingComponent) {
-			const streamingIndex = this.chatContainer.children.indexOf(this.streamingComponent);
-			if (streamingIndex >= 0) {
-				this.chatContainer.children.splice(streamingIndex, 0, component);
-				return;
-			}
+		const children = this.chatContainer.children;
+		const streamingIndex = this.streamingComponent ? children.indexOf(this.streamingComponent) : -1;
+		const insertIndex = streamingIndex >= 0 ? streamingIndex : children.length;
+		const options = this.session.extensionRunner.getEntryRendererOptions(entry.customType);
+		const replacedIndex = replacedEntryCardIndex(
+			children,
+			insertIndex,
+			entry,
+			options,
+			(child) => child === this.lastStatusText || child === this.lastStatusSpacer,
+		);
+		if (replacedIndex >= 0) {
+			children.splice(replacedIndex, 1, component);
+			return;
+		}
+		if (streamingIndex >= 0) {
+			children.splice(streamingIndex, 0, component);
+			return;
 		}
 
 		this.chatContainer.addChild(component);
@@ -6047,7 +6059,13 @@ export class InteractiveMode {
 		this.assistantTextSegments.clear();
 	}
 
-	private createToolExecutionComponent(toolName: string, toolCallId: string, args: unknown): ToolExecutionComponent {
+	private createToolExecutionComponent(
+		requestedName: string,
+		toolCallId: string,
+		args: unknown,
+	): ToolExecutionComponent {
+		// A call the agent resolves to another tool (gateway namespace, recasing) renders as that tool from its first frame.
+		const toolName = this.session.resolveToolCallName(requestedName);
 		if (this.chrome) {
 			return new ToolExecutionComponent(
 				toolName,

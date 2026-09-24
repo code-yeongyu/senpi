@@ -82,6 +82,7 @@ describe("describeClaudeLane", () => {
 		expect(describeClaudeLane()).toEqual({
 			runtime: process.versions.bun === undefined ? "node" : "bun",
 			executable,
+			source: "override",
 			tried: [executable],
 		});
 	});

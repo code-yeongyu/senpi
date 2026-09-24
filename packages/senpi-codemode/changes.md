@@ -1,5 +1,47 @@
 # senpi-codemode fork changes
 
+## 2026-09-23 - Readable preview for dense JS eval cells (#2050)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/display-code.ts` (new): `displayCode(code, language)` reformats a JS cell with a line longer than 100 characters. It parses with `@babel/parser` (top-level `await`/`return` allowed, as in the kernel) and turns the whitespace, comma, and comment regions between statements, inside non-empty blocks, and between the elements of a one-line array longer than 60 characters into indented line breaks. Every other character is copied verbatim. Parse failures, non-JS languages, and non-dense code return the input unchanged; results are memoized (64 entries).
+- `packages/senpi-codemode/src/tool/render.ts`: `highlightedCode` and the no-theme call frame preview `displayCode(...)` instead of the raw cell.
+- `packages/senpi-codemode/test/eval-display-code.test.ts`: the dense cell shape from the report, top-level `await`/`return`, comments, identity cases, and the rendered cell frame.
+
+### Why
+
+- Models often send a cell as one line of semicolon-joined statements, and the preview hard-wrapped it into an unreadable block. Reformatting only at display time keeps the tool arguments byte-identical (senpi#1472). Babel works under Node (the package's Node 24 target and Vitest) and Bun, and it keeps comments, which `Bun.Transpiler` would drop.
+
+### Why an extension could not handle it
+
+- The eval renderer belongs to this package.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/tool/render.ts` `highlightedCode` and the no-theme branch of `renderEvalCall`; `display-code.ts` is new.
+
+## 2026-09-23 - Uncapped, purpose-framed eval summary (#2050)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/types.ts`: the `summary` field loses `maxLength` and `EVAL_SUMMARY_MAX_LENGTH`; its description drops the language-specific example and the truncation claim and asks for one line, in the language the user writes in, that is a progress update saying what the agent is doing and why rather than a label for the code. A literal English template ("Working on <task> to <purpose>") was tried and rejected: a real model copied the English words into a Korean summary.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `clampEvalSummary` becomes `normalizeEvalSummary` (trim, whitespace collapse, blank -> absent; no truncation). The teaching error uses the same framing. `eval-tool.ts` `prepareArguments` and the render-time `displaySummary` call it.
+- `packages/senpi-codemode/src/tool/render.ts`: `summaryVisualLines`/`summaryBlock` show the first `SUMMARY_PREVIEW_LINES` (3) wrapped lines of a collapsed summary with a trailing ellipsis and the whole summary when expanded, in the cell frame, the no-theme call frame, and the plain result frame.
+- Tests: `packages/senpi-codemode/test/eval-request-summary.test.ts` and `packages/senpi-codemode/test/eval-render-summary.test.ts` (renamed from `eval-render-summary-clamp.test.ts`) pin the uncapped contract and the display bound; the coding-agent #1472 regressions exercise whitespace normalization, the preparation difference that remains.
+
+### Why
+
+- "WHAT this cell does" produced labels for the code block rather than a statement of the work in progress and its purpose, and the 80-character cap cut the purpose clause. The language-specific example is redundant with "the language the user writes in".
+- The display bound keeps the src/tool rule that rendered output is capped, without capping what the model may write.
+
+### Why an extension could not handle it
+
+- The schema, request parser, and renderer are this package's own eval tool.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/tool/types.ts` summary field, `packages/senpi-codemode/src/tool/eval-request.ts` summary normalization, `packages/senpi-codemode/src/tool/render.ts` summary rendering.
+
 ## 2026-09-23 - Bound interpreter test concurrency in CI (#2039)
 
 ### What changed
@@ -1232,3 +1274,24 @@ Detach and settlement ownership lives inside `EvalDetachedCellManager`, and only
 `onCellSettled`. Out-of-process consumers (rpc mode with `extension_events`) now receive the
 live-cell transitions; `test/eval-wake-source.test.ts` pins the rpc case and the wiring test
 filters the settle payload instead of asserting an rpc-channel exact list. (#1943)
+
+
+## 2026-09-23 — Hide eval artifact and truncation renderer warnings
+
+### What changed
+
+`packages/senpi-codemode/src/tool/render.ts`: Remove both renderer-owned artifact/truncation warning paths and omit model-only text from the fallback. Stop pattern-based footer stripping from ordinary output. The existing artifactNotice and formatTruncationWarning helpers do not attach text to model results, so eval model text and grouping stay unchanged.
+
+### Why
+
+Eval bookkeeping should not be duplicated in visible cards or cause ordinary user output to be stripped by resemblance.
+
+### Why an extension could not handle it
+
+These card builders own the rendered details and cannot be corrected by an external extension.
+
+### Expected merge conflict zones
+
+Detailed eval cells and fallback result blocks; no collector, output grouping, or model content changes.
+
+- Covered production paths: `packages/senpi-codemode/src/tool/render.ts`.

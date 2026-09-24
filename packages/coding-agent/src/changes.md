@@ -1,4 +1,41 @@
+## 2026-09-23 - `resolvedToolName` on toolcall_start/toolcall_end JSON and RPC records (senpi#2068)
+
+### What changed
+
+- `packages/coding-agent/src/modes/json-event.ts`: `toJsonEvent` copies the session event's `resolvedToolName` into the delta-only `message_update` record written by stdout RPC and `--mode json`. Socket-host records already carry it, since `demoteToDeltaOnly` only rewrites `*_delta` records and spreads the rest.
+- `docs/rpc.md`, `docs/json.md`: document the field. `test/suite/regressions/issue-2068-rpc-resolved-tool-name.test.ts` (new); `7925-toolcall-start-metadata.test.ts` pins it on the exact `toolcall_start` wire shape.
+
+### Why
+
+- Clients title a streaming call by the tool it will run from its first frame (code-yeongyu/omo-desktop-app#1079); without the copy the field existed on the in-process event but never reached the wire.
+
+### Why an extension could not handle it
+
+- The JSON wire projection is built by the mode, after every extension hook; an extension cannot add fields to the records `toJsonEvent` writes.
+
+### Expected merge conflict zones
+
+- LOW: the returned object in `toJsonEvent`.
+
 # changes
+
+## 2026-09-23 - Export EntryRendererOptions from the package entry (senpi#2051)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports the new `EntryRendererOptions` type next to `EntryRenderer` and `EntryRenderOptions`.
+
+### Why
+
+- `pi.registerEntryRenderer()` gained an optional third argument (`replaces`) so an entry can update the card before it; extension authors importing from the package need its type.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts` is the package's public type surface; extensions cannot add exports to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: the extension-rendering type export list.
 
 ## 2026-09-21 - Print mode explains transport drops and never prints the replay marker (senpi#1628)
 

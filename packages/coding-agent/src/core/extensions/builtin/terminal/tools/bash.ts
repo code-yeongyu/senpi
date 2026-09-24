@@ -10,7 +10,13 @@ import {
 	KILLED_SESSION_EXIT_GRACE_MS,
 	TERMINAL_BASH_TOOL,
 } from "../shared.ts";
-import { errorResult, type TerminalToolContext, type TerminalToolResult, textResult } from "./context.ts";
+import {
+	errorResult,
+	noticedResult,
+	type TerminalToolContext,
+	type TerminalToolResult,
+	textResult,
+} from "./context.ts";
 import { createForegroundDetachGate } from "./foreground-detach.ts";
 import { resolveForegroundWindowSeconds, SLEEP_WAIT_WINDOW_SECONDS } from "./foreground-window.ts";
 import { classifySleepWait, type SleepWaitClassification } from "./sleep-wait.ts";
@@ -258,7 +264,7 @@ async function runForeground(
 	const startedAt = Date.now();
 	const activity = `running ${input.command.slice(0, 80)}`;
 	const emitOutputUpdate = () => {
-		const text = formatTerminalToolOutput(runtime.fullOutput()).text.slice(-2000);
+		const text = formatTerminalToolOutput(runtime.fullOutput()).body.slice(-2000);
 		onUpdate?.({ content: [{ type: "text", text }], details: { progress: { activity, startedAt } } });
 	};
 	const updateEmitter = onUpdate ? createThrottledEmitter(emitOutputUpdate) : undefined;
@@ -364,7 +370,7 @@ async function runForeground(
 	if (exit && exit.exitCode !== 0 && exit.exitCode !== null) {
 		return errorResult(`${output ? `${output}\n\n` : ""}Command exited with code ${exit.exitCode}`);
 	}
-	return textResult(output || "(no output)", {
+	return noticedResult(output || "(no output)", [formatted.marker], {
 		details: {
 			status,
 			...(formatted.truncated ? { truncation: formatted.truncation } : {}),

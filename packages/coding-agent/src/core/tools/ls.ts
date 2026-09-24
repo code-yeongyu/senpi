@@ -1,9 +1,11 @@
 import { readdir as fsReaddir, stat as fsStat } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { TextContent } from "@earendil-works/pi-ai";
 import nodePath from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
+import { modelOnlyText } from "./model-only-text.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { lsRenderers } from "./renderers/ls.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -151,7 +153,6 @@ export function createLsToolDefinition(
 						const rawOutput = results.join("\n");
 						// Apply byte truncation. There is no separate line limit because entry count is already capped.
 						const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-						let output = truncation.content;
 						const details: LsToolDetails = {};
 						// Build actionable notices for truncation and entry limits.
 						const notices: string[] = [];
@@ -163,12 +164,14 @@ export function createLsToolDefinition(
 							notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 							details.truncation = truncation;
 						}
+						const content: TextContent[] = [{ type: "text", text: truncation.content }];
 						if (notices.length > 0) {
-							output += `\n\n[${notices.join(". ")}]`;
+							content[0].text += "\n";
+							content.push(modelOnlyText(`[${notices.join(". ")}]`));
 						}
 
 						resolve({
-							content: [{ type: "text", text: output }],
+							content,
 							details: Object.keys(details).length > 0 ? details : undefined,
 						});
 					} catch (e: any) {

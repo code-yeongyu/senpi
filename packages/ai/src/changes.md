@@ -21,6 +21,33 @@ Slot allocation happens inside `appendLoginSlot` under the credential-store writ
 - MEDIUM: `auth/pool/slots.ts` `appendLoginSlot`, `projectFlatFields`, `projectSlot`, `mergeRefreshed` and the `CredentialSlot` type.
 - LOW: `auth/oauth/anthropic.ts` `exchangeAuthorizationCode` return; the receipt origin unions in `auth/types.ts` and `models.ts`.
 
+## 2026-09-23 - Cursor variant grouping derived from the live catalog (senpi#2038)
+
+### What changed
+
+- `packages/ai/src/cursor/catalog-grouping.ts`: adds the pure `deriveCursorVariantAliases(ids)` export. For raw ids `cursor-variant-aliases.json` does not list, it derives family aliases (base id, with the `-thinking` infix as a separate identity, requiring `>= 2` distinct observed levels in the same batch; `-fast`, single-level, and level-less ids stay flat). `normalizeCursorCatalog` resolves `static alias ?? derived alias`, so static-table output stays byte-identical. Derivation rejects targets that are a static identity, a static alias key (a derived `gpt-5.5-high` would shadow the static `gpt-5.5-high` alias of `gpt-5.5`), or a raw batch id; duplicate normalized levels choose the exact normalized suffix deterministically and leave other ids flat. Derived capability lookup uses the original member's base id, even when the target ends in a level token; derived groups get `capabilityId`/`window` (capability row or `FALLBACK_WINDOW`), a total `thinkingLevelMap` (observed levels map to their raw suffix and every unobserved level is `null`, because the shared model contract treats an absent ordinary level as supported and would offer and silently substitute levels the server never listed), `representativeVariantId`, `legacyAliases`, and the new `variantIds` map (normalized level -> exact server-listed variant id). Declares `CursorCatalogEntry.variantIds`.
+- `packages/ai/src/model.ts`: declares `CursorAgentCompat.cursorReasoning.variantIds` (`Readonly<Partial<Record<ModelThinkingLevel, string>>>`), present only on derived identities.
+- `packages/ai/src/cursor/selection-descriptor.ts`: `resolveCursorSelectionDescriptor` resolves explicit selections through `cursorReasoning.variantIds` before any capability lookup (a level missing from `variantIds` falls back to the representative instead of silently downgrading), and legacy-variant selections accept ids that are static aliases or `variantIds` values.
+- `packages/ai/src/cursor/store-migration.ts`: `regroupStoredCursorModels` treats stored flat entries whose ids derivation groups as legacy and regroups them over the stored batch, idempotently and in stable order; it coalesces flats and an existing derived identity at their first position, preserving existing metadata on conflicting levels. Conflicting raw levels remain flat and wire-selectable (only ids represented by the retained `variantIds` map are consumed); coalescing duplicate stored identities also runs when no new level was added, keeping the first position and its metadata. An existing grouped identity, static or derived, wins over flat rows aliasing it regardless of input order: a static group absorbs its flat alias rows, filling only levels it lacks (`absorbStaticLevels`) while its representative and compat stay unchanged. `entryToModel` copies `variantIds` into `cursorReasoning`.
+- `packages/ai/src/providers/cursor.ts`: `fetchCursorModels` copies `entry.variantIds` into `compat.cursorReasoning.variantIds`.
+- `packages/ai/test/cursor-derived-variant-grouping.test.ts` (`// senpi#2038`): coverage over the 2026-09-23 unlisted-ids fixture, target collisions, duplicate levels, parser base ids, and mixed-store migration in both orders; `cursor-derived-supported-levels.test.ts` pins supported levels, clamping, and wire ids for every derived family; `cursor-store-migration-mixed-groups.test.ts` pins static groups mixed with flat aliases, including the provider restore path.
+
+### Why
+
+Cursor shipped suffix families after the 2026-08-18 alias snapshot (`grok-4.7`, `claude-opus-5-5`, `claude-fable-5-1` plus its thinking variants, `gemini-3.8-flash`, `muse-spark-1.3`); ids absent from the static table became singleton flat models (reasoning false, 200k fallback window), and `resolveCursorSelectionDescriptor` returned the representative (medium) whenever the capability row was missing, so `senpi --model cursor/grok-4.7:low` and `:xhigh` both ran `grok-4.7-xhigh-fast` with thinking off. Deriving the grouping from the observed `GetUsableModels` batch fixes selection for new families without touching the static snapshot or its byte-identical output.
+
+### Why an extension could not handle it
+
+The grouping runs inside `normalizeCursorCatalog` / `regroupStoredCursorModels` during catalog normalization and store restore, before any extension observes model identities; selection resolution happens inside the Cursor transports' descriptor resolution, which extensions cannot intercept.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/cursor/catalog-grouping.ts`: the `CursorCatalogEntry` interface tail, static target collision guard, duplicate-level selection in derivation, and derived capability lookup in `normalizeCursorCatalog`.
+- `packages/ai/src/cursor/selection-descriptor.ts`: the selection blocks of `resolveCursorSelectionDescriptor`.
+- `packages/ai/src/cursor/store-migration.ts`: `absorbStaticLevels`, the existing-group reservation, the legacy classification, mixed-store conflict filtering and unconditional identity coalescing loop, and the `entryToModel` compat spread.
+- `packages/ai/src/model.ts`: the `cursorReasoning` block of `CursorAgentCompat`.
+- `packages/ai/src/providers/cursor.ts`: the `cursorReasoning` spread in `fetchCursorModels`.
+
 ## 2026-09-23 - claudeCodeVersion follows the pinned claude-agent-sdk (senpi#2033)
 
 ### What changed
@@ -4649,3 +4676,24 @@ Detection has to happen inside the Anthropic SSE loop while the stream is still 
 - HIGH: `packages/ai/src/api/anthropic-messages.ts` (`getAnthropicCompat`, beta header list, `buildParams`), `packages/ai/src/api/openai-responses.ts` and `openai-codex-responses.ts` request builders, `packages/ai/src/types.ts` option interfaces, `packages/ai/src/index.ts` export list.
 - MEDIUM: `retryDelayMs`/`NON_RETRYABLE_PROVIDER_ERROR_PATTERN` in `utils/retry.ts`; `EventStream` iterator in `utils/event-stream.ts`; `usesReasoningEffort` in `mistral-conversations.ts`; `models.ts` auth resolution.
 - LOW: `providers/faux.ts` option types; `providers/cloudflare-ai-gateway.ts` model list; `utils/uuid.ts` byte source.
+
+
+## 2026-09-23 — Add model-only text audience without changing provider payloads
+
+### What changed
+
+`packages/ai/src/types.ts`, `packages/ai/src/api/pi-messages.ts`: Add the optional model-only audience contract and project protocol text fields without UI metadata. Adapter tests compare serialized marked and unmarked requests, including image-bearing results and Cursor/Devin protobuf messages.
+
+### Why
+
+Tool notices must remain model context without being presented as user-facing output.
+
+### Why an extension could not handle it
+
+The shared content type and provider serialization belong to the AI package, before extension rendering hooks.
+
+### Expected merge conflict zones
+
+TextContent and pi-messages request construction.
+
+- Covered production paths: `packages/ai/src/types.ts`, `packages/ai/src/api/pi-messages.ts`.

@@ -80,8 +80,6 @@ describe("eval renderer", () => {
 			"",
 			"- tool.search: ok",
 			"- tool.write: error (denied)",
-			"",
-			"[eval output truncated]",
 		]);
 	});
 

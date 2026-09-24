@@ -9,8 +9,8 @@
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "^2026.9.23-2",
-		"@code-yeongyu/senpi": "^2026.9.23-2",
+		"@earendil-works/pi-ai": "^2026.9.23-5",
+		"@code-yeongyu/senpi": "^2026.9.23-5",
 		"@types/node": "26.6.2",
 		"@vitest/coverage-v8": "5.0.1",
 		"shx": "0.4.0",

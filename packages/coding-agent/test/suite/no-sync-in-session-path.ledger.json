@@ -158,6 +158,20 @@
 			"note": "models config JSON (KB-scale, cached after the first load)"
 		},
 		{
+			"file": "src/core/models-json-migration.ts",
+			"api": "readFileSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 1,
+			"note": "one-shot legacy provider-id migration (senpi#2044): re-reads models.json (KB-scale) right before the rename to refuse clobbering a concurrent edit. Runs only while the file still carries a legacy id, so at most once per file"
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"api": "writeFileSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 2,
+			"note": "one-shot legacy provider-id migration (senpi#2044): the backup copy and the temp file renamed over models.json (KB-scale each). Runs only while the file still carries a legacy id, so at most once per file"
+		},
+		{
 			"file": "src/core/session-manager.ts",
 			"api": "appendFileSync",
 			"symbol": "_persist",

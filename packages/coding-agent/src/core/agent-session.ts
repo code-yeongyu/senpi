@@ -260,6 +260,7 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
+import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { composeFilesystemPolicies } from "./tools/filesystem-policy.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
@@ -309,8 +310,9 @@ type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 };
 
 export type AgentSessionEvent =
-	| Exclude<AgentEvent, { type: "agent_end" }>
+	| Exclude<AgentEvent, { type: "agent_end" | "message_update" }>
 	| AgentSessionAgentEndEvent
+	| SessionMessageUpdateEvent
 	| { type: "agent_settled" }
 	| { type: "agent_idle" }
 	| { type: "session_abort" }
@@ -2372,7 +2374,13 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 
 		// Notify all listeners
-		this._emit(event.type === "agent_end" ? { ...event, willRetry: agentEndWillRetry } : event);
+		this._emit(
+			event.type === "agent_end"
+				? { ...event, willRetry: agentEndWillRetry }
+				: event.type === "message_update"
+					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
+					: event,
+		);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 		}
@@ -3114,6 +3122,15 @@ export class AgentSession {
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
 		return this._toolDefinitions.get(name)?.definition;
+	}
+
+	/**
+	 * The tool a call named `requested` runs, by the same rule the agent loop
+	 * applies (exact name, else the unique alias among callable tools), without
+	 * activating anything. Returns `requested` when nothing resolves.
+	 */
+	resolveToolCallName(requested: string): string {
+		return resolveToolNameAlias(requested, this._callableToolNames()) ?? requested;
 	}
 
 	async executeTool<TDetails = unknown>(

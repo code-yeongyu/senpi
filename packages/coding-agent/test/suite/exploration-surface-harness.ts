@@ -3,6 +3,7 @@ import { Container, TUI } from "@earendil-works/pi-tui";
 import { VirtualTerminal } from "../../../tui/test/virtual-terminal.ts";
 import type { AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
+import type { InlineExtension } from "../../src/index.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 import { createHarness } from "./harness.ts";
 
@@ -12,8 +13,8 @@ export function invoke(mode: InteractiveMode, name: string, ...args: unknown[]):
 	return method.apply(mode, args);
 }
 
-export async function explorationSurface(hideThinkingBlock = true) {
-	const harness = await createHarness({ settings: { smoothStreaming: false, hideThinkingBlock } });
+export async function explorationSurface(hideThinkingBlock = true, extensionFactories: InlineExtension[] = []) {
+	const harness = await createHarness({ settings: { smoothStreaming: false, hideThinkingBlock }, extensionFactories });
 	const runtime = Object.assign(Object.create(AgentSessionRuntime.prototype), { _session: harness.session });
 	const mode = new InteractiveMode(runtime);
 	const ui = new TUI(new VirtualTerminal(120, 40));

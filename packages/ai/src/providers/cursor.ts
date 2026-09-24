@@ -61,6 +61,7 @@ async function fetchCursorModels(context: RefreshModelsContext): Promise<Model<"
 								capabilityId: entry.capabilityId,
 								...(entry.thinkingMode !== undefined ? { thinkingMode: entry.thinkingMode } : {}),
 								representativeVariantId: entry.representativeVariantId,
+								...(entry.variantIds !== undefined ? { variantIds: entry.variantIds } : {}),
 							},
 						}
 					: {}),

@@ -35,6 +35,8 @@ function bodyLines(calls: readonly ExplorationCall[]): string[] {
  */
 export class ExplorationGroup extends Container {
 	calls: { readonly component: ToolExecutionComponent; readonly call: ExplorationCall }[] = [];
+	/** Rule paths injected into this group's calls; repeated paths count once. */
+	private rules: readonly string[] = [];
 
 	private get expanded(): boolean {
 		return this.calls.some(({ component }) => component.presentationSnapshot.state.expanded);
@@ -52,6 +54,9 @@ export class ExplorationGroup extends Container {
 		const lines = ["", truncateToWidth(header, width)];
 		if (this.expanded) return [...lines, ...super.render(width)];
 		const body = bodyLines(this.calls.map(({ call }) => call));
+		const ruleCount = new Set(this.rules).size;
+		if (ruleCount > 0)
+			body.push(`${theme.fg("accent", "Applied")} ${ruleCount} project ${ruleCount === 1 ? "rule" : "rules"}`);
 		const shown = body.length > MAX_BODY_LINES ? body.slice(0, MAX_BODY_LINES) : body;
 		if (body.length > shown.length) shown.push(theme.fg("dim", `… +${body.length - shown.length} more`));
 		for (const [index, line] of shown.entries()) {
@@ -87,8 +92,9 @@ export class ExplorationGroup extends Container {
 	}
 
 	/** References are replaced on each projection, never disposed by this view. */
-	setMembers(members: Component[], calls: ExplorationGroup["calls"]): void {
+	setMembers(members: Component[], calls: ExplorationGroup["calls"], rules: readonly string[] = []): void {
 		this.children = members;
 		this.calls = calls;
+		this.rules = rules;
 	}
 }

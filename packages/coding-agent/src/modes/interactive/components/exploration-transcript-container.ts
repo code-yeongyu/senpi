@@ -1,7 +1,9 @@
 import { type Component, Container, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { AssistantMessageComponent } from "./assistant-message.ts";
+import { CustomEntryComponent } from "./custom-entry.ts";
 import { explorationCall } from "./exploration-call.ts";
 import { ExplorationGroup } from "./exploration-group.ts";
+import { projectRulesOfCall } from "./exploration-rules.ts";
 import {
 	ProgressiveTranscriptContainer,
 	type ProgressiveTranscriptOptions,
@@ -27,6 +29,7 @@ export class ExplorationTranscriptContainer extends Container {
 		let group: ExplorationGroup | undefined;
 		let members: Component[] = [];
 		let calls: ExplorationGroup["calls"] = [];
+		let rules: string[] = [];
 		for (const child of this.children) {
 			const call = child instanceof ToolExecutionComponent ? explorationCall(child) : undefined;
 			if (child instanceof ToolExecutionComponent && call) {
@@ -36,12 +39,17 @@ export class ExplorationTranscriptContainer extends Container {
 					projected.push(group);
 					members = [];
 					calls = [];
+					rules = [];
 				}
 				members.push(child);
 				calls.push({ component: child, call });
-				group.setMembers(members, calls);
+				group.setMembers(members, calls, rules);
 			} else if (group && child instanceof AssistantMessageComponent && child.isExplorationDetail) {
 				members.push(child);
+			} else if (group && child instanceof CustomEntryComponent && projectRulesOfCall(child, calls)) {
+				members.push(child);
+				rules = [...rules, ...(projectRulesOfCall(child, calls) ?? [])];
+				group.setMembers(members, calls, rules);
 			} else {
 				group = undefined;
 				projected.push(child);

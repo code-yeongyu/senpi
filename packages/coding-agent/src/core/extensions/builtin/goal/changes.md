@@ -1,5 +1,25 @@
 # goal Extension Changes
 
+## 2026-09-23 - One cache-warm card per wait; reloads keep the parked wait (senpi#2051)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/parked-wait.ts` (new): `findParkedGoalWait(branch, goalId)` reads the pending wait (last `goal-cache-warmup` entry is a `scheduled` one for this goal, no message after it).
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: `rearmMonitorBackstop` passes the parked wait to `#schedule`, which then keeps its iteration, cache snapshot, delay and original `dueAtMs` (timer armed for the remaining time), re-emits `goal_continuation_scheduled` for live consumers, and appends no entry.
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm-renderer.ts` + `index.ts`: `isSameGoalCacheWarmCard` registered as the renderer's `replaces` option, so a same-goal entry directly after the previous card updates it in place.
+
+### Why
+
+- A config reload re-armed the backstop through a fresh generation: a new iteration-1 entry without cache figures and a full backstop from the reload time, which can land after the prompt-cache TTL. Three stacked cards were observed for one wait.
+
+### Why an extension could not handle it
+
+- Goal-owned logic; documented here by convention (fork-only directory).
+
+### Expected merge conflict zones
+
+- `#schedule` and `rearmMonitorBackstop` in `monitor-continuation.ts`.
+
 ## 2026-09-22 - claude-sdk-oauth provider id renamed to anthropic-subscription in the exhaustion classifier comment (senpi#1989)
 
 ### What changed

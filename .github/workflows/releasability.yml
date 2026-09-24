@@ -81,6 +81,11 @@ jobs:
       - name: Fail on generated drift
         run: git diff --exit-code packages/ai/src/models.generated.ts
 
+      # omo#8700: a regenerated Claude id the pinned Claude Code predates 400s on
+      # anthropic-subscription until @anthropic-ai/claude-agent-sdk is bumped.
+      - name: Catalog Claude ids known to the pinned Claude Code
+        run: node scripts/check-claude-code-model-support.mjs --strict
+
       # A removed model breaks typecheck where code/tests still reference it.
       - name: Typecheck against regenerated catalog
         run: npx tsc --noEmit
@@ -132,9 +137,27 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # omo#8700: fall behind the newest @anthropic-ai/claude-agent-sdk and the next Claude model ships
+  # unusable on anthropic-subscription. Nightly and advisory, so a new SDK never reds a PR base.
+  claude-sdk-currency:
+    name: Claude Agent SDK currency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Pin against the latest published SDK
+        run: node scripts/check-claude-code-model-support.mjs --sdk-currency
+
   report-failure:
     name: Report failure
-    needs: [check-main, model-catalog-regen, local-release-coherence]
+    needs: [check-main, model-catalog-regen, local-release-coherence, claude-sdk-currency]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -147,6 +170,7 @@ jobs:
           CHECK_MAIN_RESULT: ${{ needs.check-main.result }}
           MODEL_CATALOG_REGEN_RESULT: ${{ needs.model-catalog-regen.result }}
           LOCAL_RELEASE_COHERENCE_RESULT: ${{ needs.local-release-coherence.result }}
+          CLAUDE_SDK_CURRENCY_RESULT: ${{ needs.claude-sdk-currency.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           script: |
@@ -156,6 +180,7 @@ jobs:
               ['check-main', process.env.CHECK_MAIN_RESULT],
               ['model-catalog-regen', process.env.MODEL_CATALOG_REGEN_RESULT],
               ['local-release-coherence', process.env.LOCAL_RELEASE_COHERENCE_RESULT],
+              ['claude-sdk-currency', process.env.CLAUDE_SDK_CURRENCY_RESULT],
             ];
             const failed = results
               .filter(([, result]) => result !== 'success')

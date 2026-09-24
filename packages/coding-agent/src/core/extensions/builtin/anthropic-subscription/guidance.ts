@@ -1,4 +1,5 @@
 import type { SdkErrorKind } from "./errors.ts";
+import type { ClaudeCodeRun } from "./executable.ts";
 
 const PROVIDER = "anthropic-subscription";
 
@@ -40,14 +41,31 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 	].join("\n");
 }
 
-export function claudeCodeVersionFloorGuidance(text: string): string | undefined {
+/**
+ * The remedy for a version-floor 400 depends on which binary ran: updating senpi/omo only helps
+ * the bundled one, and `claude update` (which the API text suggests) only helps a `claude` on PATH.
+ */
+function versionFloorRemedy(target: string, ran: ClaudeCodeRun | undefined): string {
+	switch (ran?.source) {
+		case "override":
+			return `The Claude Code binary set by CLAUDE_CODE_EXECUTABLE (${ran.executable}) is too old for this model. Replace it with ${target}, or unset CLAUDE_CODE_EXECUTABLE to use the Claude Code senpi/omo ships.`;
+		case "bundled":
+			return `The Claude Code bundled with senpi/omo (${ran.executable}) is too old for this model; \`claude update\` does not change it. Update senpi/omo (it ships a newer @anthropic-ai/claude-agent-sdk), install ${target} as \`claude\` on PATH (a newer one is used automatically), or set CLAUDE_CODE_EXECUTABLE to ${target} binary.`;
+		case "path":
+			return `The Claude Code on PATH (${ran.executable}) is too old for this model. Run \`claude update\` to get ${target}, or set CLAUDE_CODE_EXECUTABLE to ${target} binary.`;
+		case undefined:
+			return `The Claude Code binary is too old for this model. Update senpi/omo, update the \`claude\` on PATH, or set CLAUDE_CODE_EXECUTABLE to ${target} binary.`;
+	}
+}
+
+export function claudeCodeVersionFloorGuidance(text: string, ran?: ClaudeCodeRun): string | undefined {
 	const floor = /does not support this model; version (\S+?) or newer is required|claude_code_version_too_old/i.exec(
 		text,
 	);
 	if (floor) {
 		const target =
 			floor[1] === undefined ? "a newer Claude Code" : `Claude Code ${floor[1].replace(/[.,;:]+$/, "")} or newer`;
-		return `The bundled Claude Code binary is too old for this model. Update senpi/omo (it ships a newer @anthropic-ai/claude-agent-sdk) or set CLAUDE_CODE_EXECUTABLE to ${target} binary.`;
+		return versionFloorRemedy(target, ran);
 	}
 	if (/\bmodel_not_found\b|unrecognized_model|not found for provider/i.test(text)) {
 		return "The bundled Claude Code binary does not know this model id; update senpi/omo or set CLAUDE_CODE_EXECUTABLE to a newer Claude Code binary.";

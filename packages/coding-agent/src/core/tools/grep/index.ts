@@ -9,7 +9,7 @@ import { grepRenderers } from "../renderers/grep.ts";
 import { wrapToolDefinition } from "../tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, GREP_MAX_LINE_LENGTH, type TruncationResult } from "../truncate.ts";
 import type { GrepEngineMatch, GrepEngineRequest, GrepEngineResult } from "./engine.ts";
-import { formatGrepText } from "./format.ts";
+import { formatGrepContent } from "./format.ts";
 import { searchPattern } from "./pattern.ts";
 import { resolveGrepEngine } from "./select-engine.ts";
 
@@ -273,7 +273,7 @@ export function createGrepToolDefinition(
 				scan,
 				linesTruncated: matches.some((row) => row.truncated),
 			};
-			return { content: [{ type: "text", text: formatGrepText(details) }], details };
+			return { content: formatGrepContent(details), details };
 		},
 		...grepRenderers,
 	};

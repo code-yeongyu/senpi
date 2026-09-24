@@ -6,6 +6,7 @@ import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { sanitizeBinaryOutput } from "../../utils/shell.ts";
+import { isModelOnlyText } from "./model-only-text.ts";
 
 export function shortenPath(path: unknown): string {
 	if (typeof path !== "string") return "";
@@ -42,7 +43,7 @@ export function getTextOutput(
 ): string {
 	if (!result) return "";
 
-	const textBlocks = result.content.filter((c) => c.type === "text");
+	const textBlocks = result.content.filter((c) => c.type === "text" && !isModelOnlyText(c));
 	const imageBlocks = result.content.filter((c) => c.type === "image");
 
 	let output = textBlocks.map((c) => sanitizeBinaryOutput(stripAnsi(c.text || "")).replace(/\r/g, "")).join("\n");

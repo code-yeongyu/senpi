@@ -17,6 +17,7 @@ import { createFindToolDefinition } from "../src/core/tools/find.ts";
 import { createGrepToolDefinition } from "../src/core/tools/grep.ts";
 import { createLsToolDefinition } from "../src/core/tools/ls.ts";
 import { createReadToolDefinition } from "../src/core/tools/read.ts";
+import { getTextOutput as getRenderedTextOutput } from "../src/core/tools/render-utils.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import {
 	createEditTool,
@@ -152,6 +153,12 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("Line 10");
 			expect(output).not.toContain("Line 11");
 			expect(output).toContain("[90 more lines in file. Use offset=11 to continue.]");
+			// #2041: continuation instructions stay in model content, not the tool card.
+			expect(result.content).toEqual([
+				{ type: "text", text: `${lines.slice(0, 10).join("\n")}\n` },
+				{ type: "text", text: "[90 more lines in file. Use offset=11 to continue.]", audience: "model" },
+			]);
+			expect(getRenderedTextOutput(result, false)).toBe(`${lines.slice(0, 10).join("\n")}\n`);
 		});
 
 		it("should handle offset + limit together", async () => {

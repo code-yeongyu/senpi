@@ -77,7 +77,12 @@ describe("webfetch output truncation", () => {
 		expect(details.outputBytes).toBeLessThan(details.outputTotalBytes);
 		// Head content is preserved (not empty) and an actionable notice is appended.
 		expect(text).toContain('{"data":"xxxx');
-		expect(text).toContain("truncated");
+		expect(text).not.toContain("Output truncated:");
+		expect(result.content[1]).toEqual({
+			type: "text",
+			text: expect.stringContaining("[Output truncated:"),
+			audience: "model",
+		});
 	});
 
 	it("truncates a large multi-line body while keeping whole leading lines", async () => {
@@ -94,7 +99,12 @@ describe("webfetch output truncation", () => {
 		expect(details.outputTruncated).toBe(true);
 		expect(details.outputBytes).toBeLessThanOrEqual(DEFAULT_OUTPUT_MAX_BYTES);
 		expect(text.startsWith("line-0-")).toBe(true);
-		expect(text).toContain("truncated");
+		expect(text).not.toContain("Output truncated:");
+		expect(result.content[1]).toEqual({
+			type: "text",
+			text: expect.stringContaining("[Output truncated:"),
+			audience: "model",
+		});
 	});
 
 	it("returns a small body verbatim with no truncation notice", async () => {

@@ -59,6 +59,7 @@ export type {
 	EditToolResultEvent,
 	// Message and Entry Rendering
 	EntryRenderer,
+	EntryRendererOptions,
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
