@@ -242,6 +242,47 @@ describe("Anthropic OAuth", () => {
 		// the prompt's signal is aborted once login settles, so UIs can dismiss it
 		expect(manualSignal?.aborted).toBe(true);
 	});
+
+	async function loginWithTokenResponse(tokenResponse: Record<string, unknown>) {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown): Promise<Response> => {
+				const url = getUrl(input);
+				if (url.includes("/oauth/token")) return jsonResponse(tokenResponse);
+				throw new Error(`Unexpected fetch: ${url}`);
+			}),
+		);
+		return anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: () => {},
+			prompt: async (prompt) => {
+				if (prompt.type === "manual_code") return "the-code";
+				throw new Error(`Unexpected prompt: ${prompt.type}`);
+			},
+		});
+	}
+
+	it("records the account and organization the token exchange reports as the credential identity", async () => {
+		const credential = await loginWithTokenResponse({
+			access_token: "access",
+			refresh_token: "refresh",
+			expires_in: 3600,
+			account: { uuid: "account-uuid", email_address: "user@example.test" },
+			organization: { uuid: "org-uuid", name: "Personal" },
+		});
+
+		expect(credential.identity).toEqual({ id: "account-uuid/org-uuid", email: "user@example.test" });
+	});
+
+	it("logs in without an identity when the token exchange reports no account", async () => {
+		const credential = await loginWithTokenResponse({
+			access_token: "access",
+			refresh_token: "refresh",
+			expires_in: 3600,
+		});
+
+		expect(credential).not.toHaveProperty("identity");
+	});
 });
 
 type PortHold = { bound: boolean; close: () => Promise<void> };

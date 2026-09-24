@@ -1,3 +1,21 @@
+## 2026-09-23 - /account list shows the account email, why an account is blocked, and a lapsed token
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: list rows add the login email after the label when known, and a blocked row names its reason: `blocked (log in again)`, `blocked (rate limited)` or `blocked (account disabled)`. An OAuth account whose access token has lapsed ends with `token expired <age> ago`; the token renews on next use, so days of lapse flag an account whose refresh token has stopped working. Rows without any of these keep their previous text.
+
+### Why
+
+See the matching `credential-accounts.ts` entry in `src/core/changes.md`.
+
+### Why an extension could not handle it
+
+This is the builtin `/account` extension's own rendering.
+
+### Expected merge conflict zones
+
+- LOW: `statusOf()`.
+
 ## 2026-09-22 - Claude Opus 5.5 becomes the recommended Opus
 
 ### What changed

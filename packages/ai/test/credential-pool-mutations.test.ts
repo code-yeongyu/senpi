@@ -8,12 +8,14 @@ import {
 	isManagedSentinelSlot,
 	listSlots,
 	managedSentinelMaterial,
+	mergeRefreshed,
 	type PooledCredential,
 	removeSlot,
 	repairManagedSentinelSlots,
 	upsertSlot,
 } from "../src/auth/pool/slots.ts";
 import { resolveProviderAuth } from "../src/auth/resolve.ts";
+import type { OAuthCredential } from "../src/auth/types.ts";
 import { createProvider, type Provider } from "../src/models.ts";
 
 describe("credential pool slot algebra", () => {
@@ -247,6 +249,161 @@ describe("credential pool slot algebra", () => {
 		const flat: Credential = { type: "api_key", key: "only-key" };
 
 		expect(appendLoginSlot(undefined, flat)).toBe(flat);
+	});
+});
+
+describe("re-login with a known account identity", () => {
+	const alice = { id: "account-alice/org-1", email: "alice@example.test" };
+	const bob = { id: "account-bob/org-1", email: "bob@example.test" };
+
+	function oauthLogin(tag: string, identity?: { id: string; email?: string }): OAuthCredential {
+		return {
+			type: "oauth",
+			access: `${tag}-access`,
+			refresh: `${tag}-refresh`,
+			expires: 100,
+			...(identity ? { identity } : {}),
+		};
+	}
+
+	function aliceAndBobPool(): PooledCredential {
+		return {
+			type: "oauth",
+			access: "alice-old-access",
+			refresh: "alice-old-refresh",
+			expires: 1,
+			identity: alice,
+			accounts: [
+				{
+					name: "default",
+					source: "login",
+					displayName: "Personal",
+					access: "alice-old-access",
+					refresh: "alice-old-refresh",
+					expires: 1,
+					identity: alice,
+				},
+				{
+					name: "login-2",
+					source: "login",
+					access: "bob-access",
+					refresh: "bob-refresh",
+					expires: 1,
+					identity: bob,
+				},
+			],
+			pinned: "default",
+		};
+	}
+
+	test("a login with a new identity is appended and keeps that identity on its slot", () => {
+		const next = appendLoginSlot(aliceAndBobPool(), oauthLogin("carol", { id: "account-carol/org-1" }));
+
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["default", "login-2", "login-3"]);
+		expect(listSlots(next).at(-1)).toMatchObject({ access: "carol-access", identity: { id: "account-carol/org-1" } });
+	});
+
+	test("a login with a stored identity refreshes that slot in place instead of appending login-N", () => {
+		const allocations: [string, string][] = [];
+
+		const next = appendLoginSlot(aliceAndBobPool(), oauthLogin("bob-new", bob), (name, origin) =>
+			allocations.push([name, origin]),
+		) as PooledCredential;
+
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["default", "login-2"]);
+		expect(listSlots(next).find((slot) => slot.name === "login-2")).toEqual({
+			name: "login-2",
+			source: "login",
+			access: "bob-new-access",
+			refresh: "bob-new-refresh",
+			expires: 100,
+			identity: bob,
+		});
+		expect(allocations).toEqual([["login-2", "updated"]]);
+		// login-2 was not the flat projection, so the flat fields and the pin stay on the default account
+		expect(next).toMatchObject({ access: "alice-old-access", refresh: "alice-old-refresh", pinned: "default" });
+	});
+
+	test("refreshing the projected slot in place also rotates the flat fields and keeps its display name", () => {
+		const next = appendLoginSlot(aliceAndBobPool(), oauthLogin("alice-new", alice)) as PooledCredential;
+
+		expect(next).toMatchObject({
+			access: "alice-new-access",
+			refresh: "alice-new-refresh",
+			expires: 100,
+			identity: alice,
+		});
+		expect(listSlots(next).find((slot) => slot.name === "default")).toMatchObject({
+			displayName: "Personal",
+			access: "alice-new-access",
+			refresh: "alice-new-refresh",
+		});
+	});
+
+	test("an in-place re-login drops block state persisted on the replaced material", () => {
+		const current = aliceAndBobPool();
+		current.accounts = current.accounts?.map((slot) =>
+			slot.name === "login-2" ? { ...slot, blockReason: "auth_error", blockedUntil: 9_999_999_999_999 } : slot,
+		);
+
+		const refreshed = listSlots(appendLoginSlot(current, oauthLogin("bob-new", bob)) as PooledCredential).find(
+			(slot) => slot.name === "login-2",
+		);
+
+		expect(refreshed).not.toHaveProperty("blockReason");
+		expect(refreshed).not.toHaveProperty("blockedUntil");
+	});
+
+	test("a legacy flat credential with the same identity is refreshed in place and stays flat", () => {
+		const current: Credential = { ...oauthLogin("alice-old", alice), expires: 1 };
+
+		const next = appendLoginSlot(current, oauthLogin("alice-new", alice));
+
+		expect(next).toEqual({ ...oauthLogin("alice-new", alice) });
+	});
+
+	test("slots without a recorded identity never absorb a login, so older pools keep appending", () => {
+		const current: PooledCredential = {
+			type: "oauth",
+			access: "old-access",
+			refresh: "old-refresh",
+			expires: 1,
+			accounts: [{ name: "default", source: "login", access: "old-access", refresh: "old-refresh", expires: 1 }],
+		};
+
+		const next = appendLoginSlot(current, oauthLogin("new", alice));
+
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["default", "login-2"]);
+	});
+
+	test("a login without an identity keeps appending even when stored slots carry one", () => {
+		expect(listSlots(appendLoginSlot(aliceAndBobPool(), oauthLogin("anon"))).map((slot) => slot.name)).toEqual([
+			"default",
+			"login-2",
+			"login-3",
+		]);
+	});
+
+	test("a malformed identity is ignored rather than matched or stored", () => {
+		const next = appendLoginSlot(aliceAndBobPool(), {
+			...oauthLogin("odd"),
+			identity: { id: "" },
+		} as Credential);
+
+		expect(listSlots(next).map((slot) => slot.name)).toEqual(["default", "login-2", "login-3"]);
+		expect(listSlots(next).at(-1)).not.toHaveProperty("identity");
+	});
+
+	test("a token refresh of a flat single-account credential keeps its identity", () => {
+		const current: Credential = oauthLogin("alice-old", alice);
+
+		expect(mergeRefreshed(current, oauthLogin("alice-rotated"))).toEqual(oauthLogin("alice-rotated", alice));
+	});
+
+	test("removing the projected slot re-projects the survivor's identity onto the flat fields", () => {
+		const next = removeSlot(aliceAndBobPool(), "default") as PooledCredential;
+
+		expect(next).toMatchObject({ access: "bob-access", identity: bob });
 	});
 });
 

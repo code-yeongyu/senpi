@@ -17,13 +17,19 @@ function getUrl(input: unknown): string {
 	throw new Error(`Unsupported fetch input: ${String(input)}`);
 }
 
-function createAccessToken(accountId: string): string {
+function createAccessToken(
+	accountId: string,
+	person?: { accountUserId?: string; userId?: string; email?: string },
+): string {
 	const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64");
 	const payload = Buffer.from(
 		JSON.stringify({
 			"https://api.openai.com/auth": {
 				chatgpt_account_id: accountId,
+				...(person?.accountUserId === undefined ? {} : { chatgpt_account_user_id: person.accountUserId }),
+				...(person?.userId === undefined ? {} : { chatgpt_user_id: person.userId }),
 			},
+			...(person?.email === undefined ? {} : { "https://api.openai.com/profile": { email: person.email } }),
 		}),
 	).toString("base64");
 	return `${header}.${payload}.signature`;
@@ -175,6 +181,49 @@ describe("OpenAI Codex OAuth", () => {
 			accountId: "account-123",
 		});
 		expect(pollTimes).toEqual([startTime.getTime(), startTime.getTime() + 5000]);
+	});
+
+	async function loginWithAccessToken(accessToken: string) {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown): Promise<Response> => {
+				const url = getUrl(input);
+				if (url === "https://auth.openai.com/api/accounts/deviceauth/usercode") {
+					return jsonResponse({ device_auth_id: "device-auth-id", user_code: "WXYZ-7890", interval: "5" });
+				}
+				if (url === "https://auth.openai.com/api/accounts/deviceauth/token") {
+					return jsonResponse({
+						authorization_code: "oauth-code",
+						code_challenge: "device-code-challenge",
+						code_verifier: "device-code-verifier",
+					});
+				}
+				if (url === "https://auth.openai.com/oauth/token") {
+					return jsonResponse({ access_token: accessToken, refresh_token: "refresh-token", expires_in: 3600 });
+				}
+				throw new Error(`Unexpected fetch URL: ${url}`);
+			}),
+		);
+		return loginChatGptSubscriptionDeviceCodeForTest({ onDeviceCode: () => {} });
+	}
+
+	it("records the person within the workspace as the identity, not the shared workspace id", async () => {
+		const credential = await loginWithAccessToken(
+			createAccessToken("workspace-1", {
+				accountUserId: "user-7__workspace-1",
+				userId: "user-7",
+				email: "member@example.test",
+			}),
+		);
+
+		expect(credential).toMatchObject({ accountId: "workspace-1" });
+		expect(credential.identity).toEqual({ id: "user-7__workspace-1", email: "member@example.test" });
+	});
+
+	it("logs in without an identity when the token names no person", async () => {
+		const credential = await loginWithAccessToken(createAccessToken("workspace-1"));
+
+		expect(credential).not.toHaveProperty("identity");
 	});
 
 	it("offers browser login first and uses the selected OpenAI Codex device code flow", async () => {
