@@ -2787,6 +2787,7 @@ name = "senpi-desktop-safety"
 version = "0.0.0"
 dependencies = [
  "parking_lot",
+ "senpi-desktop-core",
  "thiserror 2.0.21",
 ]
 
