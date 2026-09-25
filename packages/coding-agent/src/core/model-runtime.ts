@@ -17,6 +17,7 @@ import {
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
 	type DeferredHandle,
+	extractChatGptSubscriptionAccountId,
 	lazyStream,
 	type Model,
 	type Models,
@@ -112,7 +113,11 @@ export interface ModelRuntimeAuthOverrides extends AuthOperationOptions {
  * id) keeps one conversation on one credential slot, and its absence simply
  * distributes requests instead of concentrating them.
  */
-export type CredentialRotationStreamOptions = StreamOptions & ModelsRequestTransforms & { affinityKey?: string };
+export type CredentialRotationStreamOptions = StreamOptions &
+	ModelsRequestTransforms & {
+		affinityKey?: string;
+		purpose?: string;
+	};
 
 function mightHoldCredentialPool(
 	providerId: string,
@@ -168,12 +173,21 @@ function mergeHeaders(
 function withPayloadRequestMetadata(options: StreamOptions, model: Model<Api>): StreamOptions {
 	if (!options.onPayload) return options;
 	const onPayload = options.onPayload;
+	const headers = { ...options.headers };
+	if (model.api === "openai-codex-responses" && options.apiKey) {
+		for (const name of Object.keys(headers)) {
+			if (["authorization", "chatgpt-account-id"].includes(name.toLowerCase())) delete headers[name];
+		}
+		headers.authorization = `Bearer ${options.apiKey}`;
+		const accountId = extractChatGptSubscriptionAccountId(options.apiKey);
+		if (accountId) headers["chatgpt-account-id"] = accountId;
+	}
 	return {
 		...options,
 		onPayload: async (payload, providerModel) =>
 			await onPayload(payload, providerModel, {
 				model,
-				headers: options.headers ?? {},
+				headers,
 			}),
 	};
 }
@@ -230,9 +244,11 @@ export class ModelRuntime implements Models {
 	 * ModelRuntime, which the import-graph guard forbids.
 	 */
 	private readonly poolStatePath: string | undefined;
+	private readonly credentialSelectionState = new Map<string, string>();
 	private credentialPoolModules:
 		| Promise<{
 				rotation: typeof import("./credential-pool/rotation-stream.ts");
+				quota: typeof import("./credential-pool/codex-quota.ts");
 				repository: InstanceType<typeof import("./credential-pool/state-store.ts").CredentialSlotRepository>;
 		  }>
 		| undefined;
@@ -802,12 +818,14 @@ export class ModelRuntime implements Models {
 	 */
 	private loadCredentialPool(): NonNullable<typeof this.credentialPoolModules> {
 		this.credentialPoolModules ??= (async () => {
-			const [rotation, stateStore] = await Promise.all([
+			const [rotation, stateStore, quota] = await Promise.all([
 				import("./credential-pool/rotation-stream.ts"),
 				import("./credential-pool/state-store.ts"),
+				import("./credential-pool/codex-quota.ts"),
 			]);
 			return {
 				rotation,
+				quota,
 				repository: new stateStore.CredentialSlotRepository(this.poolStatePath),
 			};
 		})();
@@ -843,6 +861,23 @@ export class ModelRuntime implements Models {
 		const pool = await this.loadCredentialPool();
 		const sources: RotationSources = {
 			providerId: model.provider,
+			modelId: model.id,
+			signal: options?.signal,
+			sessionId: options?.affinitySessionId ?? options?.sessionId,
+			source:
+				options?.purpose ??
+				(process.env.DREAM_TARGET_PATH
+					? "memory dream"
+					: process.env.SENPI_MEMORY_FACTS === "1"
+						? "memory facts"
+						: process.env.SENPI_MEMORY_REFLECTION === "1"
+							? "memory reflection"
+							: undefined),
+			selectionState: this.credentialSelectionState,
+			getCodexUsage: async (slot) => {
+				const auth = await this.getAuth(model, { slotName: slot.name, signal: options?.signal });
+				return pool.quota.fetchCodexUsage(auth?.auth?.apiKey, options?.signal);
+			},
 			credential,
 			env,
 			repository: pool.repository,
@@ -850,6 +885,31 @@ export class ModelRuntime implements Models {
 		};
 		const slots = await pool.rotation.listRotationSlots(sources, { acquireLeases: false });
 		return slots.length > 1 ? sources : undefined;
+	}
+
+	/** Run an auxiliary HTTP request with the same credential policy as model streams. */
+	async requestWithCredentialRotation<T>(
+		model: Model<Api>,
+		options: CredentialRotationStreamOptions | undefined,
+		runAttempt: (prepared: { model: Model<Api>; options: ProviderRequestOptions }) => Promise<T>,
+	): Promise<T> {
+		const sources = this.couldRotateCredentials(model, options)
+			? await this.credentialRotationSources(model, options)
+			: undefined;
+		if (!sources) return runAttempt(await this.prepareRequest(model, options));
+		const { rotation } = await this.loadCredentialPool();
+		return rotation.requestWithCredentialRotation({
+			sources,
+			affinityKey: options?.affinityKey ?? options?.affinitySessionId ?? options?.sessionId,
+			runAttempt: async (slot) =>
+				runAttempt(
+					await this.prepareRequest(
+						model,
+						options,
+						slot.lane === "env" ? { apiKey: slot.envKey } : { slotName: slot.name },
+					),
+				),
+		});
 	}
 
 	stream<TApi extends Api>(
@@ -868,8 +928,8 @@ export class ModelRuntime implements Models {
 					sources,
 					...(streamOptions?.affinityKey !== undefined
 						? { affinityKey: streamOptions.affinityKey }
-						: streamOptions?.sessionId !== undefined
-							? { affinityKey: streamOptions.sessionId }
+						: (streamOptions?.affinitySessionId ?? streamOptions?.sessionId) !== undefined
+							? { affinityKey: streamOptions?.affinitySessionId ?? streamOptions?.sessionId }
 							: {}),
 					runAttempt: async (slot) => {
 						const prepared = await this.prepareRequest(
@@ -923,7 +983,9 @@ export class ModelRuntime implements Models {
 				const { rotation } = await this.loadCredentialPool();
 				return rotation.streamWithCredentialRotation({
 					sources,
-					...(streamOptions?.sessionId === undefined ? {} : { affinityKey: streamOptions.sessionId }),
+					...((streamOptions?.affinitySessionId ?? streamOptions?.sessionId) === undefined
+						? {}
+						: { affinityKey: streamOptions?.affinitySessionId ?? streamOptions?.sessionId }),
 					runAttempt: async (slot) => {
 						const prepared = await this.prepareRequest(
 							model,

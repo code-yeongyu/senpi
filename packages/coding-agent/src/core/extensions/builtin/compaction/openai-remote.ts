@@ -6,11 +6,13 @@ import {
 	convertResponsesMessages,
 	getContextProvenance,
 	type Model,
+	normalizeProviderId,
 	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { convertToLlm } from "../../../messages.ts";
+import type { ModelRuntime } from "../../../model-runtime.ts";
 import {
 	buildContextEntries,
 	buildSessionContext,
@@ -113,7 +115,10 @@ type OpenAiRemoteCompactionContext = {
 					error: string;
 			  }
 		>;
-		modelRuntime?: { streamSimple: OpenAiResponsesStreamRunner };
+		modelRuntime?: {
+			streamSimple: OpenAiResponsesStreamRunner;
+			requestWithCredentialRotation?: ModelRuntime["requestWithCredentialRotation"];
+		};
 	};
 	serviceTier: ServiceTier | undefined;
 	sessionManager: {
@@ -779,19 +784,103 @@ export async function runOpenAiRemoteCompaction(
 				reason: REMOTE_COMPACTION_TIMEOUT_REASON,
 				transport: "compact-endpoint",
 			}),
-		run: (signal) =>
-			runOpenAiCompactEndpointCompaction({
-				fetchImpl: dependencies.fetch ?? fetch,
-				headers: requestHeaders,
-				model: requestModel,
-				request: transformedRequest,
-				requestId: event.requestId,
-				signal,
-				firstKeptEntryId: event.preparation.firstKeptEntryId,
-				now: dependencies.now ?? Date.now,
-				emit,
-				origin,
-			}),
+		run: async (signal) => {
+			const execute = async (prepared?: {
+				model: Model<Api>;
+				options: { apiKey?: string; headers?: ProviderHeaders };
+			}) => {
+				const headers = prepared
+					? createOpenAiRemoteCompactionHeaders(
+							requestModel,
+							{ apiKey: prepared.options.apiKey, headers: prepared.options.headers },
+							request.body.prompt_cache_key,
+						)
+					: requestHeaders;
+				if (!headers) {
+					emit?.({
+						version: 1,
+						action: "remote_fallback",
+						route: "builtin.compaction.openai_remote",
+						requestId: event.requestId,
+						modelId: requestModel.id,
+						reason: "missing-openai-auth",
+						transport: "compact-endpoint",
+					});
+					return undefined;
+				}
+				const resolvedOrigin = prepared ? openAiRemoteCompactionOrigin(requestModel, headers) : origin;
+				if (!resolvedOrigin) {
+					emit?.({
+						version: 1,
+						action: "remote_fallback",
+						route: "builtin.compaction.openai_remote",
+						requestId: event.requestId,
+						modelId: requestModel.id,
+						reason: MISSING_REMOTE_REPLAY_ORIGIN_REASON,
+						transport: "compact-endpoint",
+					});
+					return undefined;
+				}
+				let credentialFailure: Error | undefined;
+				const result = await runOpenAiCompactEndpointCompaction({
+					fetchImpl: async (...args) => {
+						const response = await (dependencies.fetch ?? fetch)(...args);
+						if (prepared && [401, 402, 403, 429].includes(response.status)) {
+							const hint = response.headers.get("retry-after");
+							credentialFailure = Object.assign(
+								new Error(
+									`${response.status}: ${await response.clone().text()}${hint ? ` (retry-after: ${hint})` : ""}`,
+								),
+								{ status: response.status },
+							);
+						}
+						return response;
+					},
+					headers,
+					model: requestModel,
+					request: transformedRequest,
+					requestId: event.requestId,
+					signal,
+					firstKeptEntryId: event.preparation.firstKeptEntryId,
+					now: dependencies.now ?? Date.now,
+					emit,
+					origin: resolvedOrigin,
+				});
+				if (credentialFailure) throw credentialFailure;
+				return result;
+			};
+
+			const runtime = ctx.modelRegistry?.modelRuntime;
+			if (
+				normalizeProviderId(requestModel.provider) === "chatgpt-subscription" &&
+				runtime?.requestWithCredentialRotation
+			) {
+				try {
+					return await runtime.requestWithCredentialRotation(
+						requestModel,
+						{
+							signal,
+							sessionId: ctx.sessionManager.getSessionId(),
+							purpose: "remote compaction",
+							headers: transformedHeaders,
+						},
+						(prepared) => execute(prepared),
+					);
+				} catch (error) {
+					if (signal.aborted) throw error;
+					emit?.({
+						version: 1,
+						action: "remote_fallback",
+						route: "builtin.compaction.openai_remote",
+						requestId: event.requestId,
+						modelId: requestModel.id,
+						reason: "Codex account pool unavailable",
+					});
+					return undefined;
+				}
+			}
+			return execute();
+		},
 	});
 }
 

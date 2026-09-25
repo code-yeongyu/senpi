@@ -168,6 +168,26 @@ Only the host can run the `before_agent_start` chain, and only the host knows th
 
 - `packages/coding-agent/src/core/extensions/types.ts`: command context and action declarations beside `navigateTree` and `editAssistantMessage`.
 - `packages/coding-agent/src/core/extensions/runner.ts`: handler types, default fields, command binding/reset, and context injection.
+## 2026-09-20 - Session retry-fallback settings are readable from the extension context
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext` gains an optional `getRetryFallbackSettings(): RetryFallbackSettings` getter.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createContext()` exposes that getter from the already-bound `sessionSettingsFn`, so an extension auxiliary request reads the active session's resolved fallback configuration rather than reconstructing one from the global agent directory.
+
+### Why
+
+Title/compaction/btw/vision auxiliary requests need the session's configured fallback chains, including SDK in-memory settings, without each builtin importing `SettingsManager` and reaching for `getAgentDir()`.
+
+### Why an extension could not handle it
+
+Only the host binds the active session settings into the extension context.
+An external extension cannot add a typed context capability or access SDK
+in-memory overrides through the global settings file.
+
+### Expected merge conflict zones
+
+- LOW: the new optional member in `ExtensionContext` and the one getter in `createContext()`.
 
 ## 2026-09-20 - Import attributes survive the CommonJS rewrite (#1864)
 

@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { AssistantMessageEvent, Credential } from "@earendil-works/pi-ai";
+import { type AssistantMessageEvent, type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
 import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import { listSlots as listCredentialSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { resolveConfigValue } from "../resolve-config-value.ts";
+import { emitAccountSwitch } from "./account-notices.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
+import { admitCodexQuota, preferredCodexQuotaTier } from "./codex-quota.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
-import { type RunSlot, runCredentialFailover } from "./failover.ts";
+import { type RunCredentialFailoverOptions, type RunSlot, runCredentialFailover } from "./failover.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { acquireHalfOpenLease, type CredentialSlotRepository, type CredentialSlotState } from "./state-store.ts";
 
@@ -16,6 +18,8 @@ export type RotationLane = "stored" | "env";
 
 export type RotationSlot = RunSlot & {
 	lane: RotationLane;
+	quotaTier?: 0 | 1;
+	quotaUnavailable?: boolean;
 	/** Env-lane key material for the attempt; never serialized or persisted. */
 	envKey?: string;
 	envVarName?: string;
@@ -25,6 +29,12 @@ export type RotationSlot = RunSlot & {
 
 export type RotationSources = {
 	providerId: string;
+	modelId?: string;
+	signal?: AbortSignal;
+	sessionId?: string;
+	source?: string;
+	selectionState?: Map<string, string>;
+	getCodexUsage?: (slot: RotationSlot) => Promise<unknown>;
 	credential: Credential | undefined;
 	env: (name: string) => string | undefined;
 	repository: CredentialSlotRepository;
@@ -217,27 +227,106 @@ export type CredentialRotationOptions = {
 export function streamWithCredentialRotation(
 	options: CredentialRotationOptions,
 ): AsyncGenerator<AssistantMessageEvent> {
+	return runRotation({
+		...options,
+		isCommittedOutput: isCommittedRotationOutput,
+		isStreamStart: isRotationStreamStart,
+		errorFromEvent: rotationErrorFromEvent,
+	});
+}
+
+/** Non-streaming provider requests share the same admission, health, and notices. */
+export async function requestWithCredentialRotation<T>(
+	options: Omit<CredentialRotationOptions, "runAttempt"> & { runAttempt: (slot: RotationSlot) => Promise<T> },
+): Promise<T> {
+	let result: { value: T } | undefined;
+	for await (const event of runRotation<{ value: T }>({
+		...options,
+		runAttempt: async function* (slot) {
+			yield { value: await options.runAttempt(slot) };
+		},
+		isCommittedOutput: () => true,
+		isStreamStart: () => false,
+	})) {
+		result = event;
+	}
+	if (!result) throw new Error("Credential request completed without a result");
+	return result.value;
+}
+
+function runRotation<TEvent>(
+	options: Omit<CredentialRotationOptions, "runAttempt"> &
+		Pick<
+			RunCredentialFailoverOptions<TEvent, RotationSlot>,
+			"runAttempt" | "isCommittedOutput" | "isStreamStart" | "errorFromEvent"
+		>,
+): AsyncGenerator<TEvent> {
 	const { sources, runAttempt } = options;
 	const hasher = options.hasher ?? sha256SlotHasher;
 	const affinityKey = options.affinityKey ?? randomUUID();
 	const useAffinity = sources.policy?.affinity !== false;
 	const now = sources.now ?? Date.now;
+	const selectionKey = `${sources.providerId}\0${sources.sessionId ?? affinityKey}`;
+	const codexProvider = normalizeProviderId(sources.providerId) === "chatgpt-subscription";
+	let previous = sources.selectionState?.get(selectionKey);
+	let previousFailure: string | undefined;
+	let admitted: RotationSlot[] = [];
 
-	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
-		listSlots: () => listRotationSlots(sources),
+	return runCredentialFailover<TEvent, RotationSlot>({
+		listSlots: async () => {
+			const slots = await listRotationSlots(sources);
+			// A different caller's probe lease hides a generation candidate, not
+			// its remaining normal quota. Assess the full inventory before filtering.
+			const inventory = codexProvider ? await listRotationSlots(sources, { acquireLeases: false }) : slots;
+			previous ??=
+				inventory.find((slot) => slot.pinned)?.name ??
+				(useAffinity ? rendezvousOrder(affinityKey, inventory, hasher) : inventory)[0]?.name;
+			admitted = await admitCodexQuota(sources, inventory);
+			return admitted.filter((slot) =>
+				slots.some((candidate) => candidate.name === slot.name && candidate.lane === slot.lane),
+			);
+		},
 		select: (candidates) => {
+			candidates = preferredCodexQuotaTier(candidates);
 			const pinned = candidates.find((candidate) => candidate.pinned === true);
-			if (pinned) return pinned;
 			const ordered = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
 
-			const winner = ordered[0];
+			const winner = pinned ?? ordered[0];
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
+			if (codexProvider && previous && previous !== winner.name) {
+				const prior = admitted.find((slot) => slot.name === previous);
+				const reason =
+					previousFailure ??
+					(prior?.quotaUnavailable
+						? "quota unavailable"
+						: prior?.blockReason === "rate_limit"
+							? "cooldown"
+							: prior?.blockReason === "account_disabled"
+								? "quota exhausted"
+								: (prior?.blockReason ?? "account selection"));
+				emitAccountSwitch({
+					type: "account_failover",
+					provider: sources.providerId,
+					from: previous,
+					to: winner.name,
+					reason: winner.quotaTier === 1 ? `${reason}; using extra usage` : reason,
+					sessionId: sources.sessionId,
+					source: sources.source,
+				});
+			}
+			previous = winner.name;
+			previousFailure = undefined;
+			sources.selectionState?.set(selectionKey, winner.name);
 			return winner;
 		},
+		onRotate: ({ slot, block }) => {
+			previous = slot.name;
+			previousFailure = block.reason;
+		},
 		runAttempt,
-		isCommittedOutput: isCommittedRotationOutput,
-		isStreamStart: isRotationStreamStart,
-		errorFromEvent: rotationErrorFromEvent,
+		isCommittedOutput: options.isCommittedOutput,
+		isStreamStart: options.isStreamStart,
+		errorFromEvent: options.errorFromEvent,
 		classify: (error, context) =>
 			classifyCredentialFailure(error, {
 				...context,

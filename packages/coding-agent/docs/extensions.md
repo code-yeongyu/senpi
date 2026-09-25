@@ -1255,6 +1255,20 @@ if (usage && usage.tokens > 100_000) {
 }
 ```
 
+### ctx.getRetryFallbackSettings()
+
+Returns the resolved retry/fallback policy for the current session, including
+session overrides. Auxiliary model requests should use this policy rather than
+loading global settings independently. The method is optional for contexts
+supplied by older integrations.
+
+```typescript
+const policy = ctx.getRetryFallbackSettings?.();
+if (policy?.modelFallback) {
+  // Apply the session's configured fallback policy.
+}
+```
+
 ### ctx.compact()
 
 Trigger compaction without awaiting completion. Use `onComplete` and `onError` for follow-up actions.

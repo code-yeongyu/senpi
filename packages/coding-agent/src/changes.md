@@ -192,6 +192,26 @@
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/print-mode.ts`: navigation and assistant-edit neighbours inside `commandContextActions`.
+## 2026-09-20 - Print mode renders account-switch notices
+
+### What changed
+
+- `packages/coding-agent/src/modes/print-mode.ts`: the session subscription adds
+  `account_failover` (formatted via `formatAccountSwitchNotice`) and
+  `internal_model_fallback` to the stderr notice handling.
+
+### Why
+
+- Print/json mode is non-interactive; account switches still need a stderr line consistent
+  with the other model-fallback notices.
+
+### Why an extension could not handle it
+
+- One-shot mode prints engine events outside any extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the two new `else if` branches in the subscription callback.
 
 ## 2026-09-20 - Name what the startup timing table measures before the stdin read (senpi#1868 follow-up)
 

@@ -516,6 +516,8 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Get resolved compaction settings from global/project/user overrides. */
 	getCompactionSettings(): CompactionPreparation["settings"];
+	/** Resolved retry-fallback settings for this session; injected so auxiliary requests use session config over globals. */
+	getRetryFallbackSettings?(): RetryFallbackSettings;
 	/**
 	 * Longest a tool may block in the foreground before the active model's prompt
 	 * cache expires, or `undefined` when no cache-derived budget applies. Reads the

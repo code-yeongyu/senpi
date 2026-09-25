@@ -54,6 +54,29 @@ The provider id is resolved inside the package before any extension loads, and t
 ### Expected merge conflict zones
 
 - These three files, against any other change to the remote-compaction provider gate.
+## Auxiliary summarizer/remote compaction route through the internal fallback seam (2026-09-20)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts`: `summarizationStream` routes through `streamInternalModel`, carrying the purpose, session ID, injected fallback policy, agent directory, and runtime stream primitive.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts`: Codex compact-endpoint requests use `ModelRuntime.requestWithCredentialRotation` and selected-slot headers. Pool exhaustion yields to local summarization. Only prepared rotation attempts convert credential HTTP failures into errors, retaining the numeric status for classification; legacy and non-Codex callers retain their undefined/local-fallback result.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: the request rewrite uses resolved authorization metadata for selected-account provenance.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: the summarizer context accepts the injected agent directory and retry/fallback policy.
+
+### Why
+
+Compaction lanes previously streamed through `stream`/`runtime.streamSimple` directly. The shared seam avoids a pre-resolved credential crossing providers and lets account rotation remain on the public runtime primitive instead of private `prepareRequest` access.
+
+### Why an extension could not handle it
+
+These builtin consumers need the shared core account-selection and internal
+request primitives; an external extension cannot replace the native title,
+summary, and HTTP credential-selection paths consistently.
+
+### Expected merge conflict zones
+
+- LOW: the summarization dispatch, compact-endpoint request block, authorization
+  recovery, and optional context fields in the four paths listed above.
 
 ## Hold a model switch until the next send can compact for it (2026-09-20)
 
