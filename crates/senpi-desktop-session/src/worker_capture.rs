@@ -1,42 +1,52 @@
-//! `capture`: backend image -> capture caps -> PNG, recorded as the target's
-//! latest frame. The byte budget (JPEG / artifact-only) lands with todo 21.
+//! `capture`: backend image -> screenshot budget (caps, then PNG / JPEG /
+//! artifact-only), recorded as the target's latest frame.
 
 use senpi_desktop_core::error::CoreResult;
-use senpi_desktop_core::frame::{apply_capture_caps, encode_png};
 use senpi_desktop_core::protocol_params::CaptureParams;
-use senpi_desktop_core::types::{CaptureMode, CaptureResult, Target};
+use senpi_desktop_core::types::{CaptureResult, DesktopSessionOptions, Target};
 
+use crate::budget::{plan_screenshot, Budget, Delivery};
 use crate::request::Response;
 use crate::worker::Worker;
+
+/// Artifact-only screenshots of a session opened without `artifactDir` go
+/// under this directory of the system temp dir.
+const DEFAULT_ARTIFACT_DIR: &str = "senpi-desktop";
 
 impl Worker {
     pub(crate) fn capture(&mut self, params: &CaptureParams) -> CoreResult<Response> {
         let target = Target::parse(&params.target);
-        let caps = match (&params.caps, &self.options) {
-            (Some(caps), _) => caps.clone(),
-            (None, Some(options)) => options.capture_caps.clone(),
-            (None, None) => Default::default(),
-        };
-        let (image, mut geometry) = self.backend()?.capture(&target, &caps)?;
-        let (source_width, source_height) = image.dimensions();
-        let image = apply_capture_caps(image, &mut geometry, &caps)?;
-        let (width, height) = image.dimensions();
-        let png = encode_png(image)?;
+        let unopened = DesktopSessionOptions::default();
+        let options = self.options.as_ref().unwrap_or(&unopened);
+        let artifact_dir = options
+            .artifact_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join(DEFAULT_ARTIFACT_DIR));
+        let budget = Budget::new(&options.capture_caps, params.caps.as_ref(), artifact_dir)?;
+        let (image, mut geometry) = self.backend()?.capture(&target, budget.caps())?;
+        let screenshot = plan_screenshot(image, &mut geometry, &budget)?;
         let frame_id = self.frames.record(&target, geometry);
         self.refresh_capabilities();
+        let scale = screenshot.scale();
+        let mode = screenshot.delivery.mode();
+        let (data, mime_type, artifact_path, note) = match screenshot.delivery {
+            Delivery::InlinePng(png) => (Some(base64(&png)), "image/png", None, None),
+            Delivery::InlineJpeg { jpeg, note } => (Some(base64(&jpeg)), "image/jpeg", None, Some(note)),
+            Delivery::ArtifactOnly { path, note } => (None, "image/png", Some(path), Some(note)),
+        };
         Ok(Response::Capture(CaptureResult {
-            mode: CaptureMode::InlinePng,
-            data: Some(base64(&png)),
-            mime_type: Some("image/png".to_owned()),
-            artifact_path: None,
-            width,
-            height,
-            source_width,
-            source_height,
-            scale: f64::from(width) / f64::from(source_width),
+            mode,
+            data,
+            mime_type: Some(mime_type.to_owned()),
+            artifact_path,
+            width: screenshot.width,
+            height: screenshot.height,
+            source_width: screenshot.source_width,
+            source_height: screenshot.source_height,
+            scale,
             target: target.key().to_owned(),
             frame_id,
-            note: None,
+            note,
         }))
     }
 }

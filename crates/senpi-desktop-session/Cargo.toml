@@ -9,6 +9,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 flume.workspace = true
+image.workspace = true
 parking_lot.workspace = true
 senpi-desktop-backend-fake = { path = "../senpi-desktop-backend-fake" }
 senpi-desktop-core = { path = "../senpi-desktop-core" }
@@ -17,8 +18,9 @@ serde.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
+ulid.workspace = true
 
 [dev-dependencies]
-image.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }

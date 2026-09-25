@@ -6,6 +6,7 @@
 //! transaction, and one audit event to [`SessionSafety::audit`].
 
 mod audit;
+mod budget;
 mod mutate;
 mod pointer;
 mod request;
