@@ -13,6 +13,8 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+pub mod scenario;
+
 pub const HANG_GUARD: Duration = Duration::from_secs(30);
 pub const BINARY: &str = env!("CARGO_BIN_EXE_senpi-desktop-engine");
 pub const TWO_DISPLAYS: &str = concat!(
@@ -39,6 +41,8 @@ pub struct Engine {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<Value>,
+    /// Id of the next [`Engine::invoke`]; far above the explicit ids tests pick.
+    next_id: i64,
 }
 
 impl Engine {
@@ -68,7 +72,12 @@ impl Engine {
             }
         });
         let stdin = child.stdin.take();
-        Self { child, stdin, lines }
+        Self {
+            child,
+            stdin,
+            lines,
+            next_id: 1_000,
+        }
     }
 
     pub fn send(&mut self, message: &Value) {
@@ -104,6 +113,27 @@ impl Engine {
             if message.get("id").is_some() {
                 assert_eq!(message["id"], json!(id), "reply to {method}: {message}");
                 return message;
+            }
+        }
+    }
+
+    /// [`Engine::call`] with the next free id.
+    pub fn invoke(&mut self, method: &str, params: Value) -> Value {
+        self.next_id += 1;
+        self.call(self.next_id, method, params)
+    }
+
+    /// Closes stdin and returns every line written before the engine exits.
+    pub fn drain(mut self) -> Vec<Value> {
+        drop(self.stdin.take());
+        let mut rest = Vec::new();
+        loop {
+            match self.lines.recv_timeout(HANG_GUARD) {
+                Ok(message) => rest.push(message),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return rest,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("engine did not exit at stdin EOF within the hang guard")
+                }
             }
         }
     }
