@@ -9,20 +9,13 @@ use crate::budget::{plan_screenshot, Budget, Delivery};
 use crate::request::Response;
 use crate::worker::Worker;
 
-/// Artifact-only screenshots of a session opened without `artifactDir` go
-/// under this directory of the system temp dir.
-const DEFAULT_ARTIFACT_DIR: &str = "senpi-desktop";
-
 impl Worker {
     pub(crate) fn capture(&mut self, params: &CaptureParams) -> CoreResult<Response> {
         let target = Target::parse(&params.target);
+        let artifact_dir = self.artifact_dir();
         let unopened = DesktopSessionOptions::default();
-        let options = self.options.as_ref().unwrap_or(&unopened);
-        let artifact_dir = options
-            .artifact_dir
-            .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join(DEFAULT_ARTIFACT_DIR));
-        let budget = Budget::new(&options.capture_caps, params.caps.as_ref(), artifact_dir)?;
+        let caps = self.options.as_ref().unwrap_or(&unopened).capture_caps.clone();
+        let budget = Budget::new(&caps, params.caps.as_ref(), artifact_dir)?;
         let (image, mut geometry) = self.backend()?.capture(&target, budget.caps())?;
         let screenshot = plan_screenshot(image, &mut geometry, &budget)?;
         let frame_id = self.frames.record(&target, geometry);
