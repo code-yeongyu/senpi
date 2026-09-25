@@ -44,7 +44,11 @@ impl Worker {
         Ok(Response::Unit)
     }
 
-    pub(crate) fn click(&mut self, params: &PointParams) -> CoreResult<Audited> {
+    pub(crate) fn click(
+        &mut self,
+        params: &PointParams,
+        cancelled: &dyn Fn() -> bool,
+    ) -> CoreResult<Audited> {
         let target = Target::parse(&params.target);
         let mutation = Mutation {
             frame_id: params.frame_id.as_deref(),
@@ -54,7 +58,7 @@ impl Worker {
                 ParsedPointerOptions::requested_mode(params.opts.as_ref()),
             )
         };
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             let options = ParsedPointerOptions::parse(params.opts.as_ref())?;
             let (frame, current) = worker.frame_for(&target, params.frame_id.as_deref())?;
             let (x, y) = frame.map_point(params.x, params.y, current.as_ref())?;
@@ -69,7 +73,11 @@ impl Worker {
         })
     }
 
-    pub(crate) fn move_mouse(&mut self, params: &PointParams) -> CoreResult<Audited> {
+    pub(crate) fn move_mouse(
+        &mut self,
+        params: &PointParams,
+        cancelled: &dyn Fn() -> bool,
+    ) -> CoreResult<Audited> {
         let target = Target::parse(&params.target);
         let mutation = Mutation {
             frame_id: params.frame_id.as_deref(),
@@ -79,7 +87,7 @@ impl Worker {
                 ParsedPointerOptions::requested_mode(params.opts.as_ref()),
             )
         };
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             let mode = delivery(params.opts.as_ref())?;
             let (frame, current) = worker.frame_for(&target, params.frame_id.as_deref())?;
             let (x, y) = frame.map_point(params.x, params.y, current.as_ref())?;
@@ -87,7 +95,7 @@ impl Worker {
         })
     }
 
-    pub(crate) fn drag(&mut self, params: &DragParams) -> CoreResult<Audited> {
+    pub(crate) fn drag(&mut self, params: &DragParams, cancelled: &dyn Fn() -> bool) -> CoreResult<Audited> {
         let target = Target::parse(&params.target);
         let mutation = Mutation {
             frame_id: params.frame_id.as_deref(),
@@ -97,7 +105,7 @@ impl Worker {
                 ParsedPointerOptions::requested_mode(params.opts.as_ref()),
             )
         };
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             let options = ParsedPointerOptions::parse(params.opts.as_ref())?;
             let (frame, current) = worker.frame_for(&target, params.frame_id.as_deref())?;
             let path = params
@@ -114,7 +122,11 @@ impl Worker {
         })
     }
 
-    pub(crate) fn scroll(&mut self, params: &ScrollParams) -> CoreResult<Audited> {
+    pub(crate) fn scroll(
+        &mut self,
+        params: &ScrollParams,
+        cancelled: &dyn Fn() -> bool,
+    ) -> CoreResult<Audited> {
         let target = Target::parse(&params.target);
         let mutation = Mutation {
             frame_id: params.frame_id.as_deref(),
@@ -124,7 +136,7 @@ impl Worker {
                 ParsedPointerOptions::requested_mode(params.opts.as_ref()),
             )
         };
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             let mode = delivery(params.opts.as_ref())?;
             let (frame, current) = worker.frame_for(&target, params.frame_id.as_deref())?;
             let (x, y) = frame.map_point(params.x, params.y, current.as_ref())?;
@@ -138,7 +150,11 @@ impl Worker {
         })
     }
 
-    pub(crate) fn type_text(&mut self, params: &TypeTextParams) -> CoreResult<Audited> {
+    pub(crate) fn type_text(
+        &mut self,
+        params: &TypeTextParams,
+        cancelled: &dyn Fn() -> bool,
+    ) -> CoreResult<Audited> {
         let target = Target::parse(&params.target);
         let mutation = Mutation {
             text: Some(&params.text),
@@ -148,14 +164,18 @@ impl Worker {
                 ParsedPointerOptions::requested_mode(params.opts.as_ref()),
             )
         };
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             let mode = delivery(params.opts.as_ref())?;
             worker.backend()?.type_text(&target, &params.text, mode)?;
             Ok(Response::Unit)
         })
     }
 
-    pub(crate) fn key_chord(&mut self, params: &KeyChordParams) -> CoreResult<Audited> {
+    pub(crate) fn key_chord(
+        &mut self,
+        params: &KeyChordParams,
+        cancelled: &dyn Fn() -> bool,
+    ) -> CoreResult<Audited> {
         let target = Target::parse(&params.target);
         let mutation = Mutation {
             keys: Some(&params.keys),
@@ -165,7 +185,7 @@ impl Worker {
                 ParsedPointerOptions::requested_mode(params.opts.as_ref()),
             )
         };
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             let keys = parse_keys(&params.keys)?;
             let mode = delivery(params.opts.as_ref())?;
             worker.backend()?.key_chord(&target, &keys, mode)?;
@@ -175,13 +195,17 @@ impl Worker {
 
     /// Raising a window is itself the focus change asked for: audited as
     /// foreground, and nothing is restored afterwards.
-    pub(crate) fn raise_window(&mut self, window_id: &str) -> CoreResult<Audited> {
+    pub(crate) fn raise_window(
+        &mut self,
+        window_id: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> CoreResult<Audited> {
         let mutation = Mutation::new(
             MutatingAction::RaiseWindow,
             window_id.to_owned(),
             DeliveryMode::Foreground,
         );
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             worker.backend()?.raise_window(window_id)?;
             Ok(Response::Unit)
         })

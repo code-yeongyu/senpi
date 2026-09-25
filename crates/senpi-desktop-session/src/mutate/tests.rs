@@ -3,12 +3,13 @@ use std::sync::Arc;
 use senpi_desktop_backend_fake::{FakeMethod, SinkOp};
 use senpi_desktop_core::backend::DeliveryMode;
 use senpi_desktop_core::error::{CoreResult, ErrorCode};
+use senpi_desktop_core::keys::parse_keys;
 use senpi_desktop_core::protocol_params::{
     AxClickParams, AxPerformParams, AxRefParams, AxSetValueParams, DragParams, KeyChordParams, PointParams,
     RaiseWindowParams, ScrollParams, TypeTextParams,
 };
-use senpi_desktop_core::types::DesktopPoint;
-use senpi_desktop_safety::{MutatingAction, StopSource};
+use senpi_desktop_core::types::{DesktopPoint, Target};
+use senpi_desktop_safety::{MutatingAction, StopPathId, StopSource};
 use serde_json::json;
 
 use super::Mutation;
@@ -29,17 +30,21 @@ fn released(harness: &Harness) -> bool {
 
 #[test]
 fn gate_refusal_is_audited_and_touches_no_backend_state() {
-    // Given
+    // Given: no stop path is live - a refusal only the gate itself makes
+    // (admission already refuses a suspended session before the gate).
     let mut harness = harness(&json!({}));
     let frame = harness.capture("101");
-    harness.supervisor.trigger_stop(StopSource::Api);
+    harness.supervisor.set_live(StopPathId::Global, false);
     // When
-    let reply = harness.worker.process(click_window(&frame, None));
+    let reply = harness.process(click_window(&frame, None));
     // Then
-    assert_eq!(reply.map_err(|error| error.code), Err(ErrorCode::Suspended));
+    assert_eq!(
+        reply.map_err(|error| error.code),
+        Err(ErrorCode::StopPathUnavailable)
+    );
     assert_eq!(harness.sink.ops(), Vec::new());
     let codes: Vec<_> = harness.audits().into_iter().map(|audit| audit.code).collect();
-    assert_eq!(codes, [Some(ErrorCode::Suspended)]);
+    assert_eq!(codes, [Some(ErrorCode::StopPathUnavailable)]);
 }
 
 #[test]
@@ -49,7 +54,7 @@ fn panicking_backend_releases_all_and_reports_internal() {
     // When
     let result = harness
         .worker
-        .mutate(&click_desktop_mutation(), |worker| -> CoreResult<()> {
+        .mutate(&click_desktop_mutation(), &|| false, |worker| -> CoreResult<()> {
             worker.backend()?;
             panic!("scripted backend panic")
         });
@@ -70,7 +75,7 @@ fn error_path_release_failure_does_not_mask_primary() {
         .faults
         .fail_next(FakeMethod::ReleaseAll, ErrorCode::Internal);
     // When
-    let reply = harness.worker.process(click_window(&frame, None));
+    let reply = harness.process(click_window(&frame, None));
     // Then: the primary survives, and the failing release was attempted
     // (its queued failure is spent).
     assert_eq!(reply.map_err(|error| error.code), Err(ErrorCode::InputFailed));
@@ -84,7 +89,7 @@ fn suspension_observed_midflight_releases_all() {
     let mut harness = harness(&json!({}));
     let supervisor = Arc::clone(&harness.supervisor);
     // When
-    let result = harness.worker.mutate(&click_desktop_mutation(), |_| {
+    let result = harness.worker.mutate(&click_desktop_mutation(), &|| false, |_| {
         supervisor.trigger_stop(StopSource::HostRelay);
         Ok(())
     });
@@ -165,7 +170,7 @@ fn every_mutating_request_emits_one_audit_event() {
             continue;
         };
         // When
-        let reply = harness.worker.process(op);
+        let reply = harness.process(op);
         // Then
         assert!(reply.is_ok(), "{action:?}: {reply:?}");
         let audited: Vec<_> = harness
@@ -187,11 +192,96 @@ fn typed_text_is_audited_by_length_and_digest_only() {
         opts: None,
     });
     // When
-    harness.worker.process(op).expect("types");
+    harness.process(op).expect("types");
     // Then: SHA-256("abc") starts ba7816bf8f01cfea.
     let audit = harness.audits().pop().expect("one audit");
     assert_eq!(
         (audit.text_length, audit.text_sha256.as_deref()),
         (Some(3), Some("ba7816bf8f01cfea"))
     );
+}
+
+#[test]
+fn cursor_warp_failure_maps_through_execute_input() {
+    // Given: the backend fails the pointer move itself.
+    let mut harness = harness(&json!({}));
+    let frame_id = harness.capture("101");
+    harness.faults.fail_next(FakeMethod::Move, ErrorCode::InputFailed);
+    let op = Op::MoveMouse(PointParams {
+        target: "101".to_owned(),
+        x: 10.0,
+        y: 10.0,
+        frame_id: Some(frame_id),
+        opts: None,
+    });
+    // When
+    let reply = harness.process(op);
+    // Then: the backend's code is the reply and the audit.
+    assert_eq!(reply.map_err(|error| error.code), Err(ErrorCode::InputFailed));
+    let codes: Vec<_> = harness.audits().into_iter().map(|audit| audit.code).collect();
+    assert_eq!(codes, [Some(ErrorCode::InputFailed)]);
+}
+
+#[test]
+fn out_of_bounds_coordinate_errors_and_releases() {
+    // Given: a drag whose second point is off the captured frame.
+    let mut harness = harness(&json!({}));
+    let frame_id = harness.capture("101");
+    let op = Op::Drag(DragParams {
+        target: "101".to_owned(),
+        path: vec![
+            DesktopPoint { x: 0.0, y: 0.0 },
+            DesktopPoint { x: 999_999.0, y: 0.0 },
+        ],
+        frame_id: Some(frame_id),
+        opts: None,
+    });
+    // When
+    let reply = harness.process(op);
+    // Then: no pointer input, and anything held is released.
+    assert_eq!(
+        reply.map_err(|error| error.code),
+        Err(ErrorCode::InvalidCoordinateFrame)
+    );
+    assert_eq!(harness.sink.ops(), [SinkOp::ReleaseAll]);
+}
+
+#[test]
+fn type_and_keypress_pass_the_gate() {
+    // Given
+    let mut harness = harness(&json!({}));
+    let target = Target::Window("101".to_owned());
+    let typed = Op::TypeText(TypeTextParams {
+        target: "101".to_owned(),
+        text: "hi".to_owned(),
+        opts: None,
+    });
+    let pressed = Op::KeyChord(KeyChordParams {
+        target: "101".to_owned(),
+        keys: vec!["enter".to_owned()],
+        opts: None,
+    });
+    // When
+    harness.process(typed).expect("types");
+    harness.process(pressed).expect("presses");
+    // Then
+    let sent: Vec<_> = harness
+        .sink
+        .ops()
+        .into_iter()
+        .filter(|op| matches!(op, SinkOp::TypeText { .. } | SinkOp::KeyChord { .. }))
+        .collect();
+    let expected = [
+        SinkOp::TypeText {
+            target: target.clone(),
+            text: "hi".to_owned(),
+            mode: DeliveryMode::Background,
+        },
+        SinkOp::KeyChord {
+            target,
+            keys: parse_keys(&["enter".to_owned()]).expect("enter is a key"),
+            mode: DeliveryMode::Background,
+        },
+    ];
+    assert_eq!(sent, expected);
 }
