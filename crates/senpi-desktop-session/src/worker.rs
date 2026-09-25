@@ -1,5 +1,6 @@
 //! The session thread's state and request dispatch.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -11,10 +12,15 @@ use senpi_desktop_core::types::{
     DesktopCapabilities, DesktopSessionOptions, DesktopWindow, DisplaySelector, Target,
 };
 
+use crate::audit::ArtifactGc;
 use crate::mutate::SessionSafety;
 use crate::pointer::FrameCache;
 use crate::request::{Op, Response};
 use crate::selection::BackendFactory;
+
+/// Artifact-only screenshots of a session opened without `artifactDir` go
+/// under this directory of the system temp dir.
+const DEFAULT_ARTIFACT_DIR: &str = "senpi-desktop";
 
 /// Owned by the session thread: AX handles are `Rc`, so it never leaves it.
 pub(crate) struct Worker {
@@ -26,6 +32,9 @@ pub(crate) struct Worker {
     pub(crate) frames: FrameCache,
     capabilities: Arc<Mutex<DesktopCapabilities>>,
     pub(crate) safety: SessionSafety,
+    pub(crate) session_id: String,
+    pub(crate) run_id: String,
+    pub(crate) gc: ArtifactGc,
 }
 
 /// A mutating request's reply and the audit event it emitted.
@@ -48,6 +57,9 @@ impl Worker {
             frames: FrameCache::default(),
             capabilities,
             safety,
+            session_id: String::new(),
+            run_id: String::new(),
+            gc: ArtifactGc::default(),
         };
         worker.refresh_capabilities();
         worker
@@ -62,7 +74,18 @@ impl Worker {
         self.registry = AxRegistry::default();
         self.frames = FrameCache::default();
         self.options = Some(options);
+        self.session_id = ulid::Ulid::generate().to_string();
+        self.run_id = ulid::Ulid::generate().to_string();
+        self.gc = ArtifactGc::default();
+        self.maybe_gc();
         self.refresh_capabilities()
+    }
+
+    pub(crate) fn artifact_dir(&self) -> PathBuf {
+        self.options
+            .as_ref()
+            .and_then(|options| options.artifact_dir.clone())
+            .unwrap_or_else(|| std::env::temp_dir().join(DEFAULT_ARTIFACT_DIR))
     }
 
     pub(crate) fn refresh_capabilities(&mut self) -> DesktopCapabilities {
@@ -83,6 +106,7 @@ impl Worker {
                 "desktop session is not open; call session.open first",
             ));
         }
+        self.maybe_gc();
         let served = |audited: CoreResult<Audited>| audited.map(|(response, _audit)| response);
         // Every mutating request goes through `mutate`; reads bypass it.
         match op {
