@@ -38,6 +38,25 @@ This is release tooling.
 - The workspace loop of `prepareSenpiBundledWorkspaces` and the check loop of `assertSenpiPackedWorkspaceFiles`.
 - `registryPackageNames` in `scripts/registry-packages.mjs`, when a desktop package joins the publish set.
 
+## 2026-09-25 - Inline the never-published desktop engine locator in the coding-agent bundle (senpi#2128)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: `@code-yeongyu/senpi-desktop-engine` is no longer external or allowed; esbuild inlines its locator like the other desktop packages. `@earendil-works/pi-pty` stays external.
+- `scripts/build-coding-agent-bundle.test.mjs`: pins pi-pty as the only native-sidecar external and adds a probe proving `@code-yeongyu/senpi-desktop-engine` is inlined.
+
+### Why
+
+- The owner decided not to publish any `@code-yeongyu/senpi-desktop-*` package for now. An external import of an unpublished package would make the shipped dist import a package that is absent from the registry, which the senpi#2141 release guard rejects. With the locator inlined, a published install finds no engine binary and reports `computer` unavailable, while a source checkout keeps locating the vendored or locally built engine.
+
+### Why an extension could not handle it
+
+- The bundle's external list is decided at build time by this script, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: one entry removed from `allowedExternalPackages` and from `commonBuildOptions().external`.
+
 ## 2026-09-24 - The five desktop packages join every enumerating build and publish script (senpi#2128)
 
 ### What changed
