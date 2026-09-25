@@ -30,8 +30,6 @@ const allowedExternalPackages = new Set([
 	"@silvia-odwyer/photon-node",
 	// The native PTY loader resolves its manifest and prebuilds beside its package.
 	"@earendil-works/pi-pty",
-	// The desktop engine locator resolves its vendored executable beside its package the same way.
-	"@code-yeongyu/senpi-desktop-engine",
 	// Runtime-guarded Bun lock adapter; Node uses node:sqlite instead.
 	"bun:sqlite",
 	// Runtime-guarded host child reaper bindings; a Node host turns the reaper off.
@@ -100,7 +98,6 @@ export function commonBuildOptions() {
 			"@earendil-works/chord",
 			"@silvia-odwyer/photon-node",
 			"@earendil-works/pi-pty",
-			"@code-yeongyu/senpi-desktop-engine",
 			"bun:sqlite",
 			"bun:ffi",
 			// ws resolves these native accelerators when they happen to be installed.
