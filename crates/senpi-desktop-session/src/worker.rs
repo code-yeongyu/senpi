@@ -74,7 +74,9 @@ impl Worker {
         capabilities
     }
 
-    pub(crate) fn process(&mut self, op: Op) -> CoreResult<Response> {
+    /// `cancelled` reports that the request's waiter gave up; only mutating
+    /// requests consult it.
+    pub(crate) fn process(&mut self, op: Op, cancelled: &dyn Fn() -> bool) -> CoreResult<Response> {
         if self.options.is_none() {
             return Err(DesktopError::new(
                 ErrorCode::Closed,
@@ -87,13 +89,13 @@ impl Worker {
             Op::Displays => Ok(Response::Displays(self.backend()?.displays()?)),
             Op::Windows => Ok(Response::Windows(self.backend()?.windows()?)),
             Op::Capture(params) => self.capture(&params),
-            Op::Click(params) => served(self.click(&params)),
-            Op::MoveMouse(params) => served(self.move_mouse(&params)),
-            Op::Drag(params) => served(self.drag(&params)),
-            Op::Scroll(params) => served(self.scroll(&params)),
-            Op::TypeText(params) => served(self.type_text(&params)),
-            Op::KeyChord(params) => served(self.key_chord(&params)),
-            Op::RaiseWindow(params) => served(self.raise_window(&params.window_id)),
+            Op::Click(params) => served(self.click(&params, cancelled)),
+            Op::MoveMouse(params) => served(self.move_mouse(&params, cancelled)),
+            Op::Drag(params) => served(self.drag(&params, cancelled)),
+            Op::Scroll(params) => served(self.scroll(&params, cancelled)),
+            Op::TypeText(params) => served(self.type_text(&params, cancelled)),
+            Op::KeyChord(params) => served(self.key_chord(&params, cancelled)),
+            Op::RaiseWindow(params) => served(self.raise_window(&params.window_id, cancelled)),
             Op::AxSnapshot(params) => self.ax_snapshot(&params),
             Op::AxQuery(params) => self.ax_query(&params),
             Op::AxElementAt(params) => self.ax_element_at(&params),
@@ -102,10 +104,10 @@ impl Worker {
             Op::AxAttributes(params) => self.ax_attributes(&params.ref_),
             Op::AxChildren(params) => self.ax_children(&params.ref_),
             Op::AxParent(params) => self.ax_parent(&params.ref_),
-            Op::AxPerform(params) => served(self.ax_perform(&params.ref_, &params.action)),
-            Op::AxSetValue(params) => served(self.ax_set_value(&params.ref_, &params.value)),
-            Op::AxFocus(params) => served(self.ax_focus(&params.ref_)),
-            Op::AxClick(params) => served(self.ax_click(&params)),
+            Op::AxPerform(params) => served(self.ax_perform(&params.ref_, &params.action, cancelled)),
+            Op::AxSetValue(params) => served(self.ax_set_value(&params.ref_, &params.value, cancelled)),
+            Op::AxFocus(params) => served(self.ax_focus(&params.ref_, cancelled)),
+            Op::AxClick(params) => served(self.ax_click(&params, cancelled)),
         }
     }
 
