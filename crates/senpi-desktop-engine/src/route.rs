@@ -4,7 +4,12 @@
 
 use senpi_desktop_core::methods::Method;
 use senpi_desktop_core::protocol::{MethodRejection, RequestId};
-use senpi_desktop_core::protocol_params::{AdvanceClockParams, CancelParams, EmptyParams};
+use senpi_desktop_core::protocol_params::{
+    AdvanceClockParams, CancelParams, EmptyParams, StopPathResumeParams, StopPathStartParams,
+    StopPathStopParams,
+};
+use senpi_desktop_core::types::DesktopSessionOptions;
+use senpi_desktop_safety::{Chord, StopPolicy};
 use senpi_desktop_session::Op;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -25,6 +30,12 @@ impl Engine {
             .unwrap_or_else(|failure| Route::Immediate(Err(failure)))
     }
 
+    /// Answers a stop-path method, announcing the transition it caused.
+    fn stop_path_changed(&self, outcome: Result<Value, Failure>) -> Route {
+        self.announce_stop_path();
+        Route::Immediate(outcome)
+    }
+
     fn route_method(&self, method: Method, params: Value) -> Result<Route, Failure> {
         let op = |op| Ok(Route::Session(SessionCall::Op(op)));
         match method {
@@ -32,7 +43,13 @@ impl Engine {
                 parse::<EmptyParams>(params)?;
                 Ok(Route::Immediate(to_result(Self::hello())))
             }
-            Method::SessionOpen => Ok(Route::Session(SessionCall::Open(parse(params)?))),
+            Method::SessionOpen => {
+                let options: DesktopSessionOptions = parse(params)?;
+                self.stop_paths().set_policy(StopPolicy {
+                    allow_host_relay_only: options.allow_host_relay_only_stop,
+                });
+                Ok(Route::Session(SessionCall::Open(options)))
+            }
             Method::SessionClose => {
                 parse::<EmptyParams>(params)?;
                 Ok(Route::Session(SessionCall::Close))
@@ -65,15 +82,31 @@ impl Engine {
             Method::AxClick => op(Op::AxClick(parse(params)?)),
             Method::StopPathStatus => {
                 parse::<EmptyParams>(params)?;
-                Ok(Route::Immediate(to_result(self.stop_path_status())))
+                Ok(Route::Immediate(to_result(self.stop_paths().status())))
             }
-            // Clipboard lands with the backends; the stop-path ladder with todo 12.
-            Method::ClipboardRead
-            | Method::ClipboardWrite
-            | Method::StopPathStart
-            | Method::StopPathHeartbeat
-            | Method::StopPathStop
-            | Method::StopPathResume => Err(Failure::not_implemented(method)),
+            Method::StopPathStart => {
+                let chord = parse::<StopPathStartParams>(params)?.chord;
+                let chord =
+                    Chord::parse(&chord).map_err(|error| Failure::InvalidParams(error.to_string()))?;
+                Ok(self.stop_path_changed(to_result(self.stop_paths().start(&chord))))
+            }
+            Method::StopPathHeartbeat => {
+                parse::<EmptyParams>(params)?;
+                self.stop_paths().heartbeat();
+                // The heartbeat is the host's poll for a listener's transitions.
+                Ok(self.stop_path_changed(Ok(Value::Null)))
+            }
+            Method::StopPathStop => {
+                let source = parse::<StopPathStopParams>(params)?.source;
+                Ok(self.stop_path_changed(to_result(self.stop_paths().stop(source))))
+            }
+            Method::StopPathResume => {
+                let token = parse::<StopPathResumeParams>(params)?.token;
+                let resumed = self.stop_paths().resume(&token).map_err(Failure::Engine);
+                Ok(self.stop_path_changed(resumed.and_then(to_result)))
+            }
+            // Clipboard lands with the backends.
+            Method::ClipboardRead | Method::ClipboardWrite => Err(Failure::not_implemented(method)),
             Method::Cancel => Ok(Route::Cancel(parse::<CancelParams>(params)?.id)),
             Method::TestAdvanceClock => {
                 let Some(clock) = self.fake_clock() else {
