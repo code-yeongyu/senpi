@@ -240,6 +240,12 @@
     "packages/desktop-tool": {
       "name": "@code-yeongyu/senpi-desktop-tool",
       "version": "2026.9.24-2",
+      "dependencies": {
+        "@code-yeongyu/senpi-desktop-prelude": "^2026.9.24-2",
+        "@code-yeongyu/senpi-desktop-protocol": "^2026.9.24-2",
+        "@code-yeongyu/senpi-desktop-service": "^2026.9.24-2",
+        "typebox": "1.3.34",
+      },
       "devDependencies": {
         "@types/node": "26.6.2",
         "shx": "0.4.0",
