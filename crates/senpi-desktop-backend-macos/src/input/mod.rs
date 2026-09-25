@@ -29,6 +29,8 @@ use held::{Held, KeyRoute};
 
 pub(crate) use self::canary::CANARY_STOP_REASON;
 pub use self::canary::{CanaryMode, CanaryResult};
+pub(crate) use self::cgevent::modifier_flags;
+pub(crate) use self::keys::{key_code, update_modifier};
 
 pub(crate) struct MacInput {
     source: CGEventSource,

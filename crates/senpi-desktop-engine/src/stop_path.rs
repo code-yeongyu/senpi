@@ -24,16 +24,25 @@ const NO_GLOBAL_LISTENER: &str = "no-global-listener";
 
 type Listener = Box<dyn StopPathListener + Send>;
 
-/// The platform backend's Global listener. The OS backend crates add their
-/// `cfg(target_os)` arm here (macOS todo 17, X11 todo 28, Windows todo 31,
-/// Wayland todo 33); the fake backend has none, so a fake session relies on
-/// the host relay alone.
-const fn global_listener(selection: &BackendSelection) -> Option<Listener> {
+/// The platform backend's Global listener; the fake backend has none, so a
+/// fake session relies on the host relay alone.
+fn global_listener(selection: &BackendSelection) -> Option<Listener> {
     match selection {
-        BackendSelection::Platform | BackendSelection::FakeFile(_) | BackendSelection::FakeScenario(_) => {
-            None
-        }
+        BackendSelection::Platform => platform_listener(),
+        BackendSelection::FakeFile(_) | BackendSelection::FakeScenario(_) => None,
     }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_listener() -> Option<Listener> {
+    Some(Box::new(senpi_desktop_backend_macos::CgEventTapListener::new()))
+}
+
+/// The OS backend crates add their `cfg(target_os)` arm (X11 todo 28,
+/// Windows todo 31, Wayland todo 33).
+#[cfg(not(target_os = "macos"))]
+const fn platform_listener() -> Option<Listener> {
+    None
 }
 
 /// The part of a status whose change is announced. Heartbeat freshness is
@@ -151,6 +160,9 @@ impl StopPaths {
             )
         })?;
         self.supervisor.reset(proof);
+        if let Some(global) = self.state.lock().global.as_mut() {
+            global.restart();
+        }
         Ok(self.status())
     }
 

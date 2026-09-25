@@ -14,7 +14,7 @@ use super::cgevent::modifier_flags;
 use super::held::{Held, HeldKey, KeyRoute};
 
 /// The key code for a chord key, as the fixed macOS virtual-key table gives it.
-pub(super) fn key_code(key: KeyName) -> CoreResult<u16> {
+pub(crate) fn key_code(key: KeyName) -> CoreResult<u16> {
     let code = match key {
         KeyName::Ctrl => 59,
         KeyName::Alt => 58,
@@ -126,7 +126,7 @@ fn char_key_code(character: char) -> CoreResult<u16> {
 }
 
 /// Applies a chord key to the running modifier accumulator.
-pub(super) const fn update_modifier(modifiers: &mut Modifiers, key: KeyName, down: bool) {
+pub(crate) const fn update_modifier(modifiers: &mut Modifiers, key: KeyName, down: bool) {
     match key {
         KeyName::Ctrl => modifiers.ctrl = down,
         KeyName::Alt => modifiers.alt = down,

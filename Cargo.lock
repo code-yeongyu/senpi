@@ -2716,7 +2716,9 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation",
+ "parking_lot",
  "senpi-desktop-core",
+ "senpi-desktop-safety",
  "tempfile",
  "xcap",
 ]
@@ -2773,6 +2775,7 @@ dependencies = [
  "parking_lot",
  "schemars",
  "senpi-desktop-backend-fake",
+ "senpi-desktop-backend-macos",
  "senpi-desktop-core",
  "senpi-desktop-safety",
  "senpi-desktop-session",
