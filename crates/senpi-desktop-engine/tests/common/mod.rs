@@ -1,5 +1,9 @@
 //! Drives the built engine binary over stdio. Every wait is bounded by
 //! `HANG_GUARD`, a hang guard only: no assertion depends on latency.
+#![allow(
+    dead_code,
+    reason = "every integration-test crate compiles this module and uses a different subset of it"
+)]
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
@@ -91,12 +95,17 @@ impl Engine {
             .expect("engine answers within the hang guard")
     }
 
-    /// Sends a request and returns the next output line, its reply.
+    /// Sends a request and returns its reply: the next line with an id.
+    /// Notifications before it (`audit` of an earlier request, ...) are skipped.
     pub fn call(&mut self, id: i64, method: &str, params: Value) -> Value {
         self.request(id, method, params);
-        let reply = self.next();
-        assert_eq!(reply["id"], json!(id), "reply to {method}: {reply}");
-        reply
+        loop {
+            let message = self.next();
+            if message.get("id").is_some() {
+                assert_eq!(message["id"], json!(id), "reply to {method}: {message}");
+                return message;
+            }
+        }
     }
 
     /// Closes stdin and returns the exit status.
