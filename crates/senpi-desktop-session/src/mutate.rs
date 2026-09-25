@@ -129,6 +129,7 @@ impl Worker {
         let code = result.as_ref().err().map(|error| error.code);
         let event = audit_event(mutation, code, focus_restored, started.elapsed());
         (self.safety.audit)(&event);
+        self.persist_audit(&event, result.as_ref().err());
         result.map(|value| (value, event))
     }
 

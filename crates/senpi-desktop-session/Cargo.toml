@@ -15,12 +15,12 @@ senpi-desktop-backend-fake = { path = "../senpi-desktop-backend-fake" }
 senpi-desktop-core = { path = "../senpi-desktop-core" }
 senpi-desktop-safety = { path = "../senpi-desktop-safety" }
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
 ulid.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
