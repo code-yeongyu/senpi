@@ -6,7 +6,7 @@ use senpi_desktop_core::error::CoreResult;
 
 use super::element::ax_result;
 
-pub(super) fn perform(element: &AXUIElement, action: &str) -> CoreResult<()> {
+pub(crate) fn perform(element: &AXUIElement, action: &str) -> CoreResult<()> {
     let native = action_name(action);
     let action = CFString::from_str(&native);
     // SAFETY: The retained element and action CFString stay valid for the
@@ -30,6 +30,19 @@ pub(super) fn focus(element: &AXUIElement) -> CoreResult<()> {
     // synchronous setter call.
     let error = unsafe { element.set_attribute_value(&attribute, CFBoolean::new(true)) };
     ax_result(error, "setting AXFocused=true failed")
+}
+
+/// Sets `AXMain` and `AXFocused` to true on a window element: the restore and
+/// foreground-preparation half of focus handling.
+pub(crate) fn set_window_main_and_focused(element: &AXUIElement) -> CoreResult<()> {
+    for attribute in ["AXMain", "AXFocused"] {
+        let name = CFString::from_str(attribute);
+        // SAFETY: The singleton CFBoolean and retained element stay valid for
+        // the synchronous setter call.
+        let error = unsafe { element.set_attribute_value(&name, CFBoolean::new(true)) };
+        ax_result(error, format!("setting {attribute}=true failed"))?;
+    }
+    Ok(())
 }
 
 /// Model-facing action names (`press`, `show_menu`) -> native `AX*` names.

@@ -3,7 +3,7 @@
 //! core's `AxRegistry`.
 
 mod actions;
-mod element;
+pub(crate) mod element;
 mod props;
 mod tree;
 
@@ -26,6 +26,57 @@ impl MacAx {
     pub fn raise(&mut self, window: &DesktopWindow) -> CoreResult<()> {
         actions::perform(&*tree::window_root(window)?, "AXRaise")
     }
+}
+
+/// Marks `window` main and focused through AX: the belt-and-braces half of
+/// `restore_key_focus`.
+pub(crate) fn focus_key_window(window: &DesktopWindow) -> CoreResult<()> {
+    let root = tree::window_root(window)?;
+    actions::set_window_main_and_focused(&root)
+}
+
+/// Performs `AXPress` on an element: the canary's deterministic dialog
+/// dismissal (synthetic clicks are ignored by these alerts on macOS 26).
+pub(crate) fn press(element: &objc2_application_services::AXUIElement) -> CoreResult<()> {
+    actions::perform(element, "AXPress")
+}
+
+/// Presses `window`'s close button (live-test teardown).
+#[cfg(test)]
+pub(crate) fn close_window(window: &DesktopWindow) -> CoreResult<()> {
+    let root = tree::window_root(window)?;
+    let Some(close) = element::copy_element(&root, "AXCloseButton") else {
+        return Ok(());
+    };
+    actions::perform(&close, "press")
+}
+
+/// The value of the first `AXTextArea` under `window`'s root (live-test
+/// observer over the document text).
+#[cfg(test)]
+pub(crate) fn text_area_value(window: &DesktopWindow) -> Option<String> {
+    let root = tree::window_root(window).ok()?;
+    let mut queue = vec![root];
+    let mut visited = 0;
+    while let Some(element) = queue.pop() {
+        visited += 1;
+        if visited > 400 {
+            return None;
+        }
+        if element::copy_string(&element, "AXRole").as_deref() == Some("AXTextArea") {
+            return element::copy_string(&element, "AXValue");
+        }
+        queue.extend(element::copy_elements(&element, "AXChildren").unwrap_or_default());
+    }
+    None
+}
+
+/// Raises `window` and marks it main/focused so a foreground action lands in
+/// it (oh-my-pi's `prepare_foreground_input`).
+pub(crate) fn prepare_foreground_input(window: &DesktopWindow) -> CoreResult<()> {
+    let root = tree::window_root(window)?;
+    actions::set_window_main_and_focused(&root)?;
+    actions::perform(&root, "AXRaise")
 }
 
 impl AxBackend for MacAx {

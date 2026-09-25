@@ -62,7 +62,7 @@ pub(super) fn element(handle: &AxHandle) -> CoreResult<&AXUIElement> {
         .ok_or_else(|| DesktopError::ax_failed("non-macOS AX handle passed to MacAx"))
 }
 
-pub(super) fn create_application(pid: libc::pid_t) -> CoreResult<CFRetained<AXUIElement>> {
+pub(crate) fn create_application(pid: libc::pid_t) -> CoreResult<CFRetained<AXUIElement>> {
     // SAFETY: AXUIElementCreateApplication accepts any process id and returns
     // a +1 retained CF object.
     let raw = unsafe { AXUIElementCreateApplication(pid) };
@@ -79,14 +79,14 @@ pub(super) fn create_system_wide() -> CFRetained<AXUIElement> {
     unsafe { AXUIElement::new_system_wide() }
 }
 
-pub(super) fn set_timeout(element: &AXUIElement) -> CoreResult<()> {
+pub(crate) fn set_timeout(element: &AXUIElement) -> CoreResult<()> {
     // SAFETY: The retained AX element stays valid for the synchronous update.
     let error = unsafe { element.set_messaging_timeout(AX_TIMEOUT_SECONDS) };
     ax_result(error, "AXUIElementSetMessagingTimeout(2.0) failed")
 }
 
 /// The CGWindowID behind an AX window, when the private SPI is present.
-pub(super) fn window_id(element: &AXUIElement) -> Option<u32> {
+pub(crate) fn window_id(element: &AXUIElement) -> Option<u32> {
     let get_id = (*GET_WINDOW_ID)?;
     let mut id = 0u32;
     // SAFETY: `id` is writable and the retained element outlives the call.
@@ -113,29 +113,29 @@ pub(super) fn copy_attribute_result(
     Ok(Some(unsafe { CFRetained::from_raw(pointer) }))
 }
 
-pub(super) fn copy_attribute(element: &AXUIElement, attribute: &str) -> Option<CFRetained<CFType>> {
+pub(crate) fn copy_attribute(element: &AXUIElement, attribute: &str) -> Option<CFRetained<CFType>> {
     copy_attribute_result(element, attribute).ok().flatten()
 }
 
-pub(super) fn copy_string(element: &AXUIElement, attribute: &str) -> Option<String> {
+pub(crate) fn copy_string(element: &AXUIElement, attribute: &str) -> Option<String> {
     copy_attribute(element, attribute)?
         .downcast::<CFString>()
         .ok()
         .map(|value| value.to_string())
 }
 
-pub(super) fn copy_bool(element: &AXUIElement, attribute: &str) -> Option<bool> {
+pub(crate) fn copy_bool(element: &AXUIElement, attribute: &str) -> Option<bool> {
     copy_attribute(element, attribute)?
         .downcast::<CFBoolean>()
         .ok()
         .map(|value| value.as_bool())
 }
 
-pub(super) fn copy_element(element: &AXUIElement, attribute: &str) -> Option<CFRetained<AXUIElement>> {
+pub(crate) fn copy_element(element: &AXUIElement, attribute: &str) -> Option<CFRetained<AXUIElement>> {
     copy_attribute(element, attribute)?.downcast::<AXUIElement>().ok()
 }
 
-pub(super) fn copy_elements(element: &AXUIElement, attribute: &str) -> Option<Vec<CFRetained<AXUIElement>>> {
+pub(crate) fn copy_elements(element: &AXUIElement, attribute: &str) -> Option<Vec<CFRetained<AXUIElement>>> {
     let array = copy_attribute(element, attribute)?.downcast::<CFArray>().ok()?;
     // SAFETY: AXWindows/AXChildren are documented CFArray<AXUIElement> values.
     let array = unsafe { CFRetained::cast_unchecked::<CFArray<CFType>>(array) };
@@ -169,7 +169,7 @@ pub(super) fn copy_name_array(
         .collect())
 }
 
-pub(super) fn bounds(element: &AXUIElement) -> Option<AxBounds> {
+pub(crate) fn bounds(element: &AXUIElement) -> Option<AxBounds> {
     let position = copy_attribute(element, "AXPosition")?
         .downcast::<AXValue>()
         .ok()?;
