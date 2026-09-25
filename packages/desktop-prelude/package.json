@@ -18,7 +18,7 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json",
+		"build": "node scripts/generate-assets.ts && tsgo -p tsconfig.build.json",
 		"test": "vitest --run test"
 	},
 	"keywords": [

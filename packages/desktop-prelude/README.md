@@ -1,6 +1,28 @@
 # @code-yeongyu/senpi-desktop-prelude
 
-Holds the codemode prelude assets (`prelude.js`, `prelude.py`, declarations) and the model documentation for the `computer` tool. The prelude is sugar over the ordinary registered tool call `tool.computer(...)`. This package is a skeleton until todo 23 of the computer-use plan fills it in.
+Holds the eval-kernel facades and the model documentation for the `computer` tool. The package exports one object, `computerPreludeAssets`:
+
+| Key | Source | Use |
+|---|---|---|
+| `javascript` | `src/prelude.js` | Defines `globalThis.computer` in the JS kernel. |
+| `python` | `src/prelude.py` | Defines `computer` in the Python kernel (synchronous, like senpi's Python helpers). |
+| `declarations` | `declarations.d.ts` | TypeScript declarations of the JS `computer` global. |
+| `documentation` | `docs/computer.md` | Helper-list lines for the eval prompt's `<prelude>` block. It is rendered inside that block's code fence, so it holds no fences itself. |
+| `safety` | `docs/computer-safety.md` | System-prompt fragment for sessions where `computer` is active. |
+| `exports` | - | `["computer"]`, the kernel globals the snippets define. |
+| `methodAllowlist` | - | Every call-chain method: the union of the `desktop-protocol` tier tables. |
+
+`javascript`, `python`, `documentation`, and `exports` together form the tool's `kernelPrelude` (`ToolDefinition.kernelPrelude`). The texts are compiled into `src/assets.generated.ts` by `scripts/generate-assets.ts`, which runs first in `build`. The committed module is checked for drift by `test/assets.test.ts`, so no text-import attribute is needed.
+
+## Tool contract the facades rely on
+
+Every facade helper is one ordinary `tool.computer(args)` call, so tool activation and the permission-system preflight apply to it. The `computer` tool must accept these `args`:
+
+- `{ action: "call", chain }`: `chain` holds at most two `{ method, args }` steps: a desktop root method, optionally followed by one window (`window` root) or element (`ref` root) method. Handles re-resolve on every call.
+- `{ action: "run", code, read_only?, timeout? }`: `code` is an async function body. `computer.run(fn, { args })` serializes `fn` and each argument (JSON data, functions, and `RegExp`) into `return await (fn)({ desktop, wait, assert }, ...args);`. `timeout` is in seconds.
+- `{ action: "capabilities" }` and `{ action: "close" }`.
+
+The facades read the kernel result `{ text, details?, images?, hasError? }` this way: `hasError` throws with `text`, each `images[i]` goes to `display()`, and `details.value` is the return value.
 
 ## Settings
 
