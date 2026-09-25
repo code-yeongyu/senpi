@@ -936,6 +936,17 @@ pi.on("thinking_level_select", async (event, ctx) => {
 
 Use this to update extension UI when `pi.setThinkingLevel()`, model changes, or built-in thinking-level controls change the active thinking level.
 
+#### tool_activated
+
+Fired after the active tool set gains tools. This covers `pi.setActiveTools()`, a `tool_search` promotion, and a by-name call that activates a deferred tool. The event is notification-only: handler return values are ignored.
+
+```typescript
+pi.on("tool_activated", async (event, ctx) => {
+  // event.toolNames - only the tools that just became active
+  if (event.toolNames.includes("my_tool")) await warmUp(ctx);
+});
+```
+
 ### Tool Events
 
 #### tool_call

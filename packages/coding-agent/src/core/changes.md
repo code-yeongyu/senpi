@@ -57,6 +57,24 @@ Only the host knows which path started the turn.
 
 - The `emitBeforeAgentStart` call inside the `triggerTurn` branch of `sendCustomMessage`.
 
+## 2026-09-25 - `setActiveToolsByName` emits `tool_activated` (senpi#2128)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `setActiveToolsByName` emits `tool_activated` with the tools that were not active before the call, when any handler listens. It emits fire-and-forget, because `ExtensionRunner.emit` reports handler failures itself. Every activation path goes through this method: `pi.setActiveTools`, tool_search promotion, and lazy activation of a by-name call.
+
+### Why
+
+The `computer-use` builtin arms the user's stop chord when its tool becomes active (see `extensions/changes.md`).
+
+### Why an extension could not handle it
+
+The active tool set belongs to `AgentSession`, and only the host can report a change to it.
+
+### Expected merge conflict zones
+
+- LOW: the `previousToolNames` line and the tail of `setActiveToolsByName`.
+
 ## 2026-09-25 - `todo.turnEndBackstop` setting (senpi#2121)
 
 ### What changed
@@ -7303,3 +7321,6 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 - `packages/coding-agent/src/core/session-write-reservation.ts`: new `hasOtherLiveSessionWriter(path, self)` answers whether another live persisted writer still owns a session file, pruning collected refs like `liveSessionWritePaths()` does.
 - `packages/coding-agent/src/core/session-manager.ts`: both blob-directory releases (the stale clear in `_setSessionFile` and `dispose()`) go through `_releaseBlobsDirUnlessShared()`, which keeps the directory while another live manager owns the same session file. The app-server loads a thread that is already open (`modes/app-server/threads/registry.ts` disposes the duplicate `AgentSession`), and without this the duplicate's teardown took the live manager's cache, costing it a full JSONL recovery per evicted string.
+
+
+

@@ -127,3 +127,21 @@ Following pi-mono's extension-first philosophy. All permission logic is in the e
   `bash` permission class (shared `parseBashLikePermission` helper). Otherwise read-only/ask
   presets would be bypassable by steering a background session. `kill_bash`/`bash_resize`/
   `bash_output` fall back to their own tool-named (session-control/read) permissions.
+
+## 2026-09-25 - `registerToolParser` for tools other builtins own (senpi#2128)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: `registerToolParser(toolName, parser)` puts a parser in a module-level map. `ParserRegistry.parse` consults that map for a tool without a built-in parser, so a built-in parser always wins. Because the lookup happens at parse time, a registration made after the permission-system's `session_start` built its registry still applies. The `computer-use` builtin registers `computerPermissionParser`, which turns each call into a `computer` request whose pattern is its `read` or `exec` tier. Rules such as `computer:exec=deny` then apply instead of the `*` fallback.
+
+### Why
+
+senpi#2128: the `computer` tool's tier has to be evaluated by the permission-system `tool_call` hook, and only there. The tool performs no evaluation of its own.
+
+### Why an extension could not handle it
+
+The parser registry is internal to this builtin; the diff is one exported function and one lookup.
+
+### Expected merge conflict zones
+
+- LOW: the `ParserRegistry` class head and `parse` in `parsers.ts`.
