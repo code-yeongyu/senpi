@@ -7,6 +7,7 @@
 ### Added
 
 - Extension tools can declare `kernelPrelude` (JavaScript/Python snippets, one documentation line, exported names) to add globals to eval kernels while the tool is active; `getAllTools()` projects it and rejects exports that shadow built-in kernel helpers. ([#2128](https://github.com/code-yeongyu/senpi/issues/2128))
+- New `computer-use` builtin: on macOS, Linux, and Windows, sessions register a search-exposed `computer` tool for desktop control (screenshots, native input, the accessibility tree, and the clipboard). The tool is found through `tool_search`. Activating it arms the user's stop chord and adds a `computer` global to eval cells. `--permission computer:read=…` and `--permission computer:exec=…` rules control each tier. `/computer on|off|status|stop|resume` also works over rpc; only the user can resume. Set `computer.enabled: false` in `settings.json` to turn it off. Extensions can observe activation with the new `tool_activated` event. ([#2128](https://github.com/code-yeongyu/senpi/issues/2128))
 
 ### Changed
 

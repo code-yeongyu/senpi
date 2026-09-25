@@ -81,6 +81,17 @@ function withExternalDirectoryRequests(
 	];
 }
 
+const registeredToolParsers = new Map<string, ToolPermissionParser>();
+
+/**
+ * Registers the parser of a tool another builtin owns (the `computer` tool). Every registry consults it for
+ * a tool without a built-in parser, so a registration made after the permission-system's session_start
+ * still applies. A built-in parser always wins.
+ */
+export function registerToolParser(toolName: string, parser: ToolPermissionParser): void {
+	registeredToolParsers.set(toolName, parser);
+}
+
 /** Registry for tool-specific permission parsers */
 export class ParserRegistry {
 	private readonly parsers = new Map<string, ToolPermissionParser>();
@@ -92,7 +103,7 @@ export class ParserRegistry {
 
 	/** Parse tool input into permission requests */
 	parse(toolName: string, input: Record<string, unknown>, cwd: string): PermissionRequest[] {
-		const parser = this.parsers.get(toolName);
+		const parser = this.parsers.get(toolName) ?? registeredToolParsers.get(toolName);
 		if (!parser) {
 			return [fallbackPermissionRequest(toolName)];
 		}
