@@ -19,6 +19,24 @@
 - The `BeforeAgentStartEvent` interface, the `emitBeforeAgentStart` options object, and the `triggerTurn` call site in `agent-session.ts`.
 
 
+## 2026-09-25 - `tool_activated` extension event (senpi#2128)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `ToolActivatedEvent` (`type: "tool_activated"`, `toolNames`: only the newly active tools) in the `ExtensionEvent` union, plus its `pi.on` overload. It is notification-only; the generic `ExtensionRunner.emit` delivers it, so there is no result type and no dedicated emit helper.
+
+### Why
+
+- The `computer-use` builtin has to arm the user's stop chord when its search-exposed tool becomes active. That happens through a tool_search promotion, a by-name lazy activation, or `pi.setActiveTools`. No hook observed that: `registerLazyToolActivator` short-circuits at the first activator that claims the tool, which is tool-search, and a promotion calls `setActiveTools` with no event.
+
+### Why an extension could not handle it
+
+- The active tool set belongs to `AgentSession`, and only the host can report a change to it.
+
+### Expected merge conflict zones
+
+- LOW: the block after `ThinkingLevelSelectEvent`, the `ExtensionEvent` union, and the `on(...)` overloads next to `thinking_level_select` in `types.ts`.
+
 ## 2026-09-24 - ToolDefinition.kernelPrelude: eval-kernel globals for active tools (#2128)
 
 ### What changed

@@ -1375,6 +1375,16 @@ export interface ThinkingLevelSelectEvent {
 	previousLevel: ThinkingLevel;
 }
 
+/**
+ * Fired after the active tool set gains tools: `pi.setActiveTools()`, tool_search promotion, or a
+ * by-name call that lazily activates a deferred tool. Notification-only; `toolNames` lists only the
+ * newly active tools.
+ */
+export interface ToolActivatedEvent {
+	type: "tool_activated";
+	toolNames: string[];
+}
+
 // ============================================================================
 // User Bash Events
 // ============================================================================
@@ -1655,6 +1665,7 @@ export type ExtensionEvent =
 	| ModelSelectEvent
 	| SystemPromptChangeEvent
 	| ThinkingLevelSelectEvent
+	| ToolActivatedEvent
 	| UserBashEvent
 	| InputEvent
 	| InputDispositionEvent
@@ -1957,6 +1968,7 @@ export interface ExtensionAPI {
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): void;
 	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
+	on(event: "tool_activated", handler: ExtensionHandler<ToolActivatedEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
