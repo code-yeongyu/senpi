@@ -1,3 +1,21 @@
+## 2026-09-25 - Export `KernelPreludeContribution` from the package entry (senpi#2128)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports the `KernelPreludeContribution` type next to the other extension tool types, so a tool package can type its `ToolDefinition.kernelPrelude` value.
+
+### Why
+
+- The `computer` tool (`@code-yeongyu/senpi-desktop-tool`) contributes the `computer` global to the eval kernels through `ToolDefinition.kernelPrelude`; its package imports the type from `@code-yeongyu/senpi` instead of redeclaring it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts` is the package's public type surface; extensions cannot add exports to it.
+
+### Expected merge conflict zones
+
+- LOW: one name in the extension type export list of `index.ts`.
+
 ## 2026-09-24 - Profile /resume session switches under TIMING (senpi#2087)
 
 ### What changed
