@@ -1882,7 +1882,7 @@ describe("AgentSession compaction characterization", () => {
 		);
 	});
 
-	it("blocks pre-prompt continuation after overflow recovery already failed", async () => {
+	it("replenishes overflow recovery budget on a new pre-prompt turn (#8411)", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		const firstOverflow = createAssistant(harness, {
@@ -1900,20 +1900,30 @@ describe("AgentSession compaction characterization", () => {
 			content: [{ type: "text" as const, text: "continue" }],
 			timestamp: Date.now() - 1,
 		};
-		const runAutoCompactionSpy = stubRunAutoCompaction(harness.session);
+		stubRunAutoCompaction(harness.session);
+		const prePromptCompactionSpy = vi.fn(async (): Promise<boolean> => false);
+		Reflect.set(harness.session, "_runPrePromptCompaction", prePromptCompactionSpy);
 
 		//#given - overflow recovery already used its compact-and-retry attempt
 		await checkCompaction(harness.session, firstOverflow);
 		harness.session.agent.state.messages = [userMessage, secondOverflow];
 
-		//#when - a continuation tries to start another turn while the latest assistant is still overflowed
+		//#when - a new user turn starts (pre_prompt), the latch is reset and compaction retries
 		const prompt = harness.session.prompt("continue goal");
 
-		//#then - the prompt is blocked before another doomed provider request can be sent
-		await expect(prompt).rejects.toThrow(
-			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
-		);
-		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
+		//#then - the retry budget is replenished: compaction runs again instead of a hard abort.
+		// The prompt may still fail (compaction stub returns false), but it must NOT fail
+		// with the latch message. The key assertion is that compaction was attempted again
+		// via the pre-prompt path.
+		try {
+			await prompt;
+		} catch (err) {
+			// Provider/compaction errors are fine; the latch message is not.
+			expect((err as Error).message).not.toContain(
+				"Context overflow recovery failed after one compact-and-retry attempt",
+			);
+		}
+		expect(prePromptCompactionSpy).toHaveBeenCalled();
 	});
 
 	it("does not consume the overflow compact-and-retry attempt when compaction fails before retrying", async () => {

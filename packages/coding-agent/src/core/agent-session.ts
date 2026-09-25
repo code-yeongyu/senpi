@@ -6912,20 +6912,25 @@ export class AgentSession {
 			}
 
 			if (this._overflowRecoveryAttempted) {
-				const errorMessage =
-					"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.";
-				this._emit({
-					type: "compaction_end",
-					reason: "overflow",
-					result: undefined,
-					aborted: false,
-					willRetry: false,
-					errorMessage,
-				});
+				// A new user turn (pre_prompt) replenishes the retry budget so each
+				// fresh overflow gets its own compact-and-retry attempt, rather than
+				// latching the session as permanently dead (#8411).  The in-turn
+				// loop guard is preserved: only one retry per overflow event.
 				if (inlineReason === "pre_prompt") {
-					throw new Error(errorMessage);
+					this._overflowRecoveryAttempted = false;
+				} else {
+					const errorMessage =
+						"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.";
+					this._emit({
+						type: "compaction_end",
+						reason: "overflow",
+						result: undefined,
+						aborted: false,
+						willRetry: false,
+						errorMessage,
+					});
+					return false;
 				}
-				return false;
 			}
 
 			// Case 1: remove the failed or truncated message from agent state, compact, and
