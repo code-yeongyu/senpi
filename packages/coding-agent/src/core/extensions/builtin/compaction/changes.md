@@ -143,6 +143,26 @@ The provider id is resolved inside the package before any extension loads, and t
 
 # changes.md — builtin compaction policy
 
+## Retry local summaries without images after a provider image-format rejection (2026-09-13)
+
+### What changed
+
+- Speculative/local summary generation keeps native images on its normal first request. When that image-bearing request returns the narrowly recognized provider image-format/base64 rejection, compaction makes one text-only retry with image blocks replaced by non-empty placeholders.
+- The retry projection runs after the context transformations in `prepareProviderRequest`, replacing their image blocks while preserving text and tool structure. Payload/header hooks remain active, and source messages and persisted session entries are not mutated.
+- Other errors and image-free requests retain their existing retry behavior; a failed fallback propagates without another image retry, and aborts still stand down.
+
+### Why
+
+- A provider rejected a local compaction request at `input[*].output[*].image_url` even though every persisted PNG and base64 payload validated. Retrying only that failed summary without image transport recovers across downstream serialization causes without sanitizing stored data or degrading rich-image summarization by default.
+
+### Why an extension could not handle it
+
+- The builtin compaction extension owns the local summary request, its bounded retries, and provider error-stop handling. An external hook can transform a request but cannot conditionally replay this private summarization attempt.
+
+### Expected merge conflict zones
+
+- LOW: `speculative-summary.ts` request projection and `speculative.ts` retry classification.
+
 ## Deterministic resume slice for an over-window restored context (2026-09-10)
 
 ### What changed
