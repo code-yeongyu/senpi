@@ -1668,6 +1668,16 @@ function disableThinkingForRequest(
 		return;
 	}
 	params.thinking = { type: "disabled" };
+	// Generated per-turn effort markers are incompatible with disabled thinking too.
+	params.messages = params.messages.filter(
+		(message) =>
+			!(
+				message.role === "system" &&
+				Array.isArray(message.content) &&
+				message.content.length === 0 &&
+				message.output_config?.effort !== undefined
+			),
+	);
 }
 
 function supportsAdaptiveThinking(model: Model<"anthropic-messages">): boolean {
