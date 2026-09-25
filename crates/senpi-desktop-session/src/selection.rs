@@ -72,8 +72,15 @@ fn fake_backend(scenario: FakeScenario) -> Box<dyn Backend> {
     Box::new(FakeBackend::new(scenario))
 }
 
-/// The OS backend crates (macOS todo 14, X11 todo 27, Windows todo 30,
-/// Wayland todo 33) replace this with a `cfg(target_os)` dispatch.
+/// The backend crate for the compile target. X11 (todo 27), Windows (todo
+/// 30) and Wayland (todo 33) add their `cfg(target_os)` arms here.
+#[cfg(target_os = "macos")]
+fn platform_backend(selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
+    let backend = senpi_desktop_backend_macos::MacosBackend::new(selector)?;
+    Ok(Box::new(backend))
+}
+
+#[cfg(not(target_os = "macos"))]
 fn platform_backend(_selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
     Err(DesktopError::capture_failed(format!(
         "{} desktop backend not yet ported",
@@ -114,6 +121,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn platform_backend_is_not_yet_ported() {
         let error = BackendSelection::Platform
