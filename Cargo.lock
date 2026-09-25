@@ -2804,6 +2804,7 @@ dependencies = [
  "image",
  "parking_lot",
  "senpi-desktop-backend-fake",
+ "senpi-desktop-backend-macos",
  "senpi-desktop-core",
  "senpi-desktop-safety",
  "serde",
