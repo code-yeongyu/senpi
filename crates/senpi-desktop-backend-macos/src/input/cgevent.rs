@@ -11,7 +11,7 @@ use senpi_desktop_core::error::{CoreResult, DesktopError};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(super) fn modifier_flags(modifiers: Modifiers) -> CGEventFlags {
+pub(crate) fn modifier_flags(modifiers: Modifiers) -> CGEventFlags {
     let mut flags = CGEventFlags::CGEventFlagNull;
     if modifiers.ctrl {
         flags |= CGEventFlags::CGEventFlagControl;
