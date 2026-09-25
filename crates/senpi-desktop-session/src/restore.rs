@@ -155,3 +155,5 @@ enum GuardKind {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod unwind_tests;

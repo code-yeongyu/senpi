@@ -1,13 +1,17 @@
-//! The single choke point of every mutating request: the fail-closed
-//! [`gate`], then one input transaction (focus/cursor capture, the action
-//! under `catch_unwind`, `release_all` on failure or suspension, the
-//! focus/cursor restore), then exactly one [`AuditEvent`]. Read-only
-//! requests never pass here.
+//! The single choke point of every mutating request: admission to the
+//! process-wide transaction lock, the fail-closed [`gate`], then one input
+//! transaction (focus/cursor capture, the action under `catch_unwind`,
+//! `release_all` on failure or suspension, the focus/cursor restore), then
+//! exactly one [`AuditEvent`]. Read-only requests never pass here.
+//!
+//! A stop or a cancellation observed at admission or just before the action
+//! sends no input; suspension always wins over cancellation (gajae
+//! `execute_one`).
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use senpi_desktop_core::backend::DeliveryMode;
 use senpi_desktop_core::error::{CoreResult, DesktopError, ErrorCode};
 use senpi_desktop_core::protocol_results::AuditEvent;
@@ -24,6 +28,10 @@ use crate::worker::Worker;
 /// Serializes input transactions across every session of the process
 /// (gajae `INPUT_TRANSACTION`): capture through restore is never interleaved.
 static INPUT_TRANSACTION: Mutex<()> = parking_lot::const_mutex(());
+
+/// How long admission waits on a held transaction lock between cancellation
+/// checks.
+const ADMISSION_POLL: Duration = Duration::from_millis(1);
 
 /// What the session thread needs to gate input and report it.
 pub struct SessionSafety {
@@ -99,19 +107,23 @@ impl Worker {
     /// Runs `act` as one gated, audited input transaction. The host performs
     /// no cleanup: release and restore all happen here.
     ///
+    /// `cancelled` reports that the request's waiter gave up (`$/cancel`).
+    ///
     /// # Errors
-    /// The gate's refusal, the action's error, `Suspended` when a stop landed
-    /// while it ran, or `FocusRestoreFailed` / `CursorRestoreFailed` naming
-    /// the error they followed.
+    /// `Suspended` / `Cancelled` observed before the action, the gate's
+    /// refusal, the action's error, a stop that landed while it ran, or
+    /// `FocusRestoreFailed` / `CursorRestoreFailed` naming the error they
+    /// followed.
     pub(crate) fn mutate<T>(
         &mut self,
         mutation: &Mutation<'_>,
+        cancelled: &dyn Fn() -> bool,
         act: impl FnOnce(&mut Self) -> CoreResult<T>,
     ) -> CoreResult<(T, AuditEvent)> {
         let started = Instant::now();
-        let (result, focus_restored) = {
-            let _transaction = INPUT_TRANSACTION.lock();
-            self.transaction(mutation, act)
+        let (result, focus_restored) = match self.admit(cancelled) {
+            Ok(_transaction) => self.transaction(mutation, cancelled, act),
+            Err(stopped) => (Err(TransactionError::Primary(stopped)), None),
         };
         let result = result.map_err(DesktopError::from);
         let code = result.as_ref().err().map(|error| error.code);
@@ -125,6 +137,7 @@ impl Worker {
     pub(crate) fn transaction<T>(
         &mut self,
         mutation: &Mutation<'_>,
+        cancelled: &dyn Fn() -> bool,
         act: impl FnOnce(&mut Self) -> CoreResult<T>,
     ) -> (Result<T, TransactionError>, Option<bool>) {
         if let Err(refused) = self.gate(mutation) {
@@ -134,12 +147,12 @@ impl Worker {
             Ok(guard) => guard,
             Err(error) => return (Err(TransactionError::Primary(error)), None),
         };
-        let mut result = guarded(|| act(self));
-        if result.is_ok() && self.safety.supervisor.is_suspended() {
-            result = Err(DesktopError::new(
-                ErrorCode::Suspended,
-                "input was suspended while the action ran; held input was released",
-            ));
+        let mut result = match self.stop_observed(cancelled) {
+            Some(stopped) => Err(stopped),
+            None => guarded(|| act(self)),
+        };
+        if result.is_ok() {
+            result = self.after_action(mutation, result);
         }
         if let Err(primary) = &mut result {
             // Recorded on the primary error, never in place of it.
@@ -148,6 +161,52 @@ impl Worker {
             }
         }
         guard.restore(self, result)
+    }
+
+    /// Waits for the transaction lock, giving up when a stop or a
+    /// cancellation is observed first.
+    fn admit(&self, cancelled: &dyn Fn() -> bool) -> CoreResult<MutexGuard<'static, ()>> {
+        loop {
+            if let Some(stopped) = self.stop_observed(cancelled) {
+                return Err(stopped);
+            }
+            if let Some(transaction) = INPUT_TRANSACTION.try_lock_for(ADMISSION_POLL) {
+                return Ok(transaction);
+            }
+        }
+    }
+
+    /// `Suspended` before `Cancelled`: the probe runs first because a stop
+    /// may race it.
+    fn stop_observed(&self, cancelled: &dyn Fn() -> bool) -> Option<DesktopError> {
+        let cancelled = cancelled();
+        if self.safety.supervisor.is_suspended() {
+            Some(DesktopError::from(GateError::Suspended))
+        } else if cancelled {
+            Some(DesktopError::new(
+                ErrorCode::Cancelled,
+                "the request was cancelled before any input was sent",
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// A key chord re-checks the whole gate after its last key (gajae
+    /// `keypress_checks_liveness_after_the_final_key`): a stop path that died
+    /// mid-chord fails the request. Any other action fails only on a stop.
+    fn after_action<T>(&mut self, mutation: &Mutation<'_>, result: CoreResult<T>) -> CoreResult<T> {
+        let stopped = if mutation.action == MutatingAction::KeyChord {
+            self.gate(mutation).err().map(DesktopError::from)
+        } else {
+            self.safety.supervisor.is_suspended().then(|| {
+                DesktopError::new(
+                    ErrorCode::Suspended,
+                    "input was suspended while the action ran; held input was released",
+                )
+            })
+        };
+        stopped.map_or(result, Err)
     }
 
     fn gate(&mut self, mutation: &Mutation<'_>) -> Result<(), GateError> {
@@ -179,5 +238,7 @@ impl Worker {
     }
 }
 
+#[cfg(test)]
+mod stop_tests;
 #[cfg(test)]
 mod tests;

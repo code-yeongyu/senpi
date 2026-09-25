@@ -120,13 +120,18 @@ impl Worker {
             .unwrap_or_else(|_| reference.to_owned())
     }
 
-    pub(crate) fn ax_perform(&mut self, reference: &str, action: &str) -> CoreResult<Audited> {
+    pub(crate) fn ax_perform(
+        &mut self,
+        reference: &str,
+        action: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> CoreResult<Audited> {
         let mutation = Mutation::new(
             MutatingAction::AxPerform,
             self.ref_target(reference),
             DeliveryMode::Background,
         );
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             let handle = worker.registry.resolve(reference)?;
             let backend = worker.ax_parts()?.0;
             if action.eq_ignore_ascii_case("press") {
@@ -138,7 +143,12 @@ impl Worker {
         })
     }
 
-    pub(crate) fn ax_set_value(&mut self, reference: &str, value: &str) -> CoreResult<Audited> {
+    pub(crate) fn ax_set_value(
+        &mut self,
+        reference: &str,
+        value: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> CoreResult<Audited> {
         let mutation = Mutation {
             text: Some(value),
             ..Mutation::new(
@@ -147,20 +157,20 @@ impl Worker {
                 DeliveryMode::Background,
             )
         };
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             let handle = worker.registry.resolve(reference)?;
             worker.ax_parts()?.0.set_value(&handle, value)?;
             Ok(Response::Unit)
         })
     }
 
-    pub(crate) fn ax_focus(&mut self, reference: &str) -> CoreResult<Audited> {
+    pub(crate) fn ax_focus(&mut self, reference: &str, cancelled: &dyn Fn() -> bool) -> CoreResult<Audited> {
         let mutation = Mutation::new(
             MutatingAction::AxFocus,
             self.ref_target(reference),
             DeliveryMode::Background,
         );
-        self.mutate(&mutation, |worker| {
+        self.mutate(&mutation, cancelled, |worker| {
             let handle = worker.registry.resolve(reference)?;
             worker.ax_parts()?.0.focus(&handle)?;
             Ok(Response::Unit)
@@ -168,10 +178,14 @@ impl Worker {
     }
 
     /// Clicks the centre of the element's bounds in the window containing it.
-    pub(crate) fn ax_click(&mut self, params: &AxClickParams) -> CoreResult<Audited> {
+    pub(crate) fn ax_click(
+        &mut self,
+        params: &AxClickParams,
+        cancelled: &dyn Fn() -> bool,
+    ) -> CoreResult<Audited> {
         let mode = ParsedPointerOptions::requested_mode(params.opts.as_ref());
         let mutation = Mutation::new(MutatingAction::AxClick, self.ref_target(&params.ref_), mode);
-        self.mutate(&mutation, |worker| worker.ax_click_now(params))
+        self.mutate(&mutation, cancelled, |worker| worker.ax_click_now(params))
     }
 
     fn ax_click_now(&mut self, params: &AxClickParams) -> CoreResult<Response> {
