@@ -112,7 +112,9 @@ fn reports_tcc_identity_when_screen_recording_is_denied() {
 #[test]
 #[ignore = "live: needs a Screen Recording grant for the launcher"]
 fn reports_quartz_capabilities_with_active_displays() {
-    let capabilities = MacosBackend::new(DisplaySelector::All).capabilities();
+    let capabilities = MacosBackend::new(DisplaySelector::All)
+        .expect("backend")
+        .capabilities();
     println!("capabilities={capabilities:?}");
     assert!(capabilities.capture && capabilities.display_count >= 1);
 }
