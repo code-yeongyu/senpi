@@ -1,22 +1,24 @@
 //! Engine-wide state shared by every connection: the one desktop session,
-//! the supervisor and its (possibly fake) clock, the resume token, and the
-//! request permits.
+//! the supervisor and its (possibly fake) clock, the stop paths and resume
+//! token, the notification outbox, and the request permits.
 
 use std::sync::Arc;
 
 use senpi_desktop_core::error::{CoreResult, DesktopError};
-use senpi_desktop_core::methods::Effect;
+use senpi_desktop_core::methods::{Effect, Notification};
 use senpi_desktop_core::protocol::{ABI, PROTOCOL_VERSION};
-use senpi_desktop_core::protocol_results::{HelloResult, SessionOpenResult, StopPathKind, StopPathStatus};
+use senpi_desktop_core::protocol_results::{HelloResult, SessionOpenResult};
 use senpi_desktop_core::types::{DesktopCapabilities, DesktopSessionOptions};
-use senpi_desktop_safety::{ActiveStopPath, Clock, FakeClock, MonotonicClock, Supervisor};
-use senpi_desktop_session::{Op, Pending, Response, Session};
+use senpi_desktop_safety::{Clock, FakeClock, MonotonicClock, ResumeToken, Supervisor};
+use senpi_desktop_session::{Op, Pending, Response, Session, SessionSafety};
 use serde_json::Value;
 use tokio::sync::Semaphore;
 use ulid::Ulid;
 
 use crate::config::EngineConfig;
+use crate::outbox::Outbox;
 use crate::rpc::{to_result, Failure};
+use crate::stop_path::{StopPaths, StopReport};
 
 /// Read-only session requests that may be in flight at once.
 pub const READ_CONCURRENCY: usize = 4;
@@ -31,10 +33,9 @@ pub enum SessionCall {
 
 pub struct Engine {
     session: Session,
-    supervisor: Supervisor,
+    stop_paths: StopPaths,
     fake_clock: Option<Arc<FakeClock>>,
-    /// Returned only in the `session.open` reply; lifts a stop latch.
-    resume_token: String,
+    outbox: Arc<Outbox>,
     read_permits: Arc<Semaphore>,
     /// One mutating request in flight at a time.
     exec_permits: Arc<Semaphore>,
@@ -51,11 +52,21 @@ impl Engine {
             Some(fake) => Arc::clone(fake) as Arc<dyn Clock>,
             None => Arc::new(MonotonicClock::new()),
         };
+        let supervisor = Arc::new(Supervisor::new(clock));
+        // Per-process and random; only the `session.open` reply carries it.
+        let resume = ResumeToken::new(format!("{}{}", Ulid::generate(), Ulid::generate()));
+        let stop_paths = StopPaths::new(Arc::clone(&supervisor), &config.selection, resume);
+        let outbox = Arc::new(Outbox::default());
+        let audited = Arc::clone(&outbox);
+        let safety = SessionSafety {
+            supervisor,
+            audit: Box::new(move |event| audited.push(Notification::Audit, event)),
+        };
         Ok(Self {
-            session: Session::start(config.selection, config.timeouts)?,
-            supervisor: Supervisor::new(clock),
+            session: Session::start_supervised(config.selection, config.timeouts, safety)?,
+            stop_paths,
             fake_clock,
-            resume_token: Ulid::generate().to_string(),
+            outbox,
             read_permits: Arc::new(Semaphore::new(READ_CONCURRENCY)),
             exec_permits: Arc::new(Semaphore::new(1)),
         })
@@ -74,22 +85,21 @@ impl Engine {
 
     /// Answered from the session's cache, so a busy backend never delays it.
     pub fn capabilities(&self) -> DesktopCapabilities {
-        self.session.capabilities()
+        self.stop_paths.report().stamp(self.session.capabilities())
     }
 
-    pub fn stop_path_status(&self) -> StopPathStatus {
-        let status = self.supervisor.status();
-        StopPathStatus {
-            suspended: status.suspended,
-            global_live: status.global_live,
-            host_relay_live: status.host_relay_live,
-            heartbeat_fresh: status.heartbeat_fresh,
-            stop_path: match status.stop_path {
-                ActiveStopPath::Global => StopPathKind::Global,
-                ActiveStopPath::HostRelay => StopPathKind::HostRelay,
-                ActiveStopPath::None => StopPathKind::None,
-            },
-            reason: None,
+    pub const fn stop_paths(&self) -> &StopPaths {
+        &self.stop_paths
+    }
+
+    pub fn outbox(&self) -> &Outbox {
+        &self.outbox
+    }
+
+    /// Queues `stopPath.changed` when the stop-path status changed.
+    pub fn announce_stop_path(&self) {
+        if let Some(status) = self.stop_paths.transition() {
+            self.outbox.push(Notification::StopPathChanged, &status);
         }
     }
 
@@ -111,15 +121,19 @@ impl Engine {
         match call {
             SessionCall::Open(options) => Started {
                 pending: self.session.open(options),
-                resume_token: Some(self.resume_token.clone()),
+                // Reported now: the reply outlives `self`.
+                open: Some(OpenReply {
+                    resume_token: self.stop_paths.resume_token().to_owned(),
+                    report: self.stop_paths.report(),
+                }),
             },
             SessionCall::Close => Started {
                 pending: self.session.close(),
-                resume_token: None,
+                open: None,
             },
             SessionCall::Op(op) => Started {
                 pending: self.session.submit(op),
-                resume_token: None,
+                open: None,
             },
         }
     }
@@ -132,11 +146,17 @@ impl Engine {
     }
 }
 
+/// What the `session.open` reply adds to the session's capabilities.
+struct OpenReply {
+    resume_token: String,
+    report: StopReport,
+}
+
 /// An enqueued session request.
 pub struct Started {
     pending: Pending,
-    /// `Some` for `session.open`, whose reply carries the token.
-    resume_token: Option<String>,
+    /// `Some` for `session.open`.
+    open: Option<OpenReply>,
 }
 
 impl Started {
@@ -144,10 +164,10 @@ impl Started {
     /// The session's error for this request.
     pub async fn wait(self) -> Result<Value, Failure> {
         let response = self.pending.wait().await.map_err(Failure::Engine)?;
-        match (self.resume_token, response) {
-            (Some(resume_token), Response::Capabilities(capabilities)) => to_result(SessionOpenResult {
-                capabilities,
-                resume_token,
+        match (self.open, response) {
+            (Some(open), Response::Capabilities(capabilities)) => to_result(SessionOpenResult {
+                capabilities: open.report.stamp(capabilities),
+                resume_token: open.resume_token,
             }),
             (Some(_), other) => Err(Failure::Engine(DesktopError::internal(format!(
                 "session.open answered {other:?}"

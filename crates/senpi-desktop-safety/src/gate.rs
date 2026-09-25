@@ -13,7 +13,7 @@ use senpi_desktop_core::error::{DesktopError, ErrorCode};
 
 use crate::{
     action::MutatingAction,
-    supervisor::{ActiveStopPath, StopPolicy, Supervisor},
+    supervisor::{ActiveStopPath, StopPolicy, Supervisor, SupervisorStatus},
 };
 
 /// Id of a captured frame, as named by a coordinate request's `frameId`.
@@ -91,6 +91,24 @@ impl StopPathReason {
     }
 }
 
+impl SupervisorStatus {
+    /// Why no stop path authorizes input under `policy`, ignoring suspension;
+    /// `None` when one does.
+    #[must_use]
+    pub const fn stop_path_unavailable(self, policy: &StopPolicy) -> Option<StopPathReason> {
+        match (self.stop_path, self.heartbeat_fresh) {
+            (ActiveStopPath::None, _) => Some(StopPathReason::NoGlobalListener),
+            (ActiveStopPath::HostRelay, _) if !policy.allow_host_relay_only => {
+                Some(StopPathReason::HostRelayNotAllowed)
+            }
+            (ActiveStopPath::Global | ActiveStopPath::HostRelay, false) => {
+                Some(StopPathReason::HeartbeatStale)
+            }
+            (ActiveStopPath::Global | ActiveStopPath::HostRelay, true) => None,
+        }
+    }
+}
+
 impl fmt::Display for StopPathReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -147,15 +165,7 @@ pub fn gate(
     if status.suspended {
         return Err(GateError::Suspended);
     }
-    let unavailable = match (status.stop_path, status.heartbeat_fresh) {
-        (ActiveStopPath::None, _) => Some(StopPathReason::NoGlobalListener),
-        (ActiveStopPath::HostRelay, _) if !policy.allow_host_relay_only => {
-            Some(StopPathReason::HostRelayNotAllowed)
-        }
-        (ActiveStopPath::Global | ActiveStopPath::HostRelay, false) => Some(StopPathReason::HeartbeatStale),
-        (ActiveStopPath::Global | ActiveStopPath::HostRelay, true) => None,
-    };
-    if let Some(reason) = unavailable {
+    if let Some(reason) = status.stop_path_unavailable(policy) {
         return Err(GateError::StopPathUnavailable { reason });
     }
     if frames.screen_locked().is_locked() {

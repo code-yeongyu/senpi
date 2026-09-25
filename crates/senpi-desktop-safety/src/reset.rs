@@ -18,6 +18,12 @@ impl ResumeToken {
         Self(secret)
     }
 
+    /// The secret, for the `session.open` reply to the host only.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     /// A [`UserReset`] when `presented` matches the secret, otherwise `None`.
     #[must_use]
     pub fn redeem(&self, presented: &str) -> Option<UserReset> {

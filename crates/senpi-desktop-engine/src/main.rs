@@ -5,10 +5,12 @@
 mod config;
 mod connection;
 mod engine;
+mod outbox;
 mod route;
 mod rpc;
 mod selftest;
 mod serve;
+mod stop_path;
 
 use std::process::ExitCode;
 use std::sync::Arc;
