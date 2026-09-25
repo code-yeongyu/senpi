@@ -45,7 +45,7 @@ interface DeterministicFallbackDetails {
 	origin: "required-compaction-recovery";
 	failureKind: RequiredCompactionFallbackFailure;
 	taskIntent?: string;
-	retainedSuffix?: "prepared" | "latest-user-turn" | "earlier-safe-boundary";
+	retainedSuffix?: "prepared" | "latest-user-turn" | "earlier-safe-boundary" | "later-safe-boundary";
 }
 
 export interface DeterministicFallbackDiagnostic {
@@ -278,6 +278,7 @@ export function createRequiredCompactionFallback(
 		...(taskIntent ? { taskIntent } : {}),
 	};
 	let candidateCount = 0;
+	let sawUnsafeRetainedContent = false;
 
 	const syntheticCompaction: CompactionEntry = {
 		type: "compaction",
@@ -449,6 +450,7 @@ export function createRequiredCompactionFallback(
 		if (startIndex === undefined) return reject("context-reconstruction-failed");
 		const retainedStart = Math.min(startIndex, projectedMessages.length);
 		if (unsafeSuffix[retainedStart]) {
+			sawUnsafeRetainedContent = true;
 			const unsafeMessageIndex = unsafeIndexSuffix[retainedStart];
 			const unsafeMessage = projectedMessages[unsafeMessageIndex];
 			return reject("unsafe-retained-content", {
@@ -520,6 +522,23 @@ export function createRequiredCompactionFallback(
 			}
 		}
 		break;
+	}
+
+	// A split turn can contain an unsafe persisted tool payload after the
+	// prepared boundary and no later user message. Advance to the earliest safe
+	// suffix rather than retaining that payload forever. `projectCandidate`
+	// still rejects orphaned tool results, incomplete call chains, unsafe
+	// content, and over-budget suffixes.
+	if (sawUnsafeRetainedContent) {
+		for (let index = preparedBoundaryIndex + 1; index < branchEntries.length; index++) {
+			const entry = branchEntries[index];
+			if (entry.type === "compaction") continue;
+			const laterSafe = projectCandidate(entry.id, "later-safe-boundary");
+			if (laterSafe) {
+				if (diagnostics) diagnostics.candidatesChecked = candidateCount;
+				return laterSafe;
+			}
+		}
 	}
 
 	if (diagnostics) diagnostics.candidatesChecked = candidateCount;

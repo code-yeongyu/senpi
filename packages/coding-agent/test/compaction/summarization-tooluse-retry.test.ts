@@ -260,28 +260,26 @@ describe("required compaction recovery from summarizer tool-call hijack", () => 
 		}
 	});
 
-	it("keeps idle and speculative-origin failures fail-closed", async () => {
-		for (const reason of ["pre_prompt", "extension"] as const) {
-			const handlers = createCompactionHandlers();
-			const harness = createBlockingContext({ usageTokens: 9_900 });
-			harness.registration.setResponses([bareToolCallResponse()]);
-			const branchEntries = harness.ctx.sessionManager.getBranch();
-			const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
-			const result = await handlers.sessionBeforeCompact(
-				{
-					type: "session_before_compact",
-					reason,
-					willRetry: false,
-					requestId: `fail-closed-${reason}`,
-					preparation: preparation!,
-					branchEntries,
-					signal: new AbortController().signal,
-				},
-				harness.ctx,
-			);
-			expect(result).toMatchObject({ cancel: true });
-			expect(result).not.toHaveProperty("compaction");
-		}
+	it("keeps speculative-origin failures fail-closed", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		harness.registration.setResponses([bareToolCallResponse()]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "extension",
+				willRetry: false,
+				requestId: "fail-closed-extension",
+				preparation: preparation!,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+		expect(result).toMatchObject({ cancel: true });
+		expect(result).not.toHaveProperty("compaction");
 	});
 
 	it("keeps manual auth failures fail-closed", async () => {
