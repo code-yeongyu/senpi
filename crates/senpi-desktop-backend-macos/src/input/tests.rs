@@ -7,13 +7,13 @@ use senpi_desktop_core::error::ErrorCode;
 use senpi_desktop_core::keys::KeyName;
 use senpi_desktop_core::types::DesktopWindow;
 
-use super::guard;
-use super::held::{ButtonRoute, Held, HeldButton, HeldKey, KeyRoute};
-use super::keys;
-use super::{
+use super::cgevent::{
     event_source, get_local_events_filter_during_suppression_state, get_local_events_suppression_interval,
     LOCAL_EVENT_FILTER, REMOTE_MOUSE_DRAG, SUPPRESSION_INTERVAL,
 };
+use super::guard;
+use super::held::{ButtonRoute, Held, HeldButton, HeldKey, KeyRoute};
+use super::keys;
 
 fn window(id: &str, app: &str) -> DesktopWindow {
     DesktopWindow {

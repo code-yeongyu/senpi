@@ -17,9 +17,7 @@ mod tests;
 #[cfg(test)]
 mod live;
 
-use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-use core_graphics::sys::CGEventSourceRef;
-use foreign_types::ForeignType;
+use core_graphics::event_source::CGEventSource;
 use senpi_desktop_core::backend::{DeliveryMode, PointerEvent};
 use senpi_desktop_core::error::{CoreResult, DesktopError};
 use senpi_desktop_core::keys::KeyName;
@@ -31,24 +29,6 @@ use held::{Held, KeyRoute};
 
 pub(crate) use self::canary::CANARY_STOP_REASON;
 pub use self::canary::{CanaryMode, CanaryResult};
-
-const LOCAL_EVENT_FILTER: u32 = 0x01 | 0x02 | 0x04;
-const SUPPRESSION_INTERVAL: u32 = 0;
-const REMOTE_MOUSE_DRAG: u32 = 1;
-
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-    #[link_name = "CGEventSourceSetLocalEventsSuppressionInterval"]
-    fn set_local_events_suppression_interval(source: CGEventSourceRef, seconds: f64);
-    #[link_name = "CGEventSourceSetLocalEventsFilterDuringSuppressionState"]
-    fn set_local_events_filter_during_suppression_state(source: CGEventSourceRef, filter: u32, state: u32);
-    #[cfg(test)]
-    #[link_name = "CGEventSourceGetLocalEventsSuppressionInterval"]
-    fn get_local_events_suppression_interval(source: CGEventSourceRef) -> f64;
-    #[cfg(test)]
-    #[link_name = "CGEventSourceGetLocalEventsFilterDuringSuppressionState"]
-    fn get_local_events_filter_during_suppression_state(source: CGEventSourceRef, state: u32) -> u32;
-}
 
 pub(crate) struct MacInput {
     source: CGEventSource,
@@ -67,7 +47,7 @@ unsafe impl Send for MacInput {}
 impl MacInput {
     pub(crate) fn new(canary: CanaryMode) -> CoreResult<Self> {
         Ok(Self {
-            source: event_source()?,
+            source: cgevent::event_source()?,
             held: Held::default(),
             canary: canary::CanaryState::new(canary),
             last_activated: None,
@@ -252,28 +232,6 @@ impl MacInput {
         }
         first_error.map_or(Ok(()), Err)
     }
-}
-
-fn event_source() -> CoreResult<CGEventSource> {
-    let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
-        .map_err(|()| DesktopError::input_failed("failed to create a Quartz input event source"))?;
-    // SAFETY: `source` is a live CGEventSource and both setters accept these
-    // documented masks/states. Zero suppression interval: the user's own
-    // typing is never swallowed by our posts.
-    unsafe {
-        set_local_events_suppression_interval(source.as_ptr(), 0.0);
-        set_local_events_filter_during_suppression_state(
-            source.as_ptr(),
-            LOCAL_EVENT_FILTER,
-            SUPPRESSION_INTERVAL,
-        );
-        set_local_events_filter_during_suppression_state(
-            source.as_ptr(),
-            LOCAL_EVENT_FILTER,
-            REMOTE_MOUSE_DRAG,
-        );
-    }
-    Ok(source)
 }
 
 fn resolve_window(capture: &MacCapture, id: &str) -> CoreResult<DesktopWindow> {

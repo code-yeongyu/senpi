@@ -1,8 +1,11 @@
-//! Shared CGEvent field helpers: modifier flags, button type tables, point
-//! clamping, and the click-group id.
+//! Shared CGEvent helpers: the never-suppressing combined-session event source,
+//! modifier flags, button type tables, point clamping, and the click-group id.
 
 use core_graphics::event::{CGEventFlags, CGEventType, CGMouseButton};
+use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
+use core_graphics::sys::CGEventSourceRef;
+use foreign_types::ForeignType;
 use senpi_desktop_core::backend::{Modifiers, MouseButton};
 use senpi_desktop_core::error::{CoreResult, DesktopError};
 
@@ -73,6 +76,51 @@ pub(super) fn finite_i32(value: f64, name: &str) -> CoreResult<i32> {
 
 /// A per-gesture id: events of one click/drag share the group so apps see a
 /// coherent gesture.
+pub(super) const LOCAL_EVENT_FILTER: u32 = 0x01 | 0x02 | 0x04;
+pub(super) const SUPPRESSION_INTERVAL: u32 = 0;
+pub(super) const REMOTE_MOUSE_DRAG: u32 = 1;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    #[link_name = "CGEventSourceSetLocalEventsSuppressionInterval"]
+    fn set_local_events_suppression_interval(source: CGEventSourceRef, seconds: f64);
+    #[link_name = "CGEventSourceSetLocalEventsFilterDuringSuppressionState"]
+    fn set_local_events_filter_during_suppression_state(source: CGEventSourceRef, filter: u32, state: u32);
+    #[cfg(test)]
+    #[link_name = "CGEventSourceGetLocalEventsSuppressionInterval"]
+    pub(super) fn get_local_events_suppression_interval(source: CGEventSourceRef) -> f64;
+    #[cfg(test)]
+    #[link_name = "CGEventSourceGetLocalEventsFilterDuringSuppressionState"]
+    pub(super) fn get_local_events_filter_during_suppression_state(
+        source: CGEventSourceRef,
+        state: u32,
+    ) -> u32;
+}
+
+/// The combined-session event source whose local-event suppression is disabled:
+/// the user's own typing is never swallowed by our posts.
+pub(super) fn event_source() -> CoreResult<CGEventSource> {
+    let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+        .map_err(|()| DesktopError::input_failed("failed to create a Quartz input event source"))?;
+    // SAFETY: `source` is a live CGEventSource and both setters accept these
+    // documented masks/states. Zero suppression interval: the user's own
+    // typing is never swallowed by our posts.
+    unsafe {
+        set_local_events_suppression_interval(source.as_ptr(), 0.0);
+        set_local_events_filter_during_suppression_state(
+            source.as_ptr(),
+            LOCAL_EVENT_FILTER,
+            SUPPRESSION_INTERVAL,
+        );
+        set_local_events_filter_during_suppression_state(
+            source.as_ptr(),
+            LOCAL_EVENT_FILTER,
+            REMOTE_MOUSE_DRAG,
+        );
+    }
+    Ok(source)
+}
+
 pub(super) fn click_group_id() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
