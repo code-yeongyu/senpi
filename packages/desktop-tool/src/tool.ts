@@ -88,39 +88,47 @@ function assertNever(value: never): never {
 	throw new TypeError(`unhandled computer action ${JSON.stringify(value)}`);
 }
 
+/** A `computer` run: activates the session (arming the stop chord) and runs `code` through the desktop facade. */
+export async function runComputer(
+	deps: ComputerToolDeps,
+	context: ComputerHostContext,
+	request: { readonly code: string; readonly readOnly: boolean; readonly timeoutSeconds: number },
+	signal: AbortSignal | undefined,
+): Promise<ComputerToolResult> {
+	const { handle, executeTool } = deps;
+	await handle.activate(context);
+	const snapshot = runSnapshot(handle.settings(), context, request.readOnly);
+	const timeoutMs = request.timeoutSeconds * 1000;
+	const outcome = await runComputerCode(
+		{ code: request.code, snapshot, timeoutMs, ...(signal === undefined ? {} : { signal }) },
+		{ service: handle.service, executeTool },
+	);
+	const content = [...outcome.displays];
+	if (outcome.returnValue !== undefined) content.push({ type: "text", text: stringify(outcome.returnValue) });
+	if (content.length === 0) content.push({ type: "text", text: "Done." });
+	return {
+		content,
+		details: {
+			value: outcome.returnValue,
+			readOnly: request.readOnly,
+			screenshots: outcome.screenshots,
+			audit: outcome.audit,
+		},
+	};
+}
+
 /**
  * The senpi `computer` tool: search-exposed, with the eval-kernel `computer` facade as its `kernelPrelude`.
  * Permission tiers are enforced only by the permission-system `tool_call` hook through
  * `computerPermissionParser`; `execute` evaluates no rule and shows no prompt of its own.
  */
 export function createComputerTool(deps: ComputerToolDeps) {
-	const { handle, executeTool } = deps;
-
-	const run = async (
+	const { handle } = deps;
+	const run = (
 		context: ComputerHostContext,
-		request: { readonly code: string; readonly readOnly: boolean; readonly timeoutSeconds: number },
+		request: Parameters<typeof runComputer>[2],
 		signal: AbortSignal | undefined,
-	): Promise<ComputerToolResult> => {
-		await handle.activate(context);
-		const snapshot = runSnapshot(handle.settings(), context, request.readOnly);
-		const timeoutMs = request.timeoutSeconds * 1000;
-		const outcome = await runComputerCode(
-			{ code: request.code, snapshot, timeoutMs, ...(signal === undefined ? {} : { signal }) },
-			{ service: handle.service, executeTool },
-		);
-		const content = [...outcome.displays];
-		if (outcome.returnValue !== undefined) content.push({ type: "text", text: stringify(outcome.returnValue) });
-		if (content.length === 0) content.push({ type: "text", text: "Done." });
-		return {
-			content,
-			details: {
-				value: outcome.returnValue,
-				readOnly: request.readOnly,
-				screenshots: outcome.screenshots,
-				audit: outcome.audit,
-			},
-		};
-	};
+	) => runComputer(deps, context, request, signal);
 
 	return {
 		name: COMPUTER_TOOL_NAME,

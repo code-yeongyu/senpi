@@ -18,6 +18,24 @@
 
 # Local fork changes
 
+## 2026-09-27 - copy-binary-assets copies the desktop engine sidecar (senpi#2128)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `copy-binary-assets` runs `scripts/copy-desktop-engine.mjs` after the pty copy.
+
+### Why
+
+- `build:binary` must place the engine where the compiled binary's locator looks for it (plan todo 39).
+
+### Why an extension could not handle it
+
+- Package build scripts.
+
+### Expected merge conflict zones
+
+- LOW: the `copy-binary-assets` line.
+
 ## 2026-09-26 - coding-agent declares the desktop packages its computer-use builtin imports (#2128)
 
 ### What changed

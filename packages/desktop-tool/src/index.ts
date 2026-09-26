@@ -11,6 +11,13 @@ export {
 	type ComputerSubcommand,
 	runComputerCommand,
 } from "./command.ts";
+export { type ComputerAction, type ComputerActionsInput, ComputerActionsParams } from "./cua-actions.ts";
+export {
+	COMPUTER_ACTIONS_TOOL_NAME,
+	type ComputerActionsTool,
+	computerActionsPermissionParser,
+	createComputerActionsTool,
+} from "./cua-adapter.ts";
 export { defaultStopHotkey, isSupportedHost } from "./host-policy.ts";
 export { ComputerParams, type ComputerToolParams, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS } from "./params.ts";
 export { COMPUTER_PERMISSION, computerPermissionParser, computerTier, type PermissionRequest } from "./permission.ts";
@@ -37,4 +44,5 @@ export {
 	type ComputerToolDetails,
 	type ComputerToolResult,
 	createComputerTool,
+	runComputer,
 } from "./tool.ts";

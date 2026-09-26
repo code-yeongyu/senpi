@@ -145,7 +145,7 @@ fn a_refused_screenshot_is_permission_denied_and_never_reported_as_capture() {
 }
 
 #[test]
-fn a_window_target_is_refused_because_the_portal_has_no_window_capture() {
+fn a_window_target_without_screencast_is_refused_because_the_screenshot_portal_has_no_window_capture() {
     let mut backend = backend_without_services();
 
     let error = backend

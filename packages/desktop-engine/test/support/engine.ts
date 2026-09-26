@@ -72,11 +72,11 @@ export class EngineProcess {
 	#closed = false;
 	#nextId = 1000;
 
-	/** Spawns the located engine with exactly `env` among the engine's variables. */
-	constructor(env: Readonly<Record<string, string>>) {
+	/** Spawns the located engine in `args`' mode with exactly `env` among the engine's variables. */
+	constructor(env: Readonly<Record<string, string>>, args: readonly string[] = ["--stdio"]) {
 		const inherited = { ...process.env };
 		for (const name of ENGINE_ENV) delete inherited[name];
-		this.#child = spawn(locatedEngine(), ["--stdio"], { env: { ...inherited, ...env }, windowsHide: true });
+		this.#child = spawn(locatedEngine(), [...args], { env: { ...inherited, ...env }, windowsHide: true });
 		this.#child.stderr.resume();
 		createInterface({ input: this.#child.stdout }).on("line", (line) => {
 			const message = parseMessage(line);

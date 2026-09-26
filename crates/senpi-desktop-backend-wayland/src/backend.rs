@@ -2,7 +2,8 @@
 //! accessibility and window listing, and honest capabilities. Wayland lets
 //! no client activate or target another surface, so window-targeted input
 //! and raising are refused with the compositor's constraint, and there is no
-//! focus guard. Capture goes through the Screenshot portal.
+//! focus guard. Capture streams each monitor through ScreenCast and PipeWire
+//! (window capture crops the composite), else uses the Screenshot portal.
 
 use image::RgbaImage;
 use senpi_desktop_backend_atspi::{AtSpiAx, AxPermission};
@@ -137,7 +138,11 @@ impl Backend for WaylandBackend {
     }
 
     fn capture(&mut self, target: &Target, _caps: &CaptureCaps) -> CoreResult<(RgbaImage, FrameGeometry)> {
-        self.capture.capture(target)
+        let ax = &mut self.ax;
+        self.capture.capture(target, || match ax {
+            Ok(ax) => ax.windows(),
+            Err(error) => Err(error.clone()),
+        })
     }
 
     fn pointer(

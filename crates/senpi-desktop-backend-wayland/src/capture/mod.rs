@@ -1,9 +1,10 @@
-//! Wayland capture through the `org.freedesktop.portal.Screenshot` portal,
-//! with no PipeWire (D6: the shipped engine never links libpipewire). The
-//! portal hands back one image of the whole desktop, so there is no window
-//! capture, and the image is the single logical display `wayland-portal-0`
-//! at scale 1: nothing PipeWire-free reports the compositor's outputs or
-//! their scale.
+//! Wayland capture. Where libpipewire loads at runtime, the ScreenCast
+//! portal streams each monitor and the desktop is their composite, one
+//! display per monitor (`pipewire`). Otherwise the
+//! `org.freedesktop.portal.Screenshot` portal hands back one image of the
+//! whole desktop as the single logical display `wayland-portal-0` at scale 1.
+//! The shipped engine never links libpipewire (D6). Neither path captures a
+//! single window.
 //!
 //! Capabilities stay honest: `capture` is `true` only after a screenshot
 //! actually came back. Some compositors (GNOME, KDE) show a consent dialog
@@ -11,6 +12,7 @@
 
 #[cfg(test)]
 mod live_tests;
+pub mod pipewire;
 pub mod screenshot_portal;
 
 use std::slice;
@@ -18,8 +20,9 @@ use std::slice;
 use image::RgbaImage;
 use senpi_desktop_core::error::{CoreResult, DesktopError};
 use senpi_desktop_core::frame::FrameGeometry;
-use senpi_desktop_core::types::{DesktopDisplay, DisplaySelector, Target};
+use senpi_desktop_core::types::{DesktopDisplay, DesktopWindow, DisplaySelector, Target};
 
+use self::pipewire::{CastError, ScreenCast};
 use self::screenshot_portal::ShotError;
 use crate::portal::portal_runtime;
 
@@ -55,7 +58,9 @@ impl Probe {
 pub struct PortalCapture {
     selector: DisplaySelector,
     pub(crate) probe: Probe,
-    display: Option<DesktopDisplay>,
+    displays: Vec<DesktopDisplay>,
+    screencast: ScreenCast,
+    screencast_fallback: Option<String>,
 }
 
 impl PortalCapture {
@@ -63,7 +68,9 @@ impl PortalCapture {
         Self {
             selector,
             probe: Probe::Unknown,
-            display: None,
+            displays: Vec::new(),
+            screencast: ScreenCast::new(),
+            screencast_fallback: None,
         }
     }
 
@@ -85,7 +92,7 @@ impl PortalCapture {
 
     /// The display of the last screenshot; empty before the first one.
     pub fn displays(&self) -> Vec<DesktopDisplay> {
-        self.display.iter().cloned().collect()
+        self.displays.clone()
     }
 
     /// Takes a portal screenshot of the whole desktop.
@@ -94,20 +101,43 @@ impl PortalCapture {
     /// `CaptureFailed` for a window target or when the portal is absent or
     /// fails; `PermissionDenied` when the screenshot is refused;
     /// `InvalidTarget` when the session selected another display.
-    pub fn capture(&mut self, target: &Target) -> CoreResult<(RgbaImage, FrameGeometry)> {
-        if let Target::Window(id) = target {
-            return Err(DesktopError::capture_failed(format!(
-                "window {id}: the Wayland Screenshot portal captures the whole desktop only; \
-                 capture the desktop instead"
-            )));
-        }
+    pub fn capture(
+        &mut self,
+        target: &Target,
+        windows: impl FnOnce() -> CoreResult<Vec<DesktopWindow>>,
+    ) -> CoreResult<(RgbaImage, FrameGeometry)> {
         self.selected_display_allowed()?;
         let runtime = portal_runtime()?;
+        match self.screencast.capture(runtime) {
+            Ok((image, displays)) => {
+                self.probe = Probe::Granted;
+                self.displays = displays;
+                return match target {
+                    Target::Desktop => Ok((image, FrameGeometry::for_displays(&self.displays))),
+                    Target::Window(id) => pipewire::crop_window(&image, &self.displays, windows()?, id),
+                };
+            }
+            Err(CastError::Refused(message)) => {
+                self.probe = Probe::Refused;
+                return Err(DesktopError::permission_denied(message));
+            }
+            Err(CastError::Unavailable(reason) | CastError::Failed(reason)) => {
+                self.screencast_fallback = Some(reason);
+            }
+        }
+        if let Target::Window(id) = target {
+            let cast = self.screencast_fallback.as_deref().unwrap_or("not tried");
+            return Err(DesktopError::capture_failed(format!(
+                "window {id}: window capture needs the ScreenCast portal (ScreenCast: {cast}); \
+                 the Screenshot portal captures the whole desktop only, so capture the desktop instead"
+            )));
+        }
         if self.probe != Probe::Granted {
             if let Err(reason) = screenshot_portal::presence(runtime) {
                 self.probe = Probe::Absent;
+                let cast = self.screencast_fallback.as_deref().unwrap_or("not tried");
                 return Err(DesktopError::capture_failed(format!(
-                    "{}: {reason}",
+                    "{}: {reason} (ScreenCast: {cast})",
                     screenshot_portal::UNAVAILABLE
                 )));
             }
@@ -118,19 +148,26 @@ impl PortalCapture {
                 self.probe = Probe::Refused;
                 DesktopError::permission_denied(message)
             }
-            ShotError::Failed(message) => DesktopError::capture_failed(message),
+            ShotError::Failed(message) => match &self.screencast_fallback {
+                Some(cast) => DesktopError::capture_failed(format!("{message} (ScreenCast: {cast})")),
+                None => DesktopError::capture_failed(message),
+            },
         })?;
         self.probe = Probe::Granted;
         let display = portal_display(image.width(), image.height());
         let frame = FrameGeometry::for_displays(slice::from_ref(&display));
-        self.display = Some(display);
+        self.displays = vec![display];
         Ok((image, frame))
     }
 
     fn selected_display_allowed(&self) -> CoreResult<()> {
         match &self.selector {
             DisplaySelector::All => Ok(()),
-            DisplaySelector::Id(id) if id == PORTAL_DISPLAY_ID => Ok(()),
+            DisplaySelector::Id(id)
+                if id == PORTAL_DISPLAY_ID || id.starts_with(pipewire::DISPLAY_PREFIX) =>
+            {
+                Ok(())
+            }
             DisplaySelector::Id(id) => Err(DesktopError::invalid_target(format!(
                 "Wayland portal display '{id}' is unavailable; use 'all' or '{PORTAL_DISPLAY_ID}'"
             ))),

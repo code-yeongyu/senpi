@@ -69,8 +69,13 @@ All settings live under `computer` in `settings.json`:
 | `auditLog.enabled` | `true` | Write the audit log |
 | `screenshotGc.enabled` / `staleMs` / `scanIntervalMs` | `true` / 12 h / 30 min | Delete old screenshot files |
 | `enginePath` | located automatically | Use a specific engine binary |
+| `cuaAdapter` | `false` | Also register `computer_actions`, which takes OpenAI computer-use actions |
 
 When a model clicks in screenshot pixels, captures are clamped to 1280x896. That is senpi's coordinate-safe default, not a provider limit.
+
+## OpenAI computer-use actions
+
+With `computer.cuaAdapter: true`, senpi also registers a second search-exposed tool, `computer_actions`, for models prompted with OpenAI's computer-use action schema: `screenshot`, `click`, `double_click`, `move`, `drag`, `scroll`, `type`, `keypress`, `wait`, or a `batch` of them. It runs on the same desktop session, stop chord, permissions, and audit log as `computer`, with no second input path. Pointer coordinates are checked against the latest screenshot before any input, a screenshot inside a batch becomes the frame for the actions after it, and a batch stops at its first failure. Failures carry `COMPUTER_*` codes with a recovery hint (for example `COMPUTER_SUSPENDED` or `COMPUTER_COORD_INVALID`). Screenshots and waits are `computer:read`; every other action is `computer:exec`.
 
 ## Capabilities
 
@@ -105,7 +110,7 @@ When a model clicks in screenshot pixels, captures are clamped to 1280x896. That
 
 Wayland support has not yet been tested live on a desktop session.
 
-- Screenshots go through the xdg-desktop-portal Screenshot portal; GNOME may show a permission dialog.
+- Screenshots go through the ScreenCast portal and PipeWire when `libpipewire-0.3.so.0` is installed: every monitor is streamed and the desktop capture is their composite, one display per monitor. The engine loads PipeWire at runtime, so the same binary starts where it is missing and then uses the Screenshot portal instead (one image of the whole desktop). Window capture on Wayland crops the window out of the ScreenCast image, so it needs the ScreenCast path. Either portal may show a permission dialog on first use. A compositor whose ScreenCast backend cannot copy the screen (for example wlroots on its pixman software renderer) falls back to the Screenshot portal.
 - Input goes through the RemoteDesktop portal and libei. It is background-only, with no per-window targeting and no `raise`. The portal asks for consent on first input, so `inputPermission` reports `prompt-or-granted` until then.
 - The stop chord uses the GlobalShortcuts portal (GNOME 45+, KDE Plasma 6). Where it is missing, the global stop path is unavailable and input requires `allowHostRelayOnlyStop`.
 
@@ -152,6 +157,7 @@ The engine is a separate binary with its own protocol, so it can run without sen
 - `senpi-desktop-engine --stdio` serves JSON-RPC 2.0 over NDJSON on stdin/stdout. This is how senpi runs it.
 - `senpi-desktop-engine --serve <socket>` runs a daemon. It opens its own session from its flags (`--audit-path`, `--artifact-dir`, `--max-width`, `--max-height`, `--max-bytes`, `--display`, `--stop-chord`, `--allow-host-relay-only-stop`) and arms the stop chord at startup. The resume token goes to a file only you can read, and `senpi-desktop-engine --resume` lifts a stop.
 - `senpi-desktop-engine --oneshot` forwards one `desktop.<method>` request to the daemon, starting it if needed. Session and stop-path controls never cross this bridge, except `desktop.stop` and `desktop.stopPath.status`.
+- `senpi-desktop-engine --mcp` is an MCP stdio server (tools capability) for other agent hosts. It is a persistent `--oneshot`: `tools/list` offers the same methods as tools named `desktop_<method>` (`desktop_capture`, `desktop_click`, `desktop_stop`, ...), and every call goes through the same bridge to the same daemon. `stopPath.resume` is never a tool, a capture comes back as an MCP image block, and an engine error comes back as an `isError` result that carries the engine error unchanged. With `--allow-host-relay-only-stop`, the MCP host must also call `desktop_stopPath_heartbeat` to keep that stop path live.
 
 `packages/desktop-engine/bunshin/desktop.capability.json` is a bunshin sidecar descriptor for the oneshot bridge. `node scripts/install-bunshin-desktop-capability.mjs` installs it into the agent's capability directory with this host's engine path. Inspection ops are `read`, and input ops are `mutate`, so they need a capability token. Stopping is `read`, so it never needs one.
 
@@ -174,5 +180,5 @@ Release-note paragraph:
 
 ## Not yet
 
-- Screen capture through PipeWire on Wayland, and video.
+- Video, and capture of a single window on Wayland without the ScreenCast portal.
 - A provider-hosted `computer_use_preview` tool; senpi drives the desktop through its own `computer` tool.
