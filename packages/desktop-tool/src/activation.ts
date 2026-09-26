@@ -6,7 +6,7 @@ import type { ComputerSettings } from "./settings.ts";
 /** The `DesktopService` surface the tool, the command, and the activation hook use. */
 export type ComputerService = Pick<
 	DesktopService,
-	"open" | "ensureStopPath" | "call" | "onAudit" | "capabilities" | "stop" | "resume" | "close"
+	"open" | "ensureStopPath" | "call" | "onAudit" | "capabilities" | "stopPathStatus" | "stop" | "resume" | "close"
 >;
 
 export interface ComputerHandleOptions {
@@ -105,6 +105,11 @@ export class ComputerHandle {
 	async close(): Promise<void> {
 		this.#opened = undefined;
 		await this.#service.close();
+	}
+
+	/** Live stop-path state (suspended, reason), or `undefined` when no engine runs (status never starts one). */
+	async stopPathStatus(): Promise<StopPathStatus | undefined> {
+		return this.running ? this.#service.stopPathStatus() : undefined;
 	}
 
 	/** Latches the stop path (user-only, also reachable without a TUI); `undefined` when no engine runs. */
