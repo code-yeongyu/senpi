@@ -3,7 +3,7 @@
 //! task beats the `Global` heartbeat every `HEARTBEAT_INTERVAL_MS` while the
 //! session is open; a closed session takes the path down.
 
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
@@ -13,7 +13,7 @@ use parking_lot::{Condvar, Mutex};
 use senpi_desktop_safety::{
     Chord, StopPathError, StopPathId, StopPathListener, StopSource, Supervisor, HEARTBEAT_INTERVAL_MS,
 };
-use tokio::sync::{oneshot, watch};
+use tokio::sync::watch;
 use zbus::zvariant::serialized::Context;
 use zbus::zvariant::OwnedObjectPath;
 
@@ -82,6 +82,9 @@ impl GlobalShortcutsListener {
     }
 
     /// Opens a session and binds the trigger; returns once bound or refused.
+    /// The bind result arrives on a std channel, so the caller never enters
+    /// the portal runtime: `start` is safe from any thread, including the
+    /// engine's own tokio workers.
     fn arm(&mut self, sup: Arc<Supervisor>, trigger: String) -> Result<(), StopPathError> {
         let runtime = portal_runtime().map_err(|_| unavailable())?;
         let (shutdown, shutdown_rx) = watch::channel(false);
@@ -91,18 +94,18 @@ impl GlobalShortcutsListener {
             changed: Condvar::new(),
             shutdown,
         });
-        let (ready, bound) = oneshot::channel();
+        let (ready, bound) = mpsc::sync_channel(1);
         let task = runtime.spawn(run(Arc::clone(&shared), trigger, ready, shutdown_rx));
-        match runtime.block_on(async { tokio::time::timeout(BIND_TIMEOUT, bound).await }) {
-            Ok(Ok(Ok(()))) => {
+        match bound.recv_timeout(BIND_TIMEOUT) {
+            Ok(Ok(())) => {
                 self.shared = Some(shared);
                 Ok(())
             }
-            Ok(Ok(Err(error))) => {
+            Ok(Err(error)) => {
                 eprintln!("senpi-desktop-backend-wayland: GlobalShortcuts: {error}");
                 Err(unavailable())
             }
-            Ok(Err(_)) | Err(_) => {
+            Err(_) => {
                 task.abort();
                 shared.set_live(false);
                 Err(unavailable())
@@ -155,7 +158,7 @@ impl Drop for GlobalShortcutsListener {
     }
 }
 
-type Ready = oneshot::Sender<Result<(), ashpd::Error>>;
+type Ready = mpsc::SyncSender<Result<(), ashpd::Error>>;
 
 /// The session's whole life: subscribe to `Activated` first so no signal is
 /// missed, open the session, bind, report, then serve until closed.
