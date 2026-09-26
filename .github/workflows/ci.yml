@@ -462,6 +462,12 @@ jobs:
       - name: Build desktop engine
         run: cargo build --release -p senpi-desktop-engine --locked
 
+      # The locator resolves the vendored macOS prebuild first; point it at the engine this job just built.
+      # A byte comparison cannot run here: dependency paths in the binary differ per machine.
+      - name: Use the freshly built engine as the vendored prebuild
+        if: runner.os == 'macOS'
+        run: node packages/desktop-engine/native/check-prebuild-fresh.mjs --update
+
       - name: Desktop engine package tests
         run: bun run --cwd packages/desktop-engine test
 
