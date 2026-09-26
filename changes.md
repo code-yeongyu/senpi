@@ -1,5 +1,25 @@
 # changes — senpi-monorepo root
 
+## MCP stdio facade for the desktop engine (2026-09-27)
+
+### What changed
+
+- `crates/senpi-desktop-engine/src/cli.rs` (new): the command line moved out of `main.rs` unchanged, since `main.rs` was at the 250-line ceiling. It gains `--mcp`.
+- `crates/senpi-desktop-engine/src/mcp/mod.rs`, `crates/senpi-desktop-engine/src/mcp/catalog.rs`, and `crates/senpi-desktop-engine/src/mcp/call.rs` (new): `--mcp` serves MCP (`initialize`, `ping`, `tools/list`, `tools/call`) on stdio. The tools are generated from `engine_schema()`: the public methods plus `desktop.stop` and `desktop.stopPath.status`, each with an object `inputSchema` carrying only the definitions it reaches. `desktop.stopPath.heartbeat` is listed only under `--allow-host-relay-only-stop`. Every call goes through `oneshot::translate` to the same `--serve` daemon, started on demand. An inline capture becomes an image content block, and an engine error becomes an `isError` result with the engine error object unchanged. Unknown or unlisted tools (including resume) are a JSON-RPC `-32602` error and never reach the daemon.
+- `crates/senpi-desktop-engine/src/main.rs`: dispatches `--mcp`.
+
+### Why
+
+- Third-party agent hosts speak MCP; this gives them the desktop engine with no second input path and no way around the stop path (plan todo 49, senpi#2128).
+
+### Why an extension could not handle it
+
+- It is a mode of the standalone engine binary, outside any senpi session.
+
+### Expected merge conflict zones
+
+- None: fork-only crate files.
+
 ## Gate Cargo pins in the root check (2026-09-26)
 
 ### What changed
