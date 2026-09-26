@@ -31,14 +31,15 @@ fn deliverable(id: &str, own: IntegrityRid, kind: EventKind) -> CoreResult<Windo
     }
 }
 
-/// The window a background key chord of `keys` may be posted to.
+/// The window a background key chord of `keys` is posted to: the target's
+/// keyboard focus, after the matrix accepted the target's own class.
 pub(super) fn key_target(id: &str, own: IntegrityRid, keys: &[KeyName]) -> CoreResult<Window> {
     let kind = if keys.len() > 1 || keys.iter().any(|key| key.is_modifier()) {
         EventKind::KeyCombo
     } else {
         EventKind::Keystroke
     };
-    deliverable(id, own, kind)
+    deliverable(id, own, kind).map(Window::keyboard_focus)
 }
 
 fn post(window: Window, message: u32, wparam: WPARAM, lparam: LPARAM) -> CoreResult<()> {
@@ -63,7 +64,7 @@ pub(super) fn post_button_up(window: Window, held: HeldButton) -> CoreResult<()>
 }
 
 pub(super) fn post_text(id: &str, own: IntegrityRid, text: &str) -> CoreResult<()> {
-    let window = deliverable(id, own, EventKind::TextInput)?;
+    let window = deliverable(id, own, EventKind::TextInput)?.keyboard_focus();
     utf16_units(text).try_for_each(|unit| post(window, WM_CHAR, usize::from(unit), 1))
 }
 

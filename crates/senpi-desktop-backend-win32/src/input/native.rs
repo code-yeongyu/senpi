@@ -8,8 +8,8 @@ use senpi_desktop_core::error::{CoreResult, DesktopError};
 use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, VkKeyScanW, MAPVK_VK_TO_VSC};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetCursorPos,
-    SetForegroundWindow,
+    GetClassNameW, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, IsChild,
+    IsWindow, SetCursorPos, SetForegroundWindow, GUITHREADINFO,
 };
 
 use super::keys::Stroke;
@@ -80,6 +80,38 @@ impl Window {
         match usize::try_from(length) {
             Ok(length) if length > 0 => String::from_utf16_lossy(&buffer[..length.min(buffer.len())]),
             Ok(_) | Err(_) => "<unknown>".to_owned(),
+        }
+    }
+
+    /// The window that receives this window's posted keyboard input: its
+    /// thread's focus window when that is this window or a descendant of it
+    /// (a top-level frame such as Notepad's drops `WM_CHAR` posted to the
+    /// frame itself), otherwise this window.
+    pub(super) fn keyboard_focus(self) -> Self {
+        // SAFETY: [FFI] the HWND is opaque; a stale one yields thread id 0.
+        let thread = unsafe { GetWindowThreadProcessId(self.hwnd(), std::ptr::null_mut()) };
+        if thread == 0 {
+            return self;
+        }
+        let size = u32::try_from(std::mem::size_of::<GUITHREADINFO>()).unwrap_or(u32::MAX);
+        // SAFETY: [Uninit] GUITHREADINFO is plain integers and HWNDs, for which
+        // all-zero is a valid value; `cbSize` is set before the call reads it.
+        let mut info: GUITHREADINFO = unsafe { std::mem::zeroed() };
+        info.cbSize = size;
+        // SAFETY: [FFI] `info` is a writable GUITHREADINFO whose `cbSize`
+        // matches its size; a thread without a GUI queue fails and writes nothing.
+        if unsafe { GetGUIThreadInfo(thread, &raw mut info) } == 0 {
+            return self;
+        }
+        let Some(focus) = Self::from_hwnd(info.hwndFocus) else {
+            return self;
+        };
+        // SAFETY: [FFI] both HWNDs are opaque values; `IsChild` only reports
+        // whether the second descends from the first.
+        if focus == self || unsafe { IsChild(self.hwnd(), focus.hwnd()) } != 0 {
+            focus
+        } else {
+            self
         }
     }
 
