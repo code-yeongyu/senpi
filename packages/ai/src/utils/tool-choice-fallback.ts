@@ -31,7 +31,34 @@ function errorMessage(error: unknown): string {
 }
 
 export function isForcedToolChoiceUnsupportedError(error: unknown, sentForcedToolChoice: boolean): boolean {
-	if (!sentForcedToolChoice || extractHttpStatus(error) !== 400) {
+	if (!sentForcedToolChoice) {
+		return false;
+	}
+
+	const status = extractHttpStatus(error);
+	if (status === 404 && isRecord(error) && isRecord(error.error)) {
+		// OpenRouter can remove the allowed provider during tool compatibility filtering,
+		// then report a guardrail 404. Retry without the forced choice, keeping routing policy.
+		const metadata = error.error.metadata;
+		if (!isRecord(metadata) || metadata.failed_routing_step !== "Filter by Guardrails") return false;
+		const funnel = metadata.routing_funnel;
+		if (!Array.isArray(funnel)) return false;
+		return funnel.some((step, index) => {
+			const previous: unknown = funnel[index - 1];
+			return (
+				isRecord(step) &&
+				step.step === "Filter by Tool Compatibility" &&
+				isRecord(previous) &&
+				typeof previous.endpoint_count === "number" &&
+				Number.isFinite(previous.endpoint_count) &&
+				typeof step.endpoint_count === "number" &&
+				Number.isFinite(step.endpoint_count) &&
+				step.endpoint_count >= 0 &&
+				step.endpoint_count < previous.endpoint_count
+			);
+		});
+	}
+	if (status !== 400) {
 		return false;
 	}
 

@@ -1,3 +1,22 @@
+## 2026-09-26 - Recover forced tool choices rejected by OpenRouter routing
+
+### What changed
+
+- `packages/ai/src/utils/tool-choice-fallback.ts`: recognize HTTP 404 only when a forced choice was sent and structured OpenRouter routing metadata shows that tool compatibility removed endpoints before guardrails failed. Reuse the adapters' existing single retry without `tool_choice`; retain all other payload fields.
+- `packages/ai/test/openrouter-tool-choice-routing.test.ts`: offline wire tests through the real OpenAI SDK cover recovery, unchanged routing policy, unforced requests, ordinary/guardrail-only/malformed errors, and a terminal second rejection.
+
+### Why
+
+- The first-turn todo extension forces a named choice. A captured OpenRouter DeepSeek request failed with 27 initial endpoints, 19 after tool compatibility, and a guardrail rejection. Replaying the same payload without only `tool_choice` succeeded on DeepSeek. The existing HTTP 400 classifier never reached its fallback for this routing 404.
+
+### Why an extension could not handle it
+
+- Provider rejection and retry occur inside the adapters, after the request hook. The shared classifier is already their forced-choice compatibility boundary; an extension cannot retry that failed request.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/tool-choice-fallback.ts`: status classification before the existing HTTP 400 text patterns.
+
 ## 2026-09-24 - Forced tool_choice refused under thinking falls back instead of failing (senpi#2121)
 
 ### What changed
