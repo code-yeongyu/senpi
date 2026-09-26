@@ -72,11 +72,17 @@ fn fake_backend(scenario: FakeScenario) -> Box<dyn Backend> {
     Box::new(FakeBackend::new(scenario))
 }
 
-/// The backend crate for the compile target. Windows (todo 30) adds its
-/// `cfg(target_os)` arm here; Wayland (todo 33) fills the Linux Wayland arm.
+/// The backend crate for the compile target. Wayland (todo 33) fills the
+/// Linux Wayland arm.
 #[cfg(target_os = "macos")]
 fn platform_backend(selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
     let backend = senpi_desktop_backend_macos::MacosBackend::new(selector)?;
+    Ok(Box::new(backend))
+}
+
+#[cfg(target_os = "windows")]
+fn platform_backend(selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
+    let backend = senpi_desktop_backend_win32::Win32Backend::new(selector)?;
     Ok(Box::new(backend))
 }
 
@@ -115,7 +121,7 @@ fn platform_backend(selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn platform_backend(_selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
     Err(DesktopError::capture_failed(format!(
         "{} desktop backend not yet ported",
@@ -179,7 +185,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     #[test]
     fn platform_backend_is_not_yet_ported() {
         let error = BackendSelection::Platform

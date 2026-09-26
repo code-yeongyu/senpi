@@ -2740,6 +2740,8 @@ name = "senpi-desktop-backend-win32"
 version = "0.0.0"
 dependencies = [
  "enigo",
+ "image",
+ "senpi-desktop-core",
  "uiautomation",
  "windows-sys 0.61.2",
  "xcap",
@@ -2809,6 +2811,7 @@ dependencies = [
  "parking_lot",
  "senpi-desktop-backend-fake",
  "senpi-desktop-backend-macos",
+ "senpi-desktop-backend-win32",
  "senpi-desktop-backend-x11",
  "senpi-desktop-core",
  "senpi-desktop-safety",
