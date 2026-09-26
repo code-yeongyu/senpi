@@ -194,6 +194,24 @@ for platform in "${PLATFORMS[@]}"; do
         echo "  (no pi-pty prebuild for $pty_host — archive uses pipe fallback)"
     fi
 
+    # Copy the desktop engine executable next to the compiled binary at the sidecar path the
+    # engine locator probes first: native/prebuilds/<host>/senpi-desktop-engine[.exe]. Only the host
+    # prebuild is vendored; other targets ship without it and report native-unavailable.
+    engine_file="senpi-desktop-engine"
+    [[ "$platform" == windows-* ]] && engine_file="senpi-desktop-engine.exe"
+    engine_src="../desktop-engine/native/prebuilds/$pty_host/$engine_file"
+    if [[ -f "$engine_src" ]]; then
+        mkdir -p "$OUTPUT_DIR/$platform/native/prebuilds/$pty_host"
+        cp "$engine_src" "$OUTPUT_DIR/$platform/native/prebuilds/$pty_host/"
+        chmod 0755 "$OUTPUT_DIR/$platform/native/prebuilds/$pty_host/$engine_file"
+        if [[ "$platform" == darwin-* ]] && command -v codesign >/dev/null 2>&1; then
+            codesign --remove-signature "$OUTPUT_DIR/$platform/native/prebuilds/$pty_host/$engine_file" 2>/dev/null || true
+            codesign --force --sign - "$OUTPUT_DIR/$platform/native/prebuilds/$pty_host/$engine_file"
+        fi
+    else
+        echo "  (no desktop engine prebuild for $pty_host — computer use reports native-unavailable)"
+    fi
+
     # Copy the selected architecture's native platform helpers next to the executable.
     native_platform="${platform/windows-/win32-}"
     native_path="native/${native_platform%-*}/prebuilds"

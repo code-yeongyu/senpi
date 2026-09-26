@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,17 @@ afterEach(() => {
 		tempDir = undefined;
 	}
 });
+
+const engineFile = process.platform === "win32" ? "senpi-desktop-engine.exe" : "senpi-desktop-engine";
+const hostEngine = join(repoRoot, "packages", "desktop-engine", "native", "prebuilds", `${process.platform}-${process.arch}`, engineFile);
+
+function placeEngineSidecar(binaryPath) {
+	const sidecar = join(dirname(binaryPath), "native", "prebuilds", `${process.platform}-${process.arch}`, engineFile);
+	mkdirSync(dirname(sidecar), { recursive: true });
+	copyFileSync(hostEngine, sidecar);
+	chmodSync(sidecar, 0o755);
+	return sidecar;
+}
 
 function writeExecutable(path, source) {
 	mkdirSync(dirname(path), { recursive: true });
@@ -91,10 +102,33 @@ if (process.argv.includes("--mode")) {
 `,
 		);
 
+		placeEngineSidecar(binaryPath);
+
 		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8" });
 
 		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /desktop engine: backend=fake abi=senpi-desktop\/1/);
 		assert.equal(readFileSync(workerPath, "utf8"), `"use strict";\n`);
+	});
+
+	it("fails a relocated binary shipped without its desktop engine sidecar", () => {
+		// Given: a binary that passes every other step, with no engine next to it.
+		tempDir = mkdtempSync(join(tmpdir(), "senpi-standalone-smoke-"));
+		const workerPath = join(tempDir, "worker.js");
+		writeFileSync(workerPath, "export {};\n");
+		const binaryPath = join(tempDir, "no-engine-binary");
+		const response = {
+			id: "standalone-smoke-surfaces", type: "response", command: "get_loaded_surfaces", success: true,
+			data: { extensions: [{ name: "codemode", path: "<builtin:codemode>", enabled: true }], mcpServers: [] },
+		};
+		writeExecutable(binaryPath, `#!/usr/bin/env node\nprocess.stdout.write(process.argv.includes("--mode") ? ${JSON.stringify(`${JSON.stringify(response)}\n`)} : "ok");\n`);
+
+		// When
+		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8" });
+
+		// Then: a packaging regression fails the smoke instead of passing silently.
+		assert.notEqual(result.status, 0);
+		assert.match(result.stderr, /desktop engine sidecar missing at .*senpi-desktop-engine/);
 	});
 
 	it("fails a relocated binary whose RPC inventory omits bundled codemode", () => {
