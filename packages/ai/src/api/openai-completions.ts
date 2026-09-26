@@ -1520,6 +1520,24 @@ function addCacheControlToTextContent(
 	return false;
 }
 
+function appendUserMessage(
+	params: ChatCompletionMessageParam[],
+	content: string | ChatCompletionContentPart[],
+	mergeAdjacentUserMessages: boolean,
+): void {
+	const previous = params[params.length - 1];
+	if (!mergeAdjacentUserMessages || previous?.role !== "user") {
+		params.push({ role: "user", content });
+		return;
+	}
+
+	const previousContent: ChatCompletionContentPart[] =
+		typeof previous.content === "string" ? [{ type: "text", text: previous.content }] : previous.content;
+	const currentContent: ChatCompletionContentPart[] =
+		typeof content === "string" ? [{ type: "text", text: content }] : content;
+	previous.content = [...previousContent, ...currentContent];
+}
+
 export function convertMessages(
 	model: Model<"openai-completions">,
 	context: Context,
@@ -1562,6 +1580,7 @@ export function convertMessages(
 		preserveThinking: options.preserveThinking,
 		normalizeSameModelToolCallIds: true,
 	});
+	const mergeAdjacentUserMessages = !model.baseUrl.includes("api.openai.com");
 
 	if (context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
@@ -1584,10 +1603,7 @@ export function convertMessages(
 
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				params.push({
-					role: "user",
-					content: sanitizeSurrogates(msg.content),
-				});
+				appendUserMessage(params, sanitizeSurrogates(msg.content), mergeAdjacentUserMessages);
 			} else {
 				const content: ChatCompletionContentPart[] = msg.content.map((item): ChatCompletionContentPart => {
 					if (item.type === "text") {
@@ -1605,10 +1621,7 @@ export function convertMessages(
 					}
 				});
 				if (content.length === 0) continue;
-				params.push({
-					role: "user",
-					content,
-				});
+				appendUserMessage(params, content, mergeAdjacentUserMessages);
 			}
 		} else if (msg.role === "assistant") {
 			// Some providers don't accept null content, use empty string instead
