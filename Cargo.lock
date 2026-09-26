@@ -2730,7 +2730,15 @@ name = "senpi-desktop-backend-wayland"
 version = "0.0.0"
 dependencies = [
  "ashpd",
+ "futures",
+ "image",
+ "parking_lot",
  "reis",
+ "senpi-desktop-backend-atspi",
+ "senpi-desktop-core",
+ "senpi-desktop-safety",
+ "tempfile",
+ "tokio",
  "xkeysym",
  "zbus",
 ]
@@ -2814,6 +2822,7 @@ dependencies = [
  "parking_lot",
  "senpi-desktop-backend-fake",
  "senpi-desktop-backend-macos",
+ "senpi-desktop-backend-wayland",
  "senpi-desktop-backend-win32",
  "senpi-desktop-backend-x11",
  "senpi-desktop-core",
