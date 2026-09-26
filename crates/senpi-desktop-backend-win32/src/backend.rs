@@ -1,8 +1,8 @@
 //! `Win32Backend`: DPI awareness at construction, capture and enumeration,
-//! and the capabilities that report the engine's integrity level. Window and
-//! desktop input land in todo 31 and UI Automation in todo 32; until then the
-//! capabilities report input and AX unavailable, so the session gate refuses
-//! input before any input method below is reached.
+//! UI Automation, and the capabilities that report the engine's integrity
+//! level. Window and desktop input land in todo 31; until then the
+//! capabilities report input unavailable, so the session gate refuses input
+//! before any input method below is reached.
 
 use image::RgbaImage;
 use senpi_desktop_core::backend::{AxBackend, Backend, DeliveryMode, PointerEvent};
@@ -13,12 +13,14 @@ use senpi_desktop_core::types::{
     CaptureCaps, DesktopCapabilities, DesktopDisplay, DesktopWindow, DisplaySelector, Target,
 };
 
+use crate::ax::Win32Ax;
 use crate::capture::{enable_per_monitor_awareness, Win32Capture};
 use crate::integrity::{self, IntegrityRid};
 
 pub struct Win32Backend {
     capture: Win32Capture,
     integrity: IntegrityRid,
+    ax: Win32Ax,
 }
 
 impl Win32Backend {
@@ -36,7 +38,11 @@ impl Win32Backend {
         })?;
         let capture = Win32Capture::new(display, integrity);
         capture.displays()?;
-        Ok(Self { capture, integrity })
+        Ok(Self {
+            capture,
+            integrity,
+            ax: Win32Ax::new(),
+        })
     }
 
     pub fn capabilities(&self) -> DesktopCapabilities {
@@ -49,6 +55,8 @@ impl Win32Backend {
             display_server: Some("win32".to_string()),
             capture: display_count > 0,
             capture_permission: if display_count > 0 { "granted" } else { "unknown" }.to_string(),
+            ax: true,
+            ax_permission: "granted".to_string(),
             display_count,
             integrity_level: Some(self.integrity.level().label().to_string()),
             ..DesktopCapabilities::unavailable()
@@ -112,6 +120,6 @@ impl Backend for Win32Backend {
     }
 
     fn ax(&mut self) -> Option<&mut dyn AxBackend> {
-        None
+        Some(&mut self.ax)
     }
 }
