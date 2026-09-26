@@ -1,0 +1,110 @@
+name: Desktop Windows QA
+
+# Live Windows QA of senpi-desktop-engine on a hosted runner, which has an interactive desktop
+# (proven first by the interactive-desktop smoke): the win32 backend's live tests, then the QA
+# driver's scenarios against the release engine, each fact read by an independent PowerShell
+# observer. Pull requests of any base run it, so stacked desktop PRs are covered too.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/desktop-windows-qa.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/senpi-desktop-*/**'
+      - 'packages/desktop-*/**'
+      - 'scripts/qa-desktop-windows.ts'
+      - 'scripts/ci/desktop-windows-qa/**'
+      - 'scripts/ci/windows-interactive-desktop-smoke.ps1'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/desktop-windows-qa.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/senpi-desktop-*/**'
+      - 'packages/desktop-*/**'
+      - 'scripts/qa-desktop-windows.ts'
+      - 'scripts/ci/desktop-windows-qa/**'
+      - 'scripts/ci/windows-interactive-desktop-smoke.ps1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-windows-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-desktop-qa:
+    name: Windows interactive-desktop QA
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      RUST_TARGET: x86_64-pc-windows-msvc
+      ENGINE: target/x86_64-pc-windows-msvc/release/senpi-desktop-engine.exe
+      QA_DIR: ${{ runner.temp }}/desktop-windows-qa
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      # SendInput and UI Automation need an interactive window station; fail fast without one.
+      - name: Windows interactive-desktop smoke
+        shell: powershell
+        run: ./scripts/ci/windows-interactive-desktop-smoke.ps1
+
+      - name: Setup Rust target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "${RUST_TARGET}"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: desktop-windows-qa-${{ env.RUST_TARGET }}
+
+      - name: Build desktop engine (msvc x64)
+        shell: bash
+        run: cargo build --release -p senpi-desktop-engine --target "${RUST_TARGET}" --locked
+
+      # The live tests inject real input; one thread keeps one test's keys out of another's window.
+      - name: Win32 backend tests, live ones included
+        shell: bash
+        run: cargo test -p senpi-desktop-backend-win32 --target "${RUST_TARGET}" --locked -- --include-ignored --test-threads=1 --nocapture
+
+      - name: QA driver - every scenario
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:QA_DIR | Out-Null
+          bun scripts/qa-desktop-windows.ts --all --json --engine $env:ENGINE --out "$env:QA_DIR/desktop-windows-qa.jsonl"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: QA driver - an invalid stop chord must fail hotkey-latches with InvalidKey
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          New-Item -ItemType Directory -Force -Path $env:QA_DIR | Out-Null
+          $sabotaged = "$env:QA_DIR/desktop-windows-qa-sabotage.jsonl"
+          bun scripts/qa-desktop-windows.ts --scenario hotkey-latches --sabotage invalid-chord --json --engine $env:ENGINE --out $sabotaged
+          if ($LASTEXITCODE -eq 0) { throw 'the sabotaged hotkey-latches run exited 0' }
+          bun scripts/ci/desktop-windows-qa/expect-sabotage.ts $sabotaged hotkey-latches InvalidKey
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload QA JSONL
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-windows-qa-jsonl
+          path: ${{ runner.temp }}/desktop-windows-qa/*.jsonl
+          if-no-files-found: warn
+          retention-days: 14
