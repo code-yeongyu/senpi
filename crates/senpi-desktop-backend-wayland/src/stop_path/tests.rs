@@ -8,7 +8,7 @@ use senpi_desktop_safety::{Chord, FakeClock, StopPathError, StopPathListener, Su
 use super::global_shortcuts::Control;
 use super::{GlobalShortcutsListener, STOP_SHORTCUT_ID, UNAVAILABLE};
 use crate::test_support::fake_eis::EisConfig;
-use crate::test_support::fake_portal::{fake_bus, FakeBus, Mode, Reply};
+use crate::test_support::fake_portal::{fake_bus, FakeBus, Mode, Reply, Shot};
 use crate::test_support::{env_lock, HANG_GUARD};
 
 const CHORD: &str = "ctrl+alt+shift+escape";
@@ -17,6 +17,7 @@ fn portal(global_shortcuts: Reply) -> &'static FakeBus {
     fake_bus(Mode {
         remote_desktop: Reply::Absent,
         global_shortcuts,
+        screenshot: Shot::Absent,
         eis: EisConfig { keymap: "", group: 0 },
     })
 }

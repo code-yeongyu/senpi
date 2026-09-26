@@ -2,7 +2,7 @@
 //! accessibility and window listing, and honest capabilities. Wayland lets
 //! no client activate or target another surface, so window-targeted input
 //! and raising are refused with the compositor's constraint, and there is no
-//! focus guard. Capture arrives with the Screenshot portal (todo 34).
+//! focus guard. Capture goes through the Screenshot portal.
 
 use image::RgbaImage;
 use senpi_desktop_backend_atspi::{AtSpiAx, AxPermission};
@@ -15,6 +15,7 @@ use senpi_desktop_core::types::{
     CaptureCaps, DesktopCapabilities, DesktopDisplay, DesktopWindow, DisplaySelector, Target,
 };
 
+use crate::capture::PortalCapture;
 use crate::input::Libei;
 use crate::portal::{portal_runtime, remote_desktop, token_cleanup};
 
@@ -32,15 +33,18 @@ pub struct WaylandBackend {
     /// Whether the session bus offers the RemoteDesktop portal; probed once,
     /// only while no libei connection was tried.
     portal_offered: Option<bool>,
-    displays: Vec<DesktopDisplay>,
+    pub(crate) capture: PortalCapture,
 }
 
 impl WaylandBackend {
     /// Read-only construction: removes the orphaned oh-my-pi restore token
     /// and connects AT-SPI, never libei or a portal session.
-    pub fn new(_selector: DisplaySelector) -> Self {
+    pub fn new(selector: DisplaySelector) -> Self {
         token_cleanup::remove_orphaned_remote_desktop_token();
-        Self::with_ax(AtSpiAx::new())
+        Self {
+            capture: PortalCapture::new(selector),
+            ..Self::with_ax(AtSpiAx::new())
+        }
     }
 
     pub(crate) const fn with_ax(ax: Result<AtSpiAx, DesktopError>) -> Self {
@@ -48,7 +52,7 @@ impl WaylandBackend {
             ax,
             input: Input::Untried,
             portal_offered: None,
-            displays: Vec::new(),
+            capture: PortalCapture::new(DisplaySelector::All),
         }
     }
 
@@ -104,24 +108,25 @@ impl Backend for WaylandBackend {
     fn capabilities(&mut self) -> DesktopCapabilities {
         let input_permission = self.input_permission();
         let ax_permission = AxPermission::of(self.ax.as_mut().ok());
+        let capture_permission = self.capture.permission();
         DesktopCapabilities {
             backend: "wayland".to_owned(),
             display_server: Some("wayland".to_owned()),
-            capture: false,
+            capture: self.capture.is_proven(),
             input: input_permission != "unavailable",
             ax: ax_permission.is_granted(),
             background_window_input: false,
             delivery_modes: vec!["background".to_owned()],
-            capture_permission: "unavailable".to_owned(),
+            capture_permission: capture_permission.to_owned(),
             input_permission: input_permission.to_owned(),
             ax_permission: ax_permission.as_str().to_owned(),
-            display_count: u32::try_from(self.displays.len()).unwrap_or(u32::MAX),
+            display_count: u32::try_from(self.capture.displays().len()).unwrap_or(u32::MAX),
             ..DesktopCapabilities::unavailable()
         }
     }
 
     fn displays(&mut self) -> CoreResult<Vec<DesktopDisplay>> {
-        Ok(self.displays.clone())
+        Ok(self.capture.displays())
     }
 
     fn windows(&mut self) -> CoreResult<Vec<DesktopWindow>> {
@@ -131,10 +136,8 @@ impl Backend for WaylandBackend {
         }
     }
 
-    fn capture(&mut self, _target: &Target, _caps: &CaptureCaps) -> CoreResult<(RgbaImage, FrameGeometry)> {
-        Err(DesktopError::capture_failed(
-            "Wayland capture is not available in this engine build",
-        ))
+    fn capture(&mut self, target: &Target, _caps: &CaptureCaps) -> CoreResult<(RgbaImage, FrameGeometry)> {
+        self.capture.capture(target)
     }
 
     fn pointer(
@@ -175,6 +178,8 @@ impl Backend for WaylandBackend {
     }
 }
 
+#[cfg(test)]
+mod capture_tests;
 #[cfg(test)]
 mod eis_tests;
 #[cfg(test)]

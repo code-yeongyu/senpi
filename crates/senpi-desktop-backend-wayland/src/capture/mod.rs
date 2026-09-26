@@ -1,0 +1,157 @@
+//! Wayland capture through the `org.freedesktop.portal.Screenshot` portal,
+//! with no PipeWire (D6: the shipped engine never links libpipewire). The
+//! portal hands back one image of the whole desktop, so there is no window
+//! capture, and the image is the single logical display `wayland-portal-0`
+//! at scale 1: nothing PipeWire-free reports the compositor's outputs or
+//! their scale.
+//!
+//! Capabilities stay honest: `capture` is `true` only after a screenshot
+//! actually came back. Some compositors (GNOME, KDE) show a consent dialog
+//! the first time; wlroots' portal does not.
+
+#[cfg(test)]
+mod live_tests;
+pub mod screenshot_portal;
+
+use std::slice;
+
+use image::RgbaImage;
+use senpi_desktop_core::error::{CoreResult, DesktopError};
+use senpi_desktop_core::frame::FrameGeometry;
+use senpi_desktop_core::types::{DesktopDisplay, DisplaySelector, Target};
+
+use self::screenshot_portal::ShotError;
+use crate::portal::portal_runtime;
+
+/// The one display a portal screenshot describes.
+pub const PORTAL_DISPLAY_ID: &str = "wayland-portal-0";
+
+/// What the Screenshot portal has proven so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Probe {
+    /// Not asked yet.
+    Unknown,
+    /// The portal is served, but no screenshot came back yet.
+    Offered,
+    /// No session bus, no `xdg-desktop-portal`, or no Screenshot backend.
+    Absent,
+    /// The user or compositor refused the last screenshot.
+    Refused,
+    /// A screenshot came back.
+    Granted,
+}
+
+impl Probe {
+    const fn permission(self) -> &'static str {
+        match self {
+            Self::Unknown | Self::Offered => "prompt-or-granted",
+            Self::Absent => "unavailable",
+            Self::Refused => "denied",
+            Self::Granted => "granted",
+        }
+    }
+}
+
+pub struct PortalCapture {
+    selector: DisplaySelector,
+    pub(crate) probe: Probe,
+    display: Option<DesktopDisplay>,
+}
+
+impl PortalCapture {
+    pub const fn new(selector: DisplaySelector) -> Self {
+        Self {
+            selector,
+            probe: Probe::Unknown,
+            display: None,
+        }
+    }
+
+    /// `capturePermission`; reads the portal's `version` once, never takes a
+    /// screenshot.
+    pub fn permission(&mut self) -> &'static str {
+        if self.probe == Probe::Unknown {
+            self.probe = match portal_runtime().map(screenshot_portal::presence) {
+                Ok(Ok(())) => Probe::Offered,
+                Ok(Err(_)) | Err(_) => Probe::Absent,
+            };
+        }
+        self.probe.permission()
+    }
+
+    pub fn is_proven(&self) -> bool {
+        self.probe == Probe::Granted
+    }
+
+    /// The display of the last screenshot; empty before the first one.
+    pub fn displays(&self) -> Vec<DesktopDisplay> {
+        self.display.iter().cloned().collect()
+    }
+
+    /// Takes a portal screenshot of the whole desktop.
+    ///
+    /// # Errors
+    /// `CaptureFailed` for a window target or when the portal is absent or
+    /// fails; `PermissionDenied` when the screenshot is refused;
+    /// `InvalidTarget` when the session selected another display.
+    pub fn capture(&mut self, target: &Target) -> CoreResult<(RgbaImage, FrameGeometry)> {
+        if let Target::Window(id) = target {
+            return Err(DesktopError::capture_failed(format!(
+                "window {id}: the Wayland Screenshot portal captures the whole desktop only; \
+                 capture the desktop instead"
+            )));
+        }
+        self.selected_display_allowed()?;
+        let runtime = portal_runtime()?;
+        if self.probe != Probe::Granted {
+            if let Err(reason) = screenshot_portal::presence(runtime) {
+                self.probe = Probe::Absent;
+                return Err(DesktopError::capture_failed(format!(
+                    "{}: {reason}",
+                    screenshot_portal::UNAVAILABLE
+                )));
+            }
+            self.probe = Probe::Offered;
+        }
+        let image = screenshot_portal::take(runtime).map_err(|error| match error {
+            ShotError::Refused(message) => {
+                self.probe = Probe::Refused;
+                DesktopError::permission_denied(message)
+            }
+            ShotError::Failed(message) => DesktopError::capture_failed(message),
+        })?;
+        self.probe = Probe::Granted;
+        let display = portal_display(image.width(), image.height());
+        let frame = FrameGeometry::for_displays(slice::from_ref(&display));
+        self.display = Some(display);
+        Ok((image, frame))
+    }
+
+    fn selected_display_allowed(&self) -> CoreResult<()> {
+        match &self.selector {
+            DisplaySelector::All => Ok(()),
+            DisplaySelector::Id(id) if id == PORTAL_DISPLAY_ID => Ok(()),
+            DisplaySelector::Id(id) => Err(DesktopError::invalid_target(format!(
+                "Wayland portal display '{id}' is unavailable; use 'all' or '{PORTAL_DISPLAY_ID}'"
+            ))),
+        }
+    }
+}
+
+/// The screenshot as one display at scale 1, logical size = pixel size.
+fn portal_display(width: u32, height: u32) -> DesktopDisplay {
+    DesktopDisplay {
+        id: PORTAL_DISPLAY_ID.to_owned(),
+        name: "Wayland portal screenshot".to_owned(),
+        x: 0,
+        y: 0,
+        width,
+        height,
+        scale: 1.0,
+        pixel_x: 0,
+        pixel_y: 0,
+        pixel_width: width,
+        pixel_height: height,
+        is_primary: true,
+    }
+}
