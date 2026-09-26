@@ -37,9 +37,11 @@ function describeCapabilities(capabilities: DesktopCapabilities | undefined): st
 }
 
 async function status(handle: ComputerHandle): Promise<string> {
+	const stopPath = await handle.stopPathStatus();
 	return [
 		`Computer use: enabled=${handle.enabled} active=${handle.active} engine=${handle.running ? "running" : "not started"}`,
 		`capabilities: ${describeCapabilities(await handle.capabilities())}`,
+		`stop: ${stopPath === undefined ? "n/a (engine not started)" : describeStopPath(stopPath)}`,
 		"permissions: inspection needs computer:read, input and mutation need computer:exec; " +
 			"non-interactive modes block `ask` unless a rule pre-allows the tier",
 	].join("\n");

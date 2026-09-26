@@ -51,6 +51,19 @@ describe("/computer command", HANG_GUARD, () => {
 		}).toEqual({ lifted: true, resumes: 1 });
 	});
 
+	it("reports a latched stop path as suspended in status", async () => {
+		// Given: the user stopped input.
+		const { handle } = desktopFixture();
+		await runComputerCommand("on", handle, hostContext());
+		await runComputerCommand("stop", handle, hostContext());
+
+		// When
+		const text = await runComputerCommand("status", handle, hostContext());
+
+		// Then
+		expect(text).toMatch(/^stop: stopPath=\S+ suspended=true/m);
+	});
+
 	it("latches the stop path through the handle without any TUI", async () => {
 		// Given: an active session and no UI surface at all.
 		const { handle } = desktopFixture();

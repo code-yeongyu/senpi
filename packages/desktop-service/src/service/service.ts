@@ -117,6 +117,11 @@ export class DesktopService {
 		return result;
 	}
 
+	/** Reads the live stop-path state; it never arms or latches anything. */
+	async stopPathStatus(): Promise<StopPathStatus> {
+		return this.#stopPath(await this.#live(), "stopPath.status", {});
+	}
+
 	async stop(): Promise<StopPathStatus> {
 		return this.#stopPath(await this.#live(), "stopPath.stop", { source: "host-relay" });
 	}
