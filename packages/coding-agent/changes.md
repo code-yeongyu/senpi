@@ -1,5 +1,23 @@
 # Local fork changes
 
+## 2026-09-26 - Vitest resolves the desktop packages to source (#2128)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: resolve aliases map `@code-yeongyu/senpi-desktop-{protocol,engine,prelude,service,tool}` to each package's `src/index.ts`.
+
+### Why
+
+- The computer-use builtin reaches all five desktop packages, so any suite that loads the builtin list (the cross-OS terminal job runs `terminal-extension.test.ts` without a workspace build) failed to resolve `@code-yeongyu/senpi-desktop-service`, whose `exports` point at an unbuilt `dist/`.
+
+### Why an extension could not handle it
+
+- Test module resolution is owned by this package's Vitest config, not by any extension.
+
+### Expected merge conflict zones
+
+- LOW: the `resolve.alias` array in `packages/coding-agent/vitest.config.ts`.
+
 ## 2026-09-24 - getAllTools projects ToolDefinition.kernelPrelude (#2128)
 
 ### What changed
