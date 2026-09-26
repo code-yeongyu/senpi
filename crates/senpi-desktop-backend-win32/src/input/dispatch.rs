@@ -83,7 +83,7 @@ impl Win32Input {
         match (target, mode) {
             (Target::Desktop, _) => self.enigo.text(text).map_err(enigo_error),
             (Target::Window(id), DeliveryMode::Foreground) => {
-                self.with_foreground(id, |_| utf16_units(text).try_for_each(system::unicode_unit))
+                self.with_foreground(id, |_| system::unicode_text(utf16_units(text)))
             }
             (Target::Window(id), DeliveryMode::Background) => background::post_text(id, self.integrity, text),
         }

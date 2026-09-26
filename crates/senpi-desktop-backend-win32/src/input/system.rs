@@ -8,8 +8,8 @@ use std::mem::size_of;
 use senpi_desktop_core::backend::MouseButton;
 use senpi_desktop_core::error::{CoreResult, DesktopError};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_KEYUP,
+    KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
     MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
     MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT,
 };
@@ -19,12 +19,20 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 use super::messages::absolute_coordinate;
 
-fn send(event: &INPUT) -> CoreResult<()> {
+/// An unassigned virtual key (no layout or command maps it): the delivery
+/// barrier's sentinel.
+const VK_BARRIER: u16 = 0xE8;
+
+/// Inserts `events` into the system input queue in one call, so no other
+/// input interleaves with them.
+fn send(events: &[INPUT]) -> CoreResult<()> {
     let size = i32::try_from(size_of::<INPUT>()).unwrap_or(i32::MAX);
-    // SAFETY: [FFI] `event` is one fully initialized INPUT that Win32 copies
-    // synchronously; `size` is its exact size.
-    let sent = unsafe { SendInput(1, event, size) };
-    if sent == 1 {
+    let count = u32::try_from(events.len())
+        .map_err(|_| DesktopError::input_failed("too many input events for one SendInput call"))?;
+    // SAFETY: [FFI] `events` is `count` fully initialized INPUTs that Win32
+    // copies synchronously; `size` is the exact size of one.
+    let sent = unsafe { SendInput(count, events.as_ptr(), size) };
+    if sent == count {
         Ok(())
     } else {
         Err(DesktopError::input_failed(format!(
@@ -67,13 +75,38 @@ const fn key_event(vk: u16, scan: u16, flags: u32) -> INPUT {
 
 /// Presses (`down`) or releases virtual key `vk`.
 pub(super) fn key(vk: u16, down: bool) -> CoreResult<()> {
-    send(&key_event(vk, 0, if down { 0 } else { KEYEVENTF_KEYUP }))
+    send(&[key_event(vk, 0, if down { 0 } else { KEYEVENTF_KEYUP })])
 }
 
-/// Types one UTF-16 unit layout-independently (`KEYEVENTF_UNICODE`).
-pub(super) fn unicode_unit(unit: u16) -> CoreResult<()> {
-    send(&key_event(0, unit, KEYEVENTF_UNICODE))?;
-    send(&key_event(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
+/// Types UTF-16 units layout-independently (`KEYEVENTF_UNICODE`), all in
+/// one `SendInput` call.
+pub(super) fn unicode_text(units: impl Iterator<Item = u16>) -> CoreResult<()> {
+    let events = units
+        .flat_map(|unit| {
+            [
+                key_event(0, unit, KEYEVENTF_UNICODE),
+                key_event(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP),
+            ]
+        })
+        .collect::<Vec<_>>();
+    if events.is_empty() {
+        return Ok(());
+    }
+    send(&events)
+}
+
+/// Presses (`down`) or releases the barrier sentinel key.
+pub(super) fn barrier_key(down: bool) -> CoreResult<()> {
+    key(VK_BARRIER, down)
+}
+
+/// Whether the raw input thread has processed a press of the sentinel key
+/// that no release has followed yet: it updates the async key state as it
+/// routes each event, in queue order.
+pub(super) fn barrier_key_down() -> bool {
+    // SAFETY: [FFI] a scalar read of the global async key state.
+    let state = unsafe { GetAsyncKeyState(i32::from(VK_BARRIER)) };
+    state < 0
 }
 
 /// Makes this process the source of the last input event with a zero
@@ -81,7 +114,7 @@ pub(super) fn unicode_unit(unit: u16) -> CoreResult<()> {
 /// succeeds for the process that received the last input event, which an
 /// engine driven over stdio never is on its own.
 pub(super) fn claim_last_input() -> CoreResult<()> {
-    send(&mouse_event(MOUSEEVENTF_MOVE, 0, 0, 0))
+    send(&[mouse_event(MOUSEEVENTF_MOVE, 0, 0, 0)])
 }
 
 /// Moves the cursor to a physical virtual-desktop point.
@@ -105,7 +138,7 @@ pub(super) fn move_to((x, y): (i32, i32)) -> CoreResult<()> {
         ));
     };
     let flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-    send(&mouse_event(flags, 0, dx, dy))
+    send(&[mouse_event(flags, 0, dx, dy)])
 }
 
 /// Presses (`down`) or releases `button` where the cursor is.
@@ -118,7 +151,7 @@ pub(super) fn button(button: MouseButton, down: bool) -> CoreResult<()> {
         (MouseButton::Middle, true) => MOUSEEVENTF_MIDDLEDOWN,
         (MouseButton::Middle, false) => MOUSEEVENTF_MIDDLEUP,
     };
-    send(&mouse_event(flags, 0, 0, 0))
+    send(&[mouse_event(flags, 0, 0, 0)])
 }
 
 /// One wheel event of `delta` (multiples of `WHEEL_DELTA`) on an axis.
@@ -128,5 +161,5 @@ pub(super) fn wheel(horizontal: bool, delta: i32) -> CoreResult<()> {
     } else {
         MOUSEEVENTF_WHEEL
     };
-    send(&mouse_event(flags, delta, 0, 0))
+    send(&[mouse_event(flags, delta, 0, 0)])
 }

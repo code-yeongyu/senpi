@@ -12,6 +12,8 @@ pub mod messages;
 #[cfg(target_os = "windows")]
 mod background;
 #[cfg(target_os = "windows")]
+mod barrier;
+#[cfg(target_os = "windows")]
 mod dispatch;
 #[cfg(target_os = "windows")]
 mod foreground;
