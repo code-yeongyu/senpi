@@ -1,3 +1,22 @@
+## 2026-09-27 - The standalone smoke requires the engine only where a prebuild is vendored (senpi#2128)
+
+### What changed
+
+- `scripts/smoke-standalone-binary.mjs`: the desktop engine sidecar is required only when the repo vendors a prebuild for the host (only `darwin-arm64` today). `SENPI_SMOKE_REQUIRE_DESKTOP_ENGINE=1` or `0` overrides that.
+- `scripts/smoke-standalone-binary.test.mjs`: the sidecar cases use a scripted engine and the override, so they run on every OS.
+
+### Why
+
+- Linux and Windows builds ship without the engine, since only the host prebuild is vendored, so requiring it failed the compiled-extension smoke on Windows and the script tests on Linux.
+
+### Why an extension could not handle it
+
+- Release smoke tooling.
+
+### Expected merge conflict zones
+
+- None.
+
 ## 2026-09-27 - Ship the desktop engine next to the compiled binary and smoke it (senpi#2128)
 
 ### What changed

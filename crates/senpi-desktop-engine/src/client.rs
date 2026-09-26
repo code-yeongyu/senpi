@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 const START_GUARD: Duration = Duration::from_secs(10);
+const BUSY_GUARD: Duration = Duration::from_secs(5);
 const CONNECT_RETRY: Duration = Duration::from_millis(20);
 
 /// `$XDG_RUNTIME_DIR/senpi-desktop/<uid>.sock`, else a private per-user
@@ -57,13 +58,43 @@ fn private_dir(dir: &Path) -> io::Result<u32> {
 /// # Errors
 /// The daemon is not reachable or its reply is not JSON.
 pub fn exchange(endpoint: &str, request: &Value) -> io::Result<Value> {
-    let mut stream = connect(endpoint)?;
+    let stream = connect_until(endpoint, Instant::now() + BUSY_GUARD, &is_busy)?;
+    exchange_over(stream, request)
+}
+
+fn exchange_over(mut stream: impl io::Read + Write, request: &Value) -> io::Result<Value> {
     writeln!(stream, "{request}")?;
     stream.flush()?;
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;
     serde_json::from_str(&line).map_err(io::Error::other)
 }
+
+/// Retries while `retry(error)` holds, until `deadline`.
+fn connect_until(
+    endpoint: &str,
+    deadline: Instant,
+    retry: &dyn Fn(&io::Error) -> bool,
+) -> io::Result<Stream> {
+    loop {
+        match connect(endpoint) {
+            Ok(stream) => return Ok(stream),
+            Err(error) if retry(&error) && Instant::now() < deadline => std::thread::sleep(CONNECT_RETRY),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// A named pipe whose every instance is serving a client (`ERROR_PIPE_BUSY`): the
+/// daemon creates the next instance right after accepting, so a retry gets in.
+fn is_busy(error: &io::Error) -> bool {
+    cfg!(windows) && error.raw_os_error() == Some(231)
+}
+
+#[cfg(unix)]
+type Stream = std::os::unix::net::UnixStream;
+#[cfg(not(unix))]
+type Stream = std::fs::File;
 
 #[cfg(unix)]
 fn connect(endpoint: &str) -> io::Result<std::os::unix::net::UnixStream> {
@@ -81,20 +112,21 @@ fn connect(endpoint: &str) -> io::Result<std::fs::File> {
 /// # Errors
 /// The daemon could not be started or never accepted within the guard.
 pub fn exchange_or_start(endpoint: &str, serve_args: &[String], request: &Value) -> io::Result<Value> {
-    if connect(endpoint).is_err() {
-        start_detached(endpoint, serve_args)?;
-        let deadline = Instant::now() + START_GUARD;
-        while connect(endpoint).is_err() {
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
+    // The connection that finds the daemon carries the request: a separate probe would take a
+    // named pipe's only free instance, and the real connect would then find it busy.
+    let stream = match connect_until(endpoint, Instant::now() + BUSY_GUARD, &is_busy) {
+        Ok(stream) => stream,
+        Err(_) => {
+            start_detached(endpoint, serve_args)?;
+            connect_until(endpoint, Instant::now() + START_GUARD, &|_| true).map_err(|error| {
+                io::Error::new(
                     io::ErrorKind::TimedOut,
-                    format!("daemon did not start on {endpoint}"),
-                ));
-            }
-            std::thread::sleep(CONNECT_RETRY);
+                    format!("daemon did not start on {endpoint}: {error}"),
+                )
+            })?
         }
-    }
-    exchange(endpoint, request)
+    };
+    exchange_over(stream, request)
 }
 
 fn start_detached(endpoint: &str, serve_args: &[String]) -> io::Result<()> {

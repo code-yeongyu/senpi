@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,13 +18,25 @@ afterEach(() => {
 });
 
 const engineFile = process.platform === "win32" ? "senpi-desktop-engine.exe" : "senpi-desktop-engine";
-const hostEngine = join(repoRoot, "packages", "desktop-engine", "native", "prebuilds", `${process.platform}-${process.arch}`, engineFile);
+const requireEngine = { ...process.env, SENPI_SMOKE_REQUIRE_DESKTOP_ENGINE: "1" };
 
+/** A scripted engine at the sidecar path: answers engine.hello and capabilities like the fake backend. */
 function placeEngineSidecar(binaryPath) {
 	const sidecar = join(dirname(binaryPath), "native", "prebuilds", `${process.platform}-${process.arch}`, engineFile);
-	mkdirSync(dirname(sidecar), { recursive: true });
-	copyFileSync(hostEngine, sidecar);
-	chmodSync(sidecar, 0o755);
+	writeExecutable(
+		sidecar,
+		`#!/usr/bin/env node
+let buffer = "";
+process.stdin.on("data", (chunk) => { buffer += chunk; });
+process.stdin.on("end", () => {
+	for (const line of buffer.split("\\n").filter(Boolean)) {
+		const request = JSON.parse(line);
+		const result = request.method === "engine.hello" ? { abi: "senpi-desktop/1" } : { backend: process.env.SENPI_DESKTOP_BACKEND?.startsWith("fake:") ? "fake" : "none" };
+		process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+	}
+});
+`,
+	);
 	return sidecar;
 }
 
@@ -104,7 +116,7 @@ if (process.argv.includes("--mode")) {
 
 		placeEngineSidecar(binaryPath);
 
-		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8" });
+		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8", env: requireEngine });
 
 		assert.equal(result.status, 0, result.stderr);
 		assert.match(result.stdout, /desktop engine: backend=fake abi=senpi-desktop\/1/);
@@ -124,7 +136,7 @@ if (process.argv.includes("--mode")) {
 		writeExecutable(binaryPath, `#!/usr/bin/env node\nprocess.stdout.write(process.argv.includes("--mode") ? ${JSON.stringify(`${JSON.stringify(response)}\n`)} : "ok");\n`);
 
 		// When
-		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8" });
+		const result = spawnSync(process.execPath, [smokeScript, binaryPath, workerPath], { encoding: "utf8", env: requireEngine });
 
 		// Then: a packaging regression fails the smoke instead of passing silently.
 		assert.notEqual(result.status, 0);
