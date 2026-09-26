@@ -120,6 +120,8 @@
 
 ### Fixed
 
+- The eval schema now explains that runs require an explicit language, and invalid language values produce a distinct error from an omitted language; `peek` and `stop` remain language-free ([#1395](https://github.com/code-yeongyu/senpi/issues/1395)).
+
 ### Removed
 
 ## [2026.9.23-2] - 2026-09-23

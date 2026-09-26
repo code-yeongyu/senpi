@@ -7,6 +7,7 @@ import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fa
 const LANGUAGE_TEACHING_ERROR = 'eval run requires language — one of "js", "py", "rb", "jl"';
 const JS_ONLY_LANGUAGE_TEACHING_ERROR = 'eval run requires language — one of "js"';
 const DEFAULT_ENABLED_LANGUAGE_TEACHING_ERROR = 'eval run requires language — one of "js", "py"';
+const INVALID_LANGUAGE_ERROR = "eval run language must be one of: js, py, rb, jl";
 const CODE_TEACHING_ERROR = "eval run requires code — the cell body to execute, verbatim";
 const LANGUAGE_SCHEMA_DESCRIPTION =
 	"REQUIRED for run. Kernel that runs the cell; each language keeps its own persistent state across eval calls.";
@@ -34,15 +35,33 @@ function parseError(params: unknown, enabledLanguages?: readonly EvalLanguage[])
 	throw new Error("expected parseEvalRequest to throw");
 }
 
+function languageError(language: unknown): TypeError {
+	return parseError({ language, code: "return 1", summary: "Evaluate a number" });
+}
+
+describe("eval request language validation", () => {
+	it.each([null, "", "python", 42])("distinguishes invalid language %j from an omission", (language) => {
+		expect(languageError(language).message).not.toBe(languageError(undefined).message);
+	});
+
+	it("rejects an omitted language instead of selecting a default kernel", () => {
+		expect(() => parseEvalRequest({ code: "return 1", summary: "Evaluate a number" })).toThrow(TypeError);
+	});
+
+	it.each(["peek", "stop"])("accepts %s without a language", (action) => {
+		expect(parseEvalRequest({ action, cell_id: "cell-1395" })).toEqual({ action, cell_id: "cell-1395" });
+	});
+});
+
 describe("parseEvalRequest language and code enforcement", () => {
 	it("throws an actionable error when a run omits language", () => {
 		expect(parseError({ code: "return 1", summary: "run without a language" }).message).toBe(LANGUAGE_TEACHING_ERROR);
 	});
 
-	it("throws the same actionable error for an unknown language value", () => {
+	it("throws a distinct actionable error for an unknown language value", () => {
 		expect(
 			parseError({ language: "python", code: "print(1)", summary: "run with an unknown language" }).message,
-		).toBe(LANGUAGE_TEACHING_ERROR);
+		).toBe(INVALID_LANGUAGE_ERROR);
 	});
 
 	it("names language first when a run omits both language and code", () => {
@@ -89,7 +108,7 @@ describe("eval tool execute error path", () => {
 			undefined,
 			fakeExtensionContext(),
 		);
-		await expect(call).rejects.toThrowError(TypeError);
+		await expect(call).rejects.toThrow(TypeError);
 		await expect(call).rejects.toThrow(JS_ONLY_LANGUAGE_TEACHING_ERROR);
 	});
 });

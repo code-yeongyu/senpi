@@ -30,7 +30,9 @@ export function parseEvalRequest(
 	}
 	if (params.action !== undefined && params.action !== "run")
 		throw new TypeError(`Unknown eval action "${String(params.action)}"`);
-	if (!isEvalLanguage(params.language)) throw new TypeError(evalRunRequiresLanguageMessage(enabledLanguages));
+	if (params.language === undefined) throw new TypeError(evalRunRequiresLanguageMessage(enabledLanguages));
+	if (!isEvalLanguage(params.language))
+		throw new TypeError(`eval run language must be one of: ${evalLanguageOrder.join(", ")}`);
 	if (typeof params.code !== "string")
 		throw new TypeError("eval run requires code — the cell body to execute, verbatim");
 	const summary = normalizeEvalSummary(params.summary);

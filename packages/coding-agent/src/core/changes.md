@@ -180,8 +180,6 @@ The active tool list, the base system prompt and the next-turn context snapshot 
 
 - LOW: the `TimingLabel` union in `timings.ts`; the import block, `switchSession`, and `teardownCurrent` in `agent-session-runtime.ts`.
 
-||||||| parent of 1f032c2b4f (perf(coding-agent): persist session summaries in a per-directory index (#2087))
-
 ## 2026-09-24 - configuration_update follows a catalog capability flag (senpi#2094)
 
 ### What changed
