@@ -7,9 +7,10 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const HANG_GUARD_MS = 30_000;
-// The native backend each host's engine dispatches to when no backend is forced; hosts whose
-// backend is not ported yet report "unavailable".
-const NATIVE_BACKEND = { darwin: "quartz" };
+// The native backend each host's engine dispatches to when no backend is forced. Linux picks X11 or
+// Wayland from DISPLAY/WAYLAND_DISPLAY, which a headless CI runner does not set, so it reports
+// "unavailable" there.
+const NATIVE_BACKEND = { darwin: "quartz", win32: "win32" };
 const expectedNativeBackend = NATIVE_BACKEND[process.platform] ?? "unavailable";
 
 if (process.argv.length !== 4) {
