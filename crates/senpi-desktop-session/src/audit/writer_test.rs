@@ -7,7 +7,7 @@ use senpi_desktop_core::types::DesktopSessionOptions;
 use serde_json::{json, Value};
 
 use super::{append, append_rotating};
-use crate::audit::{take_warnings, AuditRecord, AuditStatus};
+use crate::audit::{AuditRecord, AuditStatus};
 use crate::request::Op;
 use crate::test_support::{click_window, harness};
 
@@ -157,6 +157,8 @@ fn audit_rotates_to_numbered_sibling_at_size_cap() {
 #[test]
 fn audit_read_only_dir_does_not_fail_the_action() {
     use std::os::unix::fs::PermissionsExt;
+
+    use crate::audit::take_warnings;
 
     // Given
     let dir = tempfile::tempdir().expect("tempdir");
