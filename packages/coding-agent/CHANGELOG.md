@@ -8,6 +8,8 @@
 
 ### Changed
 
+- npm, pnpm, Yarn, and npx installs now run on Bun when Bun 1.4.0 or newer is installed, like `bun add -g` installs already did. `SENPI_RUNTIME=node` keeps them on Node.js. ([#2157](https://github.com/code-yeongyu/senpi/issues/2157))
+
 ### Fixed
 
 ### Removed

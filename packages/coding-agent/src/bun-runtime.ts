@@ -1,15 +1,17 @@
 /**
- * Runtime selection for a CLI that was installed with `bun install -g`.
+ * Runtime selection for an installed CLI.
  *
  * `bun install -g` writes `~/.bun/bin/senpi` as a symlink into
  * `<BUN_ROOT>/install/global/node_modules/...`, but the launcher still starts the script with
- * whatever interpreter resolves the shebang — Node. A user who chose Bun then silently runs on
- * Node, losing Bun's startup time and its runtime APIs. This module decides, from injected
- * facts only, whether the process should hand itself to Bun.
+ * whatever interpreter resolves the shebang — Node. npm, pnpm, yarn, and npx installs start on
+ * Node too, even on a machine that has Bun. Either way the user silently loses Bun's startup time
+ * and its runtime APIs. This module decides, from injected facts only, whether the process should
+ * hand itself to Bun.
  *
  * Everything here is pure and injectable so the decision can be tested without touching the
  * host PATH or the real `~/.bun` tree; `cli.ts` owns the single impure call site.
  */
+import { spawnSync } from "node:child_process";
 import { homedir as osHomedir } from "node:os";
 import { posix, win32 } from "node:path";
 
@@ -26,10 +28,21 @@ export interface BunRuntimeOptions {
 	readonly platform: NodeJS.Platform;
 	readonly exists: (path: string) => boolean;
 	readonly realpath: (path: string) => string;
+	/** `<bun> --version` output, or `undefined` when the binary cannot be run. */
+	readonly bunVersion: (bunPath: string) => string | undefined;
 }
 
+/** Oldest Bun release a non-Bun install is handed to; older releases miss runtime APIs senpi uses. */
+export const MIN_BUN_VERSION = "1.4.0";
+
 /** Why the process stayed on its current runtime. Surfaced for tests and diagnostics. */
-export type StayReason = "already-bun" | "runtime-pinned-node" | "inspector" | "bun-not-found" | "not-bun-install";
+export type StayReason =
+	| "already-bun"
+	| "runtime-pinned-node"
+	| "inspector"
+	| "bun-not-found"
+	| "bun-too-old"
+	| "not-bun-install";
 
 export type BunReexecDecision =
 	| { readonly action: "stay"; readonly reason: StayReason }
@@ -103,6 +116,27 @@ export function isUnderBunGlobalTree(scriptRealPath: string, options: BunRuntime
 	return false;
 }
 
+/**
+ * Report whether the executed script belongs to an installed package (npm, pnpm, yarn, npx, or a
+ * project-local install), as opposed to a source checkout. Only installed packages are handed to a
+ * discovered Bun: a checkout run on Node is a developer's deliberate choice.
+ */
+export function isInstalledPackageScript(scriptRealPath: string): boolean {
+	return normalize(scriptRealPath).includes("/node_modules/");
+}
+
+/** True when `version` (e.g. `1.4.2`, `1.5.0-canary.3`) is at least {@link MIN_BUN_VERSION}. */
+export function bunVersionSatisfies(version: string | undefined): boolean {
+	const actual = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
+	const minimum = /^(\d+)\.(\d+)\.(\d+)/.exec(MIN_BUN_VERSION);
+	if (!actual || !minimum) return false;
+	for (let index = 1; index <= 3; index++) {
+		const difference = Number(actual[index]) - Number(minimum[index]);
+		if (difference !== 0) return difference > 0;
+	}
+	return true;
+}
+
 /** Executable name for the platform, e.g. `bun` or `bun.exe`. */
 function bunExecutableName(options: BunRuntimeOptions): string {
 	return options.platform === "win32" ? "bun.exe" : "bun";
@@ -172,7 +206,9 @@ function readRuntimePin(options: BunRuntimeOptions): RuntimeName | undefined {
  * 3. an inherited Inspector option — a debugger session owns a Node socket, keep it;
  * 4. `SENPI_RUNTIME=bun` with Bun installed — explicit opt-in;
  * 5. the script lives in Bun's global install tree with Bun installed — the install implies it;
- * 6. otherwise stay.
+ * 6. any other installed package with Bun >= {@link MIN_BUN_VERSION} — a machine that has a
+ *    current Bun runs senpi on it, whichever package manager installed it;
+ * 7. otherwise stay (source checkouts, no Bun, or an older Bun).
  */
 export function resolveBunReexec(input: BunReexecInput): BunReexecDecision {
 	if (input.versions.bun !== undefined) {
@@ -185,15 +221,32 @@ export function resolveBunReexec(input: BunReexecInput): BunReexecDecision {
 	if (input.hasInheritedInspectorOption) {
 		return { action: "stay", reason: "inspector" };
 	}
-	const wantsBun = pinned === "bun" || isUnderBunGlobalTree(input.scriptRealPath, input.options);
-	if (!wantsBun) {
+	const trustsInstalledBun = pinned === "bun" || isUnderBunGlobalTree(input.scriptRealPath, input.options);
+	if (!trustsInstalledBun && !isInstalledPackageScript(input.scriptRealPath)) {
 		return { action: "stay", reason: "not-bun-install" };
 	}
 	const bunPath = findBunBinary(input.options);
 	if (bunPath === undefined) {
 		return { action: "stay", reason: "bun-not-found" };
 	}
+	// A pin or a bun-global install already proved its Bun; any other install probes it once.
+	if (!trustsInstalledBun && !bunVersionSatisfies(input.options.bunVersion(bunPath))) {
+		return { action: "stay", reason: "bun-too-old" };
+	}
 	return { action: "reexec", bunPath };
+}
+
+/** Run `<bun> --version`; any failure (missing, not executable, timeout) means "unknown". */
+export function readBunVersion(bunPath: string): string | undefined {
+	try {
+		const result = spawnSync(bunPath, ["--version"], { encoding: "utf8", timeout: 5_000, windowsHide: true });
+		if (result.status !== 0) return undefined;
+		const version = result.stdout.trim();
+		return version === "" ? undefined : version;
+	} catch {
+		// Node throws synchronously for a batch file spawned without a shell (spawn EINVAL).
+		return undefined;
+	}
 }
 
 /** Build the default, process-backed options for the real CLI entry point. */
@@ -201,5 +254,12 @@ export function processBunRuntimeOptions(
 	exists: (path: string) => boolean,
 	realpath: (path: string) => string,
 ): BunRuntimeOptions {
-	return { env: process.env, homedir: osHomedir(), platform: process.platform, exists, realpath };
+	return {
+		env: process.env,
+		homedir: osHomedir(),
+		platform: process.platform,
+		exists,
+		realpath,
+		bunVersion: readBunVersion,
+	};
 }

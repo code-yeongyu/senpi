@@ -1,3 +1,21 @@
+## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
+
+### What changed
+
+- `scripts/coding-agent-consumer.mjs`: the consumer smoke env pins `SENPI_RUNTIME: "node"`.
+
+### Why
+
+- An installed CLI now re-execs under any Bun 1.4.0+ on PATH, which would silently turn the Node lane of the smoke into a Bun run. Under a Bun runtime the pin is inert (`already-bun` wins).
+
+### Why an extension could not handle it
+
+- Release tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `env` literal in `smokeTestCodingAgentConsumer`.
+
 ## 2026-09-25 - The published tarball leaves out never-published workspaces nothing shipped reaches (senpi#2141)
 
 ### What changed
