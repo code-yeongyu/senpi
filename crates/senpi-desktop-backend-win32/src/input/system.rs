@@ -76,6 +76,14 @@ pub(super) fn unicode_unit(unit: u16) -> CoreResult<()> {
     send(&key_event(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
 }
 
+/// Makes this process the source of the last input event with a zero
+/// relative mouse move (no motion, no button). `SetForegroundWindow` only
+/// succeeds for the process that received the last input event, which an
+/// engine driven over stdio never is on its own.
+pub(super) fn claim_last_input() -> CoreResult<()> {
+    send(&mouse_event(MOUSEEVENTF_MOVE, 0, 0, 0))
+}
+
 /// Moves the cursor to a physical virtual-desktop point.
 pub(super) fn move_to((x, y): (i32, i32)) -> CoreResult<()> {
     // SAFETY: [FFI] `GetSystemMetrics` takes a scalar index and has no
