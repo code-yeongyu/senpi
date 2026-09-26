@@ -17,8 +17,9 @@ use crate::Win32Backend;
 const WINDOW_DEADLINE: Duration = Duration::from_secs(30);
 
 /// A Notepad editing a scratch file; dropping it (also while a failed
-/// assertion unwinds) ends Notepad and removes the file.
-struct Notepad {
+/// assertion unwinds) ends Notepad and removes the file. Shared with the
+/// input live tests.
+pub(crate) struct Notepad {
     child: Child,
     path: PathBuf,
     /// The window's owning process: packaged Notepad hands the document to
@@ -27,8 +28,9 @@ struct Notepad {
 }
 
 impl Notepad {
-    fn open() -> Self {
-        let path = std::env::temp_dir().join(format!("senpi-uia-live-{}.txt", std::process::id()));
+    /// `tag` keeps the scratch files of concurrently running tests apart.
+    pub(crate) fn open(tag: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("senpi-{tag}-live-{}.txt", std::process::id()));
         std::fs::write(&path, "senpi uia live").unwrap();
         let child = Command::new("notepad.exe").arg(&path).spawn().unwrap();
         Self {
@@ -40,7 +42,7 @@ impl Notepad {
 
     /// Notepad's document window, found by the scratch file's name in its
     /// title.
-    fn wait_for_window(&mut self) -> DesktopWindow {
+    pub(crate) fn wait_for_window(&mut self) -> DesktopWindow {
         let name = self.path.file_name().unwrap().to_string_lossy().into_owned();
         let backend = Win32Backend::new(DisplaySelector::All).unwrap();
         let started = Instant::now();
@@ -86,7 +88,7 @@ impl Drop for Notepad {
 #[test]
 #[ignore = "live: needs an interactive Windows desktop and notepad.exe"]
 fn uia_snapshot_of_notepad_has_document() {
-    let mut notepad = Notepad::open();
+    let mut notepad = Notepad::open("uia");
     let window = notepad.wait_for_window();
     let mut ax = Win32Ax::new();
     let mut registry = AxRegistry::default();
