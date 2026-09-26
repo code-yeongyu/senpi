@@ -217,7 +217,7 @@ impl Worker {
                 .as_ref()
                 .is_some_and(|options| options.allow_host_relay_only_stop),
         };
-        let input_granted = self.refresh_capabilities().input_permission == "granted";
+        let input_granted = input_may_proceed(&self.refresh_capabilities().input_permission);
         let lock = match self.backend().and_then(|backend| backend.screen_locked()) {
             Ok(true) => LockState::Locked,
             Ok(false) => LockState::Unlocked,
@@ -239,6 +239,15 @@ impl Worker {
     }
 }
 
+/// `prompt-or-granted` (Wayland before the first input) lets the action
+/// through: the RemoteDesktop portal asks the user when the first input
+/// connects libei, and a refusal there fails the action itself.
+fn input_may_proceed(input_permission: &str) -> bool {
+    matches!(input_permission, "granted" | "prompt-or-granted")
+}
+
+#[cfg(test)]
+mod permission_tests;
 #[cfg(test)]
 mod stop_tests;
 #[cfg(test)]
