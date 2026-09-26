@@ -87,6 +87,8 @@ These variables are read by Pi itself:
 | `PI_PACKAGE_DIR` | Override the package directory, useful for Nix/Guix store paths |
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package updates, and install/update telemetry |
 | `PI_SKIP_VERSION_CHECK` | Disable the `pi.dev` latest-version request |
+| `SENPI_RUNTIME` | `node` keeps senpi on Node.js and hides the Node.js runtime notice; `bun` re-execs under any installed Bun. Without it, a Bun-global install runs on its Bun and any other installed package runs on a discovered Bun 1.4.0 or newer |
+| `PI_SKIP_RUNTIME_NOTICE` | Hide the one-time "Running on Node.js" notice without changing the runtime |
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no` |
 | `PI_CACHE_RETENTION` | Set to `long` to opt into extended provider prompt caching where supported; direct Anthropic defaults to 5 minutes |
 | `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |

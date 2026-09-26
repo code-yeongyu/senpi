@@ -95,6 +95,8 @@ export function smokeTestCodingAgentConsumer(directory, runtime = process.execPa
 		PI_CODING_AGENT_DIR: join(home, ".pi", "agent"),
 		PI_OFFLINE: "1",
 		PI_TELEMETRY: "0",
+		// The installed CLI re-execs under any bun >= 1.4 on PATH; pin the runtime this smoke names.
+		SENPI_RUNTIME: "node",
 	};
 	for (const name of ["SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"]) {
 		if (process.env[name]) env[name] = process.env[name];

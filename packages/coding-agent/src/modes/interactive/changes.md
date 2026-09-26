@@ -1,3 +1,23 @@
+## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `init()` calls `maybeShowRuntimeNotice` right after the risky-model and subscription-auth startup warnings, rendering through `showNoticeBox`.
+- `packages/coding-agent/src/modes/interactive/runtime-notice.ts` (new, pure): `runtimeNoticeSkipReason` hides the notice on Bun, for a user Node pin (`SENPI_RUNTIME=node`; under `OMO_NATIVE=1` only `OMO_RUNTIME=node`, because the OmO Native launcher always forwards its own runtime as `SENPI_RUNTIME`), for an inherited `--inspect*` option, for `*_SKIP_RUNTIME_NOTICE`, and when the engine version was already shown. `buildRuntimeNotice` names the Bun step (install, or `bun upgrade` below 1.4.0) and a clean reinstall (`npm uninstall -g` / `pnpm remove -g` / `yarn global remove`, then `bun add -g`) for senpi or for the brand's update package and dist-tag.
+- `packages/coding-agent/src/modes/interactive/runtime-notice-presenter.ts` (new): reads the process facts, probes Bun through `bun-runtime.ts`, and records the shown engine version in `<agentDir>/runtime-notice.json`.
+
+### Why
+
+- A process still on Node.js after the launchers' Bun hand-off is one the user can fix (no Bun, an old Bun, or a Node-managed install), and nothing told them.
+
+### Why an extension could not handle it
+
+- The notice must appear with the other host-owned startup warnings, before extensions bind and for every brand of the engine.
+
+### Expected merge conflict zones
+
+- LOW: one import beside `risky-main-model-warning.ts` and one call after `maybeWarnAboutAnthropicSubscriptionAuth()` in `init()`.
+
 ## 2026-09-24 - Show switch timings on "Resumed session" under TIMING (senpi#2087)
 
 ### What changed

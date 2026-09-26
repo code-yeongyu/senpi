@@ -6,7 +6,11 @@
 
 ### Added
 
+- The interactive UI shows a one-time "Running on Node.js" notice (once per version) when senpi or OmO Native starts on Node.js. It says how to install or upgrade Bun and gives the clean reinstall command for the package manager that installed it, for example `npm uninstall -g @code-yeongyu/senpi && bun add -g --ignore-scripts @code-yeongyu/senpi`. Set `SENPI_RUNTIME=node` (`OMO_RUNTIME=node` for OmO Native) to stay on Node.js without it, or `SENPI_SKIP_RUNTIME_NOTICE=1` to hide it. ([#2157](https://github.com/code-yeongyu/senpi/issues/2157))
+
 ### Changed
+
+- npm, pnpm, Yarn, and npx installs now run on Bun when Bun 1.4.0 or newer is installed, like `bun add -g` installs already did. `SENPI_RUNTIME=node` keeps them on Node.js. ([#2157](https://github.com/code-yeongyu/senpi/issues/2157))
 
 ### Fixed
 

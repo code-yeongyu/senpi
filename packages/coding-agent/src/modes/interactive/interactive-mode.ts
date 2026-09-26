@@ -249,6 +249,7 @@ import {
 } from "./provider-error-presentation.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
 import { isRiskyMainModel, RISKY_MAIN_MODEL_WARNING } from "./risky-main-model-warning.ts";
+import { maybeShowRuntimeNotice } from "./runtime-notice-presenter.ts";
 import { DEFAULT_SMOOTH_FPS, StreamingRevealController } from "./streaming-reveal.ts";
 import {
 	getAvailableThemes,
@@ -1825,6 +1826,7 @@ export class InteractiveMode {
 
 		this.showRiskyMainModelWarning(this.session.model);
 		void this.maybeWarnAboutAnthropicSubscriptionAuth();
+		maybeShowRuntimeNotice((spec) => this.showNoticeBox(spec));
 
 		// Process initial messages
 		if (initialMessage) {
