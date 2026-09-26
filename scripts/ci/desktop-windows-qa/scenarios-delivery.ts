@@ -1,6 +1,7 @@
-// Delivery scenarios: foreground typing restores the previous front window, background PostMessage
-// is refused for a toolkit class outside the matrix (Notepad) and lands without a focus change for
-// one inside it (WPF). The target text and the foreground come from the independent observer.
+// Delivery scenarios: foreground typing restores the previous front window; background typing lands
+// in Notepad's document without a focus change, and is refused with BackgroundUnavailable for a WPF
+// window (the oh-my-pi delivery matrix: WPF ignores posted keyboard input). The target text and the
+// foreground come from the independent observer.
 import { type Engine, errorCode } from "./engine.ts";
 import type { QaWindow } from "./fixtures.ts";
 import { type Observation, observe, observeUntil, windowText } from "./observer.ts";
@@ -56,15 +57,17 @@ export const backgroundPostMessageNotepad: Scenario = {
 			const { target, front, before } = await notepadBehindNotepad(context, engine, "bg");
 			const text = marker("bg");
 			const reply = await engine.exec("typeText", { target: target.id, text, opts: { deliveryMode: "background" } });
-			const after = await observe([target.id, front.id]);
+			const after = await observeUntil([target.id, front.id], (seen) => windowText(seen, target.id).includes(text));
 			const landed = windowText(after, target.id).includes(text);
 			return verdict({
 				checks: [
 					["front-raised-before", String(before.foreground) === front.id],
-					// An accepted post that never lands is the silent drop the matrix exists to prevent.
-					["refused-background-unavailable", errorCode(reply) === "BackgroundUnavailable"],
-					["text-unchanged", windowText(after, target.id) === windowText(before, target.id)],
+					["type-succeeded", reply.error === undefined],
+					["text-absent-before", !windowText(before, target.id).includes(text)],
+					// An accepted post that never reaches the document is a silent drop.
+					["text-landed-in-document", landed],
 					["foreground-unchanged", after.foreground === before.foreground],
+					["cursor-unchanged", after.cursor.x === before.cursor.x && after.cursor.y === before.cursor.y],
 				],
 				facts: {
 					target: target.id,
@@ -90,14 +93,16 @@ export const backgroundPostMessageWpf: Scenario = {
 			const before = await bringToFront(engine, front, [wpf.id]);
 			const text = marker("wpf");
 			const reply = await engine.exec("typeText", { target: wpf.id, text, opts: { deliveryMode: "background" } });
-			const after = await observeUntil([wpf.id, front.id], (seen) => windowText(seen, wpf.id).includes(text));
+			const after = await observe([wpf.id, front.id]);
 			const wpfClass = before.windows[wpf.id]?.class ?? "";
+			const message = reply.error?.message ?? "";
 			return verdict({
 				checks: [
 					["wpf-class", wpfClass.startsWith("HwndWrapper[")],
 					["front-raised-before", String(before.foreground) === front.id],
-					["type-succeeded", reply.error === undefined],
-					["text-landed", windowText(after, wpf.id).includes(text)],
+					["refused-background-unavailable", errorCode(reply) === "BackgroundUnavailable"],
+					["refusal-names-wpf", message.includes("WPF") && message.includes(wpfClass)],
+					["text-unchanged", windowText(after, wpf.id) === windowText(before, wpf.id)],
 					["foreground-unchanged", after.foreground === before.foreground],
 				],
 				facts: {
