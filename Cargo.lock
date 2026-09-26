@@ -2753,7 +2753,10 @@ version = "0.0.0"
 dependencies = [
  "image",
  "libc",
+ "parking_lot",
+ "senpi-desktop-backend-atspi",
  "senpi-desktop-core",
+ "senpi-desktop-safety",
  "x11rb",
  "xkeysym",
 ]

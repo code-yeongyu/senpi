@@ -1,7 +1,6 @@
-//! `X11Capture` and `X11Backend` capabilities against the in-memory server,
+//! `X11Capture` against the in-memory server,
 //! whose root pixel at `(x, y)` is `rgb(x & 0xff, y & 0xff, 0x7f)`.
 
-use senpi_desktop_core::backend::Backend;
 use senpi_desktop_core::error::ErrorCode;
 use senpi_desktop_core::frame::FrameGeometry;
 use senpi_desktop_core::types::{DesktopDisplay, DesktopWindow, DisplaySelector, Target};
@@ -10,7 +9,6 @@ use x11rb::protocol::xproto::AtomEnum;
 use super::fake::{viewable, FakeServer};
 use super::image::RootRect;
 use super::X11Capture;
-use crate::X11Backend;
 
 fn root_pixel(x: u8, y: u8) -> [u8; 4] {
     [x, y, 0x7f, 255]
@@ -117,42 +115,4 @@ fn an_unknown_window_id_is_window_not_found() {
     let error = capture.capture(&Target::Window("404".into())).unwrap_err();
 
     assert_eq!(error.code, ErrorCode::WindowNotFound);
-}
-
-#[test]
-fn capabilities_report_capture_truth_and_withhold_input_until_it_is_wired() {
-    let capture = X11Capture::with_server(dual_head(), DisplaySelector::All).unwrap();
-    let mut backend = X11Backend::with_capture(capture, Some(":99".into()));
-
-    let caps = Backend::capabilities(&mut backend);
-
-    let summary = (
-        caps.backend.as_str(),
-        caps.display_server.as_deref(),
-        caps.capture,
-        caps.capture_permission.as_str(),
-        caps.display_count,
-    );
-    assert_eq!(summary, ("x11", Some(":99"), true, "granted", 2));
-    assert_ne!(
-        caps.input_permission, "granted",
-        "the session gate refuses input unless granted"
-    );
-    assert_eq!(
-        (caps.input, caps.ax, caps.background_window_input),
-        (false, false, false)
-    );
-}
-
-#[test]
-fn capabilities_report_capture_unavailable_when_the_display_is_gone() {
-    let capture = X11Capture::with_server(dual_head(), DisplaySelector::Id("DP-9".into())).unwrap();
-    let mut backend = X11Backend::with_capture(capture, None);
-
-    let caps = Backend::capabilities(&mut backend);
-
-    assert_eq!(
-        (caps.capture, caps.capture_permission.as_str(), caps.display_count),
-        (false, "unavailable", 0)
-    );
 }
