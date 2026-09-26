@@ -1,9 +1,9 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { createRequire, isBuiltin } from "node:module";
 import { dirname, extname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "es-module-lexer/js";
-import { isCommonJsFile, rewriteCommonJsImport } from "./bun-extension-commonjs.ts";
+import { isCommonJsFile, isEsmByPackageType, rewriteCommonJsImport } from "./bun-extension-commonjs.ts";
 import { ExtensionSourceError } from "./bun-extension-error.ts";
 import {
 	type CommonJsBody,
@@ -25,6 +25,94 @@ declare const Bun: {
 		readonly define: Readonly<Record<string, string>>;
 	}) => { transformSync(source: string): string };
 };
+
+function skipTrivia(source: string, index: number): { readonly index: number; readonly hasLineTerminator: boolean } {
+	let hasLineTerminator = false;
+	while (index < source.length) {
+		const char = source[index];
+		if (char === "\r" || char === "\n" || char === "\u2028" || char === "\u2029") {
+			hasLineTerminator = true;
+			index += 1;
+			continue;
+		}
+		if (char !== undefined && /\s/u.test(char)) {
+			index += 1;
+			continue;
+		}
+		if (char === "/" && source[index + 1] === "/") {
+			index += 2;
+			while (index < source.length && !/[\r\n\u2028\u2029]/u.test(source[index] ?? "")) index += 1;
+			continue;
+		}
+		if (char === "/" && source[index + 1] === "*") {
+			index += 2;
+			while (index < source.length) {
+				const commentChar = source[index];
+				if (commentChar === "\r" || commentChar === "\n" || commentChar === "\u2028" || commentChar === "\u2029")
+					hasLineTerminator = true;
+				if (commentChar === "*" && source[index + 1] === "/") {
+					index += 2;
+					break;
+				}
+				index += 1;
+			}
+			continue;
+		}
+		break;
+	}
+	return { index, hasLineTerminator };
+}
+
+function stringLiteralEnd(source: string, index: number): number | undefined {
+	const quote = source[index];
+	if (quote !== '"' && quote !== "'") return undefined;
+	for (index += 1; index < source.length; index += 1) {
+		const char = source[index];
+		if (char === "\\") {
+			index += 1;
+			if (source[index] === "\r" && source[index + 1] === "\n") index += 1;
+			continue;
+		}
+		if (char === quote) return index + 1;
+		if (char === "\r" || char === "\n") return undefined;
+	}
+	return undefined;
+}
+
+function isStringExpressionContinuation(source: string, index: number): boolean {
+	const char = source[index];
+	if (char === undefined) return false;
+	if (char === "+" || char === "-") return source[index + 1] !== char;
+	if (char === "!") return source[index + 1] === "=";
+	if ("([.`?*/%&|^<>=,:".includes(char)) return true;
+	return /^(?:in|instanceof)(?![$_\p{ID_Continue}\\\u200c\u200d])/u.test(source.slice(index));
+}
+
+/** Whether the original CommonJS source opts into strict mode with a directive prologue. */
+function hasUseStrictDirective(source: string): boolean {
+	let index = 0;
+	if (source.startsWith("#!")) {
+		const lineEnd = source.indexOf("\n");
+		index = lineEnd === -1 ? source.length : lineEnd + 1;
+	}
+	for (;;) {
+		index = skipTrivia(source, index).index;
+		const start = index;
+		const end = stringLiteralEnd(source, index);
+		if (end === undefined) return false;
+		const strict = source.slice(start, end) === '"use strict"' || source.slice(start, end) === "'use strict'";
+		const after = skipTrivia(source, end);
+		if (source[after.index] === ";") {
+			if (strict) return true;
+			index = after.index + 1;
+			continue;
+		}
+		if (strict && (after.index === source.length || source[after.index] === "}")) return true;
+		if (strict && after.hasLineTerminator && !isStringExpressionContinuation(source, after.index)) return true;
+		if (!after.hasLineTerminator || (source[after.index] !== '"' && source[after.index] !== "'")) return false;
+		index = after.index;
+	}
+}
 
 /** A generation owns only source bookkeeping; Bun owns evaluation and cycles. */
 export function createBunExtensionImporter(
@@ -141,9 +229,29 @@ export function createBunExtensionImporter(
 			// function wrapper preserves synchronous export assignment and keeps
 			// `exports` and `module` reassignable bindings with `this` as the exports
 			// object, as dependencies such as whatwg-url and jsdom require.
-			if (!hasModuleSyntax && extension !== ".mjs" && extension !== ".mts") {
+			// `.cjs` is always CommonJS; a `.js` file whose nearest package.json declares
+			// `"type": "module"` is ESM even with no import/export, so top-level await parses.
+			const esmByType = extension === ".js" && isEsmByPackageType(filename);
+			if (!hasModuleSyntax && extension !== ".mjs" && extension !== ".mts" && !esmByType) {
 				commonJs.add(moduleId(filename));
-				contents = `export default ${name}.commonJs(function (exports, module) {\n${contents}\n});`;
+				// The body is compiled with the Function constructor rather than emitted as a
+				// function literal in this ES module: a literal would inherit the module's strict
+				// mode, while Node and plain Bun evaluate CommonJS sloppy unless the file opts in.
+				// The metadata object arrives as a parameter, so the transformed body keeps the
+				// identifiers the transpiler already bound, and `//# sourceURL` keeps stack frames
+				// on the dependency file.
+				// Bun's transpiler drops a leading "use strict" directive, so opting in has to be
+				// read from the original source and re-applied to the compiled body.
+				const directive = hasUseStrictDirective(source) ? '"use strict";\n' : "";
+				const body = `${directive}${contents}\n//# sourceURL=${pathToFileURL(filename).href}`;
+				// The compiled body takes the metadata first; the forwarding wrapper keeps Node's
+				// `this === module.exports` receiver, which dependencies such as whatwg-url rely on.
+				contents = [
+					`const ${name}Body = Function(${JSON.stringify(name)}, "exports", "module", ${JSON.stringify(body)});`,
+					`export default ${name}.commonJs(function (exports, module) {`,
+					`\treturn ${name}Body.call(this, ${name}, exports, module);`,
+					"});",
+				].join("\n");
 			}
 			contents = `import { metadata as ${name}Factory } from "${extensionNamespace}:runtime";\nconst ${name} = ${name}Factory(${JSON.stringify(registration.generation)}, ${JSON.stringify(filename)});\n${contents}`;
 			const prepared = { contents, loader: "js" } satisfies ModuleSource;

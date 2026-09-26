@@ -435,6 +435,8 @@
 
 - Opening a session on a busy machine no longer fails instantly. The open deadline was fixed once when the request queue was built, so anything opened later inherited what was left of it — and after 30 seconds the next open was given a zero-length timer that expired immediately. Each open is now given its own deadline, measured from when it is sent. ([#1719](https://github.com/code-yeongyu/senpi/issues/1719))
 
+- Fixed Bun extension loading for sloppy-mode CommonJS dependencies and await-only JavaScript files in `type: module` packages, while preserving explicit strict directives and CommonJS metadata ([#1841](https://github.com/code-yeongyu/senpi/issues/1841)).
+
 ### Removed
 
 ## [2026.9.19-2] - 2026-09-19

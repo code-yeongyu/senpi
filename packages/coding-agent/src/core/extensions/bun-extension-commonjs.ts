@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { extname } from "node:path";
+import { basename, dirname, extname, join, parse as parsePath } from "node:path";
 import { parse } from "es-module-lexer/js";
 
 /**
@@ -21,10 +21,42 @@ export function isCommonJsFile(path: string): boolean {
 	return result;
 }
 
+/**
+ * True when the nearest `package.json` declares `"type": "module"`, which makes a
+ * `.js` file ESM regardless of the syntax it happens to use. The walk stops at a
+ * `node_modules` boundary or the filesystem root, so one package scope cannot leak
+ * into a dependency that has no manifest. A missing manifest keeps walking; a
+ * malformed one is a real error, as in Node.
+ */
+export function isEsmByPackageType(path: string): boolean {
+	let directory = dirname(path);
+	const { root } = parsePath(directory);
+	for (;;) {
+		// Node does not let the application package scope reach into node_modules.
+		if (basename(directory) === "node_modules") return false;
+		const manifestPath = join(directory, "package.json");
+		let manifest: string | undefined;
+		try {
+			manifest = readFileSync(manifestPath, "utf8");
+		} catch (error) {
+			// Only "not here, keep looking" continues the walk. A permission or I/O failure is
+			// a real condition Node would surface, so it is not flattened into CommonJS.
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+		}
+		if (manifest !== undefined) return (JSON.parse(manifest) as { readonly type?: unknown }).type === "module";
+		if (directory === root) return false;
+		const parent = dirname(directory);
+		if (parent === directory) return false;
+		directory = parent;
+	}
+}
+
 function detect(path: string): boolean {
 	const extension = extname(path);
 	if (extension === ".cjs") return true;
 	if (extension === ".mjs" || extension === ".ts" || extension === ".tsx" || extension === ".mts") return false;
+	if (extension === ".js" && isEsmByPackageType(path)) return false;
 	try {
 		const [, , , hasModuleSyntax] = parse(readFileSync(path, "utf8"), path);
 		return !hasModuleSyntax;
