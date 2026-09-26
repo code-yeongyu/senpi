@@ -24,6 +24,9 @@ ulid.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 senpi-desktop-backend-macos = { path = "../senpi-desktop-backend-macos" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+senpi-desktop-backend-x11 = { path = "../senpi-desktop-backend-x11" }
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
