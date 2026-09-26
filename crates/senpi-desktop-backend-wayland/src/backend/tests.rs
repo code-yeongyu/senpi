@@ -7,18 +7,20 @@ use std::os::unix::net::UnixListener;
 
 use senpi_desktop_core::backend::{Backend, DeliveryMode};
 use senpi_desktop_core::error::DesktopError;
-use senpi_desktop_core::types::{CaptureCaps, Target};
+use senpi_desktop_core::types::Target;
 
 use super::WaylandBackend;
+use crate::capture::Probe;
 use crate::test_support::fake_eis::{EisConfig, FakeEis};
 use crate::test_support::{env_lock, LibeiSocketEnv};
 
 pub const FR: &str = include_str!("../../testdata/fr.xkb");
 
-/// No AT-SPI bus and a settled portal probe: no service is touched.
+/// No AT-SPI bus and settled portal probes: no service is touched.
 pub fn backend_without_services() -> WaylandBackend {
     let mut backend = WaylandBackend::with_ax(Err(DesktopError::ax_unsupported()));
     backend.portal_offered = Some(false);
+    backend.capture.probe = Probe::Absent;
     backend
 }
 
@@ -112,21 +114,6 @@ fn capabilities_do_not_advertise_foreground_delivery() {
     assert_eq!(capabilities.delivery_modes, ["background"]);
     assert!(!capabilities.background_window_input);
     assert_eq!(capabilities.backend, "wayland");
-}
-
-/// Rewritten by todo 34 (`capabilities_report_capture_from_portal_probe`,
-/// D6) once the Screenshot portal capture lands; until then the engine has
-/// no Wayland capture path and must not advertise one.
-#[test]
-fn capabilities_report_no_capture_without_pipewire_feature() {
-    let mut backend = backend_without_services();
-    let caps = backend.capabilities();
-    assert!(!caps.capture, "capture must be false without a capture path");
-    assert_eq!(caps.capture_permission, "unavailable");
-    let err = backend
-        .capture(&Target::Desktop, &CaptureCaps::default())
-        .expect_err("capture must fail without a capture path");
-    assert_eq!(err.code.as_str(), "CaptureFailed");
 }
 
 #[test]

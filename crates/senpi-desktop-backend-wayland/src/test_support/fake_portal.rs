@@ -3,8 +3,8 @@
 //! wrapper shell kills the daemon and removes its directory when the test
 //! process exits and closes the wrapper's stdin). It implements
 //! `GlobalShortcuts` `CreateSession/BindShortcuts/Activated` and
-//! `RemoteDesktop` `CreateSession/SelectDevices/Start/ConnectToEIS`, each
-//! scripted by [`Mode`].
+//! `RemoteDesktop` `CreateSession/SelectDevices/Start/ConnectToEIS`, and
+//! `Screenshot`, each scripted by [`Mode`].
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -17,6 +17,7 @@ use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 use super::fake_eis::{EisConfig, FakeEis};
 use super::portal_ifaces::{GlobalShortcutsPortal, RemoteDesktopPortal};
+use super::screenshot_iface::ScreenshotPortal;
 
 const DESKTOP_PATH: &str = "/org/freedesktop/portal/desktop";
 
@@ -31,9 +32,21 @@ pub enum Reply {
     Absent,
 }
 
+/// How the Screenshot interface answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shot {
+    /// A fresh `width` x `height` PNG file per request.
+    Png { width: u32, height: u32 },
+    /// `response=1`.
+    Deny,
+    /// The interface is not implemented.
+    Absent,
+}
+
 pub struct Mode {
     pub remote_desktop: Reply,
     pub global_shortcuts: Reply,
+    pub screenshot: Shot,
     pub eis: EisConfig,
 }
 
@@ -43,6 +56,10 @@ pub struct Recorded {
     pub bound: Vec<(String, Option<String>)>,
     pub shortcuts_session: Option<String>,
     pub eis: Option<FakeEis>,
+    /// Every PNG a `Screenshot` request wrote.
+    pub shots: Vec<std::path::PathBuf>,
+    /// The `interactive` option of the last `Screenshot` request.
+    pub interactive: Option<bool>,
 }
 
 pub struct State {
@@ -120,6 +137,7 @@ fn start() -> FakeBus {
         mode: Mutex::new(Mode {
             remote_desktop: Reply::Absent,
             global_shortcuts: Reply::Absent,
+            screenshot: Shot::Absent,
             eis: EisConfig { keymap: "", group: 0 },
         }),
         recorded: Mutex::default(),
@@ -135,6 +153,7 @@ fn start() -> FakeBus {
                 .name("org.freedesktop.portal.Desktop")?
                 .serve_at(DESKTOP_PATH, RemoteDesktopPortal::new(Arc::clone(&state)))?
                 .serve_at(DESKTOP_PATH, GlobalShortcutsPortal::new(Arc::clone(&state)))?
+                .serve_at(DESKTOP_PATH, ScreenshotPortal::new(Arc::clone(&state)))?
                 .build()
                 .await
         })

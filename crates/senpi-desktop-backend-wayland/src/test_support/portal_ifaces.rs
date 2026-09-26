@@ -12,10 +12,10 @@ use zbus::{fdo, interface, Connection};
 
 use super::fake_portal::{Reply, State};
 
-type Options = HashMap<String, OwnedValue>;
+pub type Options = HashMap<String, OwnedValue>;
 type Results<'a> = HashMap<&'static str, Value<'a>>;
 
-fn absent(interface: &str) -> fdo::Error {
+pub fn absent(interface: &str) -> fdo::Error {
     fdo::Error::InvalidArgs(format!("No such interface \u{201c}{interface}\u{201d}"))
 }
 
@@ -34,7 +34,7 @@ fn token<'a>(options: &'a Options, key: &str) -> fdo::Result<&'a str> {
 }
 
 /// Emits `Response(code, results)` on the request handle and returns it.
-async fn respond(
+pub async fn respond(
     connection: &Connection,
     header: &Header<'_>,
     options: &Options,

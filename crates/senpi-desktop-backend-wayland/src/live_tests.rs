@@ -9,9 +9,10 @@ use std::sync::Arc;
 
 use senpi_desktop_core::backend::{Backend, DeliveryMode};
 use senpi_desktop_core::error::ErrorCode;
-use senpi_desktop_core::types::{DisplaySelector, Target};
+use senpi_desktop_core::types::{CaptureCaps, DisplaySelector, Target};
 use senpi_desktop_safety::{Chord, MonotonicClock, StopPathListener, Supervisor};
 
+use crate::capture::screenshot_portal::UNAVAILABLE as CAPTURE_UNAVAILABLE;
 use crate::portal::remote_desktop::INPUT_PATH_REQUIRED;
 use crate::{GlobalShortcutsListener, WaylandBackend, STOP_PATH_UNAVAILABLE};
 
@@ -61,6 +62,26 @@ fn live_session_without_portals_refuses_input_with_the_path_message() {
     println!("type_text_error={error}");
     assert_eq!(error.code, ErrorCode::InputFailed);
     assert!(error.message.starts_with(INPUT_PATH_REQUIRED));
+}
+
+#[test]
+#[ignore = "live: needs a Wayland session without portals"]
+fn live_session_without_portals_reports_capture_unavailable() {
+    preconditions();
+    let mut backend = WaylandBackend::new(DisplaySelector::All);
+
+    let captured = backend.capture(&Target::Desktop, &CaptureCaps::default());
+    let caps = backend.capabilities();
+
+    let error = captured.expect_err("no Screenshot portal exists");
+    println!(
+        "capture_error={error} capture={} capture_permission={}",
+        caps.capture, caps.capture_permission
+    );
+    assert_eq!(error.code, ErrorCode::CaptureFailed);
+    assert!(error.message.starts_with(CAPTURE_UNAVAILABLE));
+    assert!(!caps.capture);
+    assert_eq!(caps.capture_permission, "unavailable");
 }
 
 #[test]
