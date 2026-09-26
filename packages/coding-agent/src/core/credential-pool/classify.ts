@@ -41,6 +41,7 @@ export function rateLimitCooldown(
 const INVALID_KEY_TEXT = /invalid[ _-]?(?:api[ _-]?)?key|authentication[_ ]?error|invalid x-api-key|unauthorized/i;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
+const SUBSCRIPTION_LIMIT_TEXT = /\b(?:usage|session|weekly|daily|hourly)[ _-]?limit\b/i;
 const BILLING_TEXT =
 	/billing|credits?[ _-]?(?:required|exhausted|balance)|insufficient[ _-]?(?:funds|quota|credit)|payment[ _-]?required|quota[ _-]?exhausted/i;
 const OVERLOAD_TEXT = /overloaded/i;
@@ -102,7 +103,7 @@ export function classifyCredentialFailure(
 	if (status === 402 || BILLING_TEXT.test(text)) {
 		return { kind: "failover", block: { reason: "account_disabled" } };
 	}
-	if (status === 429 || RATE_LIMIT_TEXT.test(text)) {
+	if (status === 429 || RATE_LIMIT_TEXT.test(text) || SUBSCRIPTION_LIMIT_TEXT.test(text)) {
 		const hint = extract429RetryAfterMs({
 			status: status ?? 429,
 			bodyText: text,
