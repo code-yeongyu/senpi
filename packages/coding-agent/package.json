@@ -112,6 +112,8 @@
 		"@hono/node-server": "2.1.1"
 	},
 	"devDependencies": {
+		"@code-yeongyu/senpi-desktop-service": "^2026.9.24-2",
+		"@code-yeongyu/senpi-desktop-tool": "^2026.9.24-2",
 		"@types/cross-spawn": "6.0.6",
 		"@types/hosted-git-info": "3.0.5",
 		"@types/node": "26.6.2",
