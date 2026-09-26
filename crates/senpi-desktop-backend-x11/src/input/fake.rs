@@ -61,6 +61,9 @@ pub struct FakeInputServer {
     pub pointer: Cell<(i16, i16)>,
     classes: HashMap<Window, Vec<u8>>,
     origins: HashMap<Window, (i16, i16)>,
+    /// A child window covering the whole of its parent (the widget a toolkit
+    /// dispatches to), keyed by parent.
+    children: HashMap<Window, Window>,
     keymap: Keymap,
     /// The 0-based index of the input request (fake/send) that fails.
     pub fail_at: Cell<Option<usize>>,
@@ -76,6 +79,7 @@ impl FakeInputServer {
             pointer: Cell::new((0, 0)),
             classes: HashMap::new(),
             origins: HashMap::new(),
+            children: HashMap::new(),
             keymap: keymap(),
             fail_at: Cell::new(None),
             inputs: Cell::new(0),
@@ -86,6 +90,14 @@ impl FakeInputServer {
     pub fn window(mut self, window: Window, origin: (i16, i16), wm_class: &[u8]) -> Self {
         self.origins.insert(window, origin);
         self.classes.insert(window, wm_class.to_vec());
+        self
+    }
+
+    /// `child` covers all of `parent` and receives events sent under it.
+    pub fn child(mut self, parent: Window, child: Window) -> Self {
+        let origin = self.origins.get(&parent).copied().unwrap_or((0, 0));
+        self.origins.insert(child, origin);
+        self.children.insert(parent, child);
         self
     }
 
@@ -124,6 +136,14 @@ impl InputServer for FakeInputServer {
     fn translate(&self, window: Window, x: i16, y: i16) -> CoreResult<(i16, i16)> {
         let (left, top) = self.origins.get(&window).copied().unwrap_or((0, 0));
         Ok((x - left, y - top))
+    }
+
+    fn target_at(&self, window: Window, _x: i16, _y: i16) -> CoreResult<Window> {
+        let mut current = window;
+        while let Some(&child) = self.children.get(&current) {
+            current = child;
+        }
+        Ok(current)
     }
 
     fn pointer(&self) -> CoreResult<(i16, i16)> {
