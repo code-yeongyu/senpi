@@ -43,8 +43,12 @@ jobs:
     env:
       RUST_TARGET: x86_64-pc-windows-msvc
       ENGINE: target/x86_64-pc-windows-msvc/release/senpi-desktop-engine.exe
-      QA_DIR: ${{ runner.temp }}/desktop-windows-qa
     steps:
+      # The runner context is unavailable in jobs.<id>.env, so the QA dir is exported from a step.
+      - name: Export QA dir
+        shell: bash
+        run: echo "QA_DIR=${RUNNER_TEMP}/desktop-windows-qa" >> "${GITHUB_ENV}"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
