@@ -1,3 +1,24 @@
+## 2026-09-27 - Ship the desktop engine next to the compiled binary and smoke it (senpi#2128)
+
+### What changed
+
+- `scripts/copy-desktop-engine.mjs` (new): copies the host `senpi-desktop-engine` prebuild to `packages/coding-agent/dist/native/prebuilds/<host>/` (mode 0755), the sidecar path the engine locator probes first. A missing host prebuild is a no-op, like `copy-pty-native.mjs`.
+- `scripts/build-binaries.sh`: every release directory gets the engine beside the pty prebuild, ad-hoc signed on macOS like `pi`.
+- `scripts/smoke-standalone-binary.mjs`: a fourth step resolves the engine next to the relocated binary, runs `engine.hello` and `capabilities` over `--stdio` against the fake backend, and requires `abi=senpi-desktop/1` and `backend=fake`. A missing sidecar fails with `standalone smoke: desktop engine sidecar missing at <path>`.
+- `scripts/smoke-standalone-binary.test.mjs`: the passing case ships the host engine, and a new case proves a binary without it fails. `scripts/check-desktop-engine-prebuild-fresh.test.mjs` (new): the engine's freshness gate (missing, stale, fresh, `--update`, `.exe` naming).
+
+### Why
+
+- Plan todo 39: compiled binaries had no engine next to them, so computer use reported `native-unavailable` in every standalone install, and no smoke would have caught it.
+
+### Why an extension could not handle it
+
+- Release packaging.
+
+### Expected merge conflict zones
+
+- LOW: the pty copy block in `scripts/build-binaries.sh` and the relocation smoke's final step.
+
 ## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
 
 ### What changed
