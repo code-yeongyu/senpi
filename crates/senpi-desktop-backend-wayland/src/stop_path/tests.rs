@@ -61,6 +61,30 @@ fn start_binds_the_stop_chord_as_the_preferred_trigger() {
 }
 
 #[test]
+fn start_from_inside_a_multi_thread_runtime_binds_without_panicking() {
+    // Given: the engine answers stopPath.start on a tokio worker thread.
+    let _env = env_lock();
+    portal(Reply::Grant);
+    let supervisor = supervisor();
+    let engine = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .build()
+        .expect("engine runtime");
+    // When
+    let (started, live) = engine.block_on(async {
+        tokio::spawn(async move {
+            let mut listener = GlobalShortcutsListener::new();
+            let started = start(&mut listener, &supervisor);
+            (started, listener.is_live())
+        })
+        .await
+        .expect("the start task must not panic")
+    });
+    // Then
+    assert_eq!((started, live), (Ok(()), true));
+}
+
+#[test]
 fn only_the_stop_shortcut_activation_latches_the_supervisor() {
     // Given: a bound listener
     let _env = env_lock();
