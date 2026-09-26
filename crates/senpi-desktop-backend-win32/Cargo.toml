@@ -9,6 +9,8 @@ crate-type = ["rlib"]
 
 [target.'cfg(target_os = "windows")'.dependencies]
 enigo.workspace = true
+image.workspace = true
+senpi-desktop-core = { path = "../senpi-desktop-core" }
 uiautomation.workspace = true
-windows-sys.workspace = true
+windows-sys = { workspace = true, features = ["Win32_UI_HiDpi"] }
 xcap.workspace = true
