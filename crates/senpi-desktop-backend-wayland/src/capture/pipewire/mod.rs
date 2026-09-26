@@ -14,12 +14,14 @@ mod screencast;
 mod stream;
 #[cfg(test)]
 mod tests;
+mod window;
 
 use image::{imageops, RgbaImage};
 use senpi_desktop_core::types::DesktopDisplay;
 use tokio::runtime::Runtime;
 
 use screencast::Cast;
+pub use window::crop_window;
 
 pub const DISPLAY_PREFIX: &str = "wayland-screencast-";
 

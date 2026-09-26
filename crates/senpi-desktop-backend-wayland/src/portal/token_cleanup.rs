@@ -46,6 +46,7 @@ pub fn remove_orphaned_remote_desktop_token() {
 mod tests {
     use super::*;
 
+    /// oh-my-pi's `removes_orphaned_remote_desktop_token`, plus the absent-file case.
     #[test]
     fn removes_orphaned_remote_desktop_token_and_tolerates_its_absence() {
         let dir = tempfile::tempdir().expect("token test dir");
