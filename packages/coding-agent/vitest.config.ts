@@ -4,6 +4,12 @@ import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
 
 const aiSrcProviderScope = fileURLToPath(new URL("../ai/src/node/provider-scope.ts", import.meta.url));
 const ptySrcIndex = fileURLToPath(new URL("../pty/src/index.ts", import.meta.url));
+// The computer-use builtin reaches all five desktop packages; resolve them to source so a suite
+// that loads the builtin list needs no prior desktop build.
+const desktopSourceAliases = ["protocol", "engine", "prelude", "service", "tool"].map((name) => ({
+	find: new RegExp(`^@code-yeongyu/senpi-desktop-${name}$`),
+	replacement: fileURLToPath(new URL(`../desktop-${name}/src/index.ts`, import.meta.url)),
+}));
 
 export default mergeConfig(
 	baseConfig,
@@ -65,6 +71,7 @@ export default mergeConfig(
 				{ find: /^@mariozechner\/pi-ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },
 				{ find: /^@mariozechner\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 				{ find: /^@mariozechner\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
+				...desktopSourceAliases,
 			],
 		},
 	}),
