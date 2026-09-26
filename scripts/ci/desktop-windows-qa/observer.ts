@@ -16,6 +16,8 @@ export interface WindowObservation {
 	readonly processName?: string | null;
 	readonly controlType?: string | null;
 	readonly text?: string | null;
+	/** Which read produced `text`: `uia-find`, `uia-walk`, or `win32` (WM_GETTEXT on the Edit child). */
+	readonly readVia?: string | null;
 	readonly readError?: string;
 }
 
@@ -51,6 +53,7 @@ function parseWindow(value: Json | undefined): WindowObservation {
 		processName: optionalString(entry.processName) ?? null,
 		controlType: optionalString(entry.controlType) ?? null,
 		text: optionalString(entry.text) ?? null,
+		readVia: optionalString(entry.readVia) ?? null,
 		...(typeof readError === "string" ? { readError } : {}),
 	};
 }

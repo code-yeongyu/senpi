@@ -23,6 +23,30 @@ public static class QaObserver {
 	[DllImport("advapi32.dll")] static extern bool GetTokenInformation(IntPtr token, int cls, IntPtr buffer, int length, out int needed);
 	[DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
 	[DllImport("advapi32.dll")] static extern IntPtr GetSidSubAuthority(IntPtr sid, uint index);
+	delegate bool ChildProc(IntPtr hwnd, IntPtr lParam);
+	[DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, ChildProc proc, IntPtr lParam);
+	[DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW")] static extern IntPtr SendLength(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+	[DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode)] static extern IntPtr SendText(IntPtr hwnd, uint msg, IntPtr wParam, StringBuilder lParam, uint flags, uint timeout, out IntPtr result);
+	// First descendant window of class Edit or RichEdit*; IntPtr.Zero when there is none.
+	public static IntPtr EditChild(IntPtr parent) {
+		IntPtr found = IntPtr.Zero;
+		EnumChildWindows(parent, (hwnd, unused) => {
+			string name = ClassName(hwnd);
+			if (name == "Edit" || name.StartsWith("RichEdit")) { found = hwnd; return false; }
+			return true;
+		}, IntPtr.Zero);
+		return found;
+	}
+	// The window's text through WM_GETTEXTLENGTH/WM_GETTEXT, which Win32 marshals across processes;
+	// null when the window does not answer within the timeout (SMTO_ABORTIFHUNG).
+	public static string WindowText(IntPtr hwnd) {
+		IntPtr length;
+		if (SendLength(hwnd, 0x000E, IntPtr.Zero, IntPtr.Zero, 0x0002, 2000, out length) == IntPtr.Zero) return null;
+		var text = new StringBuilder(length.ToInt32() + 1);
+		IntPtr copied;
+		if (SendText(hwnd, 0x000D, (IntPtr)text.Capacity, text, 0x0002, 2000, out copied) == IntPtr.Zero) return null;
+		return text.ToString();
+	}
 	public static string ClassName(IntPtr hwnd) { var name = new StringBuilder(256); GetClassNameW(hwnd, name, name.Capacity); return name.ToString(); }
 	public static uint ProcessId(IntPtr hwnd) { uint pid; GetWindowThreadProcessId(hwnd, out pid); return pid; }
 	// Mandatory-label RID of process `pid` (0x1000 low, 0x2000 medium, 0x3000 high, 0x4000 system); -1 when unreadable.
@@ -51,14 +75,46 @@ $dpiAware = [QaObserver]::SetProcessDpiAwarenessContext([IntPtr]-4)
 Add-Type -AssemblyName System.Windows.Forms, UIAutomationClient, UIAutomationTypes
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-function Read-EditableText([IntPtr]$hwnd) {
+function Test-Editable($element) {
+	$id = $element.Current.ControlType.Id
+	return $id -eq [System.Windows.Automation.ControlType]::Edit.Id -or $id -eq [System.Windows.Automation.ControlType]::Document.Id
+}
+
+# The first Edit or Document under `root`: a UIA FindFirst, then a breadth-first raw-view walk (bounded),
+# since the condition search can miss proxied Win32 controls.
+function Find-Editable($root) {
 	$type = [System.Windows.Automation.AutomationElement]::ControlTypeProperty
 	$editable = New-Object System.Windows.Automation.OrCondition -ArgumentList @(
 		(New-Object System.Windows.Automation.PropertyCondition -ArgumentList $type, ([System.Windows.Automation.ControlType]::Edit)),
 		(New-Object System.Windows.Automation.PropertyCondition -ArgumentList $type, ([System.Windows.Automation.ControlType]::Document)))
-	$root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
 	$element = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editable)
-	if ($null -eq $element) { return [ordered]@{ controlType = $null; text = $null } }
+	if ($null -ne $element) { return @{ element = $element; via = 'uia-find' } }
+	$walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+	$queue = New-Object System.Collections.Queue
+	$queue.Enqueue($root)
+	$visited = 0
+	while ($queue.Count -gt 0 -and $visited -lt 500) {
+		$child = $walker.GetFirstChild($queue.Dequeue())
+		while ($null -ne $child) {
+			$visited++
+			if (Test-Editable $child) { return @{ element = $child; via = 'uia-walk' } }
+			$queue.Enqueue($child)
+			$child = $walker.GetNextSibling($child)
+		}
+	}
+	return $null
+}
+
+# The editable text of window `hwnd`: through UI Automation, else through Win32 WM_GETTEXT on its Edit or
+# RichEdit child. `readVia` records which read produced it.
+function Read-EditableText([IntPtr]$hwnd) {
+	$found = Find-Editable ([System.Windows.Automation.AutomationElement]::FromHandle($hwnd))
+	if ($null -eq $found) {
+		$edit = [QaObserver]::EditChild($hwnd)
+		if ($edit -eq [IntPtr]::Zero) { return [ordered]@{ controlType = $null; text = $null; readVia = $null } }
+		return [ordered]@{ controlType = 'Win32.' + [QaObserver]::ClassName($edit); text = [QaObserver]::WindowText($edit); readVia = 'win32' }
+	}
+	$element = $found.element
 	$pattern = $null
 	if ($element.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
 		$text = $pattern.Current.Value
@@ -67,7 +123,7 @@ function Read-EditableText([IntPtr]$hwnd) {
 	} else {
 		$text = $element.Current.Name
 	}
-	return [ordered]@{ controlType = $element.Current.ControlType.ProgrammaticName; text = $text }
+	return [ordered]@{ controlType = $element.Current.ControlType.ProgrammaticName; text = $text; readVia = $found.via }
 }
 
 # `whoami /groups` names the runner token's mandatory label, e.g. `Mandatory Label\High Mandatory Level`.
@@ -93,6 +149,7 @@ foreach ($id in ($Hwnds -split ',' | Where-Object { $_ -ne '' })) {
 		$read = Read-EditableText $hwnd
 		$entry.controlType = $read.controlType
 		$entry.text = $read.text
+		$entry.readVia = $read.readVia
 	} catch {
 		# A window UIA cannot read (e.g. a system window) is reported, not fatal.
 		$entry.readError = $_.Exception.Message

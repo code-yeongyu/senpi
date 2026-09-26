@@ -99,7 +99,7 @@ export const uiaSnapshotNotepad: Scenario = {
 					["document-line-with-ref", line !== undefined],
 					[
 						"observer-sees-edit-or-document",
-						observed?.controlType === "ControlType.Edit" || observed?.controlType === "ControlType.Document",
+						/^(ControlType\.(Edit|Document)|Win32\.(Edit|RichEdit\w*))$/.test(observed?.controlType ?? ""),
 					],
 					["observer-reads-file-content", windowText(before, notepad.id).includes(notepad.content)],
 					["snapshot-carries-file-content", line?.includes(notepad.content) === true],
@@ -111,6 +111,7 @@ export const uiaSnapshotNotepad: Scenario = {
 					nodeCount: snapshot.nodeCount ?? null,
 					documentLine: line ?? null,
 					observerControlType: observed?.controlType ?? null,
+					observerReadVia: observed?.readVia ?? null,
 				},
 				before,
 				after,
