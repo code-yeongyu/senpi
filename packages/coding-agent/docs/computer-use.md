@@ -110,7 +110,7 @@ With `computer.cuaAdapter: true`, senpi also registers a second search-exposed t
 
 Wayland support has not yet been tested live on a desktop session.
 
-- Screenshots go through the xdg-desktop-portal Screenshot portal; GNOME may show a permission dialog.
+- Screenshots go through the ScreenCast portal and PipeWire when `libpipewire-0.3.so.0` is installed: every monitor is streamed and the desktop capture is their composite, one display per monitor. The engine loads PipeWire at runtime, so the same binary starts where it is missing and then uses the Screenshot portal instead (one image of the whole desktop). Either portal may show a permission dialog on first use. A compositor whose ScreenCast backend cannot copy the screen (for example wlroots on its pixman software renderer) falls back to the Screenshot portal.
 - Input goes through the RemoteDesktop portal and libei. It is background-only, with no per-window targeting and no `raise`. The portal asks for consent on first input, so `inputPermission` reports `prompt-or-granted` until then.
 - The stop chord uses the GlobalShortcuts portal (GNOME 45+, KDE Plasma 6). Where it is missing, the global stop path is unavailable and input requires `allowHostRelayOnlyStop`.
 
@@ -180,5 +180,5 @@ Release-note paragraph:
 
 ## Not yet
 
-- Screen capture through PipeWire on Wayland, and video.
+- Video, and capture of a single window on Wayland.
 - A provider-hosted `computer_use_preview` tool; senpi drives the desktop through its own `computer` tool.
