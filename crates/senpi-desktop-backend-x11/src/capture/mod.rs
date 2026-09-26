@@ -9,7 +9,7 @@ mod windows;
 #[cfg(test)]
 mod capture_tests;
 #[cfg(test)]
-mod fake;
+pub(crate) mod fake;
 #[cfg(test)]
 mod live_tests;
 #[cfg(test)]
