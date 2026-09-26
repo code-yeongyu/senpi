@@ -4,6 +4,7 @@
 pub mod fake_eis;
 pub mod fake_portal;
 mod portal_ifaces;
+pub mod screenshot_iface;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;

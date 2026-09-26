@@ -10,13 +10,14 @@ use super::tests::FR;
 use super::WaylandBackend;
 use crate::portal::remote_desktop::INPUT_PATH_REQUIRED;
 use crate::test_support::fake_eis::{EisConfig, Recorded};
-use crate::test_support::fake_portal::{fake_bus, FakeBus, Mode, Reply};
+use crate::test_support::fake_portal::{fake_bus, FakeBus, Mode, Reply, Shot};
 use crate::test_support::{env_lock, LibeiSocketEnv};
 
 fn portal(remote_desktop: Reply) -> &'static FakeBus {
     fake_bus(Mode {
         remote_desktop,
         global_shortcuts: Reply::Absent,
+        screenshot: Shot::Absent,
         eis: EisConfig { keymap: FR, group: 0 },
     })
 }
