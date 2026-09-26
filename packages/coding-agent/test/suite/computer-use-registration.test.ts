@@ -16,6 +16,17 @@ afterEach(async () => {
 });
 
 describe("computer-use builtin registration", () => {
+	it("registers computer_actions only when computer.cuaAdapter is true", async () => {
+		// When
+		const defaults = await harnessWith();
+		const optedIn = await harnessWith({ computer: { cuaAdapter: true } });
+
+		// Then
+		const actionsTool = (created: ComputerUseHarness) =>
+			created.harness.session.getAllTools().find((candidate) => candidate.name === "computer_actions");
+		expect([actionsTool(defaults)?.exposure, actionsTool(optedIn)?.exposure]).toEqual([undefined, "search"]);
+	});
+
 	it("registers a search-exposed, inactive computer tool with its kernel prelude and starts no engine", async () => {
 		// When
 		const { harness, engine } = await harnessWith();

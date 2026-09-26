@@ -1,5 +1,23 @@
 # computer-use builtin changes
 
+## 2026-09-27 - Register computer_actions behind computer.cuaAdapter (senpi#2128)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/computer-use/index.ts`: with `computer.cuaAdapter: true`, session_start also registers `computer_actions` and its permission parser on the same handle.
+
+### Why
+
+- Opt-in second surface for OpenAI computer-use action prompting (plan todo 45).
+
+### Why an extension could not handle it
+
+- The builtin owns the computer session both tools share.
+
+### Expected merge conflict zones
+
+- None: fork-only builtin.
+
 ## 2026-09-25 - The `computer-use` builtin: registration, permission parser, activation, rpc stop/resume, engine diagnostics (senpi#2128)
 
 ### What changed

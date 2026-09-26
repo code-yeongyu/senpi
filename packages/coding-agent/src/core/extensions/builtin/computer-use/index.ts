@@ -1,10 +1,13 @@
 import { type ChildFactory, engineChildFactory } from "@code-yeongyu/senpi-desktop-service";
 import {
+	COMPUTER_ACTIONS_TOOL_NAME,
 	COMPUTER_COMMAND_USAGE,
 	COMPUTER_SUBCOMMANDS,
 	COMPUTER_TOOL_NAME,
 	ComputerHandle,
+	computerActionsPermissionParser,
 	computerPermissionParser,
+	createComputerActionsTool,
 	createComputerTool,
 	isSupportedHost,
 	materializeComputerSkill,
@@ -98,12 +101,13 @@ export function createComputerUseExtension(deps: ComputerUseDeps): ExtensionFact
 			handle.onActivationChange(syncActiveTools);
 			// todo 24(b): the permission-system tool_call hook is the only place the tier is evaluated.
 			registerToolParser(COMPUTER_TOOL_NAME, computerPermissionParser);
-			pi.registerTool(
-				createComputerTool({
-					handle,
-					executeTool: (toolName, params, options) => pi.executeTool(toolName, params, options),
-				}),
-			);
+			const executeTool = (toolName: string, params: unknown, options: { readonly signal: AbortSignal }) =>
+				pi.executeTool(toolName, params, options);
+			pi.registerTool(createComputerTool({ handle, executeTool }));
+			if (settings.cuaAdapter) {
+				registerToolParser(COMPUTER_ACTIONS_TOOL_NAME, computerActionsPermissionParser);
+				pi.registerTool(createComputerActionsTool({ handle, executeTool }));
+			}
 			session = { handle, service };
 		});
 

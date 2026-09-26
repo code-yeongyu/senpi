@@ -45,6 +45,7 @@ describe("resolveComputerSettings", () => {
 			auditLog: { enabled: true },
 			screenshotGc: { enabled: true, staleMs: 43_200_000, scanIntervalMs: 1_800_000 },
 			enginePath: undefined,
+			cuaAdapter: false,
 		});
 	});
 

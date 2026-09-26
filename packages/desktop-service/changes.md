@@ -1,5 +1,23 @@
 # senpi-desktop-service fork changes
 
+## 2026-09-27 - Scripted input refusals in the fake engine (senpi#2128)
+
+### What changed
+
+- `packages/desktop-service/test/fake-desktop.mjs`: `FAKE_ENGINE_INPUT_ERROR=<code>` makes every input method fail with that engine error and its real rpc code, the way the input gate refuses (Suspended, StopPathUnavailable, PermissionDenied, ScreenLocked).
+
+### Why
+
+- The computer_actions enforcement tests need the engine's refusals on the wire.
+
+### Why an extension could not handle it
+
+- Test fixture of this package.
+
+### Expected merge conflict zones
+
+- None.
+
 ## 2026-09-27 - A computer run that returns without awaiting the host settles (senpi#2128)
 
 ### What changed

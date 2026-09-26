@@ -38,8 +38,11 @@ export interface DesktopFixture {
 const services: DesktopService[] = [];
 
 /** A handle over a real `DesktopService` whose engine child is the scripted fake desktop. */
-export function desktopFixture(settings: ComputerSettingsInput = {}): DesktopFixture {
-	const log = fakeEngineFactory({ FAKE_ENGINE_DESKTOP: "1" });
+export function desktopFixture(
+	settings: ComputerSettingsInput = {},
+	env: Readonly<Record<string, string>> = {},
+): DesktopFixture {
+	const log = fakeEngineFactory({ FAKE_ENGINE_DESKTOP: "1", ...env });
 	const service = new DesktopService({ createChild: log.factory });
 	services.push(service);
 	const resolved = resolveComputerSettings(settings, "linux");

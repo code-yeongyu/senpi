@@ -2,6 +2,8 @@
 // One display, two windows ("101" Code, "202" Mail). Pointer input needs a prior capture of the same
 // target (InvalidCoordinateFrame otherwise), as the real engine's per-target frames do.
 // Captures of "desktop" and "101" are inline PNGs; "202" is artifact-only.
+// FAKE_ENGINE_INPUT_ERROR=<engine error code> makes every input method fail with that code, the way the
+// engine's input gate refuses (Suspended, StopPathUnavailable, PermissionDenied, ScreenLocked).
 
 const PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
@@ -45,6 +47,9 @@ const BUTTON = {
 const POINTER_METHODS = new Set(["click", "moveMouse", "drag", "scroll"]);
 const NULL_METHODS = new Set(["typeText", "keyChord", "raiseWindow", "ax.perform", "ax.setValue", "ax.focus", "ax.click"]);
 
+// rpc code = -32000 - the ErrorCode ordinal (senpi-desktop-core error.rs).
+const INPUT_ERROR_RPC = { PermissionDenied: -32000, StopPathUnavailable: -32014, Suspended: -32015, ScreenLocked: -32016 };
+
 const error = (rpcCode, code, message, hint = null) => ({ error: { code: rpcCode, message, data: { code, hint } } });
 
 function capture(target, frameId) {
@@ -72,8 +77,13 @@ const audit = (action, target, frameId, code) => ({
 export function createDesktop() {
 	const frames = new Map();
 	let clipboard = "";
+	const inputError = process.env.FAKE_ENGINE_INPUT_ERROR;
 	return (method, params) => {
 		const target = params?.target;
+		if (inputError !== undefined && (POINTER_METHODS.has(method) || method === "typeText" || method === "keyChord")) {
+			const failure = error(INPUT_ERROR_RPC[inputError] ?? -32013, inputError, `input refused: ${inputError}`);
+			return { ...failure, notifications: [audit(method, target ?? "desktop", null, inputError)] };
+		}
 		if (POINTER_METHODS.has(method)) {
 			const frameId = frames.get(target) ?? null;
 			if (frameId === null) {

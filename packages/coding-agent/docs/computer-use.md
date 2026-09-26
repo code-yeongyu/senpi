@@ -69,8 +69,13 @@ All settings live under `computer` in `settings.json`:
 | `auditLog.enabled` | `true` | Write the audit log |
 | `screenshotGc.enabled` / `staleMs` / `scanIntervalMs` | `true` / 12 h / 30 min | Delete old screenshot files |
 | `enginePath` | located automatically | Use a specific engine binary |
+| `cuaAdapter` | `false` | Also register `computer_actions`, which takes OpenAI computer-use actions |
 
 When a model clicks in screenshot pixels, captures are clamped to 1280x896. That is senpi's coordinate-safe default, not a provider limit.
+
+## OpenAI computer-use actions
+
+With `computer.cuaAdapter: true`, senpi also registers a second search-exposed tool, `computer_actions`, for models prompted with OpenAI's computer-use action schema: `screenshot`, `click`, `double_click`, `move`, `drag`, `scroll`, `type`, `keypress`, `wait`, or a `batch` of them. It runs on the same desktop session, stop chord, permissions, and audit log as `computer`, with no second input path. Pointer coordinates are checked against the latest screenshot before any input, a screenshot inside a batch becomes the frame for the actions after it, and a batch stops at its first failure. Failures carry `COMPUTER_*` codes with a recovery hint (for example `COMPUTER_SUSPENDED` or `COMPUTER_COORD_INVALID`). Screenshots and waits are `computer:read`; every other action is `computer:exec`.
 
 ## Capabilities
 
