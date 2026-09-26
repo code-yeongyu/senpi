@@ -118,6 +118,7 @@ export type {
 	InputEvent,
 	InputEventResult,
 	InputSource,
+	KernelPreludeContribution,
 	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,

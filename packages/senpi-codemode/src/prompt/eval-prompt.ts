@@ -1,3 +1,4 @@
+import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { DEFAULT_MAX_DETACHED_CELLS, DEFAULT_RUN_BUDGET_SECONDS } from "../config/settings.ts";
 import type { EvalRuntimeInfo } from "../tool/types.ts";
 import { EVAL_PROMPT_TEMPLATE } from "./eval-prompt-template.ts";
@@ -32,6 +33,8 @@ export interface EvalPromptOptions {
 	readonly runBudgetSeconds?: number;
 	/** Global background capacity advertised to the model. */
 	readonly maxDetachedCells?: number;
+	/** Active tools' kernel globals; each documentation line joins the prelude helper list. */
+	readonly kernelPreludes?: readonly KernelPreludeContribution[];
 }
 
 /** Prompt dialect for the eval-first batching emphasis. */
@@ -99,6 +102,7 @@ export function buildEvalPrompt(
 		bunSkillPath: options.bunSkillPath ?? "",
 		runBudgetSeconds: String(options.runBudgetSeconds ?? DEFAULT_RUN_BUDGET_SECONDS),
 		maxDetachedCells: String(options.maxDetachedCells ?? DEFAULT_MAX_DETACHED_CELLS),
+		kernelPreludeDocs: (options.kernelPreludes ?? []).map((prelude) => prelude.documentation).join("\n"),
 	};
 	const description = renderTemplate(EVAL_PROMPT_TEMPLATE, context)
 		.replace(/\n{3,}/g, "\n\n")

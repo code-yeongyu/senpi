@@ -69,7 +69,8 @@ log(message) → None
     Progress line above the status tree.
 phase(title) → None
     Phase grouping subsequent status lines.
-\`\`\`
+{{#if kernelPreludeDocs}}{{kernelPreludeDocs}}
+{{/if}}\`\`\`
 </prelude>
 {{#if spawns}}
 <workflow>

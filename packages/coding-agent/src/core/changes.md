@@ -1,3 +1,21 @@
+## 2026-09-25 - `setActiveToolsByName` emits `tool_activated` (senpi#2128)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `setActiveToolsByName` emits `tool_activated` with the tools that were not active before the call, when any handler listens. It emits fire-and-forget, because `ExtensionRunner.emit` reports handler failures itself. Every activation path goes through this method: `pi.setActiveTools`, tool_search promotion, and lazy activation of a by-name call.
+
+### Why
+
+The `computer-use` builtin arms the user's stop chord when its tool becomes active (see `extensions/changes.md`).
+
+### Why an extension could not handle it
+
+The active tool set belongs to `AgentSession`, and only the host can report a change to it.
+
+### Expected merge conflict zones
+
+- LOW: the `previousToolNames` line and the tail of `setActiveToolsByName`.
+
 ## 2026-09-25 - An extension-triggered turn emits `before_agent_start` with `trigger: "extension"` (senpi#2137)
 
 ### What changed

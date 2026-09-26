@@ -1,6 +1,7 @@
 import type { KernelInterruptHandle } from "../../tool/types.ts";
 import type { KernelToolsInvokeOptions } from "../js/kernel-tools-types.ts";
 import { rejectKernelToolsUnavailable } from "../kernel-tools-unavailable.ts";
+import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import type { PendingRun, PythonKernelRunOptions, PythonKernelStartOptions, ResultMessage } from "./kernel-contract.ts";
 import { failedPythonResult, PythonKernelTransport } from "./transport.ts";
 
@@ -20,6 +21,7 @@ export class PythonKernel {
 	#retirement: Promise<void> | null = null;
 	#closePromise: Promise<void> | null = null;
 	#failure: Error | null = null;
+	readonly #preludes = new KernelPreludeTracker();
 	#generation = 0;
 	#closed = false;
 
@@ -180,7 +182,10 @@ export class PythonKernel {
 		if (timeoutMs !== undefined)
 			pending.timeoutTimer = setTimeout(() => this.#timeoutRun(pending, timeoutMs), timeoutMs);
 		try {
-			this.#transport?.run(pending.input);
+			this.#transport?.run({
+				...pending.input,
+				preludePlan: this.#preludes.plan(pending.input.kernelPreludes ?? []),
+			});
 		} catch (error) {
 			const failure = error instanceof Error ? error : new Error(String(error));
 			this.#rejectRun(pending, failure);

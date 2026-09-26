@@ -1,3 +1,21 @@
+## 2026-09-25 - Register the `computer-use` builtin (senpi#2128)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: imports `computer-use/index.ts` and registers `{ id: "computer-use" }` after `tool-search` and before `mcp`. It follows `permission-system`, whose parser registry it feeds, and `tool-search`, whose catalog its search-exposed `computer` tool joins. It mutates no provider payload, so `mcp` stays last.
+
+### Why
+
+senpi#2128: the desktop `computer` tool ships as a builtin; see `computer-use/changes.md`.
+
+### Why an extension could not handle it
+
+`builtinExtensions` is the list of in-tree extensions every session loads.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the `tool-search`/`mcp` tail of `builtinExtensions`.
+
 ## 2026-09-24 - Pin the refreshed pi-* extension releases (senpi#2079)
 
 ### What changed
