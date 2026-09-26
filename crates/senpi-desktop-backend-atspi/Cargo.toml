@@ -9,4 +9,6 @@ crate-type = ["rlib"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 atspi.workspace = true
+senpi-desktop-core = { path = "../senpi-desktop-core" }
+tokio = { workspace = true, features = ["time"] }
 zbus.workspace = true
