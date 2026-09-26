@@ -445,7 +445,8 @@ jobs:
         run: |
           toolchain=stable
           if [ -f rust-toolchain.toml ]; then
-            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+            # ubuntu-22.04 ships Python 3.10, which has no tomllib.
+            toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
           fi
           rustup toolchain install "$toolchain" --profile minimal --component clippy
           rustup default "$toolchain"
