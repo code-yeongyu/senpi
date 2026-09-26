@@ -38,9 +38,25 @@ fn platform_listener() -> Option<Listener> {
     Some(Box::new(senpi_desktop_backend_macos::CgEventTapListener::new()))
 }
 
-/// The OS backend crates add their `cfg(target_os)` arm (X11 todo 28,
-/// Windows todo 31, Wayland todo 33).
-#[cfg(not(target_os = "macos"))]
+/// Mirrors the session's display-server choice: `WAYLAND_DISPLAY` wins over
+/// `DISPLAY` (an XWayland session sets both), and no display means no listener.
+#[cfg(target_os = "linux")]
+fn platform_listener() -> Option<Listener> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        Some(Box::new(senpi_desktop_backend_wayland::GlobalShortcutsListener::new()))
+    } else if std::env::var_os("DISPLAY").is_some() {
+        Some(Box::new(senpi_desktop_backend_x11::Xi2Listener::new()))
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn platform_listener() -> Option<Listener> {
+    Some(Box::new(senpi_desktop_backend_win32::HotkeyListener::new()))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 const fn platform_listener() -> Option<Listener> {
     None
 }

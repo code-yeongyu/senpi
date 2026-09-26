@@ -1,5 +1,24 @@
 # changes
 
+## 2026-09-26 - Windows interactive-desktop QA workflow for the desktop engine (senpi#2128)
+
+### What changed
+
+- `.github/workflows/desktop-windows-qa.yml`: new `windows-desktop-qa` job on `windows-latest` (path-filtered to the desktop crates/packages and the QA scripts; `pull_request` runs for any base so stacked desktop PRs are covered). It gates on `scripts/ci/windows-interactive-desktop-smoke.ps1`, builds `senpi-desktop-engine` for `x86_64-pc-windows-msvc`, runs `cargo test -p senpi-desktop-backend-win32 -- --include-ignored --test-threads=1`, runs `bun scripts/qa-desktop-windows.ts --all --json`, proves the sabotage path (`--sabotage invalid-chord` must fail `hotkey-latches` with reason `InvalidKey`, checked by `scripts/ci/desktop-windows-qa/expect-sabotage.ts`), and uploads both JSONL files as the `desktop-windows-qa-jsonl` artifact.
+- `scripts/qa-desktop-windows.ts` + `scripts/ci/desktop-windows-qa/`: the Windows QA driver. Scenarios `capture-primary`, `foreground-type-notepad-restores-front`, `background-post-message-notepad`, `background-post-message-wpf`, `elevated-window-refused` (a Low-integrity copy of the engine made with `icacls /setintegritylevel Low`), `uia-snapshot-notepad`, `hotkey-latches`; one JSONL line per scenario with facts from an independent PowerShell observer (`observer.ps1`: `GetForegroundWindow`, `Cursor.Position`, UI Automation text, `whoami /groups`, process integrity RID), teardown receipts (`procs 0`, `dir REMOVED`) as the last lines, exit 0 iff every scenario passed and the teardown was clean.
+
+### Why
+
+- The win32 backend's capture, input delivery, UIPI refusal, UI Automation, and RegisterHotKey stop path can only be proven on a real Windows desktop; the hosted runner has one, so every desktop PR gets that proof with facts no engine report can fake.
+
+### Why an extension could not handle it
+
+- CI workflow configuration and a repository QA script.
+
+### Expected merge conflict zones
+
+- NONE: fork-only workflow and scripts.
+
 ## 2026-09-24 - Build and verify the senpi-desktop-engine binary in the native matrix (senpi#2128)
 
 ### What changed

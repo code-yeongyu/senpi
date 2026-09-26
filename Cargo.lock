@@ -2687,6 +2687,8 @@ name = "senpi-desktop-backend-atspi"
 version = "0.0.0"
 dependencies = [
  "atspi",
+ "senpi-desktop-core",
+ "tokio",
  "zbus",
 ]
 
@@ -2728,7 +2730,15 @@ name = "senpi-desktop-backend-wayland"
 version = "0.0.0"
 dependencies = [
  "ashpd",
+ "futures",
+ "image",
+ "parking_lot",
  "reis",
+ "senpi-desktop-backend-atspi",
+ "senpi-desktop-core",
+ "senpi-desktop-safety",
+ "tempfile",
+ "tokio",
  "xkeysym",
  "zbus",
 ]
@@ -2738,6 +2748,10 @@ name = "senpi-desktop-backend-win32"
 version = "0.0.0"
 dependencies = [
  "enigo",
+ "image",
+ "parking_lot",
+ "senpi-desktop-core",
+ "senpi-desktop-safety",
  "uiautomation",
  "windows-sys 0.61.2",
  "xcap",
@@ -2747,7 +2761,12 @@ dependencies = [
 name = "senpi-desktop-backend-x11"
 version = "0.0.0"
 dependencies = [
+ "image",
  "libc",
+ "parking_lot",
+ "senpi-desktop-backend-atspi",
+ "senpi-desktop-core",
+ "senpi-desktop-safety",
  "x11rb",
  "xkeysym",
 ]
@@ -2776,6 +2795,9 @@ dependencies = [
  "schemars",
  "senpi-desktop-backend-fake",
  "senpi-desktop-backend-macos",
+ "senpi-desktop-backend-wayland",
+ "senpi-desktop-backend-win32",
+ "senpi-desktop-backend-x11",
  "senpi-desktop-core",
  "senpi-desktop-safety",
  "senpi-desktop-session",
@@ -2805,6 +2827,9 @@ dependencies = [
  "parking_lot",
  "senpi-desktop-backend-fake",
  "senpi-desktop-backend-macos",
+ "senpi-desktop-backend-wayland",
+ "senpi-desktop-backend-win32",
+ "senpi-desktop-backend-x11",
  "senpi-desktop-core",
  "senpi-desktop-safety",
  "serde",
