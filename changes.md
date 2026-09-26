@@ -1,5 +1,25 @@
 # changes — senpi-monorepo root
 
+## Wayland PipeWire capture through a runtime-loaded libpipewire (2026-09-27)
+
+### What changed
+
+- `crates/senpi-desktop-backend-wayland/src/capture/pipewire/` (new): ScreenCast portal capture over PipeWire. `lib.rs` resolves the `pw_*` symbols from `libpipewire-0.3.so.0` with `libloading`; `ffi.rs` mirrors the PipeWire 1.x ABI; `pod.rs` builds the EnumFormat pod and reads the negotiated Format pod in Rust, since libspa's builder is header-only; `stream.rs` grabs one mapped frame; `pixels.rs` converts the packed RGB layouts; `screencast.rs` runs the portal session; `mod.rs` composites every monitor at its logical position with its own scale.
+- `crates/senpi-desktop-backend-wayland/src/capture/mod.rs`: desktop capture tries ScreenCast first and falls back to the Screenshot portal when libpipewire is missing or the cast fails. Only the user's Cancelled is a refusal (`PermissionDenied`). The fallback reason is carried in the Screenshot error.
+- `Cargo.toml` and `crates/senpi-desktop-backend-wayland/Cargo.toml`: `libloading = "=0.8.9"` (already in the lockfile).
+
+### Why
+
+- The Screenshot portal gives one image with no output geometry or scale. ScreenCast gives each monitor, which multi-monitor and HiDPI coordinates need (plan todo 44, closes GAP-4). Loading libpipewire at runtime keeps the engine's NEEDED list unchanged, so one binary still runs on hosts without PipeWire.
+
+### Why an extension could not handle it
+
+- It is the engine's platform backend.
+
+### Expected merge conflict zones
+
+- LOW: the `[workspace.dependencies]` block of `Cargo.toml`.
+
 ## MCP stdio facade for the desktop engine (2026-09-27)
 
 ### What changed

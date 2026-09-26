@@ -2732,6 +2732,7 @@ dependencies = [
  "ashpd",
  "futures",
  "image",
+ "libloading 0.8.9",
  "parking_lot",
  "reis",
  "senpi-desktop-backend-atspi",
