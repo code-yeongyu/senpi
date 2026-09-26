@@ -14,6 +14,8 @@ mod background;
 #[cfg(target_os = "windows")]
 mod barrier;
 #[cfg(target_os = "windows")]
+mod char_sink;
+#[cfg(target_os = "windows")]
 mod dispatch;
 #[cfg(target_os = "windows")]
 mod foreground;
