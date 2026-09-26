@@ -157,6 +157,9 @@ export async function runComputerCode(request: ComputerRunRequest, host: Compute
 			signal.addEventListener("abort", () => reject(signal.reason), { once: true });
 			signal.throwIfAborted();
 			Promise.resolve(evaluation).then(resolve, reject);
+			// Code that settled during the first evaluation queued this subscription on the vm's own microtask
+			// queue, which only a later runInContext drains; without this drain such a run hangs to its timeout.
+			setImmediate(resumeVm);
 		});
 		return {
 			displays: context.output.finish(),

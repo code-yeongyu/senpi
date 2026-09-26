@@ -72,6 +72,23 @@ function methods(log: SpawnLog): readonly string[] {
 }
 
 describe("runComputerCode", HANG_GUARD, () => {
+	it("settles a run that returns without awaiting any host call", async () => {
+		// Given
+		const { service } = await openDesktop();
+
+		// When
+		const results = await Promise.all(
+			[
+				"return 42;",
+				"if (true) return { early: true }; await desktop.windows();",
+				"await Promise.resolve(); return 'x';",
+			].map((code) => run(service, code, { timeoutMs: 5_000 })),
+		);
+
+		// Then
+		expect(results.map((result) => result.returnValue)).toEqual([42, { early: true }, "x"]);
+	});
+
 	it("returns the code's value and displays the inline capture before later console output", async () => {
 		// Given
 		const { service } = await openDesktop();
