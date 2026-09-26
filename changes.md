@@ -4,19 +4,25 @@
 
 ### What changed
 
-- `package.json`: `check` runs the new `check:conflict-markers` (`scripts/check-conflict-markers.mjs`), which fails on any tracked text line that opens (`<<<<<<< `), bases (`||||||| `) or closes (`>>>>>>> `) a conflict.
+- `package.json`: `check` runs the new `check:conflict-markers` (`scripts/check-conflict-markers.mjs`), which fails on any tracked text line that opens (`<<<<<<< `), bases (`
+
+## Gate Cargo pins in the root check (2026-09-26)
+
+### What changed
+
+- `package.json`: `check:cargo-pinned-deps` runs `scripts/check-cargo-pinned-deps.mjs`, and `check` runs it right after `check:pinned-deps`.
 
 ### Why
 
-- Merge resolutions kept committing diff3 leftovers into trackers and changelogs (#963, #1189, and #2087's leftover in `core/changes.md`, senpi#2173).
+- `bun run check` is what CI and the pre-commit hook run, so the Cargo pin gate has to be part of it (senpi#2128).
 
 ### Why an extension could not handle it
 
-- Repository validation gate.
+- Root scripts are repository configuration.
 
 ### Expected merge conflict zones
 
-- LOW: the `check` script chain in the root `package.json`.
+- LOW: the `check` script line in the root `package.json`.
 
 ## Resolve the desktop packages from source in the root type check (2026-09-24)
 

@@ -16,6 +16,24 @@
 
 - LOW: the `env` literal in `smokeTestCodingAgentConsumer`.
 
+## 2026-09-26 - Cargo dependencies must be exact pins (senpi#2128)
+
+### What changed
+
+- `scripts/check-cargo-pinned-deps.mjs` (new) and `scripts/check-cargo-pinned-deps.test.mjs` (new): the Cargo twin of `check-pinned-deps.mjs`. Every registry dependency in the workspace root and in every member crate, in any `dependencies`, `dev-dependencies`, `build-dependencies` or target-specific table, must be an exact `=x.y.z` pin. `workspace = true` and `path` entries pass. A dotted `name.version = "…"` key is checked too.
+
+### Why
+
+- `check-pinned-deps.mjs` reads only `package.json`. The desktop crates (senpi#2128) brought 30+ Cargo pins copied from oh-my-pi, and oh-my-pi leaves some as carets (for example `zbus`). A caret written by a later edit would float with no gate catching it.
+
+### Why an extension could not handle it
+
+- It is a repository gate.
+
+### Expected merge conflict zones
+
+- None: new files.
+
 ## 2026-09-26 - Installer for the desktop engine's bunshin capability (senpi#2128)
 
 ### What changed
