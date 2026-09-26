@@ -7,6 +7,7 @@ import {
 	computerPermissionParser,
 	createComputerTool,
 	isSupportedHost,
+	materializeComputerSkill,
 	runComputerCommand,
 } from "@code-yeongyu/senpi-desktop-tool";
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
@@ -105,6 +106,11 @@ export function createComputerUseExtension(deps: ComputerUseDeps): ExtensionFact
 			);
 			session = { handle, service };
 		});
+
+		// resources_discover fires after session_start, so the skill tracks the same host and setting gate as the tool.
+		pi.on("resources_discover", () =>
+			session === undefined ? undefined : { skillPaths: [materializeComputerSkill()] },
+		);
 
 		pi.on("tool_activated", async (event, ctx) => {
 			if (session === undefined || session.handle.active || !event.toolNames.includes(COMPUTER_TOOL_NAME)) return;

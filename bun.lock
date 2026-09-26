@@ -206,6 +206,7 @@
       },
       "devDependencies": {
         "@types/node": "26.6.2",
+        "zod": "4.6.5",
       },
     },
     "packages/desktop-prelude": {

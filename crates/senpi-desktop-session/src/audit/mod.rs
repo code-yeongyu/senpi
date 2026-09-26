@@ -216,7 +216,7 @@ thread_local! {
     static WARNINGS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn take_warnings() -> Vec<String> {
     WARNINGS.with(|warnings| std::mem::take(&mut *warnings.borrow_mut()))
 }

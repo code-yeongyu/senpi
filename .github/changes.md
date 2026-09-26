@@ -1,5 +1,23 @@
 # changes
 
+## 2026-09-26 - Desktop Rust contract job on three OSes (senpi#2128)
+
+### What changed
+
+- `.github/workflows/ci.yml`: new `desktop-native-contract` job on `macos-14`, `ubuntu-22.04` and `windows-latest`. Each OS runs workspace clippy with `-D warnings`, `cargo test --workspace`, the release engine build, the desktop-engine package tests, and the conformance replay. Ubuntu also runs the `#[ignore]`d X11 and AT-SPI display tests under `dbus-run-session -- xvfb-run`. On macOS the job first copies the engine it built over the vendored `darwin-arm64` prebuild (`check-prebuild-fresh.mjs --update`), because the locator resolves the vendored binary first and the TS tests would otherwise exercise a stale engine. The job is a `needs` of the `Check and test` fan-in, so the required status covers it.
+
+### Why
+
+- `native-prebuilds.yml` runs `cargo test` only on its non-cross rows, so the Linux desktop crates were never tested in CI, and display-bound tests never ran anywhere.
+
+### Why an extension could not handle it
+
+- CI jobs are repository configuration.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `check-and-test` `needs` list and summary in `.github/workflows/ci.yml`.
+
 ## 2026-09-26 - Windows interactive-desktop QA workflow for the desktop engine (senpi#2128)
 
 ### What changed
