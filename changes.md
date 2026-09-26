@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## The engine client reuses the connection that found the daemon (2026-09-27)
+
+### What changed
+
+- `crates/senpi-desktop-engine/src/client.rs`: `exchange_or_start` sends the request over the connection that found (or waited for) the daemon, instead of probing and reconnecting, and a busy Windows named pipe (`ERROR_PIPE_BUSY`) is retried for up to 5 s.
+
+### Why
+
+- On Windows the probe took the pipe's only free instance, so the real connect found it busy and `--oneshot`/`--mcp` calls failed (the MCP client tests on windows-latest).
+
+### Why an extension could not handle it
+
+- The engine binary's own client.
+
+### Expected merge conflict zones
+
+- None: fork-only crate.
+
 ## Wayland window capture from the ScreenCast composite (2026-09-27)
 
 ### What changed

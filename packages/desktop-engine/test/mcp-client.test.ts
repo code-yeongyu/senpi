@@ -74,7 +74,7 @@ describe("senpi-desktop-engine --mcp", () => {
 			// Then
 			const content = at(captured, "result", "content");
 			const image = Array.isArray(content) ? content[0] : undefined;
-			expect(at(image, "type")).toBe("image");
+			expect(at(image, "type"), JSON.stringify(captured).slice(0, 600)).toBe("image");
 			expect(at(image, "mimeType")).toMatch(/^image\//);
 			expect(typeof at(captured, "result", "structuredContent", "frameId")).toBe("string");
 		},
@@ -91,7 +91,7 @@ describe("senpi-desktop-engine --mcp", () => {
 			const clicked = await toolCall(client, "desktop_click", { target: "desktop", x: 10, y: 10 });
 
 			// Then
-			expect(at(clicked, "result", "isError")).toBe(true);
+			expect(at(clicked, "result", "isError"), JSON.stringify(clicked).slice(0, 600)).toBe(true);
 			const content = at(clicked, "result", "content");
 			const text = Array.isArray(content) ? at(content[0], "text") : undefined;
 			expect(at(JSON.parse(String(text)), "data", "code")).toBe("StopPathUnavailable");

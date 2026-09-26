@@ -118,12 +118,22 @@ try {
 	const host = `${process.platform}-${process.arch}`;
 	const engineFile = process.platform === "win32" ? "senpi-desktop-engine.exe" : "senpi-desktop-engine";
 	const enginePath = join(dirname(binaryPath), "native", "prebuilds", host, engineFile);
-	if (!existsSync(enginePath)) {
+	const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+	const vendored = existsSync(join(repoRoot, "packages", "desktop-engine", "native", "prebuilds", host, engineFile));
+	// Only a host with a vendored prebuild ships the sidecar; elsewhere computer use reports native-unavailable.
+	const engineRequired = process.env.SENPI_SMOKE_REQUIRE_DESKTOP_ENGINE
+		? process.env.SENPI_SMOKE_REQUIRE_DESKTOP_ENGINE === "1"
+		: vendored;
+	if (engineRequired && !existsSync(enginePath)) {
 		throw new Error(`standalone smoke: desktop engine sidecar missing at ${enginePath}`);
 	}
+	if (!engineRequired) {
+		console.log(`desktop engine: no ${host} prebuild is vendored; sidecar not required`);
+	}
+	if (engineRequired) {
 	const scenario = join(smokeDirectory, "desktop-engine-fixture.json");
 	copyFileSync(
-		join(dirname(fileURLToPath(import.meta.url)), "..", "crates", "senpi-desktop-backend-fake", "fixtures", "two-displays-one-window.json"),
+		join(repoRoot, "crates", "senpi-desktop-backend-fake", "fixtures", "two-displays-one-window.json"),
 		scenario,
 	);
 	const engineRequests = [
@@ -162,6 +172,7 @@ try {
 		);
 	}
 	console.log(`desktop engine: backend=${backend} abi=${abi}`);
+	}
 } finally {
 	if (existsSync(hiddenWorkerPath)) {
 		renameSync(hiddenWorkerPath, workerPath);
