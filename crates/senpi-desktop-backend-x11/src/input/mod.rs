@@ -14,6 +14,8 @@ mod toolkit_filter;
 mod xtest;
 
 #[cfg(test)]
+mod child_tests;
+#[cfg(test)]
 pub(crate) mod fake;
 #[cfg(test)]
 mod live_tests;

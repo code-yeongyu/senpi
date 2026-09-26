@@ -50,6 +50,10 @@ pub trait InputServer {
     fn send(&self, window: Window, event: SentEvent) -> CoreResult<()>;
     /// Root `(x, y)` in `window`'s coordinates.
     fn translate(&self, window: Window, x: i16, y: i16) -> CoreResult<(i16, i16)>;
+    /// The deepest mapped descendant of `window` under root `(x, y)`, or
+    /// `window` itself: Xt and most toolkits dispatch a sent pointer event by
+    /// its event window, so it must name the widget under the point.
+    fn target_at(&self, window: Window, x: i16, y: i16) -> CoreResult<Window>;
     /// The core pointer's root position.
     fn pointer(&self) -> CoreResult<(i16, i16)>;
     fn warp(&self, x: i16, y: i16) -> CoreResult<()>;

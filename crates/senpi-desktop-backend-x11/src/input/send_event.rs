@@ -15,7 +15,13 @@ use super::xtest::{button_detail, point, scroll_buttons, CLICK_DELAY, DRAG_STEP_
 use super::X11Input;
 
 impl<S: InputServer> X11Input<S> {
-    pub(super) fn pointer_send_event(&mut self, window: Window, event: &PointerEvent) -> CoreResult<()> {
+    /// `top` is the requested top-level window; each event goes to its
+    /// deepest mapped descendant under the event's first point (a drag keeps
+    /// the window its press landed in, as a real grab would).
+    pub(super) fn pointer_send_event(&mut self, top: Window, event: &PointerEvent) -> CoreResult<()> {
+        let (x, y) = first_point(event)?;
+        let (root_x, root_y) = point(x, y)?;
+        let window = self.server.target_at(top, root_x, root_y)?;
         let route = Route::Window(window);
         match event {
             PointerEvent::Click {
@@ -101,6 +107,19 @@ impl<S: InputServer> X11Input<S> {
         let root = point(x, y)?;
         let local = self.server.translate(window, root.0, root.1)?;
         Ok(Spot { root, local })
+    }
+}
+
+/// The root point that picks the event window.
+fn first_point(event: &PointerEvent) -> CoreResult<(f64, f64)> {
+    match event {
+        PointerEvent::Click { x, y, .. }
+        | PointerEvent::Move { x, y }
+        | PointerEvent::Scroll { x, y, .. } => Ok((*x, *y)),
+        PointerEvent::Drag { path, .. } => path
+            .first()
+            .copied()
+            .ok_or_else(|| DesktopError::input_failed("drag path is empty")),
     }
 }
 
