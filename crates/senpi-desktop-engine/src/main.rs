@@ -9,6 +9,7 @@ mod connection;
 mod daemon;
 mod engine;
 mod fake_listener;
+mod mcp;
 mod oneshot;
 mod outbox;
 mod route;
@@ -38,6 +39,22 @@ fn main() -> ExitCode {
                 }
             }
             Err(error) => fail(&format!("--oneshot: {error}")),
+        },
+        Mode::Mcp {
+            endpoint,
+            serve_args,
+            allow_host_relay_only_stop,
+        } => match endpoint.map_or_else(client::default_endpoint, Ok) {
+            Ok(endpoint) => {
+                let server = mcp::Server::new(allow_host_relay_only_stop, |request: &serde_json::Value| {
+                    client::exchange_or_start(&endpoint, &serve_args, request)
+                });
+                match server.run(std::io::stdin().lock(), std::io::stdout().lock()) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => fail(&format!("--mcp: {error}")),
+                }
+            }
+            Err(error) => fail(&format!("--mcp: {error}")),
         },
         Mode::Resume { endpoint } => match endpoint.map_or_else(client::default_endpoint, Ok) {
             Ok(endpoint) => match client::resume(&endpoint) {

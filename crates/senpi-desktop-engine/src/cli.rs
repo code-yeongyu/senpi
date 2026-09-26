@@ -12,7 +12,7 @@ use crate::daemon;
     version,
     about = "Senpi desktop engine (JSON-RPC 2.0 over NDJSON)"
 )]
-#[command(group(ArgGroup::new("mode").args(["stdio", "serve", "oneshot", "resume", "selftest", "schema"])))]
+#[command(group(ArgGroup::new("mode").args(["stdio", "serve", "oneshot", "mcp", "resume", "selftest", "schema"])))]
 pub struct Cli {
     /// Serve on stdin/stdout (the default).
     #[arg(long)]
@@ -26,10 +26,13 @@ pub struct Cli {
     /// Forward one request line to the --serve daemon (bunshin sidecar contract).
     #[arg(long)]
     oneshot: bool,
+    /// Serve MCP (tools) on stdio over the --serve daemon, starting it when needed.
+    #[arg(long)]
+    mcp: bool,
     /// Lift a stop latched in the daemon (the desktop user's reset).
     #[arg(long)]
     resume: bool,
-    /// Daemon endpoint for --oneshot / --resume (default: the per-user socket).
+    /// Daemon endpoint for --oneshot / --mcp / --resume (default: the per-user socket).
     #[arg(long, value_name = "ENDPOINT")]
     endpoint: Option<String>,
     #[command(flatten)]
@@ -117,6 +120,11 @@ pub enum Mode {
         endpoint: Option<String>,
         serve_args: Vec<String>,
     },
+    Mcp {
+        endpoint: Option<String>,
+        serve_args: Vec<String>,
+        allow_host_relay_only_stop: bool,
+    },
     Resume {
         endpoint: Option<String>,
     },
@@ -140,6 +148,16 @@ impl Cli {
                     self.daemon.serve_args(),
                 ]
                 .concat(),
+            }
+        } else if self.mcp {
+            Mode::Mcp {
+                endpoint: self.endpoint,
+                serve_args: [
+                    vec!["--idle-ms".to_owned(), self.idle_ms.to_string()],
+                    self.daemon.serve_args(),
+                ]
+                .concat(),
+                allow_host_relay_only_stop: self.daemon.allow_host_relay_only_stop,
             }
         } else if self.resume {
             Mode::Resume {
