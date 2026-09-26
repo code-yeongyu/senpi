@@ -39,24 +39,6 @@ Title generation is internal background work started from `AgentSession`. Extens
 
 - LOW: the `catch` block of `_generateSessionTitle()` in `agent-session.ts`.
 
-## 2026-09-25 - An extension-triggered turn emits `before_agent_start` with `trigger: "extension"` (senpi#2137)
-
-### What changed
-
-- `packages/coding-agent/src/core/agent-session.ts`: the `sendCustomMessage(..., { triggerTurn: true })` path passes `{ trigger: "extension" }` to `emitBeforeAgentStart`; the user-prompt path and the preview keep the runner's default `"prompt"`. The event field itself is recorded in `extensions/changes.md`.
-
-### Why
-
-The todotools first-turn plan opener could not tell a user request from an extension's hidden bootstrap turn and armed on omo's onboarding greeting, skipping the user's real first request.
-
-### Why an extension could not handle it
-
-Only the host knows which path started the turn.
-
-### Expected merge conflict zones
-
-- The `emitBeforeAgentStart` call inside the `triggerTurn` branch of `sendCustomMessage`.
-
 ## 2026-09-25 - `setActiveToolsByName` emits `tool_activated` (senpi#2128)
 
 ### What changed
@@ -74,6 +56,24 @@ The active tool set belongs to `AgentSession`, and only the host can report a ch
 ### Expected merge conflict zones
 
 - LOW: the `previousToolNames` line and the tail of `setActiveToolsByName`.
+
+## 2026-09-25 - An extension-triggered turn emits `before_agent_start` with `trigger: "extension"` (senpi#2137)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `sendCustomMessage(..., { triggerTurn: true })` path passes `{ trigger: "extension" }` to `emitBeforeAgentStart`; the user-prompt path and the preview keep the runner's default `"prompt"`. The event field itself is recorded in `extensions/changes.md`.
+
+### Why
+
+The todotools first-turn plan opener could not tell a user request from an extension's hidden bootstrap turn and armed on omo's onboarding greeting, skipping the user's real first request.
+
+### Why an extension could not handle it
+
+Only the host knows which path started the turn.
+
+### Expected merge conflict zones
+
+- The `emitBeforeAgentStart` call inside the `triggerTurn` branch of `sendCustomMessage`.
 
 ## 2026-09-25 - `todo.turnEndBackstop` setting (senpi#2121)
 
