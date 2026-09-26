@@ -4,6 +4,7 @@
 
 use image::imageops::FilterType;
 use image::{Rgba, RgbaImage};
+use senpi_desktop_core::ax::AxBounds;
 use senpi_desktop_core::error::{CoreResult, DesktopError};
 use senpi_desktop_core::frame::{FrameGeometry, MAX_COMPOSITE_PIXELS};
 use senpi_desktop_core::types::{DesktopDisplay, DisplaySelector};
@@ -77,8 +78,48 @@ pub(crate) fn lay_out<T>(
 /// A physical window rect in global logical coordinates, divided by the scale
 /// of the display holding its origin (1.0 off every display).
 pub(crate) fn logical_window_rect(rect: PhysicalRect, displays: &[DesktopDisplay]) -> (i32, i32, u32, u32) {
+    let scale = physical_origin_scale(rect, displays);
+    (
+        logical_coordinate(rect.x, scale),
+        logical_coordinate(rect.y, scale),
+        logical_edge(rect.width, scale),
+        logical_edge(rect.height, scale),
+    )
+}
+
+/// A physical rect as fractional logical bounds (UI Automation element
+/// bounds), divided like [`logical_window_rect`].
+pub(crate) fn logical_bounds(rect: PhysicalRect, displays: &[DesktopDisplay]) -> AxBounds {
+    let scale = physical_origin_scale(rect, displays);
+    AxBounds {
+        x: f64::from(rect.x) / scale,
+        y: f64::from(rect.y) / scale,
+        width: f64::from(rect.width) / scale,
+        height: f64::from(rect.height) / scale,
+    }
+}
+
+/// A global logical point in physical pixels, scaled by the display holding
+/// it (the first display when none does); `None` without displays.
+pub(crate) fn physical_point(x: f64, y: f64, displays: &[DesktopDisplay]) -> Option<(i32, i32)> {
+    let display = displays
+        .iter()
+        .find(|display| {
+            x >= f64::from(display.x)
+                && x < f64::from(display.x) + f64::from(display.width)
+                && y >= f64::from(display.y)
+                && y < f64::from(display.y) + f64::from(display.height)
+        })
+        .or_else(|| displays.first())?;
+    Some((
+        physical_coordinate(x, display.scale),
+        physical_coordinate(y, display.scale),
+    ))
+}
+
+fn physical_origin_scale(rect: PhysicalRect, displays: &[DesktopDisplay]) -> f64 {
     let (x, y) = (f64::from(rect.x), f64::from(rect.y));
-    let scale = displays
+    displays
         .iter()
         .find(|display| {
             let left = f64::from(display.x) * display.scale;
@@ -89,13 +130,7 @@ pub(crate) fn logical_window_rect(rect: PhysicalRect, displays: &[DesktopDisplay
                 && y < f64::from(display.height).mul_add(display.scale, top)
         })
         .map_or(1.0, |display| display.scale)
-        .max(f64::EPSILON);
-    (
-        logical_coordinate(rect.x, scale),
-        logical_coordinate(rect.y, scale),
-        logical_edge(rect.width, scale),
-        logical_edge(rect.height, scale),
-    )
+        .max(f64::EPSILON)
 }
 
 /// Composites per-display captures at their laid-out pixel rects; a capture
@@ -168,6 +203,10 @@ fn offset(value: i32, origin: i32) -> CoreResult<u32> {
 // maximum): the clamp every caller wants, and the only float-to-int path.
 fn logical_coordinate(physical: i32, scale: f64) -> i32 {
     (f64::from(physical) / scale).round() as i32
+}
+
+fn physical_coordinate(logical: f64, scale: f64) -> i32 {
+    (logical * scale).round() as i32
 }
 
 fn logical_edge(physical: u32, scale: f64) -> u32 {

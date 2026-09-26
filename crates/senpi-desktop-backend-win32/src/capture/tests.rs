@@ -4,7 +4,9 @@ use image::{Rgba, RgbaImage};
 use senpi_desktop_core::error::ErrorCode;
 use senpi_desktop_core::types::{DesktopDisplay, DisplaySelector};
 
-use super::frame::{composite, lay_out, logical_window_rect, MonitorSample, PhysicalRect};
+use super::frame::{
+    composite, lay_out, logical_bounds, logical_window_rect, physical_point, MonitorSample, PhysicalRect,
+};
 
 fn monitor(id: &str, (x, y): (i32, i32), (width, height): (u32, u32), scale: f64) -> ((), MonitorSample) {
     let sample = MonitorSample {
@@ -146,4 +148,40 @@ fn composite_places_each_capture_at_its_pixel_rect_and_resamples_mismatches() {
     assert_eq!(image.get_pixel(199, 99), &Rgba([255, 0, 0, 255]));
     assert_eq!(image.get_pixel(200, 0), &Rgba([0, 0, 255, 255]));
     assert_eq!(image.get_pixel(399, 99), &Rgba([0, 0, 255, 255]));
+}
+
+#[test]
+fn element_bounds_stay_fractional_in_logical_coordinates() {
+    let laid_out = displays(vec![monitor("1", (0, 0), (2880, 1620), 1.5)]);
+    let rect = PhysicalRect {
+        x: 301,
+        y: 150,
+        width: 25,
+        height: 10,
+    };
+    let bounds = logical_bounds(rect, &laid_out);
+    assert_eq!(
+        (bounds.x, bounds.y, bounds.width, bounds.height),
+        (301.0 / 1.5, 100.0, 25.0 / 1.5, 10.0 / 1.5)
+    );
+}
+
+#[test]
+fn logical_point_scales_by_the_display_holding_it() {
+    let laid_out = displays(vec![
+        monitor("1", (0, 0), (1920, 1080), 1.0),
+        monitor("2", (1920, 0), (3840, 2160), 2.0),
+    ]);
+    assert_eq!(physical_point(1930.0, 10.0, &laid_out), Some((3860, 20)));
+}
+
+#[test]
+fn logical_point_off_every_display_uses_the_first_display() {
+    let laid_out = displays(vec![monitor("1", (0, 0), (2880, 1620), 1.5)]);
+    assert_eq!(physical_point(-10.0, 4000.0, &laid_out), Some((-15, 6000)));
+}
+
+#[test]
+fn logical_point_without_displays_is_none() {
+    assert_eq!(physical_point(1.0, 1.0, &[]), None);
 }

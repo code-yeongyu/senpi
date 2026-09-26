@@ -13,6 +13,7 @@ use senpi_desktop_core::frame::FrameGeometry;
 use senpi_desktop_core::types::{DesktopDisplay, DesktopWindow, DisplaySelector, Target};
 
 pub(crate) use self::dpi::enable_per_monitor_awareness;
+pub(crate) use self::frame::{logical_bounds, physical_point, PhysicalRect};
 use crate::integrity::IntegrityRid;
 
 #[derive(Debug, Clone)]
@@ -35,11 +36,7 @@ impl Win32Capture {
 
     /// Windows on every display, whatever the session's display selector.
     pub(crate) fn windows(&self) -> CoreResult<Vec<DesktopWindow>> {
-        let layout = monitors::read(&DisplaySelector::All)?
-            .into_iter()
-            .map(|(_, display)| display)
-            .collect::<Vec<_>>();
-        windows::enumerate(&layout, self.integrity)
+        windows::enumerate(&all_displays()?, self.integrity)
     }
 
     pub(crate) fn capture(&self, target: &Target) -> CoreResult<(RgbaImage, FrameGeometry)> {
@@ -74,6 +71,15 @@ impl Win32Capture {
         let geometry = FrameGeometry::for_window(&descriptor, image.width(), image.height());
         Ok((image, geometry))
     }
+}
+
+/// Every active display, whatever a session's display selector: the layout
+/// window and element coordinates are resolved against.
+pub(crate) fn all_displays() -> CoreResult<Vec<DesktopDisplay>> {
+    Ok(monitors::read(&DisplaySelector::All)?
+        .into_iter()
+        .map(|(_, display)| display)
+        .collect())
 }
 
 fn ensure_nonempty(image: &RgbaImage, kind: &str, id: &str) -> CoreResult<()> {
