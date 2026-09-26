@@ -61,6 +61,10 @@
 					"path": "terminal-tools.md"
 				},
 				{
+					"title": "Computer use",
+					"path": "computer-use.md"
+				},
+				{
 					"title": "Skills",
 					"path": "skills.md"
 				},
@@ -100,6 +104,10 @@
 				{
 					"title": "Session Format",
 					"path": "session-format.md"
+				},
+				{
+					"title": "computer tool",
+					"path": "tools/computer.md"
 				}
 			]
 		},
