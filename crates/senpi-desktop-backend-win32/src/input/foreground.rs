@@ -1,9 +1,11 @@
 //! The focus guard: foreground delivery gives the target the foreground
 //! (`SetForegroundWindow`), confirms Win32 made it foreground, acts through
 //! `SendInput`, and hands the foreground back to the window that had it
-//! (oh-my-pi `win32/input.rs:577-626`). Like oh-my-pi there is no
-//! `AttachThreadInput` fallback: a refused `SetForegroundWindow` is an
-//! error, never input sent to whichever window happens to be in front.
+//! (oh-my-pi `win32/input.rs:577-626`). Win32 grants the foreground only to
+//! the process that received the last input event, so a refused request is
+//! retried once after a zero-motion `SendInput` makes this process that
+//! source. There is no `AttachThreadInput` fallback: a request still refused
+//! is an error, never input sent to whichever window happens to be in front.
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,6 +15,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_RESTO
 
 use super::dispatch::Win32Input;
 use super::native::{self, Window};
+use super::system;
 
 /// How long Win32 gets to hand over the foreground.
 const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
@@ -62,7 +65,9 @@ fn activate(id: &str, window: Window) -> CoreResult<()> {
     if native::foreground() == Some(window) {
         return Ok(());
     }
-    if !native::set_foreground(window) {
+    if !native::set_foreground(window)
+        && !(system::claim_last_input().is_ok() && native::set_foreground(window))
+    {
         return Err(DesktopError::input_failed(format!(
             "SetForegroundWindow failed for window {id}"
         )));
