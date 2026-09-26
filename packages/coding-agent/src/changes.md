@@ -211,6 +211,24 @@
 
 - LOW: the statements around `writeHelpFlagsCache` in `main.ts`.
 
+## 2026-09-20 - Forward initial CLI model provenance (#1560)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` forwards the resolved `initialModelProvenance` to session creation.
+
+### Why
+
+- `packages/coding-agent/src/main.ts` resolved explicit and scoped models but discarded their provenance before extensions received `session_start`.
+
+### Why an extension could not handle it
+
+- The metadata is lost in `packages/coding-agent/src/main.ts` before an extension can observe the startup event.
+
+### Expected merge conflict zones
+
+- LOW: the `createAgentSessionFromServices` options in `packages/coding-agent/src/main.ts`.
+
 ## 2026-09-19 - The in-process daemon shares one model runtime across its sessions (senpi#1844)
 
 ### What changed
