@@ -402,6 +402,76 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The desktop Rust contract on each OS (senpi#2128): native-prebuilds.yml runs cargo test only on
+  # its non-cross rows, so Linux desktop crates would otherwise never be tested. Display-bound tests
+  # are #[ignore]d and run explicitly under xvfb + a session bus on ubuntu.
+  desktop-native-contract:
+    name: desktop-native-contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install display test dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y xvfb at-spi2-core dbus dbus-x11 xterm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Setup Rust
+        shell: bash
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal --component clippy
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace --locked
+
+      - name: Build desktop engine
+        run: cargo build --release -p senpi-desktop-engine --locked
+
+      - name: Desktop engine package tests
+        run: bun run --cwd packages/desktop-engine test
+
+      - name: Desktop engine conformance replay
+        run: bun run --cwd packages/desktop-engine test -- conformance
+
+      - name: X11 and AT-SPI display tests
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a cargo test -p senpi-desktop-backend-x11 -p senpi-desktop-backend-atspi --locked -- --ignored
+
   # Fan-in gate carrying the exact context name branch protection requires
   # ("Check and test"). It succeeds only when every check/test job above passed,
   # so the required-status contract is unchanged while the work runs in parallel.
@@ -412,6 +482,7 @@ jobs:
         check,
         test-coding-agent,
         grep-native-contract,
+        desktop-native-contract,
         hooks-trust-storage-windows,
         rpc-windows,
         compiled-extensions-windows,
@@ -443,6 +514,7 @@ jobs:
             echo "- check: ${{ needs.check.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
+            echo "- desktop-native-contract: ${{ needs.desktop-native-contract.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
             echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
             echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"
