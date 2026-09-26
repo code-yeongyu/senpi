@@ -1,5 +1,25 @@
 # changes — senpi-monorepo root
 
+## Wayland window capture from the ScreenCast composite (2026-09-27)
+
+### What changed
+
+- `crates/senpi-desktop-backend-wayland/src/capture/pipewire/window.rs` (new): a window target is cut out of the ScreenCast composite. The window's AT-SPI logical bounds are scaled by the monitor its origin lies on. An unknown id is `WindowNotFound`, and a window on no captured monitor is `CaptureFailed`.
+- `crates/senpi-desktop-backend-wayland/src/capture/mod.rs`, `crates/senpi-desktop-backend-wayland/src/backend.rs`: capture takes the AT-SPI window list for window targets. Without ScreenCast, window capture is refused with the ScreenCast failure reason, since the Screenshot portal has no window capture.
+- Tests ported under oh-my-pi's names (`missing_portal_size_falls_back_to_buffer_scale_one`, `scaled_monitor_maps_screenshot_pixel_to_logical_point`, `monitor_offset_is_added_to_logical_point`, `window_crop_scales_logical_bounds_to_buffer_pixels`, `window_crop_rejects_window_outside_monitor`, `capture_accepts_non_numeric_wayland_window_id`, `capture_rejects_unknown_window_id_via_backend_lookup`), plus a mapping comment on the token-cleanup test.
+
+### Why
+
+- The oh-my-pi parity audit (F5) found these nine oh-my-pi tests with no counterpart. Window capture on Wayland is oh-my-pi behavior that the Screenshot-only path could not offer.
+
+### Why an extension could not handle it
+
+- The engine's platform backend.
+
+### Expected merge conflict zones
+
+- None: fork-only crate.
+
 ## Wayland PipeWire capture through a runtime-loaded libpipewire (2026-09-27)
 
 ### What changed

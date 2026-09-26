@@ -1,15 +1,22 @@
 use image::RgbaImage;
 
+use senpi_desktop_core::error::ErrorCode;
+use senpi_desktop_core::frame::FrameGeometry;
+use senpi_desktop_core::types::DesktopWindow;
+
 use super::composite;
 use super::lib::loadable;
 use super::pixels::to_rgba;
 use super::pod::{enum_format, parse_format, Negotiated, VideoFormat};
 use super::screencast::MonitorStream;
+use super::window::{crop_window, window_crop};
 
 fn words(bytes: &[u8]) -> Vec<u32> {
     bytes
-        .chunks_exact(4)
-        .map(|w| u32::from_ne_bytes(w.try_into().unwrap()))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|w| u32::from_ne_bytes(*w))
         .collect()
 }
 
@@ -140,4 +147,116 @@ fn monitors_composite_at_their_logical_positions_with_their_own_scale() {
 #[test]
 fn a_missing_libpipewire_is_reported_not_loadable() {
     assert!(!loadable("libpipewire-senpi-does-not-exist.so.0"));
+}
+
+fn portal_window(id: &str, x: i32, y: i32, width: u32, height: u32) -> DesktopWindow {
+    DesktopWindow {
+        id: id.to_owned(),
+        title: String::new(),
+        app: String::new(),
+        pid: None,
+        x,
+        y,
+        width,
+        height,
+        focused: false,
+        elevated: None,
+    }
+}
+
+/// One HiDPI monitor at logical (100, 50), 1280x1440, streaming 2560x2880 pixels.
+fn hidpi_monitor() -> (RgbaImage, Vec<senpi_desktop_core::types::DesktopDisplay>) {
+    let monitor = MonitorStream {
+        node: 1,
+        position: (100, 50),
+        size: Some((1280, 1440)),
+    };
+    let (canvas, mut displays) = composite(&[(monitor, RgbaImage::new(2560, 2880))]);
+    displays[0].x = 100;
+    displays[0].y = 50;
+    (canvas, displays)
+}
+
+#[test]
+fn missing_portal_size_falls_back_to_buffer_scale_one() {
+    let unsized_monitor = MonitorStream {
+        node: 1,
+        position: (0, 0),
+        size: None,
+    };
+    let degenerate = MonitorStream {
+        node: 2,
+        position: (0, 0),
+        size: Some((0, 0)),
+    };
+    for monitor in [unsized_monitor, degenerate] {
+        let (_, displays) = composite(&[(monitor, RgbaImage::new(1920, 1080))]);
+        assert_eq!(
+            (displays[0].width, displays[0].height, displays[0].scale),
+            (1920, 1080, 1.0)
+        );
+    }
+}
+
+#[test]
+fn scaled_monitor_maps_screenshot_pixel_to_logical_point() {
+    let monitor = MonitorStream {
+        node: 1,
+        position: (0, 0),
+        size: Some((1280, 1440)),
+    };
+    let (_, displays) = composite(&[(monitor, RgbaImage::new(2560, 2880))]);
+    let frame = FrameGeometry::for_displays(&displays);
+    assert_eq!(frame.map_point(1280.0, 1440.0, None).unwrap(), (640.0, 720.0));
+}
+
+#[test]
+fn monitor_offset_is_added_to_logical_point() {
+    let (_, displays) = hidpi_monitor();
+    let frame = FrameGeometry::for_displays(&displays);
+    assert_eq!(frame.map_point(1280.0, 1440.0, None).unwrap(), (740.0, 770.0));
+}
+
+#[test]
+fn window_crop_scales_logical_bounds_to_buffer_pixels() {
+    let (_, displays) = hidpi_monitor();
+    assert_eq!(
+        window_crop(&displays, &portal_window("w", 200, 250, 300, 400)),
+        Some((200, 400, 600, 800))
+    );
+}
+
+#[test]
+fn window_crop_rejects_window_outside_monitor() {
+    let (_, displays) = hidpi_monitor();
+    assert_eq!(
+        window_crop(&displays, &portal_window("w", 2100, 50, 100, 100)),
+        None
+    );
+    assert_eq!(
+        window_crop(&displays, &portal_window("w", 90, 50, 100, 100)),
+        None
+    );
+}
+
+/// oh-my-pi's worker-level test (desktop/mod.rs), at the crop seam: Wayland ids are AT-SPI strings, never parsed.
+#[test]
+fn capture_accepts_non_numeric_wayland_window_id() {
+    let (canvas, displays) = hidpi_monitor();
+    let id = "atspi::1.31:/org/a11y/atspi/accessible/1";
+    let (image, _) = crop_window(&canvas, &displays, vec![portal_window(id, 100, 50, 32, 24)], id).unwrap();
+    assert_eq!(image.dimensions(), (64, 48));
+}
+
+#[test]
+fn capture_rejects_unknown_window_id_via_backend_lookup() {
+    let (canvas, displays) = hidpi_monitor();
+    let error = crop_window(
+        &canvas,
+        &displays,
+        vec![portal_window("w", 100, 50, 10, 10)],
+        "does-not-exist",
+    )
+    .unwrap_err();
+    assert_eq!(error.code, ErrorCode::WindowNotFound);
 }

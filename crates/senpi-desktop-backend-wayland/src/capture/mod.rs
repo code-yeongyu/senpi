@@ -20,7 +20,7 @@ use std::slice;
 use image::RgbaImage;
 use senpi_desktop_core::error::{CoreResult, DesktopError};
 use senpi_desktop_core::frame::FrameGeometry;
-use senpi_desktop_core::types::{DesktopDisplay, DisplaySelector, Target};
+use senpi_desktop_core::types::{DesktopDisplay, DesktopWindow, DisplaySelector, Target};
 
 use self::pipewire::{CastError, ScreenCast};
 use self::screenshot_portal::ShotError;
@@ -101,21 +101,21 @@ impl PortalCapture {
     /// `CaptureFailed` for a window target or when the portal is absent or
     /// fails; `PermissionDenied` when the screenshot is refused;
     /// `InvalidTarget` when the session selected another display.
-    pub fn capture(&mut self, target: &Target) -> CoreResult<(RgbaImage, FrameGeometry)> {
-        if let Target::Window(id) = target {
-            return Err(DesktopError::capture_failed(format!(
-                "window {id}: the Wayland Screenshot portal captures the whole desktop only; \
-                 capture the desktop instead"
-            )));
-        }
+    pub fn capture(
+        &mut self,
+        target: &Target,
+        windows: impl FnOnce() -> CoreResult<Vec<DesktopWindow>>,
+    ) -> CoreResult<(RgbaImage, FrameGeometry)> {
         self.selected_display_allowed()?;
         let runtime = portal_runtime()?;
         match self.screencast.capture(runtime) {
             Ok((image, displays)) => {
                 self.probe = Probe::Granted;
-                let frame = FrameGeometry::for_displays(&displays);
                 self.displays = displays;
-                return Ok((image, frame));
+                return match target {
+                    Target::Desktop => Ok((image, FrameGeometry::for_displays(&self.displays))),
+                    Target::Window(id) => pipewire::crop_window(&image, &self.displays, windows()?, id),
+                };
             }
             Err(CastError::Refused(message)) => {
                 self.probe = Probe::Refused;
@@ -124,6 +124,13 @@ impl PortalCapture {
             Err(CastError::Unavailable(reason) | CastError::Failed(reason)) => {
                 self.screencast_fallback = Some(reason);
             }
+        }
+        if let Target::Window(id) = target {
+            let cast = self.screencast_fallback.as_deref().unwrap_or("not tried");
+            return Err(DesktopError::capture_failed(format!(
+                "window {id}: window capture needs the ScreenCast portal (ScreenCast: {cast}); \
+                 the Screenshot portal captures the whole desktop only, so capture the desktop instead"
+            )));
         }
         if self.probe != Probe::Granted {
             if let Err(reason) = screenshot_portal::presence(runtime) {
