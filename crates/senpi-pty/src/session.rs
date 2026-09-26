@@ -324,6 +324,11 @@ fn drain_output(
     master: &Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     reader_thread: &Arc<Mutex<Option<JoinHandle<()>>>>,
 ) {
+    if let Ok(guard) = master.lock() {
+        if let Some(master) = guard.as_deref() {
+            disable_eof_injection(master);
+        }
+    }
     if let Ok(mut guard) = writer.lock() {
         guard.take();
     }
@@ -338,6 +343,30 @@ fn drain_output(
         let _ = reader_thread.join();
     }
 }
+
+/// portable-pty's Unix writer writes `\n` + VEOF into the master when dropped, to hand a live child
+/// an EOF. The child has already exited when a session drains, and while another thread's freshly
+/// forked child still holds this terminal's slave (between its fork and exec), the line discipline
+/// echoes that `\n` back as `\r\n` into this session's output (senpi#2161). Disabling VEOF first
+/// makes the drop write nothing.
+#[cfg(unix)]
+fn disable_eof_injection(master: &dyn MasterPty) {
+    let Some(fd) = master.as_raw_fd() else {
+        return;
+    };
+    // SAFETY: `fd` is the live master descriptor owned by `master`, which the caller keeps locked
+    // for the duration; `termios` is a plain C struct that tcgetattr fully initializes on success.
+    unsafe {
+        let mut termios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(fd, &mut termios) == 0 {
+            termios.c_cc[libc::VEOF] = 0;
+            libc::tcsetattr(fd, libc::TCSANOW, &termios);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn disable_eof_injection(_master: &dyn MasterPty) {}
 
 /// Answer ConPTY's startup DSR cursor-position query so the child's withheld output is released.
 ///

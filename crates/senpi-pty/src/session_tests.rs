@@ -378,3 +378,49 @@ fn process_exists(pid: u32) -> bool {
     // from test child output and no Rust memory is shared with libc.
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
+
+/// senpi#2161: a session's output carries only its own child's bytes while other sessions are
+/// being spawned on other threads at the same moment.
+#[cfg(unix)]
+#[test]
+fn concurrent_session_spawns_never_leak_bytes_into_another_session() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let spawners: Vec<_> = (0..4)
+        .map(|_| {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let mut other = PtySession::start(PtySessionOptions::new("true"), |_| {}).unwrap();
+                    other.wait().unwrap();
+                }
+            })
+        })
+        .collect();
+    let mut leaked = Vec::new();
+    for _ in 0..200 {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&output);
+        let mut session = PtySession::start(
+            PtySessionOptions::new("sh").arg("-c").arg("printf 'own;'"),
+            move |chunk| seen.lock().unwrap().extend_from_slice(chunk),
+        )
+        .unwrap();
+        session.wait().unwrap();
+        let text = String::from_utf8_lossy(&output.lock().unwrap()).into_owned();
+        if text != "own;" {
+            leaked.push(text);
+        }
+    }
+    stop.store(true, Ordering::SeqCst);
+    for spawner in spawners {
+        spawner.join().unwrap();
+    }
+    assert!(
+        leaked.is_empty(),
+        "{} of 200 sessions saw foreign bytes, e.g. {:?}",
+        leaked.len(),
+        leaked.first()
+    );
+}
