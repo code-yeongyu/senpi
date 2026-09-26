@@ -39,6 +39,17 @@ describe("credential error taxonomy", () => {
 	});
 
 	test.each([
+		["Codex usage limit", new Error("Codex error: The usage limit has been reached")],
+		["Claude session limit", new Error("You've hit your session limit · resets 12am (Asia/Seoul)")],
+	] as const)("%s fails over with a cooldown when the provider omits HTTP status", (_label, error) => {
+		const action = classifyCredentialFailure(error);
+		expect(action).toEqual({
+			kind: "failover",
+			block: { reason: "rate_limit", cooldownMs: COOLDOWN_BASE_MS, retryAfterWasCapped: false },
+		});
+	});
+
+	test.each([
 		["529", status(529, "overloaded")],
 		["500", status(500, "Internal Server Error")],
 		["503", status(503, "Service Unavailable")],
