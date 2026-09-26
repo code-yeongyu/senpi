@@ -1,5 +1,23 @@
 # Local fork changes
 
+## 2026-09-26 - coding-agent declares the desktop packages its computer-use builtin imports (#2128)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@code-yeongyu/senpi-desktop-service` and `@code-yeongyu/senpi-desktop-tool` are `devDependencies`, with matching `bun.lock` and `package-lock.json` entries.
+
+### Why
+
+- The computer-use builtin imports both, but they were never declared. npm and bun hoist every workspace package, so the build passed there; pnpm links only declared dependencies, and `build:pnpm` failed with `Cannot find module '@code-yeongyu/senpi-desktop-service'`. They are dev-only while the desktop packages stay unpublished: the release guard reads `dependencies`, `optionalDependencies` and `peerDependencies`, so they never enter the shipped manifest.
+
+### Why an extension could not handle it
+
+- Workspace linking is decided by this package's manifest.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `devDependencies` block.
+
 ## 2026-09-26 - Vitest resolves the desktop packages to source (#2128)
 
 ### What changed
