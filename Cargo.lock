@@ -2687,6 +2687,8 @@ name = "senpi-desktop-backend-atspi"
 version = "0.0.0"
 dependencies = [
  "atspi",
+ "senpi-desktop-core",
+ "tokio",
  "zbus",
 ]
 
