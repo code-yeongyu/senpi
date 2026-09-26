@@ -2,87 +2,70 @@
 //! NDJSON on stdio (default) or a local socket; `--selftest` and `--schema`
 //! for locators and drift gates.
 
+mod cli;
+mod client;
 mod config;
 mod connection;
+mod daemon;
 mod engine;
+mod fake_listener;
+mod mcp;
+mod oneshot;
+mod outbox;
 mod route;
 mod rpc;
 mod selftest;
 mod serve;
+mod stop_path;
 
+use clap::Parser;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
 
-use clap::{ArgGroup, Parser};
-
+use crate::cli::{Cli, Mode};
 use crate::config::EngineConfig;
 use crate::engine::Engine;
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "senpi-desktop-engine",
-    version,
-    about = "Senpi desktop engine (JSON-RPC 2.0 over NDJSON)"
-)]
-#[command(group(ArgGroup::new("mode").args(["stdio", "serve", "oneshot", "selftest", "schema"])))]
-struct Cli {
-    /// Serve on stdin/stdout (the default).
-    #[arg(long)]
-    stdio: bool,
-    /// Serve on a unix socket path or `\\.\pipe\<name>`, one client at a time.
-    #[arg(long, value_name = "ENDPOINT")]
-    serve: Option<String>,
-    /// With --serve: exit after this long without a client.
-    #[arg(long, value_name = "MS", default_value_t = 300_000, requires = "serve")]
-    idle_ms: u64,
-    /// Forward one request line to the --serve daemon (bunshin sidecar contract).
-    #[arg(long)]
-    oneshot: bool,
-    /// Drive a built-in fake session and print `engine: selftest ok`.
-    #[arg(long)]
-    selftest: bool,
-    /// Print the engine protocol JSON Schema.
-    #[arg(long)]
-    schema: bool,
-}
-
-enum Mode {
-    Stdio,
-    Serve { endpoint: String, idle: Duration },
-    Oneshot,
-    Selftest,
-    Schema,
-}
-
-impl Cli {
-    fn mode(self) -> Mode {
-        if let Some(endpoint) = self.serve {
-            Mode::Serve {
-                endpoint,
-                idle: Duration::from_millis(self.idle_ms),
-            }
-        } else if self.oneshot {
-            Mode::Oneshot
-        } else if self.selftest {
-            Mode::Selftest
-        } else if self.schema {
-            Mode::Schema
-        } else {
-            Mode::Stdio
-        }
-    }
-}
 
 const USAGE_ERROR: u8 = 2;
 
 fn main() -> ExitCode {
     match Cli::parse().mode() {
         Mode::Schema => print_schema(),
-        Mode::Oneshot => {
-            eprintln!("senpi-desktop-engine: --oneshot is not available until the daemon bridge lands");
-            ExitCode::from(USAGE_ERROR)
-        }
+        Mode::Oneshot { endpoint, serve_args } => match endpoint.map_or_else(client::default_endpoint, Ok) {
+            Ok(endpoint) => {
+                match oneshot::run(|request| client::exchange_or_start(&endpoint, &serve_args, request)) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => fail(&format!("--oneshot: {error}")),
+                }
+            }
+            Err(error) => fail(&format!("--oneshot: {error}")),
+        },
+        Mode::Mcp {
+            endpoint,
+            serve_args,
+            allow_host_relay_only_stop,
+        } => match endpoint.map_or_else(client::default_endpoint, Ok) {
+            Ok(endpoint) => {
+                let server = mcp::Server::new(allow_host_relay_only_stop, |request: &serde_json::Value| {
+                    client::exchange_or_start(&endpoint, &serve_args, request)
+                });
+                match server.run(std::io::stdin().lock(), std::io::stdout().lock()) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => fail(&format!("--mcp: {error}")),
+                }
+            }
+            Err(error) => fail(&format!("--mcp: {error}")),
+        },
+        Mode::Resume { endpoint } => match endpoint.map_or_else(client::default_endpoint, Ok) {
+            Ok(endpoint) => match client::resume(&endpoint) {
+                Ok(status) => {
+                    println!("{status}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => fail(&format!("--resume: {error}")),
+            },
+            Err(error) => fail(&format!("--resume: {error}")),
+        },
         Mode::Selftest => block_on(async {
             selftest::run_selftest()
                 .await
@@ -95,7 +78,12 @@ fn main() -> ExitCode {
             engine.shutdown().await;
             served.map_err(|error| error.to_string())
         }),
-        Mode::Serve { endpoint, idle } => with_engine(|engine| async move {
+        Mode::Serve {
+            endpoint,
+            idle,
+            daemon,
+        } => with_engine(|engine| async move {
+            daemon::open_daemon_session(&engine, &daemon, &client::token_file(&endpoint)).await?;
             serve::run_serve(engine, &endpoint, idle)
                 .await
                 .map_err(|error| format!("--serve {endpoint}: {error}"))

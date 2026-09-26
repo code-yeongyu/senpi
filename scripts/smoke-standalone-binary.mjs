@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const [binaryArgument, workerArgument, runtimeDirectoryArgument] = process.argv.slice(2);
@@ -111,6 +112,66 @@ try {
 		throw new Error(
 			`${basename(binaryPath)} codemode RPC smoke expected one enabled <builtin:codemode> extension, got ${codemodeExtensions?.length ?? 0}`,
 		);
+	}
+
+	// The desktop engine sidecar, resolved next to the relocated binary as the engine locator does.
+	const host = `${process.platform}-${process.arch}`;
+	const engineFile = process.platform === "win32" ? "senpi-desktop-engine.exe" : "senpi-desktop-engine";
+	const enginePath = join(dirname(binaryPath), "native", "prebuilds", host, engineFile);
+	const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+	const vendored = existsSync(join(repoRoot, "packages", "desktop-engine", "native", "prebuilds", host, engineFile));
+	// Only a host with a vendored prebuild ships the sidecar; elsewhere computer use reports native-unavailable.
+	const engineRequired = process.env.SENPI_SMOKE_REQUIRE_DESKTOP_ENGINE
+		? process.env.SENPI_SMOKE_REQUIRE_DESKTOP_ENGINE === "1"
+		: vendored;
+	if (engineRequired && !existsSync(enginePath)) {
+		throw new Error(`standalone smoke: desktop engine sidecar missing at ${enginePath}`);
+	}
+	if (!engineRequired) {
+		console.log(`desktop engine: no ${host} prebuild is vendored; sidecar not required`);
+	}
+	if (engineRequired) {
+	const scenario = join(smokeDirectory, "desktop-engine-fixture.json");
+	copyFileSync(
+		join(repoRoot, "crates", "senpi-desktop-backend-fake", "fixtures", "two-displays-one-window.json"),
+		scenario,
+	);
+	const engineRequests = [
+		{ jsonrpc: "2.0", id: 1, method: "engine.hello", params: {} },
+		{ jsonrpc: "2.0", id: 2, method: "capabilities", params: {} },
+	];
+	const engineResult = spawnSync(enginePath, ["--stdio"], {
+		cwd: smokeDirectory,
+		encoding: "utf8",
+		timeout: 30_000,
+		env: { ...process.env, SENPI_DESKTOP_BACKEND: `fake:${scenario}` },
+		input: `${engineRequests.map((request) => JSON.stringify(request)).join("\n")}\n`,
+	});
+	if (engineResult.error) {
+		throw new Error(`standalone smoke: desktop engine failed to run: ${engineResult.error.message}`);
+	}
+	const engineReplies = new Map(
+		engineResult.stdout
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => {
+				try {
+					return JSON.parse(line);
+				} catch {
+					throw new Error(`standalone smoke: desktop engine sent malformed output: ${line}`);
+				}
+			})
+			.filter((message) => message?.id !== undefined)
+			.map((message) => [message.id, message]),
+	);
+	const abi = engineReplies.get(1)?.result?.abi;
+	const backend = engineReplies.get(2)?.result?.backend;
+	if (abi !== "senpi-desktop/1" || backend !== "fake") {
+		throw new Error(
+			`standalone smoke: desktop engine expected abi=senpi-desktop/1 backend=fake, got abi=${abi} backend=${backend}: ${engineResult.stderr.trim()}`,
+		);
+	}
+	console.log(`desktop engine: backend=${backend} abi=${abi}`);
 	}
 } finally {
 	if (existsSync(hiddenWorkerPath)) {

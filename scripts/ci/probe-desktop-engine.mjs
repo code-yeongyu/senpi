@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 // Lifecycle probe for a staged senpi-desktop-engine binary: `--selftest` exits 0,
 // and `--stdio` answers `capabilities` with backend "fake" under
-// SENPI_DESKTOP_BACKEND=fake:<scenario> and "unavailable" without it.
+// SENPI_DESKTOP_BACKEND=fake:<scenario> and the host's native backend without it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const HANG_GUARD_MS = 30_000;
+// The native backend each host's engine dispatches to when no backend is forced. Linux picks X11 or
+// Wayland from DISPLAY/WAYLAND_DISPLAY, which a headless CI runner does not set, so it reports
+// "unavailable" there.
+const NATIVE_BACKEND = { darwin: "quartz", win32: "win32" };
+const expectedNativeBackend = NATIVE_BACKEND[process.platform] ?? "unavailable";
 
 if (process.argv.length !== 4) {
 	console.error("usage: probe-desktop-engine.mjs <senpi-desktop-engine binary> <fake scenario.json>");
@@ -45,5 +50,5 @@ assert.equal(withFake, "fake");
 console.log(`backend=${withFake}`);
 
 const withoutBackend = capabilitiesBackend(undefined);
-assert.equal(withoutBackend, "unavailable");
+assert.equal(withoutBackend, expectedNativeBackend);
 console.log(`backend=${withoutBackend}`);

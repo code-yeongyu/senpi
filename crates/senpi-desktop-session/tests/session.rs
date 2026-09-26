@@ -15,7 +15,10 @@ use senpi_desktop_core::types::{
     CaptureCaps, DesktopCapabilities, DesktopDisplay, DesktopSessionOptions, DesktopWindow, DisplaySelector,
     Target,
 };
-use senpi_desktop_session::{BackendFactory, BackendSelection, Op, Response, Session, SessionTimeouts};
+use senpi_desktop_safety::{FakeClock, StopPathId, Supervisor};
+use senpi_desktop_session::{
+    BackendFactory, BackendSelection, Op, Response, Session, SessionSafety, SessionTimeouts,
+};
 
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -35,6 +38,20 @@ fn scenario(overlay: &str) -> FakeScenario {
 fn start(overlay: &str, timeouts: SessionTimeouts) -> Session {
     let selection = BackendSelection::FakeScenario(Box::new(scenario(overlay)));
     Session::start(selection, timeouts).expect("session starts")
+}
+
+/// A live, fresh global stop path, so input passes the gate.
+fn live_stop_path() -> SessionSafety {
+    let supervisor = Arc::new(Supervisor::new(Arc::new(FakeClock::new(0))));
+    supervisor.set_live(StopPathId::Global, true);
+    SessionSafety {
+        supervisor,
+        audit: Box::new(|_| {}),
+    }
+}
+
+fn start_supervised(factory: impl BackendFactory) -> Session {
+    Session::start_supervised(factory, SessionTimeouts::default(), live_stop_path()).expect("session starts")
 }
 
 fn capture_desktop() -> Op {
@@ -108,7 +125,7 @@ async fn requests_after_close_fail_closed_and_close_is_idempotent() {
 #[tokio::test]
 async fn capture_returns_a_frame_that_later_clicks_map_through() {
     // Given
-    let session = start("{}", SessionTimeouts::default());
+    let session = start_supervised(BackendSelection::FakeScenario(Box::new(scenario("{}"))));
     session
         .open(DesktopSessionOptions::default())
         .wait()
@@ -123,6 +140,22 @@ async fn capture_returns_a_frame_that_later_clicks_map_through() {
     assert_eq!((capture.source_width, capture.source_height), (4800, 1800));
     assert!(capture.data.is_some_and(|data| data.starts_with("iVBORw0KGgo")));
     assert_eq!(session.submit(click_desktop()).wait().await, Ok(Response::Unit));
+}
+
+#[tokio::test]
+async fn a_session_started_without_a_supervisor_refuses_input() {
+    // Given
+    let session = start("{}", SessionTimeouts::default());
+    session
+        .open(DesktopSessionOptions::default())
+        .wait()
+        .await
+        .expect("opens");
+    session.submit(capture_desktop()).wait().await.expect("captures");
+    // When
+    let clicked = session.submit(click_desktop()).wait().await;
+    // Then
+    assert_eq!(code(clicked), Some(ErrorCode::StopPathUnavailable));
 }
 
 #[tokio::test]
@@ -150,7 +183,7 @@ async fn an_abandoned_request_never_reaches_the_backend() {
     // Given: a frame to click through, and a slow request occupying the thread.
     let factory = SharedSinkFactory::new(scenario(r#"{"delay_ms": {"windows": 300}}"#));
     let sinks = Arc::clone(&factory.sinks);
-    let session = Session::start(factory, SessionTimeouts::default()).expect("session starts");
+    let session = start_supervised(factory);
     session
         .open(DesktopSessionOptions::default())
         .wait()

@@ -1,3 +1,43 @@
+## 2026-09-27 - The standalone smoke requires the engine only where a prebuild is vendored (senpi#2128)
+
+### What changed
+
+- `scripts/smoke-standalone-binary.mjs`: the desktop engine sidecar is required only when the repo vendors a prebuild for the host (only `darwin-arm64` today). `SENPI_SMOKE_REQUIRE_DESKTOP_ENGINE=1` or `0` overrides that.
+- `scripts/smoke-standalone-binary.test.mjs`: the sidecar cases use a scripted engine and the override, so they run on every OS.
+
+### Why
+
+- Linux and Windows builds ship without the engine, since only the host prebuild is vendored, so requiring it failed the compiled-extension smoke on Windows and the script tests on Linux.
+
+### Why an extension could not handle it
+
+- Release smoke tooling.
+
+### Expected merge conflict zones
+
+- None.
+
+## 2026-09-27 - Ship the desktop engine next to the compiled binary and smoke it (senpi#2128)
+
+### What changed
+
+- `scripts/copy-desktop-engine.mjs` (new): copies the host `senpi-desktop-engine` prebuild to `packages/coding-agent/dist/native/prebuilds/<host>/` (mode 0755), the sidecar path the engine locator probes first. A missing host prebuild is a no-op, like `copy-pty-native.mjs`.
+- `scripts/build-binaries.sh`: every release directory gets the engine beside the pty prebuild, ad-hoc signed on macOS like `pi`.
+- `scripts/smoke-standalone-binary.mjs`: a fourth step resolves the engine next to the relocated binary, runs `engine.hello` and `capabilities` over `--stdio` against the fake backend, and requires `abi=senpi-desktop/1` and `backend=fake`. A missing sidecar fails with `standalone smoke: desktop engine sidecar missing at <path>`.
+- `scripts/smoke-standalone-binary.test.mjs`: the passing case ships the host engine, and a new case proves a binary without it fails. `scripts/check-desktop-engine-prebuild-fresh.test.mjs` (new): the engine's freshness gate (missing, stale, fresh, `--update`, `.exe` naming).
+
+### Why
+
+- Plan todo 39: compiled binaries had no engine next to them, so computer use reported `native-unavailable` in every standalone install, and no smoke would have caught it.
+
+### Why an extension could not handle it
+
+- Release packaging.
+
+### Expected merge conflict zones
+
+- LOW: the pty copy block in `scripts/build-binaries.sh` and the relocation smoke's final step.
+
 ## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
 
 ### What changed
@@ -15,6 +55,42 @@
 ### Expected merge conflict zones
 
 - LOW: the `env` literal in `smokeTestCodingAgentConsumer`.
+
+## 2026-09-26 - Cargo dependencies must be exact pins (senpi#2128)
+
+### What changed
+
+- `scripts/check-cargo-pinned-deps.mjs` (new) and `scripts/check-cargo-pinned-deps.test.mjs` (new): the Cargo twin of `check-pinned-deps.mjs`. Every registry dependency in the workspace root and in every member crate, in any `dependencies`, `dev-dependencies`, `build-dependencies` or target-specific table, must be an exact `=x.y.z` pin. `workspace = true` and `path` entries pass. A dotted `name.version = "…"` key is checked too.
+
+### Why
+
+- `check-pinned-deps.mjs` reads only `package.json`. The desktop crates (senpi#2128) brought 30+ Cargo pins copied from oh-my-pi, and oh-my-pi leaves some as carets (for example `zbus`). A caret written by a later edit would float with no gate catching it.
+
+### Why an extension could not handle it
+
+- It is a repository gate.
+
+### Expected merge conflict zones
+
+- None: new files.
+
+## 2026-09-26 - Installer for the desktop engine's bunshin capability (senpi#2128)
+
+### What changed
+
+- `scripts/install-bunshin-desktop-capability.mjs` (new): writes the desktop descriptor to `$BUNSHIN_CAPABILITY_DIR/desktop.json` (default `$BUNSHIN_HOME/capabilities`), pointing at the located engine binary (`--engine` overrides it). `--remove` uninstalls it.
+
+### Why
+
+- A bunshin agent loads sidecar descriptors only from its capability directory, and the descriptor needs the absolute engine path of that host.
+
+### Why an extension could not handle it
+
+- It configures a bunshin agent on the host, not a senpi session.
+
+### Expected merge conflict zones
+
+- None: a new file.
 
 ## 2026-09-25 - The published tarball leaves out never-published workspaces nothing shipped reaches (senpi#2141)
 
@@ -37,6 +113,25 @@ This is release tooling.
 
 - The workspace loop of `prepareSenpiBundledWorkspaces` and the check loop of `assertSenpiPackedWorkspaceFiles`.
 - `registryPackageNames` in `scripts/registry-packages.mjs`, when a desktop package joins the publish set.
+
+## 2026-09-25 - Inline the never-published desktop engine locator in the coding-agent bundle (senpi#2128)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: `@code-yeongyu/senpi-desktop-engine` is no longer external or allowed; esbuild inlines its locator like the other desktop packages. `@earendil-works/pi-pty` stays external.
+- `scripts/build-coding-agent-bundle.test.mjs`: pins pi-pty as the only native-sidecar external and adds a probe proving `@code-yeongyu/senpi-desktop-engine` is inlined.
+
+### Why
+
+- The owner decided not to publish any `@code-yeongyu/senpi-desktop-*` package for now. An external import of an unpublished package would make the shipped dist import a package that is absent from the registry, which the senpi#2141 release guard rejects. With the locator inlined, a published install finds no engine binary and reports `computer` unavailable, while a source checkout keeps locating the vendored or locally built engine.
+
+### Why an extension could not handle it
+
+- The bundle's external list is decided at build time by this script, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: one entry removed from `allowedExternalPackages` and from `commonBuildOptions().external`.
 
 ## 2026-09-24 - The five desktop packages join every enumerating build and publish script (senpi#2128)
 

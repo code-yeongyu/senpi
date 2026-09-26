@@ -2687,6 +2687,8 @@ name = "senpi-desktop-backend-atspi"
 version = "0.0.0"
 dependencies = [
  "atspi",
+ "senpi-desktop-core",
+ "tokio",
  "zbus",
 ]
 
@@ -2708,6 +2710,7 @@ version = "0.0.0"
 dependencies = [
  "core-graphics",
  "foreign-types",
+ "image",
  "libc",
  "objc2",
  "objc2-app-kit",
@@ -2715,6 +2718,9 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation",
+ "parking_lot",
+ "senpi-desktop-core",
+ "senpi-desktop-safety",
  "tempfile",
  "xcap",
 ]
@@ -2724,7 +2730,16 @@ name = "senpi-desktop-backend-wayland"
 version = "0.0.0"
 dependencies = [
  "ashpd",
+ "futures",
+ "image",
+ "libloading 0.8.9",
+ "parking_lot",
  "reis",
+ "senpi-desktop-backend-atspi",
+ "senpi-desktop-core",
+ "senpi-desktop-safety",
+ "tempfile",
+ "tokio",
  "xkeysym",
  "zbus",
 ]
@@ -2734,6 +2749,10 @@ name = "senpi-desktop-backend-win32"
 version = "0.0.0"
 dependencies = [
  "enigo",
+ "image",
+ "parking_lot",
+ "senpi-desktop-core",
+ "senpi-desktop-safety",
  "uiautomation",
  "windows-sys 0.61.2",
  "xcap",
@@ -2743,7 +2762,12 @@ dependencies = [
 name = "senpi-desktop-backend-x11"
 version = "0.0.0"
 dependencies = [
+ "image",
  "libc",
+ "parking_lot",
+ "senpi-desktop-backend-atspi",
+ "senpi-desktop-core",
+ "senpi-desktop-safety",
  "x11rb",
  "xkeysym",
 ]
@@ -2771,6 +2795,10 @@ dependencies = [
  "parking_lot",
  "schemars",
  "senpi-desktop-backend-fake",
+ "senpi-desktop-backend-macos",
+ "senpi-desktop-backend-wayland",
+ "senpi-desktop-backend-win32",
+ "senpi-desktop-backend-x11",
  "senpi-desktop-core",
  "senpi-desktop-safety",
  "senpi-desktop-session",
@@ -2787,6 +2815,7 @@ name = "senpi-desktop-safety"
 version = "0.0.0"
 dependencies = [
  "parking_lot",
+ "senpi-desktop-core",
  "thiserror 2.0.21",
 ]
 
@@ -2798,11 +2827,19 @@ dependencies = [
  "image",
  "parking_lot",
  "senpi-desktop-backend-fake",
+ "senpi-desktop-backend-macos",
+ "senpi-desktop-backend-wayland",
+ "senpi-desktop-backend-win32",
+ "senpi-desktop-backend-x11",
  "senpi-desktop-core",
+ "senpi-desktop-safety",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "ulid",
 ]
 
 [[package]]

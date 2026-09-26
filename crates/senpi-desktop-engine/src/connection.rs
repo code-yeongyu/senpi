@@ -4,7 +4,8 @@
 //! requests in arrival order; a dispatcher admits them under the read (4) and
 //! exec (1) permits; each admitted request waits for its reply, deadline, or
 //! `$/cancel` on its own task, so replies may leave out of order. A writer
-//! task owns the output behind a bounded channel.
+//! task owns the output behind a bounded channel. Queued notifications are
+//! written right after each reply (see [`crate::outbox`]).
 
 use std::collections::HashMap;
 use std::io;
@@ -16,6 +17,7 @@ use senpi_desktop_core::methods::Method;
 use senpi_desktop_core::protocol::{MethodRejection, RequestId, RpcRequest};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc::error::SendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 
@@ -109,7 +111,7 @@ async fn read_requests<R: AsyncRead + Unpin>(
         let Some(reply) = handle_line(engine, text, queue, in_flight) else {
             continue;
         };
-        if out.send(reply).await.is_err() {
+        if deliver(engine, out, reply).await.is_err() {
             // The writer stopped: nobody can read replies any more.
             return Ok(());
         }
@@ -201,13 +203,15 @@ async fn dispatch(
             Err(failure) => {
                 in_flight.finish(&id);
                 // The writer only stops once the client is gone.
-                out.send(reply_line(id, Err(failure))).await.unwrap_or(());
+                deliver(&engine, &out, reply_line(id, Err(failure)))
+                    .await
+                    .unwrap_or(());
                 continue;
             }
         };
         // Enqueued here, in arrival order; only the wait runs concurrently.
         let started = engine.begin(call);
-        let (out, in_flight) = (out.clone(), in_flight.clone());
+        let (engine, out, in_flight) = (Arc::clone(&engine), out.clone(), in_flight.clone());
         waiters.spawn(async move {
             let outcome = tokio::select! {
                 outcome = started.wait() => outcome,
@@ -215,7 +219,9 @@ async fn dispatch(
             };
             drop(permit);
             in_flight.finish(&id);
-            out.send(reply_line(id, outcome)).await.unwrap_or(());
+            deliver(&engine, &out, reply_line(id, outcome))
+                .await
+                .unwrap_or(());
         });
         while let Some(joined) = waiters.try_join_next() {
             report(joined);
@@ -224,6 +230,22 @@ async fn dispatch(
     while let Some(joined) = waiters.join_next().await {
         report(joined);
     }
+}
+
+/// Writes `reply`, then every notification queued so far.
+///
+/// # Errors
+/// The writer stopped: nobody reads the output any more.
+async fn deliver(
+    engine: &Engine,
+    out: &mpsc::Sender<String>,
+    reply: String,
+) -> Result<(), SendError<String>> {
+    out.send(reply).await?;
+    for line in engine.outbox().drain() {
+        out.send(line).await?;
+    }
+    Ok(())
 }
 
 fn report(joined: Result<(), tokio::task::JoinError>) {

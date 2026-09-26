@@ -28,4 +28,19 @@ Only the host prebuild is committed, as `packages/pty` does. `bun run check:preb
 - `@code-yeongyu/senpi` (coding-agent) may import only `-tool` and `-service`. `@code-yeongyu/senpi-codemode` imports none of them.
 - No desktop package imports `pi-agent-core`, `pi-ai`, or `pi-tui`. There is no shared utils package: the five desktop packages are the whole set.
 
+## Crate layering
+
+The engine binary is built from the `crates/senpi-desktop-*` crates. Each depends only on the layers below it:
+
+```text
+senpi-desktop-engine
+  -> senpi-desktop-session
+       -> senpi-desktop-backend-{macos,x11,wayland,win32,fake}
+            -> senpi-desktop-backend-atspi   (x11 and wayland only)
+            -> senpi-desktop-safety          (every real backend)
+                 -> senpi-desktop-core
+```
+
+`senpi-desktop-core` depends on no other desktop crate, and no backend depends on `-session` or `-engine`. The engine also depends directly on the backends (for their stop-path listeners), `-safety`, and `-core`.
+
 The Rust side runs the other way: `senpi-desktop-core` <- `-safety` <- `-session` <- backends <- `senpi-desktop-engine` (the binary). The TS packages reach it only through the engine's stdio JSON-RPC.

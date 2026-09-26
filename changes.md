@@ -1,5 +1,101 @@
 # changes — senpi-monorepo root
 
+## The engine client reuses the connection that found the daemon (2026-09-27)
+
+### What changed
+
+- `crates/senpi-desktop-engine/src/client.rs`: `exchange_or_start` sends the request over the connection that found (or waited for) the daemon, instead of probing and reconnecting, and a busy Windows named pipe (`ERROR_PIPE_BUSY`) is retried for up to 5 s.
+
+### Why
+
+- On Windows the probe took the pipe's only free instance, so the real connect found it busy and `--oneshot`/`--mcp` calls failed (the MCP client tests on windows-latest).
+
+### Why an extension could not handle it
+
+- The engine binary's own client.
+
+### Expected merge conflict zones
+
+- None: fork-only crate.
+
+## Wayland window capture from the ScreenCast composite (2026-09-27)
+
+### What changed
+
+- `crates/senpi-desktop-backend-wayland/src/capture/pipewire/window.rs` (new): a window target is cut out of the ScreenCast composite. The window's AT-SPI logical bounds are scaled by the monitor its origin lies on. An unknown id is `WindowNotFound`, and a window on no captured monitor is `CaptureFailed`.
+- `crates/senpi-desktop-backend-wayland/src/capture/mod.rs`, `crates/senpi-desktop-backend-wayland/src/backend.rs`: capture takes the AT-SPI window list for window targets. Without ScreenCast, window capture is refused with the ScreenCast failure reason, since the Screenshot portal has no window capture.
+- Tests ported under oh-my-pi's names (`missing_portal_size_falls_back_to_buffer_scale_one`, `scaled_monitor_maps_screenshot_pixel_to_logical_point`, `monitor_offset_is_added_to_logical_point`, `window_crop_scales_logical_bounds_to_buffer_pixels`, `window_crop_rejects_window_outside_monitor`, `capture_accepts_non_numeric_wayland_window_id`, `capture_rejects_unknown_window_id_via_backend_lookup`), plus a mapping comment on the token-cleanup test.
+
+### Why
+
+- The oh-my-pi parity audit (F5) found these nine oh-my-pi tests with no counterpart. Window capture on Wayland is oh-my-pi behavior that the Screenshot-only path could not offer.
+
+### Why an extension could not handle it
+
+- The engine's platform backend.
+
+### Expected merge conflict zones
+
+- None: fork-only crate.
+
+## Wayland PipeWire capture through a runtime-loaded libpipewire (2026-09-27)
+
+### What changed
+
+- `crates/senpi-desktop-backend-wayland/src/capture/pipewire/` (new): ScreenCast portal capture over PipeWire. `lib.rs` resolves the `pw_*` symbols from `libpipewire-0.3.so.0` with `libloading`; `ffi.rs` mirrors the PipeWire 1.x ABI; `pod.rs` builds the EnumFormat pod and reads the negotiated Format pod in Rust, since libspa's builder is header-only; `stream.rs` grabs one mapped frame; `pixels.rs` converts the packed RGB layouts; `screencast.rs` runs the portal session; `mod.rs` composites every monitor at its logical position with its own scale.
+- `crates/senpi-desktop-backend-wayland/src/capture/mod.rs`: desktop capture tries ScreenCast first and falls back to the Screenshot portal when libpipewire is missing or the cast fails. Only the user's Cancelled is a refusal (`PermissionDenied`). The fallback reason is carried in the Screenshot error.
+- `Cargo.toml` and `crates/senpi-desktop-backend-wayland/Cargo.toml`: `libloading = "=0.8.9"` (already in the lockfile).
+
+### Why
+
+- The Screenshot portal gives one image with no output geometry or scale. ScreenCast gives each monitor, which multi-monitor and HiDPI coordinates need (plan todo 44, closes GAP-4). Loading libpipewire at runtime keeps the engine's NEEDED list unchanged, so one binary still runs on hosts without PipeWire.
+
+### Why an extension could not handle it
+
+- It is the engine's platform backend.
+
+### Expected merge conflict zones
+
+- LOW: the `[workspace.dependencies]` block of `Cargo.toml`.
+
+## MCP stdio facade for the desktop engine (2026-09-27)
+
+### What changed
+
+- `crates/senpi-desktop-engine/src/cli.rs` (new): the command line moved out of `main.rs` unchanged, since `main.rs` was at the 250-line ceiling. It gains `--mcp`.
+- `crates/senpi-desktop-engine/src/mcp/mod.rs`, `crates/senpi-desktop-engine/src/mcp/catalog.rs`, and `crates/senpi-desktop-engine/src/mcp/call.rs` (new): `--mcp` serves MCP (`initialize`, `ping`, `tools/list`, `tools/call`) on stdio. The tools are generated from `engine_schema()`: the public methods plus `desktop.stop` and `desktop.stopPath.status`, each with an object `inputSchema` carrying only the definitions it reaches. `desktop.stopPath.heartbeat` is listed only under `--allow-host-relay-only-stop`. Every call goes through `oneshot::translate` to the same `--serve` daemon, started on demand. An inline capture becomes an image content block, and an engine error becomes an `isError` result with the engine error object unchanged. Unknown or unlisted tools (including resume) are a JSON-RPC `-32602` error and never reach the daemon.
+- `crates/senpi-desktop-engine/src/main.rs`: dispatches `--mcp`.
+
+### Why
+
+- Third-party agent hosts speak MCP; this gives them the desktop engine with no second input path and no way around the stop path (plan todo 49, senpi#2128).
+
+### Why an extension could not handle it
+
+- It is a mode of the standalone engine binary, outside any senpi session.
+
+### Expected merge conflict zones
+
+- None: fork-only crate files.
+
+## Gate Cargo pins in the root check (2026-09-26)
+
+### What changed
+
+- `package.json`: `check:cargo-pinned-deps` runs `scripts/check-cargo-pinned-deps.mjs`, and `check` runs it right after `check:pinned-deps`.
+
+### Why
+
+- `bun run check` is what CI and the pre-commit hook run, so the Cargo pin gate has to be part of it (senpi#2128).
+
+### Why an extension could not handle it
+
+- Root scripts are repository configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script line in the root `package.json`.
+
 ## Resolve the desktop packages from source in the root type check (2026-09-24)
 
 ### What changed

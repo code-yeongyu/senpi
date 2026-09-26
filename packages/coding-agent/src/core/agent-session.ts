@@ -204,6 +204,7 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
+import { projectKernelPrelude } from "./extensions/kernel-prelude.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type {
 	ApplyCompactionOptions,
@@ -3143,6 +3144,7 @@ export class AgentSession {
 			description: definition.description,
 			parameters: definition.parameters,
 			promptGuidelines: definition.promptGuidelines,
+			kernelPrelude: projectKernelPrelude(definition.name, definition.kernelPrelude),
 			sourceInfo,
 			...normalizeToolExposure(definition),
 		}));
@@ -3401,6 +3403,7 @@ export class AgentSession {
 		const activeToolNamesChanged =
 			validToolNames.length !== this.agent.state.tools.length ||
 			validToolNames.some((name, index) => name !== this.agent.state.tools[index]?.name);
+		const previousToolNames = new Set(this.agent.state.tools.map((tool) => tool.name));
 		this.agent.state.tools = tools;
 		for (const name of validToolNames) {
 			if (!this._declaredToolNames.includes(name)) this._declaredToolNames.push(name);
@@ -3417,6 +3420,11 @@ export class AgentSession {
 				this.abortCompaction();
 				this._incrementMessageRevision();
 			}
+		}
+		// senpi#2128: notification-only; the runner reports handler failures, so nothing awaits it.
+		const activatedToolNames = validToolNames.filter((name) => !previousToolNames.has(name));
+		if (activatedToolNames.length > 0 && this._extensionRunner?.hasHandlers("tool_activated")) {
+			void this._extensionRunner.emit({ type: "tool_activated", toolNames: activatedToolNames });
 		}
 	}
 
