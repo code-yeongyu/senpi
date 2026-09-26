@@ -8,6 +8,8 @@ license.workspace = true
 crate-type = ["rlib"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
+image.workspace = true
 libc.workspace = true
+senpi-desktop-core = { path = "../senpi-desktop-core" }
 x11rb.workspace = true
 xkeysym.workspace = true
