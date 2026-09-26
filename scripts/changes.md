@@ -16,6 +16,42 @@
 
 - LOW: the `env` literal in `smokeTestCodingAgentConsumer`.
 
+## 2026-09-26 - Cargo dependencies must be exact pins (senpi#2128)
+
+### What changed
+
+- `scripts/check-cargo-pinned-deps.mjs` (new) and `scripts/check-cargo-pinned-deps.test.mjs` (new): the Cargo twin of `check-pinned-deps.mjs`. Every registry dependency in the workspace root and in every member crate, in any `dependencies`, `dev-dependencies`, `build-dependencies` or target-specific table, must be an exact `=x.y.z` pin. `workspace = true` and `path` entries pass. A dotted `name.version = "…"` key is checked too.
+
+### Why
+
+- `check-pinned-deps.mjs` reads only `package.json`. The desktop crates (senpi#2128) brought 30+ Cargo pins copied from oh-my-pi, and oh-my-pi leaves some as carets (for example `zbus`). A caret written by a later edit would float with no gate catching it.
+
+### Why an extension could not handle it
+
+- It is a repository gate.
+
+### Expected merge conflict zones
+
+- None: new files.
+
+## 2026-09-26 - Installer for the desktop engine's bunshin capability (senpi#2128)
+
+### What changed
+
+- `scripts/install-bunshin-desktop-capability.mjs` (new): writes the desktop descriptor to `$BUNSHIN_CAPABILITY_DIR/desktop.json` (default `$BUNSHIN_HOME/capabilities`), pointing at the located engine binary (`--engine` overrides it). `--remove` uninstalls it.
+
+### Why
+
+- A bunshin agent loads sidecar descriptors only from its capability directory, and the descriptor needs the absolute engine path of that host.
+
+### Why an extension could not handle it
+
+- It configures a bunshin agent on the host, not a senpi session.
+
+### Expected merge conflict zones
+
+- None: a new file.
+
 ## 2026-09-25 - The published tarball leaves out never-published workspaces nothing shipped reaches (senpi#2141)
 
 ### What changed
@@ -37,6 +73,25 @@ This is release tooling.
 
 - The workspace loop of `prepareSenpiBundledWorkspaces` and the check loop of `assertSenpiPackedWorkspaceFiles`.
 - `registryPackageNames` in `scripts/registry-packages.mjs`, when a desktop package joins the publish set.
+
+## 2026-09-25 - Inline the never-published desktop engine locator in the coding-agent bundle (senpi#2128)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: `@code-yeongyu/senpi-desktop-engine` is no longer external or allowed; esbuild inlines its locator like the other desktop packages. `@earendil-works/pi-pty` stays external.
+- `scripts/build-coding-agent-bundle.test.mjs`: pins pi-pty as the only native-sidecar external and adds a probe proving `@code-yeongyu/senpi-desktop-engine` is inlined.
+
+### Why
+
+- The owner decided not to publish any `@code-yeongyu/senpi-desktop-*` package for now. An external import of an unpublished package would make the shipped dist import a package that is absent from the registry, which the senpi#2141 release guard rejects. With the locator inlined, a published install finds no engine binary and reports `computer` unavailable, while a source checkout keeps locating the vendored or locally built engine.
+
+### Why an extension could not handle it
+
+- The bundle's external list is decided at build time by this script, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: one entry removed from `allowedExternalPackages` and from `commonBuildOptions().external`.
 
 ## 2026-09-24 - The five desktop packages join every enumerating build and publish script (senpi#2128)
 

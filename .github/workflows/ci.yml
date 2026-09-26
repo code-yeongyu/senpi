@@ -402,6 +402,96 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The desktop Rust contract on each OS (senpi#2128): native-prebuilds.yml runs cargo test only on
+  # its non-cross rows, so Linux desktop crates would otherwise never be tested. Display-bound tests
+  # are #[ignore]d and run explicitly under xvfb + a session bus on ubuntu.
+  desktop-native-contract:
+    name: desktop-native-contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install display test dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y xvfb at-spi2-core dbus dbus-x11 xterm xdotool xfce4-terminal
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Setup Rust
+        shell: bash
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            # ubuntu-22.04 ships Python 3.10, which has no tomllib.
+            toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          fi
+          rustup toolchain install "$toolchain" --profile minimal --component clippy
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace --locked
+
+      - name: Build desktop engine
+        run: cargo build --release -p senpi-desktop-engine --locked
+
+      # The locator resolves the vendored macOS prebuild first; point it at the engine this job just built.
+      # A byte comparison cannot run here: dependency paths in the binary differ per machine.
+      - name: Use the freshly built engine as the vendored prebuild
+        if: runner.os == 'macOS'
+        run: node packages/desktop-engine/native/check-prebuild-fresh.mjs --update
+
+      - name: Desktop engine package tests
+        run: bun run --cwd packages/desktop-engine test
+
+      - name: Desktop engine conformance replay
+        run: bun run --cwd packages/desktop-engine test -- conformance
+
+      # Each #[ignore]d display test runs in the environment its module docs name. The X11 input tests need
+      # the Linux QA driver's window manager and windows (scripts/qa-desktop-linux.ts), so they stay there.
+      - name: X11 display tests
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a cargo test -p senpi-desktop-backend-x11 --locked --lib -- --ignored --exact capture::live_tests::captures_root_window stop_path::live_tests::raw_key_chord_latches_supervisor
+          env -u DISPLAY cargo test -p senpi-desktop-backend-x11 --locked --lib -- --ignored --exact stop_path::live_tests::start_without_a_display_is_unavailable_and_not_live
+
+      # One fresh session bus per AT-SPI test, as the module docs require.
+      - name: AT-SPI display tests
+        if: runner.os == 'Linux'
+        run: |
+          for test in ax_tree_of_xterm_lists_window permission_is_toolkits_silent_until_a_toolkit_publishes; do
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" cargo test -p senpi-desktop-backend-atspi --locked --lib -- --ignored --exact "live_tests::$test"
+          done
+          env -u AT_SPI_BUS_ADDRESS DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/senpi-no-bus cargo test -p senpi-desktop-backend-atspi --locked --lib -- --ignored --exact live_tests::no_bus_reports_bus_unreachable
+
   # Fan-in gate carrying the exact context name branch protection requires
   # ("Check and test"). It succeeds only when every check/test job above passed,
   # so the required-status contract is unchanged while the work runs in parallel.
@@ -412,6 +502,7 @@ jobs:
         check,
         test-coding-agent,
         grep-native-contract,
+        desktop-native-contract,
         hooks-trust-storage-windows,
         rpc-windows,
         compiled-extensions-windows,
@@ -443,6 +534,7 @@ jobs:
             echo "- check: ${{ needs.check.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
+            echo "- desktop-native-contract: ${{ needs.desktop-native-contract.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
             echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
             echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"

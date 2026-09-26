@@ -72,8 +72,56 @@ fn fake_backend(scenario: FakeScenario) -> Box<dyn Backend> {
     Box::new(FakeBackend::new(scenario))
 }
 
-/// The OS backend crates (macOS todo 14, X11 todo 27, Windows todo 30,
-/// Wayland todo 33) replace this with a `cfg(target_os)` dispatch.
+/// The backend crate for the compile target.
+#[cfg(target_os = "macos")]
+fn platform_backend(selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
+    let backend = senpi_desktop_backend_macos::MacosBackend::new(selector)?;
+    Ok(Box::new(backend))
+}
+
+#[cfg(target_os = "windows")]
+fn platform_backend(selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
+    let backend = senpi_desktop_backend_win32::Win32Backend::new(selector)?;
+    Ok(Box::new(backend))
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxDisplayServer {
+    Wayland,
+    X11,
+}
+
+/// `WAYLAND_DISPLAY` wins over `DISPLAY` (an XWayland session sets both).
+#[cfg(target_os = "linux")]
+fn linux_display_server(is_set: impl Fn(&str) -> bool) -> Option<LinuxDisplayServer> {
+    if is_set("WAYLAND_DISPLAY") {
+        Some(LinuxDisplayServer::Wayland)
+    } else if is_set("DISPLAY") {
+        Some(LinuxDisplayServer::X11)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn platform_backend(selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
+    match linux_display_server(|name| std::env::var_os(name).is_some()) {
+        Some(LinuxDisplayServer::Wayland) => {
+            let backend = senpi_desktop_backend_wayland::WaylandBackend::new(selector);
+            Ok(Box::new(backend))
+        }
+        Some(LinuxDisplayServer::X11) => {
+            let backend = senpi_desktop_backend_x11::X11Backend::new(selector)?;
+            Ok(Box::new(backend))
+        }
+        None => Err(DesktopError::capture_failed(
+            "no display server (neither WAYLAND_DISPLAY nor DISPLAY is set)",
+        )),
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn platform_backend(_selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
     Err(DesktopError::capture_failed(format!(
         "{} desktop backend not yet ported",
@@ -114,6 +162,30 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_prefers_wayland_then_x11_and_needs_one_of_them() {
+        let with = |set: &'static [&'static str]| linux_display_server(move |name| set.contains(&name));
+
+        let picks = [
+            with(&["WAYLAND_DISPLAY", "DISPLAY"]),
+            with(&["WAYLAND_DISPLAY"]),
+            with(&["DISPLAY"]),
+            with(&[]),
+        ];
+
+        assert_eq!(
+            picks,
+            [
+                Some(LinuxDisplayServer::Wayland),
+                Some(LinuxDisplayServer::Wayland),
+                Some(LinuxDisplayServer::X11),
+                None,
+            ]
+        );
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     #[test]
     fn platform_backend_is_not_yet_ported() {
         let error = BackendSelection::Platform

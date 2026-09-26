@@ -251,6 +251,7 @@ async function executeCell(
 				kernel.run({
 					cellId: invocation.cellId,
 					code: invocation.input.code,
+					kernelPreludes: options.kernelPreludes?.(),
 					onMessage,
 					onStarted: () => {
 						cellManager.markRunning(cell);

@@ -8,6 +8,7 @@ import bashTimeoutExtension from "./bash-timeout/index.ts";
 import btwExtension from "./btw/index.ts";
 import cacheKeepAliveExtension from "./cache-keepalive/index.ts";
 import compactionExtension from "./compaction/index.ts";
+import computerUseExtension from "./computer-use/index.ts";
 import configReloadExtension from "./config-reload/index.ts";
 import cursorCliOauthExtension from "./cursor-cli-oauth/index.ts";
 import diffExtension from "./diff.ts";
@@ -115,6 +116,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "config-reload", factory: configReloadExtension },
 	// Shared catalog wiring loads before MCP, which feeds its tools into the shared catalog as the final builtin.
 	{ id: "tool-search", factory: toolSearchExtension },
+	// Follows permission-system (its parser registry) and tool-search (the catalog its search-exposed tool joins).
+	{ id: "computer-use", factory: computerUseExtension },
 	// Keep MCP last so its eventual provider-payload tap observes all co-resident builtin mutations.
 	{ id: "mcp", factory: mcpExtension },
 ];

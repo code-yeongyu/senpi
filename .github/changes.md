@@ -1,5 +1,42 @@
 # changes
 
+## 2026-09-26 - Desktop Rust contract job on three OSes (senpi#2128)
+
+### What changed
+
+- `.github/workflows/ci.yml`: new `desktop-native-contract` job on `macos-14`, `ubuntu-22.04` and `windows-latest`. Each OS runs workspace clippy with `-D warnings`, `cargo test --workspace`, the release engine build, the desktop-engine package tests, and the conformance replay. Ubuntu also runs the `#[ignore]`d X11 and AT-SPI display tests under `dbus-run-session -- xvfb-run`. On macOS the job first copies the engine it built over the vendored `darwin-arm64` prebuild (`check-prebuild-fresh.mjs --update`), because the locator resolves the vendored binary first and the TS tests would otherwise exercise a stale engine. The job is a `needs` of the `Check and test` fan-in, so the required status covers it.
+
+### Why
+
+- `native-prebuilds.yml` runs `cargo test` only on its non-cross rows, so the Linux desktop crates were never tested in CI, and display-bound tests never ran anywhere.
+
+### Why an extension could not handle it
+
+- CI jobs are repository configuration.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `check-and-test` `needs` list and summary in `.github/workflows/ci.yml`.
+
+## 2026-09-26 - Windows interactive-desktop QA workflow for the desktop engine (senpi#2128)
+
+### What changed
+
+- `.github/workflows/desktop-windows-qa.yml`: new `windows-desktop-qa` job on `windows-latest` (path-filtered to the desktop crates/packages and the QA scripts; `pull_request` runs for any base so stacked desktop PRs are covered). It gates on `scripts/ci/windows-interactive-desktop-smoke.ps1`, builds `senpi-desktop-engine` for `x86_64-pc-windows-msvc`, runs `cargo test -p senpi-desktop-backend-win32 -- --include-ignored --test-threads=1`, runs `bun scripts/qa-desktop-windows.ts --all --json`, proves the sabotage path (`--sabotage invalid-chord` must fail `hotkey-latches` with reason `InvalidKey`, checked by `scripts/ci/desktop-windows-qa/expect-sabotage.ts`), and uploads both JSONL files as the `desktop-windows-qa-jsonl` artifact.
+- `scripts/qa-desktop-windows.ts` + `scripts/ci/desktop-windows-qa/`: the Windows QA driver. Scenarios `capture-primary`, `foreground-type-notepad-restores-front`, `background-post-message-notepad`, `background-post-message-wpf`, `elevated-window-refused` (a Low-integrity copy of the engine made with `icacls /setintegritylevel Low`), `uia-snapshot-notepad`, `hotkey-latches`; one JSONL line per scenario with facts from an independent PowerShell observer (`observer.ps1`: `GetForegroundWindow`, `Cursor.Position`, UI Automation text, `whoami /groups`, process integrity RID), teardown receipts (`procs 0`, `dir REMOVED`) as the last lines, exit 0 iff every scenario passed and the teardown was clean.
+
+### Why
+
+- The win32 backend's capture, input delivery, UIPI refusal, UI Automation, and RegisterHotKey stop path can only be proven on a real Windows desktop; the hosted runner has one, so every desktop PR gets that proof with facts no engine report can fake.
+
+### Why an extension could not handle it
+
+- CI workflow configuration and a repository QA script.
+
+### Expected merge conflict zones
+
+- NONE: fork-only workflow and scripts.
+
 ## 2026-09-24 - Build and verify the senpi-desktop-engine binary in the native matrix (senpi#2128)
 
 ### What changed

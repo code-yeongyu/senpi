@@ -1,5 +1,9 @@
 //! Drives the built engine binary over stdio. Every wait is bounded by
 //! `HANG_GUARD`, a hang guard only: no assertion depends on latency.
+#![allow(
+    dead_code,
+    reason = "every integration-test crate compiles this module and uses a different subset of it"
+)]
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
@@ -8,6 +12,8 @@ use std::thread;
 use std::time::Duration;
 
 use serde_json::{json, Value};
+
+pub mod scenario;
 
 pub const HANG_GUARD: Duration = Duration::from_secs(30);
 pub const BINARY: &str = env!("CARGO_BIN_EXE_senpi-desktop-engine");
@@ -35,6 +41,8 @@ pub struct Engine {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<Value>,
+    /// Id of the next [`Engine::invoke`]; far above the explicit ids tests pick.
+    next_id: i64,
 }
 
 impl Engine {
@@ -64,7 +72,12 @@ impl Engine {
             }
         });
         let stdin = child.stdin.take();
-        Self { child, stdin, lines }
+        Self {
+            child,
+            stdin,
+            lines,
+            next_id: 1_000,
+        }
     }
 
     pub fn send(&mut self, message: &Value) {
@@ -91,12 +104,38 @@ impl Engine {
             .expect("engine answers within the hang guard")
     }
 
-    /// Sends a request and returns the next output line, its reply.
+    /// Sends a request and returns its reply: the next line with an id.
+    /// Notifications before it (`audit` of an earlier request, ...) are skipped.
     pub fn call(&mut self, id: i64, method: &str, params: Value) -> Value {
         self.request(id, method, params);
-        let reply = self.next();
-        assert_eq!(reply["id"], json!(id), "reply to {method}: {reply}");
-        reply
+        loop {
+            let message = self.next();
+            if message.get("id").is_some() {
+                assert_eq!(message["id"], json!(id), "reply to {method}: {message}");
+                return message;
+            }
+        }
+    }
+
+    /// [`Engine::call`] with the next free id.
+    pub fn invoke(&mut self, method: &str, params: Value) -> Value {
+        self.next_id += 1;
+        self.call(self.next_id, method, params)
+    }
+
+    /// Closes stdin and returns every line written before the engine exits.
+    pub fn drain(mut self) -> Vec<Value> {
+        drop(self.stdin.take());
+        let mut rest = Vec::new();
+        loop {
+            match self.lines.recv_timeout(HANG_GUARD) {
+                Ok(message) => rest.push(message),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return rest,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("engine did not exit at stdin EOF within the hang guard")
+                }
+            }
+        }
     }
 
     /// Closes stdin and returns the exit status.

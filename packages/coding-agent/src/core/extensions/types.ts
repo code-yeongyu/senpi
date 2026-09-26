@@ -754,6 +754,22 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 export type ToolExposure = "direct" | "search" | "eval";
 
 /**
+ * Globals a tool contributes to the persistent eval kernels while it is active. Each snippet runs before a cell
+ * only when one of `exports` is missing, and calls the tool through the ordinary `tool.<name>()` helper; a
+ * deactivated tool's exports are removed before the next cell. `documentation` is one line rendered into the
+ * eval prompt's helper list while the tool is active.
+ */
+export interface KernelPreludeContribution {
+	/** JavaScript statements that assign every name in `exports` onto `globalThis`. */
+	readonly javascript: string;
+	/** Python statements that bind every name in `exports` in the kernel namespace. */
+	readonly python: string;
+	readonly documentation: string;
+	/** Global names the snippets define; must not shadow a built-in kernel helper such as `display` or `tool`. */
+	readonly exports: readonly string[];
+}
+
+/**
  * Tool definition for registerTool().
  */
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
@@ -796,6 +812,8 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * prompt-cache prefix.
 	 */
 	promptGuidelines?: string[];
+	/** Optional eval-kernel globals installed while this tool is active; see {@link KernelPreludeContribution}. */
+	kernelPrelude?: KernelPreludeContribution;
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
 	/** Optional OpenAI Responses freeform tool metadata. */
@@ -1357,6 +1375,16 @@ export interface ThinkingLevelSelectEvent {
 	previousLevel: ThinkingLevel;
 }
 
+/**
+ * Fired after the active tool set gains tools: `pi.setActiveTools()`, tool_search promotion, or a
+ * by-name call that lazily activates a deferred tool. Notification-only; `toolNames` lists only the
+ * newly active tools.
+ */
+export interface ToolActivatedEvent {
+	type: "tool_activated";
+	toolNames: string[];
+}
+
 // ============================================================================
 // User Bash Events
 // ============================================================================
@@ -1637,6 +1665,7 @@ export type ExtensionEvent =
 	| ModelSelectEvent
 	| SystemPromptChangeEvent
 	| ThinkingLevelSelectEvent
+	| ToolActivatedEvent
 	| UserBashEvent
 	| InputEvent
 	| InputDispositionEvent
@@ -1939,6 +1968,7 @@ export interface ExtensionAPI {
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): void;
 	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
+	on(event: "tool_activated", handler: ExtensionHandler<ToolActivatedEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
@@ -2415,7 +2445,10 @@ export type RegisterLazyToolActivatorHandler = (activator: LazyToolActivator) =>
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with normalized exposure metadata and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "label" | "description" | "parameters" | "promptGuidelines"> & {
+export type ToolInfo = Pick<
+	ToolDefinition,
+	"name" | "label" | "description" | "parameters" | "promptGuidelines" | "kernelPrelude"
+> & {
 	sourceInfo: SourceInfo;
 	exposure: ToolExposure;
 	searchText?: string;

@@ -18,6 +18,61 @@
 
 # Local fork changes
 
+## 2026-09-26 - coding-agent declares the desktop packages its computer-use builtin imports (#2128)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `@code-yeongyu/senpi-desktop-service` and `@code-yeongyu/senpi-desktop-tool` are `devDependencies`, with matching `bun.lock` and `package-lock.json` entries.
+
+### Why
+
+- The computer-use builtin imports both, but they were never declared. npm and bun hoist every workspace package, so the build passed there; pnpm links only declared dependencies, and `build:pnpm` failed with `Cannot find module '@code-yeongyu/senpi-desktop-service'`. They are dev-only while the desktop packages stay unpublished: the release guard reads `dependencies`, `optionalDependencies` and `peerDependencies`, so they never enter the shipped manifest.
+
+### Why an extension could not handle it
+
+- Workspace linking is decided by this package's manifest.
+
+### Expected merge conflict zones
+
+- LOW: the top of the `devDependencies` block.
+
+## 2026-09-26 - Vitest resolves the desktop packages to source (#2128)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: resolve aliases map `@code-yeongyu/senpi-desktop-{protocol,engine,prelude,service,tool}` to each package's `src/index.ts`.
+
+### Why
+
+- The computer-use builtin reaches all five desktop packages, so any suite that loads the builtin list (the cross-OS terminal job runs `terminal-extension.test.ts` without a workspace build) failed to resolve `@code-yeongyu/senpi-desktop-service`, whose `exports` point at an unbuilt `dist/`.
+
+### Why an extension could not handle it
+
+- Test module resolution is owned by this package's Vitest config, not by any extension.
+
+### Expected merge conflict zones
+
+- LOW: the `resolve.alias` array in `packages/coding-agent/vitest.config.ts`.
+
+## 2026-09-24 - getAllTools projects ToolDefinition.kernelPrelude (#2128)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `getAllTools()` projects `kernelPrelude` through `projectKernelPrelude`, which throws `KernelPreludeCollisionError` when an export would shadow a built-in eval kernel global.
+- `packages/coding-agent/src/index.ts`: re-exports the `KernelPreludeContribution` type for extensions (codemode consumes it).
+
+### Why
+
+- Codemode reads kernel globals for active tools from `getAllTools()` per cell; rejecting a colliding export at projection keeps a bad contribution from silently replacing `display`/`tool` in every later cell.
+
+### Why an extension could not handle it
+
+- `getAllTools()` is the host's tool projection; only the session decides which `ToolDefinition` fields other extensions see.
+
+### Expected merge conflict zones
+
+- LOW: the object literal in `AgentSession.getAllTools` and the extension-import block near `getToolSearchService` in `agent-session.ts`; the extension type re-export list in `src/index.ts`.
+
 ## 2026-09-23 - claude-agent-sdk 0.3.280 (senpi#2033)
 
 ### What changed
