@@ -155,7 +155,7 @@ The engine is a separate binary with its own protocol, so it can run without sen
 
 `packages/desktop-engine/bunshin/desktop.capability.json` is a bunshin sidecar descriptor for the oneshot bridge. `node scripts/install-bunshin-desktop-capability.mjs` installs it into the agent's capability directory with this host's engine path. Inspection ops are `read`, and input ops are `mutate`, so they need a capability token. Stopping is `read`, so it never needs one.
 
-Hosting the engine under bunshin still has gaps on the bunshin side; they are tracked in a bunshin issue.
+Hosting the engine natively in bunshin (one long-lived session per machine, a fleet-level pause, binary screenshot artifacts, and agents that run inside the graphical session on Linux and Windows) is tracked in [code-yeongyu/bunshin#192](https://github.com/code-yeongyu/bunshin/issues/192).
 
 ## Not yet
 
