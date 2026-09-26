@@ -48,6 +48,7 @@
 		"@code-yeongyu/senpi-desktop-protocol": "^2026.9.24-2"
 	},
 	"devDependencies": {
-		"@types/node": "26.6.2"
+		"@types/node": "26.6.2",
+		"zod": "4.6.5"
 	}
 }

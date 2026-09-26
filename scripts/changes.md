@@ -16,6 +16,24 @@
 
 - LOW: the `env` literal in `smokeTestCodingAgentConsumer`.
 
+## 2026-09-26 - Installer for the desktop engine's bunshin capability (senpi#2128)
+
+### What changed
+
+- `scripts/install-bunshin-desktop-capability.mjs` (new): writes the desktop descriptor to `$BUNSHIN_CAPABILITY_DIR/desktop.json` (default `$BUNSHIN_HOME/capabilities`), pointing at the located engine binary (`--engine` overrides it). `--remove` uninstalls it.
+
+### Why
+
+- A bunshin agent loads sidecar descriptors only from its capability directory, and the descriptor needs the absolute engine path of that host.
+
+### Why an extension could not handle it
+
+- It configures a bunshin agent on the host, not a senpi session.
+
+### Expected merge conflict zones
+
+- None: a new file.
+
 ## 2026-09-25 - The published tarball leaves out never-published workspaces nothing shipped reaches (senpi#2141)
 
 ### What changed

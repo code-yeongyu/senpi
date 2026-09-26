@@ -19,17 +19,21 @@ use senpi_desktop_safety::{
 };
 use senpi_desktop_session::BackendSelection;
 
+use crate::fake_listener::FakeGlobalListener;
+
 /// Reported as `stopReason` when no Global listener exists or none started.
 const NO_GLOBAL_LISTENER: &str = "no-global-listener";
 
 type Listener = Box<dyn StopPathListener + Send>;
 
-/// The platform backend's Global listener; the fake backend has none, so a
-/// fake session relies on the host relay alone.
+/// The platform backend's Global listener; the fake backend has none (a fake
+/// session relies on the host relay) unless the test asks for a live one.
 fn global_listener(selection: &BackendSelection) -> Option<Listener> {
     match selection {
         BackendSelection::Platform => platform_listener(),
-        BackendSelection::FakeFile(_) | BackendSelection::FakeScenario(_) => None,
+        BackendSelection::FakeFile(_) | BackendSelection::FakeScenario(_) => {
+            FakeGlobalListener::from_env().map(|listener| Box::new(listener) as Listener)
+        }
     }
 }
 
@@ -43,7 +47,9 @@ fn platform_listener() -> Option<Listener> {
 #[cfg(target_os = "linux")]
 fn platform_listener() -> Option<Listener> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        Some(Box::new(senpi_desktop_backend_wayland::GlobalShortcutsListener::new()))
+        Some(Box::new(
+            senpi_desktop_backend_wayland::GlobalShortcutsListener::new(),
+        ))
     } else if std::env::var_os("DISPLAY").is_some() {
         Some(Box::new(senpi_desktop_backend_x11::Xi2Listener::new()))
     } else {
