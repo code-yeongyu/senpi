@@ -86,7 +86,15 @@ function pressedKeys(log: JsonObject | null): number[] {
 		.map((event) => Number(event.keycode));
 }
 
-async function input(ctx: Context, stage: WaylandStage, optIn: boolean, name: string): Promise<Result> {
+// `expectDelivery` is what the scenario asserts; `optIn` is what the engine is actually given. They only differ under
+// `--sabotage skip-optin`, which must turn the with-opt-in scenario red rather than swap it to the refusal checks.
+async function input(
+	ctx: Context,
+	stage: WaylandStage,
+	expectDelivery: boolean,
+	optIn: boolean,
+	name: string,
+): Promise<Result> {
 	const eis = startFakeEis(ctx, name);
 	await until(() => exists(eis.socket), "the fake EIS socket");
 	const engine = spawnEngine(ctx, stage, eis.socket);
@@ -97,7 +105,7 @@ async function input(ctx: Context, stage: WaylandStage, optIn: boolean, name: st
 		const eisLog = await readFakeEis(ctx, eis.child, eis.done, typed === "ok");
 		const keys = pressedKeys(eisLog.log);
 		const after = { eisExited: eisLog.exited, eisLog: eisLog.log, pressedKeys: keys };
-		const checks: Record<string, boolean> = optIn
+		const checks: Record<string, boolean> = expectDelivery
 			? {
 					type_text_ok: typed === "ok",
 					fake_eis_connected: eisLog.log?.connected === true,
@@ -130,8 +138,8 @@ export function runWayland(
 		case "wayland-capabilities-honest":
 			return capabilitiesHonest(ctx, stage, observe);
 		case "wayland-input-refused-without-optin":
-			return input(ctx, stage, false, name);
+			return input(ctx, stage, false, false, name);
 		case "wayland-input-with-optin":
-			return input(ctx, stage, ctx.sabotage !== "skip-optin", name);
+			return input(ctx, stage, true, ctx.sabotage !== "skip-optin", name);
 	}
 }
