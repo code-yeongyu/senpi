@@ -157,6 +157,21 @@ The engine is a separate binary with its own protocol, so it can run without sen
 
 Hosting the engine natively in bunshin (one long-lived session per machine, a fleet-level pause, binary screenshot artifacts, and agents that run inside the graphical session on Linux and Windows) is tracked in [code-yeongyu/bunshin#192](https://github.com/code-yeongyu/bunshin/issues/192).
 
+## omo
+
+omo picks up computer use from the senpi runtime; nothing in omo's prompts has to change. Adopting a senpi release that contains it means checking the following:
+
+- The `computer-use` skill appears in the skill list on supported hosts. The builtin contributes it through `resources_discover` from the model-facing reference and safety rules in `packages/desktop-prelude/docs`, and contributes nothing when the tool is unavailable.
+- The `computer.*` settings pass through unchanged, including `computer.enabled` for hosts that should never register the tool.
+- `/computer on|off|status|stop|resume` works in omo's TUI and over RPC, including in the desktop app.
+- The `computer`, `computer:read`, and `computer:exec` permission rules behave as described above. Non-interactive runs block `ask` unless a rule allows the call.
+- The per-OS prerequisites (the macOS grants to the launching terminal, the Linux accessibility bus, the Windows integrity level) are in omo's setup docs.
+- The `senpi-desktop-engine` binary ships next to the omo binary as a sidecar, like the other native prebuilds. Without it, `/computer status` reports `native-unavailable`.
+
+Release-note paragraph:
+
+> **Computer use.** omo can now drive your real desktop on macOS, Linux, and Windows: screenshots, clicks and typing into native apps, and the OS accessibility tree. Input goes to background windows by default, so the app you are using keeps focus. A global stop chord (Control+Option+Command+Escape on macOS, Ctrl+Alt+Shift+Escape elsewhere) halts everything instantly, and only you can resume. The model finds the tool with `tool_search "computer"`, the `computer:read` and `computer:exec` permission tiers control it, and `/computer status` shows what your machine supports.
+
 ## Not yet
 
 - Screen capture through PipeWire on Wayland, and video.

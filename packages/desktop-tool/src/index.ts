@@ -29,6 +29,7 @@ export {
 	ComputerSettingsSchema,
 	resolveComputerSettings,
 } from "./settings.ts";
+export { COMPUTER_SKILL_NAME, computerSkillMarkdown, materializeComputerSkill } from "./skill.ts";
 export {
 	COMPUTER_TOOL_NAME,
 	type ComputerTool,
