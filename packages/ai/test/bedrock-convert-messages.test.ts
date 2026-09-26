@@ -1,3 +1,4 @@
+import type { ConverseStreamCommandInput } from "@aws-sdk/client-bedrock-runtime";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 
@@ -56,7 +57,8 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import type { Context, Message, Model } from "../src/types.ts";
+import type { Context, Message, Model, Tool } from "../src/types.ts";
+import { resolveRootObjectSchema } from "../src/utils/tool-schema-compat.ts";
 
 const baseModel: Model<"bedrock-converse-stream"> = {
 	id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -478,4 +480,71 @@ describe("Bedrock foreign tool call id normalization", () => {
 			expect(id).toMatch(/^[a-zA-Z0-9_-]+$/);
 		}
 	});
+});
+
+async function captureToolSchema(parameters: Tool["parameters"], strict = false) {
+	const original = structuredClone(parameters);
+	const tool: Tool = { name: "fixture", description: "Fixture", parameters };
+	if (strict) tool.constrainedSampling = { type: "json_schema", strict: "require" };
+	const payload = (await capturePayload({
+		messages: [{ role: "user", content: "test", timestamp: 0 }],
+		tools: [tool],
+	})) as ConverseStreamCommandInput;
+	expect(parameters).toEqual(original);
+	const spec = payload.toolConfig?.tools?.[0]?.toolSpec;
+	if (!spec) throw new Error("No tool spec captured");
+	return { schema: spec.inputSchema?.json as Record<string, unknown>, strict: spec.strict };
+}
+
+const schemaBranches = [
+	{
+		type: "object",
+		properties: { count: { type: "integer", minimum: 1 }, left: { type: "string", description: "Left value" } },
+		required: ["left"],
+	},
+	{
+		type: "object",
+		properties: { count: { type: "integer", maximum: 5 }, right: { type: "integer" } },
+		required: ["right"],
+	},
+];
+
+// #1947: the real request builder must emit object roots without dropping branch constraints.
+it.each([
+	["anyOf", ["common"], "anyOf"],
+	["oneOf", ["common"], "anyOf"],
+	["allOf", ["common", "left", "right"], "allOf"],
+] as const)("normalizes Bedrock root %s", async (combiner, required, propertyCombiner) => {
+	const parameters = {
+		...(combiner === "allOf" ? { type: "object" } : {}),
+		properties: { common: { type: "boolean" } },
+		required: ["common"],
+		[combiner]: schemaBranches,
+	};
+	if (combiner === "allOf") expect(resolveRootObjectSchema(parameters)).toEqual(parameters);
+	const { schema } = await captureToolSchema(parameters);
+	expect(schema.type).toBe("object");
+	expect(schema).not.toHaveProperty(combiner);
+	expect(schema.properties).toEqual({
+		common: { type: "boolean" },
+		left: schemaBranches[0].properties.left,
+		right: schemaBranches[1].properties.right,
+		count: { [propertyCombiner]: schemaBranches.map((branch) => branch.properties.count) },
+	});
+	expect(schema.required).toEqual(expect.arrayContaining([...required]));
+	expect(schema.required).toHaveLength(required.length);
+});
+
+it("adds Bedrock's missing root type without rewriting nested schemas", async () => {
+	const parameters = { properties: { value: { anyOf: [{ type: "string" }, { type: "number" }] } } };
+	expect((await captureToolSchema(parameters)).schema).toEqual({ type: "object", ...parameters });
+});
+
+it("normalizes the Bedrock root before required strict sampling", async () => {
+	const { schema, strict } = await captureToolSchema({ anyOf: schemaBranches }, true);
+	expect(strict).toBe(true);
+	expect(schema.type).toBe("object");
+	expect(schema).not.toHaveProperty("anyOf");
+	expect(schema.required).toEqual(expect.arrayContaining(["count", "left", "right"]));
+	expect(schema.additionalProperties).toBe(false);
 });

@@ -63,6 +63,7 @@ import {
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
+import { normalizeToolParametersForBedrock } from "../utils/tool-schema-compat.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
@@ -1128,12 +1129,13 @@ function convertToolConfig(
 	if (toolChoice === "none") return undefined;
 
 	const bedrockTools: BedrockTool[] = tools.map((tool) => {
-		const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictMode);
+		const wireTool = { ...tool, parameters: normalizeToolParametersForBedrock({ ...tool.parameters }) };
+		const strict = resolveJsonSchemaStrictSampling(wireTool, supportsStrictMode);
 		return {
 			toolSpec: {
 				name: tool.name,
 				description: tool.description,
-				inputSchema: { json: toDocumentType(getJsonSchemaToolParameters(tool, strict)) },
+				inputSchema: { json: toDocumentType(getJsonSchemaToolParameters(wireTool, strict)) },
 				...(strict === true ? { strict: true } : {}),
 			},
 		};
