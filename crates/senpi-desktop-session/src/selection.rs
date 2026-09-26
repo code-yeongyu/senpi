@@ -72,8 +72,7 @@ fn fake_backend(scenario: FakeScenario) -> Box<dyn Backend> {
     Box::new(FakeBackend::new(scenario))
 }
 
-/// The backend crate for the compile target. Wayland (todo 33) fills the
-/// Linux Wayland arm.
+/// The backend crate for the compile target.
 #[cfg(target_os = "macos")]
 fn platform_backend(selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
     let backend = senpi_desktop_backend_macos::MacosBackend::new(selector)?;
@@ -108,9 +107,10 @@ fn linux_display_server(is_set: impl Fn(&str) -> bool) -> Option<LinuxDisplaySer
 #[cfg(target_os = "linux")]
 fn platform_backend(selector: DisplaySelector) -> CoreResult<Box<dyn Backend>> {
     match linux_display_server(|name| std::env::var_os(name).is_some()) {
-        Some(LinuxDisplayServer::Wayland) => Err(DesktopError::capture_failed(
-            "wayland desktop backend not yet ported",
-        )),
+        Some(LinuxDisplayServer::Wayland) => {
+            let backend = senpi_desktop_backend_wayland::WaylandBackend::new(selector);
+            Ok(Box::new(backend))
+        }
         Some(LinuxDisplayServer::X11) => {
             let backend = senpi_desktop_backend_x11::X11Backend::new(selector)?;
             Ok(Box::new(backend))
