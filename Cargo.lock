@@ -2749,7 +2749,9 @@ version = "0.0.0"
 dependencies = [
  "enigo",
  "image",
+ "parking_lot",
  "senpi-desktop-core",
+ "senpi-desktop-safety",
  "uiautomation",
  "windows-sys 0.61.2",
  "xcap",
