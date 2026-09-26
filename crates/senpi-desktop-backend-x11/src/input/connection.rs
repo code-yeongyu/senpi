@@ -15,6 +15,9 @@ use x11rb::CURRENT_TIME;
 use super::keys::Keymap;
 use super::server::{FakeInput, InputServer, SentEvent};
 
+/// Bounds the descendant walk of `target_at`; real widget trees are far shallower.
+const MAX_WINDOW_DEPTH: usize = 32;
+
 pub struct X11InputConnection {
     conn: RustConnection,
     root: Window,
@@ -170,6 +173,23 @@ impl InputServer for X11InputConnection {
             .reply()
             .map_err(failed)?;
         Ok((reply.dst_x, reply.dst_y))
+    }
+
+    fn target_at(&self, window: Window, x: i16, y: i16) -> CoreResult<Window> {
+        let mut current = window;
+        for _ in 0..MAX_WINDOW_DEPTH {
+            let reply = self
+                .conn
+                .translate_coordinates(self.root, current, x, y)
+                .map_err(failed)?
+                .reply()
+                .map_err(failed)?;
+            if reply.child == x11rb::NONE {
+                break;
+            }
+            current = reply.child;
+        }
+        Ok(current)
     }
 
     fn pointer(&self) -> CoreResult<(i16, i16)> {
