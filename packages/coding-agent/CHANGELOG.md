@@ -25,6 +25,8 @@
 - `bun add @code-yeongyu/senpi` works again. 2026.9.25 declared five unpublished desktop packages as dependencies, which npm installs from the bundle but bun looks up on the registry and fails; the package no longer ships them until a released feature uses them. ([#2141](https://github.com/code-yeongyu/senpi/issues/2141))
 
 - A turn that keeps repeating is caught again when its text contains `Ask:` outside a handoff block; only the restated request inside a handoff block is ignored. ([#2143](https://github.com/code-yeongyu/senpi/issues/2143))
+
+- Anthropic Subscription custom-tool schemas now preserve JSON-Schema field descriptions, so Claude receives guidance such as eval's required `summary` field instead of making a wasted corrective call. ([#2145](https://github.com/code-yeongyu/senpi/issues/2145))
 ### Removed
 
 ## [2026.9.25] - 2026-09-25

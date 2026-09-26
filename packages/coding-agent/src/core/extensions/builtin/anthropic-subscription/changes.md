@@ -1,3 +1,21 @@
+## 2026-09-25 - preserve custom-tool JSON-Schema field descriptions (senpi#2145)
+
+### What changed
+
+- `custom-tools-schema.ts`: applies a JSON-Schema field's `description` to the converted Zod schema before advertising the custom tool to Claude Code.
+
+### Why
+
+- The MCP bridge rebuilt every field as a bare Zod type, so descriptions such as eval's required `summary` guidance disappeared before reaching the model.
+
+### Why an extension could not handle it
+
+- The conversion is inside the provider extension's custom-tool MCP adapter, before the SDK receives its input schema.
+
+### Expected merge conflict zones
+
+- LOW: `schemaToZod` in `custom-tools-schema.ts`.
+
 ## 2026-09-24 - fingerprint hashes the system prompt verbatim (senpi#2093)
 
 ### What changed

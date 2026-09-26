@@ -38,6 +38,21 @@ describe("jsonSchemaToZodShape", () => {
 		expect(object.safeParse({ action: "stop", mode: "yolo" }).success).toBe(false);
 	});
 
+	it("preserves JSON-Schema descriptions on custom-tool fields", () => {
+		const shape = jsonSchemaToZodShape({
+			type: "object",
+			properties: {
+				summary: {
+					type: "string",
+					description: "One line describing the work in progress.",
+				},
+			},
+			required: ["summary"],
+		});
+
+		expect(shape.summary).toHaveProperty("description", "One line describing the work in progress.");
+	});
+
 	it("produces an empty shape for missing properties", () => {
 		expect(jsonSchemaToZodShape(undefined)).toEqual({});
 		expect(jsonSchemaToZodShape({ type: "object" })).toEqual({});
