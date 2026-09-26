@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { on, once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { z } from "zod";
 
 const repo = resolve(import.meta.dir, "..");
@@ -52,6 +53,34 @@ beforeAll(() => {
 	});
 	expect(result.status, result.stderr).toBe(0);
 }, 130_000);
+
+test("loads the embedded JavaScript grammar from an isolated Node bundle", () => {
+	const state = mkdtempSync(join(tmpdir(), "senpi-node-bundle-grammar-"));
+	try {
+		const bundle = join(state, "bundle");
+		cpSync(join(repo, "packages/coding-agent/dist/bundle"), bundle, { recursive: true });
+		const engineChunk = readdirSync(join(bundle, "chunks")).find(
+			(path) => path.startsWith("engine-") && path.endsWith(".js"),
+		);
+		expect(engineChunk).toBeDefined();
+		const probe = [
+			`const engine = await import(${JSON.stringify(pathToFileURL(join(bundle, "chunks", engineChunk!)).href)});`,
+			'const folder = await engine.loadTreeSitterFolder("js", { cache: false, fallback: { id: "heuristic", version: "1", fold: () => ({ status: "raw" }) } });',
+			'console.log(folder?.id ?? "undefined");',
+		].join(" ");
+		for (const runtime of runtimes) {
+			const result = spawnSync(runtime, ["--input-type=module", "-e", probe], {
+				cwd: state,
+				encoding: "utf8",
+				env: { PATH: process.env.PATH ?? "" },
+			});
+			expect(result.status, `${runtime}: ${result.stderr}`).toBe(0);
+			expect(result.stdout.trim(), runtime).toBe("tree-sitter-wasm");
+		}
+	} finally {
+		rmSync(state, { recursive: true, force: true });
+	}
+});
 
 // A downstream installer (oh-my-openagent) rewrites these declarations byte-for-byte inside the
 // installed bundle, so emitting must keep one literal `claudeCodeVersion="X.Y.Z"` per emitting file.

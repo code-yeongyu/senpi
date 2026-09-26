@@ -31,7 +31,7 @@
     "read-folders/lexical-spans.ts": "c7ba988487972d9e39427e5faf0120b3bf787cb48ffa32cf8123ce54bdbdbd93",
     "read-folders/prepare.ts": "3ec2d553ea1877cc04e12e730b7c9a0d7b2d5e4d08a60980a1c8396eb338bfd2",
     "read-folders/tree-sitter/engine.ts": "b2e06b13e5c42efbd6d7128d0c737f2cbc890693d5a332dac88b15e670195c05",
-    "read-folders/tree-sitter/grammar-assets.ts": "66d1db00774c8de2e19b0c8ea8711feea5d4f2daac991697a63d70a6b2ad74ec",
+    "read-folders/tree-sitter/grammar-assets.ts": "c1390501b5932899c3618a83574e0d35306a77ad3a4a6f0c784b1f8295de2a45",
     "read-folders/tree-sitter/syntax.ts": "21ec7601f431b635ccad1dce3e089875e2bec12db2f9ac2d8af62d34bda806ef",
     "read-folders/types.ts": "449f11dd3b2d0e68f1f6aad896a0a73a4c9756fef3f5acce9295bac9a26fbc69",
     "segmented-read-view.ts": "c0e865ba351a7a9eb29ab999c553729079732886e8bf0f2daa40c4b0d6dcf3bd"
@@ -105,7 +105,7 @@
     ]
   },
   "status": "frozen_measurement_with_per_language_raw_fallbacks",
-  "head_sha": "ec63eb5ee999da83b9e5d3e37b83d1998707f44c",
+  "head_sha": "6da8ef1361ef73928df8685e071f2a1826d3b17e",
   "startedAt": "2026-09-16T19:20:26.419Z",
   "finishedAt": "2026-09-16T19:20:27.638Z",
   "corpus_sha256": "7341450565d0c56ac07ef676eb6e43a79cab7a012fefe73612a7e2cab1ba43fa",

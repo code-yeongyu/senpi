@@ -1,3 +1,21 @@
+## 2026-09-26 - Cover Node bundle tree-sitter grammar loading (senpi#2032)
+
+### What changed
+
+- `node-bundle-smoke.test.ts`: the isolated published-bundle smoke test now imports the emitted tree-sitter engine chunk under Node and Bun and requires the embedded JavaScript grammar to resolve on both runtimes.
+
+### Why
+
+- The Node npm bundle previously skipped its embedded grammar while Bun loaded it, so this runtime-specific regression could pass existing CLI smoke tests unnoticed.
+
+### Why an extension could not handle it
+
+- The regression is in the build artifact's embedded asset resolution and must be exercised by the bundle smoke harness itself.
+
+### Expected merge conflict zones
+
+- LOW: the runtime matrix in `node-bundle-smoke.test.ts`.
+
 ## 2026-09-25 - The published tarball leaves out never-published workspaces nothing shipped reaches (senpi#2141)
 
 ### What changed

@@ -1,3 +1,22 @@
+## 2026-09-26 - Resolve embedded tree-sitter grammars under Node bundles (senpi#2032)
+
+### What changed
+
+- `harness/utils/read-folders/tree-sitter/grammar-assets.ts`: embedded grammar and runtime imports are now attempted on every runtime; missing or rejected imports still fall back to the installed resolver.
+- `test/harness/fixtures/read-summary/selection.json`: regenerated the tracked source hash for the selection receipt.
+
+### Why
+
+- Published npm bundles run under Node, where the Bun-only gate previously prevented the bundled JavaScript grammar from loading and forced structural reads onto the heuristic folder.
+
+### Why an extension could not handle it
+
+- The runtime gate is inside the agent package's embedded asset resolver, before extensions or read-tool hooks can observe the grammar selection.
+
+### Expected merge conflict zones
+
+- LOW: `harness/utils/read-folders/tree-sitter/grammar-assets.ts` and the adjacent selection receipt hash.
+
 ## 2026-09-24 - Lenient tool-name matching through one shared matcher (senpi#2111)
 
 ### What changed
