@@ -31,7 +31,42 @@ function isChangelogChange(path) {
 	return CHANGELOG_PATTERN.test(path);
 }
 
-export function checkPrChangelog({ changedFiles, labels, trackerPolicy }) {
+function releasedChangelogViolation({ path, before, after }) {
+	const [previous, current] = [before, after].map((text) => {
+		const headings = [...text.matchAll(/^## \[([^\]]+)\].*$/gm)];
+		return headings.map((heading, index) => ({
+			name: heading[1],
+			line: text.slice(0, heading.index).split("\n").length,
+			text: text.slice(heading.index, headings[index + 1]?.index ?? text.length),
+			body: text.slice(heading.index + heading[0].length, headings[index + 1]?.index ?? text.length),
+		}));
+	});
+	const misplaced = current.findIndex((section, index) => index > 0 && section.name === "Unreleased");
+	if (misplaced > 0)
+		return `${path}:${current[misplaced].line}: released section [${current[misplaced - 1].name}] interrupted`;
+	const oldReleased = previous.filter((section) => section.name !== "Unreleased");
+	const newReleased = current.filter((section) => section.name !== "Unreleased");
+	const unreleased = previous.find((section) => section.name === "Unreleased");
+	// Release tooling renames the existing Unreleased block, then inserts an empty next cycle.
+	if (
+		newReleased.length === oldReleased.length + 1 &&
+		unreleased?.body === newReleased[0]?.body &&
+		!oldReleased.some((section) => section.name === newReleased[0].name)
+	) newReleased.shift();
+	for (let index = 0; index < Math.max(oldReleased.length, newReleased.length); index += 1) {
+		const oldSection = oldReleased[index];
+		const newSection = newReleased[index];
+		if (oldSection?.text === newSection?.text) continue;
+		const oldLines = oldSection?.text.split("\n") ?? [];
+		const newLines = newSection?.text.split("\n") ?? [];
+		let offset = 0;
+		while (offset < Math.min(oldLines.length, newLines.length) && oldLines[offset] === newLines[offset]) offset += 1;
+		const section = newSection ?? oldSection;
+		return `${path}:${section.line + offset}: released section [${section.name}] changed`;
+	}
+}
+
+export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelogChanges = [] }) {
 	const normalizedLabels = (labels ?? []).map((label) => label.trim()).filter(Boolean);
 	const hasNoChangelogLabel = normalizedLabels.includes(NO_CHANGELOG_LABEL);
 	const changelogFiles = changedFiles.filter(isChangelogChange);
@@ -61,9 +96,13 @@ export function checkPrChangelog({ changedFiles, labels, trackerPolicy }) {
 	// required package CHANGELOG.md entry.
 	const audit = trackerPolicy == null ? null : auditChangesMdCoverage({ changedFiles, trackerPolicy });
 	const uncovered = audit ? audit.uncovered.map((item) => item.path) : [];
+	const violation = changelogChanges.map(releasedChangelogViolation).find(Boolean);
 	let pass;
 	let reason;
-	if (audit && uncovered.length > 0) {
+	if (violation) {
+		pass = false;
+		reason = violation;
+	} else if (audit && uncovered.length > 0) {
 		pass = false;
 		reason = summarizeUncovered(audit.uncovered);
 	} else if (audit) {
@@ -108,6 +147,19 @@ function collectPrFacts(base) {
 	const pin = readUpstreamPin(UPSTREAM_PIN_PATH);
 	ensureCommitExists(pin.sha);
 	const { changedFiles, renames, deletions } = resolvePrNameStatus(base);
+	const mergeBase = runGit(["merge-base", base, "HEAD"], "resolving PR merge base").trim();
+	const baseFiles = filesInCommit(mergeBase);
+	const headFiles = filesInCommit("HEAD");
+	const changelogChanges = changedFiles.filter(isChangelogChange)
+		.filter((path) => !renames.some((rename) => rename.from === path && isChangelogChange(rename.to)))
+		.map((path) => {
+			const oldPath = renames.find((rename) => rename.to === path)?.from ?? path;
+			return {
+				path,
+				before: baseFiles.has(oldPath) ? runGit(["show", `${mergeBase}:${oldPath}`], `reading base ${oldPath}`) : "",
+				after: headFiles.has(path) ? runGit(["show", `HEAD:${path}`], `reading HEAD ${path}`) : "",
+			};
+		});
 	const pinChanged = changedFiles.includes(UPSTREAM_PIN_PATH);
 	const upstreamTree = filesInCommit(pin.sha);
 	const upstreamRenames = renames.filter((rename) => upstreamTree.has(rename.from));
@@ -130,6 +182,7 @@ function collectPrFacts(base) {
 	}
 	return {
 		changedFiles,
+		changelogChanges,
 		trackerPolicy: {
 			forkOnly,
 			trackerDiffs,
@@ -196,16 +249,18 @@ export function main(argv) {
 
 	let changedFiles;
 	let trackerPolicy;
+	let changelogChanges;
 	try {
 		const facts = collectPrFacts(args.base);
 		changedFiles = facts.changedFiles;
 		trackerPolicy = facts.trackerPolicy;
+		changelogChanges = facts.changelogChanges;
 	} catch (error) {
 		console.error(`changelog-gate: ERROR - ${error.message}`);
 		return 1;
 	}
 
-	const result = checkPrChangelog({ changedFiles, labels: args.labels, trackerPolicy });
+	const result = checkPrChangelog({ changedFiles, labels: args.labels, trackerPolicy, changelogChanges });
 	const verdict = result.pass ? "PASS" : "FAIL";
 	console.log(`changelog-gate: ${verdict} - ${result.reason}`);
 	if (!result.pass) {
@@ -216,7 +271,8 @@ export function main(argv) {
 			console.log(`  missing changes.md coverage: ${path}`);
 		}
 		console.log(
-			"Add an entry under ## [Unreleased] in the affected package CHANGELOG.md, " +
+			"Restore any changed released sections. " +
+				"Add an entry under ## [Unreleased] in the affected package CHANGELOG.md, " +
 				`apply the '${NO_CHANGELOG_LABEL}' label if this change is not user-facing, ` +
 				"or cover the change in its exact nearest changes.md tracker.",
 		);
