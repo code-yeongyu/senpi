@@ -1,5 +1,24 @@
 # senpi-desktop-service fork changes
 
+## 2026-09-27 - A computer run that returns without awaiting the host settles (senpi#2128)
+
+### What changed
+
+- `packages/desktop-service/src/run/runtime.ts`: after the first evaluation, the run schedules one `resumeVm` drain. The vm context uses `microtaskMode: "afterEvaluate"`, so the host's subscription to the run's promise sits on the vm's own queue, which only a later `runInContext` drains. A run that awaited no host call never got that drain and hung until its timeout.
+- `packages/desktop-service/test/run.test.ts`: `settles a run that returns without awaiting any host call` covers an immediate return, an early return before any host call, and a vm-only await.
+
+### Why
+
+- A run whose code path returns before touching the desktop, such as an input refused by a pre-check, timed out instead of returning its value (found by the computer_actions adapter, plan todo 45).
+
+### Why an extension could not handle it
+
+- The run runtime is this package's code.
+
+### Expected merge conflict zones
+
+- None: a fork-only package.
+
 ## 2026-09-25 - computer.run runtime and desktop facade over the engine client (senpi#2128)
 
 ### What changed
