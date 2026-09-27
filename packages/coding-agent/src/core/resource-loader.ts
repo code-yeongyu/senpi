@@ -781,20 +781,38 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
 		time("contextFiles", "extensions");
 
-		// SYSTEM.md / APPEND_SYSTEM.md file discovery was intentionally removed; the explicit
-		// options are the only static prompt source (see packages/coding-agent/changes.md).
-		this.systemPrompt = resolvePromptInput(this.systemPromptSource, "system prompt");
-		this.appendSystemPrompt = (this.appendSystemPromptSource ?? [])
+		// An explicit --system-prompt / --append-system-prompt always wins; otherwise fall back to a
+		// discovered SYSTEM.md / APPEND_SYSTEM.md under the agent or config directory. Discovered append
+		// files come first so an explicit value still has the final say.
+		const appendSystemPromptSources = [
+			...this.discoverPromptFiles("APPEND_SYSTEM.md"),
+			...(this.appendSystemPromptSource ?? []),
+		];
+		const systemPromptSource = this.systemPromptSource ?? this.discoverPromptFiles("SYSTEM.md")[0];
+		this.systemPrompt = resolvePromptInput(systemPromptSource, "system prompt");
+		this.appendSystemPrompt = appendSystemPromptSources
 			.map((source) => resolvePromptInput(source, "append system prompt"))
 			.filter((source): source is string => source !== undefined);
 		this.systemPromptSourcePath =
-			this.systemPromptSource && existsSync(this.systemPromptSource)
-				? resolvePath(this.systemPromptSource)
+			systemPromptSource && existsSync(systemPromptSource)
+				? resolvePath(systemPromptSource)
 				: undefined;
-		this.appendSystemPromptSourcePaths = (this.appendSystemPromptSource ?? [])
+		this.appendSystemPromptSourcePaths = appendSystemPromptSources
 			.filter((source) => existsSync(source))
 			.map((source) => resolvePath(source));
 		this.loaded = true;
+	}
+
+	/**
+	 * Prompt file candidates in precedence order: the agent directory, then the config directory
+	 * containing it. Only user-owned locations are read — a system prompt must not become settable
+	 * by merely entering a directory, so the project config directory is deliberately absent until
+	 * the project trust gate is wired in for it.
+	 */
+	private discoverPromptFiles(fileName: string): string[] {
+		const configDir = dirname(this.agentDir);
+		const candidates = [join(this.agentDir, fileName), join(configDir, fileName)];
+		return [...new Set(candidates)].filter((candidate) => existsSync(candidate));
 	}
 
 	private ensureGlobalDefaultExtensions(): void {

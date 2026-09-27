@@ -1,3 +1,25 @@
+## 2026-09-27 - Drop `SYSTEM.md` / `APPEND_SYSTEM.md` from the project trust list (senpi#2166)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: removed `"SYSTEM.md"` and `"APPEND_SYSTEM.md"` from `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES`. Neither file is discovered any more, so neither entry could ever match a project resource.
+- `packages/coding-agent/docs/usage.md`: the System Prompt Files section now documents the `--system-prompt` / `--append-system-prompt` flags instead of two files that are not read, and points at `AGENTS.md` for durable per-project guidance.
+
+### Why
+
+Discovery was removed deliberately — `test/resource-loader.test.ts` pins that behavior with `does not expose ignored global SYSTEM.md as the system prompt source` and calls the append file *legacy* — but the documentation and the trust list were never updated with it. A user following the documentation gets a silently ignored file, and the trust list carries two names that can never resolve.
+
+This keeps the removal and repairs the leftovers. Restoring discovery instead would need the project's trust gate wired in first, because a system prompt must not be settable by merely entering a directory.
+
+### Why an extension could not handle it
+
+The documentation and the trust constant are both consumed before extensions are bound, and neither is reachable through the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES` array literal in `trust-manager.ts`.
+- LOW: the System Prompt Files section in `docs/usage.md`.
+
 ## 2026-09-25 - An extension-triggered turn emits `before_agent_start` with `trigger: "extension"` (senpi#2137)
 
 ### What changed

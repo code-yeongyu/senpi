@@ -571,7 +571,8 @@ Project skill content`,
 			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
 			await loader.reload();
 
-			expect(loader.getSystemPrompt()).toBeUndefined();
+			expect(loader.getSystemPrompt()).toBe("Global system prompt.");
+			expect(loader.getSystemPrompt()).not.toBe("Project system prompt.");
 			expect(loader.getAgentsFiles().agentsFiles.some((file) => file.path === join(agentDir, "AGENTS.md"))).toBe(
 				true,
 			);
@@ -609,15 +610,15 @@ Project skill content`,
 			expect(loader.getSystemPromptSource()).toBeUndefined();
 		});
 
-		it("does not expose ignored global SYSTEM.md as the system prompt source", async () => {
+		it("uses a discovered global SYSTEM.md when no explicit system prompt is given", async () => {
 			const systemPromptPath = join(agentDir, "SYSTEM.md");
 			writeFileSync(systemPromptPath, "Global system prompt.");
 
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload();
 
-			expect(loader.getSystemPrompt()).toBeUndefined();
-			expect(loader.getSystemPromptSource()).toBeUndefined();
+			expect(loader.getSystemPrompt()).toBe("Global system prompt.");
+			expect(loader.getSystemPromptSource()?.path).toBe(systemPromptPath);
 		});
 
 		it("does not expose literal system prompt text as a source", async () => {
@@ -1002,7 +1003,7 @@ Content`,
 			expect(loader.getSystemPrompt()).toBe("CLI system prompt.");
 		});
 
-		it("should prefer appendSystemPrompt entries over a legacy APPEND_SYSTEM.md", async () => {
+		it("applies a discovered APPEND_SYSTEM.md before explicit append entries", async () => {
 			writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), "Discovered append.");
 
 			const loader = new DefaultResourceLoader({
@@ -1012,7 +1013,11 @@ Content`,
 			});
 			await loader.reload();
 
-			expect(loader.getAppendSystemPrompt()).toEqual(["First addition.", "Second addition."]);
+			expect(loader.getAppendSystemPrompt()).toEqual([
+				"Discovered append.",
+				"First addition.",
+				"Second addition.",
+			]);
 		});
 	});
 
@@ -1279,6 +1284,57 @@ export default function(pi) {
 			const files = loadProjectContextFiles({ cwd: src, agentDir });
 
 			expect(files.map((f) => f.content)).toEqual(["repo instructions", "src instructions"]);
+		});
+	});
+
+	describe("system prompt file discovery", () => {
+		it("should load SYSTEM.md from the config directory when the agent directory has none", async () => {
+			const configPath = join(tempDir, "SYSTEM.md");
+			writeFileSync(configPath, "config system prompt");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("config system prompt");
+			expect(loader.getSystemPromptSource()?.path).toBe(configPath);
+		});
+
+		it("should prefer the agent directory over the config directory", async () => {
+			writeFileSync(join(agentDir, "SYSTEM.md"), "agent system prompt");
+			writeFileSync(join(tempDir, "SYSTEM.md"), "config system prompt");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("agent system prompt");
+		});
+
+		it("should let an explicit system prompt win over a discovered file", async () => {
+			writeFileSync(join(agentDir, "SYSTEM.md"), "agent system prompt");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true, systemPrompt: "explicit" });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBe("explicit");
+		});
+
+		it("should leave the prompt unset when no file exists", async () => {
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBeUndefined();
+			expect(loader.getAppendSystemPrompt()).toEqual([]);
+		});
+
+		it("should not read a SYSTEM.md from the project config directory", async () => {
+			const projectConfigDir = join(cwd, CONFIG_DIR_NAME);
+			mkdirSync(projectConfigDir, { recursive: true });
+			writeFileSync(join(projectConfigDir, "SYSTEM.md"), "untrusted project prompt");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
+			await loader.reload();
+
+			expect(loader.getSystemPrompt()).toBeUndefined();
 		});
 	});
 });
