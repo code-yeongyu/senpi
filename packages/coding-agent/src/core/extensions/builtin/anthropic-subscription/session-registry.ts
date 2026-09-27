@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { AccountSlot } from "./accounts.ts";
+import { oauthTokenDigest } from "./auth-environment.ts";
 import { EXPIRING_WITHIN_MS } from "./auth-lane.ts";
 import type { Options, SDKUserMessage, SdkQuery, SdkQueryHandle } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
@@ -104,6 +105,8 @@ export interface AnthropicSubscriptionSessionEntry {
 	taintedReason: string | null;
 	/** Wave C seam: a divergence boundary recorded for the next continuity decision. */
 	pendingForkReason: string | null;
+	/** Digest of the CLAUDE_CODE_OAUTH_TOKEN the query was spawned with; a running child never sees a newer token. */
+	credentialDigest: string | null;
 	lastUsedAt: number;
 }
 
@@ -229,6 +232,7 @@ export class AnthropicSubscriptionSessionRegistry {
 			branchInfo: null,
 			taintedReason: null,
 			pendingForkReason: null,
+			credentialDigest: oauthTokenDigest(input.options.env),
 			lastUsedAt: now,
 		};
 		let entry!: AnthropicSubscriptionSessionEntry;

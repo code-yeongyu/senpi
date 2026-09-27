@@ -15,6 +15,7 @@
 ### Fixed
 
 - RPC host starts and generation handoffs no longer inherit the calling session's identity, model selection, goal-store path, eval-kernel parent, or another host generation's lifecycle environment. An in-process session inside a host generation also attaches instead of handing the socket off again; an explicit `senpi host handoff` still advances exactly one generation. ([#2208](https://github.com/code-yeongyu/senpi/issues/2208))
+- A Claude subscription (`anthropic-subscription`) session that stays in use across an OAuth token refresh no longer fails with "401 OAuth access token has been revoked" and then leaves the account blocked in every process until `/login`. A running Claude Code process kept the token it was started with; when the stored token changes (this process refreshed it, another process did, or `/login` replaced it), the next turn now resumes the same Claude Code session in a new process that carries the current token. A 401 for a token the account no longer holds, because another process refreshed it while the request was in flight, still fails that request but no longer blocks the account. ([oh-my-openagent#8762](https://github.com/code-yeongyu/oh-my-openagent/issues/8762))
 
 ### Removed
 

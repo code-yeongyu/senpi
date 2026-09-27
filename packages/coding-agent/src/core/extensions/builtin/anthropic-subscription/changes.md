@@ -1,3 +1,25 @@
+## 2026-09-28 - a rotated OAuth token replaces the resident process instead of blocking the account (oh-my-openagent#8762)
+
+### What changed
+
+- `auth-environment.ts`: `oauthTokenDigest` hashes the `CLAUDE_CODE_OAUTH_TOKEN` of a child env (SHA-256; `null` when the env carries none, as on the config-dir lane or a token-less ambient host).
+- `session-registry.ts`: an entry records `credentialDigest` once, when its query is spawned. `getOrCreate` does not update it when it returns an existing entry, and `switchEntryModel` keeps it.
+- `session-stream.ts` / `session-continuity.ts`: `createResidentAttempt` passes `credentialRotated` when the live entry's digest differs from the token `prepareSlot` just resolved, and the live snapshot carries `sdkSessionIdConfirmed`. `decideFromState` then returns `reattach` with reason `bound_account_token_expiring` instead of `delta`, or `flatten` with `session_unconfirmed` for a session id the SDK never acknowledged. The branch runs after the divergence, idle and identity-drift branches, which keep their reasons because each already spawns a query with the current env.
+- `failover.ts`: `runFailover` hands each attempt its own copy of the selected slot, and `persistBlock` does not stamp `auth_error` on a stored slot whose `access` is no longer the token the failed attempt used.
+
+### Why
+
+- A resident Claude Code child keeps the token from its spawn env. After `prepareSlot` refreshed the slot, another process refreshed it, or `/login` replaced it, `delta` kept pushing turns into that child. The API answered "401 OAuth access token has been revoked" and the lane stamped a non-expiring `auth_error` on the slot that already held the fresh token, so every process failed until `/login`. The unused time-based `isBoundAccountTokenExpiring` would not catch it: it reads the pool snapshot taken before `prepareSlot`, and a stored expiry cannot tell which token a live child holds.
+- A request already in flight when another process refreshes still gets the 401, but that rejection says nothing about the stored token. Stored slot objects are shared by concurrent requests in one process and `prepareSlot` updates the selected slot in place, so without the per-attempt copy the comparison would read another request's refreshed token.
+
+### Why an extension could not handle it
+
+- Resident-session continuity and account failover are internal to this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the entry literal in `getOrCreate`, `entrySnapshot` and the `decideNativeContinuity` input in `session-stream.ts`, the tail of `decideFromState`, the head of the attempt loop in `runFailover`, and `persistBlock`.
+
 ## 2026-09-27 - another turn's events never fail the pending turn before its replay (senpi#2192)
 
 ### What changed

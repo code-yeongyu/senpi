@@ -13,6 +13,7 @@ export type ContinuityEntrySnapshot = {
 	assistantUuidByIndex: ReadonlyMap<number, string>;
 	pendingForkReason: string | null;
 	taintedReason?: string | null;
+	sdkSessionIdConfirmed?: boolean;
 };
 
 export type ContinuityBindingSnapshot = {
@@ -42,6 +43,8 @@ export type ContinuityDecisionInput = {
 	/** false only on the config-dir lane, whose per-account credential roots cannot share a transcript root, so cross-account resume is impossible there. */
 	crossAccountResumeSupported: boolean;
 	idleExpired?: boolean;
+	/** The live query was spawned with a different OAuth token than this attempt resolved; its env cannot change. */
+	credentialRotated?: boolean;
 	/** Reason the newest ledger record invalidated this session's binding, when one is pending. */
 	invalidationReason?: string;
 };
@@ -272,6 +275,16 @@ function decideFromState(input: ContinuityDecisionInput): ContinuityDecision {
 	const drift = identityDrift(input, entry);
 	if (drift) {
 		return { kind: "reattach", sdkSessionId: entry.sdkSessionId, from: entry.sentCount, reason: drift };
+	}
+
+	if (input.credentialRotated) {
+		if (entry.sdkSessionIdConfirmed === false) return { kind: "flatten", reason: "session_unconfirmed" };
+		return {
+			kind: "reattach",
+			sdkSessionId: entry.sdkSessionId,
+			from: entry.sentCount,
+			reason: "bound_account_token_expiring",
+		};
 	}
 
 	return { kind: "delta", from: entry.sentCount };

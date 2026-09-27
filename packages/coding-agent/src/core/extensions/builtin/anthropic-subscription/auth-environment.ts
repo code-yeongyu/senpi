@@ -1,5 +1,12 @@
+import { createHash } from "node:crypto";
+
 function isClaudeOauthTokenName(name: string): boolean {
 	return name === "CLAUDE_CODE_OAUTH_TOKEN" || /^CLAUDE_CODE_OAUTH_TOKEN_\d+$/.test(name);
+}
+
+export function oauthTokenDigest(environment: Readonly<Record<string, string | undefined>> | undefined): string | null {
+	const token = environment?.CLAUDE_CODE_OAUTH_TOKEN;
+	return token ? createHash("sha256").update(token).digest("hex") : null;
 }
 
 export function hasRequestOauthToken(requestEnvironment: Record<string, string> | undefined): boolean {

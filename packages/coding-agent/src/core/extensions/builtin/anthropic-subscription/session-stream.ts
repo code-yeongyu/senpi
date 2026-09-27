@@ -1,4 +1,5 @@
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { oauthTokenDigest } from "./auth-environment.ts";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
@@ -74,6 +75,7 @@ function entrySnapshot(entry: AnthropicSubscriptionSessionEntry, hashes: readonl
 		assistantUuidByIndex: entry.assistantUuidByIndex,
 		pendingForkReason: entry.pendingForkReason,
 		taintedReason: entry.taintedReason,
+		sdkSessionIdConfirmed: entry.sdkSessionIdConfirmed,
 	};
 }
 
@@ -98,6 +100,7 @@ async function createResidentAttempt(
 		transcriptAvailable,
 		crossAccountResumeSupported: auth.authLane !== "config-dir",
 		idleExpired: existing ? isIdleExpired(existing) : false,
+		credentialRotated: existing ? existing.credentialDigest !== oauthTokenDigest(auth.options.env) : false,
 		invalidationReason: bindingInvalidationReason(sessionId),
 	});
 	const firstTurn =

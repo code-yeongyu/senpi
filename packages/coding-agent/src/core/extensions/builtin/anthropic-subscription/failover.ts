@@ -113,6 +113,10 @@ async function persistBlock(store: CredentialStore, providerId: string, account:
 				},
 			};
 		}
+		const stored = (credential.accounts ?? []).find((existing) => existing.name === account.name);
+		// The failed request carried a token this slot no longer holds (another process refreshed it, or
+		// /login replaced it, mid-request): that rejection says nothing about the stored token.
+		if (account.blockReason === "auth_error" && stored?.access !== account.access) return current;
 		const accounts = (credential.accounts ?? []).map((existing) =>
 			existing.name === account.name
 				? { ...existing, blockedUntil: account.blockedUntil, blockReason: account.blockReason }
@@ -134,7 +138,9 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	let lastError: ClassifiedSdkError | undefined;
 
 	for (let attempt = 0; attempt < accounts.length; attempt++) {
-		const account = options.selectFn(accounts);
+		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
+		// attempt holding the same stored object must still report the token it actually sent.
+		const account = { ...options.selectFn(accounts) };
 		let visibleDeltaEmitted = false;
 		try {
 			const attemptStream = await options.runAttempt(account);
