@@ -1,5 +1,23 @@
 # core/tools changes
 
+## Read paths wrapped in quotes resolve to the file (2026-09-27)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/path-utils.ts`: `resolveReadPath()` and `resolveReadPathAsync()` fall back to the path without one pair of surrounding `"` or `'` quotes (optionally after `@`) when the literal path does not exist.
+
+### Why
+
+Windows Explorer's "Copy as path" produces `"C:\Users\<user>\Pictures\Screenshots\aaa.png"`. A real `windows-latest` run for [#2170](https://github.com/code-yeongyu/senpi/issues/2170) showed that the read tool resolved it relative to the working directory (`<cwd>\"C:\...`) and failed with ENOENT. A file whose name really contains the quotes still wins, because the fallback only runs when the literal path is missing.
+
+### Why an extension could not handle it
+
+Path resolution happens inside the builtin read tool before any extension hook sees the file.
+
+### Expected merge conflict zones
+
+- LOW: the first fallback in `resolveReadPath()` / `resolveReadPathAsync()`, next to the macOS screenshot variants.
+
 ## Default reads consult the frozen fold engine for their language (2026-09-16)
 
 ### What changed
