@@ -1,4 +1,169 @@
+## 2026-09-27 — Bound LaTeX start hints at line boundaries
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts`: stop the inline math start hint at the first recognized marker or newline. Include the newline in Marked's clipped text input so hard-break lookahead remains intact. All earlier tokenizers still receive the full source.
+
+### Why
+
+- `packages/tui/src/components/markdown.ts`: repeated whole-suffix marker searches made small appends to a large multiline paragraph expensive, including when valid math appeared only at the end. A line boundary bounds that search without changing parser options or adding caches.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/components/markdown.ts`: application extensions cannot replace the private Markdown parser's inline math start hint.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/markdown.ts`: `inlineMathTokenizer.start`; keep the newline included because clipping before it hides Marked's hard-break lookahead. This bounds multiline inputs; a giant single source line can still require repeated scans.
+
 # TUI delta rendering fork changes
+
+## 2026-09-27 - Deliver clipboard writes through the active stdout guard
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: forward the clipboard helper's complete OSC 52 write frame through the terminal-owned raw writer. Ordinary stdout, clipboard queries, malformed frames and mixed output remain hidden; clipboard control does not invalidate screen geometry.
+
+### Why
+
+- `packages/tui/src/terminal.ts`: the active stdout guard logged clipboard transport bytes as stray output, so fullscreen selection, message copying and todo copying could report success without reaching a remote terminal's clipboard.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/terminal.ts`: the terminal owns stdout interception and the raw destination below clipboard helpers and application extensions.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal.ts`: external stdout guard routing. Preserve exact complete clipboard-write recognition and suppression of unrelated or mixed terminal output.
+
+## 2026-09-27 - Keep fullscreen interactions anchored to visible entries
+
+### What changed
+
+- `packages/tui/src/tui-alt-screen.ts`: indexed transcript selection, highlighting, mouse geometry and prompt navigation use committed entry-local positions. Selection checks inspect metadata and visible rows; copying cooperatively renders only the requested range and validates committed endpoint boundaries before copying current complete interior entries. Width/content changes cancel stale gestures, while later appends preserve stable selections.
+- `packages/tui/src/alt-screen-search.ts`: indexed transcript searches run in cancellable cooperative batches, retain cross-entry whitespace-normalized Unicode matches and map only visible matches for each paint. Existing non-indexed callers retain their row-based behavior.
+
+### Why
+
+- `packages/tui/src/tui-alt-screen.ts` and `packages/tui/src/alt-screen-search.ts`: full-history row arrays would force the new entry viewport to format unseen history for ordinary selection checks, highlighting and search refresh. Entry anchors preserve exact text and geometry without fabricating missing rows.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui-alt-screen.ts` and `packages/tui/src/alt-screen-search.ts`: the shared fullscreen renderer owns committed geometry, selection, clipboard dispatch and transcript search below application extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui-alt-screen.ts`: indexed branches in selection, copy, prompt/search navigation and committed mouse gesture validation. Preserve the non-indexed paths and existing clipboard/grapheme behavior.
+- `packages/tui/src/alt-screen-search.ts`: search result mapping and the search component status row; preserve case-insensitive Unicode matching and cross-entry whitespace normalization.
+
+## 2026-09-27 - Preserve interior hardware-cursor markers
+
+### What changed
+
+- `packages/tui/src/components/editor-line-render.ts`: split an editor row at the hardware cursor position independently of reverse-video cursor styling, so the existing marker insertion also runs inside plain or highlighted text.
+- `packages/tui/test/editor.test.ts` and `packages/tui/test/editor-mention-highlight.test.ts`: cover first/interior/end positions, Home followed by insertion in a multiline draft, wide/joined graphemes, and mention styling with a real hardware cursor.
+
+### Why
+
+- `packages/tui/src/components/editor-line-render.ts`: disabling the fake cursor also removed the interior split point. The editor therefore omitted its hardware marker after moving within a row; canonical rendering hid the caret and native working-region rendering fell back to a full transcript replay.
+- `packages/tui/test/editor.test.ts` and `packages/tui/test/editor-mention-highlight.test.ts`: the existing hardware-cursor test covered only the separate end-of-line append path, while mention tests exercised reverse-video cursors.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/components/editor-line-render.ts`: the shared editor composes the cursor marker before terminal cursor placement and working-region validation; extensions cannot repair a missing marker after that rendering boundary.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor-line-render.ts`: cut-point collection and cursor-marker insertion. Keep grapheme styling and mention boundaries separate from marker placement.
+- `packages/tui/test/editor.test.ts` and `packages/tui/test/editor-mention-highlight.test.ts`: hardware/fake cursor and highlighted-fragment assertions.
+
+## 2026-09-27 - Paint changed stream rows before archiving them
+
+### What changed
+
+- `packages/tui/src/tui.ts`: use the insert-scroll shortcut only when every row that will move into scrollback is unchanged. Larger changed bursts use the existing differential writer, which paints their entire changed prefix before it scrolls out.
+- `packages/tui/test/scroll-then-diff.test.ts`: assert exact complete scrollback, cursor position, balanced frames and the following differential update for stream bursts below and above the viewport height, including changing and shrinking working controls in mux and ordinary terminals.
+
+### Why
+
+- `packages/tui/src/tui.ts`: a completion burst combined with changing controls could produce an accurate visible viewport while silently dropping newly completed rows from scrollback. The shortcut scrolled stale rows away before painting only the final visible suffix.
+- `packages/tui/test/scroll-then-diff.test.ts`: viewport-only assertions missed that loss; complete terminal-history equality proves every emitted row remains present exactly once.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts` and `packages/tui/test/scroll-then-diff.test.ts`: deciding whether a changed row is about to enter native history requires the renderer's previous frame, viewport and cursor state.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: insert-scroll dispatch after first/last changed-row detection. Preserve the existing differential fallback and unchanged-row scroll fast path.
+- `packages/tui/test/scroll-then-diff.test.ts`: scroll-region golden and terminal-history assertions.
+
+## 2026-09-27 - Preserve idle native history while resizing the working controls
+
+### What changed
+
+- `packages/tui/src/tui.ts`: add an explicit unchanged-history boundary for regular-screen hosts. A cursor-position query locates the committed working controls after resize; only those controls are prepared and repainted. Keep native history untouched through subsequent typing. Fitting fresh frames keep synchronous canonical resize until a complete committed frame first overflows the viewport. Retain that overflow evidence for the renderer's lifetime because mux scrollback can survive later shrink. Abort stale queries/preparation and return to canonical rendering for changed history, active mouse capture, overlays, unknown cursor position or unsupported controls. Direct root snapshots avoid retaining every historical child's render. Optional tail composition defers arbitrary legacy callbacks and publishes only ready working frames.
+- `packages/tui/src/tui-main-screen.ts`: retain canonical mouse geometry and cancel resize state when restoring a canonical frame.
+- `packages/tui/src/index.ts`: export the optional component tail capability and composition helpers used by working-control wrappers.
+
+### Why
+
+- `packages/tui/src/tui.ts`: recomputing and replaying an unchanged transcript makes idle resize proportional to all session history. Repainting a new transcript suffix alone loses native scrollback characters; retaining terminal ownership avoids that loss. The host explicitly distinguishes idle immutable history from active content. Cursor calibration adds avoidable latency when a fresh frame fits entirely on screen; using committed row counts preserves wide-character wrapping without a text-size heuristic.
+- `packages/tui/src/tui-main-screen.ts`: committed geometry must match the controls actually written, and restored full frames must reject pending resize callbacks.
+- `packages/tui/src/index.ts`: working wrappers need the same row budget and cancellation contract as the renderer.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`, `packages/tui/src/tui-main-screen.ts` and `packages/tui/src/index.ts`: terminal cursor anchoring, native-history ownership, differential writes and committed mouse geometry belong to the shared renderer.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: component interfaces, Container rendering, render scheduling, cursor-query lifetime and regular-screen resize dispatch. Active turns and unknown geometry retain the canonical path; legacy callbacks do not gain a hard CPU guarantee merely by being deferred.
+- `packages/tui/src/tui-main-screen.ts`: mouse target snapshots, native capture transitions and restored frame state.
+- `packages/tui/src/index.ts`: TUI capability exports.
+
+## 2026-09-27 - Reuse Markdown parses and scan ANSI spans directly
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts`: retain the latest normalized, width-transformed source and parsed tokens per component. Reuse them across width changes and output invalidation; changed or empty source releases the prior tree. The shared bounded cache still supports cross-component reuse.
+- `packages/tui/src/utils.ts`: reuse `stripTerminalSequences` for visible-width normalization. Strip sequences and update style state by jumping between escape positions instead of scanning every ordinary character.
+
+### Why
+
+- `packages/tui/src/components/markdown.ts`: histories longer than the shared parse cache reparsed unchanged messages on every width change. One current token tree per mounted component removes that repeated parsing at a measured memory cost.
+- `packages/tui/src/utils.ts`: width measurement and wrapping repeatedly traversed styled text character by character. Span scanning preserves the same escape parser and Unicode width calculation with less work.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/components/markdown.ts`: tokenization and cache ownership live inside the shared Markdown component.
+- `packages/tui/src/utils.ts`: terminal-width and ANSI-state helpers are shared below extension rendering hooks.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/markdown.ts`: cache fields, `setText`, transformed-source identity and lexer fallback. Keep width-dependent transforms and one-time partial-fence trimming correct.
+- `packages/tui/src/utils.ts`: `visibleWidth`, `stripTerminalSequences` and `updateTrackerFromText`. Preserve malformed escapes, nested valid escapes, tab preprocessing and grapheme clusters across removed ANSI sequences.
+
+## 2026-09-27 - Reuse unchanged history during focus and streaming frames
+
+### What changed
+
+- `packages/tui/src/tui.ts`: refresh terminal capabilities on main-screen focus, invalidate component caches only when capabilities change, and reserve full replay for changed capabilities or committed image payloads. Reuse unchanged raw/normalized rows at the same width, including frames whose length changes; restored render state clears the previous raw-row snapshot.
+- `packages/tui/src/tui-main-screen.ts`: retain committed component identities and a line-array reference while mouse capture is inactive, without rescanning images or comparing/copying historical lines. Enabling capture refreshes the committed anchor without triggering a nested render or snapshotting an uncommitted component tree.
+
+### Why
+
+- `packages/tui/src/tui.ts`: focus caused seconds of unnecessary work in a long transcript, and append frames reprocessed unchanged historical rows before checking the existing normalization cache.
+- `packages/tui/src/tui-main-screen.ts`: an eight-second synthetic stream traversed about 9.4 million historical rows for disabled mouse bookkeeping. Keeping committed identity information preserves stale-target rejection without repeating the expensive history work.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts` and `packages/tui/src/tui-main-screen.ts`: focus invalidation, output normalization, and committed mouse geometry are renderer-owned contracts below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: focus input handling, line-reset reuse, and the protected previous-line setter. Same-width reuse must not reuse rows clipped at an older terminal width.
+- `packages/tui/src/tui-main-screen.ts`: committed mouse state, capture transitions, and restored render state. Preserve image replay, late capture, acquisition during render, and removed-target rejection.
 
 ## 2026-09-24 - Fuzzy matching over pre-lowered text (senpi#2087)
 
@@ -1331,3 +1496,132 @@ Component-level caching is added in coding-agent components because high-frequen
 - HIGH: `packages/tui/src/components/editor.ts` marker handling and input dispatch; `packages/tui/src/terminal.ts` `ProcessTerminal` start/stop.
 - MEDIUM: `packages/tui/src/index.ts` export list; `packages/tui/src/utils.ts` width cache and ANSI helpers; `select-list.ts` render path.
 - LOW: `box.ts` lifecycle methods; `tui-alt-screen.ts` teardown call sites.
+
+## ASCII width fast paths during transcript reflow
+
+### What changed
+
+- `packages/tui/src/utils.ts`: return the normalized string length for printable ASCII after stripping terminal escapes and expanding tabs; return one cell for a single printable ASCII grapheme. Keep the bounded width cache and Unicode path unchanged.
+
+### Why
+
+- `packages/tui/src/utils.ts`: terminal resizing invalidates width-dependent component caches. Styled English and code were unnecessarily segmented and checked against Unicode properties on every width-cache miss; mixed Unicode lines also repeated these checks for each ASCII grapheme.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/utils.ts`: width calculation is shared by terminal wrapping, clipping and every core component, below the extension API.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/utils.ts`: `visibleWidth` normalization and `graphemeWidth` entry checks.
+
+## Printable ASCII tokenization during text wrapping
+
+### What changed
+
+- `packages/tui/src/utils.ts`: iterate printable ASCII spans directly when splitting wrapped text into words; retain grapheme segmentation and CJK break detection for other spans.
+
+### Why
+
+- `packages/tui/src/utils.ts`: resizing a transcript rewraps styled output, and segmenting every ASCII character repeatedly consumed significant render time. ANSI attachment and line wrapping remain unchanged.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/utils.ts`: core text and Markdown components share this wrapping primitive below the extension API.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/utils.ts`: the non-ANSI span loop inside `splitIntoTokensWithAnsi`.
+
+
+## Entry-backed fullscreen transcript layout
+
+### What changed
+
+- `packages/tui/src/layout-node.ts` and `packages/tui/src/index.ts`: expose optional source entries, stable entry-local anchors and committed viewport snapshots.
+- `packages/tui/src/components/scroll-view.ts`: render entries on demand with a latest-width cache limited to 64 entries and 8 MiB of accounted line text/array slots, cooperative 8 ms / 64-entry traversal, stable browsing anchors and explicit entry-fraction scrollbars. Indexed views contain overscroll; legacy views retain row-based chaining.
+- `packages/tui/src/tui.ts`: share existing render-error logging/fallback with indexed viewport admission; failed entries remain retryable, while explicit search/copy can surface errors.
+- `packages/tui/src/layout.ts`: admit only viewport entries, use one-row intrinsic sizing for indexed content, preserve entry-local mouse coordinates and crop partially visible Kitty images within the admitted entry. Indexed boxes do not expose a pretend full-document line array.
+
+### Why
+
+- `packages/tui/src/tui.ts`: preserving Container error containment prevents a custom renderer failure from escaping the alternate-screen frame.
+- `packages/tui/src/components/scroll-view.ts` and `packages/tui/src/layout.ts`: clipping after rendering the entire transcript still reflows every old message on resize. Entry admission bounds historical work before rendering, while settled windows avoid rescanning stable empty suffixes. Up to 64 unversioned empty entries are observed for dynamic changes; larger unversioned runs use bounded repeated traversal while retaining the committed viewport. A single admitted giant component can still exceed the cooperative budget; the cache bound does not include component-owned caches.
+- `packages/tui/src/layout-node.ts` and `packages/tui/src/index.ts`: source identity, content revisions and source-local row anchors let fullscreen consumers validate selection/search without constructing global wrapped-row offsets.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/components/scroll-view.ts`, `packages/tui/src/layout.ts`, `packages/tui/src/layout-node.ts`, `packages/tui/src/index.ts` and `packages/tui/src/tui.ts`: bounded admission, layout geometry and committed mouse frames belong to the shared renderer below the extension API.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/scroll-view.ts`: scrolling, render caching and disposal; `packages/tui/src/layout.ts`: scroll layout, scrollbar geometry and image clipping; `packages/tui/src/layout-node.ts` and `packages/tui/src/index.ts`: source/frame types and exports; `packages/tui/src/tui.ts`: Container error fallback helper.
+
+
+## Explicit canonical output from indexed layouts
+
+### What changed
+
+- `packages/tui/src/components/scroll-view.ts`: explicit `render(width)` materializes all source entries, preserving render-error fallback; ordinary viewport admission still uses the bounded entry-frame path.
+- `packages/tui/src/layout.ts` and `packages/tui/src/layout-node.ts`: nested indexed stack subtrees use bounded intrinsic measurement through the existing layout nodes instead of eager component rendering.
+- `packages/tui/src/components/v-stack.ts`: explicit canonical rendering uses an indexed descendant's full rendered height, including a transcript configured with `basis: 0` and `grow: 1`; constrained screen layout remains in `layout.ts`.
+
+### Why
+
+- `packages/tui/src/components/scroll-view.ts` and `packages/tui/src/components/v-stack.ts`: fullscreen transcript exit and diagnostic export explicitly request complete output, so the viewport placeholder and zero growth basis must not discard historical entries.
+- `packages/tui/src/layout.ts` and `packages/tui/src/layout-node.ts`: restoring canonical output must not make ordinary nested auto-basis layout render the entire history during measurement. Nonindexed subtrees retain their existing measurement and explicit rendering semantics.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/components/scroll-view.ts`, `packages/tui/src/components/v-stack.ts`, `packages/tui/src/layout.ts` and `packages/tui/src/layout-node.ts`: explicit rendering and intrinsic measurement are shared core layout contracts.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/scroll-view.ts`: explicit render method; `packages/tui/src/components/v-stack.ts`: canonical height allocation; `packages/tui/src/layout.ts`: intrinsic measurement; `packages/tui/src/layout-node.ts`: indexed-subtree detection.
+
+
+## Responsive indexed intrinsic measurement
+
+### What changed
+
+- `packages/tui/src/layout.ts` and `packages/tui/src/layout-node.ts`: detect indexed descendants structurally before measuring a stack, then measure only descendants visible in the actual terminal viewport. Explicit canonical rendering continues to use its canonical visibility context.
+
+### Why
+
+- `packages/tui/src/layout.ts` and `packages/tui/src/layout-node.ts`: a child hidden at terminal height could become visible inside canonical `VStack.render`'s unbounded height, unexpectedly rendering all history and changing visible sibling widths during ordinary layout.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/layout.ts` and `packages/tui/src/layout-node.ts`: intrinsic measurement and responsive layout traversal are shared renderer internals.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/layout.ts`: indexed stack height/width measurement; `packages/tui/src/layout-node.ts`: optional viewport in indexed-subtree detection.
+
+
+## 2026-09-27 - Remove unused native-tail mouse metadata
+
+### What changed
+
+- `packages/tui/src/tui.ts`: remove the unread tail deadline, omitted-row metadata, and unused clipped-mouse target type, assembly, state, and dispatch. Keep suffix rendering, cancellation and native-working-region detection.
+- `packages/tui/src/tui-main-screen.ts`: use native-state detection to skip historical mouse-layout traversal; keep canonical mouse dispatch and capture transitions.
+- `packages/tui/src/components/box.ts`, `packages/tui/src/components/spacer.ts` and `packages/tui/src/components/mouse-region.ts`: retain ordinary suffix delegation and decoration without constructing unused mouse fragments or their omitted-row offsets.
+- `packages/tui/src/index.ts`: remove the unused tail mouse-target export.
+
+### Why
+
+- `packages/tui/src/tui.ts`: native working-region adoption rejects mouse capture, and acquiring capture cancels native state before mouse dispatch. The target chain could not receive an event; no component reads the advertised deadline.
+- `packages/tui/src/tui-main-screen.ts`: removing that chain must not reintroduce a full historical component walk during idle native frames.
+- `packages/tui/src/components/box.ts`, `packages/tui/src/components/spacer.ts` and `packages/tui/src/components/mouse-region.ts`: canonical mouse handlers already own click routing; native suffixes need only their rendered rows and pending/earlier-row flags.
+- `packages/tui/src/index.ts`: exporting an unused target contract would imply unsupported native-history mouse coordinates.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/tui.ts`, `packages/tui/src/tui-main-screen.ts`, `packages/tui/src/components/box.ts`, `packages/tui/src/components/spacer.ts`, `packages/tui/src/components/mouse-region.ts` and `packages/tui/src/index.ts`: these fields and dispatch branches belong to the shared renderer and its component helpers.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/tui.ts`: tail interfaces/composition and native working-region state.
+- `packages/tui/src/tui-main-screen.ts`: committed canonical mouse layout and press dispatch.
+- `packages/tui/src/components/box.ts`, `packages/tui/src/components/spacer.ts` and `packages/tui/src/components/mouse-region.ts`: suffix rendering beside existing canonical behavior.
+- `packages/tui/src/index.ts`: TUI type exports.

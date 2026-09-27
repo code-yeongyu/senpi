@@ -125,8 +125,8 @@ export function rankFamilyModels(
 	const byProvider = new Map<string, Model<Api>[]>();
 	for (const model of models) {
 		if (BARE_EXPANSION_DENYLIST.has(model.provider.toLowerCase())) continue;
-		if (tiers.isFallbackEligible?.(model) === false) continue;
 		if (!matchesFamily(model, family)) continue;
+		if (tiers.isFallbackEligible?.(model) === false) continue;
 		const bucket = byProvider.get(model.provider);
 		if (bucket) bucket.push(model);
 		else byProvider.set(model.provider, [model]);

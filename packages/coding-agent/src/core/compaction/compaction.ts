@@ -351,7 +351,8 @@ const ESTIMATED_IMAGE_CHARS = 4800;
  * 4x so the shared chars/4 heuristic stays conservative for them; otherwise a
  * 1 MB inline screenshot estimates at ~256K tokens while providers count ~1M.
  */
-const BASE64_RUN_RE = /[A-Za-z0-9+/=_-]{512,}/g;
+// A failed short run cannot match from an interior position, so only try its start.
+const BASE64_RUN_RE = /(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/=_-]{512,}/g;
 const BASE64_CHAR_WEIGHT = 4;
 
 function weightedChars(text: string): number {

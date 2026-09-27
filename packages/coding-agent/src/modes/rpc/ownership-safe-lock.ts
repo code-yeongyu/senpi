@@ -46,20 +46,16 @@ export async function acquireOwnershipSafeLock(
 	options: OwnershipSafeLockOptions = {},
 ): Promise<() => Promise<void>> {
 	const retries = options.retries ?? DEFAULT_RETRIES;
-	// One cumulative deadline caps the total wait (proper-lockfile's profile
-	// waited ~10s); each SQLite busy wait stays SHORT because it blocks the
-	// event loop synchronously - a long busy_timeout would stop a same-process
-	// holder from ever finishing its critical section - and the async sleep
-	// between attempts yields without adding to the budget (the deadline is the
-	// only limit).
+	// SQLite busy waits block the event loop, multiplying the stall for each
+	// same-process contender. Fail immediately and use only async backoff;
+	// the cumulative deadline still caps the total wait.
 	const deadline = Date.now() + retries.retries * retries.maxTimeout;
 	while (true) {
 		await rejectLegacyDirectory(lockPath);
-		const busyMs = Math.max(1, Math.min(retries.maxTimeout, deadline - Date.now()));
 		let database: LockDatabase | undefined;
 		try {
 			database = await openLockDatabase(lockPath);
-			database.exec(`PRAGMA busy_timeout = ${busyMs}; BEGIN EXCLUSIVE;`);
+			database.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
 			let released = false;
 			const held = database;
 			return async () => {

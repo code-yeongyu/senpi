@@ -168,6 +168,113 @@ it("keeps a same-target gesture across a no-op committed render", () => {
 		tui.stop();
 	}
 });
+it("does not scan committed mouse frames while capture is inactive", () => {
+	class ObservedTui extends TuiMainScreen {
+		frameReads = 0;
+		protected override noteCommittedMouseFrame() {
+			this.frameReads++;
+			super.noteCommittedMouseFrame();
+		}
+	}
+	const terminal = new RecordingTerminal(80, 24);
+	const tui = new ObservedTui(terminal);
+	tui.addChild(new Text("history", 0, 0));
+	try {
+		tui.renderNow();
+		const firstRenderReads = tui.frameReads;
+		tui.renderNow();
+		assert.equal(tui.frameReads, firstRenderReads);
+		const release = tui.acquireMouseCapture("pending-question");
+		assert.ok(tui.frameReads > firstRenderReads, "late capture must refresh the current committed anchor");
+		release();
+		const readsAfterRelease = tui.frameReads;
+		tui.renderNow();
+		assert.equal(tui.frameReads, readsAfterRelease);
+	} finally {
+		tui.stop();
+	}
+});
+it("refreshes the current frame when capture resumes after history changed", () => {
+	const { terminal, tui, events, root } = setup(false, true);
+	try {
+		const release = tui.acquireMouseCapture("pending-question");
+		release();
+		root.children[0] = new Text(Array.from({ length: 45 }, () => "new padding").join("\n"), 0, 0);
+		tui.renderNow();
+		tui.acquireMouseCapture("pending-question");
+		terminal.sendInput("\x1b[<0;5;24M");
+		tui.renderNow();
+		terminal.sendInput("\x1b[<0;5;24m");
+		assert.equal(events.filter((event) => event.type === "click").length, 1);
+		assert.equal(events.find((event) => event.type === "click")?.y, 1);
+	} finally {
+		tui.stop();
+	}
+});
+it("does not reuse raw-line normalization from a different restored frame", () => {
+	const terminal = new RecordingTerminal(80, 24);
+	const tui = new TuiMainScreen(terminal);
+	const text = new Text("earlier frame", 0, 0);
+	tui.addChild(text);
+	try {
+		tui.renderNow();
+		const earlier = tui.captureRenderState();
+		text.setText("current frame");
+		tui.renderNow();
+		const current = tui.captureRenderState();
+		tui.restoreRenderState(earlier);
+		tui.renderNow();
+		assert.deepEqual(tui.captureRenderState().previousLines, current.previousLines);
+	} finally {
+		tui.stop();
+	}
+});
+it("rejects a stale click when capture enables before a pending target replacement commits", () => {
+	const terminal = new RecordingTerminal(80, 24);
+	const tui = new TuiMainScreen(terminal);
+	const root = new Container();
+	const events: string[] = [];
+	const region = (name: string) =>
+		new MouseRegion(new Text("option", 0, 0), (event) => {
+			events.push(`${name}:${event.type}`);
+			return { handled: true };
+		});
+	root.addChild(region("old"));
+	tui.addChild(root);
+	try {
+		tui.start();
+		tui.renderNow(true);
+		root.removeChild(root.children[0]);
+		root.addChild(region("new"));
+		tui.acquireMouseCapture("pending-question");
+		terminal.sendInput("\x1b[<0;5;1M");
+		tui.renderNow();
+		terminal.sendInput("\x1b[<0;5;1m");
+		assert.deepEqual(events, ["old:press"]);
+	} finally {
+		tui.stop();
+	}
+});
+it("can acquire capture during component rendering without leaking a reentrant lease", () => {
+	const terminal = new RecordingTerminal(80, 24);
+	const tui = new TuiMainScreen(terminal);
+	let release: (() => void) | undefined;
+	tui.addChild({
+		render() {
+			release ??= tui.acquireMouseCapture("pending-question");
+			return ["option"];
+		},
+		invalidate() {},
+	});
+	try {
+		tui.renderNow();
+		assert.ok(release);
+		release();
+		assert.equal(terminal.writes.at(-1), MOUSE_TRACKING.disable);
+	} finally {
+		tui.stop();
+	}
+});
 it("enables Windows Terminal but rejects legacy Windows and Termux", () => {
 	const platform = Object.getOwnPropertyDescriptor(process, "platform");
 	const termux = process.env.TERMUX_VERSION;

@@ -3,9 +3,72 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import { attachJsonlLineReader } from "../src/modes/rpc/jsonl.ts";
 import { RpcClient, RpcClientOpenInFlightError, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
 
 describe("RpcClient disconnect lifecycle", () => {
+	test("rejects refused commands without dropping the session lease or duplicating prompt callbacks", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "rpc-client-refused-"));
+		const socketPath = join(directory, "rpc.sock");
+		let peer: import("node:net").Socket | undefined;
+		const commands: Array<{ id: string; type: string; sessionId?: string }> = [];
+		let refuse = true;
+		const server = createServer((socket) => {
+			peer = socket;
+			attachJsonlLineReader(socket, (line) => {
+				const command = JSON.parse(line) as (typeof commands)[number];
+				commands.push(command);
+				const result =
+					command.type === "open_session"
+						? { success: true, data: { sessionId: "owned", state: {} } }
+						: refuse
+							? {
+									success: false,
+									error: "refused",
+									errorCode: "command_rejected",
+									errorData: { reason: "test" },
+								}
+							: { success: true };
+				socket.write(`${JSON.stringify({ type: "response", command: command.type, id: command.id, ...result })}\n`);
+			});
+		});
+		const client = new RpcClient({ socketPath });
+		try {
+			await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+			await client.start();
+			await client.openSession({ cwd: directory });
+			const rejected = { name: "RpcCommandError", errorCode: "command_rejected", errorData: { reason: "test" } };
+			for (const send of [
+				() => client.steer("instruction"),
+				() => client.followUp("instruction"),
+				() => client.sendCustomMessage({ customType: "test", content: "instruction", display: false }),
+				() => client.abort(),
+				() => client.closeSession(),
+				() => client.getState(),
+			]) {
+				await expect(send()).rejects.toMatchObject(rejected);
+			}
+			expect(commands.at(-1)).toMatchObject({ type: "get_state", sessionId: "owned" });
+			const preflightResult = vi.fn();
+			const promptDisposition = vi.fn();
+			await expect(client.prompt("instruction", { preflightResult, promptDisposition })).rejects.toMatchObject(
+				rejected,
+			);
+			expect(preflightResult.mock.calls).toEqual([[false]]);
+			expect(promptDisposition).not.toHaveBeenCalled();
+			refuse = false;
+			await expect(client.steer("accepted")).resolves.toBeUndefined();
+			await expect(client.closeSession()).resolves.toBeUndefined();
+			await client.getState();
+			expect(commands.at(-1)).not.toHaveProperty("sessionId");
+		} finally {
+			await client.stop();
+			peer?.destroy();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
 	test("fails sends with a classified transport error before start", async () => {
 		const client = new RpcClient();
 

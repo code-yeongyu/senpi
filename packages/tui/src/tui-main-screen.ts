@@ -53,6 +53,11 @@ export class TuiMainScreen extends TuiBase {
 		if (this.trackingEnabled === next) return;
 		this.trackingEnabled = next;
 		this.terminal.write(next ? MOUSE_TRACKING.inline : MOUSE_TRACKING.disable);
+		if (next) {
+			// Capture can be acquired after many frames rendered without a mouse lease.
+			// Keep the existing identity snapshot: the live tree may have uncommitted changes.
+			this.noteCommittedMouseFrame();
+		}
 	}
 
 	protected override beforeTerminalStop(): void {
@@ -80,24 +85,32 @@ export class TuiMainScreen extends TuiBase {
 			});
 		}
 		super.doRender();
-		this.noteCommittedMouseFrame();
+		if (this.trackingEnabled) this.noteCommittedMouseFrame();
+		this.updateMouseLayoutRevision();
+		if (this.trackingEnabled) this.calibrateMouseAnchor();
+	}
+
+	private updateMouseLayoutRevision(): void {
 		const components: Component[] = [];
 		const visit = (component: Component): void => {
 			components.push(component);
 			if (component instanceof Container) for (const child of component.children) visit(child);
 		};
-		for (const root of this.getMouseLayoutRoots()) visit(root);
+		// Native history has no active mouse capture or canonical component coordinates.
+		// Preserve the cheap native path without walking the historical component tree.
+		if (!this.nativeWorkingRegionActive) for (const root of this.getMouseLayoutRoots()) visit(root);
 		if (
-			this.previousLines.length !== this.committedMouseLines.length ||
-			this.previousLines.some((line, index) => line !== this.committedMouseLines[index]) ||
-			components.length !== this.committedMouseComponents.length ||
-			components.some((component, index) => component !== this.committedMouseComponents[index])
+			this.trackingEnabled &&
+			(this.previousLines.length !== this.committedMouseLines.length ||
+				this.previousLines.some((line, index) => line !== this.committedMouseLines[index]) ||
+				components.length !== this.committedMouseComponents.length ||
+				components.some((component, index) => component !== this.committedMouseComponents[index]))
 		) {
 			this.layoutRevision++;
 		}
-		this.committedMouseLines = [...this.previousLines];
+		// Committed line arrays are replaced, never mutated, so no full-history copy is needed.
+		this.committedMouseLines = this.previousLines;
 		this.committedMouseComponents = components;
-		this.calibrateMouseAnchor();
 	}
 
 	private applyMouseResult(result: TuiMouseDispatchResult | undefined): void {
@@ -181,7 +194,11 @@ export class TuiMainScreen extends TuiBase {
 	}
 
 	restoreRenderState(state: TuiMainScreenRenderState): void {
-		this.previousLines = state.previousLines.map((line) => (isImageLine(line) ? "" : line));
+		this.cancelResizeViewport();
+		this.setPreviousLines(
+			state.previousLines.map((line) => (isImageLine(line) ? "" : line)),
+			[],
+		);
 		this.previousKittyImageIds = new Set();
 		this.previousWidth = state.previousWidth;
 		this.previousHeight = state.previousHeight;

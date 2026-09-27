@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../src/utils.ts";
+import { applyBackgroundToLine, getGraphemeSegmenter, visibleWidth, wrapTextWithAnsi } from "../src/utils.ts";
 
 describe("wrapTextWithAnsi", () => {
 	describe("background layering", () => {
@@ -200,6 +200,43 @@ describe("wrapTextWithAnsi", () => {
 	});
 
 	describe("basic wrapping", () => {
+		it("wraps styled printable ASCII without grapheme segmentation", (t) => {
+			const segment = t.mock.method(getGraphemeSegmenter(), "segment");
+
+			assert.deepStrictEqual(wrapTextWithAnsi("\x1b[31malpha beta gamma delta\x1b[0m", 10), [
+				"\x1b[31malpha beta",
+				"\x1b[31mgamma",
+				"\x1b[31mdelta\x1b[0m",
+			]);
+			assert.strictEqual(segment.mock.callCount(), 0);
+		});
+
+		it("preserves OSC and APC bytes between printable ASCII spans", () => {
+			const marker = "\x1b]133;A\x07";
+			const open = "\x1b]8;;https://example.test\x1b\\";
+			const close = "\x1b]8;;\x1b\\";
+			const image = "\x1b_Ga=T;AAAA\x1b\\";
+
+			assert.deepStrictEqual(wrapTextWithAnsi(`${marker}one ${open}two three${close} ${image}four five`, 9), [
+				`${marker}one ${open}two${close}`,
+				`${open}three${close}`,
+				`${image}four five`,
+			]);
+		});
+
+		it("keeps Unicode clusters and control characters on the grapheme path", () => {
+			assert.deepStrictEqual(wrapTextWithAnsi("\x1b[31mASCII e\u0301 中文 👨‍👩‍👧‍👦 end\x1b[0m", 8), [
+				"\x1b[31mASCII e\u0301",
+				"\x1b[31m中文 👨‍👩‍👧‍👦",
+				"\x1b[31mend\x1b[0m",
+			]);
+			assert.deepStrictEqual(wrapTextWithAnsi("\x1b[32ma\tb \x00c d\x7fe f\x1b[0m", 5), [
+				"\x1b[32ma\tb",
+				"\x1b[32m\x00c d\x7fe",
+				"\x1b[32mf\x1b[0m",
+			]);
+		});
+
 		it("should handle LF, CRLF, and CR line endings", () => {
 			assert.deepStrictEqual(wrapTextWithAnsi("first\nsecond\r\nthird\rfourth", 80), [
 				"first",

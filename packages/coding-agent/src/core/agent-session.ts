@@ -3804,9 +3804,12 @@ export class AgentSession {
 		// Waiting on the session-work barrier here would trap the message inside this
 		// call for the rest of the run whenever a queued continuation (e.g. an active
 		// goal chain) holds the barrier, making typed input invisible until the run
-		// ends or the user aborts.
+		// ends or the user aborts. An extension-triggered turn also owns that barrier
+		// while its preflight hooks run, before isStreaming becomes true.
 		const canQueueWhileStreaming =
-			(this.isStreaming || this._promptStartPending) &&
+			(this.isStreaming ||
+				this._promptStartPending ||
+				this._triggerTurnAdmissionAbortGeneration === this._userAbortGeneration) &&
 			!this.isCompacting &&
 			options?.streamingBehavior !== undefined;
 		// Auto-compaction claims only _autoCompactionAbortController, which the

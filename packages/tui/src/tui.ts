@@ -134,6 +134,23 @@ export interface TuiMouseDispatchTarget {
 	height: number;
 }
 
+/** One resize lifetime and one current content revision. */
+export interface TailRenderContext {
+	signal: AbortSignal;
+	revision: number;
+	/** Preparation completion requests a frame without changing the content revision. */
+	requestRender(): void;
+}
+
+export interface TailRenderResult {
+	/** At most maxRows lines, in their normal top-to-bottom order. */
+	lines: string[];
+	/** True while these lines are an interim snapshot rather than the exact current-width suffix. */
+	pending: boolean;
+	/** Earlier rows exist, or preparation has not established whether they exist. */
+	hasMore: boolean;
+}
+
 /** Result of dispatching to a concrete component. */
 export interface TuiMouseDispatchResult extends TuiMouseEventResult {
 	handled: true;
@@ -183,6 +200,9 @@ export interface Component {
 	 * @returns Array of strings, each representing a line
 	 */
 	render(width: number): string[];
+
+	/** Optional cooperative suffix renderer. Must not render an unbounded head before slicing it. */
+	renderTail?(width: number, maxRows: number, context: TailRenderContext): TailRenderResult;
 
 	/** Optional handler for keyboard input when component has focus. */
 	handleInput?(data: string): void;
@@ -357,6 +377,12 @@ function logRenderErrorOnce(component: Component, error: unknown): void {
 	const logPath = path.join(renderErrorLogDirectory ?? defaultDiagnosticLogDirectory(), "senpi-debug.log");
 	const msg = `[${new Date().toISOString()}] render error: ${componentName}: ${errorText}\n`;
 	appendRenderErrorLogBestEffort(logPath, msg);
+}
+
+/** Shared viewport/container fallback; explicit search/export callers may surface the error instead. */
+export function renderComponentError(component: Component, error: unknown): string[] {
+	logRenderErrorOnce(component, error);
+	return [`[render error: ${componentRenderErrorName(component)}]`];
 }
 
 function appendRenderErrorLogBestEffort(logPath: string, msg: string): void {
@@ -563,11 +589,133 @@ type TuiConstructorOptions = {
 	muxDetector?: () => boolean;
 };
 
+type LegacyTailSnapshot = {
+	width: number;
+	lines: string[];
+	revision?: number;
+	signal?: AbortSignal;
+	pending?: { width: number; revision: number; signal: AbortSignal };
+};
+const legacyTailSnapshots = new WeakMap<Component, LegacyTailSnapshot>();
+
+function rememberComponentRender(component: Component, width: number, lines: string[]): void {
+	legacyTailSnapshots.set(component, { width, lines });
+}
+
+/** Legacy callbacks are explicitly pending; arbitrary synchronous extension code has no CPU guarantee. */
+function renderLegacyTail(
+	component: Component,
+	width: number,
+	maxRows: number,
+	context: TailRenderContext,
+): TailRenderResult {
+	let snapshot = legacyTailSnapshots.get(component);
+	if (!snapshot) {
+		snapshot = { width, lines: [] };
+		legacyTailSnapshots.set(component, snapshot);
+	}
+	const ready =
+		snapshot.width === width && snapshot.revision === context.revision && snapshot.signal === context.signal;
+	if (!ready && !context.signal.aborted) {
+		const pending = snapshot.pending;
+		if (pending?.width !== width || pending.revision !== context.revision || pending.signal !== context.signal) {
+			const job = { width, revision: context.revision, signal: context.signal };
+			snapshot.pending = job;
+			const current = snapshot;
+			setImmediate(() => {
+				if (job.signal.aborted || current.pending !== job) return;
+				let lines: string[];
+				try {
+					lines = component.render(width);
+				} catch (error) {
+					logRenderErrorOnce(component, error);
+					lines = [`[render error: ${componentRenderErrorName(component)}]`];
+				}
+				if (job.signal.aborted || current.pending !== job) return;
+				current.width = width;
+				current.lines = lines;
+				current.revision = job.revision;
+				current.signal = job.signal;
+				current.pending = undefined;
+				context.requestRender();
+			});
+		}
+	}
+	const rowOffset = Math.max(0, snapshot.lines.length - maxRows);
+	return {
+		lines: snapshot.lines
+			.slice(rowOffset, rowOffset + maxRows)
+			.map((line) => (snapshot.width === width ? line : sliceByColumn(line, 0, width, true))),
+		pending: !ready,
+		hasMore: !ready || rowOffset > 0,
+	};
+}
+
+/** Render one bounded suffix, deferring components without a compatible tail renderer. */
+export function renderComponentTail(
+	component: Component,
+	width: number,
+	maxRows: number,
+	context: TailRenderContext,
+): TailRenderResult {
+	if (maxRows <= 0 || context.signal.aborted) return { lines: [], pending: false, hasMore: true };
+	const decoratedContainer =
+		component.renderTail === Container.prototype.renderTail && component.render !== Container.prototype.render;
+	let result: TailRenderResult;
+	try {
+		result =
+			component.renderTail && !decoratedContainer
+				? component.renderTail(width, maxRows, context)
+				: renderLegacyTail(component, width, maxRows, context);
+	} catch (error) {
+		logRenderErrorOnce(component, error);
+		result = {
+			lines: [`[render error: ${componentRenderErrorName(component)}]`],
+			pending: false,
+			hasMore: false,
+		};
+	}
+	if (result.lines.length > maxRows) throw new Error("renderTail exceeded its row budget");
+
+	return result;
+}
+
+/** Reverse composition stops at the visible suffix; it never measures omitted children. */
+export function renderChildrenTail(
+	children: readonly Component[],
+	width: number,
+	maxRows: number,
+	context: TailRenderContext,
+): TailRenderResult {
+	const fragments: TailRenderResult[] = [];
+	let remaining = Math.max(0, maxRows);
+	let pending = false;
+	let hasMore = false;
+	for (let index = children.length - 1; index >= 0; index--) {
+		if (remaining === 0) {
+			hasMore = true;
+			break;
+		}
+		const fragment = renderComponentTail(children[index], width, remaining, context);
+		fragments.push(fragment);
+		remaining -= fragment.lines.length;
+		pending ||= fragment.pending;
+		if (fragment.hasMore) {
+			hasMore = true;
+			break;
+		}
+	}
+	const lines: string[] = [];
+	for (let index = fragments.length - 1; index >= 0; index--) lines.push(...fragments[index].lines);
+	return { lines, pending, hasMore };
+}
+
 /**
  * Container - a component that contains other components
  */
 export class Container implements Component {
 	children: Component[] = [];
+	protected captureChildRenders = false;
 	private disposed = false;
 	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
 
@@ -645,18 +793,21 @@ export class Container implements Component {
 			try {
 				childLines = child.render(width);
 			} catch (error) {
-				logRenderErrorOnce(child, error);
-				const componentName = componentRenderErrorName(child);
 				// Focus ownership stays unchanged; render containment must not steal or clear focus implicitly.
-				childLines = [`[render error: ${componentName}]`];
+				childLines = renderComponentError(child, error);
 			}
 			mouseChildren.push({ component: child, height: childLines.length });
+			if (this.captureChildRenders) rememberComponentRender(child, width, childLines);
 			for (const line of childLines) {
 				lines.push(line);
 			}
 		}
 		this.mouseLayout = { width, children: mouseChildren };
 		return lines;
+	}
+
+	renderTail(width: number, maxRows: number, context: TailRenderContext): TailRenderResult {
+		return renderChildrenTail(this.children, width, maxRows, context);
 	}
 }
 
@@ -731,6 +882,27 @@ export abstract class TuiBase extends Container {
 	public terminal: Terminal;
 	protected previousLines: string[] = [];
 	private previousRawLines: string[] = [];
+	private tailRevision = 0;
+	private workingRegion?: { after: Component; getRevision(checkCustomContent?: boolean): number | undefined };
+	private committedDocumentOverflow = false;
+	private committedWorkingRegion?: {
+		lines: string[];
+		width: number;
+		height: number;
+		cursorRow: number;
+		revision: number;
+	};
+	private failedWorkingResize?: { width: number; height: number; revision: number };
+	private resizeViewport?: {
+		controller: AbortController;
+		width: number;
+		height: number;
+		revision: number;
+		top?: number;
+		lines: string[];
+		cursorRow: number;
+		unsubscribe?: () => void;
+	};
 	private normalizeMemo = new Map<string, string>();
 	protected previousKittyImageIds = new Set<number>();
 	protected previousWidth = 0;
@@ -809,6 +981,8 @@ export abstract class TuiBase extends Container {
 		const first = this.mouseLeases.size === 0;
 		this.mouseLeases.set(token, reason);
 		if (first) {
+			// Native history has no canonical component coordinates; rebuild them before enabling clicks.
+			if (this.resizeViewport) this.requestRender(true);
 			this.mouseWriteUnsubscribe ??= this.terminal.observeExternalWrites?.(() => {
 				this.placementEpoch++;
 				this.mouseExternalWritePending = true;
@@ -840,6 +1014,10 @@ export abstract class TuiBase extends Container {
 		return [...this.getMountedRoots(), ...this.renderedOverlayLayouts.map((layout) => layout.entry.component)];
 	}
 
+	protected get nativeWorkingRegionActive(): boolean {
+		return this.resizeViewport !== undefined;
+	}
+
 	protected setMouseBlocker(name: "suspended" | "external-editor" | "shutting-down", on: boolean): void {
 		if (this.mouseBlockers.has(name) === on) return;
 		if (on) this.mouseBlockers.add(name);
@@ -866,7 +1044,7 @@ export abstract class TuiBase extends Container {
 	protected noteCommittedMouseFrame(): void {
 		if (this.mouseCommittedLineCount !== this.previousLines.length) this.placementEpoch++;
 		this.mouseCommittedLineCount = this.previousLines.length;
-		if (this.previousLines.some(isImageLine)) {
+		if (!this.resizeViewport && this.previousLines.some(isImageLine)) {
 			this.placementEpoch++;
 			this.anchor.kind = "unknown";
 			return;
@@ -1424,6 +1602,7 @@ export abstract class TuiBase extends Container {
 
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
+		this.cancelResizeViewport();
 		this.renderRequested = false;
 		this.inputRenderPending = false;
 		this.cancelRenderTimer();
@@ -1469,6 +1648,7 @@ export abstract class TuiBase extends Container {
 	}
 
 	renderNow(force = false): void {
+		this.tailRevision++;
 		if (force) this.resetForcedRenderState();
 		this.renderRequested = false;
 		this.inputRenderPending = false;
@@ -1488,6 +1668,7 @@ export abstract class TuiBase extends Container {
 	}
 
 	requestRender(force = false, source = "unknown"): void {
+		if (source !== "tail.prepare") this.tailRevision++;
 		if (force) {
 			this.inputRenderPending = false;
 			this.resetForcedRenderState();
@@ -1503,7 +1684,7 @@ export abstract class TuiBase extends Container {
 			});
 			return;
 		}
-		if (source === "input" || source === "editor.input") {
+		if (source === "input" || source === "editor.input" || source === "tail.prepare") {
 			if (!this.inputRenderPending) {
 				this.inputRenderPending = true;
 				this.renderRequested = true;
@@ -1528,6 +1709,7 @@ export abstract class TuiBase extends Container {
 
 	/** Drop every cached frame so the next render repaints from a clean slate. */
 	private resetForcedRenderState(): void {
+		this.cancelResizeViewport();
 		this.resetRenderState();
 		this.previousLines = [];
 		this.previousRawLines = [];
@@ -1537,6 +1719,34 @@ export abstract class TuiBase extends Container {
 		this.hardwareCursorRow = 0;
 		this.maxLinesRendered = 0;
 		this.previousViewportTop = 0;
+	}
+
+	protected cancelResizeViewport(): void {
+		this.resizeViewport?.controller.abort();
+		this.resizeViewport?.unsubscribe?.();
+		this.resizeViewport = undefined;
+	}
+
+	/** Preserve an unchanged idle transcript while resizing only the following working controls. */
+	setWorkingRegionAfter(
+		component: Component,
+		getRevision: (checkCustomContent?: boolean) => number | undefined,
+	): void {
+		this.cancelResizeViewport();
+		this.captureChildRenders = true;
+		this.workingRegion = { after: component, getRevision };
+		this.committedWorkingRegion = undefined;
+		this.failedWorkingResize = undefined;
+	}
+
+	override clear(): void {
+		this.cancelResizeViewport();
+		super.clear();
+	}
+
+	override detachAll(): void {
+		this.cancelResizeViewport();
+		super.detachAll();
 	}
 
 	private cancelRenderTimer(): void {
@@ -1587,9 +1797,21 @@ export abstract class TuiBase extends Container {
 		if (this.mode !== "fullscreen") {
 			const focus = consumeTmuxFocusEvent(data);
 			if (focus.event !== null) {
+				const previousCapabilities = getCapabilities();
 				resetCapabilitiesCache();
-				this.invalidate();
-				this.requestRender(true);
+				const capabilities = getCapabilities();
+				const capabilitiesChanged =
+					previousCapabilities.images !== capabilities.images ||
+					previousCapabilities.trueColor !== capabilities.trueColor ||
+					previousCapabilities.hyperlinks !== capabilities.hyperlinks ||
+					previousCapabilities.tmuxPassthrough !== capabilities.tmuxPassthrough ||
+					previousCapabilities.kittyUnicodePlaceholders !== capabilities.kittyUnicodePlaceholders;
+				if (capabilitiesChanged) {
+					this.invalidate();
+				}
+				// A reattached terminal may have lost image payloads despite identical capabilities.
+				const repaintImages = this.previousKittyImageIds.size > 0 || this.previousLines.some(isImageLine);
+				this.requestRender(capabilitiesChanged || repaintImages);
 				if (focus.data.length === 0) return;
 				data = focus.data;
 			}
@@ -1874,7 +2096,13 @@ export abstract class TuiBase extends Container {
 		for (const entry of this.overlayStack) entry.bounds = undefined;
 
 		// Pre-render all visible overlays and calculate positions
-		const rendered: { entry: OverlayStackEntry; overlayLines: string[]; row: number; col: number; w: number }[] = [];
+		const rendered: {
+			entry: OverlayStackEntry;
+			overlayLines: string[];
+			row: number;
+			col: number;
+			w: number;
+		}[] = [];
 		let minLinesNeeded = result.length;
 
 		const visibleEntries = this.overlayStack.filter((e) => this.isOverlayVisible(e));
@@ -1954,9 +2182,43 @@ export abstract class TuiBase extends Container {
 	private static readonly FRAME_BEGIN = "\x1b[?2026h\x1b[?7l";
 	private static readonly FRAME_END = "\x1b[?7h\x1b[?2026l";
 
-	private setPreviousLines(lines: string[], rawLines: string[]): void {
+	protected setPreviousLines(lines: string[], rawLines: string[]): void {
 		this.previousLines = lines;
 		this.previousRawLines = rawLines;
+		if (!this.resizeViewport) {
+			this.committedDocumentOverflow ||= lines.length > this.terminal.rows;
+			this.captureWorkingRegion();
+		}
+	}
+
+	private captureWorkingRegion(): void {
+		this.committedWorkingRegion = undefined;
+		const region = this.workingRegion;
+		const revision = region?.getRevision();
+		if (!region || revision === undefined || this.overlayStack.length > 0) return;
+		const boundary = this.children.indexOf(region.after);
+		if (boundary < 0) return;
+		const lines: string[] = [];
+		for (let index = boundary + 1; index < this.children.length; index++) {
+			const snapshot = legacyTailSnapshots.get(this.children[index]);
+			if (
+				!snapshot ||
+				snapshot.width !== this.terminal.columns ||
+				lines.length + snapshot.lines.length > this.terminal.rows
+			)
+				return;
+			lines.push(...snapshot.lines);
+		}
+		if (lines.some(isImageLine)) return;
+		const cursor = this.extractCursorPosition([...lines], this.terminal.rows);
+		if (!cursor) return;
+		this.committedWorkingRegion = {
+			lines,
+			width: this.terminal.columns,
+			height: this.terminal.rows,
+			cursorRow: cursor.row,
+			revision,
+		};
 	}
 
 	private normalizeLine(line: string): { line: string; normalized: boolean } {
@@ -1980,9 +2242,16 @@ export abstract class TuiBase extends Container {
 		const previousMemo = this.normalizeMemo;
 		const nextMemo = new Map<string, string>();
 		const normalizedLines: string[] = [];
+		const sameWidth = this.previousWidth === this.terminal.columns;
 		let normalizedCount = 0;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
+			// Streaming can change the frame length while leaving its historical prefix intact.
+			// Reuse that prefix before scanning escapes or hashing every old line into a new map.
+			if (sameWidth && line === this.previousRawLines[i] && i < this.previousLines.length) {
+				normalizedLines.push(this.previousLines[i]);
+				continue;
+			}
 			if (isImageLine(line)) {
 				normalizedLines.push(line);
 				continue;
@@ -2432,10 +2701,169 @@ export abstract class TuiBase extends Container {
 		return null;
 	}
 
+	/** Native history stays untouched; only controls after the explicit idle boundary are repainted. */
+	private renderResizedWorkingRegion(width: number, height: number): boolean {
+		// Fitting fresh frames need no asynchronous cursor calibration. Keep the overflow
+		// evidence for this renderer's lifetime: mux history can survive canonical shrink.
+		if (!this.resizeViewport && !this.committedDocumentOverflow) return false;
+		const region = this.workingRegion;
+		// Canonical capture already rendered the document; native frames must check dynamic custom cards.
+		const revision = region?.getRevision(true);
+		const boundary = region ? this.children.indexOf(region.after) : -1;
+		let state = this.resizeViewport;
+		if (
+			!region ||
+			revision === undefined ||
+			boundary < 0 ||
+			this.overlayStack.length > 0 ||
+			this.mouseCaptureEnabled ||
+			(state && state.revision !== revision)
+		) {
+			if (state) this.resetForcedRenderState();
+			return false;
+		}
+		const resized = !state || state.width !== width || state.height !== height;
+		if (resized) {
+			const previous = state ?? this.committedWorkingRegion;
+			if (!previous || previous.revision !== revision || !this.terminal.queryCursorPosition) return false;
+			if (
+				this.failedWorkingResize?.width === width &&
+				this.failedWorkingResize.height === height &&
+				this.failedWorkingResize.revision === revision
+			)
+				return false;
+			state?.controller.abort();
+			state?.unsubscribe?.();
+			state = {
+				controller: new AbortController(),
+				width,
+				height,
+				revision,
+				lines: previous.lines,
+				cursorRow: previous.cursorRow,
+			};
+			this.resizeViewport = state;
+			this.placementEpoch++;
+			const pending = state;
+			pending.unsubscribe = this.terminal.observeExternalWrites?.(() => {
+				if (this.resizeViewport !== pending) return;
+				this.placementEpoch++;
+				this.mouseExternalWritePending = true;
+				this.requestRender();
+			});
+			void this.terminal.queryCursorPosition().then(
+				(position) => {
+					if (pending.controller.signal.aborted || this.stopped || this.resizeViewport !== pending) return;
+					if (
+						!position ||
+						position.row < 1 ||
+						position.row > height ||
+						position.column < 1 ||
+						position.column > width + 1 ||
+						(position.page !== undefined && position.page !== 1)
+					) {
+						this.failedWorkingResize = { width, height, revision };
+						this.resetForcedRenderState();
+					} else {
+						pending.top = Math.max(0, position.row - 1 - pending.cursorRow);
+					}
+					this.requestRender(false, "tail.prepare");
+				},
+				() => {
+					if (pending.controller.signal.aborted || this.stopped || this.resizeViewport !== pending) return;
+					this.failedWorkingResize = { width, height, revision };
+					this.resetForcedRenderState();
+					this.requestRender(false, "tail.prepare");
+				},
+			);
+			return true;
+		}
+		if (!state || state.top === undefined) return true;
+		const signal = state.controller.signal;
+		const context: TailRenderContext = {
+			signal,
+			revision: this.tailRevision,
+			requestRender: () => {
+				if (!signal.aborted && !this.stopped) this.requestRender(false, "tail.prepare");
+			},
+		};
+		const tail = renderChildrenTail(this.children.slice(boundary + 1), width, height, context);
+		if (tail.pending) return true;
+		if (tail.lines.some(isImageLine)) {
+			this.resetForcedRenderState();
+			return false;
+		}
+		const rawLines = [...tail.lines];
+		const cursorPos = this.extractCursorPosition(rawLines, height);
+		if (!cursorPos) {
+			this.resetForcedRenderState();
+			return false;
+		}
+		const lines = this.applyLineResets(rawLines).map((line) =>
+			visibleWidth(line) > width ? sliceByColumn(line, 0, width, true) + TUI.SEGMENT_RESET : line,
+		);
+		let top = state.top;
+		let buffer = TUI.FRAME_BEGIN;
+		const geometryChanged =
+			this.previousWidth !== width || this.previousHeight !== height || lines.length !== state.lines.length;
+		if (geometryChanged) {
+			const oldEnd = Math.min(height, top + state.lines.length);
+			for (let row = top; row < oldEnd; row++) buffer += `\x1b[${row + 1};1H\x1b[2K`;
+		}
+		const overflow = Math.max(0, top + lines.length - height);
+		if (overflow > 0) {
+			buffer += `\x1b[${height};1H${"\r\n".repeat(overflow)}`;
+			top = Math.max(0, top - overflow);
+		}
+		let lastRow = this.hardwareCursorRow;
+		for (let row = 0; row < lines.length; row++) {
+			if (!geometryChanged && lines[row] === this.previousLines[row]) continue;
+			buffer += `\x1b[${top + row + 1};1H\x1b[2K${TUI.SEGMENT_RESET}${lines[row]}`;
+			lastRow = row;
+		}
+		buffer = this.finishFrame(buffer, cursorPos, lines.length, lastRow);
+		writeBounded(this.terminal, buffer);
+		state.top = top;
+		state.lines = rawLines;
+		state.cursorRow = cursorPos?.row ?? Math.max(0, lines.length - 1);
+
+		this.setPreviousLines(lines, rawLines);
+		this.previousWidth = width;
+		this.previousHeight = height;
+		this.previousViewportTop = 0;
+		this.maxLinesRendered = lines.length;
+		this.cursorRow = Math.max(0, lines.length - 1);
+		this.noteCommittedMouseFrame();
+		this.anchor = {
+			kind: "cleared",
+			frameTopScreenRow: top,
+			epoch: this.placementEpoch,
+			rows: height,
+			columns: width,
+		};
+		return true;
+	}
+
 	protected doRender(): void {
 		if (this.stopped) return;
+		if (this.mode === "regular" && this.mouseExternalWritePending) {
+			this.mouseExternalWritePending = false;
+			this.terminal.write("\r\n");
+			this.resetForcedRenderState();
+			this.previousWidth = 0;
+			this.previousHeight = 0;
+		}
 		const width = this.terminal.columns;
 		const height = this.terminal.rows;
+		if (
+			this.mode === "regular" &&
+			(this.resizeViewport ||
+				(this.previousWidth > 0 &&
+					this.previousHeight > 0 &&
+					(this.previousWidth !== width || this.previousHeight !== height)))
+		) {
+			if (this.renderResizedWorkingRegion(width, height)) return;
+		}
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
 		const heightChanged = this.previousHeight !== 0 && this.previousHeight !== height;
 		if (widthChanged || heightChanged) this.placementEpoch++;
@@ -2612,7 +3040,8 @@ export abstract class TuiBase extends Container {
 			return;
 		}
 
-		if (insertScrollPlan) {
+		// Rows scrolled into history must already be current; otherwise paint the burst first.
+		if (insertScrollPlan && firstChanged >= insertScrollPlan.viewportTop) {
 			this.renderViewportInsertScroll(insertScrollPlan, newLines, rawLines, cursorPos, width, height);
 			return;
 		}

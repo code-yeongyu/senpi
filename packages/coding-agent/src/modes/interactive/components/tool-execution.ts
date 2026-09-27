@@ -69,6 +69,7 @@ export class ToolExecutionComponent extends Container {
 	private cachedSignature?: string;
 	private cachedWidth?: number;
 	private lastDisplaySignature?: string;
+	private transcriptChanged?: (projectionChanged: boolean) => void;
 
 	constructor(
 		toolName: string,
@@ -112,6 +113,7 @@ export class ToolExecutionComponent extends Container {
 			);
 			this.images = new ToolExecutionImages(() => {
 				this.invalidateRenderCache();
+				this.transcriptChanged?.(false);
 				this.ui.requestRender();
 			});
 			this.addChild(new Spacer(1));
@@ -132,6 +134,11 @@ export class ToolExecutionComponent extends Container {
 	/** Read-only presentation state; execution routing continues to own this original card. */
 	get presentationSnapshot() {
 		return { identity: this.identity, state: this.createRenderState(), presentation: this.presentation };
+	}
+
+	/** One original transcript owns grouping; non-owning projected containers keep its listener. */
+	setTranscriptChangedListener(listener: ((projectionChanged: boolean) => void) | undefined): void {
+		this.transcriptChanged = listener;
 	}
 
 	markExecutionStarted(): void {
@@ -163,6 +170,7 @@ export class ToolExecutionComponent extends Container {
 	stopAnimation(): void {
 		this.stopSpinnerAnimation();
 		this.stopTodoStrikeAnimation();
+		this.updateDisplay();
 	}
 
 	override dispose(): void {
@@ -195,7 +203,7 @@ export class ToolExecutionComponent extends Container {
 	override render(width: number): string[] {
 		if (this.presentation === "grok") return super.render(width);
 
-		const signature = this.createRenderSignature();
+		const signature = this.lastDisplaySignature ?? "";
 		if (this.cachedLines && this.cachedWidth === width && this.cachedSignature === signature) {
 			return [...this.cachedLines];
 		}
@@ -222,6 +230,9 @@ export class ToolExecutionComponent extends Container {
 		const displaySignature = this.createRenderSignature();
 		if (this.lastDisplaySignature === displaySignature) return;
 		this.lastDisplaySignature = displaySignature;
+		this.transcriptChanged?.(
+			this.presentation === "classic" && ["read", "grep", "find", "ls"].includes(this.identity.toolName),
+		);
 		this.invalidateRenderCache();
 		const state = this.createRenderState();
 		if (this.grokRow) {

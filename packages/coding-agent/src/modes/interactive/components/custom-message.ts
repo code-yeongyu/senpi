@@ -17,6 +17,8 @@ export class CustomMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private _expanded = false;
 	private outputPad: number;
+	private renderedFrame?: { width: number; lines: string[] };
+	private committedFrame?: { width: number; lines: string[] };
 
 	constructor(
 		message: CustomMessage<unknown>,
@@ -36,6 +38,24 @@ export class CustomMessageComponent extends Container {
 		this.box = new Box(1, 1, (t) => theme.bg("customMessageBg", t));
 
 		this.rebuild();
+	}
+
+	override render(width: number): string[] {
+		const lines = super.render(width);
+		this.renderedFrame = { width, lines };
+		return lines;
+	}
+
+	commitRenderedFrame(): void {
+		this.committedFrame = this.renderedFrame;
+	}
+
+	hasCustomRenderChanged(): boolean {
+		if (!this.customComponent) return false;
+		const committed = this.committedFrame;
+		if (!committed) return true;
+		const lines = super.render(committed.width);
+		return lines.length !== committed.lines.length || lines.some((line, index) => line !== committed.lines[index]);
 	}
 
 	setExpanded(expanded: boolean): void {

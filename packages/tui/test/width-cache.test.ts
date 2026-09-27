@@ -19,6 +19,22 @@ function widthCacheStats(): WidthCacheStats {
 }
 
 describe("visibleWidth width cache", () => {
+	it("preserves normalized ASCII and mixed grapheme widths on cold and cached reads", () => {
+		const cases: [string, number][] = [
+			["\x1b[31mcolored ASCII\x1b[0m", 13],
+			["\x1b]8;;https://example.com\x07linked text\x1b]8;;\x07", 11],
+			["\x1b_cursor\x1b\\plain\ttext", 12],
+			["\x1b[0m", 0],
+			["A\x00B\x7fC", 3],
+			["• ASCII 界 👨‍💻", 13],
+			["e\u0301 #️⃣ 🇬🇧", 7],
+		];
+		for (const [text, width] of cases) {
+			assert.strictEqual(utils.visibleWidth(text), width);
+			assert.strictEqual(utils.visibleWidth(text), width);
+		}
+	});
+
 	it("keeps rotated keys retrievable from the previous generation", () => {
 		// given
 		const keys = Array.from({ length: 2049 }, (_, index) => styledKey("generation", index));

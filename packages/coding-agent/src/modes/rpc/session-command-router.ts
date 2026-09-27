@@ -582,6 +582,7 @@ export class SessionCommandRouter {
 								clearWidth: (connectionId) => {
 									const widths = this.widths.get(openedSession.sessionId);
 									if (connectionId !== undefined) widths?.delete(connectionId);
+									if (widths?.size === 0) this.widths.delete(openedSession.sessionId);
 								},
 								setCapabilities: (connectionId, capabilities) => {
 									if (connectionId !== undefined) {
@@ -625,6 +626,7 @@ export class SessionCommandRouter {
 			if (!this.draining && owner !== undefined && this.releasedConnections.has(owner)) {
 				this.releaseOwnerAttachment(owner, openedSession.sessionId);
 				await this.releaseOwnedSession(openedSession.sessionId);
+				return undefined;
 			}
 			const state =
 				entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
@@ -663,7 +665,10 @@ export class SessionCommandRouter {
 		this.writer.clearConnectionCapabilities(connectionId);
 		for (const sessionId of this.sessionsByConnection.get(connectionId)?.keys() ?? [])
 			this.writer.detachConnectionFromSession(connectionId, sessionId);
-		for (const widths of this.widths.values()) widths.delete(connectionId);
+		for (const [sessionId, widths] of this.widths) {
+			widths.delete(connectionId);
+			if (widths.size === 0) this.widths.delete(sessionId);
+		}
 		for (const binding of this.bindings.values()) binding.rerenderComponents?.();
 		const opens = this.opensByConnection.get(connectionId);
 		const owned = this.sessionsByConnection.get(connectionId);
@@ -673,11 +678,13 @@ export class SessionCommandRouter {
 			// Its attachment-draining claim releases these counts once work settles.
 			if (opens) await Promise.all([...opens]);
 			this.releasedConnections.delete(connectionId);
+			this.pendingCapabilities.delete(connectionId);
 			return;
 		}
 		if (owned === undefined) {
 			if (opens) await Promise.all([...opens]);
 			this.releasedConnections.delete(connectionId);
+			this.pendingCapabilities.delete(connectionId);
 			return;
 		}
 		await Promise.all(
@@ -729,6 +736,7 @@ export class SessionCommandRouter {
 		);
 		if (opens) await Promise.all([...opens]);
 		this.releasedConnections.delete(connectionId);
+		this.pendingCapabilities.delete(connectionId);
 	}
 
 	/**
@@ -840,7 +848,9 @@ export class SessionCommandRouter {
 
 	/** Detaches the closing connection's UI/width state; a rerender failure must not abort the close. */
 	private releaseOwnerAttachment(owner: string, sessionId: string): void {
-		this.widths.get(sessionId)?.delete(owner);
+		const widths = this.widths.get(sessionId);
+		widths?.delete(owner);
+		if (widths?.size === 0) this.widths.delete(sessionId);
 		this.writer.detachConnectionFromSession(owner, sessionId);
 		for (const binding of this.bindings.values()) {
 			try {
@@ -887,6 +897,10 @@ export class SessionCommandRouter {
 			// terminal records must still observe the exit callback's registry removal.
 			await this.registry.peek(sessionId)?.closeCompletion;
 			terminal?.();
+			// The binding is silent and the runtime has relinquished this unique
+			// handle. Queued terminal records survive forgetting its bookkeeping.
+			this.forgetSessionOwnership(sessionId);
+			this.writer.forgetSession(sessionId);
 		} finally {
 			finalization.resolve();
 			this.finalizations.delete(sessionId);

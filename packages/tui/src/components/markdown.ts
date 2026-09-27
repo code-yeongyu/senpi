@@ -203,8 +203,10 @@ const inlineMathTokenizer: TokenizerExtension = {
 	name: "latex_inline",
 	level: "inline",
 	start(src) {
-		const index = src.search(/\$|\\[()[\]]/);
-		return index >= 0 ? index : undefined;
+		// Include the newline so Marked's inline-text hard-break lookahead stays intact.
+		// Earlier tokenizers still see the full source; only the final text hint is bounded.
+		const match = /\$|\\[()[\]]|\n/.exec(src);
+		return match ? match.index + (match[0] === "\n" ? 1 : 0) : undefined;
 	},
 	tokenizer(src, tokens) {
 		const codeSpanLiteral = /^(?:\${1,2}|\\\(|\\\)|\\\[|\\\])/.exec(src)?.[0];
@@ -435,6 +437,7 @@ export class Markdown implements Component {
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private cachedParse?: { source: string; key: string; tokens: Token[] };
 
 	constructor(
 		text: string,
@@ -453,6 +456,7 @@ export class Markdown implements Component {
 	}
 
 	setText(text: string): void {
+		if (text !== this.text) this.cachedParse = undefined;
 		this.text = text;
 		this.invalidate();
 	}
@@ -475,6 +479,7 @@ export class Markdown implements Component {
 
 		// Don't render anything if there's no actual text
 		if (!text || text.trim() === "") {
+			this.cachedParse = undefined;
 			const result: string[] = [];
 			// Update cache
 			this.cachedText = this.text;
@@ -485,7 +490,8 @@ export class Markdown implements Component {
 
 		// Replace tabs with 3 spaces for consistent rendering
 		const normalizedText = text.replace(/\t/g, "   ");
-		const normalizedContentKey = contentKey(normalizedText);
+		if (this.cachedParse?.source !== normalizedText) this.cachedParse = undefined;
+		const normalizedContentKey = this.cachedParse?.key ?? contentKey(normalizedText);
 		const styleKey = this.defaultTextStyle ? objectId(this.defaultTextStyle) : -1;
 		const renderKey = [
 			normalizedContentKey,
@@ -511,7 +517,7 @@ export class Markdown implements Component {
 		}
 
 		// Parse markdown to HTML-like tokens
-		const cachedParse = parseCache.get(normalizedContentKey);
+		const cachedParse = this.cachedParse ?? parseCache.get(normalizedContentKey);
 		let tokens: Token[];
 		if (cachedParse?.source === normalizedText) {
 			tokens = cachedParse.tokens;
@@ -520,6 +526,8 @@ export class Markdown implements Component {
 			trimPartialClosingFences(tokens);
 			cacheSet(parseCache, normalizedContentKey, { source: normalizedText, tokens }, PARSE_CACHE_MAX);
 		}
+		// Keep only this source's tokens so long histories survive shared-cache eviction on resize.
+		this.cachedParse = { source: normalizedText, key: normalizedContentKey, tokens };
 
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];

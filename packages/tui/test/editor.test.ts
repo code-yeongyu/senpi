@@ -42,6 +42,66 @@ async function flushAutocomplete(): Promise<void> {
 const EXPLICIT_NEWLINE = "\x1b[13;2u";
 
 describe("Editor cursor rendering", () => {
+	for (const column of [0, 1, 13]) {
+		it(`positions the hardware cursor at column ${column} inside a plain editor row`, async () => {
+			const terminal = new VirtualTerminal(80, 24);
+			const tui = new TuiMainScreen(terminal, true);
+			const editor = new Editor(tui, defaultEditorTheme);
+			editor.focused = true;
+			editor.setText("QA_CURSOR_END");
+			editor.handleInput("\x1b[H");
+			for (let index = 0; index < column; index++) editor.handleInput("\x1b[C");
+			tui.addChild(editor);
+			try {
+				const rendered = editor.render(80).join("\n");
+				assert.equal(rendered.split(CURSOR_MARKER).length - 1, 1);
+				assert.doesNotMatch(rendered, /\x1b\[7m/);
+				tui.renderNow();
+				await terminal.flush();
+				assert.deepStrictEqual(terminal.getCursorPosition(), { x: column, y: 1 });
+			} finally {
+				tui.stop();
+			}
+		});
+	}
+
+	it("keeps the hardware caret after Home and insertion in a multiline draft", async () => {
+		const terminal = new VirtualTerminal(80, 24);
+		const tui = new TuiMainScreen(terminal, true);
+		const editor = new Editor(tui, defaultEditorTheme);
+		editor.focused = true;
+		editor.setText("QA_LINE_A\nQA_LINE_B\nQA_LINE_C\nQA_CURSOR_END");
+		editor.handleInput("\x1b[H");
+		editor.handleInput("P");
+		tui.addChild(editor);
+		try {
+			assert.equal(editor.getText(), "QA_LINE_A\nQA_LINE_B\nQA_LINE_C\nPQA_CURSOR_END");
+			assert.ok(editor.render(80).some((line) => line.includes(`P${CURSOR_MARKER}QA_CURSOR_END`)));
+			tui.renderNow();
+			await terminal.flush();
+			assert.deepStrictEqual(terminal.getCursorPosition(), { x: 1, y: 4 });
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("positions an interior hardware caret after wide and joined emoji graphemes", async () => {
+		const terminal = new VirtualTerminal(80, 24);
+		const tui = new TuiMainScreen(terminal, true);
+		const editor = new Editor(tui, defaultEditorTheme);
+		editor.focused = true;
+		editor.setText("界👩‍💻Z");
+		editor.handleInput("\x1b[D");
+		tui.addChild(editor);
+		try {
+			assert.ok(editor.render(80).some((line) => line.includes(`界👩‍💻${CURSOR_MARKER}Z`)));
+			tui.renderNow();
+			await terminal.flush();
+			assert.deepStrictEqual(terminal.getCursorPosition(), { x: 4, y: 1 });
+		} finally {
+			tui.stop();
+		}
+	});
 	it("does not draw a fake cursor when the hardware cursor is visible", () => {
 		const tui = new TuiMainScreen(new VirtualTerminal(80, 24), true);
 		const editor = new Editor(tui, defaultEditorTheme);

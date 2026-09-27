@@ -743,7 +743,19 @@ export function createRemoteSessionProxy(
 				// Non-fatal if session file is transiently locked or unavailable
 			}
 		}
-		const event = hydrateMessageUpdate(wireEvent, streamingAssistant);
+		const snapshot = wireEvent.type === "message_update" ? (wireEvent as { message?: unknown }).message : undefined;
+		const hasSnapshot =
+			typeof snapshot === "object" &&
+			snapshot !== null &&
+			"role" in snapshot &&
+			snapshot.role === "assistant" &&
+			"content" in snapshot &&
+			Array.isArray(snapshot.content);
+		// Full socket snapshots are authoritative and seed subsequent replay deltas.
+		if (hasSnapshot) streamingAssistant = structuredClone(snapshot as NonNullable<typeof streamingAssistant>);
+		const event = hasSnapshot
+			? (wireEvent as unknown as AgentSessionEvent)
+			: hydrateMessageUpdate(wireEvent, streamingAssistant);
 		for (const listener of listeners) listener(event);
 	};
 	client.onEvent(handleWireEvent);
@@ -1237,8 +1249,9 @@ function hydrateMessageUpdate(
 			// Keep the last valid arguments until the next complete update.
 		}
 	}
-	streamingAssistant.usage = event.usage;
+	streamingAssistant.usage = event.usage ?? streamingAssistant.usage;
 	return {
+		...event,
 		type: "message_update",
 		message: structuredClone(streamingAssistant),
 		assistantMessageEvent: { ...update, partial: structuredClone(streamingAssistant) },

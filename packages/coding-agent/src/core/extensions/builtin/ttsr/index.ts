@@ -2,7 +2,11 @@ import { getKeybindings } from "@earendil-works/pi-tui";
 
 import type { AgentEndEvent, ExtensionAPI, ExtensionContext, MessageUpdateEvent } from "../../types.ts";
 import { appendRuleActivation, registerRuleActivationRenderer } from "../rule-activation/index.ts";
-import { parseRuleActivationDetails, RULE_ACTIVATION_ENTRY_TYPE } from "../rule-activation/types.ts";
+import {
+	parseRuleActivationDetails,
+	RULE_ACTIVATION_ENTRY_TYPE,
+	type TtsrActivationDetails,
+} from "../rule-activation/types.ts";
 import { BUILTIN_TTSR_RULES } from "./builtin-rules.ts";
 import { registerTtsrCommands, type TtsrPublicState } from "./commands.ts";
 import { claimAbort, createGenerationState, markUserCancelled } from "./coordinator.ts";
@@ -73,6 +77,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	let pendingRuleNudge: PendingRuleNudge | null = null;
 	let pendingNudge: TtsrNudgeMessage | null = null;
 	let settlingAgentEnd: AgentEndEvent | null = null;
+	let collapseRecoveryAttempted = false;
 	let disabled = false;
 	const repetitiveTurns = new RepetitiveTurnsLane();
 
@@ -95,7 +100,11 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		watcher?.reset();
 	}
 
-	function recordInjection(owner: string, observed: readonly string[], retryMode: "nudge" | "provider-error"): void {
+	function recordInjection(
+		owner: string,
+		observed: readonly string[],
+		retryMode: TtsrActivationDetails["remediation"],
+	): void {
 		appendRuleActivation(pi, {
 			kind: "ttsr",
 			owner,
@@ -155,6 +164,10 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	registerTtsrCommands(pi, publicState);
 
 	pi.on("session_start", (_event, ctx) => {
+		pendingNudge = null;
+		settlingAgentEnd = null;
+		collapseRecoveryAttempted = false;
+		resetGenerationState();
 		ensureInitialized(ctx);
 	});
 
@@ -162,8 +175,9 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		cancelRemediation();
 	});
 
-	pi.on("input", () => {
+	pi.on("input", (event) => {
 		cancelRemediation();
+		if (event.source !== "extension") collapseRecoveryAttempted = false;
 	});
 
 	pi.on("agent_end", (event) => {
@@ -246,8 +260,12 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 			pendingRemediation = null;
 			try {
 				const outcome = buildStreamRemediation(pending, event.message);
-				recordInjection(outcome.owner, outcome.observedRules, outcome.retryMode);
-				if (outcome.nudge !== null) {
+				// Detector state resets every turn; its corrective turn must not create
+				// an unlimited chain of fresh corrections when recovery also collapses.
+				const recoveryStopped = outcome.nudge !== null && collapseRecoveryAttempted;
+				recordInjection(outcome.owner, outcome.observedRules, recoveryStopped ? "stopped" : outcome.retryMode);
+				if (outcome.nudge !== null && !recoveryStopped) {
+					collapseRecoveryAttempted = true;
 					pendingNudge = outcome.nudge;
 				}
 				const merged = { ...event.message, ...outcome.replacement };
@@ -259,6 +277,9 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 				});
 				return undefined;
 			}
+		}
+		if (!genState.abortClaimed && event.message.stopReason !== "aborted" && event.message.stopReason !== "error") {
+			collapseRecoveryAttempted = false;
 		}
 		if (turnText !== null) repetitiveTurns.recordCompletedTurn(turnText);
 		return undefined;

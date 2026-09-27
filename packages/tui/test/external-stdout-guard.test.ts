@@ -65,6 +65,63 @@ function setupGuardHarness(options?: { withHandler?: boolean; handler?: (text: s
 }
 
 describe("ProcessTerminal external stdout guard", () => {
+	it("forwards complete clipboard writes without invalidating screen geometry", () => {
+		const harness = setupGuardHarness();
+		let externalWrites = 0;
+		const unsubscribe = harness.terminal.observeExternalWrites(() => externalWrites++);
+		try {
+			harness.terminal.start(
+				() => {},
+				() => {},
+			);
+			harness.writes.length = 0;
+			let callbacks = 0;
+			const writes = ["", "a", "ab", "abc", "é 👩🏽‍💻 漢字", "x".repeat(75_000)].map(
+				(text) => `\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`,
+			);
+			for (const write of writes) process.stdout.write(write, () => callbacks++);
+			process.stdout.write(Buffer.from(writes[0]!));
+			assert.deepEqual([...harness.writes], [...writes, writes[0]]);
+			assert.deepEqual(harness.hidden, []);
+			assert.equal(callbacks, writes.length);
+			assert.equal(externalWrites, 0);
+		} finally {
+			unsubscribe();
+			harness.cleanup();
+		}
+	});
+
+	it("keeps queries, malformed clipboard frames and mixed stdout hidden", () => {
+		const harness = setupGuardHarness();
+		try {
+			harness.terminal.start(
+				() => {},
+				() => {},
+			);
+			harness.writes.length = 0;
+			const clipboard = "\x1b]52;c;aGk=\x07";
+			const hidden = [
+				"ordinary log\n",
+				"\x1b]52;c;?\x07",
+				"\x1b]52;c;a\x07",
+				"\x1b]52;c;aGk===\x07",
+				"\x1b]52;c;!\x07",
+				"\x1b]52;c;aGk=",
+				"\x1b]52;p;aGk=\x07",
+				"\x1b]0;title\x07",
+				`before${clipboard}`,
+				`${clipboard}after`,
+				`${clipboard}\n`,
+				`${clipboard}${clipboard}`,
+			];
+			for (const text of hidden) process.stdout.write(text);
+			assert.deepEqual(harness.hidden, hidden);
+			assert.deepEqual(harness.writes, []);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("hides external stdout writes while started and forwards them to the handler", () => {
 		const harness = setupGuardHarness();
 		try {

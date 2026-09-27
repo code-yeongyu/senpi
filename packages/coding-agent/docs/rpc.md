@@ -29,6 +29,8 @@ A label is stored NFC-normalized with internal whitespace collapsed, must contai
 
 `RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
 
+`waitForIdle()` subscribes before querying the current state: it resolves immediately when `isStreaming` is false, otherwise on `agent_settled`. This matches `AgentSession.waitForIdle()`, including automatic run recovery; independent compaction and queued-message metadata do not hold that idle wait. `collectEvents()` still collects through the next `agent_settled`, and `promptAndWait()` cancels its collector if prompting fails. Disconnect, process exit, stop and timeout reject pending waits and release their listeners and timers.
+
 ```bash
 senpi --mode rpc [options]
 ```
@@ -41,6 +43,21 @@ Common options:
 - `--session-dir <path>`: Custom session storage directory
 
 ### Client capabilities
+
+When a shared-host connection attaches during an assistant message, snapshot replay
+preserves ordered streaming deltas and the latest compact delta's cumulative message.
+Superseded `text_delta`, `thinking_delta`, and `toolcall_delta` records can carry
+`message: null` and `assistantMessageEvent.partial: null`; clients must apply their
+deltas instead of treating the null fields as a message reset. Full start/end boundary
+records remain available. This compaction affects retained replay, not live socket
+events, and does not set a global replay-cache byte limit. Retained boundary records
+share immutable string values; a late connection receives their complete JSONL records
+one at a time through its normal socket drain. Subsequent live events remain behind
+that connection's attachment-time replay, including when the active message completes.
+Replay yields to the event loop after approximately 4 ms between completed records,
+including for sinks that never apply backpressure. A single record still serializes synchronously.
+The socket budget charges an estimate of retained replay data plus queued live wire
+bytes, rather than the expanded wire size of all historical boundary snapshots.
 
 Optional additive records are enabled through the comma-separated
 `SENPI_RPC_CLIENT_CAPABILITIES` environment variable:
@@ -829,7 +846,8 @@ queue (64 MiB per connection), not when the peer's kernel has drained it: a clie
 the producing worker's credit. On the shared stdio lane credit still waits for stdout backpressure. A five-second credit
 failure closes that session visibly (`session_error` followed by `session_closed`), rather than retaining an
 unbounded queue. Socket queues keep their independent overflow/disconnect behavior: a connection whose queue would
-exceed 64 MiB is cut immediately, and a peer that has not accepted a single pending write within 30 seconds
+exceed 64 MiB is cut immediately (pending live wire bytes plus retained replay estimates;
+one in-flight line is separate). Each materialized replay line must also fit that limit. A peer that has not accepted a single pending write within 30 seconds
 (`DEFAULT_STALL_MS`) is cut as a dead peer. That budget is a transport liveness bound and is deliberately independent
 of the 5-second worker control deadline — a busy client is not a dead one. A cut connection receives one `overflow`
 record (`error: "overflow, resync required"` or `"stalled, resync required"`); the host then half-closes the socket
@@ -885,6 +903,8 @@ containment, or containment of arbitrary native code. They are not an extension 
 
 ### Identities (D6)
 
+The TypeScript client exposes the same opt-in: `client.listSessions({ include_workers: true })` includes worker sessions for lifecycle reconciliation. Calling `client.listSessions()` keeps workers hidden.
+
 Response-level `sessionId` = opaque **routing handle**, unique per process epoch, ephemeral (dies with the child). `state.sessionId` = **durable** JSONL session identity (what a resume cursor stores today). `list_sessions` exposes both. Clients store both, discard routing handles on child exit, and verify only durable ids against cursors.
 
 ### Stable error codes
@@ -916,7 +936,7 @@ Strict FIFO per session; one total stdout order; cross-session order unspecified
 
 ### Duplicate/idempotency
 
-Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle), including when that session is retained with zero attachments; while held by an `opening` entry (or an internally quarantined one) → `session_path_in_use`. A `closing` entry is a session that is ENDING, not one in use: on the in-process runtime (the `--listen` socket host default) the open WAITS for that teardown - bounded by the close grace window that bounds the teardown itself - and then opens the file fresh, so reopening a path after a close never depends on how long disposal takes. The worker runtime still answers `session_path_in_use` there, because a worker's teardown ends with an OS thread exit that no host deadline bounds. A path whose owner has already replaced it with another session file is no longer held: that open allocates a new worker and resumes the file. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error, and so is a `close_session` from a connection that never attached to that handle — it releases nothing and leaves the session untouched. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup.
+Duplicate `open_session` while a path reservation is held by a fully-open session → ATTACH (`attached: true`, same handle), including when that session is retained with zero attachments; while held by an `opening` entry (or an internally quarantined one) → `session_path_in_use`. A `closing` entry is a session that is ENDING, not one in use: on the in-process runtime (the `--listen` socket host default) the open WAITS for that teardown - bounded by the close grace window that bounds the teardown itself - and then opens the file fresh, so reopening a path after a close never depends on how long disposal takes. The worker runtime still answers `session_path_in_use` there, because a worker's teardown ends with an OS thread exit that no host deadline bounds. A path whose owner has already replaced it with another session file is no longer held: that open allocates a new worker and resumes the file. `close_session` releases one attachment; the runtime is disposed only when the last attachment closes. A close for an entry already `closing` joins its in-flight teardown. `close_session` on unknown/already-closed → `unknown_session` error, and so is a `close_session` from a connection that never attached to that handle — it releases nothing and leaves the session untouched. The grace window is configurable by the host through `SENPI_RPC_CLOSE_GRACE_MS`. Request `id`s are client-owned; the server echoes them without dedup. Once runtime teardown and the terminal records are complete, the host releases that unique handle's in-memory routing bookkeeping. Disposed bindings suppress late asynchronous command output, so releasing this bookkeeping does not permit events after the terminal response. Connection capability records are released on disconnect, and width records on detach; retained sessions themselves remain available.
 
 ## Protocol Overview
 

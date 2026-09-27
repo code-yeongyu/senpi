@@ -27,6 +27,7 @@ const DEAD_TERMINAL_ERRNOS = new Set([EIO_ERRNO, EPIPE_ERRNO]);
 const ERRNO_IN_MESSAGE_PATTERN = /errno:\s*(\d+)/;
 const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
 const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c`;
+const OSC52_CLIPBOARD_WRITE = /^\x1b\]52;c;(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?\x07$/;
 
 export interface CursorPosition {
 	row: number;
@@ -243,6 +244,7 @@ export interface ProcessTerminalOptions {
 	 * screen while the terminal is started and forwarded to this handler
 	 * instead. External writes (console.log, libraries) would otherwise
 	 * interleave with frames and desynchronize differential rendering.
+	 * Complete OSC 52 clipboard writes remain visible because they do not paint.
 	 */
 	onExternalStdoutWrite?: (text: string) => void;
 	/** Observe actual stderr delivery when a host redirects diagnostics before they reach the terminal. */
@@ -421,6 +423,13 @@ export class ProcessTerminal implements Terminal {
 			const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
 			const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
 			const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(encoding);
+			// The clipboard helper uses stdout; only its complete write frame bypasses logging.
+			// endsWith excludes a trailing newline, which JavaScript's $ anchor would accept.
+			if (text.endsWith("\x07") && OSC52_CLIPBOARD_WRITE.test(text)) {
+				rawWrite(text);
+				cb?.(null);
+				return true;
+			}
 			if (!handler || this.forwardingExternalWrite) {
 				this.noteExternalWrite();
 				rawWrite(text);

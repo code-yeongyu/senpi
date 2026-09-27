@@ -167,6 +167,7 @@ export class RpcClient {
 	private socket: Socket | null = null;
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
+	private eventWaitRejectors = new Set<(error: Error) => void>();
 	private pendingRequests: Map<
 		string,
 		{
@@ -285,6 +286,7 @@ export class RpcClient {
 	 * Stop the RPC agent process.
 	 */
 	async stop(): Promise<void> {
+		this.rejectPendingRequests(new RpcTransportGoneError());
 		this.pendingOpenSession = false;
 		this.pendingSessionEvents = [];
 		this.pendingSessionEventBytes = 0;
@@ -434,7 +436,7 @@ export class RpcClient {
 		if (this.sessionId === sessionId) this.sessionId = undefined;
 	}
 
-	async listSessions(): Promise<
+	async listSessions(options?: { include_workers?: boolean }): Promise<
 		Array<{
 			sessionId: string;
 			durableSessionId?: string;
@@ -446,7 +448,7 @@ export class RpcClient {
 			attachments?: number;
 		}>
 	> {
-		const response = await this.send({ type: "list_sessions" }, false);
+		const response = await this.send({ type: "list_sessions", include_workers: options?.include_workers }, false);
 		return this.getData<{
 			sessions: Array<{
 				sessionId: string;
@@ -992,67 +994,85 @@ export class RpcClient {
 	// Helpers
 	// =========================================================================
 
-	/**
-	 * Wait for agent to become idle (no streaming).
-	 * Resolves when agent_settled event is received.
-	 */
+	/** Wait for the current run to settle, or return if the session is already idle. */
 	waitForIdle(timeout = 60000): Promise<void> {
-		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
-				unsubscribe();
-				reject(new Error(`Timeout waiting for agent to become idle. Stderr: ${this.stderr}`));
-			}, timeout);
-
-			const unsubscribe = this.onEvent((event) => {
-				if (event.type === "agent_settled") {
-					clearTimeout(timer);
-					unsubscribe();
-					resolve();
-				}
-			});
-		});
+		const waiter = this.createEventWait(timeout, false);
+		const stateQuery = new AbortController();
+		void this.send(
+			{ type: "get_state" },
+			true,
+			{
+				onResponse: (response) => {
+					// Match AgentSession.isIdle in frame order, before a subsequent run can start.
+					if (response.success && response.command === "get_state" && response.data.isStreaming === false)
+						waiter.resolve();
+				},
+			},
+			true,
+			stateQuery.signal,
+		)
+			.then((response) => this.getData<RpcSessionState>(response))
+			.catch(waiter.cancel);
+		return waiter.promise.then(() => undefined).finally(() => stateQuery.abort());
 	}
 
-	/**
-	 * Collect events until agent becomes idle.
-	 */
+	/** Collect events until the next agent_settled event. */
 	collectEvents(timeout = 60000): Promise<JsonAgentSessionEvent[]> {
-		return new Promise((resolve, reject) => {
-			const events: JsonAgentSessionEvent[] = [];
-			const timer = setTimeout(() => {
-				unsubscribe();
-				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
-			}, timeout);
-
-			const unsubscribe = this.onEvent((event) => {
-				if (
-					isProviderAccountEvent(event) ||
-					event.type === "extension_event" ||
-					event.type === "bash_start" ||
-					event.type === "bash_end" ||
-					event.type === "extension_ui_request" ||
-					// Connection-level, not part of the agent's event stream.
-					event.type === "session_replaced" ||
-					event.type === "session_parked"
-				)
-					return;
-				events.push(event);
-				if (event.type === "agent_settled") {
-					clearTimeout(timer);
-					unsubscribe();
-					resolve(events);
-				}
-			});
-		});
+		return this.createEventWait(timeout, true).promise;
 	}
 
-	/**
-	 * Send prompt and wait for completion, returning all events.
-	 */
+	/** Send prompt and wait for completion, returning all events. */
 	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<JsonAgentSessionEvent[]> {
-		const eventsPromise = this.collectEvents(timeout);
-		await this.prompt(message, images ? { images } : undefined);
-		return eventsPromise;
+		const waiter = this.createEventWait(timeout, true);
+		try {
+			const [, events] = await Promise.all([this.prompt(message, images ? { images } : undefined), waiter.promise]);
+			return events;
+		} finally {
+			waiter.cancel(new Error("Prompt event collection cancelled"));
+		}
+	}
+
+	private createEventWait(timeout: number, collect: boolean) {
+		const events: JsonAgentSessionEvent[] = [];
+		const { promise, resolve, reject } = Promise.withResolvers<JsonAgentSessionEvent[]>();
+		let finished = false;
+		const finish = (error?: Error) => {
+			if (finished) return;
+			finished = true;
+			clearTimeout(timer);
+			unsubscribe();
+			this.eventWaitRejectors.delete(cancel);
+			if (error) reject(error);
+			else resolve(events);
+		};
+		const cancel = (error: Error) => finish(error);
+		const timer = setTimeout(
+			() =>
+				finish(
+					new Error(
+						`Timeout ${collect ? "collecting events" : "waiting for agent to become idle"}. Stderr: ${this.stderr}`,
+					),
+				),
+			timeout,
+		);
+		const unsubscribe = this.onEvent((event) => {
+			if (finished) return;
+			if (
+				isProviderAccountEvent(event) ||
+				event.type === "extension_event" ||
+				event.type === "bash_start" ||
+				event.type === "bash_end" ||
+				event.type === "extension_ui_request" ||
+				// Connection-level, not part of the agent's event stream.
+				event.type === "session_replaced" ||
+				event.type === "session_parked"
+			)
+				return;
+			if (collect) events.push(event);
+			if (event.type === "agent_settled") finish();
+		});
+		this.eventWaitRejectors.add(cancel);
+		return { promise, resolve: () => finish(), cancel };
 	}
 
 	// =========================================================================
@@ -1070,10 +1090,16 @@ export class RpcClient {
 				// Response hooks run synchronously inside the frame dispatch so ordering-sensitive
 				// contracts (e.g. optimistic-echo disposition) settle before the NEXT frame —
 				// never through the microtask scheduled by resolve().
-				pending.onResponse?.(data as RpcResponse);
-				pending.resolve(data as RpcResponse);
+				try {
+					pending.onResponse?.(data as RpcResponse);
+					pending.resolve(data as RpcResponse);
+				} catch (error) {
+					pending.reject(error instanceof Error ? error : new Error(String(error)));
+				}
 				return;
 			}
+			// A response to a cancelled or timed-out request is never an agent event.
+			if (data.type === "response") return;
 
 			// Otherwise it's an event. During open_session, retain tagged events until
 			// the response establishes the lease so startup hooks are not lost.
@@ -1093,7 +1119,7 @@ export class RpcClient {
 				}
 				return;
 			}
-			for (const listener of this.eventListeners) {
+			for (const listener of [...this.eventListeners]) {
 				listener(data as RpcClientEvent);
 			}
 		} catch {
@@ -1107,7 +1133,7 @@ export class RpcClient {
 		this.pendingSessionEventBytes = 0;
 		for (const { sessionId, event } of pending) {
 			if (sessionId !== this.sessionId) continue;
-			for (const listener of this.eventListeners) listener(event);
+			for (const listener of [...this.eventListeners]) listener(event);
 		}
 	}
 
@@ -1124,6 +1150,7 @@ export class RpcClient {
 	}
 
 	private rejectPendingRequests(error: Error): void {
+		for (const reject of this.eventWaitRejectors) reject(error);
 		for (const pending of this.pendingRequests.values()) {
 			pending.onReject?.(error);
 			pending.reject(error);
@@ -1136,7 +1163,9 @@ export class RpcClient {
 		route = true,
 		hooks?: { onResponse?: (response: RpcResponse) => void; onReject?: (error: Error) => void },
 		expectResponse = true,
+		signal?: AbortSignal,
 	): Promise<RpcResponse> {
+		signal?.throwIfAborted();
 		const childProcess = this.process;
 		const stream = this.socket ?? childProcess?.stdin;
 		if (!stream) {
@@ -1170,27 +1199,37 @@ export class RpcClient {
 			stream.write(serializeJsonLine(fullCommand));
 			return Promise.resolve({ type: "response", command: command.type, success: true } as RpcResponse);
 		}
-		return new Promise((resolve, reject) => {
+		return new Promise<RpcResponse>((resolve, reject) => {
 			const timeout = setTimeout(() => {
 				const pending = this.pendingRequests.get(id);
 				this.pendingRequests.delete(id);
 				const timeoutError = new Error(`Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`);
 				pending?.onReject?.(timeoutError);
-				reject(timeoutError);
+				pending?.reject(timeoutError);
 			}, 30000);
+			const onAbort = () => {
+				const pending = this.pendingRequests.get(id);
+				this.pendingRequests.delete(id);
+				const error = signal?.reason instanceof Error ? signal.reason : new Error("RPC request cancelled");
+				pending?.onReject?.(error);
+				pending?.reject(error);
+			};
 
 			this.pendingRequests.set(id, {
 				resolve: (response) => {
 					clearTimeout(timeout);
+					signal?.removeEventListener("abort", onAbort);
 					resolve(response);
 				},
 				reject: (error) => {
 					clearTimeout(timeout);
+					signal?.removeEventListener("abort", onAbort);
 					reject(error);
 				},
 				...(hooks?.onResponse ? { onResponse: hooks.onResponse } : {}),
 				...(hooks?.onReject ? { onReject: hooks.onReject } : {}),
 			});
+			signal?.addEventListener("abort", onAbort, { once: true });
 
 			try {
 				stream.write(serializeJsonLine(fullCommand));
@@ -1201,6 +1240,9 @@ export class RpcClient {
 				pending?.onReject?.(writeError);
 				pending?.reject(writeError);
 			}
+		}).then((response) => {
+			this.getData(response);
+			return response;
 		});
 	}
 

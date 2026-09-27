@@ -2,16 +2,6 @@ const WORKING_STATUS_MESSAGE_SHIMMER_PADDING = 10;
 const WORKING_STATUS_MESSAGE_SHIMMER_BAND_HALF_WIDTH = 5;
 const WORKING_STATUS_MESSAGE_SHIMMER_SWEEP_MS = 2_000;
 const ACTIVE_TOOL_WORKING_LABEL_MAX_LENGTH = 80;
-const LARGE_SESSION_ENTRY_THRESHOLD = 1000;
-
-export function largeSessionWorkingStatusInterval(
-	sessionEntryCount: number,
-	defaultIntervalMs: number,
-	largeSessionIntervalMs: number,
-): number {
-	return sessionEntryCount >= LARGE_SESSION_ENTRY_THRESHOLD ? largeSessionIntervalMs : defaultIntervalMs;
-}
-
 export type WorkingStatusRgbColor = {
 	r: number;
 	g: number;

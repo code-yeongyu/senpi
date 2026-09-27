@@ -1,3 +1,21 @@
+## 2026-09-27 - Bound consecutive builtin collapse recovery
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts` allows one automatic corrective attempt for a consecutive collapse chain. A second collapse still aborts and truncates the generation, but records `stopped` remediation without queuing another turn. Genuine interactive/RPC input, a clean non-aborted/non-error completion (including successful tool use), or session start resets the allowance. Session start also clears pending correction and settlement state.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts` previously reset builtin detector state each generation (the intentional after-gap:1 policy recorded below). The corrective nudge starts another generation outside provider retry accounting, so repeated collapse could queue corrections indefinitely. The detector remains active; only consecutive automatic collapse corrections are bounded. Manager-held custom regex once/after-gap policies and control-token provider retry behavior are unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts` is the existing builtin extension that owns abort, truncation, pending correction and settled-time delivery. It can bound its own correction chain without changing provider/core retry policy or adding configuration.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: session/input lifecycle and the builtin `message_end` remediation branch. The independent repetitive-turns lane and manager regex branch retain their existing recovery policies.
+
 # TTSR Fork Tracker
 
 ## 2026-09-25 - The handoff Ask exemption needs a closing status label (senpi#2143)

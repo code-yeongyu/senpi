@@ -1,4 +1,12 @@
-import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
+import {
+	type Component,
+	dispatchMouseEvent,
+	renderChildrenTail,
+	type TailRenderContext,
+	type TailRenderResult,
+	type TuiMouseDispatchResult,
+	type TuiMouseEvent,
+} from "../tui.ts";
 import { applyBackgroundToLine, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
@@ -115,6 +123,31 @@ export class Box implements Component {
 			childY += childHeight;
 		}
 		return undefined;
+	}
+
+	renderTail(width: number, maxRows: number, context: TailRenderContext): TailRenderResult {
+		if (maxRows <= 0 || this.children.length === 0) return { lines: [], pending: false, hasMore: false };
+		const paddingY = Math.max(0, Math.ceil(this.paddingY));
+		const contentWidth = Math.max(1, width - this.paddingX * 2);
+		const child = renderChildrenTail(this.children, contentWidth, Math.max(1, maxRows - paddingY), context);
+		if (child.lines.length === 0 && !child.pending) return child;
+		const top = child.hasMore ? 0 : Math.min(maxRows, paddingY);
+		const omittedTop = child.hasMore ? paddingY : paddingY - top;
+		const blank = this.applyBg("", width);
+		const left = " ".repeat(this.paddingX);
+		const decorated = [
+			...new Array<string>(top).fill(blank),
+			...child.lines.map((line) => this.applyBg(left + line, width)),
+			...new Array<string>(Math.min(maxRows, paddingY)).fill(blank),
+		];
+		const clipped = Math.max(0, decorated.length - maxRows);
+		const lines = decorated.slice(clipped);
+
+		return {
+			lines,
+			pending: child.pending,
+			hasMore: child.hasMore || omittedTop > 0 || paddingY > maxRows || clipped > 0,
+		};
 	}
 
 	render(width: number): string[] {

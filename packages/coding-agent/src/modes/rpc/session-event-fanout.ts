@@ -33,34 +33,66 @@ type RegisteredConnection = {
 	readonly actor: SocketEventSinkActor;
 };
 
-/**
- * A replayable snapshot line.
- *
- * `placeholderLine` is the `media_placeholders` variant. The writer supplies it only when
- * a capable connection was already attached when the record was emitted; a connection that
- * attaches later still needs it, so `source` carries the wire record and the variant is
- * derived once, on the first capable replay, then memoized. Records with no media resolve
- * `placeholderLine` to `line`, so replay stays O(1) and never re-serializes twice.
- */
+/** Boundary records own normalized JSON data; compact deltas keep only one full line. */
 type SnapshotRecord = {
-	readonly line: string;
-	placeholderLine?: string;
-	readonly source?: Record<string, unknown>;
+	readonly line?: string;
+	readonly source?: unknown;
+	readonly placeholderSource?: unknown;
 	readonly rendered: boolean;
+	readonly demotedLine?: string;
+	readonly retainedBytes: number;
 };
 
-/** The placeholder variant of a remembered record, derived and memoized on first use. */
-function snapshotPlaceholderLine(record: SnapshotRecord): string {
-	if (record.placeholderLine !== undefined) return record.placeholderLine;
-	const redacted = record.source === undefined ? undefined : omitInlineMedia(record.source);
-	record.placeholderLine =
-		redacted === undefined || redacted === record.source ? record.line : serializeJsonLine(redacted);
-	return record.placeholderLine;
+type SessionSnapshot = {
+	readonly records: SnapshotRecord[];
+	readonly strings: Map<string, string>;
+	retainedBytes: number;
+	latestFull?: number;
+};
+
+/**
+ * Parse the already emitted wire value, never a mutable caller object or another
+ * invocation of its toJSON. Equal strings from independently parsed host events
+ * share one value within this active message; cumulative delta prefixes stay out
+ * of this pool. The queue charge estimates UTF-16 storage and object metadata,
+ * not the much larger JSON history produced by expanding these shared values.
+ */
+function rememberBoundary(
+	snapshot: SessionSnapshot,
+	line: string,
+	rendered: boolean,
+	placeholderLine?: string,
+): SnapshotRecord {
+	let retainedBytes = 64;
+	const share = (_key: string, value: unknown): unknown => {
+		if (typeof value === "string") {
+			const existing = snapshot.strings.get(value);
+			if (existing !== undefined) return existing;
+			snapshot.strings.set(value, value);
+			retainedBytes += 64 + value.length * 2;
+		} else if (typeof value === "object" && value !== null) {
+			retainedBytes += 64;
+			for (const key of Object.keys(value)) retainedBytes += 32 + key.length * 2;
+		}
+		return value;
+	};
+	const source: unknown = JSON.parse(line, share);
+	const placeholderSource: unknown = placeholderLine === undefined ? undefined : JSON.parse(placeholderLine, share);
+	return { source, placeholderSource, rendered, retainedBytes };
+}
+
+function snapshotLine(record: SnapshotRecord, placeholders: boolean): string {
+	if (record.line !== undefined) return record.line;
+	if (placeholders && record.placeholderSource !== undefined) return serializeJsonLine(record.placeholderSource);
+	const source = record.source;
+	return serializeJsonLine(
+		placeholders && typeof source === "object" && source !== null ? omitInlineMedia(source) : source,
+	);
 }
 
 export class SessionEventFanout {
 	private readonly connections = new Map<string, RegisteredConnection>();
-	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
+	private readonly sessionSnapshots = new Map<string, SessionSnapshot>();
 	private readonly pendingQuestions = new Map<string, Map<string, Record<string, unknown>>>();
 	private readonly connectionCapabilities = new Map<string, Set<string>>();
 	private readonly connectionSessions = new Map<string, Set<string>>();
@@ -213,7 +245,7 @@ export class SessionEventFanout {
 		value: Record<string, unknown>,
 		line: string,
 		placeholderLine?: string,
-		source?: Record<string, unknown>,
+		demotedLine?: string,
 	): void {
 		if (value.type === "extension_ui_request" && value.method === "question" && typeof value.id === "string") {
 			const pending = this.pendingQuestions.get(sessionId) ?? new Map<string, Record<string, unknown>>();
@@ -230,19 +262,37 @@ export class SessionEventFanout {
 			if (frame) Object.assign(frame, { deadlineAtMs: value.deadlineAtMs, remainingMs: value.remainingMs });
 			return;
 		}
-		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
-		const record: SnapshotRecord = {
-			line,
-			placeholderLine,
-			source,
-			rendered: value[RENDERED_COMPONENT_RECORD] === true,
-		};
-		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
-			this.sessionSnapshots.set(sessionId, [record]);
-		} else if (this.sessionSnapshots.has(sessionId)) {
-			this.sessionSnapshots.get(sessionId)?.push(record);
+		if (value.type === "message_end") {
+			this.sessionSnapshots.delete(sessionId);
+			return;
 		}
-		if (value.type === "message_end") this.sessionSnapshots.delete(sessionId);
+		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
+		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
+			this.sessionSnapshots.set(sessionId, { records: [], strings: new Map(), retainedBytes: 0 });
+		}
+		const snapshot = this.sessionSnapshots.get(sessionId);
+		if (!snapshot) return;
+		const rendered = value[RENDERED_COMPONENT_RECORD] === true;
+		const record: SnapshotRecord =
+			demotedLine === undefined
+				? rememberBoundary(snapshot, line, rendered, placeholderLine)
+				: { line, demotedLine, rendered, retainedBytes: 64 + 2 * (line.length + demotedLine.length) };
+		if (demotedLine !== undefined) {
+			// Keep every delta, but only the newest compact delta's cumulative snapshot.
+			const previous = snapshot.latestFull === undefined ? undefined : snapshot.records[snapshot.latestFull];
+			if (previous?.demotedLine !== undefined) {
+				const demoted = {
+					line: previous.demotedLine,
+					rendered: previous.rendered,
+					retainedBytes: 64 + 2 * previous.demotedLine.length,
+				};
+				snapshot.records[snapshot.latestFull!] = demoted;
+				snapshot.retainedBytes += demoted.retainedBytes - previous.retainedBytes;
+			}
+			snapshot.latestFull = snapshot.records.length;
+		}
+		snapshot.records.push(record);
+		snapshot.retainedBytes += record.retainedBytes;
 	}
 
 	forgetSession(sessionId: string): void {
@@ -251,17 +301,42 @@ export class SessionEventFanout {
 	}
 
 	private replaySnapshot(id: string, sessionId: string): void {
-		const actor = this.connections.get(id)?.actor;
-		if (!actor) return;
 		const capable = this.connectionHas(id, RENDERED_COMPONENTS_CAPABILITY);
-		const placeholders = this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY);
-		for (const record of this.sessionSnapshots.get(sessionId) ?? [])
-			if (!record.rendered || capable) actor.enqueue(placeholders ? snapshotPlaceholderLine(record) : record.line);
+		this.replay(
+			id,
+			sessionId,
+			(record) => !record.rendered || capable,
+			this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY),
+		);
 	}
 
 	private replayRendered(id: string, sessionId: string): void {
+		this.replay(id, sessionId, (record) => record.rendered, false);
+	}
+
+	private replay(
+		id: string,
+		sessionId: string,
+		include: (record: SnapshotRecord) => boolean,
+		placeholders: boolean,
+	): void {
 		const actor = this.connections.get(id)?.actor;
-		if (!actor) return;
-		for (const record of this.sessionSnapshots.get(sessionId) ?? []) if (record.rendered) actor.enqueue(record.line);
+		const snapshot = this.sessionSnapshots.get(sessionId);
+		if (!actor || !snapshot) return;
+		// Freeze the attachment's view before subsequent events replace the newest
+		// full delta or clear this session. Records themselves are immutable.
+		const records = snapshot.records.filter(include);
+		if (records.length === 0) return;
+		actor.enqueueReplay(
+			(function* () {
+				try {
+					for (const record of records) yield snapshotLine(record, placeholders);
+				} finally {
+					// A closed actor may still await its current transport write.
+					records.length = 0;
+				}
+			})(),
+			snapshot.retainedBytes + 8 * records.length,
+		);
 	}
 }

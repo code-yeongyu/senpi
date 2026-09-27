@@ -73,7 +73,7 @@ import {
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
-import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
+import { flushRawStdout, restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { resolveResumeTarget } from "./core/resume-target.ts";
@@ -1093,6 +1093,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.version) {
 		console.log(DISPLAY_VERSION);
+		await flushRawStdout();
 		process.exit(0);
 	}
 
@@ -1107,6 +1108,7 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 		console.log(`Exported to: ${result}`);
+		await flushRawStdout();
 		process.exit(0);
 	}
 
@@ -1161,12 +1163,14 @@ export async function main(args: string[], options?: MainOptions) {
 		printHelp(flags);
 		writeHelpFlagsCache({ scope, flags, extensionPaths });
 		printTimings();
+		await flushRawStdout();
 		process.exit(0);
 	}
 
 	if (parsed.listTips) {
 		const { listTips } = await import("./cli/list-tips.ts");
 		listTips();
+		await flushRawStdout();
 		process.exit(0);
 	}
 
@@ -1196,6 +1200,8 @@ export async function main(args: string[], options?: MainOptions) {
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await listModels(services.modelRuntime, searchPattern);
+		// A successful catalog is consumed by task admission. Exit only after piped rows arrive.
+		await flushRawStdout();
 		process.exit(0);
 	}
 

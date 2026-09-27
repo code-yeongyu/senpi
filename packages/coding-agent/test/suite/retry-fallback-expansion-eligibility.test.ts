@@ -1,6 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { canonicalizeFallbackChains } from "../../src/core/retry-fallback/chains.ts";
+import { rankFamilyModels } from "../../src/core/retry-fallback/expansion.ts";
 
 function model(provider: string, id: string): Model<Api> {
 	return {
@@ -44,6 +45,33 @@ const catalog = [
 ];
 
 describe("bare expansion eligibility gate", () => {
+	it("probes only matching models and rechecks eligibility on the next expansion without changing ranking", () => {
+		let subscriptionEnabled = true;
+		const checked: string[] = [];
+		const tiers = {
+			isUsingOAuth: (candidate: Model<Api>) => candidate.provider === "anthropic-subscription",
+			isFallbackEligible: (candidate: Model<Api>) => {
+				checked.push(`${candidate.provider}/${candidate.id}`);
+				return (
+					candidate.provider !== "cursor-cli-oauth" &&
+					(candidate.provider !== "anthropic-subscription" || subscriptionEnabled)
+				);
+			},
+		};
+		const expectedProbes = [`anthropic/${OPUS5}`, `anthropic-subscription/${OPUS5}`, `cursor-cli-oauth/${OPUS5}`];
+
+		expect(rankFamilyModels(catalog, OPUS5, tiers).map((candidate) => candidate.provider)).toEqual([
+			"anthropic-subscription",
+			"anthropic",
+		]);
+		expect(checked).toEqual(expectedProbes);
+
+		subscriptionEnabled = false;
+		checked.length = 0;
+		expect(rankFamilyModels(catalog, OPUS5, tiers).map((candidate) => candidate.provider)).toEqual(["anthropic"]);
+		expect(checked).toEqual(expectedProbes);
+	});
+
 	it("excludes a provider whose registration declares the lane unusable, even with an OAuth credential", () => {
 		// The regression shape: anthropic-subscription holds an OAuth credential (tier 0,
 		// ranked first) but its registration declares the lane unusable. Ranking
