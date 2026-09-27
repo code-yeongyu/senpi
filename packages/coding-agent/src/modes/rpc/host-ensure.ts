@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -140,8 +141,15 @@ export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHos
 		await options._test?.afterLockAcquired?.();
 		return await ensureHostLocked(paths, socket, options);
 	} finally {
+		diag2227(`ensure lock-release-start at=${Date.now()}`);
 		await release();
+		diag2227(`ensure lock-released at=${Date.now()}`);
 	}
+}
+
+function diag2227(line: string): void {
+	const file = process.env.DIAG_2227_FILE;
+	if (file) appendFileSync(file, `DIAG2227 ${line}\n`);
 }
 
 async function ensureHostLocked(
@@ -419,6 +427,7 @@ async function startHost(
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, childExit);
+	diag2227(`ensure readiness-answered at=${Date.now()} registeredStartTime=${String(pidFile.processStartTime)}`);
 	if (isCompatible(result.protocol)) return { pid: pidFile.pid, socket, reused: false };
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop
 	// failure here (unreadable identity, a host that outlives SIGKILL) would other-

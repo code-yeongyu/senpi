@@ -1,6 +1,6 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { on, once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer, type Server as HttpServer, type ServerResponse } from "node:http";
 import { type AddressInfo, createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -230,12 +230,28 @@ describe("ensureHost-spawned host lifecycle", () => {
 		const model = await HeldAnthropicModel.start();
 		models.push(model);
 		writeRpcModelsJson(qa.agentDir, model.origin);
-		await ensureLifecycleHost(qa, {
-			policy: { idleExitMs: 800 },
-			hostArgs: ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
-		});
-		const entry = currentManaged();
-		const peer = await JsonlPeer.connect(qa.socket);
+		const diag = (line: string) => { if (process.env.DIAG_2227_FILE) appendFileSync(process.env.DIAG_2227_FILE, `DIAG2227 ${line}\n`); };
+		diag(`test ensure-start at=${Date.now()}`);
+		let peer: JsonlPeer;
+		let entry: ReturnType<typeof currentManaged>;
+		try {
+			await ensureLifecycleHost(qa, {
+				policy: { idleExitMs: 800 },
+				hostArgs: ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
+			});
+			diag(`test ensure-returned-and-pidfile-read at=${Date.now()}`);
+			entry = currentManaged();
+			const inject = Number(process.env.DIAG_2227_INJECT_MS ?? 0);
+			if (inject > 0) await delay(inject);
+			diag(`test connect-start at=${Date.now()} injectMs=${inject}`);
+			peer = await JsonlPeer.connect(qa.socket);
+			diag(`test connected at=${Date.now()}`);
+		} catch (cause) {
+			diag(`test connect-failed at=${Date.now()} ${String(cause)}`);
+			throw cause;
+		} finally {
+			diag(`supervisor-stderr-begin\n${readSupervisorStderr(qa)}\nDIAG2227 supervisor-stderr-end`);
+		}
 		const opened = await peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
 		const sessionId = openedSessionId(opened);
 		const agentStart = peer.waitFor((value) => value.type === "agent_start" && value.sessionId === sessionId);
@@ -739,6 +755,7 @@ async function ensureLifecycleHost(
 					: { command: process.execPath, args: [hostLifecycleEntry(), "--socket", qa.socket, ...hostArgs] },
 			},
 		});
+		if (process.env.DIAG_2227_FILE) appendFileSync(process.env.DIAG_2227_FILE, `DIAG2227 test ensureHost-returned at=${Date.now()}\n`);
 		managed.push({ pidFile: await recordedPidFile(qa, ensured.pid), pidFilePath: qa.pidFilePath });
 		return ensured;
 	} catch (error) {
