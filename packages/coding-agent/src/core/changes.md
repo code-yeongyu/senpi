@@ -1,22 +1,25 @@
-## 2026-09-27 - Drop `SYSTEM.md` / `APPEND_SYSTEM.md` from the project trust list (senpi#2166)
+## 2026-09-27 - Restore `SYSTEM.md` / `APPEND_SYSTEM.md` discovery (senpi#2166)
 
 ### What changed
 
-- `packages/coding-agent/src/core/trust-manager.ts`: removed `"SYSTEM.md"` and `"APPEND_SYSTEM.md"` from `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES`. Neither file is discovered any more, so neither entry could ever match a project resource.
-- `packages/coding-agent/docs/usage.md`: the System Prompt Files section now documents the `--system-prompt` / `--append-system-prompt` flags instead of two files that are not read, and points at `AGENTS.md` for durable per-project guidance.
+- `packages/coding-agent/src/core/resource-loader.ts`: `DefaultResourceLoader.discoverPromptFiles(fileName)` resolves `SYSTEM.md` / `APPEND_SYSTEM.md` from the agent directory and the config directory containing it. The loader falls back to those files when the matching flag is absent. A discovered `APPEND_SYSTEM.md` is applied before explicit `--append-system-prompt` values; an explicit `--system-prompt` wins outright.
+- `packages/coding-agent/src/core/trust-manager.ts`: removed `"SYSTEM.md"` and `"APPEND_SYSTEM.md"` from `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES`. Project directories are no longer read, so neither name can match a loaded resource.
+- `packages/coding-agent/docs/usage.md`: the System Prompt Files section describes the two user-owned locations that are consulted and the precedence between them and the flags.
+- `packages/coding-agent/test/resource-loader.test.ts`: discovery, precedence, the empty case, and a guard that a project config directory is not read.
 
 ### Why
 
-Discovery was removed deliberately — `test/resource-loader.test.ts` pins that behavior with `does not expose ignored global SYSTEM.md as the system prompt source` and calls the append file *legacy* — but the documentation and the trust list were never updated with it. A user following the documentation gets a silently ignored file, and the trust list carries two names that can never resolve.
+Discovery was removed deliberately, but `docs/usage.md` was never updated to match, so a user who follows it writes a file that is silently never opened, with no warning and no diagnostic. The removal also left both filenames in the project trust list, where they could never match anything.
 
-This keeps the removal and repairs the leftovers. Restoring discovery instead would need the project's trust gate wired in first, because a system prompt must not be settable by merely entering a directory.
+The two files the loader does accept now work again. Project directories are still excluded, because a system prompt must not become settable by merely entering a directory; that path needs the trust gate threaded into prompt assembly first.
 
 ### Why an extension could not handle it
 
-The documentation and the trust constant are both consumed before extensions are bound, and neither is reachable through the extension API.
+System prompt assembly happens in the resource loader before extensions are bound, and no extension event carries enough information to replace the base prompt.
 
 ### Expected merge conflict zones
 
+- LOW: the `this.systemPrompt` / `this.appendSystemPrompt` assignment block in `DefaultResourceLoader.load()`.
 - LOW: the `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES` array literal in `trust-manager.ts`.
 - LOW: the System Prompt Files section in `docs/usage.md`.
 

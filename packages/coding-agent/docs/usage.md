@@ -135,14 +135,18 @@ Use context files for project conventions, commands, safety rules, and preferenc
 
 ### System Prompt Files
 
-There is no file-based system prompt. Use the flags, which accept literal text or a path:
+Replace the default system prompt with `SYSTEM.md` in either user-owned location:
 
-- `--system-prompt <text|file>` replaces the generated base prompt
-- `--append-system-prompt <text|file>` appends to it, and may be repeated
+- `~/.senpi/agent/SYSTEM.md`
+- `~/.senpi/SYSTEM.md`
 
-Both are per-invocation; there is no discovered `SYSTEM.md` / `APPEND_SYSTEM.md`. For durable
-per-project guidance use `AGENTS.md`, which is layered as context rather than replacing the
-prompt.
+Append to the default prompt without replacing it with `APPEND_SYSTEM.md` in either location. An
+explicit `--system-prompt` takes precedence over `SYSTEM.md`, and explicit `--append-system-prompt`
+values are applied after the discovered `APPEND_SYSTEM.md`. Both flags accept literal text or a
+path.
+
+Project directories are not searched. A directory you enter must not be able to replace the system
+prompt, so per-project guidance belongs in `AGENTS.md`, which is layered as context.
 
 ### Project Trust
 
