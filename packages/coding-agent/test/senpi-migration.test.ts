@@ -3,7 +3,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { migrateLegacySenpiDirs } from "../src/legacy-senpi-dir-migration.ts";
 import { runMigrations } from "../src/migrations.ts";
+import { treeDigest, withFakeHome, writeUpstreamPiAgentDir } from "./support/legacy-pi-home.ts";
 
 describe("senpi migration", () => {
 	const tempDirs: string[] = [];
@@ -14,51 +16,75 @@ describe("senpi migration", () => {
 		}
 	});
 
-	it("moves legacy .pi directories into the .senpi layout when the new paths do not exist", () => {
-		// given
-		const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "senpi-migration-test-"));
+	function upstreamPiHome(prefix: string): { fakeHome: string; cwd: string; piDir: string; newAgentDir: string } {
+		const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 		tempDirs.push(rootDir);
 		const fakeHome = path.join(rootDir, "home");
 		const cwd = path.join(rootDir, "project");
-		const oldAgentDir = path.join(fakeHome, ".pi", "agent");
-		const oldMomDir = path.join(fakeHome, ".pi", "mom");
-		const oldProjectDir = path.join(cwd, ".pi");
-		fs.mkdirSync(oldAgentDir, { recursive: true });
-		fs.mkdirSync(oldMomDir, { recursive: true });
-		fs.mkdirSync(oldProjectDir, { recursive: true });
-		fs.writeFileSync(path.join(oldAgentDir, "settings.json"), "{}\n", "utf-8");
-		fs.writeFileSync(path.join(oldMomDir, "auth.json"), "{}\n", "utf-8");
-		fs.writeFileSync(path.join(oldProjectDir, "settings.json"), "{}\n", "utf-8");
+		const piDir = path.join(fakeHome, ".pi");
+		writeUpstreamPiAgentDir(path.join(piDir, "agent"));
+		fs.mkdirSync(path.join(piDir, "mom"), { recursive: true });
+		fs.writeFileSync(path.join(piDir, "mom", "settings.json"), "{}\n", "utf-8");
+		fs.mkdirSync(path.join(cwd, ".pi", "skills"), { recursive: true });
+		fs.writeFileSync(path.join(cwd, ".pi", "settings.json"), "{}\n", "utf-8");
+		fs.writeFileSync(path.join(cwd, ".pi", "skills", "SKILL.md"), "# skill\n", "utf-8");
+		return { fakeHome, cwd, piDir, newAgentDir: path.join(fakeHome, ".senpi", "agent") };
+	}
 
-		const newAgentDir = path.join(fakeHome, ".senpi", "agent");
-		const previousAgentDir = process.env[ENV_AGENT_DIR];
-		const previousHome = process.env.HOME;
-		process.env[ENV_AGENT_DIR] = newAgentDir;
-		process.env.HOME = fakeHome;
+	it("copies upstream pi directories into the .senpi layout and leaves the originals byte-identical", () => {
+		// given
+		const { fakeHome, cwd, piDir, newAgentDir } = upstreamPiHome("senpi-migration-test-");
+		const piBefore = treeDigest(piDir);
+		const projectBefore = treeDigest(path.join(cwd, ".pi"));
 
-		try {
-			// when
-			runMigrations(cwd);
-		} finally {
-			// then
-			if (previousAgentDir === undefined) {
-				delete process.env[ENV_AGENT_DIR];
-			} else {
-				process.env[ENV_AGENT_DIR] = previousAgentDir;
-			}
-			if (previousHome === undefined) {
-				delete process.env.HOME;
-			} else {
-				process.env.HOME = previousHome;
-			}
+		// when
+		withFakeHome(fakeHome, newAgentDir, () => runMigrations(cwd));
+
+		// then
+		expect(treeDigest(piDir)).toEqual(piBefore);
+		expect(treeDigest(path.join(cwd, ".pi"))).toEqual(projectBefore);
+		const copiedAgent = treeDigest(newAgentDir);
+		for (const [entry, digest] of Object.entries(treeDigest(path.join(piDir, "agent")))) {
+			expect(copiedAgent[entry]).toBe(digest);
 		}
+		expect(fs.statSync(path.join(newAgentDir, "auth.json")).mode & 0o777).toBe(0o600);
+		expect(fs.existsSync(path.join(fakeHome, ".senpi", "mom", "settings.json"))).toBe(true);
+		expect(fs.readFileSync(path.join(cwd, ".senpi", "skills", "SKILL.md"), "utf-8")).toBe("# skill\n");
+	});
 
-		expect(fs.existsSync(path.join(fakeHome, ".pi", "agent"))).toBe(false);
-		expect(fs.existsSync(path.join(fakeHome, ".pi", "mom"))).toBe(false);
-		expect(fs.existsSync(path.join(cwd, ".pi"))).toBe(false);
-		expect(fs.existsSync(path.join(fakeHome, ".senpi", "agent", "settings.json"))).toBe(true);
-		expect(fs.existsSync(path.join(fakeHome, ".senpi", "mom", "auth.json"))).toBe(true);
-		expect(fs.existsSync(path.join(cwd, ".senpi", "settings.json"))).toBe(true);
+	it("copies only missing pi entries into an existing agent dir without overwriting its files", () => {
+		// given
+		const { fakeHome, cwd, piDir, newAgentDir } = upstreamPiHome("senpi-migration-existing-");
+		fs.mkdirSync(newAgentDir, { recursive: true });
+		fs.writeFileSync(path.join(newAgentDir, "settings.json"), '{"source":"senpi"}\n', "utf-8");
+		const piBefore = treeDigest(piDir);
+
+		// when
+		withFakeHome(fakeHome, newAgentDir, () => runMigrations(cwd));
+
+		// then
+		expect(treeDigest(piDir)).toEqual(piBefore);
+		expect(fs.readFileSync(path.join(newAgentDir, "settings.json"), "utf-8")).toBe('{"source":"senpi"}\n');
+		expect(fs.readFileSync(path.join(newAgentDir, "extensions", "my-ext.ts"), "utf-8")).toBe(
+			"export default () => {};\n",
+		);
+	});
+
+	it("a second pass changes nothing on either side", () => {
+		// given
+		const { fakeHome, cwd, piDir, newAgentDir } = upstreamPiHome("senpi-migration-idempotent-");
+		withFakeHome(fakeHome, newAgentDir, () => migrateLegacySenpiDirs(cwd));
+		const piAfterFirst = treeDigest(piDir);
+		const senpiAfterFirst = treeDigest(path.join(fakeHome, ".senpi"));
+		const projectAfterFirst = treeDigest(path.join(cwd, ".senpi"));
+
+		// when
+		withFakeHome(fakeHome, newAgentDir, () => migrateLegacySenpiDirs(cwd));
+
+		// then
+		expect(treeDigest(piDir)).toEqual(piAfterFirst);
+		expect(treeDigest(path.join(fakeHome, ".senpi"))).toEqual(senpiAfterFirst);
+		expect(treeDigest(path.join(cwd, ".senpi"))).toEqual(projectAfterFirst);
 	});
 
 	it("moves missing nested legacy agent files without overwriting current files", () => {

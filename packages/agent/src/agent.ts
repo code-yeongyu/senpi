@@ -1,12 +1,15 @@
-import type {
-	Context,
-	ImageContent,
-	Message,
-	Model,
-	SimpleStreamOptions,
-	TextContent,
-	ThinkingBudgets,
-	Transport,
+import {
+	type Context,
+	type ImageContent,
+	type Message,
+	type Model,
+	type ProviderDiagnostic,
+	readProviderDiagnostic,
+	type SimpleStreamOptions,
+	sanitizeProviderDiagnostic,
+	type TextContent,
+	type ThinkingBudgets,
+	type Transport,
 } from "@earendil-works/pi-ai";
 import {
 	buildProviderContext as buildProviderContextFromAgentContext,
@@ -65,15 +68,21 @@ const DEFAULT_MODEL = {
 	maxTokens: 0,
 } satisfies Model<any>;
 
-type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "pendingToolCalls" | "errorMessage"> & {
+type MutableAgentState = Omit<
+	AgentState,
+	"isStreaming" | "streamingMessage" | "pendingToolCalls" | "errorMessage" | "providerDiagnostic"
+> & {
 	isStreaming: boolean;
 	streamingMessage?: AgentMessage;
 	pendingToolCalls: Set<string>;
 	errorMessage?: string;
+	providerDiagnostic?: ProviderDiagnostic;
 };
 
 function createMutableAgentState(
-	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>,
+	initialState?: Partial<
+		Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage" | "providerDiagnostic">
+	>,
 ): MutableAgentState {
 	let tools = initialState?.tools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
@@ -100,12 +109,15 @@ function createMutableAgentState(
 		streamingMessage: undefined,
 		pendingToolCalls: new Set<string>(),
 		errorMessage: undefined,
+		providerDiagnostic: undefined,
 	};
 }
 
 /** Options for constructing an {@link Agent}. */
 export interface AgentOptions {
-	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>;
+	initialState?: Partial<
+		Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage" | "providerDiagnostic">
+	>;
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
 	streamFn: StreamFn;
@@ -413,6 +425,7 @@ export class Agent {
 		this._state.streamingMessage = undefined;
 		this._state.pendingToolCalls = new Set<string>();
 		this._state.errorMessage = undefined;
+		this._state.providerDiagnostic = undefined;
 		this.clearFollowUpQueue();
 		this.clearSteeringQueue();
 	}
@@ -659,6 +672,7 @@ export class Agent {
 		this._state.isStreaming = true;
 		this._state.streamingMessage = undefined;
 		this._state.errorMessage = undefined;
+		this._state.providerDiagnostic = undefined;
 
 		try {
 			await executor(abortController.signal);
@@ -718,6 +732,7 @@ export class Agent {
 	}
 
 	private async handleRunFailure(error: unknown, aborted: boolean): Promise<void> {
+		const providerDiagnostic = aborted ? undefined : readProviderDiagnostic(error);
 		const failureMessage = {
 			role: "assistant",
 			content: [{ type: "text", text: "" }],
@@ -727,6 +742,7 @@ export class Agent {
 			usage: EMPTY_USAGE,
 			stopReason: aborted ? "aborted" : "error",
 			errorMessage: error instanceof Error ? error.message : String(error),
+			...(providerDiagnostic === undefined ? {} : { providerDiagnostic }),
 			...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
@@ -783,6 +799,7 @@ export class Agent {
 			case "turn_end":
 				if (event.message.role === "assistant" && event.message.errorMessage) {
 					this._state.errorMessage = event.message.errorMessage;
+					this._state.providerDiagnostic = sanitizeProviderDiagnostic(event.message.providerDiagnostic);
 				}
 				break;
 

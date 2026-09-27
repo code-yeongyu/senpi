@@ -55,6 +55,7 @@ function runtime(
 			agentDir: options.agentDir,
 			// Projected into the `open_session` wire state, which shares one builder with get_state.
 			isFastModeActive: () => false,
+			agent: { state: {} },
 			getContextUsage: () => undefined,
 			favoriteModels: [],
 			scopedModels: [],

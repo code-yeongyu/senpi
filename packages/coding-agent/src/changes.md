@@ -1,3 +1,22 @@
+## 2026-09-27 - Branded starts copy an upstream pi install instead of moving it, and restore one they drained (oh-my-openagent#8039)
+
+### What changed
+
+- `packages/coding-agent/src/migrations.ts`: `runMigrations()` runs the new one-time scan migration `restoreDrainedPiDirs` (`src/pi-dir-restore.ts`) before `migrateLegacySenpiDirs`, passing the completed set it already read. When `~/.pi` exists, its `agent` (or `mom`) directory holds no user state (missing, empty, or only the `{}` `auth.json`/`models-store.json` stubs pi writes itself), the agent dir lives under `~/<configDir>` (compared by canonical path), and the migrations state records the old moving `migrateLegacySenpiDirs` (or a pre-state-file build left engine state), it copies the upstream pi entries (`auth.json`, `settings.json`, `models.json`, `sessions/`, `extensions/`, `skills/`, ...) back into `~/.pi/agent` and `~/<configDir>/mom` into `~/.pi/mom`. Real files are never overwritten; a `{}` stub is replaced only when the agent dir has that entry. `SCAN_MIGRATIONS` (`src/migrations-state.ts`) gains its name, so it runs once per agent dir; the schema version is unchanged so the move-era record stays readable as evidence.
+- `migrateLegacySenpiDirs` (`src/legacy-senpi-dir-migration.ts`, fork-only) now copies the official `~/.pi/agent`, `~/.pi/mom` and `<cwd>/.pi` (missing top-level entries only, modes and timestamps kept, copy-on-write where supported, `src/legacy-dir-copy.ts`) and keeps the move only for `.pi` leftovers nested inside the fork's own config dir.
+
+### Why
+
+- The first start of a branded engine (omo: `~/.omo/agent`) renamed a real upstream pi install into its own directory, leaving pi empty (oh-my-openagent#8039, #8370). `brand-dir-migration.ts` already copies `~/.senpi` for exactly this reason. Users already drained get their pi state back on the next start.
+
+### Why an extension could not handle it
+
+- Migrations run in `runMigrations()` before any extension loads, and the damage happens there.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/migrations.ts`: the three lines before `migrateLegacySenpiDirs(cwd)` in `runMigrations()` and one import.
+
 ## 2026-09-27 - Unsupervised processes leave a record when they crash natively (senpi#2194)
 
 ### What changed

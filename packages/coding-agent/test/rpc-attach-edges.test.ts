@@ -26,6 +26,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 			sessionManager: options.sessionManager,
 			agentDir: options.agentDir,
 			isFastModeActive: () => false,
+			agent: { state: {} },
 			isStreaming: false,
 			// The shared state builder projects open_session through the full session
 			getContextUsage: () => undefined,

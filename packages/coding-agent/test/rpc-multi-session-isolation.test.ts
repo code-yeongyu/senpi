@@ -178,6 +178,7 @@ function hostFixture() {
 				// answer them because both surfaces share one state builder.
 				effectiveServiceTier: undefined,
 				isFastModeActive: () => false,
+				agent: { state: {} },
 				get isStreaming() {
 					return streaming.get(durableSessionId) ?? false;
 				},

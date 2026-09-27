@@ -4,6 +4,7 @@ import {
 	type CursorExecResolvedCarrier,
 	isClassifierRefusal,
 	isCursorExecResolved,
+	readProviderDiagnostic,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type { AgentLoopConfig } from "./types.ts";
@@ -85,6 +86,7 @@ export function createTerminalFailureAssistantMessage(
 	partialMessage: AssistantMessage | null,
 ): AssistantMessage {
 	const errorMessage = error instanceof Error ? error.message : String(error);
+	const providerDiagnostic = reason === "error" ? readProviderDiagnostic(error) : undefined;
 	return {
 		role: "assistant",
 		content: partialMessage?.content ?? [{ type: "text", text: "" }],
@@ -97,6 +99,7 @@ export function createTerminalFailureAssistantMessage(
 		usage: partialMessage?.usage ?? EMPTY_USAGE,
 		stopReason: reason,
 		errorMessage: errorMessage || (reason === "aborted" ? "Request was aborted" : "Error"),
+		...(providerDiagnostic === undefined ? {} : { providerDiagnostic }),
 		...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 		timestamp: partialMessage?.timestamp ?? Date.now(),
 	};

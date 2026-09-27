@@ -8,6 +8,7 @@ import type {
 	ImageContent,
 	Message,
 	Model,
+	ProviderDiagnostic,
 	SimpleStreamOptions,
 	TextContent,
 	ThinkingSelection,
@@ -428,6 +429,8 @@ export interface AgentState {
 	readonly pendingToolCalls: ReadonlySet<string>;
 	/** Error message from the most recent failed or aborted assistant turn, if any. */
 	readonly errorMessage?: string;
+	/** Structured provider failure family of the turn that set `errorMessage`, when its provider adapter supplied one. */
+	readonly providerDiagnostic?: ProviderDiagnostic;
 }
 
 /** Final or partial result produced by a tool. */

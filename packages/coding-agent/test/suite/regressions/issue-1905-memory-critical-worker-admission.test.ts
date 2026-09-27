@@ -31,6 +31,7 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 			sessionManager: options.sessionManager,
 			agentDir: options.agentDir,
 			isFastModeActive: () => false,
+			agent: { state: {} },
 			getContextUsage: () => undefined,
 			favoriteModels: [],
 			scopedModels: [],

@@ -4932,3 +4932,35 @@ TextContent and pi-messages request construction.
 - LOW: the prompt-cache export block in `index.ts`.
 
 - Covered production paths: `packages/ai/src/utils/prompt-cache-ttl.ts`, `packages/ai/src/index.ts`.
+
+## 2026-09-27 — Structured providerDiagnostic on failed provider turns (#2197)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains the optional `providerDiagnostic?: ProviderDiagnostic` field.
+- `packages/ai/src/api/anthropic-messages.ts`: the two `client.beta.messages.create(...).asResponse()` awaits run through `awaitProviderTransport(..., anthropicProviderDiagnosticFromError)`, the `event: error` SSE throw attaches `anthropicProviderDiagnosticFromSseData(sse.data)` to the same `Error(errorText)`, and the catch copies `readProviderDiagnostic(error)` onto `output.providerDiagnostic` for `stopReason: "error"` only. `errorMessage` and the `provider_retry_failure` diagnostic are byte-identical.
+- `packages/ai/src/api/openai-completions.ts`: `createStream` awaits the SDK call through `awaitProviderTransport` and wraps the SDK stream in `iterateProviderTransport` (both with `openAICompatibleProviderDiagnosticFromError`), so HTTP rejections and in-stream error chunks carry a diagnostic; the catch copies it like the Anthropic adapter. `errorMessage` formatting is unchanged.
+- `packages/ai/src/index.ts`: re-exports `./provider-diagnostic.ts` (`ProviderDiagnostic` types, `PROVIDER_DIAGNOSTIC_MAX_BYTES`, `sanitizeProviderDiagnostic`, `readProviderDiagnostic`).
+- Fork-only modules: `src/provider-diagnostic.ts`, `src/utils/provider-diagnostic-vocabulary.ts` (closed token allowlist, status compatibility, 512-byte builder), `src/utils/provider-diagnostic-carrier.ts` (WeakMap side channel on thrown errors), `src/utils/provider-diagnostic-sources.ts` (per-adapter readers and the transport seam wrappers).
+
+### Why
+
+- SDK/RPC consumers could only tell an auth failure from a rate limit, quota exhaustion, a context overflow or an outage by regex over `errorMessage`. The diagnostic is minted where the structured evidence still exists (the SDK error its own transport call raised, the SSE envelope before it becomes an Error message), never from message text, headers or request ids, and never from errors raised by caller callbacks such as `onPayload`. Prior art: gajae-code #6017.
+
+### Why an extension could not handle it
+
+- The structured status and error code are gone once the adapter reduces the failure to `errorMessage`; only the adapter's own transport seam can observe them, and extensions see the already-collapsed message.
+
+### Expected merge conflict zones
+
+- MEDIUM: `createRequest` in `anthropic-messages.ts` (the `send` wrapper around `client.beta.messages.create`) and the stream catch block; `createStream` and the catch block in `openai-completions.ts`.
+- LOW: the `event: error` branch of `iterateAnthropicEvents`; the `AssistantMessage` interface in `types.ts`; the export block in `index.ts`.
+
+- Covered production paths: `packages/ai/src/types.ts`, `packages/ai/src/api/anthropic-messages.ts`, `packages/ai/src/api/openai-completions.ts`, `packages/ai/src/index.ts`.
+
+### Review round 2: retry-delay boundary
+
+- `packages/ai/src/utils/provider-retry.ts`: `validateServerRetryDelayMs` receives the provider error itself instead of only its message and re-attaches the diagnostic already minted on it (`peekProviderDiagnostic` → `attachProviderDiagnostic`) to the `ProviderRetryDelayError` it throws when the server's requested delay exceeds `maxRetryDelayMs`. Without this the replacement error dropped the diagnostic on both adapters. The message text, `retryAfterMs`, the delay limit and the retry decision are unchanged; nothing is classified from the text or the headers.
+- Expected merge conflict zones: LOW, the `validateServerRetryDelayMs` signature and its single call site in `getRetryDelayMs`.
+
+- Covered production paths: `packages/ai/src/utils/provider-retry.ts`.

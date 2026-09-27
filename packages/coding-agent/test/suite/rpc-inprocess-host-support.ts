@@ -91,6 +91,7 @@ function inProcessRuntimeFactory(): {
 				sessionManager: manager,
 				agentDir: options.agentDir,
 				isFastModeActive: () => false,
+				agent: { state: {} },
 				getContextUsage: () => undefined,
 				favoriteModels: [],
 				scopedModels: [],

@@ -28,6 +28,7 @@ import { createRpcSessionBinding, type RpcSessionBinding } from "./session-bindi
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
+import { selectSweepEvictions } from "./session-sweep.ts";
 
 /** How often a draining host re-checks whether the work it is waiting for has settled. */
 const DRAIN_SWEEP_MS = 50;
@@ -358,12 +359,9 @@ export class SessionCommandRouter {
 	}
 
 	/**
-	 * One occupancy sweep. Evicts open sessions idle longer than idleEvictionMs,
-	 * where "idle" is the COMPLETE session-owned activity contract
-	 * (`AgentSession.isSessionBusy`: agent run, bash, background terminal jobs and
-	 * other published wake sources, compaction, barrier-held session work) - busy
-	 * sessions restart their idle clock instead, so work that outlives a turn is
-	 * never killed. While the host reports memory pressure the window is HALVED, so an
+	 * One occupancy sweep. Evicts what `selectSweepEvictions` decides: open sessions idle
+	 * longer than idleEvictionMs, and unattached sessions whose transcript directory is
+	 * gone. While the host reports memory pressure the window is HALVED, so an
 	 * idle session's memory returns to the process sooner. Fires onEmptyExit once the
 	 * registry has STAYED empty for emptyExitMs with the exit permitted; any live session
 	 * or connected client resets that window. Runs on an unref'd interval and is safe to
@@ -372,19 +370,9 @@ export class SessionCommandRouter {
 	sweepIdleSessions(): void {
 		const now = this.idleNow();
 		const idleEvictionMs = this.memoryPressure ? this.idleEvictionMs / 2 : this.idleEvictionMs;
-		if (Number.isFinite(idleEvictionMs)) {
-			for (const { sessionId, status } of this.registry.list()) {
-				if (status !== "open") continue;
-				const entry = this.registry.peek(sessionId);
-				if (!entry) continue;
-				if (entry.worker?.busy || entry.runtime?.session.isSessionBusy) {
-					// Session-owned work defers eviction; the window restarts when it settles.
-					entry.lastCommandAt = now;
-					continue;
-				}
-				if (now - entry.lastCommandAt >= idleEvictionMs) void this.evictIdleSession(sessionId);
-			}
-		}
+		const verdicts = selectSweepEvictions(this.registry, now, idleEvictionMs);
+		for (const sessionId of verdicts.orphaned) void this.evictIdleSession(sessionId, "session_dir_removed");
+		for (const sessionId of verdicts.idle) void this.evictIdleSession(sessionId);
 		if (Number.isFinite(this.emptyExitMs)) {
 			if (this.registry.size === 0 && (this.canExitWhenEmpty?.() ?? true)) {
 				if (this.emptySince === undefined) this.emptySince = now;

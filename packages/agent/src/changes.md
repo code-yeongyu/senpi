@@ -1775,3 +1775,26 @@ Conflict zone: `agent-loop.ts` `streamAssistantResponse` catch.
 - HIGH: `packages/agent/src/harness/env/nodejs.ts` capture pipeline and Windows kill path; `packages/agent/src/types.ts` `AgentLoopConfig`/`AgentTool` interfaces.
 - MEDIUM: `estimateContextTokens`/`findCutPoint` in `compaction.ts`; `execute` bodies of `tools/edit.ts` and `tools/write.ts`; `ShellExecOptions` in `harness/types.ts`.
 - LOW: `convertToLlm` tail in `harness/messages.ts`; `retryNotBefore` signature; the `assistant-terminal-state.ts` export line in `index.ts`.
+
+## 2026-09-27 — Carry providerDiagnostic through the agent (#2197)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `AgentState` keeps `providerDiagnostic` next to `errorMessage`: `turn_end` sets it (revalidated with `sanitizeProviderDiagnostic`) whenever it sets `errorMessage`, and reset/run start clear it with `errorMessage`. `handleRunFailure` copies `readProviderDiagnostic(error)` onto the synthesized failure message when the run was not aborted.
+- `packages/agent/src/types.ts`: `AgentState.providerDiagnostic?: ProviderDiagnostic`.
+- Fork-only `src/assistant-terminal-state.ts`: `createTerminalFailureAssistantMessage` copies `readProviderDiagnostic(error)` for `reason: "error"`.
+
+### Why
+
+- Terminal failure messages are rebuilt field by field, so an adapter's diagnostic attached to a thrown provider error was lost before it reached SDK consumers; `AgentState` exposed only the string error.
+
+### Why an extension could not handle it
+
+- The terminal message literals and `AgentState` reducer are core agent-loop contracts; an extension only sees the rebuilt message.
+
+### Expected merge conflict zones
+
+- MEDIUM: `MutableAgentState`/`createMutableAgentState`, `handleRunFailure` and the `turn_end` case of `processEvents` in `agent.ts`.
+- LOW: the `AgentState` interface tail in `types.ts`.
+
+- Covered production paths: `packages/agent/src/agent.ts`, `packages/agent/src/types.ts`.

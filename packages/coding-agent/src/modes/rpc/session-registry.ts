@@ -1,5 +1,5 @@
-import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import {
 	type AgentSessionLaunchProfile,
@@ -12,6 +12,7 @@ import type { SessionContext, SessionKind, SessionStartEvent } from "../../core/
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
 import { assertValidSessionId, SessionManager } from "../../core/session-manager.ts";
 import { SESSION_PATH_RETRY_AFTER_MS, type SessionPathReservations } from "./host-reservations.ts";
+import { canonicalSessionPath } from "./session-path-key.ts";
 import { beginSessionClose, closeMarkedSession, closeSession, type SessionTeardownHost } from "./session-teardown.ts";
 import type { SessionWorkerClient } from "./session-worker-client.ts";
 
@@ -141,12 +142,6 @@ export interface OpenRpcSession {
 	attached?: boolean;
 }
 
-function canonicalPath(path: string): string {
-	const absolutePath = resolve(path);
-	if (existsSync(absolutePath)) return realpathSync(absolutePath);
-	return `${realpathSync(dirname(absolutePath))}/${basename(absolutePath)}`;
-}
-
 /** Freezes an open's launch inputs, including the nested objects a client supplied. */
 export function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSessionLaunchProfile> {
 	return Object.freeze({
@@ -220,7 +215,7 @@ export class RpcSessionRegistry {
 	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
 		this.validateProfile(profile);
 		this.syncRuntimeMetadata();
-		const sessionPath = profile.sessionPath ? canonicalPath(profile.sessionPath) : undefined;
+		const sessionPath = profile.sessionPath ? canonicalSessionPath(profile.sessionPath) : undefined;
 		// Taken SYNCHRONOUSLY, before any await, exactly like the path reservation below: a
 		// concurrent open naming the same durable id must find this one already recorded rather
 		// than a window between the decision and the record of it. Two LIVE sessions may never
@@ -503,7 +498,7 @@ export class RpcSessionRegistry {
 			const manager = entry.runtime?.session.sessionManager;
 			if (!manager) continue;
 			const currentPath = manager.getSessionFile();
-			const currentKey = currentPath ? canonicalPath(currentPath) : undefined;
+			const currentKey = currentPath ? canonicalSessionPath(currentPath) : undefined;
 			// Preserve the originally canonicalized key while the runtime still points at
 			// the same path. SessionManager may expose a symlink-resolved spelling after
 			// opening a file that did not exist yet; treating that as replacement would

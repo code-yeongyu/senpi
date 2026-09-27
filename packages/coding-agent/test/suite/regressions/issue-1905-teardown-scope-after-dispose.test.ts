@@ -36,6 +36,7 @@ function runtime(
 			sessionManager: options.sessionManager,
 			agentDir: options.agentDir,
 			isFastModeActive: () => false,
+			agent: { state: {} },
 			getContextUsage: () => undefined,
 			favoriteModels: [],
 			scopedModels: [],

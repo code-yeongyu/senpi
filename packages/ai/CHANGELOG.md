@@ -6,6 +6,8 @@
 
 ### Added
 
+- Failed assistant messages carry an optional `providerDiagnostic` (`category`: `auth` | `rate_limit` | `quota` | `context_limit` | `invalid_request` | `provider_unavailable` | `unknown`, plus `httpStatus`, allowlisted `code` and `evidence`) so SDK consumers can tell provider failure families apart without parsing `errorMessage`. The Anthropic Messages and OpenAI-compatible Chat Completions adapters mint it only from the SDK's HTTP error status and error code or an explicit SSE error envelope; contradictory evidence yields no diagnostic. `sanitizeProviderDiagnostic` and `readProviderDiagnostic` revalidate values that crossed a boundary. `errorMessage`, retries and fallback are unchanged. ([#2197](https://github.com/code-yeongyu/senpi/issues/2197))
+
 ### Changed
 
 ### Fixed

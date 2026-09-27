@@ -12,7 +12,11 @@ import { getAgentDir } from "./config.ts";
 export const MIGRATIONS_STATE_SCHEMA_VERSION = 1;
 export const MIGRATIONS_STATE_FILENAME = "migrations-state.json";
 
-export const SCAN_MIGRATIONS = ["migrateLegacySenpiDirs", "migrateSessionsFromAgentRoot"] as const;
+export const SCAN_MIGRATIONS = [
+	"migrateLegacySenpiDirs",
+	"migrateSessionsFromAgentRoot",
+	"restoreDrainedPiDirs",
+] as const;
 
 export type ScanMigrationName = (typeof SCAN_MIGRATIONS)[number];
 

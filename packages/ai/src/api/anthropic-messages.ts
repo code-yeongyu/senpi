@@ -12,6 +12,7 @@ import type {
 	BetaRefusalStopDetails as RefusalStopDetails,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
 import { calculateCost } from "../models.ts";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
 	AnthropicRefusalFallback,
@@ -45,6 +46,12 @@ import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getAnthropicCompat, isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
+import { attachProviderDiagnostic } from "../utils/provider-diagnostic-carrier.ts";
+import {
+	anthropicProviderDiagnosticFromError,
+	anthropicProviderDiagnosticFromSseData,
+	awaitProviderTransport,
+} from "../utils/provider-diagnostic-sources.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
@@ -1120,7 +1127,7 @@ async function* iterateAnthropicEvents(
 			if (hintMs !== undefined) {
 				errorText = appendRetryAfterMsMarker(errorText, hintMs);
 			}
-			throw new Error(errorText);
+			throw attachProviderDiagnostic(new Error(errorText), anthropicProviderDiagnosticFromSseData(sse.data));
 		}
 
 		if (!ANTHROPIC_MESSAGE_EVENTS.has(sse.event ?? "")) {
@@ -1249,17 +1256,18 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					maxRetries: 0,
 					...(payloadRequestMetadata.headers ? { headers: payloadRequestMetadata.headers } : {}),
 				};
+				const send = (body: MessageCreateParamsStreaming) =>
+					awaitProviderTransport(
+						() => client.beta.messages.create({ ...body, stream: true }, requestOptions).asResponse(),
+						anthropicProviderDiagnosticFromError,
+					);
 				try {
-					const response = await client.beta.messages
-						.create({ ...params, stream: true }, requestOptions)
-						.asResponse();
+					const response = await send(params);
 					return { params, response };
 				} catch (error) {
 					if (isForcedToolChoiceUnsupportedError(error, isForcedAnthropicToolChoice(params.tool_choice))) {
 						params = omitToolChoiceParam(params);
-						const response = await client.beta.messages
-							.create({ ...params, stream: true }, requestOptions)
-							.asResponse();
+						const response = await send(params);
 						return { params, response };
 					}
 					throw error;
@@ -1612,6 +1620,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					...(failure.shouldRetry !== undefined ? { shouldRetry: failure.shouldRetry } : {}),
 				},
 			});
+			const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+			if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 			output.errorMessage = errorMessage;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();

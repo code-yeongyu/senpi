@@ -18,7 +18,7 @@
 import * as crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { basename, dirname, extname } from "node:path";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import { type ImageContent, sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
 import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
@@ -200,12 +200,14 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		throw new Error("RPC session invariant violated: agentDir is required");
 	}
 	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
+	const lastProviderDiagnostic = sanitizeProviderDiagnostic(session.agent.state.providerDiagnostic);
 	return {
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		model: session.model,
 		thinkingLevel: session.thinkingLevel,
 		...(session.thinkingSelection ? { thinkingSelection: session.thinkingSelection } : {}),
 		...(lastAbortSource ? { lastAbortSource } : {}),
+		...(lastProviderDiagnostic ? { lastProviderDiagnostic } : {}),
 		serviceTier: session.effectiveServiceTier,
 		fastMode: session.isFastModeActive(),
 		isStreaming: session.isStreaming,

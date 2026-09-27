@@ -11,6 +11,7 @@ import { migrateKeybindingsConfig } from "./core/keybindings.ts";
 import { migrateExtensionSystem } from "./extension-system-migration.ts";
 import { migrateLegacySenpiDirs } from "./legacy-senpi-dir-migration.ts";
 import { readCompletedScanMigrations, SCAN_MIGRATIONS, writeCompletedScanMigrations } from "./migrations-state.ts";
+import { restoreDrainedPiDirs } from "./pi-dir-restore.ts";
 import { stripBom } from "./utils/text.ts";
 
 const MIGRATION_GUIDE_URL =
@@ -235,6 +236,9 @@ export function runMigrations(cwd: string): {
 	migrateEngineStateForBrand();
 	const migratedAuthProviders = migrateAuthToAuthJson();
 	const completed = readCompletedScanMigrations();
+	if (!completed.has("restoreDrainedPiDirs")) {
+		restoreDrainedPiDirs(completed);
+	}
 	if (!completed.has("migrateLegacySenpiDirs")) {
 		migrateLegacySenpiDirs(cwd);
 	}
