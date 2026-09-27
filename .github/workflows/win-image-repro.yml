@@ -1,0 +1,122 @@
+name: "[CI mirror] senpi#2170 Windows image repro"
+
+on:
+  push:
+    branches: [ci-mirror/win-image-repro]
+
+jobs:
+  windows-image-repro:
+    name: Windows image repro (senpi#2170)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Create screenshots with the Windows GDI+ PNG encoder
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          $dir = Join-Path $env:USERPROFILE "Pictures\Screenshots"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          function Save-Gradient([int]$w, [int]$h, [string]$name, $format) {
+            $bmp = New-Object System.Drawing.Bitmap($w, $h, $format)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $rect = New-Object System.Drawing.Rectangle(0, 0, $w, $h)
+            $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, [System.Drawing.Color]::SteelBlue, [System.Drawing.Color]::Orange, 45)
+            $g.FillRectangle($brush, $rect)
+            $font = New-Object System.Drawing.Font("Segoe UI", 48)
+            $g.DrawString("senpi#2170 screenshot $w x $h", $font, [System.Drawing.Brushes]::White, 40, 40)
+            $g.Dispose()
+            $bmp.Save((Join-Path $dir $name), [System.Drawing.Imaging.ImageFormat]::Png)
+            $bmp.Dispose()
+          }
+          Save-Gradient 1280 720 "aaa.png" ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+          Save-Gradient 1920 1080 "rgb24.png" ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+          Save-Gradient 3840 2160 "big-4k.png" ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+          $noise = New-Object System.Drawing.Bitmap(2400, 2400)
+          $rand = New-Object System.Random(2170)
+          for ($y = 0; $y -lt 2400; $y += 2) { for ($x = 0; $x -lt 2400; $x += 2) { $noise.SetPixel($x, $y, [System.Drawing.Color]::FromArgb(255, $rand.Next(256), $rand.Next(256), $rand.Next(256))) } }
+          $noise.Save((Join-Path $dir "noisy.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+          $noise.Dispose()
+          try {
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $shot = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+            $sg = [System.Drawing.Graphics]::FromImage($shot)
+            $sg.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $shot.Save((Join-Path $dir "screen-capture.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+            Write-Output "screen capture saved $($bounds.Width)x$($bounds.Height)"
+          } catch { Write-Output "screen capture unavailable: $($_.Exception.Message)" }
+          Get-ChildItem $dir | Format-Table Name, Length
+
+      - name: Read through the real read tool (Node)
+        shell: bash
+        working-directory: packages/coding-agent
+        run: npx vitest run test/suite/regressions/issue-2170-windows-image-read-repro.test.ts --reporter=verbose
+
+      - name: Read through the real read tool (Bun)
+        shell: bash
+        working-directory: packages/coding-agent
+        run: bunx --bun vitest run test/suite/regressions/issue-2170-windows-image-read-repro.test.ts --reporter=verbose
+
+      - name: Decode every produced payload with Pillow and GDI+
+        shell: pwsh
+        working-directory: packages/coding-agent
+        run: |
+          python -m pip install --quiet pillow
+          $script = @'
+          import pathlib, sys
+          from PIL import Image
+          out = pathlib.Path("win-image-repro-out")
+          failed = 0
+          files = sorted(p for p in out.iterdir() if not p.name.endswith(".jsonl"))
+          for p in files:
+              try:
+                  with Image.open(p) as im:
+                      im.load()
+                      fmt, size, mode = im.format, im.size, im.mode
+                  with Image.open(p) as im:
+                      im.verify()
+                  print(f"PIL OK   {p.name} {fmt} {size} {mode} {p.stat().st_size}B")
+              except Exception as e:
+                  failed += 1
+                  print(f"PIL FAIL {p.name} {type(e).__name__}: {e}")
+          print(f"PIL SUMMARY files={len(files)} failed={failed}")
+          sys.exit(1 if failed or not files else 0)
+          '@
+          $script | Set-Content -Path decode.py
+          python decode.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Add-Type -AssemblyName System.Drawing
+          $bad = 0
+          Get-ChildItem win-image-repro-out -Exclude *.jsonl | ForEach-Object {
+            try { $img = [System.Drawing.Image]::FromFile($_.FullName); Write-Output "GDI OK   $($_.Name) $($img.Width)x$($img.Height)"; $img.Dispose() }
+            catch { $bad++; Write-Output "GDI FAIL $($_.Name) $($_.Exception.Message)" }
+          }
+          Write-Output "GDI SUMMARY failed=$bad"
+          if ($bad -ne 0) { exit 1 }
+
+      - name: Upload repro rows
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: win-image-repro
+          path: packages/coding-agent/win-image-repro-out/*.jsonl
