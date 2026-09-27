@@ -8,7 +8,11 @@
  * ordinary CI type-checks against the committed catalog instead of regenerating
  * it. Such shards are listed here and left alone.
  */
-export const FORK_OWNED_MODEL_SHARDS: ReadonlySet<string> = new Set<string>(["devin.models.ts", "kimi-coding.models.ts"]);
+export const FORK_OWNED_MODEL_SHARDS: ReadonlySet<string> = new Set<string>([
+	"devin.models.ts",
+	"kimi-coding.models.ts",
+	"muse-code-subscription.models.ts",
+]);
 
 /** `kimi-coding.models.ts` -> `kimi-coding`. */
 export function providerIdOfShard(entry: string): string {

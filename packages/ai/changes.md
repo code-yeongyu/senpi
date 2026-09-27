@@ -1573,3 +1573,23 @@ These failures are in upstream `packages/ai` live integration tests, not in the 
 
 - HIGH: `packages/ai/scripts/generate-models.ts` provider blocks (OpenAI, xAI, Fireworks, Mistral, OpenRouter) whenever upstream reshapes a provider's metadata.
 - MEDIUM: `packages/ai/package.json` `dependencies` and `exports` on every upstream dependency bump.
+
+## 2026-09-27 — Export the static muse-code-cli provider module (#2190)
+
+### What changed
+
+- `packages/ai/package.json` exports `./muse-code-cli-provider`, next to `./devin-provider`.
+
+### Why
+
+- Standalone Bun binaries cannot follow the lazy variable-specifier import. They install the Node-only Muse CLI sidecar statically through this subpath.
+
+### Why an extension could not handle it
+
+- Package export maps are resolved by the module loader, which runtime extensions cannot reach.
+
+### Expected merge conflict zones
+
+- LOW: the `exports` block in `packages/ai/package.json`.
+
+- Covered production paths: `packages/ai/package.json`.

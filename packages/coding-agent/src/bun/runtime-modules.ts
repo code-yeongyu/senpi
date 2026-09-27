@@ -4,9 +4,11 @@ import {
 	setBedrockProviderModule,
 	setCursorAgentProviderModule,
 	setDevinAgentProviderModule,
+	setMuseCodeCliProviderModule,
 } from "@earendil-works/pi-ai/compat";
 import { cursorAgentProviderModule } from "@earendil-works/pi-ai/cursor-agent-provider";
 import { devinProviderModule } from "@earendil-works/pi-ai/devin-provider";
+import { museCodeCliProviderModule } from "@earendil-works/pi-ai/muse-code-cli-provider";
 
 let registered = false;
 
@@ -16,6 +18,7 @@ export function registerBunRuntimeModules(): void {
 	setBedrockProviderModule(bedrockProviderModule);
 	setCursorAgentProviderModule(cursorAgentProviderModule);
 	setDevinAgentProviderModule(devinProviderModule);
+	setMuseCodeCliProviderModule(museCodeCliProviderModule);
 	registerBunOAuthFlows();
 	registered = true;
 }

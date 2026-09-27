@@ -30,6 +30,8 @@ import { minimaxCnProvider } from "./minimax-cn.ts";
 import { mistralProvider } from "./mistral.ts";
 import { moonshotaiProvider } from "./moonshotai.ts";
 import { moonshotaiCnProvider } from "./moonshotai-cn.ts";
+import { MUSE_CODE_SUBSCRIPTION_MODELS } from "./muse-code-subscription.models.ts";
+import { museCodeSubscriptionProvider } from "./muse-code-subscription.ts";
 import { nvidiaProvider } from "./nvidia.ts";
 import { ollamaProvider } from "./ollama.ts";
 import { openaiProvider } from "./openai.ts";
@@ -65,6 +67,7 @@ export { ollamaProvider, radiusProvider };
  */
 const FORK_OWNED_CATALOGS = {
 	"kimi-coding": KIMI_CODING_MODELS,
+	"muse-code-subscription": MUSE_CODE_SUBSCRIPTION_MODELS,
 } as const;
 
 type BuiltinCatalogs = typeof MODELS & typeof FORK_OWNED_CATALOGS;
@@ -176,6 +179,7 @@ export function builtinProviders(): Provider[] {
 		mistralProvider(),
 		moonshotaiProvider(),
 		moonshotaiCnProvider(),
+		museCodeSubscriptionProvider(),
 		nvidiaProvider(),
 		openaiProvider(),
 		chatgptSubscriptionProvider(),

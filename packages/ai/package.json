@@ -47,6 +47,10 @@
 			"types": "./dist/devin-provider.d.ts",
 			"import": "./dist/devin-provider.js"
 		},
+		"./muse-code-cli-provider": {
+			"types": "./dist/muse-code-cli-provider.d.ts",
+			"import": "./dist/muse-code-cli-provider.js"
+		},
 		"./bun-oauth": {
 			"types": "./dist/bun-oauth.d.ts",
 			"import": "./dist/bun-oauth.js"

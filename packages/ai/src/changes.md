@@ -4932,3 +4932,26 @@ TextContent and pi-messages request construction.
 - LOW: the prompt-cache export block in `index.ts`.
 
 - Covered production paths: `packages/ai/src/utils/prompt-cache-ttl.ts`, `packages/ai/src/index.ts`.
+
+## 2026-09-27 — Muse Code subscription provider through the official muse CLI (#2190)
+
+### What changed
+
+- `packages/ai/src/providers/all.ts` registers the fork-owned `muse-code-subscription` catalog and provider.
+- `packages/ai/src/types.ts` adds `muse-code-subscription` to `KnownProvider`.
+- `packages/ai/src/compat.ts` re-exports `api/muse-code-cli.lazy.ts` and registers the `muse-code-cli` API.
+- New fork-only `api/muse-code-cli.ts` runs `muse exec --json` as a sidecar. It treats `run_terminal` as completion rather than stdout EOF, and kills the detached process group when it finishes or is cancelled. It is Node-only and reached through `api/muse-code-cli.lazy.ts`, with the static `muse-code-cli-provider.ts` used for Bun binaries.
+
+### Why
+
+- Meta's Model API Terms §3.2 limit a Coding Harness Subscription credential to the coding harness. Flat-rate Muse Code use works only through the Muse Code CLI. Driving the official CLI keeps every request inside the harness, and senpi never reads, mints, or sends a Meta credential.
+
+### Why an extension could not handle it
+
+- A builtin provider must be present in the shared provider matrix and API registry that every coding-agent surface reads. The same code also ships as a user extension for older builds.
+
+### Expected merge conflict zones
+
+- LOW: the alphabetical provider list in `providers/all.ts`, the `KnownProvider` union in `types.ts`, and the lazy re-export and API registration lists in `compat.ts`.
+
+- Covered production paths: `packages/ai/src/providers/all.ts`, `packages/ai/src/types.ts`, `packages/ai/src/compat.ts`.

@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added the `muse-code-subscription` provider (Muse Spark 1.2/1.3 and their contributor variants). It runs each turn through the official `muse exec` CLI, so Muse owns sign-in and requests ([#2190](https://github.com/code-yeongyu/senpi/pull/2190)).
+
 ### Changed
 
 ### Fixed
