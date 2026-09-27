@@ -1,0 +1,44 @@
+name: DIAG 2227 (temporary, do not merge)
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  rpc-lifecycle-windows:
+    name: DIAG timing (Windows) ${{ matrix.attempt }} inject=${{ matrix.inject }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3, 4, 5, 6, 7, 8]
+        inject: [0]
+        include:
+          - attempt: 9
+            inject: 1500
+          - attempt: 10
+            inject: 1500
+    env:
+      DIAG_2227_FILE: ${{ github.workspace }}\diag-2227.log
+      DIAG_2227_INJECT_MS: ${{ matrix.inject }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Run RPC host ensure tests
+        run: bunx vitest run test/rpc-host-ensure.test.ts
+        working-directory: packages/coding-agent
+      - name: Run RPC host lifecycle tests
+        run: bunx vitest run test/rpc-host-lifecycle.test.ts
+        working-directory: packages/coding-agent
+      - name: Print DIAG timeline
+        if: always()
+        run: Get-Content -ErrorAction SilentlyContinue "${{ github.workspace }}\diag-2227.log"

@@ -565,11 +565,13 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			);
 			if (internalSecret) sendSocketHandshake(internal, internalSecret);
 			clientSockets.add(client);
+			writeStderrLine(`DIAG2227 supervisor attach at=${Date.now()} clients=${clientSockets.size}`);
 			// A readiness exchange can begin and end between ticks. Record the
 			// attachment now, before a later tick can reuse the preceding idle window.
 			decider.update(currentActivity());
 			const detach = (): void => {
 				clientSockets.delete(client);
+				writeStderrLine(`DIAG2227 supervisor detach at=${Date.now()} clients=${clientSockets.size}`);
 				decider.update(currentActivity());
 				internal.destroy();
 				client.destroy();
@@ -597,7 +599,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	);
 	const tickIntervalMs = Math.max(20, Math.min(1_000, policy.idleExitMs / 4));
 	const ticker = setInterval(() => {
-		if (!draining && decider.update(currentActivity()) === "exit") void shutdown("idle", 0);
+		if (!draining && decider.update(currentActivity()) === "exit") {
+			writeStderrLine(`DIAG2227 supervisor idle-exit at=${Date.now()}`);
+			void shutdown("idle", 0);
+		}
 	}, tickIntervalMs);
 
 	function currentActivity(): HostActivity {
@@ -656,7 +661,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 				? setTimeout(() => process.exit(exitCode), WINDOWS_SUPERVISOR_SHUTDOWN_HARD_EXIT_MS)
 				: undefined;
 		try {
-			writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown`);
+			writeStderrLine(`senpi rpc host supervisor: ${reason} shutdown (DIAG2227 at=${Date.now()})`);
 			for (const client of clientSockets) client.destroy();
 			// libuv unlinks the bound NAME when the listening handle closes - which
 			// would delete a newer host's entry renamed over this path. Shield the
