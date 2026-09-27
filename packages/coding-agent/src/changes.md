@@ -3880,4 +3880,23 @@ The instrumented transitions (`_emit`, queue internals, `RequiredCompactionError
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: the single pattern list in `core/retry-fallback/billing.ts`; the module is fork-local.
+## 2026-09-27 - Flush informational CLI output before exiting
+
+### What changed
+
+- `packages/coding-agent/src/main.ts` awaits the existing `flushRawStdout()` after model listing, help, tips, version and export confirmation, before the corresponding explicit exit.
+- `packages/coding-agent/src/cli.ts` does the same for its early version and cached-help paths.
+
+### Why
+
+- Console writes to a pipe can remain queued when `process.exit()` terminates the process. A truncated successful `--list-models` response caused task admission to report a valid OpenRouter model as absent. Slow readers must receive the same complete catalog as regular-file output.
+
+### Why an extension could not handle it
+
+- The CLI owns these exit points; a provider extension cannot keep stdout alive after an unconditional process exit.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts` informational command dispatch and output-guard import.
+- `packages/coding-agent/src/cli.ts` early help/version exits and output-guard import.
 

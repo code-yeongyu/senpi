@@ -625,6 +625,30 @@ describe("estimateTokens base64 weighting", () => {
 		expect(estimateTokens(createUserMessage(text))).toBe(Math.ceil(text.length / 4));
 	});
 
+	it("weights complete runs at the threshold across ASCII and Unicode boundaries", () => {
+		const alphabet = "Az09+/=_-";
+		for (const length of [511, 512, 513, 1024]) {
+			const run = alphabet.repeat(Math.ceil(length / alphabet.length)).slice(0, length);
+			for (const boundary of ["", " ", ".", "\n", "\0", "é", "漢", "😀", "\ud800"]) {
+				const text = `${boundary}${run}${boundary}`;
+				const weightedLength = text.length + (length >= 512 ? length * 3 : 0);
+				expect(estimateTokens(createUserMessage(text))).toBe(Math.ceil(weightedLength / 4));
+			}
+		}
+	});
+
+	it("keeps adjacent alphabet characters and resets between successive messages", () => {
+		const shortRun = "a".repeat(511);
+		const splitRuns = `${shortRun}😀${shortRun}`;
+		for (let repetition = 0; repetition < 3; repetition++) {
+			expect(estimateTokens(createUserMessage(`_${shortRun}`))).toBe(512);
+			expect(estimateTokens(createUserMessage(splitRuns))).toBe(Math.ceil(splitRuns.length / 4));
+			expect(estimateTokens(createUserMessage(`${shortRun}-`))).toBe(512);
+			expect(estimateTokens(createUserMessage(""))).toBe(0);
+			expect(estimateTokens(createUserMessage(`/${shortRun}=`))).toBe(513);
+		}
+	});
+
 	it("weights base64 embedded in bash output", () => {
 		const message: AgentMessage = {
 			role: "bashExecution",

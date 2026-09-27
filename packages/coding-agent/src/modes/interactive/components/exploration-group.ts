@@ -37,32 +37,32 @@ export class ExplorationGroup extends Container {
 	calls: { readonly component: ToolExecutionComponent; readonly call: ExplorationCall }[] = [];
 	/** Rule paths injected into this group's calls; repeated paths count once. */
 	private rules: readonly string[] = [];
-
-	private get expanded(): boolean {
-		return this.calls.some(({ component }) => component.presentationSnapshot.state.expanded);
-	}
+	private expanded = false;
+	private pending = false;
+	private failed = 0;
+	private body: string[] = [];
 
 	override render(width: number): string[] {
-		const pending = this.calls.some(({ call }) => call.pending);
-		const failed = this.calls.filter(({ call }) => call.failed).length;
+		const lines = this.headerLines(width);
+		if (this.expanded) return [...lines, ...super.render(width)];
+		const body = this.body;
+		const shown = body.slice(0, MAX_BODY_LINES);
+		if (body.length > shown.length) shown.push(theme.fg("dim", `… +${body.length - shown.length} more`));
+		for (const [index, line] of shown.entries()) {
+			lines.push(truncateToWidth(`${index === 0 ? theme.fg("dim", "  └ ") : "    "}${line}`, width));
+		}
+		return lines;
+	}
+
+	private headerLines(width: number): string[] {
+		const { pending, failed } = this;
 		const marker = pending
 			? theme.fg("accent", toolSpinnerGlyph(Math.floor(Date.now() / SPINNER_FRAME_MS)))
 			: theme.fg("dim", "•");
 		const header =
 			`${marker} ${theme.bold(pending ? "Exploring" : "Explored")}` +
 			(failed ? theme.fg("error", ` · ${failed} failed`) : "");
-		const lines = ["", truncateToWidth(header, width)];
-		if (this.expanded) return [...lines, ...super.render(width)];
-		const body = bodyLines(this.calls.map(({ call }) => call));
-		const ruleCount = new Set(this.rules).size;
-		if (ruleCount > 0)
-			body.push(`${theme.fg("accent", "Applied")} ${ruleCount} project ${ruleCount === 1 ? "rule" : "rules"}`);
-		const shown = body.length > MAX_BODY_LINES ? body.slice(0, MAX_BODY_LINES) : body;
-		if (body.length > shown.length) shown.push(theme.fg("dim", `… +${body.length - shown.length} more`));
-		for (const [index, line] of shown.entries()) {
-			lines.push(truncateToWidth(`${index === 0 ? theme.fg("dim", "  └ ") : "    "}${line}`, width));
-		}
-		return lines;
+		return ["", truncateToWidth(header, width)];
 	}
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
@@ -96,5 +96,21 @@ export class ExplorationGroup extends Container {
 		this.children = members;
 		this.calls = calls;
 		this.rules = rules;
+		this.expanded = calls.some(({ component }) => component.presentationSnapshot.state.expanded);
+		this.pending = calls.some(({ call }) => call.pending);
+		this.failed = calls.filter(({ call }) => call.failed).length;
+		this.refreshBody();
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+		this.refreshBody();
+	}
+
+	private refreshBody(): void {
+		this.body = bodyLines(this.calls.map(({ call }) => call));
+		const ruleCount = new Set(this.rules).size;
+		if (ruleCount > 0)
+			this.body.push(`${theme.fg("accent", "Applied")} ${ruleCount} project ${ruleCount === 1 ? "rule" : "rules"}`);
 	}
 }

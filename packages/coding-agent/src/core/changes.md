@@ -94,6 +94,24 @@ Title generation is internal background work started from `AgentSession`. Extens
 ### Expected merge conflict zones
 
 - LOW: the `catch` block of `_generateSessionTitle()` in `agent-session.ts`.
+## 2026-09-27 - Avoid duplicate history copies during request preparation
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `_getCompactEntries()` retains the copies made while detecting missing resident strings, then rematerializes only entries repaired from persisted history. The compact cache still holds resident tokens, and every public context read still returns fresh objects with message position metadata.
+- `packages/coding-agent/src/core/retry-fallback/expansion.ts`: family expansion rejects unrelated models before invoking provider eligibility predicates. Matching models retain the same eligibility checks and ranking.
+
+### Why
+
+- CPU profiles of a resumed long session showed request preparation cloning the complete history twice and fallback expansion repeatedly reading provider settings for unrelated model families. These changes remove duplicate work without changing compaction policy, provider eligibility, or adding retained history caches.
+
+### Why an extension could not handle it
+
+- Compact-entry materialization and fallback candidate enumeration happen inside the session and retry runtime before extension handlers can intervene.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-manager.ts` `_getCompactEntries()` recovery loop and `packages/coding-agent/src/core/retry-fallback/expansion.ts` `rankFamilyModels()` filter order.
 
 ## 2026-09-25 - An extension-triggered turn emits `before_agent_start` with `trigger: "extension"` (senpi#2137)
 
@@ -7359,3 +7377,22 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 - `packages/coding-agent/src/core/session-write-reservation.ts`: new `hasOtherLiveSessionWriter(path, self)` answers whether another live persisted writer still owns a session file, pruning collected refs like `liveSessionWritePaths()` does.
 - `packages/coding-agent/src/core/session-manager.ts`: both blob-directory releases (the stale clear in `_setSessionFile` and `dispose()`) go through `_releaseBlobsDirUnlessShared()`, which keeps the directory while another live manager owns the same session file. The app-server loads a thread that is already open (`modes/app-server/threads/registry.ts` disposes the duplicate `AgentSession`), and without this the duplicate's teardown took the live manager's cache, costing it a full JSONL recovery per evicted string.
+
+
+## 2026-09-27 - Queue RPC prompts during custom-turn preflight
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the prompt queue admission predicate recognizes the existing current-generation custom-turn admission flag while extension preflight is running, before the agent begins streaming. Steering and follow-up prompts report queued acceptance immediately and retain the normal compaction and abort gates.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a custom message with `triggerTurn: true` can own the session-work barrier during asynchronous startup hooks. An RPC prompt arriving in that interval previously waited for the entire extension-triggered run, so a healthy child executing tools could fail its initial prompt acknowledgement timeout.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns both the private admission-generation flag and the settled-work wait. Extensions cannot make the shared RPC prompt acknowledgement recognize that pre-stream ownership.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `canQueueWhileStreaming` predicate in `prompt()`.

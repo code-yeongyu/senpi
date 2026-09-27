@@ -1,3 +1,25 @@
+## 2026-09-27 - Show exhausted collapse recovery accurately
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/rule-activation/types.ts` accepts the persisted TTSR remediation variant `stopped`.
+- `packages/coding-agent/src/core/extensions/builtin/rule-activation/renderer.ts` renders that variant as interrupted output with automatic recovery stopped after another collapse.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/rule-activation/types.ts` must preserve the exhausted-recovery record instead of rejecting it as malformed persisted data.
+- `packages/coding-agent/src/core/extensions/builtin/rule-activation/renderer.ts` must not claim that another corrective nudge or provider retry was started when the builtin collapse recovery allowance has been exhausted.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/rule-activation/types.ts` owns the shared persisted notice contract.
+- `packages/coding-agent/src/core/extensions/builtin/rule-activation/renderer.ts` is the single display owner for these existing builtin notices; a separate transient warning would duplicate that presentation.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/rule-activation/types.ts`: TTSR remediation union and defensive parser.
+- `packages/coding-agent/src/core/extensions/builtin/rule-activation/renderer.ts`: TTSR summary wording; project-rule notices are unchanged.
+
 ## 2026-09-24 - Pin the refreshed pi-* extension releases (senpi#2079)
 
 ### What changed

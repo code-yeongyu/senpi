@@ -84,6 +84,27 @@ describe("shared rule activation renderer", () => {
 		expect(rendered.text).toContain("collapse-repetition");
 	});
 
+	it("shows a stopped recovery without claiming another nudge or provider retry", async () => {
+		initTheme("dark");
+		const renderer = await rendererFrom(ttsrExtension);
+		if (renderer === undefined) throw new Error("expected the shared rule activation renderer");
+		const rendered = renderedText(
+			renderer,
+			{
+				kind: "ttsr",
+				owner: "collapse-repetition",
+				rules: ["collapse-repetition"],
+				remediation: "stopped",
+			},
+			true,
+		);
+
+		expect(rendered.text).toContain("automatic recovery stopped after another collapse");
+		expect(rendered.text).toContain("remediation stopped");
+		expect(rendered.text).not.toContain("queued");
+		expect(rendered.text).not.toContain("retry started");
+	});
+
 	it("#given malformed persisted data #when the shared renderer runs #then it returns no component", async () => {
 		initTheme("dark");
 		const renderer = await rendererFrom(piRulesExtension);

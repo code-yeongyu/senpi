@@ -285,7 +285,6 @@ import {
 	formatActiveToolWorkingLabel,
 	formatToolHookStatusMessageFrame,
 	formatWorkingStatusMessageFrame,
-	largeSessionWorkingStatusInterval,
 	sanitizeWorkingStatusPlainText,
 	type WorkingStatusRgbColor,
 } from "./working-status.ts";
@@ -402,12 +401,8 @@ function isCompactionCostNotice(item: RenderSessionItem): item is CompactionCost
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
 // Bun's macOS tty shim can report a dead terminal as raw positive errno 5 without a string code.
 const EIO_ERRNO = 5;
-const DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS = 80;
-const LARGE_SESSION_RETRY_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS = 600;
 const DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS = 32;
-const LARGE_SESSION_WORKING_STATUS_REFRESH_INTERVAL_MS = 60_000;
-const LARGE_SESSION_WORKING_STATUS_MESSAGE_INTERVAL_MS = 1_000;
 const FALLBACK_STATUS_KEY = "fallback";
 const RGB_FOREGROUND_PATTERN = /\x1b\[38;2;(\d+);(\d+);(\d+)m/;
 
@@ -895,6 +890,14 @@ export class InteractiveMode {
 	private mainScreenRenderState: TuiMainScreenRenderState | undefined;
 	private loadedResourcesContainer: Container;
 	private chatContainer: Container;
+	private workingRegionRevision = 0;
+	private workingRegionSnapshot?: {
+		transcriptRevision: number;
+		header: Component[];
+		headerLength: number;
+		resources: Component[];
+		resourcesLength: number;
+	};
 	private documentContainer: Container;
 	private transcriptScrollView: TuiLayouts.ScrollView | undefined;
 	private fullscreenLayoutRoot: Component | undefined;
@@ -1436,16 +1439,63 @@ export class InteractiveMode {
 
 	private mountInteractiveTui(tui: TuiMainScreen | TuiAltScreen, components: readonly Component[]): void {
 		for (const component of components) tui.addChild(component);
+		if (tui instanceof TuiMainScreen) {
+			tui.setWorkingRegionAfter(this.documentContainer, (checkCustomContent) =>
+				this.getWorkingRegionRevision(checkCustomContent),
+			);
+		}
 		if (TuiLayouts.isViewportTUI(tui)) {
 			if (!this.fullscreenLayoutRoot) throw new Error("Fullscreen layout is not initialized");
 			tui.setLayoutRoot(this.fullscreenLayoutRoot);
 		}
 	}
 
+	private getWorkingRegionRevision(checkCustomContent = false): number | undefined {
+		if (
+			this.chrome ||
+			this.customHeader ||
+			!(this.chatContainer instanceof ExplorationTranscriptContainer) ||
+			!this.chatContainer.isFullyHydrated ||
+			this.session.isStreaming ||
+			this.session.isCompacting ||
+			this.session.isBashRunning ||
+			this.session.retryAttempt > 0 ||
+			this.streamingComponent ||
+			this.bashComponent ||
+			this.pendingTools.size > 0
+		)
+			return undefined;
+		if (checkCustomContent) this.chatContainer.checkCustomRenderChanges();
+		else this.chatContainer.commitCustomRenderedFrames();
+		const transcriptRevision = this.chatContainer.revision;
+		const header = this.headerContainer.children;
+		const resources = this.loadedResourcesContainer.children;
+		const previous = this.workingRegionSnapshot;
+		if (
+			!previous ||
+			previous.transcriptRevision !== transcriptRevision ||
+			previous.header !== header ||
+			previous.headerLength !== header.length ||
+			previous.resources !== resources ||
+			previous.resourcesLength !== resources.length
+		) {
+			this.workingRegionRevision += 1;
+			this.workingRegionSnapshot = {
+				transcriptRevision,
+				header,
+				headerLength: header.length,
+				resources,
+				resourcesLength: resources.length,
+			};
+		}
+		return this.workingRegionRevision;
+	}
+
 	private stopInteractiveTui(fullscreenExitOutput: FullscreenExitOutput): void {
 		if (this.renderer.mode === "fullscreen" && fullscreenExitOutput === "transcript") {
 			while (this.renderer.hasOverlayEntries) this.renderer.hideOverlay();
 			this.switchTuiMode("regular", false, false);
+			if (this.chatContainer instanceof ExplorationTranscriptContainer) this.chatContainer.requestFullRender();
 			this.renderer.renderNow();
 		}
 		this.pauseQuestionMouseCapture();
@@ -1543,6 +1593,14 @@ export class InteractiveMode {
 		this.renderWidgets(); // Initialize with default spacer
 		const viewport = createChatViewport({
 			document: this.documentContainer,
+			...(this.chatContainer instanceof ExplorationTranscriptContainer
+				? {
+						entries: this.chatContainer.createScrollEntrySource([
+							this.headerContainer,
+							this.loadedResourcesContainer,
+						]),
+					}
+				: {}),
 			pendingMessages: this.pendingMessagesContainer,
 			status: this.statusContainer,
 			hookStatus: this.hookStatusContainer,
@@ -1672,6 +1730,8 @@ export class InteractiveMode {
 			this.builtInHeader = new Text("", 0, 0);
 			this.headerContainer.addChild(this.builtInHeader);
 		}
+		if (this.chatContainer instanceof ExplorationTranscriptContainer)
+			this.chatContainer.markScrollEntryPrefixChanged();
 		this.ui.requestRender();
 
 		// Ensure fd and rg are available after mounting the TUI (downloads if missing, adds to PATH via getBinDir)
@@ -2087,6 +2147,8 @@ export class InteractiveMode {
 			if (!this.shortcutOverlay) {
 				this.shortcutOverlay = new ShortcutOverlay();
 				this.headerContainer.addChild(this.shortcutOverlay);
+				if (this.chatContainer instanceof ExplorationTranscriptContainer)
+					this.chatContainer.markScrollEntryPrefixChanged();
 				this.ui.requestRender();
 			}
 			return;
@@ -2099,6 +2161,8 @@ export class InteractiveMode {
 		if (!this.shortcutOverlay) return;
 		this.headerContainer.removeChild(this.shortcutOverlay);
 		this.shortcutOverlay = undefined;
+		if (this.chatContainer instanceof ExplorationTranscriptContainer)
+			this.chatContainer.markScrollEntryPrefixChanged();
 		this.ui.requestRender();
 	}
 
@@ -2357,6 +2421,8 @@ export class InteractiveMode {
 	}): void {
 		// Resource rendering is idempotent; chat clears no longer clear this separate container.
 		this.loadedResourcesContainer.clear();
+		if (this.chatContainer instanceof ExplorationTranscriptContainer)
+			this.chatContainer.markScrollEntryPrefixChanged();
 
 		const showListing = options?.force || this.options.verbose || !this.settingsManager.getQuietStartup();
 		const showDiagnostics = showListing || options?.showDiagnosticsWhenQuiet === true;
@@ -2772,6 +2838,8 @@ export class InteractiveMode {
 
 	private renderCurrentSessionState(): void {
 		this.loadedResourcesContainer.clear();
+		if (this.chatContainer instanceof ExplorationTranscriptContainer)
+			this.chatContainer.markScrollEntryPrefixChanged();
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
 		for (const controller of this.compactionTransferAbortControllers.values()) controller.abort();
@@ -3027,14 +3095,9 @@ export class InteractiveMode {
 		if (this.hookStatusIntervalId) {
 			return;
 		}
-		const intervalMs = largeSessionWorkingStatusInterval(
-			this.sessionManager.getEntryCount(),
-			DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS,
-			LARGE_SESSION_WORKING_STATUS_MESSAGE_INTERVAL_MS,
-		);
 		this.hookStatusIntervalId = setInterval(() => {
 			this.refreshToolHookStatuses();
-		}, intervalMs);
+		}, DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS);
 		this.hookStatusIntervalId.unref();
 	}
 
@@ -3202,14 +3265,9 @@ export class InteractiveMode {
 		if (this.workingIndicatorOptions !== undefined) {
 			return this.workingIndicatorOptions;
 		}
-		const sessionEntryCount = this.sessionManager.getEntryCount();
 		return {
 			frames: theme.getColorMode() === "truecolor" ? ["•"] : [theme.fg("accent", "•"), theme.fg("muted", "◦")],
-			intervalMs: largeSessionWorkingStatusInterval(
-				sessionEntryCount,
-				DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS,
-				LARGE_SESSION_WORKING_STATUS_REFRESH_INTERVAL_MS,
-			),
+			intervalMs: DEFAULT_WORKING_STATUS_REFRESH_INTERVAL_MS,
 			indicatorFormatter:
 				theme.getColorMode() === "truecolor"
 					? (frame, elapsedMs) => formatWorkingStatusShimmerText(frame, elapsedMs)
@@ -3228,11 +3286,7 @@ export class InteractiveMode {
 						suffix: (text) => theme.fg("dim", text),
 					},
 				),
-			messageIntervalMs: largeSessionWorkingStatusInterval(
-				sessionEntryCount,
-				DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS,
-				LARGE_SESSION_WORKING_STATUS_MESSAGE_INTERVAL_MS,
-			),
+			messageIntervalMs: DEFAULT_WORKING_STATUS_MESSAGE_ANIMATION_INTERVAL_MS,
 		};
 	}
 
@@ -3584,6 +3638,9 @@ export class InteractiveMode {
 			}
 		}
 
+		this.workingRegionSnapshot = undefined;
+		if (this.chatContainer instanceof ExplorationTranscriptContainer)
+			this.chatContainer.markScrollEntryPrefixChanged();
 		this.ui.requestRender();
 	}
 
@@ -5712,35 +5769,28 @@ export class InteractiveMode {
 	}
 
 	private showRetryStatusIndicator(event: Extract<AgentSessionEvent, { type: "auto_retry_start" }>): void {
-		this.showRetryStatusIndicatorWithCadence(event);
+		this.showRetryIndicator(event);
 	}
 
 	private showSummarizationRetryStatusIndicator(
 		event: Extract<AgentSessionEvent, { type: "summarization_retry_scheduled" }>,
 	): void {
-		this.showRetryStatusIndicatorWithCadence(event);
+		this.showRetryIndicator(event);
 	}
 
-	private showRetryStatusIndicatorWithCadence(event: {
+	private showRetryIndicator(event: {
 		attempt: number;
 		maxAttempts: number;
 		delayMs: number;
 		errorMessage: string;
 	}): void {
-		const refreshIntervalMs = largeSessionWorkingStatusInterval(
-			this.sessionManager.getEntryCount(),
-			DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS,
-			LARGE_SESSION_RETRY_STATUS_REFRESH_INTERVAL_MS,
-		);
-		const indicator =
-			refreshIntervalMs === DEFAULT_RETRY_STATUS_REFRESH_INTERVAL_MS ? undefined : { intervalMs: refreshIntervalMs };
 		this.showStatusIndicator(
 			new RetryStatusIndicator(
 				this.ui,
 				event.attempt,
 				event.maxAttempts,
 				event.delayMs,
-				indicator,
+				undefined,
 				isNetworkProviderError(event.errorMessage),
 			),
 		);
@@ -5784,6 +5834,8 @@ export class InteractiveMode {
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
 			this.lastStatusText.setText(theme.fg("dim", message));
+			if (this.chatContainer instanceof ExplorationTranscriptContainer)
+				this.chatContainer.markProjectionDirty(children.length - 1);
 			this.ui.requestRender();
 			return;
 		}
@@ -5821,10 +5873,14 @@ export class InteractiveMode {
 		);
 		if (replacedIndex >= 0) {
 			children.splice(replacedIndex, 1, component);
+			if (this.chatContainer instanceof ExplorationTranscriptContainer)
+				this.chatContainer.markProjectionDirty(replacedIndex);
 			return;
 		}
 		if (streamingIndex >= 0) {
 			children.splice(streamingIndex, 0, component);
+			if (this.chatContainer instanceof ExplorationTranscriptContainer)
+				this.chatContainer.markProjectionDirty(streamingIndex);
 			return;
 		}
 
@@ -5862,6 +5918,8 @@ export class InteractiveMode {
 				const canonicalChildren = this.chatContainer.children.splice(appendIndex);
 				if (!spacer && canonicalChildren[0] instanceof Spacer) canonicalChildren.shift()?.dispose?.();
 				this.chatContainer.children.splice(insertionIndex, 0, ...canonicalChildren);
+				if (this.chatContainer instanceof ExplorationTranscriptContainer)
+					this.chatContainer.markProjectionDirty(insertionIndex);
 				this.ui.requestRender();
 			},
 			remove: () => {
@@ -6046,8 +6104,11 @@ export class InteractiveMode {
 			const followingToolCallId = followingToolCall?.type === "toolCall" ? followingToolCall.id : undefined;
 			const followingToolComponent = followingToolCallId ? this.pendingTools.get(followingToolCallId) : undefined;
 			const anchorIndex = followingToolComponent ? this.chatContainer.children.indexOf(followingToolComponent) : -1;
-			if (anchorIndex >= 0) this.chatContainer.children.splice(anchorIndex, 0, segment);
-			else this.chatContainer.addChild(segment);
+			if (anchorIndex >= 0) {
+				this.chatContainer.children.splice(anchorIndex, 0, segment);
+				if (this.chatContainer instanceof ExplorationTranscriptContainer)
+					this.chatContainer.markProjectionDirty(anchorIndex);
+			} else this.chatContainer.addChild(segment);
 		}
 		for (const [runStart, segment] of this.assistantTextSegments) {
 			if (runStart >= content.length || content[runStart]?.type === "toolCall") {
@@ -6796,6 +6857,8 @@ export class InteractiveMode {
 				}
 			}
 		}
+		if (this.chatContainer instanceof ExplorationTranscriptContainer)
+			this.chatContainer.markScrollEntryPrefixChanged();
 		this.showStatus(`Tool output: ${expanded ? "expanded" : "collapsed"}`);
 	}
 
@@ -9551,6 +9614,8 @@ export class InteractiveMode {
 	private handleDebugCommand(): void {
 		const width = this.ui.terminal.columns;
 		const height = this.ui.terminal.rows;
+		if (this.renderer.mode === "regular" && this.chatContainer instanceof ExplorationTranscriptContainer)
+			this.chatContainer.requestFullRender();
 		const allLines = this.ui.render(width);
 
 		const debugLogPath = getDebugLogPath();

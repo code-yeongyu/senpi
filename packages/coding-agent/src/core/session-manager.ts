@@ -1794,22 +1794,24 @@ export class SessionManager {
 
 		const entries = this.compactEntriesCache.entries;
 		const missingEntryIds = new Set<string>();
-		for (const entry of entries) {
+		const materialized = entries.map((entry) =>
 			this.residentStore.materialize(entry, () => {
 				missingEntryIds.add(entry.id);
 				return undefined;
-			});
-		}
+			}),
+		);
 		if (missingEntryIds.size > 0 && this.sessionFile) {
 			const persistedById = new Map(this._loadFullHistoryEntries().map((entry) => [entry.id, entry]));
 			for (let index = 0; index < entries.length; index++) {
 				const entry = entries[index]!;
 				if (!missingEntryIds.has(entry.id)) continue;
 				const persisted = persistedById.get(entry.id);
-				if (persisted) entries[index] = this.residentStore.externalize(persisted) as SessionEntry;
+				if (persisted) {
+					entries[index] = this.residentStore.externalize(persisted) as SessionEntry;
+					materialized[index] = this.residentStore.materialize(entries[index]!);
+				}
 			}
 		}
-		const materialized = entries.map((entry) => this.residentStore.materialize(entry) as SessionEntry);
 		for (const entry of materialized) {
 			if (entry.type !== "message") continue;
 			const order = this.entryOrdersById.get(entry.id);

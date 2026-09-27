@@ -1,3 +1,4 @@
+import { hasIndexedScroll } from "../layout-node.ts";
 import { allocateStackSizes, Stack, type StackChild, type StackOptions, visibleStackEntries } from "./stack.ts";
 
 export class VStack extends Stack {
@@ -16,7 +17,7 @@ export class VStack extends Stack {
 			rendered.map((lines) => lines.length),
 			undefined,
 			this.gap,
-		);
+		).map((size, index) => (hasIndexedScroll(entries[index]!.component, viewport) ? rendered[index]!.length : size));
 		const lines: string[] = [];
 		for (let index = 0; index < entries.length; index++) {
 			if (index > 0) {

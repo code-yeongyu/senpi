@@ -24,6 +24,9 @@ function summaryLine(details: RuleActivationDetails): string {
 			return `${details.rules.length} ${noun} matched and injected for this tool result.`;
 		}
 		case "ttsr":
+			if (details.remediation === "stopped") {
+				return "Output interrupted; automatic recovery stopped after another collapse.";
+			}
 			return details.remediation === "nudge"
 				? "Output interrupted; a corrective nudge was queued."
 				: "Corrupted generation discarded; bounded provider retry started.";

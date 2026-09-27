@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { Buffer } from "node:buffer";
 import { describe, it } from "node:test";
-import { type Component, TUI } from "../src/tui.ts";
+import { type Component, CURSOR_MARKER, TUI } from "../src/tui.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const FRAME_BEGIN = "\x1b[?2026h\x1b[?7l";
@@ -136,6 +136,62 @@ async function fullRenderViewport(lines: readonly string[]): Promise<string[]> {
 }
 
 describe("scroll-then-diff viewport rendering", () => {
+	for (const mux of [false, true]) {
+		for (const streamRows of [21, 25]) {
+			it(`preserves complete stream bursts and cursor state with a shrinking footer (${streamRows} rows, mux=${mux})`, async () => {
+				const height = 40;
+				const terminal = new LoggingVirtualTerminal(80, height);
+				const tui = new TUI(terminal, { muxDetector: () => mux });
+				tui.setClearOnShrink(false);
+				const component = new LinesComponent();
+				const history = Array.from({ length: 50 }, (_, index) => `history ${index}`);
+				component.lines = [
+					...history,
+					"STREAM_PAR",
+					...Array.from({ length: 8 }, (_, index) => `old working control ${index}`),
+				];
+				tui.addChild(component);
+				try {
+					await driveRender(tui, terminal);
+					terminal.clearWrites();
+					const stream = Array.from(
+						{ length: streamRows },
+						(_, index) => `STREAM_PART_${index} ${String.fromCodePoint(0x4e00 + index)}`,
+					);
+					const footer = ["new working control", "", `editor ${CURSOR_MARKER}entry`, "status", "help"];
+					component.lines = [...history, ...stream.flatMap((line) => [line, ""]), ...footer];
+					await driveRender(tui, terminal);
+					const expected = component.lines.map((line) => line.replace(CURSOR_MARKER, ""));
+					assert.deepStrictEqual(
+						terminal.getScrollBuffer(),
+						expected,
+						"every completed row reaches scrollback exactly once",
+					);
+					assert.deepStrictEqual(terminal.getViewport(), expected.slice(-height));
+					assert.deepStrictEqual(terminal.getCursorPosition(), { x: 7, y: height - 3 });
+					const writes = terminal.getWrites();
+					assert.ok(!SCROLL_REGION_PATTERN.test(writes), "changed rows must be painted before scrolling out");
+					assert.ok(
+						!writes.includes("\x1b[2J") && !writes.includes("\x1b[3J"),
+						"burst fallback stays differential",
+					);
+					assert.equal(writes.split(FRAME_BEGIN).length - 1, 1);
+					assert.equal(writes.split(FRAME_END).length - 1, 1);
+					component.lines[component.lines.length - 1] = "updated help";
+					await driveRender(tui, terminal);
+					expected[expected.length - 1] = "updated help";
+					assert.deepStrictEqual(
+						terminal.getScrollBuffer(),
+						expected,
+						"next differential tick keeps the committed cursor mapping",
+					);
+					assert.deepStrictEqual(terminal.getCursorPosition(), { x: 7, y: height - 3 });
+				} finally {
+					tui.stop();
+				}
+			});
+		}
+	}
 	it("keeps pure append ticks byte-identical to the insert-scroll golden", async () => {
 		const { tui, writes } = await renderTick(pureAppendLines());
 

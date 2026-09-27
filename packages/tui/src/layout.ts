@@ -1,6 +1,6 @@
 import type { ScrollView } from "./components/scroll-view.ts";
 import { allocateStackSizes, visibleStackEntries } from "./components/stack.ts";
-import { getLayoutNode } from "./layout-node.ts";
+import { getLayoutNode, hasIndexedScroll, type ScrollEntryFrame } from "./layout-node.ts";
 import { cropKittyImageLine, getKittyImageMetadata, isImageLine } from "./terminal-image.ts";
 import { type Component, CURSOR_MARKER, compositeTuiLine } from "./tui.ts";
 import {
@@ -30,6 +30,7 @@ export interface LayoutBox {
 	lineOffset?: number;
 	scrollView?: ScrollView;
 	scrollContentLines?: readonly string[];
+	entryFrame?: ScrollEntryFrame;
 	layer: number;
 }
 
@@ -81,10 +82,53 @@ function renderCached(context: LayoutContext, component: Component, width: numbe
 }
 
 function measureHeight(context: LayoutContext, component: Component, width: number): number {
+	const node = getLayoutNode(component);
+	if (node?.type === "scroll" && node.entries) return 1;
+	if (node && node.type !== "scroll" && hasIndexedScroll(component)) {
+		const entries = visibleStackEntries(node.entries, context.viewport);
+		if (node.type === "vstack") {
+			const intrinsic = entries.map((entry) =>
+				typeof entry.basis === "number" ? entry.basis : measureHeight(context, entry.component, width),
+			);
+			return (
+				allocateStackSizes(entries, intrinsic, undefined, node.gap).reduce((sum, size) => sum + size, 0) +
+				Math.max(0, entries.length - 1) * node.gap
+			);
+		}
+		const intrinsic = entries.map((entry) =>
+			typeof entry.basis === "number" ? entry.basis : measureWidth(context, entry.component, width),
+		);
+		const widths = allocateStackSizes(entries, intrinsic, width, node.gap);
+		return entries.reduce(
+			(height, entry, index) =>
+				Math.max(height, measureHeight(context, entry.component, Math.max(1, widths[index]!))),
+			0,
+		);
+	}
 	return renderCached(context, component, width).length;
 }
 
 function measureWidth(context: LayoutContext, component: Component, width: number): number {
+	const node = getLayoutNode(component);
+	if (node?.type === "scroll" && node.entries) return width;
+	// Structural detection must include responsive hidden descendants: calling a
+	// stack's canonical render would evaluate visibility at its unbounded height.
+	if (node && node.type !== "scroll" && hasIndexedScroll(component)) {
+		const entries = visibleStackEntries(node.entries, context.viewport);
+		if (node.type === "vstack") {
+			return entries.reduce((max, entry) => Math.max(max, measureWidth(context, entry.component, width)), 0);
+		}
+		const intrinsic = entries.map((entry) =>
+			typeof entry.basis === "number" ? entry.basis : measureWidth(context, entry.component, width),
+		);
+		const widths = allocateStackSizes(entries, intrinsic, width, node.gap);
+		return entries.some(
+			(entry, index) =>
+				widths[index]! > 0 && measureHeight(context, entry.component, Math.max(1, widths[index]!)) > 0,
+		)
+			? width
+			: 0;
+	}
 	return renderCached(context, component, width).reduce((max, line) => Math.max(max, visibleWidth(line)), 0);
 }
 
@@ -134,6 +178,36 @@ function layoutComponent(
 	}
 
 	if (node.type === "scroll") {
+		if (node.entries) {
+			const scrollView = node.state as ScrollView;
+			const viewportHeight = height === undefined ? 1 : Math.max(0, Math.floor(height));
+			const contentWidth = node.state.getContentWidth(safeWidth);
+			const entryFrame = scrollView.renderEntryFrame(contentWidth, viewportHeight, context.requestRender);
+			if (node.state.primary || !context.primaryScrollView) context.primaryScrollView = scrollView;
+			const rect = { x, y, width: safeWidth, height: viewportHeight };
+			const box: LayoutBox = {
+				component,
+				rect,
+				clip: intersect(clip, rect),
+				children: [],
+				scrollView,
+				entryFrame,
+				layer: 0,
+			};
+			box.children = entryFrame.entries.map((entry) => {
+				const entryRect = { x, y: y + entry.top, width: contentWidth, height: entry.lines.length };
+				return {
+					component: entry.entry.component,
+					rect: entryRect,
+					clip: intersect(box.clip, entryRect),
+					children: [],
+					parent: box,
+					lines: entry.lines,
+					layer: 0,
+				};
+			});
+			return box;
+		}
 		const previousScrollTop = node.state.scrollTop;
 		const contentWidth = node.state.getContentWidth(safeWidth);
 		const childBox = layoutComponent(
@@ -280,19 +354,30 @@ function replaceScrollbarCell(
 export function getScrollbarGeometry(box: LayoutBox, includeHiddenAuto = false): ScrollbarGeometry | undefined {
 	if (!box.scrollView || box.rect.width <= 0 || box.rect.height <= 0) return undefined;
 
+	const indexed = box.scrollView.getEntryScrollbar();
 	const contentHeight = box.children[0]?.rect.height ?? box.scrollContentLines?.length ?? 0;
 	const trackHeight = box.rect.height;
-	const canRevealHiddenAuto = includeHiddenAuto && box.scrollView.scrollbar === "auto" && contentHeight > trackHeight;
+	const canRevealHiddenAuto =
+		includeHiddenAuto &&
+		box.scrollView.scrollbar === "auto" &&
+		(indexed ? indexed.extent < 1 : contentHeight > trackHeight);
 	if (!box.scrollView.isScrollbarVisible && !canRevealHiddenAuto) return undefined;
 
 	const minThumbHeight = Math.min(2, trackHeight);
 	const thumbHeight = Math.max(
 		minThumbHeight,
-		Math.min(trackHeight, Math.round((trackHeight * trackHeight) / contentHeight)),
+		Math.min(
+			trackHeight,
+			Math.round(indexed ? trackHeight * indexed.extent : (trackHeight * trackHeight) / contentHeight),
+		),
 	);
-	const maxScrollTop = Math.max(0, contentHeight - trackHeight);
+	// Indexed scrollbar movement is normalized; never mix entry fractions with row offsets.
+	const maxScrollTop = indexed ? 1 : Math.max(0, contentHeight - trackHeight);
 	const maxThumbTop = trackHeight - thumbHeight;
-	const thumbOffset = maxScrollTop === 0 ? 0 : Math.round((box.scrollView.scrollTop / maxScrollTop) * maxThumbTop);
+	const thumbOffset =
+		maxScrollTop === 0
+			? 0
+			: Math.round((indexed ? indexed.position : box.scrollView.scrollTop / maxScrollTop) * maxThumbTop);
 	const column = box.rect.x + box.rect.width - 1;
 	if (column < box.clip.x || column >= box.clip.x + box.clip.width) return undefined;
 
@@ -355,6 +440,29 @@ function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 		}
 	}
 	for (const child of box.children) paintBox(child, screen, totalWidth);
+
+	if (box.entryFrame && box.rect.height > 0) {
+		const first = box.entryFrame.entries[0];
+		if (first && first.top < 0) {
+			const hidden = -first.top;
+			for (let row = hidden - 1; row >= 0; row--) {
+				const line = first.lines[row]!;
+				const metadata = getKittyImageMetadata(line);
+				if (metadata) {
+					const hiddenRows = hidden - row;
+					if (hiddenRows < metadata.rows && box.rect.x === 0 && box.rect.width >= totalWidth) {
+						screen[box.rect.y] = cropKittyImageLine(
+							line,
+							hiddenRows,
+							Math.min(box.rect.height, metadata.rows - hiddenRows),
+						);
+					}
+					break;
+				}
+				if (line !== "") break;
+			}
+		}
+	}
 
 	if (box.scrollView && box.scrollContentLines && box.scrollView.scrollTop > 0 && box.rect.height > 0) {
 		for (let imageRow = box.scrollView.scrollTop - 1; imageRow >= 0; imageRow--) {

@@ -27,6 +27,11 @@
 
 ### Fixed
 
+- Keep long fullscreen transcripts responsive by rendering visible entries and resolving search, selection, and copy on demand; preserve complete transcript output on exit.
+- Reduce history focus and Markdown rendering work, and preserve streamed scrollback, hardware cursor positions, and clipboard output.
+- Release closed RPC session replay and bookkeeping state, preserve live update metadata, and settle queued prompts, idle waiters, and rejected commands correctly.
+- Bound consecutive automatic stream-collapse recovery and flush successful CLI output before exiting.
+
 - Starting a branded install (such as omo) no longer empties an upstream pi install: `~/.pi/agent`, `~/.pi/mom` and a project's `.pi` are copied into the branded directories and left untouched. If an earlier start already moved them, the next start copies pi's settings, credentials, sessions and extensions back into a `~/.pi/agent` (and `~/.pi/mom`) that holds nothing of the user's, without overwriting any real file. ([oh-my-openagent#8039](https://github.com/code-yeongyu/oh-my-openagent/issues/8039))
 - Task children and other RPC clients no longer fail to open a session after 30 s when the shared host is busy. Once the host acknowledges an `open_session` with its `queued` record, the client waits for the answer (up to 10 minutes) instead of giving up at the generic 30 s request deadline. A loaded host was measured answering after 57 s. A timeout after the acknowledgement names the queue position. ([#2209](https://github.com/code-yeongyu/senpi/issues/2209))
 - A shared RPC host keeps opening sessions after the directory of a session it still holds is deleted (a task child's directory removed with its record, or a QA run's temp project). Every listing and open used to fail with `ENOENT`, so every new task child on the machine failed to start. An unattached session whose directory is gone is now closed with the `session_closed` reason `session_dir_removed`. ([#2206](https://github.com/code-yeongyu/senpi/issues/2206))

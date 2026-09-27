@@ -5,8 +5,8 @@ import { Container } from "@earendil-works/pi-tui";
  *
  * `tailBudget` is the number of trailing children painted on the first frame:
  * enough to fill the visible viewport, never the whole persisted history.
- * `warmChunkSize` bounds how many earlier children are rendered per macrotask
- * so hydration never blocks input handling.
+ * `warmChunkSize` caps earlier children rendered per macrotask. Warming also
+ * yields on an elapsed-time budget between children to keep input responsive.
  */
 export type ProgressiveTranscriptOptions = {
 	readonly tailBudget: number;
@@ -19,6 +19,9 @@ export const DEFAULT_TAIL_BUDGET = 60 as const;
 
 /** Earlier children warmed per macrotask during background hydration. */
 export const DEFAULT_WARM_CHUNK_SIZE = 100 as const;
+
+/** Cooperative budget: a single expensive child can exceed this before yielding. */
+const WARM_CHUNK_BUDGET_MS = 8;
 
 /** Watermark sentinel: no frame has been painted yet, so nothing is proven renderable. */
 const PENDING_FIRST_PAINT = -1 as const;
@@ -50,6 +53,7 @@ export class ProgressiveTranscriptContainer extends Container {
 	private hydratedFrom: number = PENDING_FIRST_PAINT;
 	private hydrationScheduled = false;
 	private hydrationGeneration = 0;
+	private fullRenderRequested = false;
 	/**
 	 * Deliberately NOT named `disposed`: `Container` keeps a private `disposed`
 	 * own-property guard, and a same-named subclass field lands in the same slot,
@@ -70,14 +74,27 @@ export class ProgressiveTranscriptContainer extends Container {
 
 	/** True when every child has been rendered at least once and no work is pending. */
 	get isFullyHydrated(): boolean {
-		return this.hydratedFrom === 0 && !this.hydrationScheduled;
+		return (this.children.length === 0 || this.hydratedFrom === 0) && !this.hydrationScheduled;
+	}
+
+	/** Explicit transcript output must finish in one frame, even before the first progressive paint. */
+	requestFullRender(): void {
+		this.cancelHydration();
+		this.fullRenderRequested = true;
 	}
 
 	override render(width: number): string[] {
 		this.lastRenderWidth = width;
 		const total = this.children.length;
+		if (this.fullRenderRequested) {
+			this.fullRenderRequested = false;
+			const lines = super.render(width);
+			if (total > 0) this.hydratedFrom = 0;
+			return lines;
+		}
+		// Startup can paint before persisted history is attached. An empty frame
+		// must not consume the pending-first-paint state for that restored history.
 		if (this.hydratedFrom === 0 || total === 0) {
-			this.hydratedFrom = 0;
 			return super.render(width);
 		}
 
@@ -125,6 +142,7 @@ export class ProgressiveTranscriptContainer extends Container {
 	private rearmHydration(): void {
 		this.hydratedFrom = PENDING_FIRST_PAINT;
 		this.hydrationHalted = false;
+		this.fullRenderRequested = false;
 	}
 
 	override dispose(): void {
@@ -176,12 +194,15 @@ export class ProgressiveTranscriptContainer extends Container {
 		if (this.hydratedFrom === 0) return;
 
 		const chunkEnd = this.hydratedFrom;
-		const chunkStart = Math.max(0, chunkEnd - this.warmChunkSize);
+		const earliest = Math.max(0, chunkEnd - this.warmChunkSize);
 		const width = this.lastRenderWidth;
-		if (width !== undefined) {
-			// Discard the lines: this pass exists only to fill each child's cache.
-			this.renderRange(chunkStart, chunkEnd, width);
-		}
+		const started = performance.now();
+		let chunkStart = chunkEnd;
+		do {
+			// Warm backwards so every completed child joins the contiguous ready tail.
+			chunkStart -= 1;
+			if (width !== undefined) this.renderRange(chunkStart, chunkStart + 1, width);
+		} while (chunkStart > earliest && performance.now() - started < WARM_CHUNK_BUDGET_MS);
 		this.hydratedFrom = chunkStart;
 
 		if (chunkStart === 0) {

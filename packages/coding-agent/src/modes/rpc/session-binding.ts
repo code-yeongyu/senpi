@@ -35,6 +35,7 @@ export async function createRpcSessionBinding(
 	// session is inside is what the loop-lag watchdog blames for a stall. The record
 	// stream already carries that transition; no extra subscription is needed.
 	const toolSpans = createToolAttributionSpans(sessionId);
+	let disposed = false;
 	const enqueueRecords = (chunk: string): void => {
 		for (const line of chunk.split("\n")) {
 			if (!line) continue;
@@ -61,13 +62,21 @@ export async function createRpcSessionBinding(
 		},
 	});
 	const handler: RpcConnectionHandler = await runWithProviderScope(entry.scope, async () => {
+		const scopedEnqueue = bindToProviderScope(enqueueRecords);
+		const scopedClose = bindToProviderScope(requestClose);
 		const taggedSink: RpcConnectionSink = {
-			writeRaw: bindToProviderScope(enqueueRecords),
-			waitForBackpressure: bindToProviderScope(async () => {}),
+			// Async commands can finish after disposal and after the provider scope
+			// closes. Check the binding lifetime before entering that closed scope.
+			writeRaw: (chunk) => {
+				if (!disposed) scopedEnqueue(chunk);
+			},
+			waitForBackpressure: async () => {},
 		};
 		return createRpcConnectionHandler(runtimeHost, taggedSink, {
 			sessionId,
-			shutdownHandler: bindToProviderScope(requestClose),
+			shutdownHandler: () => {
+				if (!disposed) scopedClose();
+			},
 			disposeRuntime: false,
 			eventFlushScheduler: (flush) => flush(),
 			...options,
@@ -79,9 +88,13 @@ export async function createRpcSessionBinding(
 		cancelPendingExtensionUiRequests: () =>
 			runWithProviderScope(entry.scope, () => handler.cancelPendingExtensionUiRequests()),
 		rerenderComponents: () => runWithProviderScope(entry.scope, () => handler.rerenderComponents()),
-		dispose: () => {
+		dispose: async () => {
 			toolSpans.closeAll();
-			return runWithProviderScope(entry.scope, () => handler.dispose());
+			try {
+				await runWithProviderScope(entry.scope, () => handler.dispose());
+			} finally {
+				disposed = true;
+			}
 		},
 	};
 }

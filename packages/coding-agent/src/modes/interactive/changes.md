@@ -36,6 +36,186 @@
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the two loaders and the `onSelect` callback in `showSessionSelector`, and one import.
 - `packages/coding-agent/src/modes/interactive/components/session-selector.ts`: the `rightPart` cwd block, the `spacing` / `styledRight` computation in the session row render.
+## 2026-09-27 — Complete explicit transcript output before fullscreen exit
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` accepts a one-frame full-render request, cancels queued hydration, and preserves empty/reset first-paint behavior.
+- `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts` forwards that explicit request through the existing non-owning projection.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` requests the complete transcript before the single regular-screen exit frame and before a regular-screen debug dump.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` otherwise paints only its trailing 60 children when indexed fullscreen browsing has never hydrated the canonical path.
+- `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts` owns the progressive display that the exit renderer traverses.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` stops after one exit render, so deferred history cannot appear later. Resume-hint exits and ordinary indexed frames keep their existing bounded work.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`, `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts`, and `packages/coding-agent/src/modes/interactive/interactive-mode.ts` privately own the hydration and renderer handoff; extensions cannot complete that one-frame output.
+
+### Expected merge conflict zones
+
+- LOW: hydration request/render/reset paths in `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts` and the delegate in `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts`.
+- LOW: `stopInteractiveTui` and `handleDebugCommand` in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`.
+
+## 2026-09-27 - Expose projected transcript entries to the fullscreen viewport
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts`: expose a non-owning indexed source over the existing projection and fixed header/resource prefix. Preserve original source identities across grouping, maintain observed assistant/tool revisions, and report the earliest changed source position through a bounded selection journal. Unobserved mutable components remain unversioned.
+- `packages/coding-agent/src/modes/interactive/chat-viewport.ts`: pass the optional indexed source into the existing fullscreen `ScrollView` and contain indexed overscroll; ordinary document-only callers retain their previous behavior.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: wire that source once and notify it at existing header/resource replacement, expansion and reset boundaries. The canonical document remains the lifecycle and regular-render owner.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: refresh display state when animation is stopped directly, updating the card and its existing content notification together.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts`: fullscreen layout needs individual projected entries without rendering, concatenating or warming the complete transcript. Entry revisions let unchanged visible messages reuse cached rows while the bounded journal distinguishes changes after a selection from changes within it.
+- `packages/coding-agent/src/modes/interactive/chat-viewport.ts`: the primary viewport already receives a fixed allocated height and is the correct boundary for indexed browsing.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: header and resource containers can replace or expand content without changing their identity or child count, so their known mutations need explicit notifications.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: clearing the timer and line cache alone leaves the renderer's spinner state and an indexed entry's revision unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts`, `packages/coding-agent/src/modes/interactive/chat-viewport.ts`, and `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: transcript projection, viewport construction and component ownership are private host responsibilities below extension rendering hooks.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: the animation state and display notification are private to the tool card.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts`: projection maps, the sole assistant/tool change listeners, invalidation and disposal. Keep source keys separate from replaceable projected groups and preserve regular rendering.
+- `packages/coding-agent/src/modes/interactive/chat-viewport.ts`: viewport options and `ScrollView` construction.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: viewport initialization and the existing header/resource mutation sites. Preserve canonical document mounting and native working-region eligibility.
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: `stopAnimation`; retain the existing update/display notification ordering and asynchronous image invalidation.
+
+## 2026-09-27 - Invalidate the committed document when a tool image finishes converting
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: notify the transcript of a content change before requesting the frame for an asynchronously converted image. Image conversion does not change exploration grouping.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a completed tool can gain a renderable image after the idle document revision was captured. Invalidating only the card's line cache left that revision unchanged, so native-history rendering could skip the newly available image.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: the image conversion callback and its transcript-change listener belong to the private tool-card lifecycle.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: the `ToolExecutionImages` completion callback in the constructor. Preserve cache invalidation, content-only notification and the existing render request order.
+
+## 2026-09-27 - Preserve status animation cadence in long sessions
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: use the existing 32 ms Working and hook shimmer timer, 600 ms decorative Working frame interval, and default retry spinner cadence independent of session length. Preserve explicit extension indicator options and retry countdown/backoff timing.
+- `packages/coding-agent/src/modes/interactive/working-status.ts`: remove the obsolete history-size interval selector.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and `packages/coding-agent/src/modes/interactive/working-status.ts`: at 1,000 session entries, the previous policy slowed Working and hook text animation to one update per second and decorative spinners to one per minute. Other renders reused the cached status text, so typing or model output could not restore its shimmer. Whole-history render costs must be addressed without freezing the activity indicator.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns default Working, hook and retry timers. An extension-specific override cannot repair their shared default behavior.
+- `packages/coding-agent/src/modes/interactive/working-status.ts` contained the engine-owned history-size policy.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: status timer constants, Working options, hook ticker and retry indicator construction. Preserve custom options and cancellation cleanup.
+- `packages/coding-agent/src/modes/interactive/working-status.ts`: top-level interval helper removal; shimmer formatting remains unchanged.
+
+## 2026-09-27 - Track committed document changes for native-history controls
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts` caches projection groups and rebuilds only the affected suffix. `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/tool-execution.ts` report content and grouping changes; `packages/coding-agent/src/modes/interactive/components/exploration-group.ts` retains unchanged presentation. `packages/coding-agent/src/modes/interactive/interactive-mode.ts` reports direct source splices and exposes an idle document revision to the main-screen renderer.
+- `packages/coding-agent/src/modes/interactive/components/custom-entry.ts` and `packages/coding-agent/src/modes/interactive/components/custom-message.ts` retain committed render frames. Before native rendering skips history, only projected custom cards are checked at their committed width; changed callback output advances the document revision. Canonical capture does not execute those callbacks twice. Custom headers, active turns, pending tools, retries, compaction and shell execution retain canonical rendering.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/custom-message.ts`: unchanged history should not be regrouped on each frame. Skipping committed history must still detect source replacements, explicit invalidation and custom renderer closures that change without an invalidation event. Fixed extension notice cards can retain native rendering eligibility.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/custom-message.ts`: projection ownership, source splices, committed render frames and the document/composer boundary are private host state.
+
+### Expected merge conflict zones
+
+- Projection lifecycle and callback ownership in `packages/coding-agent/src/modes/interactive/components/exploration-transcript-container.ts`; component update notifications in `packages/coding-agent/src/modes/interactive/components/assistant-message.ts` and `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`; root mounting, source splices and header replacement in `packages/coding-agent/src/modes/interactive/interactive-mode.ts`. Committed-frame capture in `packages/coding-agent/src/modes/interactive/components/custom-message.ts`. Preserve non-owning projected groups and distinguish canonical capture from custom-content validation.
+
+## 2026-09-27 - Preserve pending transcript hydration and yield between children
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: retain pending-first-paint state across empty frames while reporting empty containers as hydrated. Warm a contiguous tail backwards with an eight-millisecond cooperative budget and the existing child-count ceiling.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: startup paints before persisted history attaches; the empty frame previously disabled progressive hydration. A fixed hundred-child warm chunk then blocked input for over a hundred milliseconds. Yielding between children bounds cooperative work; one expensive child can still exceed the budget.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: first-paint state and the private hydration scheduler execute before extension rendering hooks can repair them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts`: empty render fast path, `isFullyHydrated`, and `warmNextChunk`. Preserve generation cancellation, a contiguous ready tail, current-width warming and final transcript order.
+
+## 2026-09-27 - Preserve authoritative shared-host streaming snapshots
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts`: recognize full assistant snapshots on message updates, seed the replay accumulator from them, and forward those authoritative updates without reapplying their deltas. Delta-only replay retains the last known usage when no replacement is supplied and forwards event metadata.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts`: the proxy discarded populated boundary snapshots after an empty message start, so streamed content could stay empty until message end. Full snapshots can also include a provider's genuine initial text or queued delta content; reconstructing them again can lose or duplicate text. Replay may begin at a text-start boundary without a message-start record. Intermediate compact replay updates omit cumulative usage, and replacing known usage with that absence or dropping tool-name metadata leaves incomplete events until the next full snapshot.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts`: the shared-host proxy reconstructs streaming events before interactive listeners and extensions receive them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-host-runtime.ts`: the wire-event handler immediately before listener dispatch. Keep full snapshots authoritative, preserve provider metadata and usage, and seed late-attachment state before processing following delta-only records.
+
+## 2026-09-27 - Reuse unchanged tool display signatures
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: reuse `lastDisplaySignature` during render, matching assistant-component caching. `updateDisplay` remains responsible for observing result/argument updates and renderer invalidation.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: a cached tool card still rehashed its stored payload on every redraw. In an old session this repeated work across hundreds of completed tools before returning cached lines.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: the signature is owned by Senpi's private tool-card render cache.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/tool-execution.ts`: the signature assignment in `render`. Update and animation paths are unchanged.
+
+## 2026-09-27 - Hash render-signature tails without recursive copies
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/render-signature.ts`: hash omitted array items and object entries incrementally, carrying the original property/index key, recursion depth and ancestor set into each value summary.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/render-signature.ts`: every cached tool render computes a signature first. Repeatedly copying and hashing the remainder of large collections caused quadratic work and reset cycle/depth tracking. Incremental traversal keeps tail changes detectable and avoids reprocessing each remaining collection.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/render-signature.ts`: the shared assistant/tool component cache computes signatures inside Senpi's rendering loop, below extension APIs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/render-signature.ts`: signature hash helpers and array/object tail branches. String sampling and cache invalidation contracts are unchanged.
 
 ## 2026-09-26 - Run on Bun when installed and tell Node.js users once how to switch (senpi#2157)
 

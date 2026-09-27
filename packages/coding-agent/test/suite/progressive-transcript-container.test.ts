@@ -1,6 +1,6 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { Container } from "@earendil-works/pi-tui";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ProgressiveTranscriptContainer } from "../../src/modes/interactive/components/progressive-transcript-container.ts";
 
 const WIDTH = 100 as const;
@@ -85,6 +85,109 @@ async function awaitHydration(container: ProgressiveTranscriptContainer, maxTick
 }
 
 describe("ProgressiveTranscriptContainer", () => {
+	it.each([false, true])("renders a requested full frame once with pending hydration: %s", async (pending) => {
+		const rerender = vi.fn();
+		const container = createProgressive(rerender);
+		const components = populate(container, OVER_BUDGET);
+		if (pending) container.render(WIDTH);
+		const counts = components.map((component) => component.renderCount);
+		container.requestFullRender();
+		expect(container.isFullyHydrated).toBe(false);
+		expect(components.map((component) => component.renderCount)).toEqual(counts);
+		expect(container.render(WIDTH)).toEqual(components.flatMap((component) => countingLines(component.index)));
+		expect(container.isFullyHydrated).toBe(true);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		expect(components.map((component) => component.renderCount)).toEqual(counts.map((count) => count + 1));
+		expect(rerender).not.toHaveBeenCalled();
+		container.dispose();
+	});
+
+	it.each(["clear", "detachAll"] as const)("drops a pending full-frame request after %s", (reset) => {
+		const container = createProgressive(() => {});
+		populate(container, OVER_BUDGET);
+		container.requestFullRender();
+		container[reset]();
+		const restored = populate(container, OVER_BUDGET);
+		expect(container.render(WIDTH)).toEqual(
+			restored.slice(-TAIL_BUDGET).flatMap((component) => countingLines(component.index)),
+		);
+		expect(restored[0].renderCount).toBe(0);
+		container.dispose();
+	});
+
+	it("keeps first-paint hydration pending after explicit output of an empty transcript", () => {
+		const container = createProgressive(() => {});
+		container.requestFullRender();
+		expect(container.render(WIDTH)).toEqual([]);
+		const restored = populate(container, OVER_BUDGET);
+		expect(container.render(WIDTH)).toEqual(
+			restored.slice(-TAIL_BUDGET).flatMap((component) => countingLines(component.index)),
+		);
+		expect(restored[0].renderCount).toBe(0);
+		container.dispose();
+	});
+
+	it.each(["initial", "clear", "detachAll"] as const)(
+		"preserves deferred hydration when an empty %s frame precedes restored history",
+		async (reset) => {
+			let rerenderRequests = 0;
+			const container = createProgressive(() => {
+				rerenderRequests += 1;
+			});
+			if (reset !== "initial") {
+				populate(container, 1);
+				container.render(WIDTH);
+				container[reset]();
+			}
+			expect(container.render(WIDTH)).toStrictEqual([]);
+			expect(container.isFullyHydrated).toBe(true);
+
+			const components = populate(container, LARGE_TRANSCRIPT);
+			const first = container.render(WIDTH);
+			expect(components.filter((component) => component.renderCount > 0)).toHaveLength(TAIL_BUDGET);
+			expect(first).toStrictEqual(
+				components.slice(-TAIL_BUDGET).flatMap((component) => countingLines(component.index)),
+			);
+			expect(container.isFullyHydrated).toBe(false);
+
+			await awaitHydration(container, LARGE_TRANSCRIPT / WARM_CHUNK + 8);
+			expect(rerenderRequests).toBe(1);
+			expect(container.render(WIDTH)).toStrictEqual(
+				components.flatMap((component) => countingLines(component.index)),
+			);
+		},
+	);
+
+	it("renders a live message immediately after an empty first frame", () => {
+		const container = createProgressive(() => {});
+		expect(container.render(WIDTH)).toStrictEqual([]);
+		const [message] = populate(container, 1);
+		expect(container.render(WIDTH)).toStrictEqual([...countingLines(0)]);
+		expect(message.renderCount).toBe(1);
+		expect(container.isFullyHydrated).toBe(true);
+	});
+
+	it("keeps the final history current when width and theme change during hydration", async () => {
+		const container = createProgressive(() => {});
+		container.render(WIDTH);
+		const components = populate(container, LARGE_TRANSCRIPT);
+		container.render(WIDTH);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		container.invalidate();
+		const resizedWidth = WIDTH - 20;
+		container.render(resizedWidth);
+		await awaitHydration(container, LARGE_TRANSCRIPT / WARM_CHUNK + 8);
+
+		expect(components.every((component) => component.invalidateCount === 1)).toBe(true);
+		expect(container.render(resizedWidth)).toStrictEqual(
+			components.flatMap((component) => [
+				`component-${component.index}-w${resizedWidth}`,
+				`component-${component.index}-body`,
+			]),
+		);
+	});
+
 	it("renders only a bounded tail on the first paint of a large transcript", () => {
 		// Given: a 5,000-message transcript hydrated into the progressive container
 		const container = createProgressive(() => {});
@@ -100,6 +203,39 @@ describe("ProgressiveTranscriptContainer", () => {
 		const expectedTail = components.slice(LARGE_TRANSCRIPT - TAIL_BUDGET);
 		expect(rendered).toStrictEqual([...expectedTail]);
 		expect(lines).toStrictEqual(expectedTail.flatMap((component) => countingLines(component.index)));
+	});
+
+	it.each([
+		{ renderMs: 0, expectedWarmed: WARM_CHUNK },
+		{ renderMs: 5, expectedWarmed: 2 },
+		{ renderMs: 20, expectedWarmed: 1 },
+	])("yields after bounded warm work when each child takes $renderMs ms", async ({ renderMs, expectedWarmed }) => {
+		let now = 0;
+		const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+		const container = createProgressive(() => {});
+		const components = populate(container, LARGE_TRANSCRIPT);
+		for (const component of components) {
+			const render = component.render.bind(component);
+			component.render = (width) => {
+				now += renderMs;
+				return render(width);
+			};
+		}
+		try {
+			container.render(WIDTH);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			const head = components.slice(0, -TAIL_BUDGET);
+			expect(head.filter((component) => component.renderCount > 0)).toHaveLength(expectedWarmed);
+			expect(head.slice(-expectedWarmed).every((component) => component.renderCount === 1)).toBe(true);
+			clock.mockRestore();
+			await awaitHydration(container, LARGE_TRANSCRIPT / WARM_CHUNK + 8);
+			expect(container.render(WIDTH)).toStrictEqual(
+				components.flatMap((component) => countingLines(component.index)),
+			);
+		} finally {
+			clock.mockRestore();
+			container.dispose();
+		}
 	});
 
 	it("eventually renders the full history exactly like an ordinary Container", async () => {

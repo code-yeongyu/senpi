@@ -207,6 +207,10 @@ function finalizeTruncatedResult(
  * check to avoid running the RGI_Emoji regex unnecessarily.
  */
 function graphemeWidth(segment: string): number {
+	if (segment.length === 1 && segment.charCodeAt(0) >= 0x20 && segment.charCodeAt(0) <= 0x7e) {
+		return 1;
+	}
+
 	if (segment === "\t") {
 		return 3;
 	}
@@ -301,22 +305,12 @@ export function visibleWidth(str: string): number {
 	if (str.includes("\t")) {
 		clean = clean.replace(/\t/g, "   ");
 	}
-	if (clean.includes("\x1b")) {
-		// Strip supported ANSI/OSC/APC escape sequences in one pass.
-		// This covers CSI styling/cursor codes, OSC hyperlinks and prompt markers,
-		// and APC sequences like CURSOR_MARKER.
-		let stripped = "";
-		let i = 0;
-		while (i < clean.length) {
-			const ansi = extractAnsiCode(clean, i);
-			if (ansi) {
-				i += ansi.length;
-				continue;
-			}
-			stripped += clean[i];
-			i++;
-		}
-		clean = stripped;
+	clean = stripTerminalSequences(clean);
+
+	// Styled ASCII is still one cell per character after normalization.
+	if (isPrintableAscii(clean)) {
+		setWidthCache(str, clean.length);
+		return clean.length;
 	}
 
 	// Calculate width
@@ -333,19 +327,19 @@ export function visibleWidth(str: string): number {
 
 /** Remove ANSI, OSC, and APC control sequences while preserving visible text. */
 export function stripTerminalSequences(str: string): string {
-	if (!str.includes("\x1b")) return str;
+	let escapeIndex = str.indexOf("\x1b");
+	if (escapeIndex === -1) return str;
 	let result = "";
-	let i = 0;
-	while (i < str.length) {
-		const ansi = extractAnsiCode(str, i);
+	let start = 0;
+	while (escapeIndex !== -1) {
+		const ansi = extractAnsiCode(str, escapeIndex);
 		if (ansi) {
-			i += ansi.length;
-			continue;
+			result += str.slice(start, escapeIndex);
+			start = escapeIndex + ansi.length;
 		}
-		result += str[i];
-		i++;
+		escapeIndex = str.indexOf("\x1b", ansi ? start : escapeIndex + 1);
 	}
-	return result;
+	return result + str.slice(start);
 }
 
 interface GraphemeCellRange {
@@ -803,15 +797,13 @@ class AnsiCodeTracker {
 }
 
 function updateTrackerFromText(text: string, tracker: AnsiCodeTracker): void {
-	let i = 0;
-	while (i < text.length) {
+	let i = text.indexOf("\x1b");
+	while (i !== -1) {
 		const ansiResult = extractAnsiCode(text, i);
 		if (ansiResult) {
 			tracker.process(ansiResult.code);
-			i += ansiResult.length;
-		} else {
-			i++;
 		}
+		i = text.indexOf("\x1b", i + (ansiResult?.length ?? 1));
 	}
 }
 
@@ -855,9 +847,13 @@ function splitIntoTokensWithAnsi(text: string): string[] {
 			end++;
 		}
 
-		for (const { segment } of graphemeSegmenter.segment(text.slice(i, end))) {
+		const span = text.slice(i, end);
+		const ascii = isPrintableAscii(span);
+		const segments = ascii ? span : graphemeSegmenter.segment(span);
+		for (const part of segments) {
+			const segment = typeof part === "string" ? part : part.segment;
 			const segmentIsSpace = segment === " ";
-			if (!segmentIsSpace && cjkBreakRegex.test(segment)) {
+			if (!ascii && !segmentIsSpace && cjkBreakRegex.test(segment)) {
 				flushCurrent();
 				const token = pendingAnsi + segment;
 				pendingAnsi = "";

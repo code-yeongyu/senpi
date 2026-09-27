@@ -10,6 +10,9 @@
 
 ### Fixed
 
+- Keep long fullscreen transcripts responsive by rendering visible entries and resolving search, selection, and copy on demand; preserve complete transcript output on exit.
+- Reduce history focus and Markdown rendering work, and preserve streamed scrollback, hardware cursor positions, and clipboard output.
+
 ### Removed
 
 ## [2026.9.27-3] - 2026-09-27

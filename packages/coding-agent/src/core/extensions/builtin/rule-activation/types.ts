@@ -12,7 +12,7 @@ export interface TtsrActivationDetails {
 	readonly kind: "ttsr";
 	readonly owner: string;
 	readonly rules: readonly string[];
-	readonly remediation: "nudge" | "provider-error";
+	readonly remediation: "nudge" | "provider-error" | "stopped";
 }
 
 export type RuleActivationDetails = ProjectRulesActivationDetails | TtsrActivationDetails;
@@ -51,7 +51,7 @@ function parseTtsrActivation(value: object): TtsrActivationDetails | undefined {
 		typeof owner !== "string" ||
 		owner.length === 0 ||
 		rules === undefined ||
-		(remediation !== "nudge" && remediation !== "provider-error")
+		(remediation !== "nudge" && remediation !== "provider-error" && remediation !== "stopped")
 	) {
 		return undefined;
 	}

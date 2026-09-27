@@ -46,8 +46,8 @@ describe("InteractiveMode hook status ticker", () => {
 	test.each([
 		[0, 32],
 		[999, 32],
-		[1000, 1000],
-	])("uses %i entries to select a %i ms cadence", (entryCount, intervalMs) => {
+		[1000, 32],
+	])("keeps a %i-entry session at a %i ms cadence", (entryCount, intervalMs) => {
 		const prototype = InteractiveMode.prototype as unknown as HookStatusTickerPrototype;
 		const intervalHandle = setInterval(() => {}, 60_000);
 		const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockReturnValue(intervalHandle);
@@ -93,7 +93,7 @@ describe("InteractiveMode hook status ticker", () => {
 			};
 			const prototype = InteractiveMode.prototype as unknown as HookStatusTickerPrototype;
 			prototype.startToolHookStatusTimer.call(owner);
-			expect(setIntervalSpy).toHaveBeenCalledExactlyOnceWith(expect.any(Function), 1_000);
+			expect(setIntervalSpy).toHaveBeenCalledExactlyOnceWith(expect.any(Function), 32);
 			expect(loadCount).toBe(0);
 		} finally {
 			restoreLoader();

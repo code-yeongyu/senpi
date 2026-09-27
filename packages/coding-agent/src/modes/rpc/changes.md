@@ -1,3 +1,123 @@
+## 2026-09-27 - RPC idle snapshots and cancellable event collectors
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `waitForIdle` subscribes before one `get_state` query and resolves from an idle snapshot in wire-frame order or a subsequent `agent_settled`. The private request signal cancels an unanswered snapshot when the event or deadline wins. Both event helpers share cleanup on settlement, timeout, transport loss, process exit and stop.
+- `promptAndWait` observes the prompt and collector together and cancels the collector when prompting fails. Event dispatch snapshots its listeners so one completing waiter cannot skip a concurrent waiter.
+- `test/suite/rpc-client-idle.test.ts` covers idle/active snapshots, response/event ordering, concurrent waiters, refused prompts and cleanup. `docs/rpc.md` records the unchanged local idle meaning.
+
+### Why
+
+In `packages/coding-agent/src/modes/rpc/rpc-client.ts`, an already-idle session produced no future settlement event, so the old client waited until its 60-second deadline. A refused prompt abandoned an event collector whose later timeout rejected without an observer. Event waits also outlived disconnected clients, and unsubscribing during array iteration skipped adjacent waiters.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/rpc/rpc-client.ts` owns the transport request, event listeners and timers. Extensions calling the interactive host's `waitForIdle` proxy cannot repair those client lifetimes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: helper methods, event dispatch loops, stop/disconnect cleanup and the private `send` request lifecycle. Retain independent command-refusal and worker-listing changes when merging. The acknowledged-open deadline uses the same cancellation-safe pending-request rejection wrapper; queued acknowledgements stay outside collected agent events.
+
+
+## 2026-09-27 - Share immutable replay boundaries and drain late attachments lazily
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: retain boundary snapshots as privately owned JSON-normalized data with equal strings shared across the active message. Replay owns an attachment-time record list and serializes one record per socket drain; caller mutation cannot change late media placeholders.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: stop passing mutable source objects to snapshot retention. Already-emitted media variants are normalized alongside plain values so stateful toJSON results remain byte-identical; live delivery retains its existing serialization path.
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`: admit an ordered lazy replay cursor using the existing FIFO, queue limit, stall detector and close path. Queued live events remain behind replay; failure or disconnect closes its iterator and releases its references. Replay yields through Node setImmediate after a 4 ms elapsed slice so immediately resolved drains cannot starve timers; a single record remains synchronous.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: full start/end boundaries repeat earlier tool arguments, so compacting only deltas still retained approximately 280 MB for a synthetic 0.53 MB final message with 128 tool calls. Shared normalized strings reduce the same source-level case to approximately 6.8 MB while retaining identical boundary records. This case establishes amplification, not the cause of any observed process OOM.
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`: eagerly queueing the same case's 139 MB replay disconnected a healthy late subscriber at the 64 MiB cap. The cursor budgets a conservative resident estimate and one materialized line, allowing transport backpressure to govern replay without expanding all wire history at once. Total replay serialization costs more CPU; the observed-shape 6-tool benchmark remains below 1 ms per emitted event.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, and `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`: shared-host snapshot ownership, socket queue ordering and drain accounting are below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: snapshot representation, reset/demotion and capability-filtered replay.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: snapshot capture call after live serialization.
+- `packages/coding-agent/src/modes/rpc/socket-event-fanout.ts`: queue entry union, admission/overflow cleanup and drain loop. Ordinary live keyed demotion, worker acceptance credit and existing loop-served stall budgets remain intact.
+
+
+## 2026-09-27 - Reject refused commands consistently in the RPC client
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: validate acknowledged responses in the shared send path with the existing typed-error decoder. Void-returning methods now reject host refusals, like methods that read response data already did.
+- `packages/coding-agent/test/rpc-client-reconnect.test.ts`: exercise refused steering, follow-up, custom messages, abort, close, and prompt over a real local socket. A refused close retains its lease; successful close releases it; rejected prompt callbacks fire exactly once.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: a `success:false` response used to resolve void-returning commands. OMO could report a refused steering message as delivered, and a refused close could discard the client's live session handle.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: callers only receive the method's promise; the response and its refusal were discarded inside the shared client.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the end of `send`. Synchronous response callbacks still run before promise settlement, fire-and-forget UI replies still require no acknowledgement, and classified transport-loss handling is unchanged.
+
+## 2026-09-27 - Forward worker visibility through the RPC client
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: accept and forward the existing `include_workers` listing option; omitted and false options retain the host's default privacy filter.
+- `packages/coding-agent/test/suite/rpc-session-context.test.ts`: exercise the public client against the actual host command router, including opt-in followed by default listings.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: OMO lifecycle reconciliation requests worker visibility, but this client silently dropped the option. A live worker was therefore absent from its liveness snapshot, permitting spurious recovery and stale task epochs.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: extensions consume this client; the shared method discarded the option before transport.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the `listSessions` signature and command construction. The host protocol and default listing policy are unchanged.
+
+## 2026-09-27 - Release superseded streaming snapshots from the replay cache
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: compute the existing delta-only serialization once and pass it to the replay cache and socket queue.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: retain ordered deltas and the newest compact delta's full snapshot, releasing earlier cumulative JSON, media variants, and source references. Full start/end boundary records remain intact for existing clients.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: retaining every cumulative prefix grows quadratically with the number of streaming deltas. A 64 KiB synthetic response previously retained about 102 MB of heap and replayed 67.5 MB, overflowing a healthy late attachment's default queue. The same case now retains about 0.84 MB and replays 0.35 MB. This removes delta-prefix amplification; it does not impose a global replay-cache cap.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` and `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: shared-host serialization and replay retention happen below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: compact-delta serialization in the socket delivery path.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: snapshot storage, replacement, and replay. Live delivery, boundary payloads, media capability filtering, and message-end cleanup retain their existing contracts.
+
+## 2026-09-27 - Yield contended startup locks to the event loop
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/ownership-safe-lock.ts`: disable SQLite's synchronous busy handler and use the existing asynchronous retry and cumulative deadline when ownership is contended.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/ownership-safe-lock.ts`: each contender could block the shared event loop for 100 ms. Eight contenders repeatedly delayed a 50 ms release timer to about 806 ms; fail-fast attempts reduced the measured heartbeat gap to 5–6 ms while preserving exclusive ownership.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/ownership-safe-lock.ts`: RPC-host and app-server startup acquire this mutex below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/ownership-safe-lock.ts`: the acquisition PRAGMA and retry comment. The persistent database, exclusive transaction, release and legacy-artifact handling are unchanged.
 ## 2026-09-27 - open_session waits for the host that acknowledged it instead of a fixed 30 s (#2209)
 
 ### What changed
@@ -3377,6 +3497,29 @@ wire shape, multi-session tagging, and payload validation responsibilities.
 ### Expected merge conflict zones
 
 - LOW: the `stop()` implementation and the spawn bookkeeping in `rpc-client.ts`.
+
+
+## 2026-09-27: Release closed RPC session and connection bookkeeping
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` now forgets a closed handle after runtime teardown and its terminal records, removes released connection capabilities and empty width maps, and suppresses an orphaned pending open response.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts` stops late async command output and shutdown callbacks after binding disposal before entering a closed provider scope.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` previously retained one writer seal for every explicit close; connection capability and empty width maps also outlived their owners. Idle eviction already forgot seals, but explicit close did not.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts` must make disposed producers silent before those seals can be released; a command completing later could otherwise emit after the terminal response or throw from its closed provider scope.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts` owns shared-host attachment, finalization, and writer bookkeeping.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts` owns the scoped output sink and its disposal boundary; extensions cannot close that transport lifetime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-command-router.ts`: pending-open completion, shared width callbacks, connection release, and final close ordering.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: scoped sink creation and binding disposal.
 
 ## 2026-09-27 — get_state reports lastProviderDiagnostic (#2197)
 

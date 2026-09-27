@@ -269,19 +269,20 @@ export class SessionEventWriter {
 		);
 		const redacted = hasPlaceholderTarget ? omitInlineMedia(wireTagged) : wireTagged;
 		const placeholderLine = redacted === wireTagged ? undefined : serializeJsonLine(redacted);
-		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, wireTagged);
+		const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
+		const demotedLine = keyed ? serializeJsonLine(demoteToDeltaOnly(wireTagged)) : undefined;
+		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine, demotedLine);
 		for (const target of targets) {
 			if (target !== undefined && !this.fanout.get(target)) continue;
 			const registered = target === undefined ? undefined : this.fanout.get(target);
 			const wants =
 				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
 			if (registered) {
-				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
 				registered.actor.enqueue(
 					wants ? placeholderLine : line,
 					keyed ? MESSAGE_KEY : undefined,
 					undefined,
-					keyed ? serializeJsonLine(demoteToDeltaOnly(wireTagged)) : undefined,
+					demotedLine,
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : wireTagged, target);
 		}

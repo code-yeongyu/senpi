@@ -1,7 +1,14 @@
-import { type Component, ScrollView, type ScrollViewScrollbar, VStack } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	type ScrollEntrySource,
+	ScrollView,
+	type ScrollViewScrollbar,
+	VStack,
+} from "@earendil-works/pi-tui";
 
 export interface ChatViewportOptions {
 	readonly document: Component;
+	readonly entries?: ScrollEntrySource;
 	readonly pendingMessages: Component;
 	readonly status: Component;
 	/** Tool-hook status rows shown between the session status and the widgets above the editor. */
@@ -25,7 +32,8 @@ export function createChatViewport(options: ChatViewportOptions): ChatViewport {
 	const transcript = new ScrollView(options.document, {
 		follow: "end",
 		primary: true,
-		overscroll: "chain",
+		overscroll: options.entries ? "contain" : "chain",
+		...(options.entries === undefined ? {} : { entries: options.entries }),
 		scrollbar: options.scrollbar ?? "auto",
 		...(options.scrollbarTrackStyle === undefined ? {} : { scrollbarTrackStyle: options.scrollbarTrackStyle }),
 		...(options.scrollbarThumbStyle === undefined ? {} : { scrollbarThumbStyle: options.scrollbarThumbStyle }),

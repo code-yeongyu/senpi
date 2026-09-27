@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { acquireOwnershipSafeLock, LegacyLockArtifactError } from "../src/modes/rpc/ownership-safe-lock.ts";
 
 const roots: string[] = [];
@@ -69,6 +69,74 @@ describe("ownership-safe-lock", () => {
 		});
 		expect((await stat(lockPath)).isDirectory()).toBe(true);
 		expect(await readFile(`${lockPath}/legacy`, "utf8")).toBe("untouched");
+	});
+
+	// This native observation instruments node:sqlite; Bun uses its separate bun:sqlite adapter.
+	it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun !== "undefined")(
+		"yields contended acquisition to async retries without a synchronous SQLite busy wait",
+		async () => {
+			// Keep Node's native adapter import behind the runtime guard, as production does.
+			const { DatabaseSync } = await import("node:sqlite");
+			const root = await scratch();
+			const lockPath = join(root, "target.lock");
+			const release = await acquireOwnershipSafeLock(lockPath);
+			const busyTimeouts: unknown[] = [];
+			const exec = DatabaseSync.prototype.exec;
+			const spy = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (
+				this: InstanceType<typeof DatabaseSync>,
+				sql,
+			) {
+				try {
+					return exec.call(this, sql);
+				} catch (error) {
+					// Observe SQLite's effective busy handler, not the SQL text or wall time.
+					busyTimeouts.push(this.prepare("PRAGMA busy_timeout;").get()?.timeout);
+					throw error;
+				}
+			});
+			let active = 0;
+			let maximumActive = 0;
+			const waiters = Array.from({ length: 4 }, async () => {
+				const unlock = await acquireOwnershipSafeLock(lockPath);
+				active++;
+				maximumActive = Math.max(maximumActive, active);
+				await Promise.resolve();
+				active--;
+				await unlock();
+			});
+			try {
+				await expect.poll(() => busyTimeouts.length, { timeout: 2_000 }).toBeGreaterThanOrEqual(4);
+				expect(maximumActive).toBe(0);
+				expect(new Set(busyTimeouts)).toEqual(new Set([0]));
+			} finally {
+				try {
+					await release();
+					await Promise.all(waiters);
+				} finally {
+					spy.mockRestore();
+				}
+			}
+			expect(maximumActive).toBe(1);
+		},
+	);
+
+	it("stops retrying once the cumulative deadline expires", async () => {
+		const root = await scratch();
+		const lockPath = join(root, "target.lock");
+		const release = await acquireOwnershipSafeLock(lockPath);
+		const now = Date.now();
+		const clock = vi
+			.spyOn(Date, "now")
+			.mockReturnValueOnce(now)
+			.mockReturnValue(now + 10);
+		try {
+			await expect(
+				acquireOwnershipSafeLock(lockPath, { retries: { retries: 2, minTimeout: 1, maxTimeout: 5 } }),
+			).rejects.toThrow(/busy|locked/i);
+		} finally {
+			clock.mockRestore();
+			await release();
+		}
 	});
 
 	it("serializes real children: the waiter acquires only after the holder releases", async () => {

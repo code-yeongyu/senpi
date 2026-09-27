@@ -1,3 +1,4 @@
+import { setImmediate } from "node:timers/promises";
 import { loopBlockedMark, loopBlockedMsSince } from "./loop-blocked-time.ts";
 
 type SocketSink = {
@@ -16,6 +17,11 @@ type QueueEntry = {
 	 */
 	demotedLine?: string;
 	onWritten?: () => void;
+};
+
+type ReplayEntry = {
+	replay: Iterator<string>;
+	bytes: number;
 };
 
 // A handful of image tool results is several MiB of base64 each; four of them
@@ -74,7 +80,10 @@ export class SocketEventQueueOverflowError extends Error {
 
 /** Independent FIFO actor for one socket. It never shares a drain promise with another sink. */
 export class SocketEventSinkActor {
-	private readonly queue: QueueEntry[] = [];
+	private readonly queue: (QueueEntry | ReplayEntry)[] = [];
+	// Queue budget: ordinary pending UTF-8 wire bytes plus replay resident estimates.
+	// Replay charges stay intact until exhaustion; expanded replay wire bytes are not
+	// retained here. As before, one in-flight wire line sits outside this budget.
 	private queuedBytes = 0;
 	private draining?: Promise<void>;
 	private closed = false;
@@ -101,7 +110,7 @@ export class SocketEventSinkActor {
 		if (this.closed) return;
 		const bytes = Buffer.byteLength(line);
 		if (key !== undefined) {
-			const existing = this.queue.find((entry) => entry.key === key);
+			const existing = this.queue.find((entry): entry is QueueEntry => "line" in entry && entry.key === key);
 			if (existing) {
 				// Lossless supersession. The old behaviour replaced the queued line
 				// outright, which threw away every delta a stalled reader had not yet
@@ -119,25 +128,27 @@ export class SocketEventSinkActor {
 			}
 		}
 		if (this.queuedBytes + bytes > this.maxQueueBytes) {
-			const overflow = new SocketEventQueueOverflowError(
-				this.queuedBytes,
-				bytes,
-				this.maxQueueBytes,
-				line.slice(0, 120),
-			);
-			this.closed = true;
-			this.queue.length = 0;
-			this.queuedBytes = 0;
-			try {
-				this.sink.writeRaw(`${JSON.stringify({ type: "overflow", error: "overflow, resync required" })}\n`);
-			} catch (cause) {
-				this.onFailure(cause);
-			}
-			this.onFailure(overflow);
+			this.overflow(bytes, line.slice(0, 120));
 			return;
 		}
 		this.queue.push({ line, bytes, key, demotedLine, onWritten });
 		this.queuedBytes += bytes;
+		void this.drain();
+	}
+
+	/** Take ownership of one immutable replay view, ahead of all subsequent live records. */
+	enqueueReplay(replay: Iterator<string>, residentBytes: number): void {
+		if (this.closed) {
+			this.closeReplay(replay);
+			return;
+		}
+		// Retain before admission so overflow closes this iterator along with the queue.
+		this.queue.push({ replay, bytes: residentBytes });
+		if (this.queuedBytes + residentBytes > this.maxQueueBytes) {
+			this.overflow(residentBytes, "[replay]");
+			return;
+		}
+		this.queuedBytes += residentBytes;
 		void this.drain();
 	}
 
@@ -160,8 +171,28 @@ export class SocketEventSinkActor {
 
 	close(): void {
 		this.closed = true;
-		this.queue.length = 0;
+		const entries = this.queue.splice(0);
 		this.queuedBytes = 0;
+		for (const entry of entries) if ("replay" in entry) this.closeReplay(entry.replay);
+	}
+
+	private closeReplay(replay: Iterator<string>): void {
+		try {
+			replay.return?.();
+		} catch (cause) {
+			this.onFailure(cause);
+		}
+	}
+
+	private overflow(bytes: number, preview: string): void {
+		const overflow = new SocketEventQueueOverflowError(this.queuedBytes, bytes, this.maxQueueBytes, preview);
+		this.close();
+		try {
+			this.sink.writeRaw(`${JSON.stringify({ type: "overflow", error: "overflow, resync required" })}\n`);
+		} catch (cause) {
+			this.onFailure(cause);
+		}
+		this.onFailure(overflow);
 	}
 
 	/**
@@ -207,19 +238,44 @@ export class SocketEventSinkActor {
 	private drain(): Promise<void> {
 		if (this.draining) return this.draining;
 		this.draining = (async () => {
+			let replaySliceStarted = performance.now();
 			try {
 				while (!this.closed && this.queue.length > 0) {
-					const entry = this.queue.shift()!;
-					this.queuedBytes -= entry.bytes;
-					this.sink.writeRaw(entry.line);
-					await this.waitForDrainOrStall(entry.bytes);
-					entry.onWritten?.();
+					const entry = this.queue[0]!;
+					let line: string;
+					let bytes: number;
+					if ("replay" in entry) {
+						const next = entry.replay.next();
+						if (next.done) {
+							this.queue.shift();
+							this.queuedBytes -= entry.bytes;
+							continue;
+						}
+						line = next.value;
+						bytes = Buffer.byteLength(line);
+						if (bytes > this.maxQueueBytes) {
+							this.overflow(bytes, line.slice(0, 120));
+							break;
+						}
+					} else {
+						this.queue.shift();
+						this.queuedBytes -= entry.bytes;
+						line = entry.line;
+						bytes = entry.bytes;
+					}
+					this.sink.writeRaw(line);
+					await this.waitForDrainOrStall(bytes);
+					if ("line" in entry) entry.onWritten?.();
+					else if (!this.closed && performance.now() - replaySliceStarted >= 4) {
+						// Resolved drain promises alone starve timers on always-writable sinks.
+						// ponytail: each record still serializes synchronously; chunk encoding if one record blocks the loop.
+						await setImmediate();
+						replaySliceStarted = performance.now();
+					}
 				}
 			} catch (cause) {
 				this.failure = cause;
-				this.closed = true;
-				this.queue.length = 0;
-				this.queuedBytes = 0;
+				this.close();
 				this.onFailure(cause);
 			}
 		})().finally(() => {

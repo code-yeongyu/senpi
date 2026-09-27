@@ -678,7 +678,7 @@ function renderRetryStatus(context: RetryStatusContext): string {
 }
 
 describe("retry indicator cadence", () => {
-	it("throttles retry indicator animation for large sessions", () => {
+	it("keeps normal retry animation and countdown timing for large sessions", () => {
 		initTheme("dark");
 		vi.useFakeTimers();
 		const context = createRetryStatusContext(1_000);
@@ -692,11 +692,14 @@ describe("retry indicator cadence", () => {
 			});
 			const initialFrame = renderRetryStatus(context);
 
-			vi.advanceTimersByTime(999);
+			vi.advanceTimersByTime(79);
 			expect(renderRetryStatus(context)).toBe(initialFrame);
 
 			vi.advanceTimersByTime(1);
 			expect(renderRetryStatus(context)).not.toBe(initialFrame);
+			expect(renderRetryStatus(context)).toContain("in 5s");
+			vi.advanceTimersByTime(920);
+			expect(renderRetryStatus(context)).toContain("in 4s");
 		} finally {
 			context.activeStatusIndicator?.dispose();
 			context.ui.stop();
@@ -729,7 +732,7 @@ describe("retry indicator cadence", () => {
 		}
 	});
 
-	it("throttles summarization retry animation for large sessions", () => {
+	it("keeps normal summarization retry animation and countdown timing for large sessions", () => {
 		initTheme("dark");
 		vi.useFakeTimers();
 		const context = createRetryStatusContext(1_000);
@@ -743,11 +746,14 @@ describe("retry indicator cadence", () => {
 			});
 			const initialFrame = renderRetryStatus(context);
 
-			vi.advanceTimersByTime(999);
+			vi.advanceTimersByTime(79);
 			expect(renderRetryStatus(context)).toBe(initialFrame);
 
 			vi.advanceTimersByTime(1);
 			expect(renderRetryStatus(context)).not.toBe(initialFrame);
+			expect(renderRetryStatus(context)).toContain("in 5s");
+			vi.advanceTimersByTime(920);
+			expect(renderRetryStatus(context)).toContain("in 4s");
 		} finally {
 			context.activeStatusIndicator?.dispose();
 			context.ui.stop();

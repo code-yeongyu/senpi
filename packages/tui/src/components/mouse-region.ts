@@ -1,6 +1,9 @@
 import {
 	type Component,
 	dispatchMouseEvent,
+	renderComponentTail,
+	type TailRenderContext,
+	type TailRenderResult,
 	type TuiMouseDispatchResult,
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
@@ -22,9 +25,17 @@ export class MouseRegion implements Component {
 		return this.child.render(width);
 	}
 
+	renderTail(width: number, maxRows: number, context: TailRenderContext): TailRenderResult {
+		return renderComponentTail(this.child, width, maxRows, context);
+	}
+
 	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | TuiMouseEventResult | undefined {
 		const childResult = dispatchMouseEvent(this.child, event);
 		return childResult ?? this.onMouse(event);
+	}
+
+	dispose(): void {
+		this.child.dispose?.();
 	}
 
 	invalidate(): void {

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import { APP_NAME, DISPLAY_VERSION, getPackageDir, isBundledNode } from "./config.ts";
+import { flushRawStdout } from "./core/output-guard.ts";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 
@@ -142,6 +143,7 @@ async function spawnFullCli(): Promise<number> {
 
 if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) {
 	console.log(DISPLAY_VERSION);
+	await flushRawStdout();
 	process.exit();
 }
 
@@ -151,6 +153,7 @@ if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) 
 if (isRootCommand(args) && args.some((arg) => arg === "--help" || arg === "-h")) {
 	const { tryPrintHelpWithoutEngine } = await import("./cli/help-fast-path.ts");
 	if (tryPrintHelpWithoutEngine(args)) {
+		await flushRawStdout();
 		process.exit();
 	}
 }

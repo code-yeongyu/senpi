@@ -28,8 +28,14 @@ function clampMentions(mentions: readonly MentionRange[], length: number): Menti
 		.filter((range) => range.start < range.end);
 }
 
-function cutPoints(length: number, mentions: readonly MentionRange[], cursorGlyph: MentionRange | undefined): number[] {
+function cutPoints(
+	length: number,
+	mentions: readonly MentionRange[],
+	cursorGlyph: MentionRange | undefined,
+	cursorPosition: number | undefined,
+): number[] {
 	const cuts = new Set<number>([0, length]);
+	if (cursorPosition !== undefined) cuts.add(cursorPosition);
 	for (const range of mentions) {
 		cuts.add(range.start);
 		cuts.add(range.end);
@@ -54,7 +60,7 @@ export function renderEditorLine(input: EditorLineRenderInput): EditorLineRender
 		cursorInText && cursor.drawFakeCursor
 			? { start: cursor.pos, end: cursor.pos + input.firstGrapheme(text.slice(cursor.pos)).length }
 			: undefined;
-	const points = cutPoints(text.length, mentions, cursorGlyph);
+	const points = cutPoints(text.length, mentions, cursorGlyph, cursorInText ? cursor.pos : undefined);
 
 	let out = "";
 	for (let index = 0; index < points.length - 1; index++) {

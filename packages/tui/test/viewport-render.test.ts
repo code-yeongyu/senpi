@@ -31,6 +31,12 @@ class MutableLinesComponent implements tuiModule.Component {
 	invalidate(): void {}
 }
 
+class ObservedTui extends tuiModule.TUI {
+	normalizedFrame(): readonly string[] {
+		return this.previousLines;
+	}
+}
+
 class StreamingComponent implements tuiModule.Component {
 	private tokenCount = 0;
 	readonly stableTail = Array.from({ length: 18 }, (_, index) => `stable viewport row ${index}`);
@@ -235,5 +241,86 @@ describe("viewport-bounded render", () => {
 			assert.strictEqual(viewportStats().lastNormalizedLines, 1);
 			tui.stop();
 		});
+	});
+
+	it("reuses normalized history without memo lookups when streaming appends rows", async (t) => {
+		const terminal = new VirtualTerminal(80, 40);
+		const tui = new tuiModule.TUI(terminal);
+		const component = new LargeStatusComponent();
+		tui.addChild(component);
+		try {
+			await driveRender(tui, terminal);
+			const memo = Reflect.get(tui, "normalizeMemo");
+			assert.ok(memo instanceof Map);
+			const lookup = t.mock.method(memo, "get");
+			component.transcript.push("new streamed row");
+			await driveRender(tui, terminal);
+			assert.ok(lookup.mock.callCount() <= 2, "unchanged history should bypass normalization memo hashing");
+			assert.ok(terminal.getViewport().some((line) => line.includes("new streamed row")));
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("preserves normalized bytes across duplicates, moved rows, deletion and resize", async () => {
+		const terminal = new VirtualTerminal(80, 40);
+		const tui = new ObservedTui(terminal);
+		const component = new MutableLinesComponent();
+		const reset = "\x1b[0m\x1b]8;;\x07";
+		const styled = "\x1b[31mred\ttext";
+		const image = "\x1b_Ga=T,f=100;AAAA\x1b\\";
+		const normalized = new Map([
+			[styled, `\x1b[31mred   text${reset}`],
+			[image, image],
+			["plain", `plain${reset}`],
+			["changed", `changed${reset}`],
+		]);
+		tui.addChild(component);
+		try {
+			const frames = [
+				[styled, "plain", image],
+				[styled, "plain", image, styled],
+				["plain", styled, styled, image],
+				["changed", styled, image],
+				[styled, "plain"],
+			];
+			for (const lines of frames) {
+				component.lines = lines;
+				await driveRender(tui, terminal);
+				assert.deepStrictEqual(
+					tui.normalizedFrame(),
+					lines.map((line) => normalized.get(line)),
+				);
+			}
+			terminal.resize(60, 30);
+			await driveRender(tui, terminal);
+			assert.deepStrictEqual(
+				tui.normalizedFrame(),
+				component.lines.map((line) => normalized.get(line)),
+			);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it("recovers clipped component output when the terminal widens", async () => {
+		const terminal = new VirtualTerminal(10, 8);
+		const tui = new ObservedTui(terminal);
+		const component = new MutableLinesComponent();
+		component.lines = ["initial"];
+		tui.addChild(component);
+		// The containment diagnostic is unrelated to this width-change regression.
+		Reflect.set(tui, "overWideCrashDumpWritten", true);
+		try {
+			await driveRender(tui, terminal);
+			component.lines = ["ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+			await driveRender(tui, terminal);
+			assert.ok(terminal.getViewport()[0].startsWith("ABCDEFGHIJ"));
+			terminal.resize(40, 8);
+			await driveRender(tui, terminal);
+			assert.ok(terminal.getViewport()[0].startsWith("ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+		} finally {
+			tui.stop();
+		}
 	});
 });

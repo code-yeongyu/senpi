@@ -1,3 +1,21 @@
+## 2026-09-27 - Avoid repeated token-estimator scans within short runs
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: restrict the base64 weighting regex to the start of each maximal alphabet run. The 512-character threshold and all token estimates remain unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: a short run previously retried the same failing threshold at every interior character during synchronous context preparation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: extensions share this core estimator and cannot replace its internal text scan without changing callers or token policy.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: the `BASE64_RUN_RE` declaration beside `weightedChars`; no caller or policy changes.
+
 ## 2026-09-16 - Bound one compaction and settle its stream inside the watchdog (#1741)
 
 ### What changed

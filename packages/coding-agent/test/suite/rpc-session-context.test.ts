@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { z } from "zod";
+import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
+import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import {
 	contextHost,
 	identitySchema,
@@ -73,6 +75,26 @@ it("lists worker rows with their kind and context for include_workers", async ()
 		}),
 		expect.objectContaining({ sessionId: interactive.sessionId, kind: "interactive", context: {} }),
 	]);
+}, 120_000);
+
+it("forwards explicit worker visibility through RpcClient without changing default listings", async () => {
+	await using host = await contextHost();
+	const worker = await host.open("conn-a", { kind: "worker", context: { role: "child" } });
+	const interactive = await host.open("conn-a", {});
+	const client = new RpcClient();
+	// Replace only transport: exercise the public client and the real host router together.
+	(client as unknown as { send: (command: RpcCommand) => Promise<unknown> }).send = (command) =>
+		host.send("conn-a", command);
+
+	expect((await client.listSessions()).map((row) => row.sessionId)).toEqual([interactive.sessionId]);
+	expect((await client.listSessions({ include_workers: true })).map((row) => row.sessionId)).toEqual([
+		worker.sessionId,
+		interactive.sessionId,
+	]);
+	expect((await client.listSessions({ include_workers: false })).map((row) => row.sessionId)).toEqual([
+		interactive.sessionId,
+	]);
+	expect((await client.listSessions()).map((row) => row.sessionId)).toEqual([interactive.sessionId]);
 }, 120_000);
 
 it("keeps a worker session hidden when a later open attaches to it without a kind", async () => {

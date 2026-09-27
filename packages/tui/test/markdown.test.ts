@@ -2,8 +2,9 @@ import assert from "node:assert";
 import { afterEach, describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
+import { Marked } from "marked";
 import { latexToUnicode } from "../src/components/latex.ts";
-import { Markdown } from "../src/components/markdown.ts";
+import { clearRenderCache, Markdown } from "../src/components/markdown.ts";
 import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import { type Component, TUI } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
@@ -48,6 +49,80 @@ function stripAnsi(line: string): string {
 }
 
 describe("Markdown component", () => {
+	describe("Parse reuse", () => {
+		it("does not reparse mounted history after shared-cache eviction", (t) => {
+			clearRenderCache();
+			const lexer = t.mock.method(Marked.prototype, "lexer");
+			const history = Array.from(
+				{ length: 300 },
+				(_, index) => new Markdown(`History ${index}: **unchanged** content.`, 0, 0, defaultMarkdownTheme),
+			);
+			for (const markdown of history) markdown.render(80);
+			assert.strictEqual(lexer.mock.callCount(), history.length);
+			for (const markdown of history) markdown.render(60);
+			assert.strictEqual(lexer.mock.callCount(), history.length);
+
+			// Shared parsing remains useful for new instances at a different width.
+			new Markdown("History 299: **unchanged** content.", 0, 0, defaultMarkdownTheme).render(40);
+			assert.strictEqual(lexer.mock.callCount(), history.length);
+		});
+
+		it("keys reuse after width-dependent transforms and releases changed or empty source", (t) => {
+			clearRenderCache();
+			const lexer = t.mock.method(Marked.prototype, "lexer");
+			const markdown = new Markdown("source", 2, 0, defaultMarkdownTheme, undefined, {
+				transform: (source, width) => (width < 20 ? "" : `${source}\t${Math.floor(width / 10)}`),
+			});
+			markdown.render(80);
+			assert.strictEqual(lexer.mock.callCount(), 1);
+			markdown.render(79);
+			assert.strictEqual(lexer.mock.callCount(), 1);
+			assert.deepStrictEqual(
+				markdown.render(60).map((line) => stripAnsi(line).trim()),
+				["source   5"],
+			);
+			assert.strictEqual(lexer.mock.callCount(), 2);
+			markdown.setText("updated");
+			assert.strictEqual(Reflect.get(markdown, "cachedParse"), undefined);
+			assert.deepStrictEqual(
+				markdown.render(60).map((line) => stripAnsi(line).trim()),
+				["updated   5"],
+			);
+			assert.strictEqual(lexer.mock.callCount(), 3);
+			assert.deepStrictEqual(markdown.render(10), []);
+			assert.strictEqual(Reflect.get(markdown, "cachedParse"), undefined);
+			markdown.setText("");
+			assert.strictEqual(Reflect.get(markdown, "cachedParse"), undefined);
+		});
+
+		it("reuses partial-fence tokens without trimming twice and refreshes theme output", (t) => {
+			clearRenderCache();
+			const lexer = t.mock.method(Marked.prototype, "lexer");
+			let codeColor = chalk.red;
+			const theme = { ...defaultMarkdownTheme, codeBlock: (text: string) => codeColor(text) };
+			const markdown = new Markdown("```ts\nconst x = 1;\n``", 0, 0, theme);
+			const expected = ["```ts", "  const x = 1;", "```"];
+			for (const width of [80, 60, 40]) {
+				assert.deepStrictEqual(
+					markdown.render(width).map((line) => stripAnsi(line).trimEnd()),
+					expected,
+				);
+			}
+			assert.strictEqual(lexer.mock.callCount(), 1);
+			codeColor = chalk.green;
+			clearRenderCache();
+			markdown.invalidate();
+			assert.ok(markdown.render(40).join("\n").includes("\x1b[32m"));
+			assert.strictEqual(lexer.mock.callCount(), 1);
+			markdown.setText("```ts\nconst x = 12;\n```");
+			assert.deepStrictEqual(
+				markdown.render(40).map((line) => stripAnsi(line).trimEnd()),
+				["```ts", "  const x = 12;", "```"],
+			);
+			assert.strictEqual(lexer.mock.callCount(), 2);
+		});
+	});
+
 	describe("Transforms", () => {
 		it("caches transformed Markdown by source and available width", () => {
 			const calls: Array<{ source: string; availableWidth: number }> = [];

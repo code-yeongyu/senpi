@@ -30,6 +30,7 @@ export class AssistantMessageComponent extends Container {
 	private providerErrorOwned = false;
 	private isStreaming = false;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
+	private transcriptChanged?: (projectionChanged: boolean) => void;
 
 	constructor(
 		message?: AssistantMessage,
@@ -91,6 +92,11 @@ export class AssistantMessageComponent extends Container {
 		return this.renderDescriptors.every((part) => part.kind === "spacer" || part.kind === "thinking-label");
 	}
 
+	/** The original transcript owns presentation grouping; projected views do not subscribe. */
+	setTranscriptChangedListener(listener: ((projectionChanged: boolean) => void) | undefined): void {
+		this.transcriptChanged = listener;
+	}
+
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
 		this.renderDescriptors = [];
@@ -116,6 +122,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
+		const wasExplorationDetail = this.isExplorationDetail;
 		const previousMessage = this.lastMessage;
 		const streamingChanged = this.isStreaming !== isStreaming;
 		this.isStreaming = isStreaming;
@@ -137,6 +144,7 @@ export class AssistantMessageComponent extends Container {
 			hasToolCalls: this.hasToolCalls,
 		});
 		this.reconcileRenderDescriptors(descriptors);
+		this.transcriptChanged?.(this.isExplorationDetail !== wasExplorationDetail);
 	}
 
 	private reconcileRenderDescriptors(descriptors: readonly AssistantRenderDescriptor[]): void {

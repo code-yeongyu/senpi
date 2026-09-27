@@ -110,6 +110,15 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.ts";
+export type {
+	ScrollEntry,
+	ScrollEntryAnchor,
+	ScrollEntryFrame,
+	ScrollEntryPlacement,
+	ScrollEntryRender,
+	ScrollEntryRow,
+	ScrollEntrySource,
+} from "./layout-node.ts";
 export {
 	decodeMouseButton,
 	isMouseSequence,
@@ -190,7 +199,11 @@ export {
 	type OverlayMargin,
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
+	renderChildrenTail,
+	renderComponentTail,
 	type SizeValue,
+	type TailRenderContext,
+	type TailRenderResult,
 	TUI,
 	type TuiInputListener,
 	type TuiInputListenerResult,

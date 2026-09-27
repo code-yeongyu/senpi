@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { AutocompleteProvider } from "../src/autocomplete.ts";
 import { Editor, type EditorTheme } from "../src/components/editor.ts";
+import { CURSOR_MARKER } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { visibleWidth } from "../src/utils.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
@@ -37,6 +38,18 @@ function createEditor(theme: EditorTheme = mentionTheme, width = 80): Editor {
 }
 
 describe("Editor skill mention highlight", () => {
+	it("keeps mention styling around an interior hardware caret without drawing a fake cursor", () => {
+		const tui = new TuiMainScreen(new VirtualTerminal(80, 24), true);
+		const editor = new Editor(tui, mentionTheme);
+		editor.focused = true;
+		editor.setAutocompleteProvider(mentionProvider);
+		editor.setText("$debugging");
+		for (let index = 0; index < 4; index++) editor.handleInput(LEFT);
+		const line = editor.render(80)[1] ?? "";
+		assert.ok(line.includes(`${styled("$debug")}${CURSOR_MARKER}${styled("ging")}`), JSON.stringify(line));
+		assert.doesNotMatch(line, /\x1b\[7m/);
+		assert.strictEqual(visibleWidth(line), 80);
+	});
 	it("styles every mention range and leaves the rest of the line plain", () => {
 		const editor = createEditor();
 		editor.setText("fix $debugging then $HOME $debugging");
