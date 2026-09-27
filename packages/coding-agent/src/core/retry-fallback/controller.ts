@@ -1,8 +1,8 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
+import { firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
-	candidatesAfter,
 	canonicalizeFallbackChains,
 	type FallbackChains,
 	type FallbackSelector,
@@ -10,61 +10,22 @@ import {
 	parseFallbackSelector,
 	resolveChainKey,
 } from "./chains.ts";
-import type { SelectorCooldowns } from "./cooldown.ts";
-import type { FallbackLogger } from "./log.ts";
+import { CircuitProbes } from "./circuit-probes.ts";
+import type {
+	ActiveFallbackState,
+	CircuitFailure,
+	FallbackReason,
+	RetryFallbackControllerDeps,
+} from "./controller-types.ts";
 
-export interface ActiveFallbackState {
-	chainKey: string;
-	originalSelector: string;
-	originalThinkingLevel?: ThinkingLevel;
-	lastAppliedThinkingLevel?: ThinkingLevel;
-	/** Pin provenance: refusal contributions release on compaction, billing never. */
-	pinnedByRefusal: boolean;
-	pinnedByBilling: boolean;
-	/** Derived OR of the two provenance flags - the only field consumers read. */
-	pinned: boolean;
-}
-
-type FallbackReason = "transient" | "refusal" | "hard-error" | "billing";
-
-interface FallbackSettings {
-	modelFallback: boolean;
-	chains: Readonly<Record<string, readonly string[]>>;
-}
-
-export interface RetryFallbackControllerDeps {
-	getSettings(): FallbackSettings;
-	registry: {
-		find(provider: string, id: string): Model<Api> | undefined;
-		getAll(): Model<Api>[];
-		/** Ranks bare-selector expansion: OAuth-credential providers come first. */
-		isUsingOAuth?(model: Model<Api>): boolean;
-		/** Filters bare-selector expansion: a definitive `false` keeps a lane that can never serve out of the chain. */
-		isFallbackEligible?(model: Model<Api>): boolean;
-	};
-	cooldowns: SelectorCooldowns;
-	logger: FallbackLogger;
-	switchModel(model: Model<Api>, thinking: ThinkingLevel, reason: "fallback" | "fallback-revert"): Promise<void>;
-	emit(
-		event:
-			| {
-					type: "retry_fallback_applied";
-					from: string;
-					to: string;
-					chainKey: string;
-					reason: FallbackReason;
-			  }
-			| { type: "retry_fallback_reverted"; from: string; to: string },
-	): void;
-	getCurrentSelector(): { model: Model<Api>; thinkingLevel?: ThinkingLevel } | undefined;
-	isAuthAvailable(provider: string): boolean;
-}
+export type { ActiveFallbackState, RetryFallbackControllerDeps } from "./controller-types.ts";
 
 export class RetryFallbackController {
 	private readonly deps: RetryFallbackControllerDeps;
 	private readonly triedSelectors = new Set<string>();
 	private state: ActiveFallbackState | undefined;
 	private lastExhaustedChainKey: string | undefined;
+	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
 	// canTryFallback/nextCandidate several times per error; without this each call
 	// re-expands bare selectors and re-probes registry eligibility over the full
@@ -76,6 +37,7 @@ export class RetryFallbackController {
 
 	constructor(deps: RetryFallbackControllerDeps) {
 		this.deps = deps;
+		this.probes = new CircuitProbes(deps.circuits);
 	}
 
 	get activeState(): Readonly<ActiveFallbackState> | undefined {
@@ -132,12 +94,18 @@ export class RetryFallbackController {
 	async maybeRestorePrimary(revertPolicy: "cooldown-expiry" | "never"): Promise<boolean> {
 		const state = this.state;
 		if (!state || state.pinned || revertPolicy !== "cooldown-expiry") return false;
-		if (this.deps.cooldowns.isSuppressed(state.originalSelector)) return false;
+		// An entry the breaker tracks recovers on the circuit's clock; the per-session
+		// cooldown only governs entries the breaker never opened (hard errors, breaker off).
+		const suppressed = this.probes.governs(state.originalSelector)
+			? this.probes.isOpen(state.originalSelector)
+			: this.deps.cooldowns.isSuppressed(state.originalSelector);
+		if (suppressed) return false;
 		const selector = parseFallbackSelector(state.originalSelector, this.deps.registry);
 		if (!selector || !this.deps.isAuthAvailable(selector.provider)) return false;
 		const model = this.deps.registry.find(selector.provider, selector.id);
 		const current = this.deps.getCurrentSelector();
 		if (!model || !current) return false;
+		if (this.probes.admit(state.originalSelector) === "open") return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -145,7 +113,7 @@ export class RetryFallbackController {
 			current.thinkingLevel === state.lastAppliedThinkingLevel
 				? (state.originalThinkingLevel ?? current.thinkingLevel ?? "off")
 				: (current.thinkingLevel ?? "off");
-		await this.deps.switchModel(model, thinking, "fallback-revert");
+		await this.switchOrRelease(model, thinking, "fallback-revert");
 		const from = formatSelector(current.model);
 		this.state = undefined;
 		this.deps.logger.info("fallback_reverted", { from, to: state.originalSelector });
@@ -192,6 +160,36 @@ export class RetryFallbackController {
 		}
 		this.state = undefined;
 		this.deps.cooldowns.clear(formatSelector(model));
+		this.probes.release();
+		this.deps.circuits?.close(formatSelector(model));
+	}
+
+	/**
+	 * Records a failure that makes the entry unusable for every session - billing
+	 * or quota exhaustion, or a transient failure that spent its budget or failed a
+	 * half-open probe - independent of whether a fallback candidate remains.
+	 */
+	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
+		if (!this.managedChainKey({ model, thinkingLevel })) return;
+		this.probes.noteFailure(formatSelector(model), failure);
+	}
+
+	/**
+	 * Turn-boundary skip: when the current entry's circuit was opened by this or a
+	 * sibling session, move to the next closed entry without spending a request on
+	 * it. With no closed entry left the current one stays and probes, so the chain
+	 * never refuses a turn; a half-open current entry is claimed for this session.
+	 */
+	async rerouteAroundOpenCircuit(): Promise<boolean> {
+		const current = this.deps.getCurrentSelector();
+		if (!this.deps.circuits || !current) return false;
+		const currentBase = formatSelector(current.model);
+		if (this.probes.admit(currentBase) !== "open") return false;
+		const candidate = this.nextCandidate(false, true);
+		if (!candidate || candidate.circuitOpen) return false;
+		this.deps.logger.info("circuit_open_skip", { selector: currentBase });
+		await this.applyCandidate(current, candidate, "transient");
+		return true;
 	}
 
 	async tryFallback(
@@ -199,6 +197,10 @@ export class RetryFallbackController {
 		failure: { errorMessage?: string; retryAfterMs?: number },
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
+		// Only a transient failure that spent its budget opens the shared circuit
+		// here; billing/quota exhaustion is recorded at the failure itself (see
+		// noteHealthFailure) so the final chain entry opens too.
+		if (current && reason === "transient") this.noteHealthFailure(current.model, current.thinkingLevel, failure);
 		const candidate = this.nextCandidate(false, true);
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
@@ -206,9 +208,18 @@ export class RetryFallbackController {
 			this.deps.cooldowns.note(currentBase, failure);
 			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
 		}
+		await this.applyCandidate(current, candidate, reason);
+		return true;
+	}
 
+	private async applyCandidate(
+		current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
+		candidate: { chainKey: string } & UsableCandidate,
+		reason: FallbackReason,
+	): Promise<void> {
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
-		await this.deps.switchModel(candidate.model, thinking, "fallback");
+		this.probes.admit(baseSelector(candidate.selector));
+		await this.switchOrRelease(candidate.model, thinking, "fallback");
 		this.triedSelectors.add(baseSelector(candidate.selector));
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
@@ -226,59 +237,54 @@ export class RetryFallbackController {
 		};
 		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason });
 		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason });
-		return true;
 	}
 
-	private nextCandidate(
-		reserve = true,
-		logDecision = reserve,
-	): { chainKey: string; selector: FallbackSelector; model: Model<Api> } | undefined {
-		const settings = this.deps.getSettings();
-		const current = this.deps.getCurrentSelector();
-		if (!settings.modelFallback || !current) return undefined;
+	/** The chain governing `current`, when fallback is enabled; a model's own chain wins over an active one. */
+	private managedChainKey(current: { model: Model<Api>; thinkingLevel?: ThinkingLevel }): string | undefined {
+		if (!this.deps.getSettings().modelFallback) return undefined;
 		const chains = this.canonicalChains();
-		// A model's own chain wins; models without an explicitly configured chain
-		// do not enter an implicit fallback lane.
 		const chainKey = resolveChainKey(current.model, current.thinkingLevel, chains) ?? this.state?.chainKey;
-		const entries = chainKey ? chains[chainKey] : undefined;
+		return chainKey && chains[chainKey] ? chainKey : undefined;
+	}
+
+	private nextCandidate(reserve = true, logDecision = reserve): ({ chainKey: string } & UsableCandidate) | undefined {
+		const current = this.deps.getCurrentSelector();
+		if (!this.deps.getSettings().modelFallback || !current) return undefined;
+		// Models without an explicitly configured chain do not enter an implicit fallback lane.
+		const chainKey = this.managedChainKey(current);
+		const entries = chainKey ? this.canonicalChains()[chainKey] : undefined;
 		if (!chainKey || !entries) {
 			if (logDecision) this.deps.logger.debug("no_chain", { selector: formatSelector(current.model) });
 			return undefined;
 		}
-		for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
-			const selector = parseFallbackSelector(raw, this.deps.registry);
-			if (!selector) {
-				this.skip(raw, "unknown");
-				continue;
-			}
-			if (selector.provider === current.model.provider && selector.id === current.model.id) {
-				this.skip(raw, "self");
-				continue;
-			}
-			const base = baseSelector(selector);
-			if (this.triedSelectors.has(base)) {
-				this.skip(raw, "tried");
-				continue;
-			}
-			if (this.deps.cooldowns.isSuppressed(base)) {
-				this.skip(raw, "suppressed");
-				continue;
-			}
-			if (!this.deps.isAuthAvailable(selector.provider)) {
-				this.skip(raw, "unauthenticated");
-				continue;
-			}
-			const model = this.deps.registry.find(selector.provider, selector.id);
-			if (!model) {
-				this.skip(raw, "unknown");
-				continue;
-			}
-			if (reserve) this.triedSelectors.add(base);
-			return { chainKey, selector, model };
+		const candidate = firstUsableCandidate(entries, current, {
+			registry: this.deps.registry,
+			tried: this.triedSelectors,
+			isSuppressed: (base) => this.deps.cooldowns.isSuppressed(base),
+			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
+			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
+			skip: (raw, skipReason) => this.skip(raw, skipReason),
+		});
+		if (candidate) {
+			if (reserve) this.triedSelectors.add(baseSelector(candidate.selector));
+			return { chainKey, ...candidate };
 		}
 		this.lastExhaustedChainKey = chainKey;
 		if (logDecision) this.deps.logger.info("candidates_exhausted", { chainKey });
 		return undefined;
+	}
+
+	private async switchOrRelease(
+		model: Model<Api>,
+		thinking: ThinkingLevel,
+		reason: "fallback" | "fallback-revert",
+	): Promise<void> {
+		try {
+			await this.deps.switchModel(model, thinking, reason);
+		} catch (error) {
+			this.probes.release();
+			throw error;
+		}
 	}
 
 	private selectThinking(

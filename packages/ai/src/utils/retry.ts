@@ -26,7 +26,13 @@ export const USAGE_LIMIT_EXHAUSTION = {
 	markers: ["usage_limit_reached", "usage_not_included", "usage limit has been reached"],
 } as const;
 
-const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
+/**
+ * Account quota, budget, credit, and billing exhaustion: the account cannot
+ * serve more requests until the user pays or the quota resets. Shared by the
+ * terminal classifier below and the fallback circuit breaker, so both recognise
+ * the same exhaustion wording.
+ */
+const QUOTA_EXHAUSTION_PATTERNS = [
 	// OpenCode Go/free-tier limits returned as 429 JSON error types by OpenCode's
 	// Zen API. These are subscription/account limits, not transient throttles.
 	"GoUsageLimitError",
@@ -56,6 +62,16 @@ const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// stays dead until its quota resets — every same-account retry is guaranteed
 	// to fail, so the failure is terminal, not rate-limited.
 	...USAGE_LIMIT_EXHAUSTION.markers,
+] as const;
+
+const QUOTA_EXHAUSTION_PATTERN = buildProviderErrorPattern(QUOTA_EXHAUSTION_PATTERNS);
+
+export function isQuotaExhaustionMessage(errorMessage: string | undefined): boolean {
+	return errorMessage !== undefined && QUOTA_EXHAUSTION_PATTERN.test(errorMessage);
+}
+
+const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
+	...QUOTA_EXHAUSTION_PATTERNS,
 
 	// Request-shape rejections: the provider refused the payload we built, not the
 	// work it describes. Gateways wrap these in whatever status they like — the

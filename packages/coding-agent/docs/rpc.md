@@ -1638,10 +1638,22 @@ Response:
       "tokens": 60000,
       "contextWindow": 200000,
       "percent": 30
+    },
+    "failures": {
+      "requests": 6,
+      "erroredRequests": 1,
+      "abortedRequests": 0,
+      "failureShare": 0.16666666666666666,
+      "failedDurationMs": 4200,
+      "postFailureRequests": 1,
+      "postFailureFullMissRequests": 1,
+      "postFailureFullMissInputTokens": 48000
     }
   }
 }
 ```
+
+`failures` reports what failed provider requests cost the session. Every assistant response is one request; `erroredRequests` and `abortedRequests` count responses that ended with stop reason `error` or `aborted`, and `failedDurationMs` sums their time from request start to the recorded response. `postFailureRequests` counts the first successful response after one or more failed ones within the same user turn (a user message resets it); `postFailureFullMissRequests` counts those that read nothing from the prompt cache on a prompt of at least 2048 tokens, and `postFailureFullMissInputTokens` sums their uncached prompt tokens (input plus cache writes). The token counts are the provider's usage report; attributing the cache miss to the preceding failure is an inference from the turn's sequence. Hosts older than this field omit it.
 
 `tokens` and `cost` include assistant messages, usage reported by tools, and compaction/branch-summary generation across the full session. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
 

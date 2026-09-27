@@ -38,6 +38,7 @@ import {
 	resolveToolNameAlias,
 } from "@earendil-works/pi-agent-core";
 import {
+	type AssistantMessageEvent,
 	contentText,
 	providerNotConfiguredMessage,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
@@ -233,6 +234,13 @@ import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./p
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import { isBillingErrorMessage } from "./retry-fallback/billing.ts";
 import { formatSelector } from "./retry-fallback/chains.ts";
+import {
+	acquireFallbackCircuits,
+	createFallbackCircuitAccess,
+	type FallbackCircuitAccess,
+	monotonicNow,
+} from "./retry-fallback/circuit.ts";
+import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
 import { RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
@@ -247,6 +255,7 @@ import { createFallbackLogger } from "./retry-fallback/log.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
+import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import {
@@ -257,7 +266,11 @@ import {
 } from "./session-manager.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
-import type { SettingsManager, SettingsSourceSelection } from "./settings-manager.ts";
+import {
+	DEFAULT_STREAM_START_TIMEOUT_MS,
+	type SettingsManager,
+	type SettingsSourceSelection,
+} from "./settings-manager.ts";
 import {
 	formatSkillInvocationPrompt,
 	MAX_SKILL_EXPANSIONS_PER_PROMPT,
@@ -833,6 +846,8 @@ export interface SessionStats {
 	};
 	cost: number;
 	contextUsage?: ContextUsage;
+	/** Absent from hosts that predate the report. */
+	failures?: SessionFailureReport;
 }
 
 interface ToolDefinitionEntry {
@@ -1073,6 +1088,10 @@ export class AgentSession {
 	private readonly _fallbackValidationWarnings: readonly string[];
 	private readonly _retryFallback: RetryFallbackController;
 	private readonly _selectorCooldowns: SelectorCooldowns;
+	private readonly _fallbackCircuits: FallbackCircuitAccess;
+	private readonly _fallbackCircuitsLease: ReturnType<typeof acquireFallbackCircuits>;
+	private _probeBackLaneSeq = 0;
+	private _circuitProbeWatchdog: ReturnType<typeof setTimeout> | undefined;
 	private readonly _probeBackScheduler: ProbeBackScheduler;
 	private readonly _fallbackNow: () => number;
 	private readonly _retryRandom: () => number;
@@ -1142,14 +1161,28 @@ export class AgentSession {
 				source: fallbackChainsSource,
 			});
 		}
-		this._selectorCooldowns = new SelectorCooldowns(config.fallbackNow ?? (() => Date.now()));
-		this._fallbackNow = config.fallbackNow ?? (() => Date.now());
+		// Cooldowns, probe schedules, and circuits measure elapsed time, so they all
+		// run on the monotonic clock; a wall-clock jump never parks or releases an entry.
+		this._fallbackNow = config.fallbackNow ?? monotonicNow;
+		this._selectorCooldowns = new SelectorCooldowns(this._fallbackNow);
+		const lease = () => this._fallbackCircuitsLease;
+		this._fallbackCircuits = createFallbackCircuitAccess({
+			// Read on every use: the hold is taken as construction's last step.
+			get breaker() {
+				return lease().breaker;
+			},
+			owner: () => this.sessionId,
+			now: this._fallbackNow,
+			settings: () => this.settingsManager.getFallbackCircuitSettings(),
+			logger: fallbackLogger,
+		});
 		this._retryRandom = config.retryRandom ?? Math.random;
 		this._environmentContextEnabled = config.environmentContext ?? true;
 		this._retryFallback = new RetryFallbackController({
 			getSettings: () => this.settingsManager.getRetryFallbackSettings(),
 			registry: this._modelRegistry,
 			cooldowns: this._selectorCooldowns,
+			circuits: this._fallbackCircuits,
 			logger: fallbackLogger,
 			switchModel: async (model, thinking, reason) => {
 				await this._switchActiveModel(model, {
@@ -1199,6 +1232,8 @@ export class AgentSession {
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
+		// Last, so a construction that throws never leaves a hold only dispose() could release.
+		this._fallbackCircuitsLease = acquireFallbackCircuits(this._agentDir);
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -2365,6 +2400,7 @@ export class AgentSession {
 	private async _processAgentEvent(event: AgentEvent, signal: AbortSignal): Promise<void> {
 		if (event.type === "agent_start") {
 			this._requiredCompactionTurnError = undefined;
+			this._armCircuitProbeWatchdog();
 		}
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
@@ -2415,6 +2451,10 @@ export class AgentSession {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 		}
 
+		if (event.type === "message_update" && event.message.role === "assistant") {
+			this._acceptCircuitProbeOnProgress(event.message, event.assistantMessageEvent);
+		}
+
 		// Handle session persistence
 		if (event.type === "message_end") {
 			// Check if this is a custom message from extensions
@@ -2448,6 +2488,7 @@ export class AgentSession {
 					assistantMsg.stopReason !== "error" &&
 					assistantMsg.stopReason !== "aborted" &&
 					!isClassifierRefusal(assistantMsg);
+				if (succeeded) this._retryFallback.probes.accept(`${assistantMsg.provider}/${assistantMsg.model}`);
 				if (succeeded && assistantMsg.stopReason !== "length") {
 					this._overflowRecoveryAttempted = false;
 				}
@@ -2493,6 +2534,12 @@ export class AgentSession {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
 			this._skipNextPostRetryCompactionCheck = false;
+			this._clearCircuitProbeWatchdog();
+			// Billing and quota exhaustion make the entry unusable for every session,
+			// whether or not the chain has a candidate left.
+			if (msg.stopReason === "error" && isHealthExhaustionFailure(msg.errorMessage) && this.model) {
+				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, { errorMessage: msg.errorMessage });
+			}
 			const requiredAutoCompaction = this._getRequiredAutoCompactionReason(msg);
 			const retryAfterRequiredCompaction =
 				requiredAutoCompaction !== undefined && this._isRequiredCompactionError(msg);
@@ -2548,6 +2595,18 @@ export class AgentSession {
 				this._abortProvenance.closeAgentEndBoundary();
 				return;
 			}
+			// A probe that failed with retries disabled still reopens its circuit; any
+			// other ending without an accepted response (a user abort, a request-shaped
+			// error) hands the probe back and leaves the circuit half-open.
+			if (
+				msg.stopReason === "error" &&
+				this.model &&
+				this._isRetryableError(msg) &&
+				this._isCircuitProbeOnCurrentModel()
+			) {
+				this._retryFallback.noteHealthFailure(this.model, this.thinkingLevel, { errorMessage: msg.errorMessage });
+			}
+			this._retryFallback.probes.release();
 			// Provider-timeout retries deliberately skip their first queue poll so
 			// steering cannot be consumed by another doomed retry request. Once the
 			// managed retry owner exhausts its budget, hand that retained queue back
@@ -2654,6 +2713,48 @@ export class AgentSession {
 		this._cumulativeHintedWaitMs = 0;
 	}
 
+	private _isCircuitProbeOnCurrentModel(): boolean {
+		const model = this.model;
+		return model !== undefined && this._retryFallback.probes.holds(formatSelector(model));
+	}
+
+	/** The first streamed content from the probed entry proves it serves again. */
+	private _acceptCircuitProbeOnProgress(message: AssistantMessage, event: AssistantMessageEvent): void {
+		const probing = this._retryFallback.probes.probing;
+		if (probing === undefined || `${message.provider}/${message.model}` !== probing) return;
+		const streamedContent =
+			(event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta") &&
+			event.delta.length > 0;
+		if (!streamedContent) return;
+		this._retryFallback.probes.accept(probing);
+		this._clearCircuitProbeWatchdog();
+	}
+
+	/**
+	 * A probe holds the circuit's only admission until it settles, so it must never
+	 * hang: with the stream-start guard disabled, the probe still gets that guard's
+	 * default bound and is aborted as a provider failure when it expires.
+	 */
+	private _armCircuitProbeWatchdog(): void {
+		this._clearCircuitProbeWatchdog();
+		const probing = this._retryFallback.probes.probing;
+		if (probing === undefined || this.agent.streamStartTimeoutMs !== undefined) return;
+		const timeoutMs = DEFAULT_STREAM_START_TIMEOUT_MS;
+		this._circuitProbeWatchdog = setTimeout(() => {
+			this._circuitProbeWatchdog = undefined;
+			if (this._retryFallback.probes.probing !== probing) return;
+			this.agent.abort(
+				new ProviderRetryWatchdogAbortError(`Circuit probe of ${probing} sent no response within ${timeoutMs}ms`),
+			);
+		}, timeoutMs);
+	}
+
+	private _clearCircuitProbeWatchdog(): void {
+		if (this._circuitProbeWatchdog === undefined) return;
+		clearTimeout(this._circuitProbeWatchdog);
+		this._circuitProbeWatchdog = undefined;
+	}
+
 	private async _emitSessionAbort(): Promise<void> {
 		await this._extensionRunner.emit({ type: "session_abort" });
 		this._emit({ type: "session_abort" });
@@ -2690,6 +2791,11 @@ export class AgentSession {
 			deadlineMs: schedule.deadlineMs,
 			authAvailable: () => this._modelRuntime.hasConfiguredAuth(provider),
 			runProbe: async (signal: AbortSignal): Promise<boolean> => {
+				// The shared circuit gates probe-back like any other request: no probe
+				// before the provider's Retry-After or the cooldown elapses, and none
+				// while another session holds the circuit's single probe.
+				const admission = this._fallbackCircuits.admit(selector, `probe-back:${++this._probeBackLaneSeq}`);
+				if (admission.kind === "open") return false;
 				try {
 					const result = await this._modelRuntime.completeSimple(
 						demotedModel,
@@ -2705,13 +2811,20 @@ export class AgentSession {
 						},
 						{ maxTokens: 1, signal },
 					);
-					return result.stopReason !== "error" && result.stopReason !== "aborted";
+					const ok = result.stopReason !== "error" && result.stopReason !== "aborted";
+					if (!ok && result.stopReason === "error" && admission.kind === "probe") {
+						this._fallbackCircuits.noteFailure(selector, { errorMessage: result.errorMessage });
+					}
+					return ok;
 				} catch {
 					return false;
+				} finally {
+					if (admission.kind === "probe") this._fallbackCircuits.release(admission.token);
 				}
 			},
 			onCleared: (sel: string) => {
 				this._selectorCooldowns.clear(sel);
+				this._fallbackCircuits.close(sel);
 			},
 			emit: (event) => {
 				if (event.type === "retry_probe_scheduled") {
@@ -2956,6 +3069,9 @@ export class AgentSession {
 		for (const dispose of this._toolContextDisposers) dispose();
 		try {
 			this._probeBackScheduler.cancel("dispose");
+			this._clearCircuitProbeWatchdog();
+			this._retryFallback.probes.releaseAll();
+			this._fallbackCircuitsLease.release();
 			this.abortRetry();
 			this.abortCompaction();
 			this.abortBranchSummary();
@@ -5268,6 +5384,7 @@ export class AgentSession {
 	private async _maybeRestoreFallbackPrimary(): Promise<void> {
 		try {
 			await this._retryFallback.maybeRestorePrimary(this.settingsManager.getRetryFallbackSettings().revertPolicy);
+			await this._retryFallback.rerouteAroundOpenCircuit();
 		} catch (error) {
 			this._retryFallback.clear();
 			console.error("fallback revert failed; cleared fallback state", error);
@@ -8601,6 +8718,18 @@ export class AgentSession {
 				return "not-handled";
 			}
 			this._retryAttempt++;
+		} else if (this._isCircuitProbeOnCurrentModel() && this._retryFallback.canTryFallback()) {
+			// A half-open probe proves nothing by retrying: its first provider-health
+			// failure reopens the circuit and moves on instead of spending the budget.
+			switchedFallback = await tryFallback("transient", {
+				errorMessage,
+				retryAfterMs: this._getProviderRetryDelayMs(errorMessage),
+			});
+			if (!switchedFallback) {
+				this._resolveRetry();
+				return "not-handled";
+			}
+			this._retryAttempt = 1;
 		} else {
 			// A provider-stream stall is an ordinary transient failure: it consumes
 			// the same bounded same-model budget (the resolved profile's turn
@@ -9560,6 +9689,7 @@ export class AgentSession {
 			},
 			cost: usageTotals.cost,
 			contextUsage: this.getContextUsage(),
+			failures: computeSessionFailureReport(this.sessionManager.getEntries()),
 		};
 	}
 

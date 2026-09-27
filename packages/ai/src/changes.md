@@ -1,21 +1,22 @@
-## 2026-09-28 - Revert the fallback circuit breaker (#2201) (senpi#2227)
+## 2026-09-27 - Terminal provider errors keep the provider Retry-After; quota exhaustion wording is shared (senpi#2198)
 
 ### What changed
 
-- `packages/ai/src/utils/error-body.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/ai/src/utils/retry.ts`: restored to its state before #2201 (merge 37b5f23).
+- `packages/ai/src/utils/error-body.ts`: `normalizeProviderError` reads `retry-after-ms` / `retry-after` (delta-seconds or HTTP-date) / `x-ratelimit-reset*` from the SDK error's response headers for 429 and 503 statuses into `retryAfterMs`, and `formatProviderError` appends the canonical `(retry-after-ms: N)` marker when the message does not already carry one. Every adapter formatting its terminal error through `formatProviderError` (OpenAI completions/responses/codex, Azure, Google, OpenRouter images) now keeps the provider-requested wait.
+- `packages/ai/src/utils/retry.ts`: the account quota/budget/credit/billing exhaustion patterns move into `QUOTA_EXHAUSTION_PATTERNS` (spread unchanged into `NON_RETRYABLE_PROVIDER_ERROR_PATTERN`) and are exposed through `isQuotaExhaustionMessage()`.
 
 ### Why
 
-Since #2201 merged, main CI fails the RPC named pipes (Windows) job deterministically: `test/rpc-host-lifecycle.test.ts` "does not exit while a turn is active even with no connections" loses the host (`connect ENOENT` on the pipe). The job passed on the nine main commits before it and fails on the merge and a rerun. The circuit breaker re-lands with the Windows fix separately.
+- With provider retries disabled (or exhausted), the SDK error's headers were dropped when the terminal message was formatted, so a provider `Retry-After` never reached the coding-agent fallback circuit breaker. The breaker also needs the terminal classifier's own quota wording to open circuits for `quota exceeded` / `out of budget` failures (senpi#2198, review of senpi#2201).
 
 ### Why an extension could not handle it
 
-A revert of core retry, session and settings code; nothing an extension owns.
+- The headers exist only on the SDK error object inside each adapter's catch block; nothing downstream of the formatted `errorMessage` can recover them.
 
 ### Expected merge conflict zones
 
-- The same regions #2201 touched, when the circuit breaker re-lands.
+- LOW: `NormalizedProviderError` and `formatProviderError` in `utils/error-body.ts`.
+- LOW: the head of `NON_RETRYABLE_PROVIDER_ERROR_PATTERN` in `utils/retry.ts`.
 
 ## 2026-09-24 - Forced tool_choice refused under thinking falls back instead of failing (senpi#2121)
 

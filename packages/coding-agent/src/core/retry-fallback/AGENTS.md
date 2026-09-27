@@ -7,6 +7,10 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 | File | Role |
 |---|---|
 | `controller.ts` | `RetryFallbackController`: turn-scoped tried-selector set, `ActiveFallbackState`, `tryFallback` / `maybeRestorePrimary(revertPolicy)` / `notifyCompactionApplied` / `clearForManualModelChange`, content-keyed memo of canonicalized chains |
+| `candidates.ts` | `firstUsableCandidate`: the chain scan after the current entry (unknown/self/tried/suppressed/unauthenticated/circuit-open skips; an all-open chain returns its first open entry as the probe) |
+| `circuit-probes.ts` | `CircuitProbes`: a session's single probe token (admit / accept / noteFailure / release) and `isHealthExhaustionFailure` (billing + quota exhaustion) |
+| `controller-types.ts` | Controller type declarations (`ActiveFallbackState`, deps, reasons) |
+| `circuit.ts` | `FallbackCircuitBreaker` shared per resolved agent dir (`fallbackCircuitsFor`): doubling cooldown, Retry-After, single half-open probe lease; `createFallbackCircuitAccess` binds a session's owner id, clock (monotonic by default), and `fallback.*` settings; `admit()` is the only way to route to a half-open entry; admission is per request lane (`turn` / `probe-back:<n>`) and each acquisition gets a fresh generation; `acquireFallbackCircuits` holds a dir's breaker per session |
 | `chains.ts` | Selector parse/format, chain-key resolution, `canonicalizeFallbackChains` (bare-selector expansion + registry eligibility) |
 | `expansion.ts` | Bare-selector family expansion; OpenRouter denylist; OAuth-first auth tiers; `PROVIDER_PRECEDENCE` tie-break |
 | `hint-policy.ts` | Pure 429 hint tiers (`no-hint-fast-fallback` / `tier1-in-turn` / `tier2-fallback-probe-back` / `tier3-fallback-only`) + probe schedule math |
@@ -31,7 +35,7 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 ## CONVENTIONS
 
 - Everything time- or randomness-dependent is injected (`now`, `random`, `setTimeout`/`clearTimeout`) — tests drive it deterministically with fake timers; never read `Date.now()` directly here.
-- Cooldowns are runtime-only and deliberately never persisted to settings or session files.
+- Cooldowns and circuits are runtime-only and deliberately never persisted to settings or session files. Cooldowns are per session; circuits are shared by every session in the process on one agent dir (`/new`, `/resume`, `/fork` and in-process subagents included), open only on `transient`/`billing` fall-out, and never make a chain refuse a turn.
 - Billing-class errors pin the fallback candidate as the session model and NEVER release; refusal pins release when a senpi-owned compaction successfully applies (context changed => one fresh primary attempt); `transient`/`hard-error` fallbacks revert per `fallbackRevertPolicy` (`cooldown-expiry` | `never`).
 - `canonicalizeFallbackChains` is memoized on chains content — provider-error handling calls it several times per error.
 - `fallback.log` scrubs by construction: blocked keys (`headers`, `env`, `authorization`, …), allowlisted data keys only, bearer/api-key text patterns truncated.

@@ -6,9 +6,13 @@
 
 ### Added
 
+- `isQuotaExhaustionMessage()` recognises the same account quota, budget, credit, and billing exhaustion wording the retry classifier treats as terminal. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
+
 ### Changed
 
 ### Fixed
+
+- A terminal 429 or 503 error from an OpenAI-compatible (or Azure, Google, OpenRouter) provider keeps the provider's `Retry-After` (seconds or HTTP-date) as the `(retry-after-ms: N)` marker, so callers can honour it even when no retry ran. ([#2198](https://github.com/code-yeongyu/senpi/issues/2198))
 
 ### Removed
 

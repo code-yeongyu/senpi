@@ -4,6 +4,7 @@ import {
 	ModelUsabilityBudgetError,
 	projectModelUsabilityBudget,
 } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { fallbackCircuitsFor } from "../../src/core/retry-fallback/circuit.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -325,11 +326,11 @@ describe("model usability budget", () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		const model = { ...harness.getModel(), contextWindow: 16_000, maxTokens: 4_000 };
+		const agentDir = join(harness.tempDir, "sdk-agent");
+		const breaker = fallbackCircuitsFor(agentDir);
 
 		// when / then
-		await expect(
-			createAgentSession({ cwd: harness.tempDir, agentDir: join(harness.tempDir, "sdk-agent"), model }),
-		).rejects.toMatchObject({
+		await expect(createAgentSession({ cwd: harness.tempDir, agentDir, model })).rejects.toMatchObject({
 			name: "ModelUsabilityBudgetError",
 			projection: {
 				model: `${model.provider}/${model.id}`,
@@ -337,6 +338,9 @@ describe("model usability budget", () => {
 				contextWindow: 16_000,
 			},
 		});
+		// then: the refused session keeps no hold on the agent dir's fallback breaker
+		fallbackCircuitsFor(`${agentDir}-unrelated`);
+		expect(fallbackCircuitsFor(agentDir)).not.toBe(breaker);
 	});
 
 	it("rejects a resumed session whose restored transcript exceeds the startup budget", async () => {

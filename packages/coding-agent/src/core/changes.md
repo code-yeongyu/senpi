@@ -1,28 +1,28 @@
-## 2026-09-28 - Revert the fallback circuit breaker (#2201) (senpi#2227)
+## 2026-09-27 - Fallback-chain entries that fail out of their chain are circuit-broken across sessions; /session reports failure cost (senpi#2198)
 
 ### What changed
 
-- `packages/coding-agent/src/core/agent-session.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/core/sdk.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/core/settings-manager.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/core/retry-fallback/circuit-probes.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/core/retry-fallback/circuit.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/core/retry-fallback/controller-types.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/core/retry-fallback/controller.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/core/session-failure-report.ts`: restored to its state before #2201 (merge 37b5f23).
+- `packages/coding-agent/src/core/agent-session.ts`: the constructor binds a `FallbackCircuitAccess` (`core/retry-fallback/circuit.ts`, new) to the breaker shared per resolved agent dir (`fallbackCircuitsFor(this._agentDir)`; each `/new`, `/resume`, and `/fork` gets a fresh `ModelRuntime` from the CLI factory, so the runtime cannot be the key), with the session id as probe owner, the injected fallback clock, and live `fallback.*` settings, and hands it to `RetryFallbackController`. An accepted assistant response closes its model's circuit; a successful probe-back closes it too. `_maybeRestoreFallbackPrimary` also runs `rerouteAroundOpenCircuit()`, so every turn boundary moves a session off an entry whose circuit another session opened. `getSessionStats()` adds `failures` from `computeSessionFailureReport` (`core/session-failure-report.ts`, new).
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings.fallback` (`circuitCooldownMs`, `circuitMaxCooldownMs`) and `getFallbackCircuitSettings()`.
+- Review round (senpi#2201): `circuit.ts` admission is atomic (`admit()` returns `closed` / `open` / a `probe` token keyed by owner and circuit generation, released by token), probes never expire on a timer, a Retry-After deadline is a floor later hintless failures cannot shorten, idle circuits and empty agent-dir breakers are swept, and the default clock is monotonic. `retry-fallback/circuit-probes.ts` (new) holds a session's one probe token and `isHealthExhaustionFailure`; `controller-types.ts` (new) takes the controller's type declarations. `agent-session.ts` records billing/quota exhaustion at `agent_end` for any chain entry, accepts a probe on its first streamed delta, falls back on a probe's first transient failure (no same-model retries), hands the probe back on every other terminal path and on dispose, gates the 429 probe-back scheduler on circuit admission, and aborts a probe that never answers after the stream-start guard when that guard is disabled. `session-failure-report.ts` counts post-failure retries within one user turn only.
+- Second review round (senpi#2201): the registry keeps one entry per agent dir with an owner count; each `AgentSession` holds it through `acquireFallbackCircuits` for its lifetime and releases it on dispose, and an entry is evicted only when unheld and empty. Probe admission is per request lane (`turn` for the foreground, `probe-back:<n>` for each background probe) with a fresh generation on every acquisition, so a stale token never releases a later probe and a probe-back in flight keeps the same session's turn off the entry. Selector cooldowns and probe schedules default to the monotonic clock, and a fallback returns to an entry the breaker tracks when its circuit allows it rather than when the per-session cooldown lapses.
+- `packages/coding-agent/src/core/sdk.ts`: `createAgentSession` disposes the constructed session when its startup model-usability check refuses it (a `ModelUsabilityBudgetError` or anything else rethrown), because the caller never receives that session to dispose; before, a refused startup kept its breaker hold, session writer, and blob directory for the life of the process (third review round of senpi#2201). `agent-session.ts` also takes the breaker hold as the constructor's last step and resolves the breaker through it lazily, so a constructor that throws never leaves a hold only `dispose()` could release.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` opens the current entry's circuit for `transient` and `billing` failures under a managed chain (advance and exhaustion), claims the half-open probe of the entry it switches to, and shares `applyCandidate` with the new `rerouteAroundOpenCircuit`; `maybeRestorePrimary` waits for the primary's circuit and claims its probe; a manual model change closes that model's circuit. `core/retry-fallback/candidates.ts` (extracted from the controller) skips circuit-open entries and returns the first of them only when no closed entry is left.
 
 ### Why
 
-Since #2201 merged, main CI fails the RPC named pipes (Windows) job deterministically: `test/rpc-host-lifecycle.test.ts` "does not exit while a turn is active even with no connections" loses the host (`connect ENOENT` on the pipe). The job passed on the nine main commits before it and fails on the merge and a rerun. The circuit breaker re-lands with the Windows fix separately.
+- Fallback cooldowns lived in one `AgentSession`, never escalated, and were invisible to new sessions and in-process subagents, so a dead provider cost its full retry budget again in every session and after every revert (senpi#2198, prior art gajae-code #5965).
 
 ### Why an extension could not handle it
 
-A revert of core retry, session and settings code; nothing an extension owns.
+- Chain candidate selection, the turn-boundary revert, and the accepted-response signal all live inside `AgentSession`'s retry pipeline, and `SessionStats` is the core stats contract behind `/session` and `get_session_stats`.
 
 ### Expected merge conflict zones
 
-- The same regions #2201 touched, when the circuit breaker re-lands.
+- LOW: `packages/coding-agent/src/core/agent-session.ts`: two imports, one field, the constructor after `_fallbackNow`, the controller deps, the `succeeded` block of the assistant `message_end` handler, the probe-back `onCleared`, `_maybeRestoreFallbackPrimary`, `SessionStats`, and the `getSessionStats` return.
+- LOW: `packages/coding-agent/src/core/settings-manager.ts`: one import, one `Settings` field, one getter.
+- LOW: `packages/coding-agent/src/core/sdk.ts`: the `assertModelUsable` block near the end of `createAgentSession` is wrapped in an outer try that disposes on rethrow.
+- LOW (review round): `agent-session.ts` `agent_start`/`message_update` branches of `_processAgentEvent`, the `agent_end` retry block head and tail, the probe-back `runProbe`, `dispose`, and one `else if` arm in `_handleRetryableError` before the transient branch.
 
 ## 2026-09-27 - Sessions are held against moves by other processes; SessionInfo carries the recorded repository (senpi#2184)
 

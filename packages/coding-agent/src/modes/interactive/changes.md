@@ -1,21 +1,20 @@
-## 2026-09-28 - Revert the fallback circuit breaker (#2201) (senpi#2227)
+## 2026-09-27 - /session shows what failed provider requests cost (senpi#2198)
 
 ### What changed
 
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: restored to its state before #2201 (merge 37b5f23).
-- `packages/coding-agent/src/modes/interactive/session-failure-info.ts`: restored to its state before #2201 (merge 37b5f23).
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleSessionCommand` appends `formatSessionFailureInfo(stats.failures)` (`session-failure-info.ts`, new) after the Cost block: failed requests with their errored/aborted split and share, time in failed requests, and retries after a failure (same user turn) that had no cache hit, with their uncached input tokens. Nothing is shown for a session without a failed request or a host that predates the report.
 
 ### Why
 
-Since #2201 merged, main CI fails the RPC named pipes (Windows) job deterministically: `test/rpc-host-lifecycle.test.ts` "does not exit while a turn is active even with no connections" loses the host (`connect ENOENT` on the pipe). The job passed on the nine main commits before it and fails on the merge and a rerun. The circuit breaker re-lands with the Windows fix separately.
+- Provider failures had no visible cost in the session stats surface (senpi#2198).
 
 ### Why an extension could not handle it
 
-A revert of core retry, session and settings code; nothing an extension owns.
+- `/session` is a builtin interactive command rendered inside `InteractiveMode`.
 
 ### Expected merge conflict zones
 
-- The same regions #2201 touched, when the circuit breaker re-lands.
+- LOW: the end of the Cost block in `handleSessionCommand` and one import in `interactive-mode.ts`.
 
 ## 2026-09-27 - Tips for the /computer command (senpi#2204)
 
