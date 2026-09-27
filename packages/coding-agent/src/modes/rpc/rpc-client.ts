@@ -30,6 +30,12 @@ export class RpcCommandError extends Error {
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import {
+	armRequestDeadline,
+	OPEN_AFTER_QUEUED_DEADLINE_MS,
+	openStalledMessage,
+	REQUEST_DEADLINE_MS,
+} from "./rpc-request-deadline.ts";
 import type {
 	EditAssistantMessageResult,
 	EditUserMessageResult,
@@ -40,6 +46,7 @@ import type {
 	RpcExtensionUIProgress,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcOpenQueuedEvent,
 	RpcProviderAccount,
 	RpcResponse,
 	RpcSessionModelEntry,
@@ -118,6 +125,9 @@ export type RpcClientEvent =
 	// because it REPLACES `session_closed` for that handle: a client that treats it as
 	// a close loses the session it was told to reopen by path.
 	| RpcSessionParkedEvent
+	// The host accepted an open_session and says where it is queued; the client also uses it to
+	// switch that open to its post-acknowledgement deadline (senpi#2209).
+	| RpcOpenQueuedEvent
 	| { type: "bash_start" }
 	| { type: "bash_end" };
 export type RpcEventListener = (event: RpcClientEvent) => void;
@@ -175,6 +185,7 @@ export class RpcClient {
 			reject: (error: Error) => void;
 			onResponse?: (response: RpcResponse) => void;
 			onReject?: (error: Error) => void;
+			onQueued?: (position: unknown) => void;
 		}
 	> = new Map();
 	private requestId = 0;
@@ -1065,7 +1076,8 @@ export class RpcClient {
 				event.type === "extension_ui_request" ||
 				// Connection-level, not part of the agent's event stream.
 				event.type === "session_replaced" ||
-				event.type === "session_parked"
+				event.type === "session_parked" ||
+				event.type === "queued"
 			)
 				return;
 			if (collect) events.push(event);
@@ -1100,6 +1112,9 @@ export class RpcClient {
 			}
 			// A response to a cancelled or timed-out request is never an agent event.
 			if (data.type === "response") return;
+
+			if (data.type === "queued" && typeof data.for_request === "string")
+				this.pendingRequests.get(data.for_request)?.onQueued?.(data.position);
 
 			// Otherwise it's an event. During open_session, retain tagged events until
 			// the response establishes the lease so startup hooks are not lost.
@@ -1200,13 +1215,16 @@ export class RpcClient {
 			return Promise.resolve({ type: "response", command: command.type, success: true } as RpcResponse);
 		}
 		return new Promise<RpcResponse>((resolve, reject) => {
-			const timeout = setTimeout(() => {
-				const pending = this.pendingRequests.get(id);
-				this.pendingRequests.delete(id);
-				const timeoutError = new Error(`Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`);
-				pending?.onReject?.(timeoutError);
-				pending?.reject(timeoutError);
-			}, 30000);
+			const deadline = armRequestDeadline(
+				REQUEST_DEADLINE_MS,
+				() => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`,
+				(timeoutError) => {
+					const pending = this.pendingRequests.get(id);
+					this.pendingRequests.delete(id);
+					pending?.onReject?.(timeoutError);
+					pending?.reject(timeoutError);
+				},
+			);
 			const onAbort = () => {
 				const pending = this.pendingRequests.get(id);
 				this.pendingRequests.delete(id);
@@ -1217,15 +1235,21 @@ export class RpcClient {
 
 			this.pendingRequests.set(id, {
 				resolve: (response) => {
-					clearTimeout(timeout);
+					deadline.clear();
 					signal?.removeEventListener("abort", onAbort);
 					resolve(response);
 				},
 				reject: (error) => {
-					clearTimeout(timeout);
+					deadline.clear();
 					signal?.removeEventListener("abort", onAbort);
 					reject(error);
 				},
+				...(command.type === "open_session"
+					? {
+							onQueued: (position: unknown) =>
+								deadline.extend(OPEN_AFTER_QUEUED_DEADLINE_MS, () => openStalledMessage(position)),
+						}
+					: {}),
 				...(hooks?.onResponse ? { onResponse: hooks.onResponse } : {}),
 				...(hooks?.onReject ? { onReject: hooks.onReject } : {}),
 			});

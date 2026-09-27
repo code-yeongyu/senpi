@@ -752,8 +752,10 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
   `position` is 1-based and `in_flight` counts opens already accepted across the whole host,
   since every session shares one loop. It is addressed to the opener only, carries the request
   id under `for_request` rather than the response-id field, and is dropped if that connection
-  has disconnected. A client that later times out can report where it was queued instead of a
-  bare deadline.
+  has disconnected. The bundled `RpcClient` treats it as the host's acknowledgement: an
+  acknowledged open waits up to 10 minutes for its response instead of the 30 s request
+  deadline (a busy host was measured answering after 57 s), and a timeout after it names the
+  queue position instead of a bare deadline. A lost transport still rejects at once.
   `SENPI_RPC_LOOP_LAG_ERROR_MS` (default 5000) additionally broadcasts a `host_stalled` record
   (`{ type, driftMs, sessionId?, tool? }`) to every connection, like the other content-free lifecycle records.
 - **Stall attribution**: each routed command is dispatched inside an `AsyncLocalStorage` scope carrying its routing

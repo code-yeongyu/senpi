@@ -191,6 +191,34 @@ describe("RPC idle and event collection lifecycle", () => {
 		expect(vi.getTimerCount()).toBe(0);
 	});
 
+	// senpi#2209: an acknowledged open and an owned idle query have independent deadlines.
+	test("keeps an acknowledged open alive when an idle query cancels and excludes queued records", async () => {
+		vi.useFakeTimers();
+		const f = fixture(() => undefined);
+		const collected = f.client.collectEvents(120_000);
+		const open = f.client.openSession({ cwd: "/tmp" });
+		const opening = f.requests[0];
+		f.emit({ type: "queued", for_request: opening.id, position: 1, in_flight: 0 });
+		const idle = expect(f.client.waitForIdle(100)).rejects.toThrow("Timeout waiting for agent");
+		await vi.advanceTimersByTimeAsync(100);
+		await idle;
+		expect(f.pending()).toBe(1);
+		await vi.advanceTimersByTimeAsync(57_000);
+		f.emit({
+			type: "response",
+			id: opening.id,
+			command: "open_session",
+			success: true,
+			data: { sessionId: "owned", state: {} },
+		});
+		await expect(open).resolves.toMatchObject({ sessionId: "owned" });
+		f.emit({ type: "agent_settled", sessionId: "owned" });
+		expect((await collected).map((event) => event.type)).toEqual(["agent_settled"]);
+		expect(f.pending()).toBe(0);
+		expect(f.listeners()).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
 	test("delivers buffered settlement to every concurrent collector during lease acquisition", async () => {
 		vi.useFakeTimers();
 		const f = fixture(() => undefined);

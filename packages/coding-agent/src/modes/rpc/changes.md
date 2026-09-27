@@ -16,7 +16,7 @@ In `packages/coding-agent/src/modes/rpc/rpc-client.ts`, an already-idle session 
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: helper methods, event dispatch loops, stop/disconnect cleanup and the private `send` request lifecycle. Retain independent command-refusal and worker-listing changes when merging.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: helper methods, event dispatch loops, stop/disconnect cleanup and the private `send` request lifecycle. Retain independent command-refusal and worker-listing changes when merging. The acknowledged-open deadline uses the same cancellation-safe pending-request rejection wrapper; queued acknowledgements stay outside collected agent events.
 
 
 ## 2026-09-27 - Share immutable replay boundaries and drain late attachments lazily
@@ -118,6 +118,25 @@ In `packages/coding-agent/src/modes/rpc/rpc-client.ts`, an already-idle session 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/rpc/ownership-safe-lock.ts`: the acquisition PRAGMA and retry comment. The persistent database, exclusive transaction, release and legacy-artifact handling are unchanged.
+## 2026-09-27 - open_session waits for the host that acknowledged it instead of a fixed 30 s (#2209)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: every request still waits `REQUEST_DEADLINE_MS` (30 s) for its answer. An `open_session` whose `queued` record the host sent (senpi#1844) switches to `OPEN_AFTER_QUEUED_DEADLINE_MS` (10 min), and a timeout after the acknowledgement names the queue position instead of reporting a bare timeout. A lost transport still rejects every pending request at once.
+- `packages/coding-agent/src/modes/rpc/rpc-request-deadline.ts` (new): the two budgets and the restartable deadline the client arms per request.
+- `packages/coding-agent/test/rpc-client-open-deadline.test.ts` (new): an acknowledged open answered after 57 s resolves; an unacknowledged open still fails at 30 s; an acknowledged open that never answers fails naming its queue position; a transport lost after the acknowledgement rejects at once.
+
+### Why
+
+A loaded in-process host builds a session on its one loop. Measured on a live host, it acknowledged an open after 3.2 s and answered it after 56.8 s. Every client gave up at 30 s, so task children failed at ~40 s (probe + 30 s) exactly when the host was busiest. The host then finished the session for a client that was already gone.
+
+### Why an extension could not handle it
+
+The deadline is armed inside `RpcClient.send`, which every embedder (task runners, desktop, CLI) uses directly; no extension runs in the client process.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `send()`'s pending-request construction and `handleLine()`'s response dispatch.
 
 ## 2026-09-22 - Daemon status metrics read the process table through the kernel, never a `ps` child (omo-desktop#594)
 
