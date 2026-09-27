@@ -230,12 +230,25 @@ describe("ensureHost-spawned host lifecycle", () => {
 		const model = await HeldAnthropicModel.start();
 		models.push(model);
 		writeRpcModelsJson(qa.agentDir, model.origin);
+		const diagT0 = Date.now();
 		await ensureLifecycleHost(qa, {
 			policy: { idleExitMs: 800 },
 			hostArgs: ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
 		});
+		const diagEnsured = Date.now();
 		const entry = currentManaged();
-		const peer = await JsonlPeer.connect(qa.socket);
+		const diagManaged = Date.now();
+		let peer: JsonlPeer;
+		try {
+			peer = await JsonlPeer.connect(qa.socket);
+		} catch (cause) {
+			throw new Error(
+				`DIAG connect failed: ${String(cause)} ensureMs=${diagEnsured - diagT0} managedMs=${diagManaged - diagEnsured} connectAtMs=${Date.now() - diagEnsured}\n[supervisor stderr]\n${readSupervisorStderr(qa)}`,
+			);
+		}
+		console.error(
+			`DIAG connected ensureMs=${diagEnsured - diagT0} managedMs=${diagManaged - diagEnsured} connectAtMs=${Date.now() - diagEnsured}`,
+		);
 		const opened = await peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
 		const sessionId = openedSessionId(opened);
 		const agentStart = peer.waitFor((value) => value.type === "agent_start" && value.sessionId === sessionId);
@@ -244,6 +257,7 @@ describe("ensureHost-spawned host lifecycle", () => {
 		peer.destroy();
 		await delay(2_500);
 		await expectHostAlive(qa, entry.pidFile);
+		console.error(`DIAG supervisor stderr (pass)\n${readSupervisorStderr(qa)}`);
 		model.release();
 		await waitForHostExit(entry, 20_000);
 	}, 60_000);
