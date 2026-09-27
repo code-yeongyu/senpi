@@ -77,6 +77,16 @@ jobs:
         working-directory: packages/coding-agent
         run: bunx --bun vitest run test/suite/regressions/issue-2170-windows-image-read-repro.test.ts --reporter=verbose
 
+      - name: Fix regressions on Windows (Node)
+        shell: bash
+        working-directory: packages/coding-agent
+        run: npx vitest run test/suite/regressions/issue-2170-rejected-image-recovery.test.ts test/suite/regressions/issue-2170-quoted-read-path.test.ts --reporter=verbose
+
+      - name: Fix regressions on Windows (Bun)
+        shell: bash
+        working-directory: packages/coding-agent
+        run: bunx --bun vitest run test/suite/regressions/issue-2170-rejected-image-recovery.test.ts test/suite/regressions/issue-2170-quoted-read-path.test.ts --reporter=verbose
+
       - name: Decode every produced payload with Pillow and GDI+
         shell: pwsh
         working-directory: packages/coding-agent
