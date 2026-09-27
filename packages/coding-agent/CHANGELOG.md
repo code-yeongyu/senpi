@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- A session recovers after the provider rejects an image. It used to fail every later turn, text-only ones included, with `Codex error: The image data you provided does not represent a valid image`. The rejected image is now replaced in later requests by a note naming its file, the error says which file was left out, and the next message goes through, also after a restart. ([#2170](https://github.com/code-yeongyu/senpi/issues/2170))
 - The read tool finds a file whose path is wrapped in quotes, such as the `"C:\Users\<user>\Pictures\Screenshots\aaa.png"` that Windows Explorer's "Copy as path" produces, instead of failing with ENOENT. ([#2170](https://github.com/code-yeongyu/senpi/issues/2170))
 - On Bun 1.3.x, extensions now load when they declare a package directory as their entry (`"pi": { "extensions": ["."] }`) or depend on a package that requires a JSON file, such as ajv. Both used to fail with `Cannot find module 'file:/…'` or `ENOENT reading "file:/…"` even though Bun itself loads them. ([#2164](https://github.com/code-yeongyu/senpi/issues/2164))
 - Automatic session titles work on models that cannot turn reasoning off, such as `openrouter/meta/muse-spark-1.3-contributor` and Z.ai GLM 5.3. The title request now asks for the model's lowest supported reasoning level and no longer fails with `Reasoning is mandatory for this endpoint and cannot be disabled. (HTTP 400)`. A title that still fails is recorded in `logs/session.log` instead of showing a runtime error. ([#2163](https://github.com/code-yeongyu/senpi/issues/2163))

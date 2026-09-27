@@ -1,3 +1,24 @@
+## 2026-09-27 - A provider-rejected image no longer poisons later turns (senpi#2170)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-rejected-images.ts` (new): `omitProviderRejectedImages()` scans converted history. When an assistant turn failed with a provider image rejection (`does not represent a valid image`, `invalid base64` data URL, `unsupported image`, and similar), every image that no successful response had accepted before it is replaced by `[Image omitted: the provider rejected this image (<source>) ...]`. The source is the `path` argument of the tool call that produced the image, or "an attached image". `rejectedImageSources()` returns the sources a given failed turn rejected.
+- `packages/coding-agent/src/core/messages.ts`: `convertToLlm()` applies `omitProviderRejectedImages()` right before `dropFailedAssistantTurns()`, while the failed turn is still visible.
+- `packages/coding-agent/src/core/agent-session.ts`: when an unhandled error turn rejected images, its `errorMessage` names the file(s) and says they are left out of later requests, next to the existing Cursor quota note.
+
+### Why
+
+`dropFailedAssistantTurns()` removed the failed turn but replayed the rejected image, so Codex rejected every later request, text-only ones included. Because the rejection is derived from the persisted failed turn, the recovery also holds after a restart and never rewrites session entries. Images from turns a later response accepted are kept, and other errors drop nothing.
+
+### Why an extension could not handle it
+
+The `context` hook cannot see failed assistant turns in a form that ties a rejection to the images it covered, and the terminal error text is composed inside `AgentSession`'s agent-end handling.
+
+### Expected merge conflict zones
+
+- LOW: the `return` of `convertToLlm()` in `messages.ts`.
+- LOW: the Cursor quota note block in the agent-end handler of `agent-session.ts`.
+
 ## 2026-09-27 - Session titles on endpoints that mandate reasoning (senpi#2163)
 
 ### What changed

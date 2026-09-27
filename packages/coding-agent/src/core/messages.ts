@@ -14,6 +14,7 @@ import {
 	type TextContent,
 } from "@earendil-works/pi-ai";
 import { ENVIRONMENT_CONTEXT_MESSAGE_TYPE, foldEnvironmentContextIntoNextUserMessage } from "./environment-context.ts";
+import { omitProviderRejectedImages } from "./provider-rejected-images.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -252,8 +253,12 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 	// deterministic per session state, so the cache-prefix guarantee above holds.
 	// senpi#2118: the environment context then becomes the leading block of the
 	// user message it precedes, so strict-alternation chat templates never see
-	// two consecutive user messages.
-	return foldEnvironmentContextIntoNextUserMessage(dropFailedAssistantTurns(converted), environmentMessages);
+	// two consecutive user messages. senpi#2170: images a failed turn proves the
+	// provider rejected are replaced first, while the failed turn is still visible.
+	return foldEnvironmentContextIntoNextUserMessage(
+		dropFailedAssistantTurns(omitProviderRejectedImages(converted)),
+		environmentMessages,
+	);
 }
 
 // ============================================================================
