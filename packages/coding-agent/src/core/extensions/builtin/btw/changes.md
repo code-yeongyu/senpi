@@ -1,5 +1,19 @@
 # changes — btw
 
+## 2026-09-20 - Side query routes through the internal fallback seam
+
+### What changed
+
+- `index.ts`: the `/btw` stream function now calls `streamInternalModel` instead of `ctx.modelRegistry.modelRuntime.streamSimple`, passing `purpose`/session id and the session's settings/agent directory. A fallback notice shows the from/to transition without leaking credentials.
+
+### Why
+
+Side queries are auxiliary requests and must not handle their own selection sharing the main chat fallback; the internal seam keeps the primary model untouched and strips resolved credentials on cross-provider fallback.
+
+### Expected merge conflict zones
+
+- LOW: the `streamFn` in the command handler.
+
 ## 2026-09-13 - Explicit off switch: bare /btw and kitty-safe Escape
 
 ### What changed
