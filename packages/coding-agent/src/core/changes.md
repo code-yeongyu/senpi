@@ -7445,3 +7445,22 @@ unrelated fallback bus, silently disconnecting `pi.rpc.emit` on trust-requiring 
 
 - `packages/coding-agent/src/core/session-write-reservation.ts`: new `hasOtherLiveSessionWriter(path, self)` answers whether another live persisted writer still owns a session file, pruning collected refs like `liveSessionWritePaths()` does.
 - `packages/coding-agent/src/core/session-manager.ts`: both blob-directory releases (the stale clear in `_setSessionFile` and `dispose()`) go through `_releaseBlobsDirUnlessShared()`, which keeps the directory while another live manager owns the same session file. The app-server loads a thread that is already open (`modes/app-server/threads/registry.ts` disposes the duplicate `AgentSession`), and without this the duplicate's teardown took the live manager's cache, costing it a full JSONL recovery per evicted string.
+
+## 2026-09-28 - Fallback skips a provider whose credential was rejected
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/auth-rejection.ts` (new): `isCredentialRejectionMessage` classifies credential-class failures (401, unauthorized, `authentication_error`/`authentication failed`, invalid/incorrect API key, `invalid x-api-key`, revoked OAuth token, `invalid_grant`).
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` records the current provider in a turn-scoped `credentialRejectedProviders` set when a `hard-error` failure is a credential rejection, and `nextCandidate` treats that provider as unauthenticated, so the chain jumps to the next provider instead of spending one failed request per remaining rung on the dead one. `resetTurn()` clears the set, so the next user turn tries the provider again (a `/login` in between recovers it).
+
+### Why
+
+- A revoked `anthropic-subscription` OAuth token plus a stale `anthropic` API key produced a cascade of 401s on every Opus rung of the default chain in one turn (`anthropic-subscription/claude-opus-5-5` -> `anthropic-subscription/claude-opus-5` -> `anthropic/claude-opus-5` -> `anthropic/claude-opus-4-8` ...), each a wasted request and a noisy error. The rejection belongs to the provider's credential, not to one model. The omo task engine already skips a credential-rejected provider's rungs for delegated children (`senpi-task` `runtimeFallbackCandidates`); the main session chain had no equivalent.
+
+### Why an extension could not handle it
+
+- Candidate selection and the tried-selector state are private to `RetryFallbackController`; extensions observe `retry_fallback_applied` only after the switch and cannot veto a candidate.
+
+### Expected merge conflict zones
+
+- LOW: `core/retry-fallback/controller.ts` (`resetTurn`, `tryFallback`, the `isAuthAvailable` filter in `nextCandidate`); fork-only directory.

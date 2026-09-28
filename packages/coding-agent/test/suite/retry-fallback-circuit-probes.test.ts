@@ -56,17 +56,18 @@ describe("fallback circuit probes and failure classes (senpi#2201 review)", () =
 	});
 
 	it.each([
-		{ errorMessage: "HTTP 429: quota exceeded", opens: true },
-		{ errorMessage: "HTTP 400: out of budget", opens: true },
-		{ errorMessage: "HTTP 401: invalid API key", opens: false },
-		{ errorMessage: "HTTP 403: forbidden", opens: false },
-	])("classifies '$errorMessage' as provider health: opens=$opens", async ({ errorMessage, opens }) => {
+		{ errorMessage: "HTTP 429: quota exceeded", opens: true, called: ["faux-1", "faux-2"] },
+		{ errorMessage: "HTTP 400: out of budget", opens: true, called: ["faux-1", "faux-2"] },
+		// A rejected credential is provider-wide, so the same-provider fallback rung is skipped.
+		{ errorMessage: "HTTP 401: invalid API key", opens: false, called: ["faux-1"] },
+		{ errorMessage: "HTTP 403: forbidden", opens: false, called: ["faux-1", "faux-2"] },
+	])("classifies '$errorMessage' as provider health: opens=$opens", async ({ errorMessage, opens, called }) => {
 		const harness = await make();
 		harness.setResponses([failure(errorMessage), answer()]);
 
 		await harness.session.prompt("provider failure");
 
-		expect(calledModels(harness)).toEqual(["faux-1", "faux-2"]);
+		expect(calledModels(harness)).toEqual(called);
 		expect(breaker(harness).isOpen(primary, now, "sibling")).toBe(opens);
 	});
 
