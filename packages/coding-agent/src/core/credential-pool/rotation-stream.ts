@@ -2,6 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AssistantMessageEvent, Credential } from "@earendil-works/pi-ai";
 import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import { listSlots as listCredentialSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
+import {
+	emitProviderAccountFailover,
+	emitProviderAccountsChanged,
+} from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import { resolveConfigValue } from "../resolve-config-value.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
@@ -214,6 +218,10 @@ export type CredentialRotationOptions = {
  * them, and a failure after it is forwarded as the provider's own terminal
  * event for the session layer to recover from.
  */
+function failoverReason(block: CredentialBlock): "auth_error" | "rate_limit" | "billing" {
+	return block.reason === "account_disabled" ? "billing" : block.reason;
+}
+
 export function streamWithCredentialRotation(
 	options: CredentialRotationOptions,
 ): AsyncGenerator<AssistantMessageEvent> {
@@ -222,6 +230,9 @@ export function streamWithCredentialRotation(
 	const affinityKey = options.affinityKey ?? randomUUID();
 	const useAffinity = sources.policy?.affinity !== false;
 	const now = sources.now ?? Date.now;
+	// The account a failover just left; announced once the next account's attempt starts, so
+	// clients and the TUI see "from -> to" only for a switch that actually happens.
+	let leaving: { name: string; block: CredentialBlock } | undefined;
 
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources),
@@ -234,7 +245,17 @@ export function streamWithCredentialRotation(
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
 			return winner;
 		},
-		runAttempt,
+		runAttempt: (slot) => {
+			if (leaving !== undefined && leaving.name !== slot.name) {
+				emitProviderAccountFailover(sources.providerId, leaving.name, slot.name, failoverReason(leaving.block));
+			}
+			leaving = undefined;
+			return runAttempt(slot);
+		},
+		onRotate: ({ slot, block, committedOutput }) => {
+			emitProviderAccountsChanged(sources.providerId);
+			leaving = committedOutput ? undefined : { name: slot.name, block };
+		},
 		isCommittedOutput: isCommittedRotationOutput,
 		isStreamStart: isRotationStreamStart,
 		errorFromEvent: rotationErrorFromEvent,

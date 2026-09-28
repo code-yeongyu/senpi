@@ -12,6 +12,8 @@
 
 ### Removed
 
+- The unused `runSlotFailover` / `PoolFailoverError` / `classifyPoolFailure` credential-pool engine is removed from `auth/pool/failover` and `auth/pool/classify`; `DEFAULT_SLOT_BLOCK_MS`, `MAX_SLOT_BLOCK_MS` and `TURN_RETRY_SUPPRESSION_PREFIX` remain. ([#2304](https://github.com/code-yeongyu/senpi/issues/2304))
+
 ## [2026.9.28-5] - 2026-09-28
 
 ### Breaking Changes

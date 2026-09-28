@@ -87,6 +87,7 @@ import {
 import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
+import { subscribeProviderAccountEvents } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
 import { formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
 import { askUserRenderers } from "../../core/extensions/builtin/ask-user/render.ts";
 import type {
@@ -887,6 +888,17 @@ function linesFactory(lines: string[] | undefined): ((tui: TUI, thm: Theme) => C
 		for (const line of lines) container.addChild(new Text(line, 1, 0));
 		return container;
 	};
+}
+
+const ACCOUNT_FAILOVER_REASONS: Record<string, string> = {
+	auth_error: "its login expired or was refused",
+	rate_limit: "it hit a rate or usage limit",
+	billing: "its account is out of credit",
+};
+
+function formatAccountFailoverNotice(event: { provider: string; from: string; to: string; reason: string }): string {
+	const why = ACCOUNT_FAILOVER_REASONS[event.reason] ?? "it failed";
+	return `Switched ${event.provider} account ${event.from} -> ${event.to}: ${why}.`;
 }
 
 export class InteractiveMode {
@@ -6654,6 +6666,13 @@ export class InteractiveMode {
 		const unhandledRejectionHandler = (reason: unknown) => this.unhandledRejection(reason);
 		process.prependListener("unhandledRejection", unhandledRejectionHandler);
 		this.signalCleanupHandlers.push(() => process.off("unhandledRejection", unhandledRejectionHandler));
+
+		// A request that moved to another logged-in account says so; before this the switch was silent.
+		this.signalCleanupHandlers.push(
+			subscribeProviderAccountEvents((event) => {
+				if (event.type === "failover") this.showStatus(formatAccountFailoverNotice(event));
+			}),
+		);
 
 		// Surface Inspector rejections that the early bootstrap seam recovered before this
 		// handler (and the TUI warning surface) existed.

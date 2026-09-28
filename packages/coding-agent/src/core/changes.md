@@ -1,3 +1,23 @@
+## 2026-09-28 - Pooled accounts switch on an expired login or a worded usage limit, and say so (senpi#2304)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/classify.ts`: `OAuth refresh failed for <provider>: ...` whose cause names a rejected refresh token (`invalid_grant`, `invalid_token`, `unauthorized_client`, "refresh token expired/revoked/invalid", or a 400/401/403 from the token endpoint) classifies as `failover` with an `auth_error` block. Other refresh failures (network, 5xx) keep their previous handling. Prose subscription limits (`usage limit has been reached`, `usage_limit_reached`, `hit your session|daily|weekly|usage limit`) classify like a 429 (`rate_limit` cooldown), closing #1768.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `streamWithCredentialRotation` passes `onRotate` (emits `accounts_changed` and remembers the blocked account) and wraps `runAttempt` to emit `emitProviderAccountFailover(provider, from, to, reason)` exactly once, when the next account's attempt starts. Nothing is emitted when the request succeeds on its account, fails without rotating, or rotates after output.
+- The TUI notice for the event is recorded in `packages/coding-agent/src/modes/interactive/changes.md`.
+
+### Why
+
+- A user with several logins expected senpi to move to the next account when one expired or ran out. The generic pool already rotated on 401/credential-scoped 403/402/429, but an expired refresh token surfaced as a refresh failure the classifier did not recognise, Codex/Claude limits arrive as prose, and the switch was invisible (only the Anthropic subscription lane emitted `account_failover`).
+
+### Why an extension could not handle it
+
+- Classification and the pre-output rotation decision run inside `ModelRuntime`'s credential pool, below every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the regex block and the first branches of `classifyCredentialFailure`; the `runCredentialFailover` options object in `streamWithCredentialRotation`.
+
 ## 2026-09-28 - A stored OAuth token the provider refuses is re-exchanged once before failing (senpi#2297)
 
 ### What changed

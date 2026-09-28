@@ -26,6 +26,41 @@ describe("credential error taxonomy", () => {
 		if (action.kind === "failover") expect(action.block.reason).toBe(reason);
 	});
 
+	test.each([
+		[
+			"refresh invalid_grant",
+			'OAuth refresh failed for chatgpt-subscription: Token refresh failed: 400 {"error":"invalid_grant"}',
+		],
+		[
+			"refresh token expired",
+			'OAuth refresh failed for anthropic: Anthropic token refresh request failed. status=400 {"error": "invalid_grant", "error_description": "Refresh token expired"}',
+		],
+		["refresh 401", "OAuth refresh failed for github-copilot: 401 Unauthorized: Bad credentials"],
+	] as const)("a dead login (%s) blocks that account and switches to a sibling", (_label, message) => {
+		expect(classifyCredentialFailure(new Error(message))).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+	});
+
+	test.each([
+		["network", "OAuth refresh failed for chatgpt-subscription: fetch failed"],
+		["token endpoint 503", "OAuth refresh failed for anthropic: Token refresh failed: 503 Service Unavailable"],
+	] as const)("a transient refresh failure (%s) never blocks the account", (_label, message) => {
+		const action = classifyCredentialFailure(new Error(message));
+		expect(action.kind === "failover" && action.block.reason === "auth_error").toBe(false);
+	});
+
+	test.each([
+		["Codex usage limit", "Codex error: The usage limit has been reached"],
+		["Claude session limit", "You've hit your session limit · resets 12am (Asia/Seoul)"],
+		["usage_limit_reached code", '{"type":"usage_limit_reached","message":"limit"}'],
+	] as const)("%s cools the account down and switches to a sibling (#1768)", (_label, message) => {
+		const action = classifyCredentialFailure(new Error(message));
+		expect(action.kind).toBe("failover");
+		if (action.kind === "failover") expect(action.block.reason).toBe("rate_limit");
+	});
+
 	test("bare 403 fails the request instead of blocking a credential", () => {
 		expect(classifyCredentialFailure(status(403, "Forbidden")).kind).toBe("fail_request");
 	});

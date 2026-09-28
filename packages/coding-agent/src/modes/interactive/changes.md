@@ -1,3 +1,21 @@
+## 2026-09-28 - Announce automatic account switches in the TUI (senpi#2304)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `registerSignalHandlers` also subscribes to provider account events (unsubscribed with the other process handlers) and shows `Switched <provider> account <from> -> <to>: <reason>.` as a status line for each `failover` event. `formatAccountFailoverNotice` maps the reason (`auth_error`, `rate_limit`, `billing`) to plain text.
+
+### Why
+
+- The generic credential pool switched to another logged-in account silently; only RPC clients of the Anthropic subscription lane ever saw `account_failover`. Users with several logins could not tell a switch had happened.
+
+### Why an extension could not handle it
+
+- The switch happens inside `ModelRuntime`'s credential pool and the event is host-internal; no extension hook receives it, and the notice belongs to the host transcript.
+
+### Expected merge conflict zones
+
+- LOW: the end of `registerSignalHandlers` and the helper above `class InteractiveMode` in `interactive-mode.ts`.
+
 ## 2026-09-28 - Show Copilot tool-limit omissions once per session (senpi#2298)
 
 ### What changed

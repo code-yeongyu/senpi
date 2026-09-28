@@ -1,3 +1,21 @@
+## 2026-09-28 - Remove the unused credential-pool failover engine (senpi#2304)
+
+### What changed
+
+- `packages/ai/src/auth/pool/failover.ts` keeps only `DEFAULT_SLOT_BLOCK_MS`, `MAX_SLOT_BLOCK_MS` and the `TURN_RETRY_SUPPRESSION_PREFIX` re-export (consumed by coding-agent). `runSlotFailover`, `PoolFailoverError` and their types are removed, and `packages/ai/src/auth/pool/classify.ts` (`classifyPoolFailure`) is deleted with its test, as is `test/credential-pool-failover.test.ts`.
+
+### Why
+
+- They had no production caller in this repository or in omo; the live engine is `packages/coding-agent/src/core/credential-pool/` (`runCredentialFailover` + `classifyCredentialFailure`). Two engines with different 403 rules invited fixes into the wrong one.
+
+### Why an extension could not handle it
+
+- Dead-code removal in the shared package.
+
+### Expected merge conflict zones
+
+- LOW: `auth/pool/failover.ts`.
+
 ## 2026-09-28 - Copilot account model limits drive compaction and output budgets (senpi#2299)
 
 ### What changed

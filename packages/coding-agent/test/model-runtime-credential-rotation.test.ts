@@ -13,6 +13,10 @@ import {
 	streamWithCredentialRotation,
 } from "../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../src/core/credential-pool/state-store.ts";
+import {
+	type ProviderAccountEvent,
+	subscribeProviderAccountEvents,
+} from "../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 
 const NOW = 1_756_000_000_000;
@@ -281,6 +285,57 @@ describe("credential rotation over a pooled provider", () => {
 		);
 		expect(attempted).toHaveLength(2);
 		expect(events.some((event) => event.type === "text_delta")).toBe(true);
+	});
+
+	test("a switch to another account is announced once, from the refused account to the one that serves", async () => {
+		const announced: ProviderAccountEvent[] = [];
+		const unsubscribe = subscribeProviderAccountEvents((event) => announced.push(event));
+		try {
+			const attempted: string[] = [];
+			await collect(
+				streamWithCredentialRotation({
+					sources: { providerId: "test", credential: pooled(), env: () => undefined, repository, now: () => NOW },
+					affinityKey: "ordinary-agent-session",
+					runAttempt: (slot) => {
+						attempted.push(slot.name);
+						return attempted.length === 1
+							? stream(startEvent(), errorEvent("Codex error: The usage limit has been reached"))
+							: stream(startEvent(), textEvent("ok"));
+					},
+				}),
+			);
+			const failovers = announced.filter((event) => event.type === "failover");
+			expect(failovers).toEqual([
+				{ type: "failover", provider: "test", from: attempted[0], to: attempted[1], reason: "rate_limit" },
+			]);
+		} finally {
+			unsubscribe();
+		}
+	});
+
+	test("no switch is announced when a request succeeds on its account or fails without rotating", async () => {
+		const announced: ProviderAccountEvent[] = [];
+		const unsubscribe = subscribeProviderAccountEvents((event) => announced.push(event));
+		try {
+			for (const outcome of [textEvent("ok"), errorEvent("500 Internal Server Error")]) {
+				await collect(
+					streamWithCredentialRotation({
+						sources: {
+							providerId: "test",
+							credential: pooled(),
+							env: () => undefined,
+							repository,
+							now: () => NOW,
+						},
+						affinityKey: "ordinary-agent-session",
+						runAttempt: () => stream(startEvent(), outcome),
+					}),
+				);
+			}
+			expect(announced.filter((event) => event.type === "failover")).toEqual([]);
+		} finally {
+			unsubscribe();
+		}
 	});
 
 	test("policy disables affinity and selects in declaration order", async () => {

@@ -41,6 +41,17 @@ export function rateLimitCooldown(
 const INVALID_KEY_TEXT = /invalid[ _-]?(?:api[ _-]?)?key|authentication[_ ]?error|invalid x-api-key|unauthorized/i;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
+// Subscription exhaustion worded as prose instead of a 429 (#1768): Codex "The usage limit
+// has been reached", Claude "You've hit your session limit". The account is spent until its
+// window resets, so it cools down and the request moves to a sibling account.
+const USAGE_LIMIT_TEXT =
+	/usage[ _-]limit[ _-](?:has been )?reached|usage_limit_reached|hit your (?:session|daily|weekly|usage) limit/i;
+// `resolveStoredOAuth` wraps every failed token exchange as `OAuth refresh failed for <id>: <cause>`.
+const OAUTH_REFRESH_FAILED_TEXT = /^OAuth refresh failed for /;
+// The token endpoint rejected the refresh token itself: only a new login can recover this account.
+// Transient exchange failures (network, 5xx, timeouts) do not match and keep today's handling.
+const DEAD_REFRESH_TEXT =
+	/invalid_grant|invalid_token|unauthorized_client|refresh token (?:has )?(?:expired|been revoked|is invalid|revoked)|\b(?:400|401|403)\b/i;
 const BILLING_TEXT =
 	/billing|credits?[ _-]?(?:required|exhausted|balance)|insufficient[ _-]?(?:funds|quota|credit)|payment[ _-]?required|quota[ _-]?exhausted/i;
 const OVERLOAD_TEXT = /overloaded/i;
@@ -91,6 +102,10 @@ export function classifyCredentialFailure(
 	if (text.includes(PROVIDER_NOT_CONFIGURED_PREFIX)) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
+	// An expired or revoked login is per-account, like a 401: switch to a sibling account now.
+	if (OAUTH_REFRESH_FAILED_TEXT.test(text) && DEAD_REFRESH_TEXT.test(text)) {
+		return { kind: "failover", block: { reason: "auth_error" } };
+	}
 	if (status === 401 || INVALID_KEY_TEXT.test(text)) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
@@ -102,7 +117,7 @@ export function classifyCredentialFailure(
 	if (status === 402 || BILLING_TEXT.test(text)) {
 		return { kind: "failover", block: { reason: "account_disabled" } };
 	}
-	if (status === 429 || RATE_LIMIT_TEXT.test(text)) {
+	if (status === 429 || RATE_LIMIT_TEXT.test(text) || USAGE_LIMIT_TEXT.test(text)) {
 		const hint = extract429RetryAfterMs({
 			status: status ?? 429,
 			bodyText: text,

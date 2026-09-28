@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- With two or more logins for a provider, an expired or revoked login and a subscription limit worded as text (Codex `The usage limit has been reached`, Claude `You've hit your session limit`) now switch the request to another logged-in account instead of failing it; transient token-endpoint errors still never block an account. Every automatic account switch is announced once in the TUI (`Switched <provider> account <from> -> <to>: <reason>.`) and as an `account_failover` event for RPC and app-server clients. ([#2304](https://github.com/code-yeongyu/senpi/issues/2304), [#1768](https://github.com/code-yeongyu/senpi/issues/1768))
+
 ### Removed
 
 ## [2026.9.28-5] - 2026-09-28
