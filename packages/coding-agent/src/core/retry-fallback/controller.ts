@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
+import { isCredentialRejectionMessage } from "./auth-rejection.ts";
 import { firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
@@ -23,6 +24,7 @@ export type { ActiveFallbackState, RetryFallbackControllerDeps } from "./control
 export class RetryFallbackController {
 	private readonly deps: RetryFallbackControllerDeps;
 	private readonly triedSelectors = new Set<string>();
+	private readonly credentialRejectedProviders = new Set<string>();
 	private state: ActiveFallbackState | undefined;
 	private lastExhaustedChainKey: string | undefined;
 	readonly probes: CircuitProbes;
@@ -50,6 +52,7 @@ export class RetryFallbackController {
 
 	resetTurn(): void {
 		this.triedSelectors.clear();
+		this.credentialRejectedProviders.clear();
 		this.lastExhaustedChainKey = undefined;
 	}
 
@@ -201,6 +204,10 @@ export class RetryFallbackController {
 		// here; billing/quota exhaustion is recorded at the failure itself (see
 		// noteHealthFailure) so the final chain entry opens too.
 		if (current && reason === "transient") this.noteHealthFailure(current.model, current.thinkingLevel, failure);
+		if (current && reason === "hard-error" && isCredentialRejectionMessage(failure.errorMessage)) {
+			this.credentialRejectedProviders.add(current.model.provider);
+			this.deps.logger.info("provider_credential_rejected", { provider: current.model.provider });
+		}
 		const candidate = this.nextCandidate(false, true);
 		if (!current || !candidate) return false;
 		const currentBase = formatSelector(current.model);
@@ -261,7 +268,8 @@ export class RetryFallbackController {
 			registry: this.deps.registry,
 			tried: this.triedSelectors,
 			isSuppressed: (base) => this.deps.cooldowns.isSuppressed(base),
-			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
+			isAuthAvailable: (provider) =>
+				!this.credentialRejectedProviders.has(provider) && this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
