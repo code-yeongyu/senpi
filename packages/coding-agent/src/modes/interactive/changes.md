@@ -112,6 +112,26 @@ The editor's draft state, the TUI's submission and clear edges, its question ove
 
 - LOW: the startup-warnings block that destructures `this.options`.
 
+## 2026-09-29 - Bounded ChatGPT identity and canonical status in the footer
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts` renders a bounded ChatGPT account row from the async summary snapshot, retaining the human label, immutable ID, selection provenance, and canonical auth-action enum at 80/120 columns. The model/context row and other providers retain their existing layout. No raw credentials or HRW guesses enter the ChatGPT rendering path.
+- `packages/coding-agent/src/modes/interactive/footer-credential-binding.ts` binds strict metadata reads and secret-free local/remote session events to the disposable footer provider. `packages/coding-agent/src/modes/interactive/interactive-mode.ts` binds on session/model changes, clears the source before session invalidation, and requests a redraw when snapshots change.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the optional provider prefix could disappear at narrow widths, and a blocked pin or failover made its predicted account misleading.
+- `packages/coding-agent/src/modes/interactive/footer-credential-binding.ts` and `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: stale asynchronous completions and previous-session attempts must not update the current footer.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts` is the default host footer; `packages/coding-agent/src/modes/interactive/footer-credential-binding.ts` and `packages/coding-agent/src/modes/interactive/interactive-mode.ts` own its session lifecycle rather than an extension's command context.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: account suffix and row assembly; `packages/coding-agent/src/modes/interactive/footer-credential-binding.ts`: new fork-only module; `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: footer binding, model-change handling, and redraw subscriptions.
+
 ## 2026-09-29 - `/model` lists ambient-only providers after configured ones (senpi#2327)
 
 ### What changed

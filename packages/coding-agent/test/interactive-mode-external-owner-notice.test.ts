@@ -19,7 +19,8 @@ function makeFakeThis() {
 		autoCompactionLoader: undefined as { stop(): void } | undefined,
 		autoCompactionProgressText: "",
 		defaultEditor: {} as { onEscape?: () => void },
-		session: { abortCompaction: vi.fn() },
+		session: { abortCompaction: vi.fn(), state: { model: { provider: "other" } } },
+		footerDataProvider: { setCredentialAccountSource: vi.fn() },
 		statusContainer: { clear: vi.fn() },
 		chatContainer,
 		sessionManager: {
@@ -269,6 +270,7 @@ describe("external-owner compaction rejection rendering", () => {
 
 		expect(fakeThis.externalOwnerCompactionNoticeShown).toBe(false);
 		expect(fakeThis.footer.setCompactionDelegated).toHaveBeenLastCalledWith(false);
+		expect(fakeThis.footerDataProvider.setCredentialAccountSource).toHaveBeenCalledWith(undefined);
 	});
 
 	test("rebindCurrentSession tolerates harness contexts without a footer", async () => {

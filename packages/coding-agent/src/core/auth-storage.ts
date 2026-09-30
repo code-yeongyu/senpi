@@ -35,6 +35,7 @@ import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
+import { emitCredentialAccountUpdate } from "./credential-account-events.ts";
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
@@ -546,14 +547,32 @@ export class AuthStorage implements CredentialStore {
 	/** Set a non-persistent API key used ahead of stored credentials. */
 	setRuntimeApiKey(provider: string, apiKey: string): void {
 		this.runtimeOverrides.set(provider, apiKey);
+		this.notifyCredentialCommit(provider);
 	}
 
 	removeRuntimeApiKey(provider: string): void {
 		this.runtimeOverrides.delete(provider);
+		this.notifyCredentialCommit(provider);
+	}
+
+	hasRuntimeApiKey(provider: string): boolean {
+		return this.runtimeOverrides.has(provider);
 	}
 
 	get(provider: string): Credential | undefined {
 		return readByProviderId(this.data, provider);
+	}
+
+	/** Strict metadata read: never resolves !commands or returns stale data after a failed read. */
+	async readStoredSnapshot(provider: string): Promise<Credential | undefined> {
+		return readByProviderId(await this.reloadFromStorageAsync(), provider);
+	}
+
+	private notifyCredentialCommit(provider: string): void {
+		emitCredentialAccountUpdate({
+			scope: this.authPath ?? this,
+			update: { type: "credential_accounts_changed", provider, reason: "credentials" },
+		});
 	}
 
 	getProviderEnv(provider: string): Record<string, string> | undefined {
@@ -569,6 +588,7 @@ export class AuthStorage implements CredentialStore {
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
+		this.notifyCredentialCommit(provider);
 	}
 
 	remove(provider: string): void {
@@ -578,6 +598,7 @@ export class AuthStorage implements CredentialStore {
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
+		this.notifyCredentialCommit(provider);
 	}
 
 	listSlots(provider: string): CredentialSlot[] {
@@ -592,6 +613,7 @@ export class AuthStorage implements CredentialStore {
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
+		this.notifyCredentialCommit(provider);
 	}
 
 	removeSlot(provider: string, name: string): void {
@@ -604,6 +626,7 @@ export class AuthStorage implements CredentialStore {
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };
 		});
+		this.notifyCredentialCommit(provider);
 	}
 
 	has(provider: string): boolean {
@@ -727,6 +750,7 @@ export class AuthStorage implements CredentialStore {
 			return { result: next, next: JSON.stringify(merged, null, 2) };
 		}, options);
 		this.updateReadState(latestData, revision);
+		this.notifyCredentialCommit(provider);
 		return result;
 	}
 
@@ -741,6 +765,7 @@ export class AuthStorage implements CredentialStore {
 			return { result: undefined, next: JSON.stringify(currentData, null, 2) };
 		}, options);
 		this.updateReadState(latestData);
+		this.notifyCredentialCommit(provider);
 	}
 
 	/** List credential metadata without resolving configured key values. */

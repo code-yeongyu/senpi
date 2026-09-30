@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
+import { emitCredentialAccountUpdate } from "../credential-account-events.ts";
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
@@ -197,7 +198,7 @@ export class CredentialSlotRepository {
 		slotId: string,
 		fn: (current: CredentialSlotState | undefined) => Omit<CredentialSlotState, "stateVersion"> | undefined,
 	): Promise<CredentialSlotState | undefined> {
-		return this.withDocument((document) => {
+		const committed = await this.withDocument((document) => {
 			const provider = document.providers[providerId] ?? { lanes: {} };
 			const lane = provider.lanes[laneId] ?? { slots: {} };
 			const current = lane.slots[slotId];
@@ -219,6 +220,11 @@ export class CredentialSlotRepository {
 			};
 			return { result, next };
 		});
+		emitCredentialAccountUpdate({
+			scope: this.path,
+			update: { type: "credential_accounts_changed", provider: providerId, reason: "health" },
+		});
+		return committed;
 	}
 }
 

@@ -2,6 +2,20 @@ import { type ExecFileException, execFile } from "child_process";
 import { existsSync, type FSWatcher, readFileSync, type Stats, statSync, unwatchFile, watchFile } from "fs";
 import { dirname, join, resolve } from "path";
 import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.ts";
+import type { CredentialAccountUpdate } from "./credential-account-events.ts";
+import type { CredentialAccountSnapshot, CredentialAccountSummary } from "./credential-accounts.ts";
+
+export type FooterCredentialAccountSource = {
+	readonly sessionId: string;
+	load(): Promise<CredentialAccountSnapshot>;
+	subscribe(listener: (event: CredentialAccountUpdate) => void): () => void;
+};
+
+export type FooterCredentialAccountSnapshot = {
+	readonly state: "loading" | "ready" | "unavailable";
+	readonly selection: "pinned" | "observed" | "only" | "unknown";
+	readonly account?: CredentialAccountSummary;
+};
 
 export type GitPaths = {
 	repoDir: string;
@@ -105,11 +119,109 @@ export class FooterDataProvider {
 	private refreshInFlight = false;
 	private refreshPending = false;
 	private disposed = false;
+	private accountSource: FooterCredentialAccountSource | undefined;
+	private accountSnapshot: CredentialAccountSnapshot | undefined;
+	private accountState: FooterCredentialAccountSnapshot["state"] = "loading";
+	private accountGeneration = 0;
+	private accountUnsubscribe: (() => void) | undefined;
+	private accountTimer: ReturnType<typeof setTimeout> | undefined;
+	private observedAccount: { name?: string } | undefined;
+	private accountChangeCallbacks = new Set<() => void>();
 
 	constructor(cwd: string) {
 		this.cwd = cwd;
 		this.gitPaths = findGitPaths(cwd);
 		this.setupGitWatcher();
+	}
+
+	/** Replace a session-bound source; old reads and observers can never publish into the new session. */
+	setCredentialAccountSource(source: FooterCredentialAccountSource | undefined): void {
+		this.accountUnsubscribe?.();
+		this.accountUnsubscribe = undefined;
+		this.accountSource = source;
+		this.observedAccount = undefined;
+		if (source && !this.disposed) {
+			this.accountUnsubscribe = source.subscribe((event) => {
+				if (event.provider !== "chatgpt-subscription") return;
+				if (event.type === "credential_account_attempt") {
+					this.observedAccount = event.name === undefined ? {} : { name: event.name };
+					this.notifyAccountChange();
+				} else {
+					if (event.reason === "credentials") this.observedAccount = undefined;
+					this.invalidateAccounts();
+				}
+			});
+		}
+		this.invalidateAccounts();
+	}
+
+	onCredentialAccountChange(callback: () => void): () => void {
+		this.accountChangeCallbacks.add(callback);
+		return () => this.accountChangeCallbacks.delete(callback);
+	}
+
+	/** Pure memory read. Even an overdue timer cannot let expired advice reach a frame. */
+	getCredentialAccountSnapshot(sessionId: string): FooterCredentialAccountSnapshot | undefined {
+		if (this.disposed || this.accountSource?.sessionId !== sessionId) return undefined;
+		const snapshot = this.accountSnapshot;
+		if (!snapshot || (snapshot.validUntil !== undefined && Date.now() >= snapshot.validUntil)) {
+			return { state: snapshot ? "loading" : this.accountState, selection: "unknown" };
+		}
+		const pinned = snapshot.accounts.find((account) => account.pinned);
+		const account = this.observedAccount
+			? snapshot.accounts.find((candidate) => candidate.name === this.observedAccount?.name)
+			: (pinned ?? (snapshot.accounts.length === 1 ? snapshot.accounts[0] : undefined));
+		return {
+			state: "ready",
+			selection: account ? (this.observedAccount ? "observed" : pinned ? "pinned" : "only") : "unknown",
+			...(account ? { account } : {}),
+		};
+	}
+
+	private notifyAccountChange(): void {
+		for (const callback of this.accountChangeCallbacks) callback();
+	}
+
+	private invalidateAccounts(): void {
+		const generation = ++this.accountGeneration;
+		clearTimeout(this.accountTimer);
+		this.accountTimer = undefined;
+		this.accountSnapshot = undefined;
+		this.accountState = "loading";
+		this.notifyAccountChange();
+		const source = this.accountSource;
+		if (!source || this.disposed) return;
+		// The load starts outside render/bind; a synchronous storage prelude cannot block a frame.
+		queueMicrotask(async () => {
+			if (this.disposed || generation !== this.accountGeneration) return;
+			try {
+				const snapshot = await source.load();
+				if (this.disposed || generation !== this.accountGeneration) return;
+				if (snapshot.validUntil !== undefined && Date.now() >= snapshot.validUntil) {
+					this.invalidateAccounts();
+					return;
+				}
+				this.accountSnapshot = snapshot;
+				this.accountState = "ready";
+				if (snapshot.validUntil !== undefined) this.armAccountBoundary(snapshot.validUntil);
+			} catch {
+				if (this.disposed || generation !== this.accountGeneration) return;
+				// An explicit unavailable state replaces advice; never render exception text or stale credentials.
+				this.accountState = "unavailable";
+			}
+			this.notifyAccountChange();
+		});
+	}
+
+	private armAccountBoundary(boundary: number): void {
+		this.accountTimer = setTimeout(
+			() => {
+				if (Date.now() < boundary) this.armAccountBoundary(boundary);
+				else this.invalidateAccounts();
+			},
+			Math.min(2_147_483_647, Math.max(0, boundary - Date.now())),
+		);
+		this.accountTimer.unref?.();
 	}
 
 	/** Current git branch, null if not in repo, "detached" if detached HEAD */
@@ -181,6 +293,8 @@ export class FooterDataProvider {
 	/** Internal: cleanup */
 	dispose(): void {
 		this.disposed = true;
+		this.accountChangeCallbacks.clear();
+		this.setCredentialAccountSource(undefined);
 		if (this.refreshTimer) {
 			clearTimeout(this.refreshTimer);
 			this.refreshTimer = null;
@@ -378,4 +492,5 @@ export class FooterDataProvider {
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
 	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
->;
+> &
+	Partial<Pick<FooterDataProvider, "getCredentialAccountSnapshot" | "onCredentialAccountChange">>;

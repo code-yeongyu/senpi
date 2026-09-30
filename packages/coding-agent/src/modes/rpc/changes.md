@@ -284,6 +284,24 @@ The registry, its reader and `host gc` are the RPC host's own on-disk state and 
 - `ensureEndpointIdentity`'s record literal and `createDaemonDirectories`' signature in `host-daemon-paths.ts`.
 - `identifyEndpoint` in `host-endpoints.ts`, `endpointStatus` in `host-status-all.ts`, the head of `gcHostEndpoints` in `host-gc.ts`.
 
+## 2026-09-29 - Share safe account summary fields with RPC clients
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcProviderAccount` aliases the existing secret-free `CredentialAccountSummary`, including verified identity provenance, workspace hint, expiry, and auth action.
+
+### Why
+
+- `get_provider_accounts` already returns these fields, but its public type hid them from typed clients.
+
+### Why an extension could not handle it
+
+- The existing RPC response contract is owned by the host.
+
+### Expected merge conflict zones
+
+- LOW: the `RpcProviderAccount` type.
+
 ## 2026-09-29 - Auth status mirrors `ambient` (senpi#2327)
 
 ### What changed

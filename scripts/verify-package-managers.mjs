@@ -15,8 +15,9 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -54,32 +55,35 @@ function header(msg) {
 	process.stdout.write(`\n${color("1;36", `==> ${msg}`)}\n`);
 }
 
-async function snapshotRepo(dest) {
-	const status = await runAsync("rsync", [
-		"-a",
-		"--exclude=node_modules",
-		"--exclude=.git",
-		"--exclude=dist",
-		"--exclude=.worktrees",
-		"--exclude=.husky/_",
-		"--exclude=packages/coding-agent/binaries",
-		"--exclude=local-ignore",
-		"--exclude=.pi",
-		"--exclude=.opencode",
-		"--exclude=*.log",
-		"--exclude=*.tsbuildinfo",
-		`${ROOT}/`,
-		`${dest}/`,
-	]);
-	if (status !== 0) throw new Error(`rsync failed (exit ${status})`);
+export async function snapshotRepo(dest, source = ROOT) {
+	const excluded = new Set(["node_modules", ".git", "dist", ".worktrees", "local-ignore", ".pi", ".opencode"]);
+	await cp(source, dest, {
+		recursive: true,
+		preserveTimestamps: true,
+		verbatimSymlinks: true,
+		filter: (path) => {
+			const pathParts = relative(source, path).split(sep);
+			const relativePath = pathParts.join("/");
+			return (
+				!pathParts.some((part) => excluded.has(part)) &&
+				relativePath !== ".husky/_" &&
+				relativePath !== "packages/coding-agent/binaries" &&
+				!relativePath.endsWith(".log") &&
+				!relativePath.endsWith(".tsbuildinfo")
+			);
+		},
+	});
 }
 
 function runAsync(command, args, cwd = ROOT, env = process.env) {
 	return new Promise((resolve) => {
-		const child = spawn(command, args, {
+		const shell = process.platform === "win32";
+		// Windows npm/pnpm shims need cmd; PM names and these arguments are fixed by the verifier.
+		const child = spawn(shell ? [command, ...args].join(" ") : command, shell ? [] : args, {
 			cwd,
 			stdio: "inherit",
 			env,
+			shell,
 		});
 		child.on("error", (error) => {
 			console.error(`\n[${command}] failed to spawn: ${error.message}`);
@@ -100,7 +104,7 @@ async function verify(pm, parentTmp) {
 
 	// Remove the npm lockfile when using bun or pnpm so they resolve from
 	// package.json alone. Their own lockfiles (if present in the working
-	// tree) come along via rsync and are respected.
+	// tree) come along in the snapshot and are respected.
 	if (pm !== "npm") {
 		const lock = join(tmp, "package-lock.json");
 		if (existsSync(lock)) rmSync(lock, { force: true });
@@ -153,4 +157,4 @@ async function main() {
 	process.exit(allOk ? 0 : 1);
 }
 
-main();
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();

@@ -53,6 +53,26 @@ Effort inference runs inside the model registry before any extension hook sees t
 
 - LOW: `createSetupErrorMessage` in `api/lazy.ts`; the end of `utils/provider-failure-description.ts`.
 
+## 2026-09-29 - ChatGPT subscription identity is verified and refreshes stay in one workspace
+
+### What changed
+
+- `packages/ai/src/utils/chatgpt-subscription-auth.ts` verifies optional ChatGPT ID tokens with Web Crypto RS256 against the issuer JWKS and admits only issuer-, audience-, authorized-party-, expiry-, person-, and workspace-valid identity; verified email is retained only when it is printable and email-shaped.
+- `packages/ai/src/auth/oauth/chatgpt-subscription.ts` binds verified identity to the access token from the same exchange, hides failed token response bodies, and rejects every refresh that omits or changes the selected slot's routing workspace.
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/pool/slots.ts` retain optional per-slot `verifiedIdentity`, reject malformed persisted identity at the read boundary, reuse only an exact person/workspace match on re-login, and preserve manual names, pins, siblings, and legacy flat projections.
+
+### Why
+
+- Login order is not account identity, and a refresh that silently changes workspaces can route requests through the wrong subscription. Optional identity must enrich a valid login only when cryptographically proven; it must never become a new login failure mode.
+
+### Why an extension could not handle it
+
+- The OAuth exchange and serialized credential writes occur below extension hooks, and the pre-write refresh comparison needs the exact selected slot's prior access token.
+
+### Expected merge conflict zones
+
+- LOW: ChatGPT token response parsing and refresh in `auth/oauth/chatgpt-subscription.ts`; login allocation and slot projection in `auth/pool/slots.ts`.
+
 ## 2026-09-29 - Cursor exec calls run once in the release bundle; bundle copies share module state (senpi#2334)
 
 ### What changed

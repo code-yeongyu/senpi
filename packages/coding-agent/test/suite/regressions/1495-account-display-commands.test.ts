@@ -56,7 +56,8 @@ describe.each([
 		expect(notices.at(-1)?.message).toContain("Work account (second)");
 		expect(JSON.stringify(notices)).not.toContain("fake-");
 		await handler(`${prefix}pin Work account`, ctx);
-		expect(storage.get(provider)).not.toHaveProperty("pinned");
+		if (name === "gpt-account") expect(storage.get(provider)).toHaveProperty("pinned", "second");
+		else expect(storage.get(provider)).not.toHaveProperty("pinned");
 		await handler(`${prefix}pin second`, ctx);
 		expect(storage.get(provider)).toHaveProperty("pinned", "second");
 		expect(accountFooterSuffix(storage.get(provider), "session-01")).toBe("@Work account (second)");

@@ -16,6 +16,24 @@
 
 - LOW: `read()` in `hooks/trust-storage.ts` between the snapshot fast path and the lock acquisition.
 
+## 2026-09-29 - Show verified ChatGPT account identity and safe selectors
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: the account list uses the safe summary's auth action, labels verified email separately from a manual name, shows a bounded workspace hint, and offers only selectors that resolve uniquely to the immutable slot ID. Expiry includes an absolute time and a readable remaining duration.
+
+### Why
+
+- Users need to distinguish accounts sharing an email, avoid ambiguous pin selectors, and tell refreshable expiry from reauthentication without exposing credential material.
+
+### Why an extension could not handle it
+
+- This is the existing built-in `/gpt-account` command; a separate command would duplicate its account controls.
+
+### Expected merge conflict zones
+
+- LOW: the account-list renderer in `gpt-account.ts`.
+
 ## 2026-09-24 - Pin the refreshed pi-* extension releases (senpi#2079)
 
 ### What changed

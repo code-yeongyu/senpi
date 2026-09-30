@@ -229,6 +229,7 @@ import { UserMessageSelectorComponent } from "./components/user-message-selector
 import { expandEditorSubmission, expandSubmittedText, transferEditorContent } from "./editor-paste-transfer.ts";
 import { formatExtensionErrorHeadline, sanitizeTuiErrorMessage } from "./extension-error-format.ts";
 import { editFileInExternalEditor, editInExternalEditor } from "./external-editor.ts";
+import { bindFooterCredentialAccounts } from "./footer-credential-binding.ts";
 import { GrokChrome, type InteractiveChrome, type InteractiveFooter } from "./grok/chrome.ts";
 import {
 	prepareInteractiveStderrCapture,
@@ -1095,6 +1096,7 @@ export class InteractiveMode {
 		this.chrome = options.chrome === "grok" ? new GrokChrome() : options.chrome;
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
+			this.footerDataProvider.setCredentialAccountSource(undefined);
 			InteractiveMode.restoreCompactionEscapeOverride(this);
 			this.resetExtensionUI();
 		});
@@ -1697,6 +1699,8 @@ export class InteractiveMode {
 		this.footerDataProvider.onBranchChange(() => {
 			this.ui.requestRender();
 		});
+
+		this.footerDataProvider.onCredentialAccountChange(() => this.ui.requestRender());
 
 		// Initialize available provider count for footer display
 		this.updateAvailableProviderCount();
@@ -2710,6 +2714,7 @@ export class InteractiveMode {
 		this.footer.setSession(this.session);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
+		bindFooterCredentialAccounts(this.footerDataProvider, this.session);
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 		this.outputPad = this.settingsManager.getOutputPad();
 		this.applySmoothStreamingRenderFps();
@@ -5490,7 +5495,9 @@ export class InteractiveMode {
 			}
 
 			case "model_changed":
-				// The new model must not inherit the previous model's
+				bindFooterCredentialAccounts(this.footerDataProvider, this.session);
+				// Shared-host/other-client model switches arrive as model_changed wire
+				// events; the new model must not inherit the previous model's
 				// SDK-delegation episode (post-#1188 core emits no repeat rejection to
 				// self-heal a stale marker).
 				this.externalOwnerCompactionNoticeShown = false;

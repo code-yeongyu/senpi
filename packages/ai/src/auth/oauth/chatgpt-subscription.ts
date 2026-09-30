@@ -17,9 +17,13 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
-import { extractChatGptSubscriptionAccountId } from "../../utils/chatgpt-subscription-auth.ts";
+import {
+	extractChatGptSubscriptionAccountId,
+	validateChatGptSubscriptionIdentity,
+} from "../../utils/chatgpt-subscription-auth.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import { getWireIdentity } from "../../wire-identity.ts";
+import { listSlots } from "../pool/slots.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
@@ -39,7 +43,7 @@ const CHATGPT_SUBSCRIPTION_BROWSER_LOGIN_METHOD = "browser";
 const CHATGPT_SUBSCRIPTION_DEVICE_CODE_LOGIN_METHOD = "device_code";
 const SCOPE = "openid profile email offline_access";
 
-type OAuthToken = { access: string; refresh: string; expires: number };
+type OAuthToken = { access: string; refresh: string; expires: number; idToken?: string };
 type TokenOperation = "exchange" | "refresh";
 
 function getCallbackHost(): string {
@@ -107,10 +111,7 @@ async function fetchWithLoginCancellation(input: string, init: RequestInit): Pro
 
 async function readTokenResponse(response: Response, operation: TokenOperation): Promise<OAuthToken> {
 	if (!response.ok) {
-		const text = await response.text().catch(() => "");
-		throw new Error(
-			`ChatGPT Subscription token ${operation} failed (${response.status}): ${text || response.statusText}`,
-		);
+		throw new Error(`ChatGPT Subscription token ${operation} failed (${response.status})`);
 	}
 
 	const rawJson = await response.json();
@@ -118,15 +119,17 @@ async function readTokenResponse(response: Response, operation: TokenOperation):
 		access_token?: string;
 		refresh_token?: string;
 		expires_in?: number;
+		id_token?: string;
 	} | null;
 	if (!json?.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
-		throw new Error(`ChatGPT Subscription token ${operation} response missing fields: ${JSON.stringify(json)}`);
+		throw new Error(`ChatGPT Subscription token ${operation} response is missing required fields`);
 	}
 
 	return {
 		access: json.access_token,
 		refresh: json.refresh_token,
 		expires: Date.now() + json.expires_in * 1000,
+		...(typeof json.id_token === "string" ? { idToken: json.id_token } : {}),
 	};
 }
 
@@ -188,10 +191,7 @@ async function startChatGptSubscriptionDeviceAuth(signal: AbortSignal): Promise<
 				"ChatGPT Subscription device code login is not enabled for this server. Use browser login or verify the server URL.",
 			);
 		}
-		const responseBody = await response.text().catch(() => "");
-		throw new Error(
-			`ChatGPT Subscription device code request failed with status ${response.status}${responseBody ? `: ${responseBody}` : ""}`,
-		);
+		throw new Error(`ChatGPT Subscription device code request failed with status ${response.status}`);
 	}
 
 	const rawJson = await response.json();
@@ -208,7 +208,7 @@ async function startChatGptSubscriptionDeviceAuth(signal: AbortSignal): Promise<
 		!Number.isFinite(intervalSeconds) ||
 		intervalSeconds < 0
 	) {
-		throw new Error(`Invalid ChatGPT Subscription device code response: ${JSON.stringify(json)}`);
+		throw new Error("Invalid ChatGPT Subscription device code response");
 	}
 
 	return {
@@ -243,7 +243,7 @@ async function pollChatGptSubscriptionDeviceAuth(
 				if (!json?.authorization_code || !json.code_verifier) {
 					return {
 						status: "failed",
-						message: `Invalid ChatGPT Subscription device auth token response: ${JSON.stringify(json)}`,
+						message: "Invalid ChatGPT Subscription device auth token response",
 					};
 				}
 				return {
@@ -273,7 +273,7 @@ async function pollChatGptSubscriptionDeviceAuth(
 
 			return {
 				status: "failed",
-				message: `ChatGPT Subscription device auth failed with status ${response.status}${responseBody ? `: ${responseBody}` : ""}`,
+				message: `ChatGPT Subscription device auth failed with status ${response.status}`,
 			};
 		},
 	});
@@ -386,18 +386,19 @@ function getAccountId(accessToken: string): string | null {
 	return extractChatGptSubscriptionAccountId(accessToken) ?? null;
 }
 
-function credentialsFromToken(token: OAuthToken): OAuthCredential {
+async function credentialsFromLoginToken(token: OAuthToken, signal: AbortSignal): Promise<OAuthCredential> {
 	const accountId = getAccountId(token.access);
-	if (!accountId) {
-		throw new Error("Failed to extract accountId from token");
-	}
-
+	if (!accountId) throw new Error("Failed to extract accountId from token");
+	const identity =
+		token.idToken === undefined ? undefined : await validateChatGptSubscriptionIdentity(token.idToken, { signal });
+	const verifiedIdentity = identity?.workspaceId === accountId ? identity : undefined;
 	return {
 		type: "oauth",
 		access: token.access,
 		refresh: token.refresh,
 		expires: token.expires,
 		accountId,
+		...(verifiedIdentity === undefined ? {} : { verifiedIdentity }),
 	};
 }
 
@@ -407,7 +408,7 @@ async function exchangeAuthorizationCodeForCredentials(
 	redirectUri: string,
 	signal: AbortSignal,
 ): Promise<OAuthCredential> {
-	return credentialsFromToken(await exchangeAuthorizationCode(code, verifier, redirectUri, signal));
+	return credentialsFromLoginToken(await exchangeAuthorizationCode(code, verifier, redirectUri, signal), signal);
 }
 
 async function loginChatGptSubscriptionDeviceCode(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
@@ -494,8 +495,35 @@ async function loginChatGptSubscription(interaction: ProviderAuthInteraction): P
 /**
  * Refresh ChatGPT Subscription OAuth token
  */
-async function refreshChatGptSubscriptionToken(refreshToken: string, signal: AbortSignal): Promise<OAuthCredential> {
-	return credentialsFromToken(await refreshAccessToken(refreshToken, signal));
+async function refreshChatGptSubscriptionToken(
+	credential: OAuthCredential,
+	signal: AbortSignal,
+): Promise<OAuthCredential> {
+	const priorWorkspaceId = getAccountId(credential.access);
+	const token = await refreshAccessToken(credential.refresh, signal);
+	const refreshedWorkspaceId = getAccountId(token.access);
+	const mirroredSlot = Array.isArray(credential.accounts)
+		? listSlots(credential).find((slot) => slot.access === credential.access || slot.refresh === credential.refresh)
+		: undefined;
+	const verifiedIdentity = Array.isArray(credential.accounts)
+		? mirroredSlot?.verifiedIdentity
+		: credential.verifiedIdentity;
+	if (
+		priorWorkspaceId === null ||
+		refreshedWorkspaceId === null ||
+		priorWorkspaceId !== refreshedWorkspaceId ||
+		(verifiedIdentity !== undefined && verifiedIdentity.workspaceId !== refreshedWorkspaceId)
+	) {
+		throw new Error("ChatGPT Subscription refresh changed or omitted the routing workspace; re-login is required");
+	}
+	return {
+		type: "oauth",
+		access: token.access,
+		refresh: token.refresh,
+		expires: token.expires,
+		accountId: refreshedWorkspaceId,
+		...(verifiedIdentity === undefined ? {} : { verifiedIdentity }),
+	};
 }
 
 export const chatgptSubscriptionOAuth: OAuthAuth = {
@@ -522,7 +550,7 @@ export const chatgptSubscriptionOAuth: OAuthAuth = {
 		return loginChatGptSubscription(interaction);
 	},
 
-	refresh: (credential, signal) => refreshChatGptSubscriptionToken(credential.refresh, signal),
+	refresh: refreshChatGptSubscriptionToken,
 
 	async toAuth(credential) {
 		return { apiKey: credential.access };

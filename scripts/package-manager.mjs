@@ -15,8 +15,6 @@ import { basename } from "node:path";
 export const SUPPORTED_PACKAGE_MANAGERS = ["npm", "bun", "pnpm"];
 
 export function detectPackageManager(env = process.env, forcedPm) {
-	if (forcedPm) return { cmd: forcedPm, execpath: undefined };
-
 	// The user agent names the manager outright (`bun/1.4.0 ...`, `pnpm/10.32.1 ...`,
 	// `npm/11.19.0 ...`). The execpath is only a fallback and is judged by its
 	// basename: a pnpm installed through `bun install -g` lives under ~/.bun/bin,
@@ -30,7 +28,11 @@ export function detectPackageManager(env = process.env, forcedPm) {
 	else if (/pnpm/.test(executable)) fromExecpath = "pnpm";
 	else if (execpath) fromExecpath = "npm";
 
-	return { cmd: fromUserAgent ?? fromExecpath ?? "npm", execpath };
+	const detected = fromUserAgent ?? fromExecpath ?? "npm";
+	return {
+		cmd: forcedPm ?? detected,
+		execpath: forcedPm && forcedPm !== detected ? undefined : execpath,
+	};
 }
 
 export function cleanEnv(envSource = process.env) {

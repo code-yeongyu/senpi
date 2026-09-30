@@ -11,6 +11,19 @@ import {
 } from "./package-manager.mjs";
 
 describe("package-manager", () => {
+	it("retains the matching manager entry point when explicitly forced", () => {
+		for (const [cmd, execpath] of [
+			["npm", "C:/nodejs/node_modules/npm/bin/npm-cli.js"],
+			["pnpm", "C:/tools/pnpm/bin/pnpm.cjs"],
+			["bun", "C:/tools/bun.exe"],
+		]) {
+			const env = { npm_config_user_agent: `${cmd}/1.0.0`, npm_execpath: execpath };
+			assert.deepEqual(detectPackageManager(env, cmd), { cmd, execpath });
+			const other = cmd === "npm" ? "bun" : "npm";
+			assert.deepEqual(detectPackageManager(env, other), { cmd: other, execpath: undefined });
+		}
+	});
+
 	it("detects the invoking package manager from the user agent, then the execpath basename", () => {
 		assert.deepEqual(detectPackageManager({ npm_execpath: "/Users/dev/.bun/bin/bun" }), {
 			cmd: "bun",

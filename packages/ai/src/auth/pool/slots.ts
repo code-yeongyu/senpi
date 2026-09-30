@@ -1,6 +1,6 @@
 import { LEGACY_PROVIDER_IDS } from "../../legacy-provider-ids.ts";
 import type { ProviderEnv } from "../../types.ts";
-import type { Credential } from "../types.ts";
+import type { Credential, OAuthVerifiedIdentity } from "../types.ts";
 
 export type { Credential };
 
@@ -18,6 +18,7 @@ export type CredentialSlot = {
 	access?: string;
 	refresh?: string;
 	expires?: number;
+	verifiedIdentity?: OAuthVerifiedIdentity;
 	/** Provider-scoped values this account carries (a Kimi region, a Cloudflare account id). */
 	env?: ProviderEnv;
 };
@@ -178,6 +179,35 @@ function credentialSlotEnv(credential: Credential): { env: ProviderEnv } | Recor
 	return { env };
 }
 
+const UNSAFE_IDENTITY_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const VERIFIED_EMAIL_PATTERN =
+	/^[^\s@\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+@[^\s@\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+\.[^\s@\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u;
+
+function credentialVerifiedIdentity(credential: { verifiedIdentity?: unknown }): OAuthVerifiedIdentity | undefined {
+	const identity = credential.verifiedIdentity;
+	if (identity === null || typeof identity !== "object" || Array.isArray(identity)) return undefined;
+	const userId = Reflect.get(identity, "userId");
+	const workspaceId = Reflect.get(identity, "workspaceId");
+	const verifiedEmail = Reflect.get(identity, "verifiedEmail");
+	if (typeof userId !== "string" || userId.length === 0 || UNSAFE_IDENTITY_CHARACTERS.test(userId)) return undefined;
+	if (typeof workspaceId !== "string" || workspaceId.length === 0 || UNSAFE_IDENTITY_CHARACTERS.test(workspaceId)) {
+		return undefined;
+	}
+	if (
+		verifiedEmail !== undefined &&
+		(typeof verifiedEmail !== "string" || !VERIFIED_EMAIL_PATTERN.test(verifiedEmail))
+	) {
+		return undefined;
+	}
+	return verifiedEmail === undefined ? { userId, workspaceId } : { userId, workspaceId, verifiedEmail };
+}
+
+function slotWithValidatedIdentity(slot: CredentialSlot): CredentialSlot {
+	const verifiedIdentity = credentialVerifiedIdentity(slot);
+	const { verifiedIdentity: _verifiedIdentity, ...withoutIdentity } = slot;
+	return verifiedIdentity === undefined ? withoutIdentity : { ...withoutIdentity, verifiedIdentity };
+}
+
 function slotFromFlatCredential(credential: PooledCredential): CredentialSlot {
 	return slotFromFlatCredentialNamed(credential, DEFAULT_SLOT_NAME);
 }
@@ -189,7 +219,7 @@ function slotFromFlatCredential(credential: PooledCredential): CredentialSlot {
 export function listSlots(credential: PooledCredential | undefined): CredentialSlot[] {
 	if (!credential) return [];
 	const slots = storedSlots(credential);
-	return slots.length > 0 ? [...slots] : [slotFromFlatCredential(credential)];
+	return slots.length > 0 ? slots.map(slotWithValidatedIdentity) : [slotFromFlatCredential(credential)];
 }
 
 export function findSlot(credential: PooledCredential | undefined, name: string): CredentialSlot | undefined {
@@ -228,7 +258,15 @@ function projectFlatFields(credential: PooledCredential, slot: CredentialSlot): 
 	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (credential.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return credential;
-		return { ...credential, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
+		const { verifiedIdentity: _verifiedIdentity, ...withoutIdentity } = credential;
+		return {
+			...withoutIdentity,
+			access: slot.access,
+			refresh: slot.refresh,
+			expires: slot.expires,
+			...(slot.verifiedIdentity === undefined ? {} : { verifiedIdentity: slot.verifiedIdentity }),
+			...env,
+		};
 	}
 	return { ...credential, key: slot.key, ...env };
 }
@@ -276,19 +314,29 @@ export function projectSlot(credential: PooledCredential | undefined, name: stri
 	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (flat.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return undefined;
-		return { ...flat, access: slot.access, refresh: slot.refresh, expires: slot.expires, ...env };
+		const { verifiedIdentity: _verifiedIdentity, ...withoutIdentity } = flat;
+		return {
+			...withoutIdentity,
+			access: slot.access,
+			refresh: slot.refresh,
+			expires: slot.expires,
+			...(slot.verifiedIdentity === undefined ? {} : { verifiedIdentity: slot.verifiedIdentity }),
+			...env,
+		};
 	}
 	return { ...flat, key: slot.key, ...env };
 }
 
 function slotFromFlatCredentialNamed(credential: Credential, name: string): CredentialSlot {
 	if (credential.type === "oauth") {
+		const verifiedIdentity = credentialVerifiedIdentity(credential);
 		return {
 			name,
 			source: "login",
 			access: credential.access,
 			refresh: credential.refresh,
 			expires: credential.expires,
+			...(verifiedIdentity === undefined ? {} : { verifiedIdentity }),
 			...credentialSlotEnv(credential),
 		};
 	}
@@ -368,6 +416,32 @@ export function appendLoginSlot(
 	onAllocated?: (name: string, origin: "generated" | "provider") => void,
 ): Credential {
 	const provided = providedSlots(flat);
+	const loginIdentity = flat.type === "oauth" ? credentialVerifiedIdentity(flat) : undefined;
+	if (current?.type === "oauth" && flat.type === "oauth" && loginIdentity !== undefined) {
+		const matching = listSlots(current).find(
+			(slot) =>
+				slot.verifiedIdentity?.userId === loginIdentity.userId &&
+				slot.verifiedIdentity.workspaceId === loginIdentity.workspaceId,
+		);
+		if (matching !== undefined) {
+			onAllocated?.(matching.name, "provider");
+			const verifiedIdentity = { ...matching.verifiedIdentity, ...loginIdentity };
+			if (!Array.isArray(current.accounts) || current.accounts.length === 0) {
+				return { ...current, ...flat, verifiedIdentity };
+			}
+			const replacement = {
+				...matching,
+				access: flat.access,
+				refresh: flat.refresh,
+				expires: flat.expires,
+				verifiedIdentity,
+			};
+			const accounts = current.accounts.map((slot) => (slot.name === matching.name ? replacement : slot));
+			if (!slotMirrorsFlat(current, matching)) return { ...current, accounts };
+			const projected = projectFlatFields(current, replacement);
+			return projected.type === "oauth" ? { ...projected, accounts } : current;
+		}
+	}
 	if (provided) {
 		// Provider-owned envelopes identify an addition by immutable ID, never by
 		// token equality or array position. Ambiguous envelopes have no receipt.

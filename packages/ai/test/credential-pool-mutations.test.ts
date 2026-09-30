@@ -43,6 +43,50 @@ describe("credential pool slot algebra", () => {
 		expect(listSlots(flat)).toEqual([{ name: "default", source: "login", access: "a", refresh: "r", expires: 123 }]);
 	});
 
+	test.each([
+		[
+			"pooled",
+			{
+				type: "oauth",
+				access: "pooled-access",
+				refresh: "pooled-refresh",
+				expires: 123,
+				accounts: [
+					{
+						name: "default",
+						access: "pooled-access",
+						refresh: "pooled-refresh",
+						expires: 123,
+						verifiedIdentity: {
+							userId: "user-1",
+							workspaceId: "workspace-1\u001b[31m",
+							verifiedEmail: "pooled@example.test\u0007",
+						},
+					},
+				],
+			},
+		],
+		[
+			"flat",
+			{
+				type: "oauth",
+				access: "flat-access",
+				refresh: "flat-refresh",
+				expires: 123,
+				verifiedIdentity: {
+					userId: "user-1",
+					workspaceId: "workspace-1",
+					verifiedEmail: "not-an-email",
+				},
+			},
+		],
+	] as const)("%s credentials discard invalid persisted verified identity", (_shape, persisted) => {
+		const credential = persisted as unknown as PooledCredential;
+
+		expect(() => listSlots(credential)).not.toThrow();
+		expect(listSlots(credential)[0]).not.toHaveProperty("verifiedIdentity");
+	});
+
 	test("upsertSlot replaces one slot and keeps its siblings", () => {
 		const next = upsertSlot(pooledApiKey(), { name: "default", key: "rotated", source: "login" });
 		expect(names(next)).toEqual(["default", "work"]);
@@ -83,6 +127,130 @@ describe("credential pool slot algebra", () => {
 			refresh: "second-refresh",
 			expires: 2,
 		});
+	});
+
+	test("re-login reuses only an exact verified person and workspace", () => {
+		const current: PooledCredential = {
+			type: "oauth",
+			access: "old-access",
+			refresh: "old-refresh",
+			expires: 1,
+			pinned: "default",
+			accounts: [
+				{
+					name: "default",
+					displayName: "Manual name",
+					source: "login",
+					access: "old-access",
+					refresh: "old-refresh",
+					expires: 1,
+					verifiedIdentity: { userId: "user-1", workspaceId: "workspace-1", verifiedEmail: "old@example.test" },
+				},
+			],
+		};
+		let allocated: string | undefined;
+
+		const next = appendLoginSlot(
+			current,
+			{
+				type: "oauth",
+				access: "new-access",
+				refresh: "new-refresh",
+				expires: 2,
+				verifiedIdentity: { userId: "user-1", workspaceId: "workspace-1", verifiedEmail: "new@example.test" },
+			},
+			(name) => {
+				allocated = name;
+			},
+		) as PooledCredential;
+
+		expect(allocated).toBe("default");
+		expect(names(next)).toEqual(["default"]);
+		expect(next.pinned).toBe("default");
+		expect(next.accounts?.[0]).toMatchObject({
+			name: "default",
+			displayName: "Manual name",
+			access: "new-access",
+			refresh: "new-refresh",
+			verifiedIdentity: { userId: "user-1", workspaceId: "workspace-1", verifiedEmail: "new@example.test" },
+		});
+	});
+
+	test.each([false, true])(
+		"same-person re-login keeps the last verified email when the new ID token omits it (pooled=%s)",
+		(pooled) => {
+			const verifiedIdentity = {
+				userId: "user-1",
+				workspaceId: "workspace-1",
+				verifiedEmail: "research@example.test",
+			};
+			const current: PooledCredential = {
+				type: "oauth",
+				access: "old-access",
+				refresh: "old-refresh",
+				expires: 1,
+				verifiedIdentity,
+				...(pooled
+					? {
+							accounts: [
+								{ name: "default", access: "old-access", refresh: "old-refresh", expires: 1, verifiedIdentity },
+							],
+						}
+					: {}),
+			};
+
+			const next = appendLoginSlot(current, {
+				type: "oauth",
+				access: "new-access",
+				refresh: "new-refresh",
+				expires: 2,
+				verifiedIdentity: { userId: "user-1", workspaceId: "workspace-1" },
+			}) as PooledCredential;
+
+			expect(listSlots(next)[0]?.verifiedIdentity?.verifiedEmail).toBe("research@example.test");
+			expect(listSlots(next)[0]?.access).toBe("new-access");
+		},
+	);
+
+	test.each([
+		["different person", "user-2", "workspace-1"],
+		["different workspace", "user-1", "workspace-2"],
+		["missing identity", undefined, undefined],
+	])("re-login appends for %s", (_case, userId, workspaceId) => {
+		const current: PooledCredential = {
+			type: "oauth",
+			access: "old",
+			refresh: "old-r",
+			expires: 1,
+			accounts: [
+				{
+					name: "default",
+					source: "login",
+					access: "old",
+					refresh: "old-r",
+					expires: 1,
+					verifiedIdentity: {
+						userId: "user-1",
+						workspaceId: "workspace-1",
+						verifiedEmail: "shared@example.test",
+					},
+				},
+			],
+		};
+		const identity =
+			userId === undefined
+				? {}
+				: { verifiedIdentity: { userId, workspaceId, verifiedEmail: "shared@example.test" } };
+
+		const next = appendLoginSlot(current, {
+			type: "oauth",
+			access: "new",
+			refresh: "new-r",
+			expires: 2,
+			...identity,
+		});
+
+		expect(names(next)).toEqual(["default", "login-2"]);
 	});
 
 	test("removeSlot deletes only the named slot", () => {

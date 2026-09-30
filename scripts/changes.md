@@ -1,3 +1,42 @@
+## 2026-09-29 - Forced package-manager builds retain their matching executable
+
+### What changed
+
+- `scripts/package-manager.mjs`: preserve the invoking manager's known entry point when an explicit `--pm` selects the same manager; discard it when selecting another manager.
+- `scripts/package-manager.test.mjs`: verify same-manager entry-point retention and cross-manager isolation for npm, pnpm and Bun.
+- `scripts/verify-package-managers.mjs`: invoke fixed npm/pnpm verification commands through the Windows command host so their command shims can run.
+
+### Why
+
+- The isolated npm and pnpm builds reached `build-all.mjs` but failed with `ENOENT` because forcing the current manager discarded its JavaScript entry point and tried to spawn a Windows command shim directly.
+
+### Why an extension could not handle it
+
+- Package-manager execution is owned by the repository's build tooling.
+
+### Expected merge conflict zones
+
+- LOW: `detectPackageManager` and the verifier's command spawning.
+
+## 2026-09-29 - Package-manager verification snapshots work without Unix-only rsync
+
+### What changed
+
+- `scripts/verify-package-managers.mjs`: copy isolated source snapshots with native Node filesystem APIs, preserving timestamps, symlink targets and the existing build/private-data exclusions.
+- `scripts/verify-package-managers.test.mjs`: exercise real temporary source trees with an empty command path and verify kept bytes and excluded dependencies, credentials, build outputs and logs.
+
+### Why
+
+- The normal integration commit hook could not reach its npm/Bun/pnpm install and build checks on Windows because spawning `rsync` failed with `ENOENT`.
+
+### Why an extension could not handle it
+
+- Source snapshot creation is owned by the repository verification hook, not the runtime extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `snapshotRepo` and its CLI main guard in `scripts/verify-package-managers.mjs`.
+
 ## 2026-09-29 - Published packages ship no sourcemaps (senpi#2362)
 
 ### What changed

@@ -131,12 +131,32 @@ describe.each(["chatgpt-subscription", "anthropic-subscription"])("%s display na
 			}),
 		);
 		const summaries = await getCredentialAccounts(storage, provider, {});
-		expect(summaries).toEqual([
+		const expected = [
 			{ name: "default", displayName: "Personal", source: "login", blocked: false, pinned: true },
 			{ name: "second", source: "import", blocked: true, pinned: false },
-		]);
+		];
+		if (provider === "chatgpt-subscription") {
+			expect(summaries).toMatchObject([
+				{
+					...expected[0],
+					identitySource: "manual-name",
+					expiresAt: 4102444800001,
+					expiresInMs: expect.any(Number),
+					authAction: "valid",
+				},
+				{
+					...expected[1],
+					identitySource: "slot-id",
+					expiresAt: 4102444800000,
+					expiresInMs: expect.any(Number),
+					authAction: "temporarily-unavailable",
+				},
+			]);
+		} else {
+			expect(summaries).toEqual(expected);
+		}
 		if (provider === "anthropic-subscription") expect(getProviderAccounts(storage, provider, {})).toEqual(summaries);
-		expect(JSON.stringify(summaries)).not.toMatch(/fake-|access|refresh|expires|headers/);
+		expect(JSON.stringify(summaries)).not.toMatch(/fake-|"access"\s*:|"refresh"\s*:|"headers"\s*:/);
 	});
 });
 

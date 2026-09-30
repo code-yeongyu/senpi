@@ -112,6 +112,7 @@ import { CompactionLifecycleCoordinator, type CompactionLifecycleState } from ".
 import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import type { CompactionModelSelector } from "./compaction-settings-access.ts";
+import type { CredentialAccountUpdate } from "./credential-account-events.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
@@ -340,6 +341,7 @@ type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 };
 
 export type AgentSessionEvent =
+	| CredentialAccountUpdate
 	| Exclude<AgentEvent, { type: "agent_end" | "message_update" }>
 	| AgentSessionAgentEndEvent
 	| SessionMessageUpdateEvent
@@ -936,6 +938,7 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _unsubscribeSettingsSource?: () => void;
+	private _unsubscribeCredentialAccounts?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _agentEventQueue: Promise<void> = Promise.resolve();
 	/**
@@ -1276,6 +1279,10 @@ export class AgentSession {
 		});
 		// Last, so a construction that throws never leaves a hold only dispose() could release.
 		this._fallbackCircuitsLease = acquireFallbackCircuits(this._agentDir);
+		this._unsubscribeCredentialAccounts = this._modelRuntime.onCredentialAccountUpdate(
+			() => this.sessionId,
+			(event) => this._emit(event),
+		);
 	}
 
 	get modelRuntime(): ModelRuntime {
@@ -3159,6 +3166,8 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		this._unsubscribeSettingsSource?.();
 		this._unsubscribeSettingsSource = undefined;
+		this._unsubscribeCredentialAccounts?.();
+		this._unsubscribeCredentialAccounts = undefined;
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
 		this._eventListeners = [];

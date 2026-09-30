@@ -162,6 +162,60 @@ describe("RPC auth and connection handler contracts", () => {
 		await handler.dispose();
 	});
 
+	it("serializes verified ChatGPT account identity and status without credential material", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		harness.authStorage.set("chatgpt-subscription", {
+			type: "oauth",
+			access: "fake-access-sentinel",
+			refresh: "fake-refresh-sentinel",
+			expires: 4_102_444_800_000,
+			pinned: "default",
+			accounts: [
+				{
+					name: "default",
+					source: "login",
+					access: "fake-access-sentinel",
+					refresh: "fake-refresh-sentinel",
+					expires: 4_102_444_800_000,
+					verifiedIdentity: {
+						userId: "fake-user",
+						workspaceId: "workspace-abcdef12",
+						verifiedEmail: "person@example.test",
+					},
+				},
+			],
+		});
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const response = collected.waitFor((message) => message.id === "chatgpt-accounts");
+
+		await handler.handleInputLine(
+			JSON.stringify({ id: "chatgpt-accounts", type: "get_provider_accounts", provider: "chatgpt-subscription" }),
+		);
+		const result = await response;
+		expect(result).toMatchObject({
+			success: true,
+			data: {
+				accounts: [
+					{
+						name: "default",
+						source: "login",
+						pinned: true,
+						verifiedEmail: "person@example.test",
+						workspaceHint: "abcdef12",
+						identitySource: "verified-email",
+						expiresAt: 4_102_444_800_000,
+						expiresInMs: expect.any(Number),
+						authAction: "valid",
+					},
+				],
+			},
+		});
+		expect(JSON.stringify(result)).not.toMatch(/fake-access-sentinel|fake-refresh-sentinel|workspace-abcdef12/);
+		await handler.dispose();
+	});
+
 	it("frames login start, URL, and completion as distinct JSONL records", async () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);

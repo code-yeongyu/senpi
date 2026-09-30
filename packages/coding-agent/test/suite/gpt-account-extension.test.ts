@@ -1,8 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import { getCredentialAccounts } from "../../src/core/credential-accounts.ts";
 import gptAccountExtension from "../../src/core/extensions/builtin/gpt-account.ts";
 import { type Command, createAccountCommandContext, registerCommand } from "./account-command-harness.ts";
 
@@ -24,6 +26,11 @@ function registeredGptCommand(): Command {
 
 function createContext() {
 	return createAccountCommandContext(storage, dir);
+}
+
+async function currentPin(): Promise<string | undefined> {
+	const accounts = await getCredentialAccounts(storage, "chatgpt-subscription");
+	return accounts.find((account) => account.pinned)?.name;
 }
 
 async function seedCodexPool(): Promise<void> {
@@ -48,8 +55,8 @@ describe("/gpt-account command", () => {
 
 		const output = notices.map((notice) => notice.message).join("\n");
 		expect(output).toContain("ChatGPT Subscription OAuth accounts:");
-		expect(output).toContain("default | login | available");
-		expect(output).toContain("work | login | available");
+		expect(output).toContain("default");
+		expect(output).toContain("work");
 		expect(output).not.toContain("access-secret");
 		expect(output).not.toContain("work-access");
 	});
@@ -61,10 +68,121 @@ describe("/gpt-account command", () => {
 
 		await command.handler("pin work", ctx);
 		await command.handler("", ctx);
-		expect(notices[notices.length - 1]?.message).toContain("work | login | available | pinned");
+		expect(await currentPin()).toBe("work");
+		expect(notices[notices.length - 1]?.message).toContain("work");
 
 		await command.handler("unpin", ctx);
 		expect(storage.get("chatgpt-subscription")).not.toHaveProperty("pinned");
+	});
+
+	it("pins a uniquely named profile without changing its immutable slot ID", async () => {
+		await seedCodexPool();
+		await storage.modify("chatgpt-subscription", async (current) => {
+			if (!current) throw new Error("Missing test credential");
+			return {
+				...current,
+				accounts: listSlots(current).map((slot) =>
+					slot.name === "work" ? { ...slot, displayName: "Research Desk" } : slot,
+				),
+			};
+		});
+		const { ctx } = createContext();
+
+		await registeredGptCommand().handler("pin research desk", ctx);
+
+		expect(await currentPin()).toBe("work");
+	});
+
+	it("refuses an ambiguous profile name and keeps the existing pin", async () => {
+		await seedCodexPool();
+		await storage.modify("chatgpt-subscription", async (current) => {
+			if (!current) throw new Error("Missing test credential");
+			return {
+				...current,
+				pinned: "default",
+				accounts: listSlots(current).map((slot) => ({ ...slot, displayName: "research" })),
+			};
+		});
+		const { ctx, notices } = createContext();
+
+		await registeredGptCommand().handler("pin research", ctx);
+
+		expect(await currentPin()).toBe("default");
+		expect(notices.at(-1)?.type).toBe("error");
+		expect(notices.at(-1)?.message).toContain("default");
+		expect(notices.at(-1)?.message).toContain("work");
+	});
+
+	it("pins the same account by verified email or unique email local part", async () => {
+		await storage.modify("chatgpt-subscription", async () => ({
+			type: "oauth",
+			access: "fake-personal-access",
+			refresh: "fake-personal-refresh",
+			expires: 1,
+			accounts: [
+				{ name: "default", access: "fake-personal-access", refresh: "fake-personal-refresh", expires: 1 },
+				{
+					name: "login-2",
+					access: "fake-research-access",
+					refresh: "fake-research-refresh",
+					expires: 1,
+					verifiedIdentity: {
+						userId: "user-research",
+						workspaceId: "account-research",
+						verifiedEmail: "research@astrabit.io",
+					},
+				},
+			],
+		}));
+		const { ctx } = createContext();
+		const command = registeredGptCommand();
+
+		await command.handler("pin research@astrabit.io", ctx);
+		expect(await currentPin()).toBe("login-2");
+		await command.handler("unpin", ctx);
+		await command.handler("pin research", ctx);
+		expect(await currentPin()).toBe("login-2");
+	});
+
+	it("does not select between two verified accounts with the same email local part", async () => {
+		await storage.modify("chatgpt-subscription", async () => ({
+			type: "oauth",
+			access: "fake-personal-access",
+			refresh: "fake-personal-refresh",
+			expires: 1,
+			pinned: "default",
+			accounts: [
+				{ name: "default", access: "fake-personal-access", refresh: "fake-personal-refresh", expires: 1 },
+				{
+					name: "login-2",
+					access: "fake-first-access",
+					refresh: "fake-first-refresh",
+					verifiedIdentity: {
+						userId: "user-1",
+						workspaceId: "account-1",
+						verifiedEmail: "research@astrabit.io",
+					},
+				},
+				{
+					name: "login-3",
+					access: "fake-second-access",
+					refresh: "fake-second-refresh",
+					verifiedIdentity: {
+						userId: "user-2",
+						workspaceId: "account-2",
+						verifiedEmail: "research@other.io",
+					},
+				},
+			],
+		}));
+		const { ctx, notices } = createContext();
+
+		await registeredGptCommand().handler("pin research", ctx);
+
+		expect(await currentPin()).toBe("default");
+		expect(notices.at(-1)?.type).toBe("error");
+		expect(notices.at(-1)?.message).toContain("login-2");
+		expect(notices.at(-1)?.message).toContain("login-3");
 	});
 
 	it("remove deletes exactly the named account", async () => {

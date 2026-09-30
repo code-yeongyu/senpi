@@ -28,9 +28,17 @@ export interface OAuthCredentials {
 	[key: string]: unknown;
 }
 
+/** Identity proven by an OIDC token and bound to the access-token workspace from the same exchange. */
+export interface OAuthVerifiedIdentity {
+	readonly userId: string;
+	readonly workspaceId: string;
+	readonly verifiedEmail?: string;
+}
+
 /** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
+	verifiedIdentity?: OAuthVerifiedIdentity;
 }
 
 /** One type-tagged credential per provider — the shape of today's auth.json. */

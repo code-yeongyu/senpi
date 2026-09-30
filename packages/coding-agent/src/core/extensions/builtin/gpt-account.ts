@@ -4,6 +4,7 @@ import {
 	getCredentialAccounts,
 	pinCredentialAccount,
 	removeCredentialAccount,
+	resolveCredentialAccountSelector,
 } from "../../../core/credential-accounts.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../types.ts";
 import { accountDisplayNameCommand, promptAccountDisplayName } from "./account-display-name.ts";
@@ -24,7 +25,7 @@ function parseArgs(rawArgs: string): string[] {
 
 function usage(ctx: ExtensionCommandContext): void {
 	ctx.ui.notify(
-		"Usage: /gpt-account [add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+		"Usage: /gpt-account [add | remove <id> | pin <id|verified email|profile name> | unpin | rename <id> <display name...> | clear-name <id>]",
 		"error",
 	);
 }
@@ -34,9 +35,60 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 	const lines = ["ChatGPT Subscription OAuth accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
 	for (const account of accounts) {
-		const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
+		const states = [
+			accountLabel(account),
+			account.source,
+			account.authAction ?? (account.blocked ? "blocked" : "available"),
+		];
 		if (account.pinned) states.push("pinned");
 		lines.push(`  ${states.join(" | ")}`);
+		if (account.verifiedEmail) lines.push(`    verified email: ${account.verifiedEmail}`);
+		if (account.workspaceHint) lines.push(`    workspace: …${account.workspaceHint}`);
+		const selectors = [
+			account.name,
+			account.verifiedEmail,
+			account.verifiedEmail?.includes("@") ? account.verifiedEmail.split("@", 1)[0] : undefined,
+			account.displayName,
+		].filter((candidate): candidate is string => candidate !== undefined);
+		const usable = [...new Set(selectors)].filter((candidate) => {
+			try {
+				return resolveCredentialAccountSelector(accounts, candidate) === account.name;
+			} catch (error) {
+				if (error instanceof Error && error.message.startsWith("Ambiguous account selector")) return false;
+				throw error;
+			}
+		});
+		lines.push(`    pin with: ${usable.join(", ")}`);
+		const remaining = account.expiresInMs;
+		let expiry = "expiry unknown";
+		if (account.expiresAt !== undefined && remaining !== undefined) {
+			const absolute = new Date(account.expiresAt).toISOString();
+			if (remaining === 0) {
+				expiry = `expired ${absolute}`;
+			} else {
+				let duration: string;
+				if (remaining >= 86_400_000) {
+					duration = `${Math.ceil(remaining / 86_400_000)}d`;
+				} else if (remaining >= 3_600_000) {
+					duration = `${Math.ceil(remaining / 3_600_000)}h`;
+				} else {
+					duration = `${Math.ceil(remaining / 60_000)}m`;
+				}
+				expiry = `expires ${absolute} (${duration} left)`;
+			}
+		}
+		const advice =
+			account.authAction === "refresh-on-use"
+				? "refreshes on next use"
+				: account.authAction === "reauth-required"
+					? "re-auth required: /gpt-account add"
+					: account.authAction === "temporarily-unavailable"
+						? "temporary cooldown"
+						: account.authAction === "account-disabled"
+							? "account disabled"
+							: undefined;
+		lines.push(`    ${expiry}`);
+		if (advice) lines.push(`    ${advice}`);
 	}
 	ctx.ui.notify(lines.join("\n"), "info");
 }
@@ -77,11 +129,13 @@ async function removeAccount(ctx: ExtensionCommandContext, name: string | undefi
 	ctx.ui.notify(`Removed ChatGPT Subscription OAuth account '${name}'.`, "info");
 }
 
-async function pinAccount(ctx: ExtensionCommandContext, name: string | undefined): Promise<void> {
-	if (!name) {
+async function pinAccount(ctx: ExtensionCommandContext, selector: string | undefined): Promise<void> {
+	if (!selector) {
 		usage(ctx);
 		return;
 	}
+	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID);
+	const name = resolveCredentialAccountSelector(accounts, selector);
 	await pinCredentialAccount(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID, name);
 	ctx.ui.notify(`Pinned ChatGPT Subscription OAuth account '${name}'.`, "info");
 }
@@ -89,7 +143,8 @@ async function pinAccount(ctx: ExtensionCommandContext, name: string | undefined
 export default function gptAccountExtension(pi: ExtensionAPI, deps: GptAccountExtensionDeps = {}): void {
 	pi.registerCommand("gpt-account", {
 		description: "List and manage ChatGPT Subscription OAuth accounts.",
-		argumentHint: "[add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+		argumentHint:
+			"[add | remove <id> | pin <id|email|profile> | unpin | rename <id> <display name...> | clear-name <id>]",
 		handler: async (rawArgs, ctx) => {
 			if (await accountDisplayNameCommand(ctx, CHATGPT_SUBSCRIPTION_PROVIDER_ID, rawArgs)) return;
 			const args = parseArgs(rawArgs);
@@ -108,7 +163,7 @@ export default function gptAccountExtension(pi: ExtensionAPI, deps: GptAccountEx
 					return;
 				}
 				if (action === "pin" && args[1] !== "unpin") {
-					await pinAccount(ctx, args[1]);
+					await pinAccount(ctx, args.slice(1).join(" "));
 					return;
 				}
 				if (action === "unpin" || (action === "pin" && args[1] === "unpin")) {

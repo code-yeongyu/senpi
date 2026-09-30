@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { Credential } from "@earendil-works/pi-ai";
+import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
 import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
-import { accountLabel, listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
+import { accountDisplayName, type CredentialSlot, listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
 import { type Component, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
-import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import type {
+	FooterCredentialAccountSnapshot,
+	ReadonlyFooterDataProvider,
+} from "../../../core/footer-data-provider.ts";
 import { theme } from "../theme/theme.ts";
 import { type FooterSegment, planFooterLayout } from "./footer-layout.ts";
 
@@ -42,7 +45,8 @@ export function formatTokens(count: number): string {
  * Mirrors the provider-shown-only-when->1 rule for accounts: the active account
  * name appears only when the provider actually pools more than one slot. The
  * pick shown is the pin when present, else the session's HRW winner - the same
- * hash the rotation engine uses, so the footer names the slot that will serve.
+ * hash the rotation engine uses. Retained for non-ChatGPT providers only;
+ * ChatGPT uses observed attempts and canonical async account summaries instead.
  */
 export function accountFooterSuffix(credential: Credential | undefined, sessionId: string): string {
 	const slots = listSlots(credential);
@@ -63,8 +67,38 @@ export function accountFooterSuffix(credential: Credential | undefined, sessionI
  */
 const ACCOUNT_FOOTER_MAX_COLUMNS = 24;
 
-function footerAccountLabel(slot: { name: string; displayName?: string }): string {
-	return truncateToWidth(accountLabel(slot), ACCOUNT_FOOTER_MAX_COLUMNS, "…");
+function footerAccountLabel(slot: CredentialSlot): string {
+	const label = accountDisplayName(slot.displayName) ?? slot.verifiedIdentity?.verifiedEmail?.split("@", 1)[0];
+	if (!label) return truncateToWidth(slot.name, ACCOUNT_FOOTER_MAX_COLUMNS, "…");
+	const suffix = ` (${slot.name})`;
+	const labelColumns = ACCOUNT_FOOTER_MAX_COLUMNS - visibleWidth(suffix) - 1;
+	if (labelColumns < 2) return truncateToWidth(slot.name, ACCOUNT_FOOTER_MAX_COLUMNS, "…");
+	return `${truncateToWidth(label, labelColumns, "…")}${suffix}`;
+}
+
+/** The account row is independent of the model/context width ladder, so neither can hide it. */
+function chatGptAccountLines(snapshot: FooterCredentialAccountSnapshot | undefined, width: number): string[] {
+	const account = snapshot?.account;
+	if (!account) {
+		const status = snapshot?.state !== "ready" ? "status unavailable" : "selection pending";
+		return [truncateToWidth(`ChatGPT: ${status}`, width, "…")];
+	}
+	const selection = snapshot.selection === "observed" ? "last attempt" : snapshot.selection;
+	const status = `[${account.authAction ?? "unknown"}]`;
+	const id = `(${account.name})`;
+	const label = sanitizeStatusText(
+		stripTerminalSequences(account.displayName ?? account.verifiedEmail?.split("@", 1)[0] ?? account.name),
+	);
+	const prefix = `ChatGPT ${selection}: `;
+	const fixed = `${prefix} ${id} ${status}`;
+	const budget = width - visibleWidth(fixed);
+	if (budget >= 2) return [`${prefix}${truncateToWidth(label, Math.min(24, budget), "…")} ${id} ${status}`];
+	// Very long immutable IDs get their own line rather than being silently changed by truncation.
+	return [
+		truncateToWidth(`${prefix}${label}`, width, "…"),
+		truncateToWidth(id, width, "…"),
+		truncateToWidth(status, width, "…"),
+	];
 }
 
 /** Format with up to 1 decimal place, dropping trailing `.0`. */
@@ -258,8 +292,9 @@ export class FooterComponent implements Component {
 			...(thinkingSuffix ? [{ text: thinkingSuffix, color: "dim" as const }] : []),
 		];
 		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(modelRuns, minimalRight) };
+		const isChatGpt = state.model && normalizeProviderId(state.model.provider) === "chatgpt-subscription";
 		let accountSuffix = "";
-		if (state.model) {
+		if (state.model && !isChatGpt) {
 			try {
 				accountSuffix = accountFooterSuffix(
 					this.session.modelRegistry.authStorage.get(state.model.provider),
@@ -347,6 +382,10 @@ export class FooterComponent implements Component {
 		const rightWidth = visibleWidth(right.plain);
 		const padding = " ".repeat(Math.max(0, width - left.width - rightWidth));
 		const lines = [left.colored + padding + right.colored];
+		if (isChatGpt) {
+			const snapshot = this.footerData.getCredentialAccountSnapshot?.(this.session.sessionManager.getSessionId());
+			lines.push(...chatGptAccountLines(snapshot, width).map((line) => theme.fg("muted", line)));
+		}
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();

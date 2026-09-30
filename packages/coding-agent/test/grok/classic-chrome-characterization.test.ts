@@ -56,7 +56,7 @@ type HeaderFixture = {
 	rebindCurrentSession(): Promise<void>;
 	renderInitialMessages(): void;
 	updateEditorBorderColor(): void;
-	footerDataProvider: { onBranchChange(): void };
+	footerDataProvider: { onBranchChange(): void; onCredentialAccountChange(): void };
 	updateAvailableProviderCount(): Promise<void>;
 };
 
@@ -129,7 +129,7 @@ function createHeaderFixture(): HeaderFixture {
 		rebindCurrentSession: async () => {},
 		renderInitialMessages: () => {},
 		updateEditorBorderColor: () => {},
-		footerDataProvider: { onBranchChange: () => {} },
+		footerDataProvider: { onBranchChange: () => {}, onCredentialAccountChange: () => {} },
 		updateAvailableProviderCount: async () => {},
 	};
 }

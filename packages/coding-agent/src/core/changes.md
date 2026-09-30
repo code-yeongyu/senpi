@@ -280,6 +280,33 @@ Whether the runtime already holds a message in its steering or follow-up queue, 
 - `agent-session.ts`: the `_pendingCustomMessages` field block, the `_isAgentRunActive = true` line in `_promptAgent`, the custom branch of `message_end` persistence in `_processAgentEvent`, `clearQueue()`, the end of the `bindCore` actions literal, and `setControlEndpointHost` beside `get sessionName`.
 - `session-manager.ts`: the methods before `_persist` and its `!this.flushed` branch; `SETUP_ONLY_ENTRY_TYPES` before the class.
 
+## 2026-09-29 - Revision-bound ChatGPT footer snapshots and observed account IDs
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts` exposes a secret-free snapshot using the same summary implementation as account listing, with the earliest applicable expiry/cooldown boundary; unknown and ambiguous selector errors omit the raw selector so accidentally pasted tokens cannot enter UI output. ChatGPT accounts without verified identity show a bounded printable routing hint decoded from their own access token without presenting it as verified identity.
+- `packages/coding-agent/src/core/footer-data-provider.ts` owns disposable asynchronous snapshots, generation fences, synchronous invalidation, exact-boundary expiry, and explicit unavailable/unknown states.
+- `packages/coding-agent/src/core/auth-storage.ts` offers a strict stored-metadata read and emits committed credential changes; `packages/coding-agent/src/core/credential-pool/state-store.ts` emits committed health changes. `packages/coding-agent/src/core/credential-account-events.ts` scopes process-local notifications without serializing store identity or credential material.
+- `packages/coding-agent/src/core/runtime-credentials.ts` observes the exact single-slot read used by auth resolution with async-local request isolation, excluding runtime overrides. `packages/coding-agent/src/core/model-runtime.ts` reports the immutable slot at each actual ChatGPT stream attempt, including failover. `packages/coding-agent/src/core/agent-session.ts` forwards these safe updates through the existing local/remote session event stream and disposes its subscription.
+
+### Why
+
+- `packages/coding-agent/src/core/credential-accounts.ts` and `packages/coding-agent/src/core/footer-data-provider.ts`: cached advice must agree with revision-matched health and stop being visible at its absolute time boundary, without credential I/O in rendering. A missing optional ID token must not erase the safe routing discriminator available from the stored access token.
+- `packages/coding-agent/src/core/auth-storage.ts`, `packages/coding-agent/src/core/credential-pool/state-store.ts`, and `packages/coding-agent/src/core/credential-account-events.ts`: refresh, pin, rename, removal, and health commits must invalidate old advice, including a read still in flight.
+- `packages/coding-agent/src/core/runtime-credentials.ts`, `packages/coding-agent/src/core/model-runtime.ts`, and `packages/coding-agent/src/core/agent-session.ts`: a pin or HRW prediction is not the serving slot after failover; single-slot reads must not attribute external key overrides to stored accounts. Unknown routing remains unknown.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/credential-accounts.ts` and `packages/coding-agent/src/core/footer-data-provider.ts` own the canonical summary and synchronous footer read contract.
+- `packages/coding-agent/src/core/auth-storage.ts`, `packages/coding-agent/src/core/credential-pool/state-store.ts`, and `packages/coding-agent/src/core/credential-account-events.ts` own post-commit invalidation below extension commands.
+- `packages/coding-agent/src/core/runtime-credentials.ts`, `packages/coding-agent/src/core/model-runtime.ts`, and `packages/coding-agent/src/core/agent-session.ts` own the actual auth read, per-attempt selection, and session-scoped transport; extension-level command selection cannot observe these reliably.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: summary factoring and deadline calculation; `packages/coding-agent/src/core/footer-data-provider.ts`: lifecycle and readonly surface.
+- `packages/coding-agent/src/core/auth-storage.ts`: mutation completion and strict read; `packages/coding-agent/src/core/credential-pool/state-store.ts`: mutation completion; `packages/coding-agent/src/core/credential-account-events.ts`: new fork-only module.
+- `packages/coding-agent/src/core/runtime-credentials.ts`: read/override observation; `packages/coding-agent/src/core/model-runtime.ts`: attempt bracket; `packages/coding-agent/src/core/agent-session.ts`: event union and subscription lifecycle.
+
 ## 2026-09-29 - A rejected request re-asks the compaction owner before its retry (senpi#2329)
 
 ### What changed

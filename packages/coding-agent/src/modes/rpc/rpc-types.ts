@@ -12,6 +12,7 @@ import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { PromptDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { CredentialAccountSummary } from "../../core/credential-accounts.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { EngineOrdinal } from "../../core/engine-build-identity.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
@@ -464,14 +465,7 @@ export interface RpcAuthStatus {
 }
 
 /** Account-slot metadata safe to send to desktop clients. */
-export interface RpcProviderAccount {
-	/** Immutable selector ID; render displayName (name) when metadata is present. */
-	name: string;
-	displayName?: string;
-	source: "login" | "import" | "env";
-	blocked: boolean;
-	pinned: boolean;
-}
+export type RpcProviderAccount = CredentialAccountSummary;
 
 // ============================================================================
 // RPC Slash Command (for get_commands response)

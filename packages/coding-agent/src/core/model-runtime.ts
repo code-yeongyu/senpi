@@ -47,6 +47,11 @@ import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { envValue } from "./brand.ts";
+import {
+	type CredentialAccountUpdate,
+	emitCredentialAccountUpdate,
+	subscribeCredentialAccountUpdates,
+} from "./credential-account-events.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
 import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry.ts";
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
@@ -526,6 +531,25 @@ export class ModelRuntime implements Models {
 		}
 	}
 
+	getCredentialPoolStatePath(): string {
+		return this.poolStatePath ?? join(getAgentDir(), "credential-pool-state.json");
+	}
+
+	/** Session-scoped observations plus committed changes in this runtime's credential/health stores. */
+	onCredentialAccountUpdate(sessionId: () => string, listener: (event: CredentialAccountUpdate) => void): () => void {
+		return subscribeCredentialAccountUpdates((event) => {
+			if (normalizeProviderId(event.update.provider) !== "chatgpt-subscription") return;
+			if (event.update.type === "credential_account_attempt") {
+				if (event.scope !== this || event.sessionId !== sessionId()) return;
+			} else if (
+				event.scope !== this.credentials.getCredentialEventScope() &&
+				event.scope !== this.getCredentialPoolStatePath()
+			)
+				return;
+			listener({ ...event.update, provider: "chatgpt-subscription" });
+		});
+	}
+
 	getProviders(): readonly Provider[] {
 		return this.models.getProviders();
 	}
@@ -946,7 +970,9 @@ export class ModelRuntime implements Models {
 	 * One provider request with the #2297 recovery: a stored OAuth token the provider
 	 * refuses before any output is re-exchanged once and the request re-sent.
 	 */
-	private attemptWithTokenRecovery<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
+	private attemptWithTokenRecovery<
+		TOptions extends ProviderRequestOptions & ModelsRequestTransforms & { sessionId?: string },
+	>(
 		model: Model<Api>,
 		options: TOptions | undefined,
 		slotAuth: { apiKey?: string; slotName?: string } | undefined,
@@ -954,14 +980,33 @@ export class ModelRuntime implements Models {
 		context: Context,
 	): Promise<AsyncIterable<AssistantMessageEvent>> {
 		return retryOnceOnRejectedToken(async (rejectedAccess) => {
-			const prepared = await this.prepareRequest(
-				model,
-				options,
-				rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
-			);
-			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
-				send(prepared),
-			);
+			const prepare = () =>
+				this.prepareRequest(
+					model,
+					options,
+					rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
+				);
+			const isChatGpt = normalizeProviderId(model.provider) === "chatgpt-subscription";
+			const observed = isChatGpt
+				? await this.credentials.observeAccount(model.provider, prepare)
+				: { value: await prepare(), name: undefined };
+			const prepared = observed.value;
+			const accountName =
+				(slotAuth?.apiKey ?? options?.apiKey) === undefined ? (slotAuth?.slotName ?? observed.name) : undefined;
+			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () => {
+				if (isChatGpt) {
+					emitCredentialAccountUpdate({
+						scope: this,
+						sessionId: options?.sessionId,
+						update: {
+							type: "credential_account_attempt",
+							provider: model.provider,
+							...(accountName === undefined ? {} : { name: accountName }),
+						},
+					});
+				}
+				return send(prepared);
+			});
 			return {
 				stream: wrapStreamWithModelRecovery(inner, model, context.tools ?? []),
 				...(prepared.rejectableAccess === undefined ? {} : { rejectableAccess: prepared.rejectableAccess }),

@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
+import { type Credential, extractChatGptSubscriptionAccountId, normalizeProviderId } from "@earendil-works/pi-ai";
 import {
 	accountDisplayName,
 	listSlots,
@@ -16,14 +16,49 @@ import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscripti
 
 export type CredentialAccountSource = "login" | "import" | "env";
 
-/** Account metadata safe to surface: names and health only, never key material. */
+/** Account metadata safe to surface; never credential material. */
 export type CredentialAccountSummary = {
 	readonly name: string;
 	readonly displayName?: string;
+	readonly verifiedEmail?: string;
+	/** Bounded routing discriminator, not proof of verified identity. */
+	readonly workspaceHint?: string;
+	readonly identitySource?: "verified-email" | "manual-name" | "slot-id";
 	readonly source: CredentialAccountSource;
 	readonly blocked: boolean;
 	readonly pinned: boolean;
+	readonly expiresAt?: number;
+	readonly expiresInMs?: number;
+	readonly authAction?:
+		| "valid"
+		| "refresh-on-use"
+		| "reauth-required"
+		| "temporarily-unavailable"
+		| "account-disabled"
+		| "unknown";
 };
+
+/** Preserve immutable ID selection; other identifiers must resolve to exactly one account. */
+export function resolveCredentialAccountSelector(
+	accounts: readonly CredentialAccountSummary[],
+	selector: string,
+): string {
+	const input = selector.trim();
+	const byId = accounts.find((account) => account.name === input);
+	if (byId) return byId.name;
+
+	const normalized = input.toLowerCase();
+	const matches = accounts.filter((account) => {
+		const email = account.verifiedEmail?.toLowerCase();
+		const localPart = email?.includes("@") ? email.slice(0, email.indexOf("@")) : undefined;
+		return email === normalized || localPart === normalized || account.displayName?.toLowerCase() === normalized;
+	});
+	if (matches.length === 1) return matches[0].name;
+	if (matches.length > 1) {
+		throw new Error(`Ambiguous account selector: ${matches.map((account) => account.name).join(", ")}`);
+	}
+	throw new Error("Provider account not found. Use /gpt-account to list accounts.");
+}
 
 const ACCOUNT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
@@ -88,6 +123,27 @@ export async function getCredentialAccounts(
 	return summarizeCredentialAccounts(provider, storage.get(provider), env, repository ?? defaultRepository(storage));
 }
 
+export type CredentialAccountSnapshot = {
+	readonly accounts: readonly CredentialAccountSummary[];
+	/** Earliest absolute boundary after which this advice must not be displayed. */
+	readonly validUntil?: number;
+};
+
+/** Strict, refresh-free read for disposable UI snapshots. No credential material escapes. */
+export async function getCredentialAccountSnapshot(
+	storage: AuthStorage,
+	provider: string,
+	env: NodeJS.ProcessEnv = process.env,
+	repository: CredentialSlotRepository = defaultRepository(storage),
+): Promise<CredentialAccountSnapshot> {
+	const stored = await storage.readStoredSnapshot(provider);
+	let validUntil: number | undefined;
+	const accounts = await summarizeAccounts(provider, stored, env, repository, (boundary) => {
+		validUntil = Math.min(validUntil ?? Infinity, boundary);
+	});
+	return { accounts, ...(validUntil === undefined ? {} : { validUntil }) };
+}
+
 /** Storage-free variant for callers that already hold the credential (e.g. auth check). */
 export async function summarizeCredentialAccounts(
 	provider: string,
@@ -95,9 +151,20 @@ export async function summarizeCredentialAccounts(
 	env: NodeJS.ProcessEnv = process.env,
 	repository: CredentialSlotRepository = new CredentialSlotRepository(),
 ): Promise<CredentialAccountSummary[]> {
+	return summarizeAccounts(provider, stored, env, repository);
+}
+
+async function summarizeAccounts(
+	provider: string,
+	stored: Credential | undefined,
+	env: NodeJS.ProcessEnv,
+	repository: CredentialSlotRepository,
+	onBoundary?: (boundary: number) => void,
+): Promise<CredentialAccountSummary[]> {
 	const credential = pooledFrom(stored);
 	const now = Date.now();
 	const pinned = pinnedName(credential);
+	const isChatGptSubscription = normalizeProviderId(provider) === "chatgpt-subscription";
 	const summaries: CredentialAccountSummary[] = [];
 
 	if (credential) {
@@ -120,12 +187,48 @@ export async function summarizeCredentialAccounts(
 			});
 			// A block belongs to the material that earned it; a re-login starts clean.
 			const applicable = persisted?.credentialRevision === revision ? persisted : undefined;
+			const blocked = slotBlocked(slot, applicable, now);
+			const expiresAt =
+				typeof slot.expires === "number" &&
+				Number.isFinite(slot.expires) &&
+				slot.expires > 0 &&
+				slot.expires <= 8_640_000_000_000_000
+					? slot.expires
+					: undefined;
+			for (const boundary of [expiresAt, applicable?.blockedUntil, numberField(slot, "blockedUntil")]) {
+				if (boundary !== undefined && boundary > now) onBoundary?.(boundary);
+			}
+			const reasons = [applicable?.blockReason, stringField(slot, "blockReason")];
+			let authAction: CredentialAccountSummary["authAction"] = "unknown";
+			if (reasons.includes("auth_error")) authAction = "reauth-required";
+			else if (reasons.includes("account_disabled")) authAction = "account-disabled";
+			else if (blocked) authAction = "temporarily-unavailable";
+			else if (expiresAt !== undefined) {
+				authAction = expiresAt > now ? "valid" : slot.refresh ? "refresh-on-use" : "reauth-required";
+			}
+			const verifiedEmail = isChatGptSubscription ? slot.verifiedIdentity?.verifiedEmail : undefined;
+			const routingId =
+				isChatGptSubscription && slot.verifiedIdentity === undefined && slot.access
+					? extractChatGptSubscriptionAccountId(slot.access)
+					: undefined;
+			const workspaceHint =
+				slot.verifiedIdentity?.workspaceId.slice(-8) ??
+				(routingId !== undefined && /^[a-zA-Z0-9_-]{9,128}$/.test(routingId) ? routingId.slice(-8) : undefined);
 			summaries.push({
 				name: slot.name,
 				...(displayName === undefined ? {} : { displayName }),
 				source: slot.source ?? "login",
-				blocked: slotBlocked(slot, applicable, now),
+				blocked,
 				pinned: pinned === slot.name,
+				...(isChatGptSubscription
+					? {
+							...(expiresAt === undefined ? {} : { expiresAt, expiresInMs: Math.max(0, expiresAt - now) }),
+							authAction,
+							...(verifiedEmail === undefined ? {} : { verifiedEmail }),
+							...(workspaceHint === undefined ? {} : { workspaceHint }),
+							identitySource: verifiedEmail ? "verified-email" : displayName ? "manual-name" : "slot-id",
+						}
+					: {}),
 			});
 		}
 		if (normalizeProviderId(provider) !== "anthropic-subscription") return summaries;
