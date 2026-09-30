@@ -30,6 +30,7 @@ import {
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
+	readModelDataStructure,
 	validateGeneratedModelData,
 	validateModelDataDirectory,
 } from "./model-data.ts";
@@ -44,12 +45,16 @@ function readGeneratorOptions(args: string[]): {
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
 	pretty: boolean;
+	providerIds: string[] | undefined;
+	generatedAt: string | undefined;
 } {
 	let strict = false;
 	let dataOnly = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
 	let pretty = false;
+	let providerIds: string[] | undefined;
+	let generatedAt: string | undefined;
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
@@ -75,12 +80,32 @@ function readGeneratorOptions(args: string[]): {
 			jsonOutputDir = resolve(value);
 			continue;
 		}
+		if (arg === "--providers") {
+			const value = args[++index];
+			if (!value) throw new Error("--providers requires a comma-separated provider list");
+			const values = value.split(",").map((providerId) => providerId.trim());
+			if (values.some((providerId) => providerId.length === 0)) {
+				throw new Error("--providers cannot contain empty provider IDs");
+			}
+			providerIds = Array.from(new Set(values)).sort();
+			if (providerIds.length !== values.length) throw new Error("--providers cannot contain duplicate provider IDs");
+			continue;
+		}
+		if (arg === "--generated-at") {
+			const value = args[++index];
+			if (!value || Number.isNaN(Date.parse(value))) throw new Error("--generated-at requires an ISO timestamp");
+			generatedAt = new Date(value).toISOString();
+			continue;
+		}
 		throw new Error(`Unknown argument: ${arg}`);
 	}
 
 	if (jsonOnly && !jsonOutputDir) throw new Error("--json-only requires --json-output");
 	if (dataOnly && (jsonOnly || jsonOutputDir)) throw new Error("--data-only cannot be combined with JSON catalog output");
-	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty };
+	if (providerIds && (dataOnly || jsonOnly || jsonOutputDir)) {
+		throw new Error("--providers cannot be combined with --data-only or JSON catalog output");
+	}
+	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty, providerIds, generatedAt };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
@@ -3726,9 +3751,15 @@ async function generateModels() {
 
 	const serializeJson = (value: unknown) => `${JSON.stringify(value, null, generatorOptions.pretty ? 2 : undefined)}\n`;
 	const writeJson = (path: string, value: unknown) => writeFileSync(path, serializeJson(value));
-	const generatedDataProviderIds = generatorOptions.dataOnly
-		? readModelDataProviderIds(packageRoot)
-		: sortedProviderIds;
+	const existingModelDataStructure = generatorOptions.providerIds ? readModelDataStructure(packageRoot) : undefined;
+	const unknownProviderIds =
+		generatorOptions.providerIds?.filter(
+			(providerId) => existingModelDataStructure === undefined || !Object.hasOwn(existingModelDataStructure, providerId),
+		) ?? [];
+	if (unknownProviderIds.length > 0) {
+		throw new Error(`Unknown provider selector: ${unknownProviderIds.join(", ")}`);
+	}
+	const generatedDataProviderIds = generatorOptions.providerIds ?? (generatorOptions.dataOnly ? readModelDataProviderIds(packageRoot) : sortedProviderIds);
 	const missingProviderIds = generatedDataProviderIds.filter((providerId) => !jsonProviders[providerId]);
 	if (missingProviderIds.length > 0) {
 		throw new Error(`Cannot hydrate missing providers: ${missingProviderIds.join(", ")}`);
@@ -3736,7 +3767,7 @@ async function generateModels() {
 
 	// Only the ignored internal data is grouped by API for type derivation. Public JSON catalog output stays flat.
 	const generatedDataProviders: Record<string, Record<string, Record<string, Model<Api>>>> = {};
-	const modelDataStructure: ModelDataStructure = {};
+	const modelDataStructure: ModelDataStructure = { ...existingModelDataStructure };
 	for (const providerId of generatedDataProviderIds) {
 		const models = jsonProviders[providerId];
 		generatedDataProviders[providerId] = {};
@@ -3752,7 +3783,7 @@ async function generateModels() {
 		}
 	}
 
-	const generatedAt = new Date().toISOString();
+	const generatedAt = generatorOptions.generatedAt ?? new Date().toISOString();
 
 	if (!generatorOptions.jsonOnly) {
 		// Stage and validate all provider values before replacing the current generated data.
@@ -3765,9 +3796,12 @@ async function generateModels() {
 		try {
 			mkdirSync(stagedDataDir, { recursive: true });
 			const fileContents: Record<string, string> = {};
-			for (const providerId of generatedDataProviderIds) {
+			const stagedProviderIds = existingModelDataStructure ? Object.keys(existingModelDataStructure).sort() : generatedDataProviderIds;
+			for (const providerId of stagedProviderIds) {
 				const filename = `${providerId}.json`;
-				const content = serializeJson(generatedDataProviders[providerId]);
+				const content = generatedDataProviders[providerId]
+					? serializeJson(generatedDataProviders[providerId])
+					: readFileSync(join(dataDir, filename), "utf8");
 				fileContents[filename] = content;
 				writeFileSync(join(stagedDataDir, filename), content);
 			}
@@ -3777,7 +3811,7 @@ async function generateModels() {
 			);
 			validateModelDataDirectory(modelDataStructure, stagedDataDir);
 
-			if (!generatorOptions.dataOnly) {
+			if (!generatorOptions.dataOnly && !generatorOptions.providerIds) {
 				const previousShardContents = new Map(
 					readdirSync(providersDir)
 						.filter((entry) => entry.endsWith(".models.ts"))
