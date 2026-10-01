@@ -6,8 +6,8 @@
 
 - `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js` (+ `.d.ts`): a captured `Bun.$` promise registers each wait (`then` and the `.text()`-style read methods) through the new optional `onShellWait(cancel)` option. `cancel(reason)` rejects that wait and turns off the settle-time echo, so a command released this way never writes into a later cell.
 - `packages/senpi-codemode/src/kernels/js/worker-runtime.js`: `interrupt(reason)` cancels every registered shell wait with the cell's interruption before retiring tracked `Bun.spawn` children; waits are dropped at cell end.
-- `packages/senpi-codemode/src/kernels/js/worker-core.js`: `interruptCell` passes its `CellInterruptedError` to `runtime.interrupt`.
-- Test: `test/js-kernel-interrupt-bun.test.ts` (a cell awaiting a long `Bun.$` command is interrupted and the next cell still sees its global).
+- `packages/senpi-codemode/src/kernels/js/worker-core.js`: `interruptCell` passes its `CellInterruptedError` to `runtime.interrupt`. From the first interrupt until the cell ends, a `process` `unhandledRejection` listener lets through only rejections that carry that cell's own interruption, and rethrows any other reason to the default crash path. A wait the cell holds but has not awaited yet is rejected with no handler attached, and the default `--unhandled-rejections=throw` would otherwise kill the worker.
+- Test: `test/js-kernel-interrupt-bun.test.ts`: a cell awaiting a long `Bun.$` command is interrupted, the command is still running at stop, and the next cell still sees its global. A cell holding an unawaited `Bun.$` read while it awaits a child keeps the worker. A released command without `.quiet()` that prints during the next cell echoes nothing there.
 
 ### Why
 
@@ -19,7 +19,7 @@
 
 ### Expected merge conflict zones
 
-- LOW: `captureShellPromise` in `worker-shell-capture.js`, `interrupt` and `#installGlobals` in `worker-runtime.js`, `interruptCell` in `worker-core.js`.
+- LOW: `captureShellPromise` in `worker-shell-capture.js`, `interrupt` and `#installGlobals` in `worker-runtime.js`, `runCell` and `interruptCell` in `worker-core.js`.
 
 ## 2026-09-29 - Eval return values reach the model whole, and every cut says so (senpi#2402)
 

@@ -19,6 +19,7 @@ type DriverReport = {
 	readonly childAlive: boolean;
 	readonly grandchildAlive: boolean;
 	readonly next: Result;
+	readonly nextText: string;
 	readonly note: string | undefined;
 };
 
@@ -65,7 +66,36 @@ const SHELL_WAIT_CELL = [
 	"return await waiting;",
 ].join(" ");
 
-function driverSource(cell: string, bounds: JavaScriptInterruptBounds): string {
+// The cell holds a `Bun.$` read it has not awaited yet while it awaits a child the interrupt kills,
+// so the interrupt rejects that read with no handler attached.
+const DELAYED_SHELL_WAIT_CELL = [
+	"globalThis.childMarker = 1;",
+	// biome-ignore lint/suspicious/noTemplateCurlyInString: the placeholder belongs to the cell's own Bun.$ template
+	"const text = Bun.$`sh -c ${'echo $$ > shell.pid; exec sleep 30'}`.text();",
+	'const child = Bun.spawn(["sleep", "30"]);',
+	'while (!(await Bun.file("shell.pid").exists()) || (await Bun.file("shell.pid").text()).trim() === "") await Bun.sleep(10);',
+	'print("MARK=" + (await Bun.file("shell.pid").text()).trim());',
+	"await child.exited;",
+	"return await text;",
+].join(" ");
+
+// The released command (no `.quiet()`) prints only once the next cell creates `release`, so its
+// output would land in that cell unless the interrupt turned the echo off. The loop is bounded so a
+// failed run cannot leave the command behind.
+const RELEASED_SHELL_OUTPUT_CELL = [
+	"globalThis.childMarker = 1;",
+	// biome-ignore lint/suspicious/noTemplateCurlyInString: the placeholder belongs to the cell's own Bun.$ template
+	"globalThis.released = Bun.$`sh -c ${'i=0; while [ ! -e release ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done; echo LATE_SHELL_OUTPUT'}`;",
+	'const waiting = globalThis.released.then(() => "exited");',
+	'print("MARK=0");',
+	"return await waiting;",
+].join(" ");
+const RELEASED_SHELL_NEXT_CELL =
+	'await Bun.write("release", ""); const late = await globalThis.released; return late.stdout.toString().trim()';
+
+const DEFAULT_NEXT_CELL = "return globalThis.childMarker";
+
+function driverSource(cell: string, bounds: JavaScriptInterruptBounds, nextCell: string): string {
 	return [
 		'import { writeFile } from "node:fs/promises";',
 		`import { JavaScriptKernel } from ${JSON.stringify(kernelModulePath)};`,
@@ -96,18 +126,23 @@ function driverSource(cell: string, bounds: JavaScriptInterruptBounds): string {
 		"const childAlive = isAlive(pid);",
 		"const grandchildAlive = isAlive(grandchildPid);",
 		'for (const target of [pid, grandchildPid]) { if (isAlive(target)) { try { process.kill(target, "SIGKILL"); } catch {} } }',
-		'const next = await kernel.run({ cellId: "after-interrupt", code: "return globalThis.childMarker", timeoutMs: 60_000 });',
+		"let nextText = '';",
+		`const next = await kernel.run({ cellId: "after-interrupt", code: ${JSON.stringify(nextCell)}, timeoutMs: 60_000, onMessage: (message) => { if (message.type === "text") nextText += message.data; } });`,
 		"await kernel.close();",
-		'await writeFile(reportPath, JSON.stringify({ result, stateRetained, childAliveAtStop, childAlive, grandchildAlive, next, note: handle.note }), "utf8");',
+		'await writeFile(reportPath, JSON.stringify({ result, stateRetained, childAliveAtStop, childAlive, grandchildAlive, next, nextText, note: handle.note }), "utf8");',
 	].join("\n");
 }
 
-async function runInterruptDriver(cell: string, bounds: JavaScriptInterruptBounds): Promise<DriverReport> {
+async function runInterruptDriver(
+	cell: string,
+	bounds: JavaScriptInterruptBounds,
+	nextCell = DEFAULT_NEXT_CELL,
+): Promise<DriverReport> {
 	const root = await mkdtemp(join(tmpdir(), "senpi-interrupt-bun-"));
 	try {
 		const driverPath = join(root, "driver.ts");
 		const reportPath = join(root, "report.json");
-		await writeFile(driverPath, driverSource(cell, bounds), "utf8");
+		await writeFile(driverPath, driverSource(cell, bounds, nextCell), "utf8");
 		const run = spawnSync("bun", [driverPath, reportPath], {
 			encoding: "utf8",
 			cwd: root,
@@ -177,7 +212,43 @@ describe.skipIf(!bunAvailable)("JavaScript kernel under Bun interrupts a running
 			expect(report.result).toMatchObject({ ok: false, error: { message: expect.stringContaining("kill-child") } });
 			expect(report.note).toBeUndefined();
 			expect(report.stateRetained).toBe(true);
+			// Only the cell's wait is released; Bun offers no way to stop the command itself.
+			expect(report.childAliveAtStop).toBe(true);
 			expect(report.next).toMatchObject({ ok: true, valueRepr: "1" });
+		},
+		TEST_TIMEOUT_MS,
+	);
+
+	// #2453 follow-up: the released read rejected with no handler yet, and the default
+	// `--unhandled-rejections=throw` killed the worker before the cell reached its `await`.
+	it(
+		"Given a cell holding an unawaited `Bun.$` read while it awaits a child when interrupted then the worker survives and the cell meets the interruption at its own await",
+		async () => {
+			const report = await runInterruptDriver(DELAYED_SHELL_WAIT_CELL, COOPERATIVE_BOUNDS);
+
+			expect(report.result).toMatchObject({ ok: false, error: { message: expect.stringContaining("kill-child") } });
+			expect(report.note).toBeUndefined();
+			expect(report.stateRetained).toBe(true);
+			expect(report.childAliveAtStop).toBe(true);
+			expect(report.next).toMatchObject({ ok: true, valueRepr: "1" });
+		},
+		TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"Given a released `Bun.$` command without quiet that prints during the next cell when it settles then its output stays out of that cell",
+		async () => {
+			const report = await runInterruptDriver(
+				RELEASED_SHELL_OUTPUT_CELL,
+				COOPERATIVE_BOUNDS,
+				RELEASED_SHELL_NEXT_CELL,
+			);
+
+			expect(report.result).toMatchObject({ ok: false, error: { message: expect.stringContaining("kill-child") } });
+			expect(report.stateRetained).toBe(true);
+			// The command finished inside the next cell, and nothing it printed was echoed there.
+			expect(report.next).toMatchObject({ ok: true, valueRepr: '"LATE_SHELL_OUTPUT"' });
+			expect(report.nextText).not.toContain("LATE_SHELL_OUTPUT");
 		},
 		TEST_TIMEOUT_MS,
 	);

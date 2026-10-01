@@ -30,6 +30,17 @@ export function createWorkerCore(transport, options) {
 	let activeCell = null;
 	const pendingTools = new Map();
 	const pendingWebViewPorts = new Map();
+	// An interrupt rejects every wait the cell registered (tool calls, `Bun.$` reads), including ones the
+	// cell holds but has not reached with `await` yet. Those rejections have no handler at that moment, and
+	// the default `--unhandled-rejections=throw` would kill the worker and every global with it (#2453).
+	// While an interrupted cell runs, only rejections carrying that cell's own interruption are let
+	// through; any other reason is rethrown to the default crash path, and the cell still meets the
+	// interruption at its own `await`.
+	let issuedInterruptions = null;
+	const ignoreIssuedInterruption = (reason) => {
+		if (issuedInterruptions?.has(reason)) return;
+		throw reason;
+	};
 	const nestedInvokes = new Map();
 	const kernelTools = createKernelToolPump({
 		getRuntime: () => runtime,
@@ -58,6 +69,10 @@ export function createWorkerCore(transport, options) {
 			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} finally {
 			activeCell = null;
+			if (issuedInterruptions !== null) {
+				issuedInterruptions = null;
+				process.off("unhandledRejection", ignoreIssuedInterruption);
+			}
 		}
 	}
 
@@ -94,6 +109,11 @@ export function createWorkerCore(transport, options) {
 		emit({ type: "status", event: { op: INTERRUPT_ACK_OP, cellId: activeCell.cellId } });
 		const interruption = cellInterruptedError(reason);
 		activeCell.interruption = interruption;
+		if (issuedInterruptions === null) {
+			issuedInterruptions = new Set();
+			process.on("unhandledRejection", ignoreIssuedInterruption);
+		}
+		issuedInterruptions.add(interruption);
 		for (const [callId, pending] of pendingTools) {
 			pendingTools.delete(callId);
 			pending.reject(interruption);

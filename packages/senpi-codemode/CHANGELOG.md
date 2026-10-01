@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- Stopping a JavaScript `eval` cell that is waiting on `Bun.$` no longer restarts the worker: the cell ends as interrupted right away and the variables from earlier cells are kept, as they already were for `Bun.spawn`. Bun offers no way to kill a `Bun.$` command, so the command itself keeps running until it exits, and its output is dropped. ([#2453](https://github.com/code-yeongyu/senpi/issues/2453))
+- Stopping a JavaScript `eval` cell that is waiting on `Bun.$` no longer restarts the worker: the cell ends as interrupted right away and the variables from earlier cells are kept, as they already were for `Bun.spawn`, also when the cell holds a `Bun.$` result or tool call it has not awaited yet. Bun offers no way to kill a `Bun.$` command, so the command itself keeps running until it exits, and its output is dropped. ([#2453](https://github.com/code-yeongyu/senpi/issues/2453))
 
 ### Removed
 
