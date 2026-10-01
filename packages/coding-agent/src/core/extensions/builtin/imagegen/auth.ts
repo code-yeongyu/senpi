@@ -21,13 +21,15 @@ export interface ImageGenAuthRegistry<TModel extends ImageGenAuthModel = ImageGe
 		get(provider: string): unknown;
 	};
 	getAll(): TModel[];
-	getApiKeyAndHeaders(model: TModel): Promise<ImageGenRegistryAuthResult>;
+	getApiKeyAndHeaders(model: TModel, options?: { sessionId?: string }): Promise<ImageGenRegistryAuthResult>;
 	getProviderAuth(provider: string): Promise<ImageGenProviderAuthResult | undefined>;
 }
 
 export interface ResolveImageGenAuthDeps<TModel extends ImageGenAuthModel = ImageGenAuthModel> {
 	modelRegistry: ImageGenAuthRegistry<TModel>;
 	env?: Readonly<Record<string, string | undefined>>;
+	/** The calling session, so a gateway's key belongs to the account that session uses. */
+	sessionId?: string;
 }
 
 export type ImageGenAuthResolution =
@@ -140,12 +142,16 @@ async function resolveGateway<TModel extends ImageGenAuthModel>(
 	providerId: string,
 	model: TModel,
 	registry: ImageGenAuthRegistry<TModel>,
+	sessionId: string | undefined,
 ): Promise<ImageGenAuthResolution | undefined> {
 	const baseUrl = nonEmpty(model.baseUrl);
 	if (!baseUrl) return undefined;
 	let resolved: ImageGenRegistryAuthResult;
 	try {
-		resolved = await registry.getApiKeyAndHeaders(model);
+		resolved =
+			sessionId === undefined
+				? await registry.getApiKeyAndHeaders(model)
+				: await registry.getApiKeyAndHeaders(model, { sessionId });
 	} catch {
 		return undefined;
 	}
@@ -173,7 +179,7 @@ export async function resolveImageGenAuth<TModel extends ImageGenAuthModel>(
 	if (pinnedProvider) {
 		const pinnedModel = groups.get(pinnedProvider);
 		if (pinnedModel) {
-			const pinned = await resolveGateway(pinnedProvider, pinnedModel, deps.modelRegistry);
+			const pinned = await resolveGateway(pinnedProvider, pinnedModel, deps.modelRegistry, deps.sessionId);
 			if (pinned) return pinned;
 		}
 	}
@@ -184,7 +190,7 @@ export async function resolveImageGenAuth<TModel extends ImageGenAuthModel>(
 	for (const providerId of providerIds) {
 		const model = groups.get(providerId);
 		if (!model) continue;
-		const gateway = await resolveGateway(providerId, model, deps.modelRegistry);
+		const gateway = await resolveGateway(providerId, model, deps.modelRegistry, deps.sessionId);
 		if (gateway) return gateway;
 	}
 

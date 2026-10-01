@@ -39,7 +39,10 @@ async function resolveState(model: NativeImageGenTarget, ctx: ExtensionContext):
 		return { kind: "native", modelKey, source: model.baseUrl };
 	}
 
-	const auth = await resolveImageGenAuth({ modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry });
+	const auth = await resolveImageGenAuth({
+		modelRegistry: imageGenRegistryOverride() ?? ctx.modelRegistry,
+		sessionId: ctx.sessionManager.getSessionId(),
+	});
 	if (auth.kind !== "none") {
 		return { kind: "client", modelKey, source: `${auth.provenance}:${auth.providerId ?? auth.kind}` };
 	}
