@@ -15,6 +15,12 @@ export interface ShellCaptureOptions {
 	readonly emitText: (stream: ShellCaptureStream, data: string) => void;
 	/** Receives every `Bun.spawn` child created while a cell is active so the runtime can kill it on interrupt. */
 	readonly onChild?: (child: ShellCaptureChild, spawnOptions?: unknown) => void;
+	/**
+	 * Called each time a cell starts waiting on a `Bun.$` command while it is active. `cancel` rejects that
+	 * wait with the given reason so an interrupt can settle the cell; the returned function unregisters it
+	 * once the command settles.
+	 */
+	readonly onShellWait?: (cancel: (reason: unknown) => void) => () => void;
 }
 
 export function installShellCapture(options: ShellCaptureOptions): ShellCaptureRestore;

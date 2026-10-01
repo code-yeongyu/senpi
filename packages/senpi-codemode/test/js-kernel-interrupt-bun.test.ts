@@ -53,6 +53,18 @@ const SPAWN_TREE_CELL = [
 	'await child.exited; return "exited"',
 ].join(" ");
 
+// #2453: the cell awaits a `Bun.$` command. The command writes its own pid (Bun exposes none) so
+// the driver can report it and clean it up; the cell waits for that file, prints MARK, then awaits.
+const SHELL_WAIT_CELL = [
+	"globalThis.childMarker = 1;",
+	// biome-ignore lint/suspicious/noTemplateCurlyInString: the placeholder belongs to the cell's own Bun.$ template
+	"const shell = Bun.$`sh -c ${'echo $$ > shell.pid; exec sleep 30'}`.quiet();",
+	'const waiting = shell.then(() => "exited");',
+	'while (!(await Bun.file("shell.pid").exists()) || (await Bun.file("shell.pid").text()).trim() === "") await Bun.sleep(10);',
+	'print("MARK=" + (await Bun.file("shell.pid").text()).trim());',
+	"return await waiting;",
+].join(" ");
+
 function driverSource(cell: string, bounds: JavaScriptInterruptBounds): string {
 	return [
 		'import { writeFile } from "node:fs/promises";',
@@ -151,6 +163,21 @@ describe.skipIf(!bunAvailable)("JavaScript kernel under Bun interrupts a running
 			expect(report.childAlive).toBe(false);
 			expect(report.next).toMatchObject({ ok: true });
 			expect(report.next).not.toHaveProperty("valueRepr");
+		},
+		TEST_TIMEOUT_MS,
+	);
+
+	// #2453: a cell awaiting `Bun.$` never settled inside the grace window, so every stop restarted
+	// the worker and lost its globals.
+	it(
+		"Given a cell awaiting a long `Bun.$` command when interrupted then the cell settles and the worker state survives",
+		async () => {
+			const report = await runInterruptDriver(SHELL_WAIT_CELL, COOPERATIVE_BOUNDS);
+
+			expect(report.result).toMatchObject({ ok: false, error: { message: expect.stringContaining("kill-child") } });
+			expect(report.note).toBeUndefined();
+			expect(report.stateRetained).toBe(true);
+			expect(report.next).toMatchObject({ ok: true, valueRepr: "1" });
 		},
 		TEST_TIMEOUT_MS,
 	);

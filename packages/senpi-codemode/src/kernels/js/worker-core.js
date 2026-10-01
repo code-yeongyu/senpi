@@ -99,7 +99,7 @@ export function createWorkerCore(transport, options) {
 			pending.reject(interruption);
 		}
 		kernelTools.abortAll(kernelToolError("kernel_tool_stale", interruption.message));
-		runtime.interrupt();
+		runtime.interrupt(interruption);
 	}
 
 	function onMessage(message) {

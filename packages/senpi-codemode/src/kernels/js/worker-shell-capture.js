@@ -41,7 +41,7 @@ function capturedShell(originalShell, options) {
 	const shell = (strings, ...expressions) => {
 		if (!options.isActive()) return originalShell(strings, ...expressions);
 		const promise = originalShell(isolateStdin(strings), ...expressions);
-		return captureShellPromise(promise, options.emitText);
+		return captureShellPromise(promise, options);
 	};
 	for (const key of Object.keys(originalShell)) shell[key] = originalShell[key];
 	for (const method of SHELL_CONFIG_METHODS) {
@@ -65,13 +65,37 @@ function isolateStdin(strings) {
 	return Object.freeze(Object.assign(cooked, { raw: Object.freeze(raw) }));
 }
 
-function captureShellPromise(promise, emitText) {
+function captureShellPromise(promise, options) {
 	const prototype = Object.getPrototypeOf(promise);
 	let echo = true;
 	const echoOnce = (output) => {
 		if (!echo) return;
 		echo = false;
-		emitShellOutput(output, emitText);
+		emitShellOutput(output, options.emitText);
+	};
+	// Bun exposes neither the pid nor a kill handle of a `Bun.$` command, and the shell never goes
+	// through `Bun.spawn`, so an interrupt cannot stop the command the way it stops a tracked child.
+	// It can stop the cell from waiting on it: the wait rejects with the interruption, the cell settles
+	// inside the grace window, and the worker keeps its globals (#2453). A command released this way
+	// echoes nothing when it finishes later, so its output never lands in another cell.
+	const interruptible = (pending) => {
+		if (typeof options.onShellWait !== "function" || typeof pending?.then !== "function") return pending;
+		return new Promise((resolve, reject) => {
+			const release = options.onShellWait((reason) => {
+				echo = false;
+				reject(reason);
+			});
+			pending.then(
+				(value) => {
+					release();
+					resolve(value);
+				},
+				(error) => {
+					release();
+					reject(error);
+				},
+			);
+		});
 	};
 	prototype.quiet.call(promise);
 	promise.quiet = function quiet() {
@@ -82,22 +106,22 @@ function captureShellPromise(promise, emitText) {
 		if (typeof prototype[method] !== "function") continue;
 		promise[method] = function read(...args) {
 			echo = false;
-			return prototype[method].apply(this, args);
+			return interruptible(prototype[method].apply(this, args));
 		};
 	}
 	promise.then = function then(onFulfilled, onRejected) {
-		return prototype.then.call(
+		const settled = prototype.then.call(
 			this,
 			(output) => {
 				echoOnce(output);
-				return onFulfilled ? onFulfilled(output) : output;
+				return output;
 			},
 			(error) => {
 				echoOnce(error);
-				if (onRejected) return onRejected(error);
 				throw error;
 			},
 		);
+		return interruptible(settled).then(onFulfilled, onRejected);
 	};
 	return promise;
 }

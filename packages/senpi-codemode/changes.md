@@ -1,5 +1,26 @@
 # senpi-codemode fork changes
 
+## 2026-10-01 - Interrupting a cell that awaits `Bun.$` keeps the worker and its globals (senpi#2453)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js` (+ `.d.ts`): a captured `Bun.$` promise registers each wait (`then` and the `.text()`-style read methods) through the new optional `onShellWait(cancel)` option. `cancel(reason)` rejects that wait and turns off the settle-time echo, so a command released this way never writes into a later cell.
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js`: `interrupt(reason)` cancels every registered shell wait with the cell's interruption before retiring tracked `Bun.spawn` children; waits are dropped at cell end.
+- `packages/senpi-codemode/src/kernels/js/worker-core.js`: `interruptCell` passes its `CellInterruptedError` to `runtime.interrupt`.
+- Test: `test/js-kernel-interrupt-bun.test.ts` (a cell awaiting a long `Bun.$` command is interrupted and the next cell still sees its global).
+
+### Why
+
+- #2453: a cell awaiting `Bun.$` never settled inside `JS_INTERRUPT_GRACE_MS`, so every stop terminated the worker and lost all globals, while the same wait through `Bun.spawn` kept them. Bun 1.4.2 gives a `Bun.$` command no pid and no kill handle (`ShellPromise` has only `cwd/env/quiet/nothrow/throws/text/json/lines/arrayBuffer/bytes/blob/run/then`) and the shell never calls `Bun.spawn`, so the runtime cannot kill the command; it can only stop the cell from waiting. The command keeps running until it exits.
+
+### Why an extension could not handle it
+
+- The shell wrapper and the worker interrupt path are this package's own kernel code.
+
+### Expected merge conflict zones
+
+- LOW: `captureShellPromise` in `worker-shell-capture.js`, `interrupt` and `#installGlobals` in `worker-runtime.js`, `interruptCell` in `worker-core.js`.
+
 ## 2026-09-29 - Eval return values reach the model whole, and every cut says so (senpi#2402)
 
 ### What changed

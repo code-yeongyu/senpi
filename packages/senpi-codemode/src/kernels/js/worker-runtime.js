@@ -30,6 +30,7 @@ export class JsWorkerRuntime {
 	#hooks = null;
 	#pendingDisplays = [];
 	#children = new Set();
+	#shellWaits = new Set();
 	#onChildEvent;
 	#tools;
 
@@ -72,14 +73,27 @@ export class JsWorkerRuntime {
 			// reparented to init. Retire it the way timeout and abort cleanup
 			// already do, unless the cell asked for a detached process.
 			await this.#terminateChildren();
+			this.#shellWaits.clear();
 			this.#hooks = null;
 		}
 	}
 
-	interrupt() {
+	interrupt(reason) {
+		// A `Bun.$` command cannot be killed from here (see worker-shell-capture.js), so the
+		// cell's waits on one are released instead; otherwise the cell never settles and the
+		// worker is restarted with every global lost (#2453).
+		const interruption = reason ?? new Error("JS cell interrupted");
+		const waits = [...this.#shellWaits];
+		this.#shellWaits.clear();
+		for (const cancel of waits) cancel(interruption);
 		// The tree snapshot, SIGTERM, and SIGKILL escalation run on their own so
 		// the caller's interrupt latency stays that of the acknowledgement.
 		void this.#terminateChildren();
+	}
+
+	#trackShellWait(cancel) {
+		this.#shellWaits.add(cancel);
+		return () => this.#shellWaits.delete(cancel);
 	}
 
 	#trackChild(child, spawnOptions) {
@@ -158,6 +172,7 @@ export class JsWorkerRuntime {
 			isActive: () => this.#hooks !== null,
 			emitText: (stream, data) => this.#emitText(stream, data),
 			onChild: (child, spawnOptions) => this.#trackChild(child, spawnOptions),
+			onShellWait: cancel => this.#trackShellWait(cancel),
 		});
 		globalThis.__senpi_restore_console__ = () => {
 			console.log = originalLog;
