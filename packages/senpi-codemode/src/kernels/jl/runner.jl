@@ -325,9 +325,14 @@ end
 function senpi_memory_report()
     try
         senpi_memory[] === nothing && return nothing
-        named = senpi_largest_globals(5)
-        isempty(named) && return nothing
-        Dict{String, Any}("globals" => named)
+        live = Int(Sys.maxrss())
+        report = Dict{String, Any}("liveBytes" => live, "measure" => "footprint", "approximate" => true)
+        notice = get(senpi_memory[], "noticeBytes", 0)
+        if notice > 0 && live >= notice
+            named = senpi_largest_globals(5)
+            isempty(named) || (report["globals"] = named)
+        end
+        report
     catch
         nothing
     end
