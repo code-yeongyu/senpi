@@ -309,7 +309,15 @@ import {
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
-import { getSupportedThinkingLevels, supportsMax, supportsXhigh } from "./thinking-levels.ts";
+import {
+	type ClampedThinkingSelection,
+	clampThinkingSelection,
+	getSupportedThinkingLevels,
+	getThinkingClampNotice,
+	supportsMax,
+	supportsXhigh,
+	type ThinkingClampNotice,
+} from "./thinking-levels.ts";
 import { resetTimings, time } from "./timings.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
@@ -445,6 +453,8 @@ export type AgentSessionEvent =
 			provider: string;
 			thinkingLevel: ThinkingLevel;
 	  }
+	/** An explicit thinking request ran at a lower level than asked (senpi#2395); emitted once per model and level. */
+	| ({ type: "thinking_level_clamped" } & ThinkingClampNotice)
 	| ({ type: "settings_source_selected" } & SettingsSourceSelection)
 	/** Active model changed; `thinkingLevel` is the level in force AFTER the switch. */
 	| {
@@ -1231,6 +1241,8 @@ export class AgentSession {
 	private _currentServiceTier: ServiceTier | undefined = undefined;
 	private _sessionFastMode = false;
 	private readonly _shownHighReasoningWarningKeys = new Set<string>();
+	private readonly _shownThinkingClampWarningKeys = new Set<string>();
+	private readonly _startupThinkingClamp: ThinkingClampNotice | undefined;
 	// Widened with the upstream BuildSystemPromptOptions user-override fields so
 	// extensions (prompt-preset) can see CLI/SDK custom prompts via
 	// before_agent_start/model_select systemPromptOptions and ctx.getSystemPromptOptions().
@@ -1284,6 +1296,11 @@ export class AgentSession {
 				warning,
 				source: fallbackChainsSource,
 			});
+		}
+		// senpi#2395: a clamp applied while the session was created is shown once by the mode that starts it.
+		this._startupThinkingClamp = getThinkingClampNotice(this.agent.state.thinkingSelection, this.agent.state.model);
+		if (this._startupThinkingClamp) {
+			this._shownThinkingClampWarningKeys.add(this._thinkingClampWarningKey(this._startupThinkingClamp));
 		}
 		// Cooldowns, probe schedules, and circuits measure elapsed time, so they all
 		// run on the monotonic clock; a wall-clock jump never parks or releases an entry.
@@ -3800,6 +3817,11 @@ export class AgentSession {
 	/** Explicit selector provenance, absent for SDK-defaulted effective levels. */
 	get thinkingSelection(): ThinkingSelection | undefined {
 		return this.agent.state.thinkingSelection;
+	}
+
+	/** An explicit thinking request clamped while this session was created (senpi#2395). */
+	get startupThinkingClamp(): ThinkingClampNotice | undefined {
+		return this._startupThinkingClamp;
 	}
 
 	get serviceTier(): ServiceTier | undefined {
@@ -6556,11 +6578,16 @@ export class AgentSession {
 		// Only persist if actually changing
 		const previousLevel = this.agent.state.thinkingLevel;
 		const previousSelection = this.agent.state.thinkingSelection;
-		const effectiveSelection = selection ? { ...selection, level: effectiveLevel } : undefined;
+		// senpi#2395: a model switch hands over a selection it already clamped; keep the level it asked for.
+		const incoming = selection as ClampedThinkingSelection | undefined;
+		const requestedLevel = incoming?.requested !== undefined && incoming.level === level ? incoming.requested : level;
+		const effectiveSelection = clampThinkingSelection(selection, requestedLevel, effectiveLevel, this.model);
 		const selectionChanged =
 			previousSelection?.level !== effectiveSelection?.level ||
 			previousSelection?.source !== effectiveSelection?.source ||
-			previousSelection?.legacyVariantId !== effectiveSelection?.legacyVariantId;
+			previousSelection?.legacyVariantId !== effectiveSelection?.legacyVariantId ||
+			(previousSelection as ClampedThinkingSelection | undefined)?.requested !==
+				(effectiveSelection as ClampedThinkingSelection | undefined)?.requested;
 		const isChanging = effectiveLevel !== previousLevel;
 		if (isChanging || selectionChanged) {
 			this._retryFallback.noteManualThinkingLevel();
@@ -6594,6 +6621,7 @@ export class AgentSession {
 				previousLevel,
 			});
 			this._emitHighReasoningWarningIfNeeded();
+			this._emitThinkingClampWarningIfNeeded();
 		}
 	}
 
@@ -6610,6 +6638,19 @@ export class AgentSession {
 			provider: model.provider,
 			thinkingLevel: level,
 		});
+	}
+
+	private _emitThinkingClampWarningIfNeeded(): void {
+		const notice = getThinkingClampNotice(this.thinkingSelection, this.model);
+		if (!notice) return;
+		const key = this._thinkingClampWarningKey(notice);
+		if (this._shownThinkingClampWarningKeys.has(key)) return;
+		this._shownThinkingClampWarningKeys.add(key);
+		this._emit({ type: "thinking_level_clamped", ...notice });
+	}
+
+	private _thinkingClampWarningKey(notice: ThinkingClampNotice): string {
+		return `${notice.provider}/${notice.modelId}:${notice.requestedLevel}`;
 	}
 
 	/**
@@ -6676,18 +6717,21 @@ export class AgentSession {
 		}
 		// senpi#2196: the model's own default outranks the global last-used level and carries no provenance.
 		requestedLevel ??= model.defaultThinkingLevel;
+		let fromGlobalDefault = false;
 		if (requestedLevel === undefined) {
 			const configuredDefault = this.settingsManager.getDefaultThinkingLevel();
 			if (configuredDefault !== undefined) {
 				requestedLevel = configuredDefault;
 				selection = { level: configuredDefault, source: "explicit" };
+				fromGlobalDefault = true;
 			}
 		}
 		requestedLevel ??= DEFAULT_THINKING_LEVEL;
 		const level = this._clampThinkingLevel(requestedLevel, getSupportedThinkingLevels(model) as ThinkingLevel[]);
 		return {
 			level,
-			selection: selection ? { ...selection, level } : undefined,
+			// senpi#2395: the global default is a default, not a request, so its clamp records and warns nothing.
+			selection: clampThinkingSelection(selection, fromGlobalDefault ? level : requestedLevel, level, model),
 		};
 	}
 

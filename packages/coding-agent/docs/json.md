@@ -22,6 +22,7 @@ type AgentSessionEvent =
   | { type: "compaction_end"; reason: "manual" | "threshold" | "overflow"; result: CompactionResult | undefined; aborted: boolean; willRetry: boolean; requestId?: string; accepted?: boolean; rejectionCause?: "cancelled-by-extension" | "external-owner" | "would-overflow" | "circuit-breaker" | "per-turn-cap"; errorMessage?: string }
   | { type: "session_info_changed"; name: string | undefined }
   | { type: "thinking_level_changed"; level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" }
+  | { type: "thinking_level_clamped"; provider: string; modelId: string; requestedLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; appliedLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; reason: "model-not-reasoning" | "level-unsupported" }
   | SystemPromptChangeEvent           // type: "system_prompt_change"
   | ExtensionToolHookLifecycleEvent   // type: "tool_hook_status"
   | { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
@@ -54,6 +55,8 @@ type JsonAgentSessionEvent =
 ```
 
 `queue_update` emits the full pending steering and follow-up queues whenever they change. `compaction_start`, `compaction_progress`, and `compaction_end` cover both manual and automatic compaction. `session_info_changed` fires when the session display name changes, `thinking_level_changed` when the thinking level changes, `system_prompt_change` (see `SystemPromptChangeEvent` in [`extensions/types.ts`](../src/core/extensions/types.ts)) when a model switch changes the active system prompt, and `tool_hook_status` (see `ExtensionToolHookLifecycleEvent` in [`extensions/runner.ts`](../src/core/extensions/runner.ts)) for extension tool hook start/end phases.
+
+`thinking_level_clamped` fires once per model and requested level when an explicit thinking request (such as `--thinking`, `/thinking`, or a remembered per-model level) runs at a lower level than asked. A level that only comes from the global `defaultThinkingLevel` does not count as a request. In RPC mode, the `thinkingSelection` carried by `thinking_level_changed` and `get_state` then also has `requested` and `clampReason`.
 
 Other base events come from
 [`AgentEvent`](../../agent/src/types.ts):

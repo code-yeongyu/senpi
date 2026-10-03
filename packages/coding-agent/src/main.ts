@@ -98,6 +98,7 @@ import { assertValidSessionId, SessionManager } from "./core/session-manager.ts"
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./core/session-rebind.ts";
 import { collectSettingsDiagnosticsWithContext } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
+import { type ClampedThinkingSelection, formatThinkingClampWarning } from "./core/thinking-levels.ts";
 import { printTimings, recordTiming, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
@@ -1048,7 +1049,9 @@ export function createCliRuntimeFactory(
 		markSwitch("createSession");
 		const cliThinkingOverride = runtimeParsed.thinking !== undefined || cliThinkingFromModel;
 		if (created.session.model && cliThinkingOverride) {
-			created.session.setThinkingLevel(created.session.thinkingLevel);
+			// senpi#2395: re-apply the level the CLI asked for, so a clamp keeps its requested level and reason.
+			const selection = created.session.thinkingSelection as ClampedThinkingSelection | undefined;
+			created.session.setThinkingLevel(selection?.requested ?? created.session.thinkingLevel);
 		}
 
 		return {
@@ -1449,6 +1452,11 @@ export async function main(args: string[], options?: MainOptions) {
 
 	time("resolveModelScope");
 	reportDiagnostics(runtime.diagnostics);
+	// senpi#2395: print/json/RPC runs report a startup thinking clamp on stderr; the TUI shows its own warning.
+	const startupThinkingClamp = runtime.session.startupThinkingClamp;
+	if (appMode !== "interactive" && startupThinkingClamp) {
+		reportDiagnostics([{ type: "warning", message: formatThinkingClampWarning(startupThinkingClamp) }]);
+	}
 	if (appMode !== "interactive") {
 		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
 	}

@@ -154,6 +154,24 @@ Interactive mode is the host UI that renders extensions.
 
 Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
 
+## 2026-09-30 - The TUI warns once about a clamped explicit thinking level (senpi#2395)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: startup shows `session.startupThinkingClamp` as a warning, and a `thinking_level_clamped` session event shows the same warning.
+
+### Why
+
+- An explicit thinking level on a model not marked `reasoning: true` was clamped to off with no visible explanation (senpi#2395).
+
+### Why an extension could not handle it
+
+- The startup warning list and the session-event switch belong to `InteractiveMode`.
+
+### Expected merge conflict zones
+
+- `interactive-mode.ts`: the startup warning block after fallback-chain warnings, and the `high_reasoning_warning` case of the session event switch.
+
 ## 2026-09-30 - Ask-user navigation stays in range; a fully answered widget click submits (omo#9268)
 
 ### What changed

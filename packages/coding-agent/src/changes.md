@@ -227,6 +227,24 @@ Every upstream release that touches these paths re-adds or modifies them: re-run
 
 - LOW: the settlement call immediately before final text selection in `packages/coding-agent/src/modes/print-mode.ts`.
 
+## 2026-09-30 - Print, JSON, and RPC runs warn once about a clamped explicit thinking level (senpi#2395)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: after runtime creation, non-interactive modes report `session.startupThinkingClamp` as one stderr warning. The CLI thinking re-apply passes the requested level from a clamped selection, so it keeps the clamp record instead of replacing it with the applied level.
+
+### Why
+
+- `--thinking high` on a model not marked `reasoning: true` silently ran with thinking off (senpi#2395). Spawned RPC children are one common way this level is set.
+
+### Why an extension could not handle it
+
+- The warning belongs to CLI startup before extensions see the session, and the re-apply is part of `main.ts` session creation.
+
+### Expected merge conflict zones
+
+- `main.ts`: the `cliThinkingOverride` re-apply in the session factory and the diagnostics block after `reportDiagnostics(runtime.diagnostics)`.
+
 ## 2026-09-30 - A runtime snapshot holds its own dependencies, and shared hosts run from it (#2408, #2409)
 
 ### What changed

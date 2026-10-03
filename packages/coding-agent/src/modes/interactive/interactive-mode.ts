@@ -135,6 +135,7 @@ import type { FullscreenExitOutput, QuietStartup, TuiMode } from "../../core/set
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import { formatThinkingClampWarning } from "../../core/thinking-levels.ts";
 import { formatTimings, resetTimings, time } from "../../core/timings.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
@@ -1886,6 +1887,11 @@ export class InteractiveMode {
 
 		for (const warning of this.session.fallbackValidationWarnings) {
 			this.showWarning(warning);
+		}
+
+		const startupThinkingClamp = this.session.startupThinkingClamp;
+		if (startupThinkingClamp) {
+			this.showWarning(formatThinkingClampWarning(startupThinkingClamp));
 		}
 
 		this.showRiskyMainModelWarning(this.session.model);
@@ -5171,6 +5177,10 @@ export class InteractiveMode {
 
 			case "high_reasoning_warning":
 				this.showHighReasoningWarning(event);
+				break;
+
+			case "thinking_level_clamped":
+				this.showWarning(formatThinkingClampWarning(event));
 				break;
 
 			case "resume_compaction_required":

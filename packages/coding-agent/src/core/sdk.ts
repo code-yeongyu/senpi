@@ -30,7 +30,7 @@ import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { DEFAULT_TOOL_NAMES, SettingsManager } from "./settings-manager.ts";
-import { getSupportedThinkingLevels } from "./thinking-levels.ts";
+import { clampThinkingSelection, getSupportedThinkingLevels } from "./thinking-levels.ts";
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -365,23 +365,33 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	if (thinkingLevel === undefined && model?.defaultThinkingLevel !== undefined) {
 		thinkingLevel = model.defaultThinkingLevel;
 	}
+	let thinkingFromGlobalDefault = false;
 	if (thinkingLevel === undefined) {
 		const configuredDefault = settingsManager.getDefaultThinkingLevel();
 		if (configuredDefault !== undefined) {
 			thinkingLevel = configuredDefault;
 			thinkingSelection = { level: configuredDefault, source: "explicit" };
+			thinkingFromGlobalDefault = true;
 		} else {
 			thinkingLevel = DEFAULT_THINKING_LEVEL;
 		}
 	}
 
 	// Clamp to model capabilities without inventing provenance for a defaulted level.
+	const requestedThinkingLevel = thinkingLevel;
 	if (!model) {
 		thinkingLevel = "off";
 	} else {
 		thinkingLevel = clampThinkingLevelToModel(thinkingLevel, model);
 	}
-	if (thinkingSelection) thinkingSelection = { ...thinkingSelection, level: thinkingLevel };
+	// senpi#2395: an explicit request the clamp changed keeps the requested level and the reason. The global
+	// default is a default, not a request, so its clamp records no requested level and shows no warning.
+	thinkingSelection = clampThinkingSelection(
+		thinkingSelection,
+		thinkingFromGlobalDefault ? thinkingLevel : requestedThinkingLevel,
+		thinkingLevel,
+		model,
+	);
 
 	const configuredDefaultToolNames = settingsManager.getDefaultTools();
 	const sessionDefaultToolNames =
