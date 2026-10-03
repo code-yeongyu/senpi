@@ -1,5 +1,37 @@
 # Tool Call Middleware Changes
 
+## 2026-09-28 - Preserve overlapping native tool calls during recovery
+
+### What changed
+
+- `packages/ai/src/tool-call-middleware/recovery-content-lifecycle.ts` tracks active
+  native tool calls by content index, with monotonically increasing starts and
+  independently ordered completions. Text and thinking content remain sequential.
+- `packages/ai/src/tool-call-middleware/recovery-stream-wrapper.ts` passes the
+  content kind into lifecycle admission.
+
+### Why
+
+- `packages/ai/src/tool-call-middleware/recovery-content-lifecycle.ts` previously
+  treated a second active native call as malformed. Valid Kimi Responses streams
+  start multiple calls before closing them, causing `Invalid native tool call
+  event order` and dropping every call. This addresses senpi#2203 without
+  disabling leaked-text recovery or accepting duplicate/post-end events.
+- `packages/ai/src/tool-call-middleware/recovery-stream-wrapper.ts` must distinguish
+  native calls from content whose text parser requires sequential delivery.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/tool-call-middleware/recovery-content-lifecycle.ts` and
+  `packages/ai/src/tool-call-middleware/recovery-stream-wrapper.ts` reject the
+  provider stream before the agent loop or extensions receive executable calls.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/tool-call-middleware/recovery-content-lifecycle.ts`: lifecycle
+  admission and active-call tracking.
+- `packages/ai/src/tool-call-middleware/recovery-stream-wrapper.ts`: `canStart`.
+
 ## 2026-09-08 - Preserve server fallback boundaries during recovery
 
 ### What changed
