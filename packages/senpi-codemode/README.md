@@ -100,6 +100,18 @@ getter and may name a file that does not exist yet. It honors session-directory 
 and in-memory sessions; it cannot be derived reliably from `PI_SESSION_FILE`. If the host
 omits the getter, the variable is unset rather than inherited from the launching process.
 
+### Loading a file
+
+A Python or JavaScript cell whose only line is `%load <path>` reads that file and
+runs it as the cell, so its definitions persist like any cell. The path is relative
+to the session directory, or a `local://` or `file://` URL; other URL schemes are
+refused and nothing is fetched. The cell runs as its file: Python compiles it under
+the file's name, so tracebacks name the file and line, and sets `__file__` and puts
+the file's directory first on the import path, so `from sibling import g` resolves
+next to it. JavaScript evaluates it under the file's name and resolves its relative
+imports from the file's directory. A missing file fails the cell with
+`file not found: <path>`.
+
 ### Python packages
 
 A Python cell whose only line is `%pip install <requirements>` installs packages

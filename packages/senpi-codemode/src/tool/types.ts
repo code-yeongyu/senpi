@@ -169,6 +169,8 @@ export interface EvalKernelRunInput {
 	readonly kernelPreludes?: readonly KernelPreludeContribution[];
 	/** Python only: the session's active environment revision, put first on the import path before the cell runs. */
 	readonly envRoot?: string;
+	/** The file a `%load` cell runs: tracebacks name it and its relative imports resolve from its directory. */
+	readonly sourceFile?: string;
 }
 
 export interface KernelInterruptHandle {

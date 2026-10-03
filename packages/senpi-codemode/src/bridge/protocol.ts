@@ -46,6 +46,8 @@ const hostToKernelMessageSchema = Type.Union([
 		timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
 		/** Python only: the published environment revision to import from; applied before the cell's code runs. */
 		envRoot: Type.Optional(Type.String({ minLength: 1 })),
+		/** The file a `%load` cell runs; the runner compiles under its name and imports beside it. */
+		sourceFile: Type.Optional(Type.String({ minLength: 1 })),
 		/** Python only: active tool globals to install before the cell and deactivated ones to remove. */
 		preludes: Type.Optional(
 			Type.Object({

@@ -23,6 +23,7 @@ import { EvalKernelResetRefusedError } from "./eval-kernel-reset-refused-error.t
 import { evalTimeoutBehavior } from "./eval-request.ts";
 import type { CreateEvalToolOptions, EvalCellInvocation } from "./eval-tool-options.ts";
 import { describeTimeoutState } from "./interrupt-note.ts";
+import { loadCell } from "./load-cell.ts";
 import { planMagicCell } from "./magic-cell-host.ts";
 import type { EvalKernel, EvalToolDetails } from "./types.ts";
 
@@ -249,15 +250,29 @@ async function executeCell(
 			if (invocation.input.reset) await execution.wait(kernel.reset());
 			execution.setKernel(kernel);
 			const magic = planMagicCell(invocation.input.language, invocation.input.code, options.pythonEnvironments);
+			const loaded =
+				magic.kind === "load"
+					? await execution.wait(
+							loadCell(magic.target, { cwd: invocation.ctx.cwd, artifactsDir: options.artifactsDir }),
+						)
+					: undefined;
+			const refusal = magic.kind === "refused" ? magic.message : loaded?.ok === false ? loaded.message : undefined;
+			if (refusal !== undefined) {
+				return await handler.finalize({
+					type: "result",
+					cellId: invocation.cellId,
+					ok: false,
+					error: { message: refusal },
+					durationMs: 0,
+				});
+			}
 			const envRoot = invocation.input.language === "py" ? options.pythonEnvironments?.activeRoot : undefined;
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,
-					code: invocation.input.code,
+					code: loaded?.ok === true ? loaded.code : invocation.input.code,
+					...(loaded?.ok === true ? { sourceFile: loaded.sourceFile } : {}),
 					...(magic.kind === "host" ? { host: magic.executor } : {}),
-					...(magic.kind === "refused"
-						? { host: async () => ({ ok: false as const, error: { message: magic.message } }) }
-						: {}),
 					...(envRoot === undefined ? {} : { envRoot }),
 					kernelPreludes: options.kernelPreludes?.(),
 					onMessage,

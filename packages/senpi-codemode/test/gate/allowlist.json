@@ -212,6 +212,20 @@
 			],
 			"reason": "Node 14 part 3: %pip / %environment magic cells run as host entries in the Python kernel's queue and every Python cell imports from the session's active environment revision; the magic-cell modules, and the environments library they import (install-lock, py-environment, py-installer, revision-store, first reached from the extension here), join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
+		"16": {
+			"additions": [
+				"legacyContracts/test/load-cell.test.ts/Given a Python file loaded with %load When the next cell calls its function, then the definition persists and a traceback names the file and line",
+				"legacyContracts/test/load-cell.test.ts/Given a Python file loaded with %load When the file imports a sibling module, then it resolves next to the file and __file__ names the file",
+				"legacyContracts/test/load-cell.test.ts/Given a Python file loaded with %load When the file has top-level await and a trailing expression, then it is awaited and the last value is shown like any cell",
+				"legacyContracts/test/load-cell.test.ts/Given a JavaScript file loaded with %load When it imports a module relative to itself, then the import resolves from the file's directory and its bindings persist",
+				"legacyContracts/test/load-cell.test.ts/Given a %load that cannot run a local file When it names a remote URL, then the cell is refused without fetching anything",
+				"legacyContracts/test/load-cell.test.ts/Given a %load that cannot run a local file When the file does not exist, then the cell fails with file not found and the path",
+				"legacyContracts/test/load-cell.test.ts/Given a %load that cannot run a local file When %load shares its cell with other code, then the cell is refused with the own-cell teaching error",
+				"imports/extension/packages/senpi-codemode/src/tool/load-cell.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/load-cell.ts"
+			],
+			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell; load-cell.ts joins the scoped census, plus the %load contracts. No prompt or eval schema change."
+		},
 		"24": {
 			"additions": [
 				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a global array with an index accessor when the globals are sized then the getter never runs",

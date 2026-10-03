@@ -1,4 +1,4 @@
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import type { BridgeConnectionConfig } from "../../bridge/protocol.ts";
@@ -121,8 +121,13 @@ export class LocalModuleLoader {
 		this.#prelude = loaderPrelude(runtimeContext(options));
 	}
 
-	prepareCell(code: string, contributions: readonly KernelPreludeContribution[] = []): string {
-		const prelude = `${this.#prelude}\n${contributionPrelude(this.#contributions.plan(contributions))}`;
-		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude, code: rewriteImports(code) })}`;
+	prepareCell(code: string, contributions: readonly KernelPreludeContribution[] = [], sourceFile?: string): string {
+		// A %load cell resolves its relative imports from its own file's directory for that cell only.
+		const base =
+			sourceFile === undefined
+				? ""
+				: `\nglobalThis.__senpi_module_context__ = { ...globalThis.__senpi_module_context__, cwdUrl: ${JSON.stringify(directoryUrl(dirname(sourceFile)))} };`;
+		const prelude = `${this.#prelude}${base}\n${contributionPrelude(this.#contributions.plan(contributions))}`;
+		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude, code: rewriteImports(code), ...(sourceFile === undefined ? {} : { sourceFile }) })}`;
 	}
 }

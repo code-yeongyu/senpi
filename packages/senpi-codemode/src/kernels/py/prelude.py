@@ -1314,8 +1314,8 @@ KERNEL_MEMORY = _KernelMemory()
 TLA_FLAG = getattr(ast, "PyCF_ALLOW_TOP_LEVEL_AWAIT", 0x2000)
 
 
-def compile_cell(source: str) -> tuple[Any | None, Any | None]:
-    module = ast.parse(transform_cell(source), mode="exec")
+def compile_cell(source: str, filename: str = "<cell>") -> tuple[Any | None, Any | None]:
+    module = ast.parse(transform_cell(source), filename=filename, mode="exec")
     if not module.body:
         return None, None
     last = module.body[-1]
@@ -1323,13 +1323,13 @@ def compile_cell(source: str) -> tuple[Any | None, Any | None]:
         body = ast.Module(body=module.body[:-1], type_ignores=[])
         expression = ast.Expression(body=last.value)
         ast.copy_location(expression, last)
-        return compile(body, "<cell>", "exec", flags=TLA_FLAG), compile(
+        return compile(body, filename, "exec", flags=TLA_FLAG), compile(
             expression,
-            "<cell>",
+            filename,
             "eval",
             flags=TLA_FLAG,
         )
-    return compile(module, "<cell>", "exec", flags=TLA_FLAG), None
+    return compile(module, filename, "exec", flags=TLA_FLAG), None
 
 
 async def run_code(code: Any, want_value: bool) -> Any:
@@ -1356,7 +1356,20 @@ def apply_preludes(preludes: Any) -> None:
             exec(compile(contribution.get("python", ""), "<kernel-prelude>", "exec"), USER_NS)
 
 
-def run_cell(cell_id: str, code: str, preludes: Any = None) -> None:
+def _enter_source_file(source_file: str | None) -> None:
+    # A %load cell runs as its file: __file__ names it and its directory comes first on the import path,
+    # so `from sibling import x` resolves next to the file the way it does when the file runs as a script.
+    if source_file is None:
+        return
+    USER_NS["__file__"] = source_file
+    directory = os.path.dirname(source_file)
+    with contextlib.suppress(ValueError):
+        sys.path.remove(directory)
+    sys.path.insert(0, directory)
+    importlib.invalidate_caches()
+
+
+def run_cell(cell_id: str, code: str, preludes: Any = None, source_file: str | None = None) -> None:
     start = time.monotonic()
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -1367,7 +1380,8 @@ def run_cell(cell_id: str, code: str, preludes: Any = None) -> None:
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             apply_preludes(preludes)
-            body, expression = compile_cell(code)
+            _enter_source_file(source_file)
+            body, expression = compile_cell(code, source_file or "<cell>")
             LOOP.run_until_complete(run_code(body, False))
             value = LOOP.run_until_complete(run_code(expression, True))
         text("stdout", stdout.getvalue())
@@ -1422,7 +1436,13 @@ def handle(message: dict[str, Any]) -> bool:
         env_root = message.get("envRoot")
         if isinstance(env_root, str) and env_root:
             _activate_env_root(env_root)
-        run_cell(str(message.get("cellId", "")), str(message.get("code", "")), message.get("preludes"))
+        source_file = message.get("sourceFile")
+        run_cell(
+            str(message.get("cellId", "")),
+            str(message.get("code", "")),
+            message.get("preludes"),
+            source_file if isinstance(source_file, str) and source_file else None,
+        )
         return True
     if message_type == "close":
         emit({"type": "closed"})

@@ -64,13 +64,15 @@ export class JsWorkerRuntime {
 		try {
 			let prelude = "";
 			let cellCode = code;
+			let sourceName = cellId;
 			if (code.startsWith(PREPARED_CELL_PREFIX)) {
 				const prepared = JSON.parse(code.slice(PREPARED_CELL_PREFIX.length));
 				if (!isPlainObject(prepared) || typeof prepared.prelude !== "string" || typeof prepared.code !== "string") throw new Error("Invalid prepared JavaScript cell payload");
 				({ prelude, code: cellCode } = prepared);
+				if (typeof prepared.sourceFile === "string") sourceName = prepared.sourceFile;
 			}
 			if (prelude) indirectEval(prelude, PRELUDE_SOURCE_URL);
-			const value = await awaitMaybePromise(indirectEval(bindKernelBun(wrapUserCode(cellCode)), cellId));
+			const value = await awaitMaybePromise(indirectEval(bindKernelBun(wrapUserCode(cellCode)), sourceName));
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {
