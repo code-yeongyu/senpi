@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Project rule discovery no longer escapes the project root on Windows. A `read`/`edit`/`write` target on a different drive, or one whose drive-letter case differs from the project root, made the rules finder walk the unrelated location and inject any `AGENTS.md`, `CLAUDE.md`, `.claude/rules`, `.cursor/rules`, or `.github/instructions` it found there as *project* rules ([#568](https://github.com/code-yeongyu/senpi/pull/568) by [@MoerAI](https://github.com/MoerAI)). POSIX behavior is unchanged.
+
 ### Removed
 
 ## [2026.10.5] - 2026-10-03
