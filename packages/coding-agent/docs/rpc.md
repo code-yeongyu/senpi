@@ -229,6 +229,12 @@ are what this decision encodes; the other two are what a client must not undo el
   touches nothing of it. The ensure then starts one beside it, numbered after the stranded generation, which
   keeps its registration until it exits; refusing there locked every client out until that process happened to
   end (#1936). A named pipe has no entry to lose, so win32 keeps refusing.
+  Neither replacement happens to a generation that is alive but stalled: when its own
+  `generations/<instanceId>/host-stalled.json` records a loop stall younger than `SENPI_RPC_STALL_REFUSAL_MS`
+  (default 120000), or its `host-alive.json` heartbeat stopped more than the loop-lag error threshold ago yet inside
+  that window, while its process is alive, the ensure fails with `HostEnsureRefusedError { reason: "host_stalled" }`
+  and sends no signal, starts no generation beside it and leaves its registration untouched - a stalled host is still
+  serving its sessions.
 - **I2 - compatibility is protocol version + capabilities, never semver equality.** An ordinal that cannot be
   compared (a build without git metadata, a host that reports none) is EQUAL, and since a handoff requires
   STRICTLY greater, such a pair attaches instead of upgrading.
@@ -238,7 +244,11 @@ are what this decision encodes; the other two are what a client must not undo el
   another generation's state files, unlinks its socket, or removes its pidfile to "clean up". A handoff is the one
   exception and it still writes only its OWN generation directory before repointing the pointer (see
   [Daemon state directory](#daemon-state-directory-layout-2)); the drained predecessor keeps its registration until
-  it exits, because it is still serving.
+  it exits, because it is still serving. The one sanctioned cross-writer is the STOP INTENT: a process about to
+  signal a generation (an ensure, `host stop`, a handoff abandoning its successor, the generation's own supervisor)
+  first writes `generations/<instanceId>/stop-intent.json` `{ sender, targetPid, reason, signal, at }` into THAT
+  generation's directory, because the target cannot know who is about to stop it; nothing ever reads or removes
+  another generation's intent, and a drain writes none.
 - **I4 - machine-driven work is invisible by default.** A session opened with `kind: "worker"` is omitted from
   `list_sessions` unless the caller passes `include_workers: true`, its `context` is published on that listing only,
   and its `session_closed`/`session_parked` records reach only the connections attached to it. A client that never
@@ -526,8 +536,15 @@ which prints the bare socket path).
     `get_protocol_info`; `null` when nothing answers or the host predates the field. It lives in the host process
     alone, so a draining predecessor's state is not reported, and it is observability only: a pressured endpoint
     admits every open.
-  - `crashes`: records in the endpoint's `crashes.jsonl` - supervised host children that died rather than
-    stopped; `0` when the file is absent.
+  - `crashes`: records in the endpoint's `crashes.jsonl` that are deaths - supervised host children that died
+    rather than stopped, `engine_stop` and watchdog lines excluded; `0` when the file is absent. Each line of that
+    file is `{ at, signal?, code?, uptimeMs, kind?, generation?, detection?, sender?, chain?, reason?, stopIntent?,
+    stall? }`: `kind: "rpc-host"` is a generation's TERMINAL record (at most one per generation) and
+    `kind: "rpc-host-watchdog"` the host child's own line when its supervisor vanished; `detection` is
+    `supervisor` (it crashed), `external` (a signal nobody announced) or `engine_stop` (an engine process stopped it on
+    purpose, named by `sender`/`chain` and `reason`, e.g. `replace_unreachable -> signal:SIGTERM` or
+    `readiness_timeout; supervisor_escalated` when the caller had to SIGKILL the supervisor). Every field after
+    `uptimeMs` is optional, so older readers keep parsing.
   - `shard`: `{ kind: "p" | "i", key }` when the socket's basename is `<kind>-<16 hex>.sock` (the naming
     contract below), else `null`.
   - `session_rows`: under `--include-workers` only (else `[]`), every row of that same `list_sessions

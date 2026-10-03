@@ -35,11 +35,30 @@
  * What those files CONTAIN is `host-daemon-state.ts` (settings, and the primitives every state file
  * is written through) and `host-daemon-registration.ts` (the pointer and the generation records).
  */
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { chmod, link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, win32 } from "node:path";
+import { basename, join } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import { canonicalSessionPath } from "./session-path-key.ts";
+import { daemonDirectoryName, socketNamesDirectory } from "./host-endpoint-names.ts";
+import { HostDaemonStateError } from "./host-generation-paths.ts";
+
+export {
+	canonicalEndpointPath,
+	daemonDirectoryName,
+	parseShardSocket,
+	type ShardKind,
+	sameEndpoint,
+	shardKey,
+	shardSocketPath,
+	shardSocketPathForKey,
+	socketNamesDirectory,
+} from "./host-endpoint-names.ts";
+export {
+	createGenerationDirectory,
+	generationPaths,
+	HostDaemonStateError,
+	type HostGenerationPaths,
+} from "./host-generation-paths.ts";
 
 /** The layout this build writes. A directory without the marker predates it and is never touched. */
 export const HOST_DAEMON_LAYOUT = 2;
@@ -82,87 +101,6 @@ export interface HostDaemonPaths {
 /** The files inside one endpoint's directory, for a reader that has the directory but not its socket. */
 export type HostDaemonDirectory = Omit<HostDaemonPaths, "socket" | "flatDir" | "layoutMarker" | "legacyPidFile">;
 
-export interface HostGenerationPaths {
-	readonly dir: string;
-	/** Where the pointer names this generation: relative to the daemon directory holding it. */
-	readonly relativeDir: string;
-	readonly pidFile: string;
-	readonly settingsFile: string;
-	readonly scratchDir: string;
-}
-
-/**
- * The one spelling of an endpoint every client derives the same way. On POSIX that is the socket path
- * with its directory resolved through its deepest existing ancestor (`/tmp` vs `/private/tmp`, a
- * symlinked agent directory) - the identity the ensure lock is keyed by - and a path already spelled
- * that way comes back unchanged. On win32 it is the normalized lower-cased path the pipe name is derived
- * from. An abstract socket has no directory to resolve. Deliberately total: naming a directory must never
- * fail on a path shape the transport would reject, or a client could not even report WHERE it was looking.
- */
-export function canonicalEndpointPath(socket: string, platform: NodeJS.Platform = process.platform): string {
-	if (platform === "win32") return win32.normalize(socket).toLowerCase();
-	if (socket.startsWith("\0")) return socket;
-	return join(canonicalSessionPath(dirname(socket)), basename(socket));
-}
-
-/**
- * The directory name every client recomputes from the socket alone: `sha256(<canonical endpoint>)`, so
- * every spelling of one endpoint shares one directory, and a canonical spelling keeps the name it had
- * when the name was hashed from the spelling itself.
- */
-export function daemonDirectoryName(socket: string, platform: NodeJS.Platform = process.platform): string {
-	return directoryNameOf(canonicalEndpointPath(socket, platform));
-}
-
-/** Whether two spellings name one endpoint. */
-export function sameEndpoint(socket: string, other: string): boolean {
-	return socket === other || canonicalEndpointPath(socket) === canonicalEndpointPath(other);
-}
-
-/**
- * Whether a record naming `socket` belongs in the directory called `name`: the canonical name, or the
- * name a build that hashed the spelling itself gave it - that directory has to stay listable, and
- * therefore collectable by `host gc`, after the upgrade.
- */
-export function socketNamesDirectory(socket: string, name: string): boolean {
-	return daemonDirectoryName(socket) === name || (process.platform !== "win32" && directoryNameOf(socket) === name);
-}
-
-function directoryNameOf(endpoint: string): string {
-	return createHash("sha256").update(endpoint, "utf8").digest("hex").slice(0, 16);
-}
-
-/**
- * The owner-keyed shard naming contract every client computes identically - senpi, omo (library
- * import) and the Desktop (a local mirror checked against `senpi host shard-path`): `p` shards belong
- * to a parent session, `i` shards to an interactive thread. The key is `sha256("<kind>:<owner>")` in
- * hex, first 16 characters; the socket is `<root>/<kind>-<key>.sock`.
- */
-export type ShardKind = "p" | "i";
-
-export function shardKey(kind: ShardKind, ownerId: string): string {
-	return createHash("sha256").update(`${kind}:${ownerId}`, "utf8").digest("hex").slice(0, 16);
-}
-
-/** The socket of a shard whose key is already known. No hashing: the key IS the name. */
-export function shardSocketPathForKey(root: string, kind: ShardKind, key: string): string {
-	return join(root, `${kind}-${key}.sock`);
-}
-
-export function shardSocketPath(root: string, kind: ShardKind, ownerId: string): string {
-	return shardSocketPathForKey(root, kind, shardKey(kind, ownerId));
-}
-
-const SHARD_SOCKET_NAME = /^(p|i)-([0-9a-f]{16})\.sock$/;
-
-/** Which shard a socket names, from its basename alone; `null` for any other endpoint. */
-export function parseShardSocket(socket: string): { readonly kind: ShardKind; readonly key: string } | null {
-	const match = SHARD_SOCKET_NAME.exec(basename(socket));
-	const key = match?.[2];
-	if (key === undefined) return null;
-	return { kind: match?.[1] === "i" ? "i" : "p", key };
-}
-
 /**
  * The daemon directory of ONE endpoint. Both fields are named rather than positional on purpose:
  * two strings in a row is exactly the call a refactor silently swaps, and swapping these two would
@@ -199,30 +137,6 @@ export function hostDaemonDirectoryPaths(dir: string): HostDaemonDirectory {
 		generationsDir: join(dir, "generations"),
 		reservationsDir: join(dir, "reservations"),
 	};
-}
-
-export function generationPaths(paths: HostDaemonDirectory, instanceId: string): HostGenerationPaths {
-	const dir = join(paths.generationsDir, instanceId);
-	return {
-		dir,
-		relativeDir: `generations/${instanceId}`,
-		pidFile: join(dir, "host.pid"),
-		settingsFile: join(dir, "settings.json"),
-		scratchDir: join(dir, "scratch"),
-	};
-}
-
-/** A daemon directory that cannot be created or written, named so the caller can say WHICH path failed. */
-export class HostDaemonStateError extends Error {
-	readonly path: string;
-
-	constructor(path: string, cause: unknown) {
-		super(`RPC daemon state directory ${path} is not usable: ${cause instanceof Error ? cause.message : cause}`, {
-			cause,
-		});
-		this.name = "HostDaemonStateError";
-		this.path = path;
-	}
 }
 
 /**
@@ -325,14 +239,4 @@ async function namesThisDirectory(paths: HostDaemonPaths): Promise<boolean> {
 		record.socket !== "" &&
 		socketNamesDirectory(record.socket, basename(paths.dir))
 	);
-}
-
-/** Creates one generation's private directory. Same failure shape as the daemon directory itself. */
-export async function createGenerationDirectory(generation: HostGenerationPaths): Promise<void> {
-	try {
-		await mkdir(generation.scratchDir, { recursive: true, mode: DIRECTORY_MODE });
-		await chmod(generation.dir, DIRECTORY_MODE);
-	} catch (cause) {
-		throw new HostDaemonStateError(generation.dir, cause);
-	}
 }

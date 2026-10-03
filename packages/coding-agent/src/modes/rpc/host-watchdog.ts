@@ -18,6 +18,9 @@ import { rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Socket } from "node:net";
 import { envValue } from "../../core/brand.ts";
+import { recordHostCrash } from "./host-crash-record.ts";
+import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
+import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 
 /** Inherited fd whose EOF means "the supervisor died"; set by the supervisor only. */
 export const HOST_WATCH_FD_ENV = "SENPI_RPC_HOST_WATCH_FD";
@@ -37,6 +40,9 @@ export interface HostWatchdogConfig {
 	readonly scratchDir?: string;
 	readonly cleanupPaths?: readonly string[];
 	readonly publicSocket?: string;
+	/** Where the WATCHDOG record of this generation goes when the supervisor vanishes (senpi#2566). */
+	readonly daemonDir?: string;
+	readonly instanceId?: string;
 	/**
 	 * Runs when the watchdog fires, BEFORE `scratchDir` and `cleanupPaths` are removed. The
 	 * host uses it to read state that lives inside the supervisor's private directory and
@@ -67,12 +73,15 @@ export function readHostWatchdogConfig(
 	const scratchDir = env[HOST_SCRATCH_DIR_ENV];
 	const cleanupPaths = env[HOST_CLEANUP_PATHS_ENV]?.split("\n").filter(Boolean);
 	const publicSocket = env[HOST_PUBLIC_SOCKET_ENV];
+	const daemonDir = env[HOST_DAEMON_DIR_ENV];
+	const instanceId = env[HOST_INSTANCE_ID_ENV];
 	return {
 		fd,
 		ppid,
 		scratchDir: scratchDir === undefined || scratchDir === "" ? undefined : scratchDir,
 		cleanupPaths,
 		publicSocket: publicSocket === "" ? undefined : publicSocket,
+		...(daemonDir && instanceId ? { daemonDir, instanceId } : {}),
 	};
 }
 
@@ -88,6 +97,8 @@ export function readHostWatchdogConfigFromBrandEnv(): HostWatchdogConfig | undef
 		[HOST_SCRATCH_DIR_ENV]: process.env[HOST_SCRATCH_DIR_ENV] ?? envValue("RPC_HOST_SCRATCH_DIR"),
 		[HOST_PUBLIC_SOCKET_ENV]: process.env[HOST_PUBLIC_SOCKET_ENV] ?? envValue("RPC_HOST_PUBLIC_SOCKET"),
 		[HOST_CLEANUP_PATHS_ENV]: process.env[HOST_CLEANUP_PATHS_ENV] ?? envValue("RPC_HOST_CLEANUP_PATHS"),
+		[HOST_DAEMON_DIR_ENV]: process.env[HOST_DAEMON_DIR_ENV],
+		[HOST_INSTANCE_ID_ENV]: process.env[HOST_INSTANCE_ID_ENV],
 	});
 }
 
@@ -108,6 +119,16 @@ export function armHostWatchdog(
 	if (!config) return () => {};
 	const fire = (reason: string): void => {
 		disarm();
+		// First, before any cleanup: a supervisor that died this way runs no exit handler of its own.
+		if (config.daemonDir !== undefined && config.instanceId !== undefined) {
+			recordHostCrash(config.daemonDir, {
+				at: new Date().toISOString(),
+				uptimeMs: Math.round(process.uptime() * 1000),
+				kind: "rpc-host-watchdog",
+				generation: config.instanceId,
+				reason,
+			});
+		}
 		const captured = captureBeforeCleanup(config);
 		if (process.platform === "win32") {
 			// Arm the host shutdown fallback before attempting metadata cleanup. The

@@ -18,7 +18,7 @@
  * terminal endpoint and a host both answer - and carries `owner`: the terminal process and the one
  * session it holds.
  */
-import { readHostCrashRecords } from "./host-crash-record.ts";
+import { isHostCrash, readHostCrashRecords } from "./host-crash-record.ts";
 import { type EndpointKind, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { type EndpointLiveness, endpointProbeTimeoutMs, judgeEndpointLiveness } from "./host-endpoint-liveness.ts";
 import { type HostEndpointEntry, type HostEndpointIdentitySource, listHostEndpoints } from "./host-endpoints.ts";
@@ -139,7 +139,7 @@ async function unaddressableStatus(dir: string): Promise<Omit<HostStatusReport, 
 		memory_pressure: null,
 		env_keys: [],
 		generations,
-		crashes: readHostCrashRecords(dir).length,
+		crashes: readHostCrashRecords(dir).filter(isHostCrash).length,
 		shard: null,
 		session_rows: [],
 		claims_live: claims.filter((claim) => claim.live).length,

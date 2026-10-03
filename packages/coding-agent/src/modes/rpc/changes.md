@@ -68,22 +68,46 @@ The launch commands in `packages/coding-agent/src/modes/rpc/host-launch.ts` and 
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` takes `superseded`; a superseded generation removes only its own generation directory and never reads or removes the pointer or `settings.json`.
-- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the supervisor records a `replaced` supersession loss and releases as superseded on shutdown. An `absent` loss, an idle exit and a drain-stop release exactly as before.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: the supervisor records a `replaced` supersession loss (`SupervisorState.endpointReplaced`, wired from `host-lifecycle.ts`) and releases as superseded on shutdown. An `absent` loss, an idle exit and a drain-stop release exactly as before.
 - `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: test-only `_test.beforeRegistration` hook between the successor's answer and the pointer move.
 
 ### Why
 
-- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: a predecessor that noticed the successor's rename before the handoff moved the pointer read "the pointer is mine" and removed it and `settings.json` (already the successor's). Landing just after the handoff's pointer move, that removal left the successor serving with no registration, and an ensure reused it reporting `pid: 0`. The check-then-remove crosses processes and cannot be made atomic, so the replaced generation must not touch state that belongs to its replacer (I3).
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: a predecessor that noticed the successor's rename before the handoff moved the pointer read "the pointer is mine" and removed it and `settings.json` (already the successor's). Landing just after the handoff's pointer move, that removal left the successor serving with no registration, and an ensure reused it reporting `pid: 0`. The check-then-remove crosses processes and cannot be made atomic, so the replaced generation must not touch state that belongs to its replacer (I3).
 
 ### Why an extension could not handle it
 
-- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`, `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the supervisor's shutdown and the handoff's registration run in the host process lifecycle, before and outside any extension runtime.
+- `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`, `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`, `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the supervisor's shutdown and the handoff's registration run in the host process lifecycle, before and outside any extension runtime.
 
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/rpc/host-daemon-registration.ts`: `releaseGeneration` signature and its early return.
-- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: the drain state declarations, the supersession watch callback and `performShutdown`'s release call.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-drain.ts`: `drainOnPublicSocketLoss`'s supersession watch callback. `packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts`: `SupervisorState.endpointReplaced` and `performShutdown`'s release call.
 - `packages/coding-agent/src/modes/rpc/host-handoff.ts`, `packages/coding-agent/src/modes/rpc/host-successor.ts`: the `_test` options and the line before `writeHostRegistration`.
+
+## 2026-10-02 - Host stops are attributable, and a stalled host is waited for instead of replaced or killed
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stop-intent.ts` (new): every engine-sent host signal writes `generations/<instanceId>/stop-intent.json` `{ sender, chain?, targetPid, reason, signal, at }` into the TARGET generation's directory first (write-rename, 0600, 120 s staleness). The supervisor layers its own step over an outer intent (`chain`, `"<outer> -> <own>"`), never overwriting it. A drain writes nothing.
+- `packages/coding-agent/src/modes/rpc/host-child-exit.ts`, `host-crash-record.ts`: the child's end is a TERMINAL record (`kind: "rpc-host"`, `generation`, `detection: supervisor | external | engine_stop`, `sender`, `chain`, `reason`, `stopIntent`, `stall`), at most one per generation under `crashes.lock`; the supervisor records it ALSO while shutting down. A caller that SIGKILLs a supervisor (`host-ensure-stop.ts`, `host-ensure-start.ts`, `host-successor.ts`) writes the record itself, BEFORE it releases the registration. `host-watchdog.ts` writes a `kind: "rpc-host-watchdog"` line when the supervisor vanishes. `isHostCrash` keeps `host status` counting deaths only.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`, `host-daemon-registration.ts`: `host stop` drops the pointer and boot settings and leaves the generation directory to the supervisor it signalled (`releaseRegistrationPointer`); a host already gone is released as before.
+- `packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts`, `host-stalled-evidence.ts` (new): a supervised host writes `host-stalled.json` for a stall past the error threshold and refreshes `host-alive.json` on each healthy tick, in its own generation directory only. `host-ensure-liveness.ts` (new): an ensure that cannot reach a registered generation refuses `host_stalled` (`host-decision.ts`) when that evidence is recent (`SENPI_RPC_STALL_REFUSAL_MS`, 120 s) and the host child is alive - on the own-writer stop path and the foreign-writer strand path.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-stall-wait.ts` (new), `host-lifecycle-shutdown.ts`: after SIGTERM and the 5 s window, a stalled child is waited for in 5 s slices up to `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS` (60 s), reported in `stop-progress.json`; the SIGKILL reason then carries `escalated_after_stall_wait=<ms>`. `host-ensure-stop.ts` extends its own SIGTERM deadline while that report is fresh. The supervisor writes `host-child.pid`.
+- Splits by responsibility, every existing import still resolving through `host-lifecycle.ts` / `host-ensure.ts`: `host-lifecycle-{launch,proxy,activity,drain,shutdown}.ts`, `host-supervisor-log.ts`, `host-ensure-{client,start,stop,liveness}.ts`, `host-state-json.ts`.
+
+### Why
+
+The supervisor's exit handler returned early while shutting down, so every engine-initiated stop left no record, and the record a death did leave could not name a sender: a host killed from outside, one an ensure replaced, and one that crashed all looked alike. A host whose loop was stalled - still serving its sessions - could be SIGKILLed after 5 s by its own supervisor, or stopped and replaced by an ensure that could not reach it ([#2566](https://github.com/code-yeongyu/senpi/issues/2566)).
+
+### Why an extension could not handle it
+
+The supervisor's exit path, the ensure's stop and replace decision and the daemon state layout are engine internals; no extension runs in the supervisor process or sees its signals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts` and `host-ensure.ts`: now orchestration only; upstream edits to the moved functions land in the split modules named above.
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `HostRefusalReason`.
 
 ## 2026-10-02 - memory_report request (senpi#2561)
 

@@ -31,6 +31,7 @@ import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-pa
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
+import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
@@ -42,9 +43,11 @@ export const HANDOFF_LOCK_HOLD_MS = HANDOFF_PROBE_TIMEOUT_MS + SUCCESSOR_START_B
 
 /**
  * How long a handoff waits for the lock. The longest holder is an ensure that probes the running host
- * and then hands it off itself (its upgrade path); 10 s of headroom for a slow runner.
+ * and then hands it off itself (its upgrade path), or one that waits out a stopped host's stall before
+ * starting a replacement; 10 s of headroom for a slow runner.
  */
-const HANDOFF_LOCK_WAIT_MS = HANDOFF_PROBE_TIMEOUT_MS + HANDOFF_LOCK_HOLD_MS + 10_000;
+const HANDOFF_LOCK_WAIT_MS =
+	HANDOFF_PROBE_TIMEOUT_MS + Math.max(HANDOFF_LOCK_HOLD_MS, STOP_WAIT_BUDGET_MS + 10_000) + 10_000;
 
 export interface HandoffHostOptions {
 	readonly socket: string;

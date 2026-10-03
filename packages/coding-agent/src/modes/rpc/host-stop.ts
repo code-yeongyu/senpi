@@ -19,11 +19,17 @@
  * error to a caller that asked for exactly that outcome.
  */
 
-import { createHostDaemonPaths } from "./host-daemon-paths.ts";
-import { provenOwner, readHostRegistration, releaseGeneration } from "./host-daemon-registration.ts";
+import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
+import {
+	provenOwner,
+	readHostRegistration,
+	releaseGeneration,
+	releaseRegistrationPointer,
+} from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { provenLegacyOwner } from "./host-legacy.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
+import { writeStopIntent } from "./host-stop-intent.ts";
 
 export interface StopHostOptions {
 	readonly socket: string;
@@ -72,11 +78,21 @@ export async function stopHost(options: StopHostOptions): Promise<StopHostResult
 	if (options.force !== true && host !== undefined && sessions !== undefined && sessions > 0) {
 		return { action: "refuse", reason: "sessions_live" };
 	}
-	signalGeneration(owner.pid, "SIGTERM");
-	// The signal ended this generation, so its registration goes with it: a pointer left behind names
-	// a process nobody serves with, and the next ensure would read it as a host to probe. A DRAINING
-	// host keeps its registration - it is still serving - and drops it on the way out itself.
-	await releaseGeneration(paths, { instanceId: owner.instanceId, pid: owner.pid });
+	await writeStopIntent(generationPaths(paths, owner.instanceId), {
+		sender: { pid: process.pid, kind: "stop" },
+		targetPid: owner.pid,
+		reason: "operator_stop",
+		signal: "SIGTERM",
+		at: new Date().toISOString(),
+	});
+	const delivered = signalGeneration(owner.pid, "SIGTERM");
+	// The signal ended this generation, so the pointer and boot settings go now: a pointer left behind
+	// names a process nobody serves with, and the next ensure would read it as a host to probe. The
+	// generation DIRECTORY stays for the supervisor, which records its child's end from the intent in
+	// it and releases it itself (senpi#2566); one that was already gone leaves it to this call. A
+	// DRAINING host keeps its registration - it is still serving - and drops it on the way out itself.
+	if (delivered) await releaseRegistrationPointer(paths, owner.instanceId);
+	else await releaseGeneration(paths, { instanceId: owner.instanceId, pid: owner.pid });
 	return { action: "stopped", pid: owner.pid };
 }
 

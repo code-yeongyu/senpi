@@ -101,7 +101,7 @@ describe("daemon state directory v2", () => {
 		expect(await permissions(join(qa.daemonDir, pointer.generation_dir as string, "host.pid"))).toBe(0o600);
 	}, 20_000);
 
-	it("clears the pointer and the generation directory when the host is stopped", async () => {
+	it("clears the pointer when the host is stopped and leaves the generation its stop intent", async () => {
 		const qa = await sandbox("stop");
 		const running = await registerManagedHost(qa);
 
@@ -109,8 +109,14 @@ describe("daemon state directory v2", () => {
 
 		expect(result).toEqual({ action: "stopped", pid: running.pid });
 		expect(await waitForPidGone(running.pid, 10_000)).toBe(true);
-		expect(await readdir(join(qa.daemonDir, "generations"))).toEqual([]);
 		await expect(stat(join(qa.daemonDir, "host.pid"))).rejects.toMatchObject({ code: "ENOENT" });
+		// senpi#2566: the generation directory is the stopped supervisor's to release, after it has recorded its
+		// child's end from this intent; this fixture host is no supervisor, so gc reaps the directory instead.
+		expect(await readJson(join(qa.daemonDir, "generations", running.instanceId, "stop-intent.json"))).toMatchObject({
+			reason: "operator_stop",
+			sender: { kind: "stop", pid: process.pid },
+			targetPid: running.pid,
+		});
 	}, 20_000);
 
 	it("fails with the daemon directory in the error when it cannot be created", async () => {

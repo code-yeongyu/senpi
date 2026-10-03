@@ -1,4 +1,5 @@
-import { parseIdleExitMs } from "./host-lifecycle.ts";
+import { parseIdleExitMs } from "./host-lifecycle-policy.ts";
+import { ownGenerationDir, writeHeartbeat, writeStallEvidence } from "./host-stalled-evidence.ts";
 import { recordLoopBlockedMs } from "./loop-blocked-time.ts";
 import type { RpcHostStalledEvent } from "./rpc-types.ts";
 import { type SessionAttribution, sessionActivityMark, sessionActivitySince } from "./session-attribution.ts";
@@ -13,6 +14,11 @@ export const DEFAULT_LOOP_LAG_ERROR_MS = 5_000;
 export const LOOP_LAG_TICK_MS = 200;
 /** One warning per window, however many stalls it covers. */
 export const LOOP_LAG_WARN_INTERVAL_MS = 10_000;
+
+/** The drift past which a tick is a stall, as the host itself judges it. Readers of its evidence use the same. */
+export function loopLagErrorMs(env: Readonly<Record<string, string | undefined>> = process.env): number {
+	return parseIdleExitMs(env[LOOP_LAG_ERROR_MS_ENV]) ?? DEFAULT_LOOP_LAG_ERROR_MS;
+}
 
 export interface LoopLagWatchdogOptions {
 	/** Delivers one `host_stalled` lifecycle record to every connection. */
@@ -69,6 +75,16 @@ export class LoopLagWatchdog {
 	private readonly heapUsed: () => number;
 	private cpuMicrosAtTick = 0;
 	private heapBytesAtTick = 0;
+	/** This host's own generation directory when a supervisor launched it; evidence goes nowhere else. */
+	private readonly evidenceDir: string | undefined;
+	private heartbeatInFlight = false;
+	/**
+	 * The parent this host was launched under. Once it is gone the host is orphaned and on its way out:
+	 * its generation directory belongs to nobody now (gc may be judging or removing it), so the host
+	 * stops writing evidence there instead of racing that with a heartbeat a dying process may leave torn.
+	 */
+	private readonly launchParentPid = process.ppid;
+	private evidenceFailureLogged = false;
 
 	constructor(options: LoopLagWatchdogOptions) {
 		const env = options.env ?? process.env;
@@ -78,7 +94,8 @@ export class LoopLagWatchdog {
 		this.cpuUsage = options.cpuUsage ?? (() => process.cpuUsage());
 		this.heapUsed = options.heapUsed ?? (() => process.memoryUsage().heapUsed);
 		this.warnMs = parseIdleExitMs(env[LOOP_LAG_WARN_MS_ENV]) ?? DEFAULT_LOOP_LAG_WARN_MS;
-		this.errorMs = parseIdleExitMs(env[LOOP_LAG_ERROR_MS_ENV]) ?? DEFAULT_LOOP_LAG_ERROR_MS;
+		this.errorMs = loopLagErrorMs(env);
+		this.evidenceDir = ownGenerationDir(env);
 	}
 
 	start(): void {
@@ -119,23 +136,68 @@ export class LoopLagWatchdog {
 		this.heapBytesAtTick = heapBytes;
 		const driftMs = Math.round(now - expectedAt);
 		recordLoopBlockedMs(driftMs);
-		if (driftMs <= this.warnMs) return;
+		if (driftMs <= this.warnMs) {
+			this.beat(now);
+			return;
+		}
 		const attribution = sessionActivitySince(previousMark);
 		const processCpuMs = Math.round((cpuMicros - previousCpuMicros) / 1000);
 		const heapDeltaMb = Math.round((heapBytes - previousHeapBytes) / BYTES_PER_MB);
-		if (driftMs > this.errorMs)
-			this.emit({
+		if (driftMs > this.errorMs) {
+			const record: RpcHostStalledEvent = {
 				type: "host_stalled",
 				driftMs,
 				sessionId: attribution?.sessionId,
 				tool: attribution?.tool,
 				processCpuMs,
 				heapDeltaMb,
-			});
+			};
+			this.emit(record);
+			this.persistStall(now, record);
+		}
 		if (this.lastWarnAt !== undefined && now - this.lastWarnAt < LOOP_LAG_WARN_INTERVAL_MS) return;
 		this.lastWarnAt = now;
 		this.log(
 			`senpi rpc host stall: event loop blocked ${driftMs}ms (${describeAttribution(attribution)}; ${describeWindow(processCpuMs, heapDeltaMb)})\n`,
+		);
+	}
+
+	/**
+	 * A healthy tick refreshes the heartbeat a reader takes as "this loop is running"; it stops the moment
+	 * the loop does, which is how a stall in progress becomes visible (senpi#2566). Async and best-effort:
+	 * the session loop never waits on it, and a write still in flight skips the next beat.
+	 */
+	private beat(now: number): void {
+		if (!this.ownsEvidenceDir() || this.evidenceDir === undefined || this.heartbeatInFlight) return;
+		this.heartbeatInFlight = true;
+		void writeHeartbeat(this.evidenceDir, new Date(now).toISOString())
+			.catch((cause: unknown) => this.evidenceFailed(cause))
+			.finally(() => {
+				this.heartbeatInFlight = false;
+			});
+	}
+
+	private persistStall(now: number, record: RpcHostStalledEvent): void {
+		if (!this.ownsEvidenceDir() || this.evidenceDir === undefined) return;
+		void writeStallEvidence(this.evidenceDir, {
+			at: new Date(now).toISOString(),
+			driftMs: record.driftMs,
+			processCpuMs: record.processCpuMs ?? 0,
+			heapDeltaMb: record.heapDeltaMb ?? 0,
+			...(record.sessionId ? { sessionId: record.sessionId } : {}),
+			...(record.tool ? { tool: record.tool } : {}),
+		}).catch((cause: unknown) => this.evidenceFailed(cause));
+	}
+
+	private ownsEvidenceDir(): boolean {
+		return process.ppid === this.launchParentPid;
+	}
+
+	private evidenceFailed(cause: unknown): void {
+		if (this.evidenceFailureLogged) return;
+		this.evidenceFailureLogged = true;
+		this.log(
+			`senpi rpc host stall evidence not written: ${cause instanceof Error ? cause.message : String(cause)}\n`,
 		);
 	}
 }

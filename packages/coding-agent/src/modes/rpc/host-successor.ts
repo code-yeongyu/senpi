@@ -23,6 +23,7 @@ import { waitForStartTime } from "../app-server/daemon/process.ts";
 import { generationPaths, HOST_STATE_FILE_MODE, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { releaseGeneration, writeGenerationRecord, writeHostRegistration } from "./host-daemon-registration.ts";
 import { readFileOrUndefined, readHostSettings, writeHostSettings } from "./host-daemon-state.ts";
+import { announceStop, recordEscalation, type StopTarget, signalPid } from "./host-ensure-stop.ts";
 import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
@@ -130,7 +131,14 @@ export async function startSuccessor(context: {
 		const answer = await awaitSuccessor(options, host, exited);
 		if (!answer) {
 			const reason = await abortReason(options.socket, replaced);
-			const cleanupFailure = await abandonSuccessor({ child, exited, paths, instanceId, bootSettings });
+			const cleanupFailure = await abandonSuccessor({
+				child,
+				exited,
+				paths,
+				instanceId,
+				bootSettings,
+				reason: "successor_readiness_timeout",
+			});
 			return { action: "refuse", reason, upgradeable: true, ...(cleanupFailure && { detail: cleanupFailure }) };
 		}
 		// The pointer moves to the successor only now: until the rename landed, the generation the
@@ -151,7 +159,14 @@ export async function startSuccessor(context: {
 			instanceId: answer.instanceId ?? "",
 		};
 	} catch (cause) {
-		const cleanupFailure = await abandonSuccessor({ child, exited, paths, instanceId, bootSettings });
+		const cleanupFailure = await abandonSuccessor({
+			child,
+			exited,
+			paths,
+			instanceId,
+			bootSettings,
+			reason: "successor_start_failed",
+		});
 		const detail = cause instanceof Error ? cause.message : String(cause);
 		return {
 			action: "refuse",
@@ -177,14 +192,30 @@ async function abandonSuccessor(context: {
 	paths: HostDaemonPaths;
 	instanceId: string;
 	bootSettings: string | undefined;
+	/** Why the successor is being killed: the stop intent and the record name it. */
+	reason: string;
 }): Promise<string | undefined> {
 	const { child, exited, paths, instanceId, bootSettings } = context;
-	if (child !== undefined && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+	const target: StopTarget = {
+		daemonDir: paths.dir,
+		generation: generationPaths(paths, instanceId),
+		instanceId,
+		sender: { pid: process.pid, kind: "successor" },
+		reason: context.reason,
+	};
+	// A successor that cannot be asked to stop is killed outright; it runs no exit handler, so the
+	// record of it is this process's to write, BEFORE its generation is released below.
+	const killed =
+		child?.pid !== undefined && child.exitCode === null && child.signalCode === null
+			? await announceStop(target, child.pid)
+			: undefined;
+	if (killed !== undefined && child?.pid !== undefined) signalPid(child.pid, "SIGKILL");
 	try {
 		if (bootSettings === undefined) await rm(paths.settingsFile, { force: true });
 		else await writeFile(paths.settingsFile, bootSettings, { mode: HOST_STATE_FILE_MODE });
 		if (child?.pid === undefined) await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true });
 		else if (exited !== undefined && (await exitedWithin(exited, SUCCESSOR_EXIT_WAIT_MS))) {
+			if (killed !== undefined) await recordEscalation(target, killed);
 			await releaseGeneration(paths, { instanceId, pid: child.pid });
 		}
 		return undefined;

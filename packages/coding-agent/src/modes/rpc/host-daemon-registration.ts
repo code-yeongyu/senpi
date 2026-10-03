@@ -178,6 +178,19 @@ export async function releaseGeneration(
 }
 
 /**
+ * Drops the pointer and the boot settings while the pointer still names `instanceId`, and leaves that
+ * generation's directory to the generation itself: `host stop` signals a supervisor that still reads
+ * its stop intent from there before it releases it.
+ */
+export async function releaseRegistrationPointer(paths: HostDaemonPaths, instanceId: string): Promise<void> {
+	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile));
+	if (pointer?.instance_id !== instanceId) return;
+	await rm(paths.settingsFile, { force: true });
+	// Last: "no pointer" is what every reader takes as "no host here" (senpi#2241).
+	await rm(paths.pointerFile, { force: true });
+}
+
+/**
  * The generation serving this socket, when - and only when - its record PROVES which process that
  * is. An owner nobody can prove may not be signalled at all (I1), so an unreadable identity, a
  * missing guard or a record about another endpoint all read as "no owner".
