@@ -290,6 +290,21 @@
 				"legacyContracts/test/jl-kernel.test.ts/JuliaKernel reports the largest globals in the result memory notice when live memory crosses the notice threshold"
 			],
 			"reason": "Julia results name their largest globals in the large-memory notice (new kernel contract)."
+		},
+		"14-host": {
+			"additions": [
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When it reaches the front, then it runs on the host in FIFO order and the interpreter receives no run frame for it",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When it is cancelled while queued, then it is removed like any queued cell and its executor never runs",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the active entry is interrupted, then its executor is aborted, the cell settles interrupted and the interpreter is not signalled",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When an interrupted entry's executor finishes afterwards, then its late outcome is ignored and later cells are unaffected",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the active entry times out, then its executor is aborted and the interpreter is not retired",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When its executor rejects, then the cell fails with that message and the next queued cell still runs",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the kernel closes with an entry active, then its executor is aborted",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a live Python interpreter When a host entry is interrupted mid-run, then the interpreter keeps its pid and globals",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/host-cell.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/host-cell.ts"
+			],
+			"reason": "Node 14 part 2: the Python kernel's queue can hold host-executed entries (the interpreter receives nothing; interrupt, timeout and close abort the host work without restarting the interpreter). Its module loads with the first Python kernel, and the new contracts. No caller submits one yet."
 		}
 	}
 }
