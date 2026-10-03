@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { startBridgeServer } from "../src/bridge/http-server.ts";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
+import { resolveCommandPath } from "../src/interpreters/resolve-command.ts";
 import { JuliaKernel } from "../src/kernels/jl/kernel.ts";
 
 function hasJulia(): boolean {
@@ -98,48 +98,49 @@ describe("JuliaKernel", () => {
 		},
 	);
 
-	it.skipIf(!hasJulia())(
-		"reports the largest globals in the result memory notice when live memory crosses the notice threshold",
-		async () => {
-			const root = await mkdtemp(join(tmpdir(), "senpi-jl-kernel-globals-"));
-			const server = await startBridgeServer({
-				token: "live-token",
-				onCall: async () => "unexpected",
-				onEmit: async () => {},
-				onCompletion: async () => {
-					throw new Error("unexpected completion");
+	it("reports the largest globals in the result memory notice when live memory crosses the notice threshold", async () => {
+		const juliaPath = resolveCommandPath("julia");
+		if (juliaPath === undefined) {
+			return;
+		}
+		const root = await mkdtemp(join(tmpdir(), "senpi-jl-kernel-globals-"));
+		const server = await startBridgeServer({
+			token: "live-token",
+			onCall: async () => "unexpected",
+			onEmit: async () => {},
+			onCompletion: async () => {
+				throw new Error("unexpected completion");
+			},
+		});
+		const MiB = 1024 * 1024;
+		try {
+			const kernel = JuliaKernel.start({
+				cwd: root,
+				sessionId: "jl-globals",
+				connection: { port: server.port, token: server.token },
+				command: juliaPath,
+				memory: {
+					thresholds: { gcWatermarkBytes: 32 * MiB, noticeBytes: 64 * MiB, ceilingBytes: 768 * MiB },
+					readFootprint: () => ({ bytes: 128 * MiB }),
 				},
 			});
-			const MiB = 1024 * 1024;
 			try {
-				const kernel = JuliaKernel.start({
-					cwd: root,
-					sessionId: "jl-globals",
-					connection: { port: server.port, token: server.token },
-					memory: {
-						thresholds: { gcWatermarkBytes: 32 * MiB, noticeBytes: 64 * MiB, ceilingBytes: 768 * MiB },
-						readFootprint: () => ({ bytes: 128 * MiB }),
-					},
+				const result = await kernel.run({
+					cellId: "big",
+					code: 'big_blob = repeat("a", 4 * 1024 * 1024); nothing',
+					timeoutMs: 120_000,
 				});
-				try {
-					const result = await kernel.run({
-						cellId: "big",
-						code: 'big_blob = repeat("a", 4 * 1024 * 1024); nothing',
-						timeoutMs: 120_000,
-					});
-					expect(result).toMatchObject({ ok: true });
-					expect(result.memory?.globals).toBeDefined();
-					expect(result.memory?.globals?.map((global) => global.name)).toContain("big_blob");
-				} finally {
-					await kernel.close();
-				}
+				expect(result).toMatchObject({ ok: true });
+				expect(result.memory?.globals).toBeDefined();
+				expect(result.memory?.globals?.map((global) => global.name)).toContain("big_blob");
 			} finally {
-				await server.close();
-				await rm(root, { recursive: true, force: true });
+				await kernel.close();
 			}
-		},
-		150_000,
-	);
+		} finally {
+			await server.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	}, 150_000);
 	it.skipIf(!hasJulia())(
 		"matches helper, status, markdown, and auto-display contracts",
 		async () => {
