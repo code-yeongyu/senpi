@@ -281,6 +281,58 @@ function senpi_set_connection(value)
     end
 end
 
+const senpi_memory = Ref{Any}(nothing)
+
+const SENPI_MEMORY_INTERNALS = Set([:senpi_current_cell, :senpi_memory, :senpi_connection, :senpi_frame_io, :senpi_stdout_capture, :senpi_stderr_capture, :senpi_protocol_stdin])
+
+function senpi_measure_global(value)
+    try
+        value isa Union{AbstractArray, AbstractString} && return sizeof(value)
+        Base.summarysize(value)
+    catch
+        nothing
+    end
+end
+
+function senpi_largest_globals(limit::Int)
+    try
+        candidates = Tuple{String, Int}[]
+        Base.invokelatest() do
+            for name in names(Main, all = true)
+                name in SENPI_MEMORY_INTERNALS && continue
+                name in (:Main, :Base, :Core, :Ans, :ans) && continue
+                lowered = lowercase(string(name))
+                startswith(lowered, "senpi_") && continue
+                startswith(string(name), "Senpi") && continue
+                startswith(string(name), "#") && continue
+                isdefined(Main, name) || continue
+                value = getfield(Main, name)
+                value isa Module && continue
+                value isa IO && continue
+                value isa Type && continue
+                value isa Function && continue
+                bytes = senpi_measure_global(value)
+                bytes !== nothing && bytes > 0 && push!(candidates, (string(name), bytes))
+            end
+        end
+        sort!(candidates, by = last, rev = true)
+        [Dict("name" => name, "bytes" => bytes) for (name, bytes) in candidates[1:min(limit, end)]]
+    catch
+        Dict{String, Any}[]
+    end
+end
+
+function senpi_memory_report()
+    try
+        senpi_memory[] === nothing && return nothing
+        named = senpi_largest_globals(5)
+        isempty(named) && return nothing
+        Dict{String, Any}("globals" => named)
+    catch
+        nothing
+    end
+end
+
 function senpi_run_cell(message)
     cell_id = string(get(message, "cellId", ""))
     code = string(get(message, "code", ""))
@@ -297,6 +349,8 @@ function senpi_run_cell(message)
         yield()
         frame = Dict{String, Any}("type" => "result", "cellId" => cell_id, "ok" => true, "durationMs" => round(Int, (time() - started) * 1000))
         value !== nothing && senpi_should_display_result(parsed) && (frame["valueRepr"] = senpi_json(value))
+        memory = senpi_memory_report()
+        memory !== nothing && (frame["memory"] = memory)
         senpi_emit(frame)
     catch error
         senpi_emit(Dict("type" => "result", "cellId" => cell_id, "ok" => false, "error" => senpi_error(error), "durationMs" => round(Int, (time() - started) * 1000)))
@@ -314,6 +368,7 @@ while !eof(SENPI_ORIGINAL_STDIN)
         kind = get(message, "type", nothing)
         if kind == "init"
             senpi_set_connection(get(message, "connection", nothing))
+            senpi_memory[] = get(message, "memory", nothing)
             senpi_emit(Dict("type" => "ready"))
         elseif kind == "run"
             senpi_run_cell(message)
