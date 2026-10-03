@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { apply, assertJsonValue, assertValidOp, assertValidWireOp, decoder, encoder, isBase, overlap, track, type Op, type WireOp } from "./delta-impl.ts";
 
 const PAD = "p".repeat(400);   // see "adaptive emission": a delta must be able to win
@@ -244,20 +244,34 @@ describe("dead-op elimination", () => {
 	it("is linear in the number of ops", () => {
 		// The naive formulation compares every op against every dominator, which
 		// is quadratic and degrades on exactly the wide flush this pass cleans up.
+		// #2026: count dominator-map lookups rather than wall-clock time, which
+		// varies with machine load even when the implementation is linear.
 		const wide = (n: number) => {
 			const root: Record<string, number> = {};
 			for (let i = 0; i < n; i++) root[`f${i}`] = i;
 			const t = track(root);
 			t.flush();   // drain the base batch
-			const started = performance.now();
 			for (let i = 0; i < n; i++) t.state[`f${i}`] = i + 1;
-			t.flush();
-			return performance.now() - started;
+			const get = vi.spyOn(Map.prototype, "get");
+			const has = vi.spyOn(Map.prototype, "has");
+			let ops: Op[];
+			let lookups: number;
+			try {
+				ops = t.flush();
+				lookups = get.mock.calls.length + has.mock.calls.length;
+			} finally {
+				get.mockRestore();
+				has.mockRestore();
+			}
+			expect(ops).toHaveLength(n);
+			expect(ops[0]).toEqual(["s", ["f0"], 1]);
+			expect(ops[n - 1]).toEqual(["s", [`f${n - 1}`], n]);
+			return lookups;
 		};
-		wide(200);                                    // warm
-		const small = Math.max(wide(250), 0.1);
+		const small = wide(250);
 		const large = wide(2500);
-		expect(large / small).toBeLessThan(40);       // linear would be ~10x
+		expect(small).toBeGreaterThanOrEqual(250);
+		expect(large).toBeLessThanOrEqual(small * 12); // 10x ops, with room for constant overhead
 	});
 
 	it("collapses a pathological redundant producer", () => {
