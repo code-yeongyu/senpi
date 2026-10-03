@@ -7,6 +7,7 @@ import { applySessionEnvironment } from "../session-env.ts";
 import { describeExit } from "./kernel-death.ts";
 import { KernelMemoryHost } from "./kernel-memory-host.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
+import { SubprocessRunDispatch } from "./subprocess-dispatch.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
 import { SubprocessRunQueue } from "./subprocess-queue.ts";
 import {
@@ -19,9 +20,7 @@ import {
 	KernelResetError,
 	KernelRetirementError,
 	KernelStartupError,
-	type PendingRun,
 	settlePendingRun,
-	timeoutResult,
 } from "./subprocess-run.ts";
 import { SubprocessStartupWatchdog } from "./subprocess-startup.ts";
 
@@ -38,6 +37,17 @@ export class SubprocessKernel {
 	private readonly options: SubprocessKernelOptions;
 	private readonly onMessage?: (message: KernelToHostMessage) => void;
 	private readonly runs = new SubprocessRunQueue();
+	private readonly dispatch = new SubprocessRunDispatch({
+		runs: this.runs,
+		readyProcess: () => {
+			const process = this.process;
+			return this.closed || !process || process.isRetiring || !this.processReady ? null : process;
+		},
+		currentProcess: () => this.process,
+		restartProcess: (process, signal, escalationMs) => this.restartProcess(process, signal, escalationMs),
+		failClosed: (error) => this.failClosed(error),
+		failure: () => this.failure,
+	});
 	private readonly memory: KernelMemoryHost | null;
 	private process: SubprocessProcess | null = null;
 	private processReady = false;
@@ -90,18 +100,7 @@ export class SubprocessKernel {
 			this.runs.settleAll(new CellInterruptedError(reason));
 			return { stateRetained: Promise.resolve(true) };
 		}
-		const process = this.process;
-		process?.retire();
-		this.runs.clearToolCalls();
-		const run = this.runs.active;
-		if (!run) return { stateRetained: Promise.resolve(true) };
-		this.runs.releaseActive(run);
-		this.runs.settle(run, failureResult(run, new CellInterruptedError(reason)));
-		const signal = globalThis.process.platform === "win32" ? "SIGTERM" : "SIGINT";
-		await this.restartProcess(process, signal, 5_000);
-		if (this.failure) throw this.failure;
-		// Restart always spawns a fresh interpreter, so no user global survives.
-		return { stateRetained: Promise.resolve(false) };
+		return this.dispatch.interruptActive(reason);
 	}
 
 	listKernelToolNames(): readonly string[] {
@@ -158,27 +157,7 @@ export class SubprocessKernel {
 	}
 
 	private pumpRuns(): void {
-		const process = this.process;
-		if (this.closed || this.runs.active || !process || process.isRetiring || !this.processReady) return;
-		const run = this.runs.startNext(performance.now());
-		if (!run) return;
-		const timeoutMs = run.input.timeoutMs;
-		if (timeoutMs !== undefined) run.timer = setTimeout(() => this.handleTimeout(run, timeoutMs), timeoutMs);
-		try {
-			process.send(encodeBridgeFrame({ type: "run", cellId: run.input.cellId, code: run.input.code, timeoutMs }));
-		} catch (error) {
-			this.failClosed(new KernelProcessError(error instanceof Error ? error.message : String(error)));
-		}
-	}
-
-	private handleTimeout(run: PendingRun, timeoutMs: number): void {
-		if (this.runs.active !== run || run.settled) return;
-		const process = this.process;
-		process?.retire();
-		this.runs.clearToolCalls();
-		this.runs.releaseActive(run);
-		this.runs.settle(run, timeoutResult(run, timeoutMs));
-		void this.restartProcess(process);
+		this.dispatch.pump();
 	}
 
 	private spawnProcess(): void {

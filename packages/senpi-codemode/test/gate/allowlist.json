@@ -211,6 +211,13 @@
 				"legacyContracts/test/py-kernel-child-lifecycle.test.ts/PythonKernel retires cell subprocesses on close leaves no driver, kernel or child behind when the process that started the driver dies"
 			],
 			"reason": "Adds a witness that the host-loss test driver exits when the process that started it dies (stdin EOF), so no driver, kernel or child outlives the test. Test-only; no prompt, schema, helper or runtime surface changes."
+		},
+		"14-split": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/subprocess-dispatch.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/subprocess-dispatch.ts"
+			],
+			"reason": "Move-only: the subprocess kernel's run dispatch (pump, timeout, active-cell interrupt) moved into its own module, so the scoped census loads one more module. No behaviour change."
 		}
 	}
 }
