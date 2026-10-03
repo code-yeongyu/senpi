@@ -25,6 +25,7 @@ import { jsRuntimeInfo, jsRuntimeLabel } from "./extension/runtime-info.ts";
 import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from "./extension/session-manager.ts";
 import { SessionManagerProxy } from "./extension/session-manager-proxy.ts";
 import { activeBunSkillPath, registerBunSkillContribution } from "./extension/skill-contribution.ts";
+import { StartRecovery, withStartRecovery } from "./extension/start-recovery.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "./extension/wake-source-state.ts";
 import type { KernelToolsCapability } from "./kernels/js/kernel-tools-types.ts";
 import { EvalDetachedCellManager, type EvalDetachedCellStatusEntry } from "./tool/detached-cell-manager.ts";
@@ -36,12 +37,9 @@ import {
 import { createEvalTool } from "./tool/eval-tool.ts";
 import { renderEvalCall, renderEvalResult } from "./tool/render.ts";
 
-const SESSION_LIFECYCLE_EVENTS = [
-	"session_start",
-	"session_shutdown",
-	"session_before_switch",
-	"session_before_fork",
-] as const;
+// session_before_switch / session_before_fork are veto points another extension can cancel, so they never
+// tear the runtime down; a switch or fork that goes ahead emits session_shutdown before the old session ends.
+const SESSION_LIFECYCLE_EVENTS = ["session_start", "session_shutdown"] as const;
 
 type SessionLifecycleEvent = (typeof SESSION_LIFECYCLE_EVENTS)[number];
 
@@ -122,6 +120,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		pi.rpc?.emit(WAKE_SOURCE_STATE_EVENT, state);
 		pi.events?.emit(WAKE_SOURCE_STATE_EVENT, state);
 	};
+	const recovery = new StartRecovery(async (event, ctx) => await startSession(event, ctx));
 	const registerEvalForRuntime = (
 		runtime: SessionRuntime,
 		modelId: string | undefined,
@@ -140,32 +139,35 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		const preludes = promptKernelPreludes(pi);
 		promptPreludeDocs = kernelPreludeDocsKey(preludes);
 		pi.registerTool(
-			createEvalTool({
-				enabledLanguages: runtime.enabledLanguages,
-				kernelManager: manager,
-				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
-				foregroundWindowSeconds: resolveForegroundWindowSeconds(runtime.settings),
-				runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
-				hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
-				executeTool: runtime.executeTool,
-				listTools: () => pi.getAllTools(),
-				complete,
-				settings: runtime.settings,
-				artifactsDir: runtime.artifactsDir,
-				cellManager,
-				executionTracker: manager,
-				onCellSettled,
-				renderers,
-				monitor,
-				spawns: runtime.spawns,
-				spawnDefaultAgent: runtime.settings.taskTools.task,
-				hostLine: hostLine(),
-				runtimes: runtime.runtimes,
-				kernelPreludes: () => activeKernelPreludes(pi),
-				promptKernelPreludes: preludes,
-				...(bunSkillPath === undefined ? {} : { bunSkillPath }),
-				...(modelId === undefined ? {} : { modelId }),
-			}),
+			withStartRecovery(
+				recovery,
+				createEvalTool({
+					enabledLanguages: runtime.enabledLanguages,
+					kernelManager: manager,
+					cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
+					foregroundWindowSeconds: resolveForegroundWindowSeconds(runtime.settings),
+					runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
+					hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
+					executeTool: runtime.executeTool,
+					listTools: () => pi.getAllTools(),
+					complete,
+					settings: runtime.settings,
+					artifactsDir: runtime.artifactsDir,
+					cellManager,
+					executionTracker: manager,
+					onCellSettled,
+					renderers,
+					monitor,
+					spawns: runtime.spawns,
+					spawnDefaultAgent: runtime.settings.taskTools.task,
+					hostLine: hostLine(),
+					runtimes: runtime.runtimes,
+					kernelPreludes: () => activeKernelPreludes(pi),
+					promptKernelPreludes: preludes,
+					...(bunSkillPath === undefined ? {} : { bunSkillPath }),
+					...(modelId === undefined ? {} : { modelId }),
+				}),
+			),
 		);
 	};
 	const dropRuntime = async (): Promise<void> => {
@@ -179,35 +181,38 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		await manager.dispose();
 	};
 	pi.registerTool(
-		createEvalTool({
-			enabledLanguages: { py: true, js: true, rb: true, jl: true },
-			kernelManager: manager,
-			cellTimeoutSeconds: defaultCodemodeSettings.cellTimeoutSeconds,
-			foregroundWindowSeconds: resolveForegroundWindowSeconds(defaultCodemodeSettings),
-			runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
-			hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
-			executeTool: createExecuteTool(pi),
-			listTools: () => pi.getAllTools(),
-			complete,
-			settings: defaultCodemodeSettings,
-			cellManager: new EvalDetachedCellManager({
-				notifier,
-				maxDetachedCells: resolveMaxDetachedCells(defaultCodemodeSettings),
-				retainedResultsBytes: resolveRetainedResultsBytes(defaultCodemodeSettings),
-				hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
+		withStartRecovery(
+			recovery,
+			createEvalTool({
+				enabledLanguages: { py: true, js: true, rb: true, jl: true },
+				kernelManager: manager,
+				cellTimeoutSeconds: defaultCodemodeSettings.cellTimeoutSeconds,
+				foregroundWindowSeconds: resolveForegroundWindowSeconds(defaultCodemodeSettings),
 				runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
-				onStatusChange: showDetachedCells,
-				onWakeSourceState: emitWakeSourceState,
-				...(options.now === undefined ? {} : { now: options.now }),
+				hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
+				executeTool: createExecuteTool(pi),
+				listTools: () => pi.getAllTools(),
+				complete,
+				settings: defaultCodemodeSettings,
+				cellManager: new EvalDetachedCellManager({
+					notifier,
+					maxDetachedCells: resolveMaxDetachedCells(defaultCodemodeSettings),
+					retainedResultsBytes: resolveRetainedResultsBytes(defaultCodemodeSettings),
+					hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
+					runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
+					onStatusChange: showDetachedCells,
+					onWakeSourceState: emitWakeSourceState,
+					...(options.now === undefined ? {} : { now: options.now }),
+				}),
+				executionTracker: manager,
+				renderers,
+				// The baseline tool is registered before extensions such as monitor load.
+				monitor: false,
+				hostLine: hostLine(),
+				runtimes: { js: jsRuntimeInfo() },
+				...(bunSkillPath === undefined ? {} : { bunSkillPath }),
 			}),
-			executionTracker: manager,
-			renderers,
-			// The baseline tool is registered before extensions such as monitor load.
-			monitor: false,
-			hostLine: hostLine(),
-			runtimes: { js: jsRuntimeInfo() },
-			...(bunSkillPath === undefined ? {} : { bunSkillPath }),
-		}),
+		),
 	);
 	pi.registerRemovedToolHint(
 		"exec",
@@ -219,7 +224,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	);
 	registerBunSkillContribution(pi);
 
-	pi.on("session_start", async (event, ctx) => {
+	const startSession = async (event: unknown, ctx: ExtensionContext): Promise<void> => {
 		const previousCells = activeCells;
 		activeCells = undefined;
 		await previousCells?.dispose();
@@ -247,10 +252,12 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		activeRuntime = runtime;
 		activeModelId = ctx.model?.id;
 		registerEvalForRuntime(runtime, activeModelId, cellManager);
+	};
+	pi.on("session_start", async (event, ctx) => await recovery.runStart(event, ctx));
+	pi.on("session_shutdown", async () => {
+		recovery.sessionEnded();
+		await dropRuntime();
 	});
-	pi.on("session_shutdown", async () => dropRuntime());
-	pi.on("session_before_switch", async () => dropRuntime());
-	pi.on("session_before_fork", async () => dropRuntime());
 	pi.on("model_select", async (event, ctx) => {
 		activeContext = ctx;
 		const runtime = activeRuntime;
