@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
+import { readBaseBaseline, reviewBaselineChanges } from "./gate-baseline-review.ts";
 import { compareReports } from "./gate-compare.ts";
 import { runProcess } from "./gate-process.ts";
 import { writeGateOutput } from "./gate-output.ts";
@@ -41,6 +42,7 @@ async function main(): Promise<void> {
 			target: { type: "string", default: packageRoot },
 			report: { type: "string", default: "gate-report.json" },
 			"write-baseline": { type: "boolean", default: false },
+			"base-ref": { type: "string" },
 		},
 	});
 	const requestedTarget = resolve(values.target);
@@ -156,14 +158,27 @@ async function main(): Promise<void> {
 					return {};
 				});
 		}
-		const result = values["write-baseline"]
+		const baselinePath = resolve(values.baseline);
+		const committed = values["write-baseline"] ? undefined : await readReport(baselinePath);
+		const result = committed === undefined
 			? { exitCode: failures.length ? 1 : 0, failures: [], additions: [] }
 			: compareReports({
-					baseline: await readReport(resolve(values.baseline)), report,
+					baseline: committed, report,
 					additions: Object.values(allowlist.nodes).flatMap((node) => node.additions),
 				});
 		failures.push(...result.failures);
 		additions = result.additions;
+		if (committed !== undefined) {
+			const baseRef = values["base-ref"];
+			const resolved = await readBaseBaseline({ baselinePath, env: process.env, ...(baseRef === undefined ? {} : { baseRef }) });
+			if (resolved !== undefined) {
+				console.log(`Baseline changes reviewed against merge base ${resolved.mergeBase}`);
+				failures.push(...reviewBaselineChanges({
+					base: resolved.base, committed, report,
+					changes: Object.values(allowlist.nodes).flatMap((node) => node.changes ?? []),
+				}));
+			}
+		}
 	} catch (error: unknown) {
 		failures.push(error instanceof Error ? error.message : canonical(error));
 		for (const section of ["prompts", "schemas", "helperCensus", "invariants", "imports"] as const) {

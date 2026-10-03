@@ -38,7 +38,13 @@ export const runtimesSchema = Type.Object({
 });
 export const allowlistSchema = Type.Object({
 	version: Type.Literal(1),
-	nodes: Type.Record(Type.String(), Type.Object({ additions: strings, reason: Type.String() })),
+	nodes: Type.Record(Type.String(), Type.Object({
+		additions: strings,
+		reason: Type.String(),
+		changes: Type.Optional(Type.Array(
+			Type.Object({ key: Type.String({ minLength: 1 }), reason: Type.String({ minLength: 1 }) }, { additionalProperties: false }),
+		)),
+	})),
 });
 export const goldenSchema = Type.Record(Type.String(), strings);
 

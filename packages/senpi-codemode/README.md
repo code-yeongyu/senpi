@@ -457,8 +457,18 @@ Homebrew (put `/opt/homebrew/opt/ruby/bin` first on `PATH`; macOS's system Ruby
 before `--write-baseline`.
 
 The report is gitignored `gate-report.json` by default (`--report <path>` overrides it).
-`test/gate/allowlist.json` contains reviewed additive changes keyed by plan node;
-it cannot authorize removal or modification of a legacy entry. The test-only
+`test/gate/allowlist.json` contains reviewed additive changes keyed by plan node.
+A pull request that changes the committed `baseline.json` itself (an intended
+schema or prompt change, a renamed contract, a deleted module) must list every
+cell it edits or removes under that node's `changes`, each as
+`{ "key": "<section>/<cell>", "reason": "..." }`. In a pull request the gate reads
+the baseline at the merge base and fails any baseline edit or removal that is
+not listed, any edited or added cell that differs from what the head measures,
+and any listed removal the head still measures. Reviewers read each `changes`
+entry: it is the only record of why a protected surface moved. If the merge
+base cannot be resolved in a pull request, the gate fails closed; the gate job
+checks out full history for this. A local run outside a pull request reviews
+baseline changes only with `--base-ref <ref>`. The test-only
 `SENPI_CODEMODE_GATE_MUTATE=drop-phase` report mutation proves that helper removal
 is rejected. `SENPI_CODEMODE_GATE_MUTATE=leak-kernel` leaves the real kernel
 alive at the teardown witness, then closes it in `finally`; nonzero process,

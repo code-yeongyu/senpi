@@ -1,3 +1,21 @@
+## 2026-10-03 - codemode-gate checks out full history to review baseline changes (senpi#2452)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `codemode-gate` job's checkout step sets `fetch-depth: 0`.
+
+### Why
+
+- The eval gate now reads `packages/senpi-codemode/test/gate/baseline.json` at the pull request's merge base and requires every baseline cell the PR edits or removes to be listed with a reason. A shallow checkout cannot resolve the merge base, and the gate fails closed when it cannot, so the job needs full history.
+
+### Why an extension could not handle it
+
+- Checkout depth is CI workflow configuration evaluated before any Senpi runtime or extension loader exists.
+
+### Expected merge conflict zones
+
+- LOW: the `codemode-gate` job's checkout step in `.github/workflows/ci.yml`.
+
 ## 2026-10-03 - The release body includes every published package's notes (senpi#2585)
 
 ### What changed
