@@ -14,7 +14,7 @@ export interface RubyKernelStartOptions extends KernelLifecycle {
 	readonly command?: string;
 	readonly spawn?: SubprocessSpawn;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
-	/** Ceiling-only memory management (no notice or globals list: the runner reports no memory). */
+	/** Memory management: the runner reports its largest globals and the host reads the interpreter footprint for the ceiling. */
 	readonly memory?: SubprocessKernelMemory;
 }
 

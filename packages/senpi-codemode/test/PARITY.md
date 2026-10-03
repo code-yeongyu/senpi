@@ -56,7 +56,7 @@ The memory report, large-globals notice, and ceiling restart (senpi#2261) have n
 | --- | --- | --- | --- | --- | --- |
 | js | worker heap | yes (synchronous + idle) | yes | yes | `test/js-kernel-memory.test.ts` |
 | py | process footprint, in the kernel | yes (`gc.collect()`, glibc `malloc_trim(0)`) | yes | yes | `test/py-kernel-memory.test.ts` |
-| rb | interpreter footprint, read by the host | no | gap: no globals list or notice | yes | `test/kernels/rb/subprocess-memory-ceiling.test.ts` |
+| rb | interpreter footprint, read by the host | no | yes (runner-side sizer) | yes | `test/kernels/rb/subprocess-memory-ceiling.test.ts`; `test/rb-kernel.test.ts` |
 | jl | interpreter footprint, read by the host | no | gap: no globals list or notice | yes | `test/kernels/rb/subprocess-memory-ceiling.test.ts` |
 
-The Ruby and Julia runners report no memory of their own, so their results carry only the host-read footprint and the ceiling fields; naming their largest globals would need a runner-side sizer like the Python prelude's.
+The Julia runner reports no memory of its own, so its results carry only the host-read footprint and the ceiling fields; naming its largest globals would need a runner-side sizer like the Python prelude's. The Ruby runner now reports its largest globals (mirroring the Python prelude's sizer), which the host merges into the footprint report.

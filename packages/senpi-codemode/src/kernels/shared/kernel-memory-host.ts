@@ -35,8 +35,11 @@ export class KernelMemoryHost {
 	}
 
 	annotate(result: ResultMessage, pid?: number): ResultMessage {
+		const runnerReport = result.memory;
 		const report =
-			this.#readFootprint === undefined ? result.memory : this.#footprintReport(this.#readFootprint, pid);
+			this.#readFootprint === undefined
+				? runnerReport
+				: this.#footprintReport(this.#readFootprint, pid, runnerReport);
 		return report === undefined ? result : { ...result, memory: this.#policy.annotate(report) };
 	}
 
@@ -54,10 +57,14 @@ export class KernelMemoryHost {
 		this.#policy.kernelRetired();
 	}
 
-	#footprintReport(read: FootprintReader, pid: number | undefined) {
+	#footprintReport(read: FootprintReader, pid: number | undefined, runnerReport: ResultMessage["memory"]) {
 		if (pid === undefined) return undefined;
 		const footprint = read(pid);
 		if (footprint === undefined) return undefined;
-		return { liveBytes: Math.round(footprint.bytes), measure: "footprint" as const };
+		return {
+			liveBytes: Math.round(footprint.bytes),
+			measure: "footprint" as const,
+			...(runnerReport?.globals === undefined ? {} : { globals: runnerReport.globals }),
+		};
 	}
 }

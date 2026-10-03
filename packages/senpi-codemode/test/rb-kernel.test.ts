@@ -1,5 +1,6 @@
 // allow: SIZE_OK — parity cases stay beside the live kernel harness they exercise.
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -175,6 +176,64 @@ describe("RubyKernel", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+
+	it.skipIf(!hasRuby())(
+		"reports the largest globals in the result memory notice when live memory crosses the notice threshold",
+		async () => {
+			const root = await mkdtemp(join(tmpdir(), "senpi-rb-kernel-globals-"));
+			const server = await startBridgeServer({
+				token: "live-token",
+				onCall: async () => "unexpected",
+				onEmit: async () => {},
+				onCompletion: async () => {
+					throw new Error("unexpected completion");
+				},
+			});
+			const MiB = 1024 * 1024;
+			try {
+				const kernel = RubyKernel.start({
+					cwd: root,
+					sessionId: "rb-globals",
+					connection: { port: server.port, token: server.token },
+					memory: {
+						thresholds: { gcWatermarkBytes: 32 * MiB, noticeBytes: 64 * MiB, ceilingBytes: 512 * MiB },
+						readFootprint: (pid) => {
+							try {
+								const status = readFileSync(`/proc/${pid}/status`, "utf8");
+								const kb = Number(status.match(/VmRSS:\s*(\d+)/)?.[1]);
+								if (Number.isFinite(kb) && kb > 0) return { bytes: kb * 1024 };
+							} catch {}
+							try {
+								const rss = Number(
+									execFileSync("ps", ["-o", "rss=", "-p", String(pid)], { encoding: "utf8" }).trim(),
+								);
+								if (Number.isFinite(rss) && rss > 0) return { bytes: rss * 1024 };
+							} catch {}
+							return undefined;
+						},
+					},
+				});
+				try {
+					const result = await kernel.run({
+						cellId: "big",
+						code: '$big_blob = "a" * (128 * 1024 * 1024); nil',
+						timeoutMs: 15_000,
+					});
+					expect(result).toMatchObject({ ok: true });
+					expect(result.memory?.globals).toBeDefined();
+					expect(result.memory?.globals?.map((global) => global.name)).toContain("$big_blob");
+					expect(
+						result.memory?.globals?.find((global) => global.name === "$big_blob")?.bytes,
+					).toBeGreaterThanOrEqual(128 * MiB);
+				} finally {
+					await kernel.close();
+				}
+			} finally {
+				await server.close();
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
 
 	it.skipIf(!hasRuby())("does not leave runner.rb alive after a timeout restart and close", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-rb-kernel-cleanup-"));

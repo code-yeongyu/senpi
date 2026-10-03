@@ -119,6 +119,66 @@ rescue JSON::GeneratorError
   value.inspect
 end
 
+$__senpi_memory = nil
+
+SENPI_MEMORY_INTERNALS = %i[
+  $__senpi_binding $__senpi_frame_mutex $__senpi_current_cell $__senpi_capture_cell
+  $__senpi_connection $__senpi_frame_io $__senpi_stdout_capture $__senpi_stderr_capture
+  $__senpi_protocol_stdin $__senpi_memory
+].freeze
+
+def __senpi_process_rss
+  if File.exist?("/proc/self/status")
+    status = File.read("/proc/self/status")
+    kb = status[/VmRSS:\s*(\d+)/, 1]
+    return kb.to_i * 1024 if kb
+  end
+  rss = `ps -o rss= -p #{Process.pid}`.strip
+  rss.empty? ? nil : rss.to_i * 1024
+rescue StandardError, Errno::ENOENT
+  nil
+end
+
+def __senpi_measure_global(value)
+  require "objspace"
+  ObjectSpace.memsize_of(value)
+rescue StandardError
+  nil
+end
+
+def __senpi_largest_globals(limit)
+  require "objspace"
+  candidates = []
+  $__senpi_binding.local_variables.each do |name|
+    next if SENPI_MEMORY_INTERNALS.include?(name)
+    bytes = __senpi_measure_global($__senpi_binding.local_variable_get(name))
+    candidates << [name.to_s, bytes] if bytes && bytes > 0
+  end
+  global_variables.each do |name|
+    next if SENPI_MEMORY_INTERNALS.include?(name) || name.to_s.start_with?("$__senpi_")
+    bytes = __senpi_measure_global(eval(name.to_s))
+    candidates << [name.to_s, bytes] if bytes && bytes > 0
+  end
+  candidates.sort_by { |_, bytes| -bytes }.first(limit).map { |name, bytes| { "name" => name, "bytes" => bytes } }
+rescue StandardError
+  []
+end
+
+def __senpi_memory_report
+  return nil if $__senpi_memory.nil?
+  notice = $__senpi_memory["noticeBytes"].to_i
+  live = __senpi_process_rss
+  return nil if live.nil?
+  report = { "liveBytes" => live, "measure" => "footprint" }
+  if notice > 0 && live >= notice
+    named = __senpi_largest_globals(5)
+    report["globals"] = named unless named.empty?
+  end
+  report
+rescue StandardError
+  nil
+end
+
 SENPI_NON_DISPLAY_NODES = %i[
   LASGN IASGN GASGN CVASGN DASGN OP_ASGN OP_CDECL CDECL MASGN CASGN
   DEFN DEFS CLASS MODULE SCLASS ALIAS UNDEF
@@ -172,6 +232,8 @@ def __senpi_run_cell(message)
       "durationMs" => ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round,
     }
     frame["valueRepr"] = __senpi_value_repr(value) if !value.nil? && __senpi_should_display_result?(source)
+    memory = __senpi_memory_report
+    frame["memory"] = memory unless memory.nil?
     __senpi_emit(frame)
   rescue Exception => error
     __senpi_emit({
@@ -192,6 +254,7 @@ $__senpi_protocol_stdin.each_line do |line|
   case message["type"]
   when "init"
     $__senpi_connection = message["connection"]
+    $__senpi_memory = message["memory"]
     __senpi_emit({ "type" => "ready" })
   when "run"
     __senpi_run_cell(message)
