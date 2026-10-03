@@ -67,6 +67,12 @@ Windows fresh-cache bootstrap p99 (30 samples). A stalled or failed start names
 the last stage and retains the interpreter's diagnostic error. The low-level
 `PythonKernel.start({ startupTimeoutMs })` override applies per stage.
 
+Every `eval` run must explicitly select an enabled `language` (`js`, `py`, `rb`,
+or `jl`); there is no default kernel, even when only one language is enabled.
+Omitting `action` means `run`, so it also requires `language`. Control requests
+with `action: "peek"` or `action: "stop"` use `cell_id` and do not require a
+language.
+
 ### Session environment
 
 Every kernel starts with the active session's `PI_*` environment — `PI_SESSION_ID`,

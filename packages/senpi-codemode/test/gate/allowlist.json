@@ -133,6 +133,20 @@
     "legacyContracts/test/bench/sampler.test.ts/per-block host sampling samples at the start, on every interval and at the end, in order and never concurrently"
    ],
    "reason": "Plan node 2 (senpi#2534, refs #2452): contract tests for the eval timing benchmark - paired comparator, per-row A/A-calibrated thresholds capped at 0.05, rescoring, scheduler, CPU accounting and workload fixtures. Test-only; no prompt, schema, helper or runtime surface changes."
+  },
+  "senpi#1396": {
+   "additions": [
+    "legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language null from an omission",
+    "legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language \"\" from an omission",
+    "legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language \"python\" from an omission",
+    "legacyContracts/test/eval-request-language.test.ts/eval request language validation distinguishes invalid language 42 from an omission",
+    "legacyContracts/test/eval-request-language.test.ts/eval request language validation rejects an omitted language instead of selecting a default kernel",
+    "legacyContracts/test/eval-request-language.test.ts/eval request language validation accepts peek without a language",
+    "legacyContracts/test/eval-request-language.test.ts/eval request language validation accepts stop without a language",
+    "legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value",
+    "legacyContracts/test/eval-request-language.test.ts/parseEvalRequest language and code enforcement lists only the enabled languages when a run names an unknown language"
+   ],
+   "reason": "#1395: an omitted eval language and an invalid one now fail with distinct errors, and peek/stop need no language; these contract tests pin that, and replace the 'same actionable error for an unknown language value' test."
   }
  }
 }

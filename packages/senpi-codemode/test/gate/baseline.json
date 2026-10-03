@@ -5204,31 +5204,31 @@
     ]
   },
   "observations": {
-    "targetRevision": "2da815ff3dc2e06342ac4e842e4901bc7946e5a1",
+    "targetRevision": "7cfea884b12653113a672e3bcccb6abc3703bf05",
     "platform": "darwin",
     "js-bun/version": "1.4.2",
     "js-bun/memoryAfter50Cells": {
-      "liveBytes": 3095360,
+      "liveBytes": 3096876,
       "measure": "heap"
     },
     "js-node/version": "v26.7.0",
     "js-node/memoryAfter50Cells": {
-      "liveBytes": 17569964,
+      "liveBytes": 17311396,
       "measure": "heap"
     },
     "py/version": "Python 3.14.7",
     "py/memoryAfter50Cells": {
-      "liveBytes": 27640288,
+      "liveBytes": 27984352,
       "measure": "footprint"
     },
     "rb/version": "ruby 4.0.7 (2026-09-15 revision 229531a6cf) +PRISM [arm64-darwin25]",
     "rb/memoryAfter50Cells": {
-      "liveBytes": 19186168,
+      "liveBytes": 19087864,
       "measure": "footprint"
     },
     "jl/version": "julia version 1.12.7",
     "jl/memoryAfter50Cells": {
-      "liveBytes": 166462352,
+      "liveBytes": 167232400,
       "measure": "footprint"
     },
     "virtualSpecifiers": [
@@ -5665,10 +5665,18 @@
       "test/eval-render.test.ts/nested tool-call widgets nested widgets: theme undefined": "passed",
       "test/eval-render.test.ts/nested tool-call widgets nested widgets: collapse budget": "passed",
       "test/eval-render.test.ts/nested tool-call widgets nested widgets: streaming partial": "passed",
+      "test/eval-request-language.test.ts/eval request language validation distinguishes invalid language null from an omission": "passed",
+      "test/eval-request-language.test.ts/eval request language validation distinguishes invalid language \"\" from an omission": "passed",
+      "test/eval-request-language.test.ts/eval request language validation distinguishes invalid language \"python\" from an omission": "passed",
+      "test/eval-request-language.test.ts/eval request language validation distinguishes invalid language 42 from an omission": "passed",
+      "test/eval-request-language.test.ts/eval request language validation rejects an omitted language instead of selecting a default kernel": "passed",
+      "test/eval-request-language.test.ts/eval request language validation accepts peek without a language": "passed",
+      "test/eval-request-language.test.ts/eval request language validation accepts stop without a language": "passed",
       "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws an actionable error when a run omits language": "passed",
-      "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws the same actionable error for an unknown language value": "passed",
+      "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws a distinct actionable error for an unknown language value": "passed",
       "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement names language first when a run omits both language and code": "passed",
       "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement lists only the enabled languages when a run omits language": "passed",
+      "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement lists only the enabled languages when a run names an unknown language": "passed",
       "test/eval-request-language.test.ts/parseEvalRequest language and code enforcement throws an actionable error when a run omits code": "passed",
       "test/eval-request-language.test.ts/eval tool schema describes language as required for run with the kernel guide": "passed",
       "test/eval-request-language.test.ts/eval tool schema describes code as required for run": "passed",
