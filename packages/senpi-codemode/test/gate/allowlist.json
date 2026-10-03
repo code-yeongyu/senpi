@@ -290,6 +290,26 @@
 				"legacyContracts/test/jl-kernel.test.ts/JuliaKernel reports the largest globals in the result memory notice when live memory crosses the notice threshold"
 			],
 			"reason": "Julia results name their largest globals in the large-memory notice (new kernel contract)."
+		},
+		"14-env": {
+			"additions": [
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When a local wheel installs, then it is published as the active revision and imports from it",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When a later install fails, then the previous revision stays active and importable and nothing partial is left",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When an install is interrupted while pip is working, then pip is stopped promptly and the previous revision stays active",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When two sessions install into one root at once, then the lock serialises them and the second builds on the first",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When a lock left by a process that has exited is found, then the install takes it over",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When pip installs, then the interpreter's own site-packages and the user site are left byte-identical",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--target /tmp/elsewhere x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--target=/tmp/elsewhere x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (-t/tmp/elsewhere x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--user x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--prefix=/usr x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--root / x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (-e .), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When the command is not install, then it is refused with the supported form",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When only requirements and ordinary flags are given, then they pass through as an argv"
+			],
+			"reason": "Node 14 part 3: the Python environments library (versioned revisions published by an atomic pointer switch, per-root install lock, pip --target installer) and its contracts. Not wired into any cell yet, so no import-census, prompt or helper change."
 		}
 	}
 }
