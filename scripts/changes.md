@@ -1,3 +1,22 @@
+## 2026-10-03 - The changelog gate fails a PR that removes existing change-log lines (senpi#2609)
+
+### What changed
+
+- `scripts/check-pr-changelog.mjs`: for every `changes.md` tracker the PR changes, `collectPrFacts` counts the base file's non-blank lines that are missing from the head (by content, with multiplicity, so diff alignment around a prepend is not a removal), and a deleted tracker counts all of them. Any removal fails the gate, naming the file and the count. For a `CHANGELOG.md`, a non-heading line of the base `[Unreleased]` section that no longer appears anywhere in the head file fails the gate; release stamping moves those lines into the new released section, so it still passes. Released sections keep their existing check.
+- `scripts/check-pr-changelog.test.mjs`: CLI cases for a tracker rewritten to only its new entry (#2598's shape), a deleted tracker, a replaced `[Unreleased]` bullet, and plain prepends that still pass.
+
+### Why
+
+- `scripts/check-pr-changelog.mjs`: the gate only read a tracker's added lines, so #2598 passed with `packages/ai/src/changes.md` cut from 5,756 lines to 18 and `packages/coding-agent/changes.md` from 1,516 to 19.
+
+### Why an extension could not handle it
+
+- Repository tooling; no extension surface reaches the PR gate.
+
+### Expected merge conflict zones
+
+- LOW: `scripts/check-pr-changelog.mjs`, `checkPrChangelog`'s violation chain, `collectPrFacts` and `main`'s facts plumbing.
+
 ## 2026-10-03 - Release notes cover every published package (senpi#2585)
 
 ### What changed

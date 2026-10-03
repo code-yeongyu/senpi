@@ -174,6 +174,58 @@ it("gates a PR whose changelog has grown past one mebibyte", (t) => {
 	assert.match(rejected.stdout + rejected.stderr, /packages\/coding-agent\/CHANGELOG\.md:\d+.*2026\.9\.20/);
 });
 
+// #2609: a PR may add entries to change logs but never delete existing ones (#2598 replaced two trackers with their new entry).
+it("fails a PR that removes existing change-log lines through the PR gate CLI", async (t) => {
+	const root = mkdtempSync(join(tmpdir(), "changelog-gate-2609-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const env = { ...process.env, GIT_CONFIG_GLOBAL: join(root, "gitconfig"), GIT_CONFIG_NOSYSTEM: "1" };
+	writeFileSync(env.GIT_CONFIG_GLOBAL, "");
+	const git = (...args) => {
+		const result = spawnSync("git", args, { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+		assert.equal(result.status, 0, result.stderr);
+		return result.stdout.trim();
+	};
+	git("init", "-q");
+	git("config", "user.name", "Fixture");
+	git("config", "user.email", "fixture@example.invalid");
+	const tracker = "packages/ai/src/changes.md";
+	const changelog = "packages/ai/CHANGELOG.md";
+	const entry = (title) =>
+		`## 2026-10-01 - ${title}\n\n### What changed\n\n- a\n\n### Why\n\n- b\n\n### Why an extension could not handle it\n\n- c\n\n### Expected merge conflict zones\n\n- d\n`;
+	const trackerOriginal = `${entry("First")}\n${entry("Second")}`;
+	const changelogOriginal = "# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- pending fix\n\n## [2026.9.20] - 2026-09-20\n\n### Fixed\n\n- published\n";
+	for (const [file, text] of [[tracker, trackerOriginal], [changelog, changelogOriginal]]) {
+		mkdirSync(dirname(join(root, file)), { recursive: true });
+		writeFileSync(join(root, file), text);
+	}
+	git("add", tracker, changelog);
+	git("commit", "-qm", "upstream fixture");
+	mkdirSync(join(root, ".github"));
+	writeFileSync(join(root, ".github/upstream.json"), JSON.stringify({ sha: git("rev-parse", "HEAD") }));
+	git("add", ".github/upstream.json");
+	git("commit", "-qm", "base fixture");
+	const base = git("rev-parse", "HEAD");
+	const cli = fileURLToPath(new URL("./check-pr-changelog.mjs", import.meta.url));
+	const check = (file, text, expected, pattern) => {
+		git("reset", "-q", "--soft", base);
+		for (const [path, original] of [[tracker, trackerOriginal], [changelog, changelogOriginal]]) writeFileSync(join(root, path), original);
+		if (text === null) rmSync(join(root, file));
+		else writeFileSync(join(root, file), text);
+		git("add", "-A");
+		git("commit", "--allow-empty", "-qm", "scenario fixture");
+		const result = spawnSync(process.execPath, [cli, "--base", base, "--labels", ""], { cwd: root, env, encoding: "utf8", timeout: 30_000 });
+		assert.equal(result.status, expected, result.stdout + result.stderr);
+		if (pattern) assert.match(result.stdout + result.stderr, pattern);
+	};
+	await t.test("tracker rewritten to only its new entry", () =>
+		check(tracker, entry("New"), 1, /packages\/ai\/src\/changes\.md: removes \d+ existing line/));
+	await t.test("deleted tracker", () => check(tracker, null, 1, /packages\/ai\/src\/changes\.md: removes \d+ existing line/));
+	await t.test("tracker prepend", () => check(tracker, `${entry("New")}\n${trackerOriginal}`, 0));
+	await t.test("deleted Unreleased entry", () =>
+		check(changelog, changelogOriginal.replace("- pending fix\n", "- replacement\n"), 1, /packages\/ai\/CHANGELOG\.md: removes 1 existing \[Unreleased\] line/));
+	await t.test("Unreleased prepend", () => check(changelog, changelogOriginal.replace("- pending fix", "- new fix\n- pending fix"), 0));
+});
+
 // #1884: drive the real CLI over committed diffs, including the actual release transformation.
 it("keeps released changelog sections immutable through the PR gate CLI", async (t) => {
 	const root = mkdtempSync(join(tmpdir(), "changelog-gate-1884-"));
