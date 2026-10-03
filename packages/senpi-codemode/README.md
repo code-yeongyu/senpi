@@ -100,6 +100,34 @@ getter and may name a file that does not exist yet. It honors session-directory 
 and in-memory sessions; it cannot be derived reliably from `PI_SESSION_FILE`. If the host
 omits the getter, the variable is unset rather than inherited from the launching process.
 
+### Python packages
+
+A Python cell whose only line is `%pip install <requirements>` installs packages
+without restarting the kernel: variables, the process and its working directory
+stay as they were. The cell runs in the kernel's queue like any other cell (it waits
+for the cell ahead of it, can be cancelled while queued, and detaches past the
+foreground window), but the install runs on the host, so its time does not count
+against the run budget. The next cell imports the new packages; modules a cell
+already imported stay cached until `reset`.
+
+Packages go into the session's own environment, never into the interpreter's
+site-packages or the user site: pip always runs as
+`<kernel interpreter> -m pip install --target <environment>`, and flags that pick
+another destination (`--target`, `--user`, `--prefix`, `--root`, `--home`,
+`-e`) are refused. Each install builds a new revision of the environment and
+publishes it only when pip succeeds, so a failed or cancelled install leaves the
+previous packages active and importable. A cell that mixes `%pip` with code is
+refused; put `%pip` on its own cell.
+
+`%environment managed` (the default) keeps the environment under the session's
+artifacts directory, or `environments.managedRoot` when set; `%environment project`
+installs into `<cwd>/.senpi/python-packages` instead, shared by every session in
+that project, with concurrent installs serialised by a lock. Setting
+`environments.autoProvision` to `false` turns installs off
+(`environment_installer_unavailable`). Failures carry pip's error output and one
+of `environment_install_failed`, `environment_install_cancelled`,
+`environment_installer_unavailable` or `environment_resolution_conflict`.
+
 ## Settings
 
 Configuration is loaded in this order:

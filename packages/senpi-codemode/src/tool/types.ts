@@ -144,14 +144,31 @@ export function createEvalInputSchema(
 export type EvalKernelResult = Extract<KernelToHostMessage, { type: "result" }>;
 export type EvalToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }>;
 
+export type HostCellOutcome =
+	| { readonly ok: true; readonly valueRepr?: string }
+	| { readonly ok: false; readonly error: { readonly message: string; readonly name?: string } };
+
+/**
+ * Work the host runs in the cell's place when the entry reaches the front of the kernel's queue: no code is
+ * sent to the interpreter, and aborting the signal (interrupt, timeout, kernel close) ends it without
+ * restarting the interpreter.
+ */
+export type HostCellExecutor = (context: {
+	readonly signal: AbortSignal;
+	readonly emit: (message: KernelToHostMessage) => void;
+}) => Promise<HostCellOutcome>;
+
 export interface EvalKernelRunInput {
 	readonly cellId: string;
 	readonly code: string;
+	readonly host?: HostCellExecutor;
 	readonly timeoutMs?: number;
 	readonly onStarted?: () => void;
 	readonly onMessage?: (message: KernelToHostMessage) => void;
 	/** Globals of the tools active when the cell was submitted; kernels without preludes ignore them. */
 	readonly kernelPreludes?: readonly KernelPreludeContribution[];
+	/** Python only: the session's active environment revision, put first on the import path before the cell runs. */
+	readonly envRoot?: string;
 }
 
 export interface KernelInterruptHandle {

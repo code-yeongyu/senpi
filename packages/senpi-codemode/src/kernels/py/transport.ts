@@ -33,6 +33,7 @@ export interface PythonTransportRunInput {
 	readonly code: string;
 	readonly timeoutMs?: number;
 	readonly preludePlan?: KernelPreludePlan;
+	readonly envRoot?: string;
 }
 
 export interface PythonTransportOptions {
@@ -145,7 +146,14 @@ export class PythonKernelTransport {
 			install: input.preludePlan.install.map(({ exports, python }) => ({ exports: [...exports], python })),
 			remove: [...input.preludePlan.remove],
 		};
-		this.#write({ type: "run", cellId: input.cellId, code: input.code, timeoutMs: input.timeoutMs, preludes });
+		this.#write({
+			type: "run",
+			cellId: input.cellId,
+			code: input.code,
+			timeoutMs: input.timeoutMs,
+			preludes,
+			...(input.envRoot === undefined ? {} : { envRoot: input.envRoot }),
+		});
 	}
 
 	interrupt(reason: string): void {

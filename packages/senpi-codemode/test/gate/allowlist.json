@@ -184,6 +184,34 @@
 			],
 			"reason": "Settings keep the user's other keys when a newer key is present, and gain optional keys for later features with today's defaults; three new config modules in the scoped census and the new settings contracts. The contract that pinned the old whole-file fallback for an unknown key is renamed in the baseline to the warn-and-keep behaviour it now asserts (status unchanged)."
 		},
+		"14": {
+			"additions": [
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a Python cell that is only a %pip line, then it is a host pip install with its arguments",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a Python cell that is only %environment project, then it switches the environment mode",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given a cell that mixes %pip with code, then it is refused with the own-cell teaching error",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given %environment with an unknown or missing mode, then it is refused naming the two modes",
+				"legacyContracts/test/magic-cells.test.ts/magic cell detection Given ordinary code, other line magics or another language, then the cell is not a host magic",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When a cell runs %pip install on a local wheel, then the next cell imports the package without a kernel restart",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When an install fails, then the cell reports pip's error, the active revision is unchanged and earlier packages still import",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When a cell mixes %pip with code, then it fails with the own-cell teaching error and installs nothing",
+				"legacyContracts/test/environments/magic-pip-e2e.test.ts/Given a Python eval session When %environment project is selected, then installs go to the project-local target and the interpreter's own site-packages and the user site stay untouched",
+				"imports/extension/packages/senpi-codemode/src/tool/magic-cells.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/magic-cells.ts",
+				"imports/extension/packages/senpi-codemode/src/tool/magic-cell-host.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/magic-cell-host.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/python-environments.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/python-environments.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/install-lock.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/py-environment.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/py-installer.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/revision-store.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/install-lock.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/py-environment.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/py-installer.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/revision-store.ts"
+			],
+			"reason": "Node 14 part 3: %pip / %environment magic cells run as host entries in the Python kernel's queue and every Python cell imports from the session's active environment revision; the magic-cell modules, and the environments library they import (install-lock, py-environment, py-installer, revision-store, first reached from the extension here), join the scoped census, plus the new contracts. No prompt or eval schema change."
+		},
 		"24": {
 			"additions": [
 				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a global array with an index accessor when the globals are sized then the getter never runs",
@@ -290,6 +318,41 @@
 				"legacyContracts/test/jl-kernel.test.ts/JuliaKernel reports the largest globals in the result memory notice when live memory crosses the notice threshold"
 			],
 			"reason": "Julia results name their largest globals in the large-memory notice (new kernel contract)."
+		},
+		"14-env": {
+			"additions": [
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When a local wheel installs, then it is published as the active revision and imports from it",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When a later install fails, then the previous revision stays active and importable and nothing partial is left",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When an install is interrupted while pip is working, then pip is stopped promptly and the previous revision stays active",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When two sessions install into one root at once, then the lock serialises them and the second builds on the first",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When a lock left by a process that has exited is found, then the install takes it over",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When pip installs, then the interpreter's own site-packages and the user site are left byte-identical",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--target /tmp/elsewhere x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--target=/tmp/elsewhere x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (-t/tmp/elsewhere x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--user x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--prefix=/usr x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (--root / x), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When they include a destination flag (-e .), then they are refused",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When the command is not install, then it is refused with the supported form",
+				"legacyContracts/test/environments/py-environment.test.ts/Given pip arguments from a magic cell When only requirements and ordinary flags are given, then they pass through as an argv"
+			],
+			"reason": "Node 14 part 3: the Python environments library (versioned revisions published by an atomic pointer switch, per-root install lock, pip --target installer) and its contracts. Not wired into any cell yet, so no import-census, prompt or helper change."
+		},
+		"14-host": {
+			"additions": [
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When it reaches the front, then it runs on the host in FIFO order and the interpreter receives no run frame for it",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When it is cancelled while queued, then it is removed like any queued cell and its executor never runs",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the active entry is interrupted, then its executor is aborted, the cell settles interrupted and the interpreter is not signalled",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When an interrupted entry's executor finishes afterwards, then its late outcome is ignored and later cells are unaffected",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the active entry times out, then its executor is aborted and the interpreter is not retired",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When its executor rejects, then the cell fails with that message and the next queued cell still runs",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a host-executed entry in the Python kernel's queue When the kernel closes with an entry active, then its executor is aborted",
+				"legacyContracts/test/py-kernel-host-cell.test.ts/Given a live Python interpreter When a host entry is interrupted mid-run, then the interpreter keeps its pid and globals",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/py/host-cell.ts",
+				"imports/extension/packages/senpi-codemode/src/kernels/py/host-cell.ts"
+			],
+			"reason": "Node 14 part 2: the Python kernel's queue can hold host-executed entries (the interpreter receives nothing; interrupt, timeout and close abort the host work without restarting the interpreter). Its module loads with the first Python kernel, and the new contracts. No caller submits one yet."
 		}
 	}
 }
