@@ -294,6 +294,8 @@ interface AutocompleteRequestOptions {
 	explicitTab: boolean;
 	/** Apply the best match of the fresh suggestions instead of showing them. */
 	acceptSelection?: boolean;
+	/** Keep the highlighted row when it is still listed (a provider-signalled refresh). */
+	preserveSelection?: boolean;
 }
 
 const ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20;
@@ -376,6 +378,7 @@ export class Editor implements Component, Focusable {
 	private autocompleteList?: SelectList;
 	private autocompleteState: "regular" | "force" | null = null;
 	private autocompletePrefix: string = "";
+	private autocompleteProviderSubscription?: () => void;
 	// Text and cursor the shown list was computed for; accepting after either changed must re-query.
 	private autocompleteListSnapshot?: { text: string; line: number; col: number };
 	/** The provider items behind `autocompleteList`, which only carries the display fields. */
@@ -550,7 +553,16 @@ export class Editor implements Component, Focusable {
 
 	setAutocompleteProvider(provider: AutocompleteProvider): void {
 		this.cancelAutocomplete();
+		this.autocompleteProviderSubscription?.();
 		this.autocompleteProvider = provider;
+		this.autocompleteProviderSubscription = provider.onDidChangeSuggestions?.(() => {
+			if (!this.autocompleteState) return;
+			this.requestAutocomplete({
+				force: this.autocompleteState === "force",
+				explicitTab: false,
+				preserveSelection: true,
+			});
+		});
 		this.setAutocompleteTriggerCharacters(provider.triggerCharacters ?? []);
 	}
 
@@ -963,9 +975,11 @@ export class Editor implements Component, Focusable {
 					this.state.lines = result.lines;
 					this.state.cursorLine = result.cursorLine;
 					this.setCursorCol(result.cursorCol);
+					const wasForced = this.autocompleteState === "force";
 					this.cancelAutocomplete();
 					if (this.onChange) this.onChange(this.getText());
 					if (drillsIntoNamespace) this.tryTriggerAutocomplete();
+					else this.continueIntoDirectory(selected, wasForced);
 				}
 				return;
 			}
@@ -1010,8 +1024,10 @@ export class Editor implements Component, Focusable {
 						}
 						// Fall through to submit
 					} else {
+						const wasForced = this.autocompleteState === "force";
 						this.cancelAutocomplete();
 						if (this.onChange) this.onChange(this.getText());
+						this.continueIntoDirectory(selected, wasForced);
 						return;
 					}
 				}
@@ -2724,6 +2740,7 @@ export class Editor implements Component, Focusable {
 			this.clearAutocompleteUi();
 			if (this.onChange) this.onChange(this.getText());
 			if (drillsIntoNamespace) this.tryTriggerAutocomplete();
+			else this.continueIntoDirectory(item, options.force);
 			this.tui.requestRender();
 			return;
 		}
@@ -2743,11 +2760,12 @@ export class Editor implements Component, Focusable {
 			this.state.cursorLine = result.cursorLine;
 			this.setCursorCol(result.cursorCol);
 			if (this.onChange) this.onChange(this.getText());
+			this.continueIntoDirectory(item, options.force);
 			this.tui.requestRender();
 			return;
 		}
 
-		this.applyAutocompleteSuggestions(suggestions, options.force ? "force" : "regular");
+		this.applyAutocompleteSuggestions(suggestions, options.force ? "force" : "regular", options.preserveSelection);
 		this.tui.requestRender();
 	}
 
@@ -2767,7 +2785,12 @@ export class Editor implements Component, Focusable {
 		);
 	}
 
-	private applyAutocompleteSuggestions(suggestions: AutocompleteSuggestions, state: "regular" | "force"): void {
+	private applyAutocompleteSuggestions(
+		suggestions: AutocompleteSuggestions,
+		state: "regular" | "force",
+		preserveSelection = false,
+	): void {
+		const keptValue = preserveSelection ? this.autocompleteList?.getSelectedItem()?.value : undefined;
 		this.autocompletePrefix = suggestions.prefix;
 		this.autocompleteListSnapshot = {
 			text: this.getText(),
@@ -2777,7 +2800,9 @@ export class Editor implements Component, Focusable {
 		this.autocompleteItems = suggestions.items;
 		this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
 
-		const bestMatchIndex = this.getBestAutocompleteMatchIndex(suggestions.items, suggestions.prefix);
+		const keptIndex = keptValue === undefined ? -1 : suggestions.items.findIndex((item) => item.value === keptValue);
+		const bestMatchIndex =
+			keptIndex >= 0 ? keptIndex : this.getBestAutocompleteMatchIndex(suggestions.items, suggestions.prefix);
 		if (bestMatchIndex >= 0) {
 			this.autocompleteList.setSelectedIndex(bestMatchIndex);
 		}
@@ -2811,6 +2836,11 @@ export class Editor implements Component, Focusable {
 				snapshot.line !== this.state.cursorLine ||
 				snapshot.col !== this.state.cursorCol)
 		);
+	}
+
+	/** A completed directory keeps the picker open on its contents, so Tab walks down a path. */
+	private continueIntoDirectory(item: AutocompleteItem, force: boolean): void {
+		if (item.label.endsWith("/")) this.requestAutocomplete({ force, explicitTab: false });
 	}
 
 	/** Accept on a list that predates the text: re-query for the current token, then accept its best match. */

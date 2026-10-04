@@ -18,6 +18,61 @@
 
 - `packages/tui/src/components/editor.ts`: the autocomplete branch at the end of `insertCharacter()`.
 
+## 2026-10-04 - @ suggestions match an in-memory file index instead of walking per keystroke
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: `CombinedAutocompleteProvider` keeps one background `fd` listing per searched directory (`refreshFileIndex()`: no pattern, `FILE_INDEX_MAX_ENTRIES` 100k, `FILE_INDEX_BUILD_BUDGET_MS` 3 s with partial output kept, refreshed in the background after `FILE_INDEX_REFRESH_MS` 5 s, `FILE_INDEX_MAX_ROOTS` 4). `getFuzzyFileSuggestions()` still asks `fd` for the one-level matches, then matches the index in memory with fd's own rules (`matchFileIndex()`: `buildFdPathQuery()` pattern, smart case, filename or full path). A subdirectory is answered from a cached ancestor's index (`findFileIndex()`); with no usable index the query waits for the listing (abort-aware), except a bare `@`, which answers from one level. `walkDirectoryWithFd()` takes an optional time budget and `parseFdOutput()` is shared. Equal-score ties rank hidden paths after visible ones unless the query starts with `.`.
+- `AutocompleteProvider.onDidChangeSuggestions?(listener)`: optional; the provider calls it when a finished listing differs from the previous one.
+
+### Why
+
+- Every keystroke walked the tree: `@~/Dev` from `$HOME` took about 7 s, and even a 400 ms walk budget left each update half a second behind typing. Hidden browser-profile files outranked visible ones of the same score.
+
+### Why an extension could not handle it
+
+- The `fd` walk, its scheduling and the ranking are private to `CombinedAutocompleteProvider`; a stacked provider can only wrap the finished result.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/autocomplete.ts`: the `AutocompleteProvider` interface, the provider's fields and new index methods before `getBaseDirSuggestions()`, `walkDirectoryWithFd()` (signature, `finish`, the `close` handler), the top of `getFuzzyFileSuggestions()`, and its sort comparator.
+
+## 2026-10-04 - The editor refreshes an open picker when the provider signals a change
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`: `setAutocompleteProvider()` subscribes to `onDidChangeSuggestions` (unsubscribing the previous provider) and re-queries an open picker with `preserveSelection`, so `applyAutocompleteSuggestions()` keeps the highlighted row when it is still listed.
+
+### Why
+
+- Deeper matches that land after the first answer should appear without another keystroke, and a refresh must not move the row the user was about to pick.
+
+### Why an extension could not handle it
+
+- The picker, its selection and the request sequencing are private to `Editor`.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: `setAutocompleteProvider()`, `AutocompleteRequestOptions`, the end of `runAutocompleteRequest()`, and `applyAutocompleteSuggestions()`.
+
+## 2026-10-04 - A completed directory keeps the picker open on its contents
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`: after Tab, Enter, a single-match Tab, or a refreshed accept applies an item whose label ends with `/`, `continueIntoDirectory()` requests suggestions again, so the picker shows the directory's entries.
+
+### Why
+
+- Tab on `@~/Developer/` closed the picker, and the next level appeared only after typing another character (Claude Code re-queries after accepting a directory).
+
+### Why an extension could not handle it
+
+- What happens after an accept is decided inside `Editor`'s private key handling.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the Tab and confirm branches of the autocomplete-mode input handler and the accept branches of `runAutocompleteRequest()`.
+
 ## 2026-10-04 - Accepting a suggestion list that predates the text re-queries instead of splicing
 
 ### What changed

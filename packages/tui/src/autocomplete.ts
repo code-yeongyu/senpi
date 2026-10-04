@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import { readdirSync, statSync } from "fs";
 import { homedir } from "os";
-import { basename, dirname, join } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import {
 	findDollarSkillMentions,
 	getDollarInvocationContext,
@@ -152,6 +152,57 @@ function buildCompletionValue(
 }
 
 // Use fd to walk directory tree (fast, respects .gitignore)
+// One background fd listing per searched directory backs every keystroke, so typing never waits on a
+// walk (a sparse query over $HOME used to walk for seconds). Capped, time-boxed, refreshed when stale.
+const FILE_INDEX_MAX_ENTRIES = 100_000;
+const FILE_INDEX_BUILD_BUDGET_MS = 3_000;
+const FILE_INDEX_REFRESH_MS = 5_000;
+const FILE_INDEX_MAX_ROOTS = 4;
+
+interface FileIndex {
+	entries: Array<{ path: string; isDirectory: boolean }>;
+	/** Basename of each entry, matched by fd's default (filename) mode. */
+	names: string[];
+	builtAt: number;
+	signature: string;
+}
+
+function createFileIndex(entries: Array<{ path: string; isDirectory: boolean }>): FileIndex {
+	let hash = 2166136261;
+	const names = entries.map((entry) => {
+		for (let i = 0; i < entry.path.length; i++) hash = Math.imul(hash ^ entry.path.charCodeAt(i), 16777619);
+		return basename(entry.isDirectory ? entry.path.slice(0, -1) : entry.path);
+	});
+	return { entries, names, builtAt: Date.now(), signature: `${entries.length}:${hash >>> 0}` };
+}
+
+function untilAborted(signal: AbortSignal): Promise<undefined> {
+	return new Promise((resolve) => {
+		if (signal.aborted) resolve(undefined);
+		else signal.addEventListener("abort", () => resolve(undefined), { once: true });
+	});
+}
+
+function isHiddenPath(path: string): boolean {
+	return toDisplayPath(path)
+		.split("/")
+		.some((segment) => segment.startsWith(".") && segment !== "." && segment !== "..");
+}
+
+function parseFdOutput(stdout: string): Array<{ path: string; isDirectory: boolean }> {
+	const results: Array<{ path: string; isDirectory: boolean }> = [];
+	for (const line of stdout.trim().split("\n").filter(Boolean)) {
+		const displayLine = toDisplayPath(line);
+		const hasTrailingSeparator = displayLine.endsWith("/");
+		const normalizedPath = hasTrailingSeparator ? displayLine.slice(0, -1) : displayLine;
+		if (normalizedPath === ".git" || normalizedPath.startsWith(".git/") || normalizedPath.includes("/.git/")) {
+			continue;
+		}
+		results.push({ path: displayLine, isDirectory: hasTrailingSeparator });
+	}
+	return results;
+}
+
 async function walkDirectoryWithFd(
 	baseDir: string,
 	fdPath: string,
@@ -159,6 +210,7 @@ async function walkDirectoryWithFd(
 	maxResults: number,
 	signal: AbortSignal,
 	maxDepth?: number,
+	budgetMs?: number,
 ): Promise<Array<{ path: string; isDirectory: boolean }>> {
 	const args = [
 		"--base-directory",
@@ -202,10 +254,12 @@ async function walkDirectoryWithFd(
 		});
 		let stdout = "";
 		let resolved = false;
+		let budgetTimer: ReturnType<typeof setTimeout> | undefined;
 
 		const finish = (results: Array<{ path: string; isDirectory: boolean }>) => {
 			if (resolved) return;
 			resolved = true;
+			clearTimeout(budgetTimer);
 			signal.removeEventListener("abort", onAbort);
 			resolve(results);
 		};
@@ -217,6 +271,13 @@ async function walkDirectoryWithFd(
 		};
 
 		signal.addEventListener("abort", onAbort, { once: true });
+		if (budgetMs !== undefined) {
+			budgetTimer = setTimeout(() => {
+				onAbort();
+				// Only complete lines: the last one may still be mid-write.
+				finish(parseFdOutput(stdout.slice(0, stdout.lastIndexOf("\n") + 1)));
+			}, budgetMs);
+		}
 		child.stdout.setEncoding("utf-8");
 		child.stdout.on("data", (chunk: string) => {
 			stdout += chunk;
@@ -230,24 +291,7 @@ async function walkDirectoryWithFd(
 				return;
 			}
 
-			const lines = stdout.trim().split("\n").filter(Boolean);
-			const results: Array<{ path: string; isDirectory: boolean }> = [];
-
-			for (const line of lines) {
-				const displayLine = toDisplayPath(line);
-				const hasTrailingSeparator = displayLine.endsWith("/");
-				const normalizedPath = hasTrailingSeparator ? displayLine.slice(0, -1) : displayLine;
-				if (normalizedPath === ".git" || normalizedPath.startsWith(".git/") || normalizedPath.includes("/.git/")) {
-					continue;
-				}
-
-				results.push({
-					path: displayLine,
-					isDirectory: hasTrailingSeparator,
-				});
-			}
-
-			finish(results);
+			finish(parseFdOutput(stdout));
 		});
 	});
 }
@@ -322,6 +366,12 @@ export interface AutocompleteProvider {
 	 * a `$skill` token). The editor styles them through `EditorTheme.mention`.
 	 */
 	getMentionRanges?(line: string): readonly MentionRange[];
+
+	/**
+	 * Subscribe to "suggestions for the same text may now differ" (for example a background file
+	 * index landed). The editor re-queries an open picker. Returns an unsubscribe function.
+	 */
+	onDidChangeSuggestions?(listener: () => void): () => void;
 }
 
 // Combined provider that handles both slash commands and file paths
@@ -329,6 +379,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private commands: (SlashCommand | AutocompleteItem)[];
 	private basePath: string;
 	private fdPath: string | null;
+	private fileIndexes = new Map<string, FileIndex>();
+	private fileIndexBuilds = new Map<string, Promise<FileIndex>>();
+	private suggestionListeners = new Set<() => void>();
 
 	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string, fdPath: string | null = null) {
 		this.commands = commands;
@@ -826,6 +879,89 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		return score;
 	}
 
+	onDidChangeSuggestions(listener: () => void): () => void {
+		this.suggestionListeners.add(listener);
+		return () => {
+			this.suggestionListeners.delete(listener);
+		};
+	}
+
+	/** Starts a background listing when `baseDir` has no index or a stale one; returns a build in flight. */
+	private refreshFileIndex(baseDir: string, fdPath: string): Promise<FileIndex> | undefined {
+		const key = resolve(baseDir);
+		const inFlight = this.fileIndexBuilds.get(key);
+		if (inFlight) return inFlight;
+		const current = this.fileIndexes.get(key);
+		if (current && Date.now() - current.builtAt < FILE_INDEX_REFRESH_MS) return undefined;
+
+		const build = walkDirectoryWithFd(
+			baseDir,
+			fdPath,
+			"",
+			FILE_INDEX_MAX_ENTRIES,
+			new AbortController().signal,
+			undefined,
+			FILE_INDEX_BUILD_BUDGET_MS,
+		).then((entries) => {
+			this.fileIndexBuilds.delete(key);
+			const index = createFileIndex(entries);
+			const previous = this.fileIndexes.get(key);
+			this.fileIndexes.delete(key);
+			this.fileIndexes.set(key, index);
+			for (const root of this.fileIndexes.keys()) {
+				if (this.fileIndexes.size <= FILE_INDEX_MAX_ROOTS) break;
+				this.fileIndexes.delete(root);
+			}
+			if (previous?.signature !== index.signature) {
+				for (const listener of this.suggestionListeners) listener();
+			}
+			return index;
+		});
+		this.fileIndexBuilds.set(key, build);
+		return build;
+	}
+
+	/** `baseDir`'s own index, else a cached ancestor's (its entries under `prefix` cover `baseDir`). */
+	private findFileIndex(baseDir: string): { index: FileIndex; prefix: string } | undefined {
+		const key = resolve(baseDir);
+		const own = this.fileIndexes.get(key);
+		if (own) return { index: own, prefix: "" };
+		for (const [root, index] of this.fileIndexes) {
+			const rel = relative(root, key);
+			if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return { index, prefix: `${toDisplayPath(rel)}/` };
+		}
+		return undefined;
+	}
+
+	/** Entries fd would return for `query` under `baseDir`: its pattern, smart case, filename or full path. */
+	private matchFileIndex(
+		{ index, prefix }: { index: FileIndex; prefix: string },
+		baseDir: string,
+		query: string,
+	): Array<{ path: string; isDirectory: boolean }> {
+		let pattern: RegExp | undefined;
+		if (query) {
+			try {
+				pattern = new RegExp(buildFdPathQuery(query), /[A-Z]/.test(query) ? "" : "i");
+			} catch {
+				return [];
+			}
+		}
+		const fullPath = toDisplayPath(query).includes("/");
+		const matches: Array<{ path: string; isDirectory: boolean }> = [];
+		for (let i = 0; i < index.entries.length; i++) {
+			const entry = index.entries[i]!;
+			if (prefix && !toDisplayPath(entry.path).startsWith(prefix)) continue;
+			const path = entry.path.slice(prefix.length);
+			if (!path) continue;
+			if (pattern && !pattern.test(fullPath ? join(baseDir, path) : index.names[i]!)) continue;
+			matches.push(prefix ? { path, isDirectory: entry.isDirectory } : entry);
+		}
+		if (query) return matches;
+		const shallow = matches.filter((entry) => toDisplayPath(entry.path).replace(/\/$/, "").split("/").length <= 2);
+		return shallow.length >= 20 ? shallow : matches;
+	}
+
 	private async getBaseDirSuggestions(
 		baseDir: string,
 		query: string,
@@ -851,8 +987,19 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			const scopedQuery = this.resolveScopedFuzzyQuery(query);
 			const fdBaseDir = scopedQuery?.baseDir ?? this.basePath;
 			const fdQuery = scopedQuery?.query ?? query;
+			const pendingIndex = this.refreshFileIndex(fdBaseDir, this.fdPath);
+			let index = this.findFileIndex(fdBaseDir);
 			const baseDirEntries = await this.getBaseDirSuggestions(fdBaseDir, fdQuery, options.signal);
-			const recursiveEntries = await walkDirectoryWithFd(fdBaseDir, this.fdPath, fdQuery, 100, options.signal);
+			// No usable index yet: wait for the listing (typing aborts the wait), so one answer carries deep
+			// matches. An empty query is answered by the one-level listing; the landing index signals a change.
+			if (!index && pendingIndex && !(fdQuery === "" && baseDirEntries.length > 0)) {
+				const built = await Promise.race([pendingIndex, untilAborted(options.signal)]);
+				if (built) index = { index: built, prefix: "" };
+			}
+			if (options.signal.aborted) {
+				return [];
+			}
+			const recursiveEntries = index ? this.matchFileIndex(index, fdBaseDir, fdQuery) : [];
 			const seenPaths = new Set(baseDirEntries.map((entry) => entry.path));
 			const entries = [
 				...baseDirEntries,
@@ -876,6 +1023,11 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			scoredEntries.sort((a, b) => {
 				const scoreDiff = b.score - a.score;
 				if (scoreDiff !== 0) return scoreDiff;
+
+				if (!fdQuery.startsWith(".")) {
+					const hiddenDiff = Number(isHiddenPath(a.path)) - Number(isHiddenPath(b.path));
+					if (hiddenDiff !== 0) return hiddenDiff;
+				}
 
 				const aDepth = toDisplayPath(a.path).split("/").filter(Boolean).length;
 				const bDepth = toDisplayPath(b.path).split("/").filter(Boolean).length;

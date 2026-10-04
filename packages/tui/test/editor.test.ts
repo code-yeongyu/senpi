@@ -2396,6 +2396,37 @@ describe("Editor component", () => {
 			}
 		});
 
+		it("refreshes an open picker when the provider signals a change and keeps the highlighted row", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let notify = () => {};
+			let names = ["a.ts", "b.ts", "c.ts"];
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const prefix = lines[cursorLine]!.slice(0, cursorCol);
+					return { prefix, items: names.map((name) => ({ value: `@${name}`, label: name })) };
+				},
+				applyCompletion,
+				onDidChangeSuggestions: (listener) => {
+					notify = listener;
+					return () => {};
+				},
+			});
+
+			editor.handleInput("@");
+			t.mock.timers.tick(20);
+			await flushAutocomplete();
+			editor.handleInput("\x1b[B");
+			names = ["0.ts", "a.ts", "b.ts", "c.ts", "d.ts"];
+			notify();
+			t.mock.timers.tick(20);
+			await flushAutocomplete();
+
+			const rendered = stripVTControlCharacters(editor.render(60).join("\n"));
+			assert.ok(rendered.includes("0.ts"), rendered);
+			assert.ok(rendered.includes("→ b.ts"), rendered);
+		});
+
 		// Re-querying after the space found an empty token and listed the working directory instead.
 		it("closes an @ or Tab path picker when a space ends the path", async (t) => {
 			t.mock.timers.enable({ apis: ["setTimeout"] });
@@ -2434,6 +2465,43 @@ describe("Editor component", () => {
 				assert.strictEqual(editor.getText(), `${typed} `, typed);
 				assert.strictEqual(editor.isShowingAutocomplete(), false, typed);
 				assert.ok(!requested.some((text) => text.endsWith(" ")), typed);
+			}
+		});
+
+		it("keeps the picker open on a completed directory's contents", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			const contents = [
+				{ value: "a.ts", label: "a.ts" },
+				{ value: "b.ts", label: "b.ts" },
+			];
+			// "@src" opens the picker by typing; bare "src" completes its single match on Tab.
+			for (const typed of ["@src", "src"]) {
+				const at = typed.startsWith("@") ? "@" : "";
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				editor.setAutocompleteProvider({
+					getSuggestions: async (lines, cursorLine, cursorCol) => {
+						const prefix = lines[cursorLine]!.slice(0, cursorCol);
+						if (prefix === typed) return { prefix, items: [{ value: `${at}src/`, label: "src/" }] };
+						if (prefix === `${at}src/`) {
+							return { prefix, items: contents.map((item) => ({ ...item, value: `${at}src/${item.value}` })) };
+						}
+						return null;
+					},
+					applyCompletion,
+				});
+
+				for (const char of typed) editor.handleInput(char);
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+				editor.handleInput("\t");
+				await flushAutocomplete();
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+
+				assert.strictEqual(editor.getText(), `${at}src/`, typed);
+				assert.strictEqual(editor.isShowingAutocomplete(), true, typed);
+				const rendered = editor.render(60).join("\n");
+				assert.ok(rendered.includes("a.ts") && rendered.includes("b.ts"), typed);
 			}
 		});
 
