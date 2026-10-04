@@ -19,6 +19,8 @@ export async function measureSurfaces(target: string): Promise<Pick<GateReport, 
 	};
 	for (const [set, enabled] of Object.entries(languages)) {
 		schemas[set] = canonical(createEvalInputSchema(enabled));
+		// The sandbox field exists only with sandbox cells turned on; the cells above prove the default schema unchanged.
+		schemas[`${set}+sandbox`] = canonical(createEvalInputSchema(enabled, undefined, { sandbox: true }));
 		for (const [style, modelId] of Object.entries(models)) {
 			for (const spawns of [false, true]) {
 				for (const monitor of [false, true]) {

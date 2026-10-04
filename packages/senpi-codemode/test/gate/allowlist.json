@@ -242,6 +242,32 @@
 			],
 			"reason": "Node 16: %load runs a local file as a Python or JavaScript cell; load-cell.ts joins the scoped census, plus the %load contracts. No prompt or eval schema change."
 		},
+		"18": {
+			"additions": [
+				"schemas/js+sandbox",
+				"schemas/js+py+sandbox",
+				"schemas/all+sandbox",
+				"imports/extension/packages/senpi-codemode/src/kernels/sandbox/sandbox-cell.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/sandbox/sandbox-cell.ts",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned off When the eval schema is built, then it is byte-identical to the schema built with no sandbox option",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned off When a call passes isolate: true, then it is refused with eval_isolate_invalid instead of running as normal JavaScript",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned off When a call passes isolate: false or omits it, then the request is the same as today",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When the eval schema is built, then it adds only the optional isolate boolean beside today's fields",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When JavaScript is not an enabled language, then the schema has no isolate field",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When a JavaScript call passes isolate: true, then the request carries it",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When the call has another language, then it is refused with eval_isolate_invalid",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When the call has reset, then it is refused with eval_isolate_invalid",
+				"legacyContracts/test/eval-isolate-schema.test.ts/Given sandbox cells are turned on When the call has a non-boolean value, then it is refused with eval_isolate_invalid",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on isolated-cell-has-no-ambient-host-or-persistence: the isolated cell sees neither the persistent kernel's globals nor process, can call tool.read, and the next isolated cell is fresh",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on isolated-result-contract: printed text, a returned value and an error use the normal result contract",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on large-item-fidelity: one 20 MiB printed item reaches the result contract complete, exactly as the persistent kernel reports the same output",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on a 256 MiB allocation fails with eval_isolate_memory_limit and the persistent kernel keeps its globals",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on a promise that never settles fails with eval_isolate_unresolved_promise",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned on store() throws eval_isolate_no_state and load() finds nothing",
+				"legacyContracts/test/sandbox/isolated-cell.test.ts/Given sandbox cells are turned off isolate: true is refused with eval_isolate_invalid and the code does not run"
+			],
+			"reason": "Node 18 part 2: the setting-gated isolate field. The three '+sandbox' schema cells are measured only with sandbox.enabled; the default schema cells (js, js+py, all) and every prompt cell stay unchanged. sandbox-cell.ts joins the scoped census (the vendored runtime itself loads lazily on the first isolated cell), plus the isolated-cell contracts."
+		},
 		"24": {
 			"additions": [
 				"legacyContracts/test/worker-global-sizes.test.js/largest-globals sizing never runs user code Given a global array with an index accessor when the globals are sized then the getter never runs",
