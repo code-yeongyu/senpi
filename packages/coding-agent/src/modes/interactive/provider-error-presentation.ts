@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { isRetryableErrorMessage } from "@earendil-works/pi-ai";
 import { type Component, type Container, Text } from "@earendil-works/pi-tui";
 import { z } from "zod";
 import { keyText } from "./components/keybinding-hints.ts";
@@ -24,6 +25,20 @@ export function isNetworkProviderError(raw: string | undefined, envelopeOnly = f
 		if (error instanceof SyntaxError) return false;
 		throw error;
 	}
+}
+
+/**
+ * True when a provider failure should take the quiet presentation path (one banner, a
+ * status-line countdown while retrying, raw JSON only on expand): any transient failure,
+ * which is a network drop, a 429 rate-limit, or a 5xx. Hard quota/auth/billing failures
+ * classify non-retryable here and stay verbose, because they need a credential or plan
+ * change, not a wait. Delegates to the shared classifier so the transcript decision and
+ * the retry engine never disagree about what is transient.
+ */
+export function isRetryableProviderError(raw: string | undefined): boolean {
+	if (!raw) return false;
+	if (isNetworkProviderError(raw)) return true;
+	return isRetryableErrorMessage(raw);
 }
 
 export function isNetworkProviderMessage(message: AssistantMessage): boolean {
@@ -84,6 +99,7 @@ export class ProviderErrorPresentation {
 
 	record(raw: string, expanded = false): void {
 		this.pending = true;
+		this.retryAwaitingFinish = true;
 		if (!this.notice) {
 			this.notice = new ProviderFailureNotice();
 			this.notice.setExpanded(expanded);
@@ -98,16 +114,45 @@ export class ProviderErrorPresentation {
 		this.notice?.setSummary(undefined);
 	}
 
+	/** A success or cleanup ends the episode: no finish is owed afterward. */
 	clear(): void {
 		this.pending = false;
+		this.retryAwaitingFinish = false;
 		// Keep diagnostics reachable through the existing expansion affordance.
 		this.notice?.setSummary(undefined);
 	}
+
+	/**
+	 * The retry engine finishing (summarization_retry_finished): clears the transient row but keeps
+	 * the episode marker, because the terminal compaction_end that follows still closes the
+	 * exhausted episode out via finish().
+	 */
+	clearTransient(): void {
+		this.pending = false;
+		this.notice?.setSummary(undefined);
+	}
+
+	/** True while a retry episode is active (a retry was recorded and not yet finished/cleared). */
+	get hasActiveRetry(): boolean {
+		return this.pending;
+	}
+
+	/**
+	 * True only while a retry has been recorded in the CURRENT episode and not yet closed out by
+	 * finish(). A fresh terminal failure after an episode that already finished returns false, so
+	 * it surfaces as a plain error instead of reopening the stale banner.
+	 */
+	get awaitingRetryFinish(): boolean {
+		return this.retryAwaitingFinish;
+	}
+
+	private retryAwaitingFinish = false;
 
 	finish(raw?: string, attempts?: number): void {
 		if (raw) this.record(raw);
 		if (!this.pending) return;
 		this.pending = false;
+		this.retryAwaitingFinish = false;
 		const count = attempts === undefined ? "" : ` after ${attempts} retries`;
 		this.notice?.setSummary(
 			`The model provider could not complete the request${count}. Try again or choose another model with /model.`,

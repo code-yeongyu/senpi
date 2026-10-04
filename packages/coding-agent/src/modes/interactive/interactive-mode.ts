@@ -264,6 +264,7 @@ import { getModelSearchText } from "./model-search.ts";
 import {
 	isNetworkProviderError,
 	isNetworkProviderMessage,
+	isRetryableProviderError,
 	ProviderErrorPresentation,
 } from "./provider-error-presentation.ts";
 import { replayAssistantTools } from "./replay-assistant-tools.ts";
@@ -5533,6 +5534,9 @@ export class InteractiveMode {
 						this.showStatus("Auto-compaction cancelled");
 					}
 				} else if (event.result) {
+					// A successful compaction ends the retry episode: no finish is owed, so a later
+					// never-retried terminal failure must not reopen the banner.
+					this.providerErrors?.clear();
 					// Compaction event consumers in the fork are session-backed and do not
 					// necessarily expose InteractiveMode's SessionManager convenience getter.
 					// Keep the structural fallback for focused handler consumers while using
@@ -5581,7 +5585,11 @@ export class InteractiveMode {
 					this.footer?.setCompactionDelegated?.(false);
 				} else if (event.errorMessage) {
 					const errorMessage = sanitizeTerminalLabel(event.errorMessage);
-					if (isNetworkProviderError(errorMessage)) {
+					// The quiet provider-retry banner's finish() closes out a retry recorded in the CURRENT
+					// episode. A terminal compaction failure after an episode that already finished (or one
+					// that never retried) must always surface as an error, even when its message looks
+					// transient ("timeout", "truncated generator").
+					if (isRetryableProviderError(errorMessage) && this.providerErrors?.awaitingRetryFinish === true) {
 						this.getProviderErrors().finish(errorMessage);
 					} else if (event.reason === "manual") {
 						this.showError(errorMessage);
@@ -5698,7 +5706,7 @@ export class InteractiveMode {
 				break;
 
 			case "retry_fallback_exhausted":
-				if (isNetworkProviderError(event.lastError)) {
+				if (isRetryableProviderError(event.lastError)) {
 					this.getProviderErrors().finish(event.lastError);
 					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 					break;
@@ -5722,7 +5730,7 @@ export class InteractiveMode {
 				break;
 
 			case "auto_retry_start": {
-				if (isNetworkProviderError(event.errorMessage)) {
+				if (isRetryableProviderError(event.errorMessage)) {
 					this.getProviderErrors().retrying(event.errorMessage, this.toolOutputExpanded);
 				}
 				// During retry waits, isStreaming flips false between attempts. The main Esc handler
@@ -5760,7 +5768,7 @@ export class InteractiveMode {
 				// Show error only on final failure (success shows normal response)
 				if (event.success || event.finalError === "Retry cancelled") {
 					this.providerErrors?.clear();
-				} else if (isNetworkProviderError(event.finalError)) {
+				} else if (isRetryableProviderError(event.finalError)) {
 					this.getProviderErrors().finish(event.finalError, event.attempt);
 				} else {
 					this.showError(`Retry failed after ${event.attempt} attempts: ${event.finalError || "Unknown error"}`);
@@ -5770,7 +5778,7 @@ export class InteractiveMode {
 			}
 
 			case "summarization_retry_scheduled": {
-				if (isNetworkProviderError(event.errorMessage)) {
+				if (isRetryableProviderError(event.errorMessage)) {
 					this.getProviderErrors().retrying(event.errorMessage, this.toolOutputExpanded);
 				} else {
 					this.showError(event.errorMessage);
@@ -5791,7 +5799,7 @@ export class InteractiveMode {
 			}
 
 			case "summarization_retry_finished": {
-				this.providerErrors?.clear();
+				this.providerErrors?.clearTransient();
 				this.clearStatusIndicator("retry");
 				this.ui.requestRender();
 				break;
@@ -5852,7 +5860,7 @@ export class InteractiveMode {
 				event.maxAttempts,
 				event.delayMs,
 				indicator,
-				isNetworkProviderError(event.errorMessage),
+				isRetryableProviderError(event.errorMessage),
 			),
 		);
 		this.ui.requestRender();
