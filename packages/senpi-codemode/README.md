@@ -112,6 +112,23 @@ next to it. JavaScript evaluates it under the file's name and resolves its relat
 imports from the file's directory. A missing file fails the cell with
 `file not found: <path>`.
 
+### JavaScript packages
+
+A JavaScript cell whose only line is `%bun add <package ...>` or `%npm add <package ...>`
+installs packages without restarting the kernel; the next cell imports them by bare name.
+In the default managed mode they go into a per-session environment revision under the
+artifacts directory (or `environments.managedRoot`), never into the project's
+`package.json` or `node_modules`: a bare import that does not resolve from the session
+directory falls back to that revision, so the project's own packages still win. Each install
+builds a new revision that carries the previous packages and is published only when the
+installer succeeds; a failed or cancelled install leaves the previous revision active.
+Lifecycle scripts never run (`--ignore-scripts`), and installer flags are refused because
+the host picks the destination. `environments.js.installer` chooses `bun`, `npm` or `auto`
+(bun when it is on `PATH`, else npm; the kernel's own runtime never changes to get one).
+`%environment project` installs into the session directory itself instead. When a newly added
+package is also present in the project's `node_modules`, the result says
+`environment_resolution_conflict` because the project copy still resolves first.
+
 ### Python packages
 
 A Python cell whose only line is `%pip install <requirements>` installs packages

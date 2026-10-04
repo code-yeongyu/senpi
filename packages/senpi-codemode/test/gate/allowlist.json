@@ -212,6 +212,22 @@
 			],
 			"reason": "Node 14 part 3: %pip / %environment magic cells run as host entries in the Python kernel's queue and every Python cell imports from the session's active environment revision; the magic-cell modules, and the environments library they import (install-lock, py-environment, py-installer, revision-store, first reached from the extension here), join the scoped census, plus the new contracts. No prompt or eval schema change."
 		},
+		"15": {
+			"additions": [
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When %bun add installs a local tarball, then the next cell imports it and the project's package.json is untouched",
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When npm is the installer, then %npm add installs the same way",
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When a second install succeeds, then the new revision still resolves the first package",
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When an install fails, then the cell reports environment_install_failed and the previous revision stays active",
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When %environment project is selected, then installs go into the project directory",
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When the cell is cancelled once the installer has started, then the installer tree exits, nothing is published, the project manifest is unchanged and the kernel answers the next cell",
+				"legacyContracts/test/environments/js-magic-e2e.test.ts/Given a JavaScript eval session When installer flags are passed, then the cell is refused because the host chooses the destination",
+				"imports/extension/packages/senpi-codemode/src/environments/js-environments.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/js-environments.ts",
+				"imports/extension/packages/senpi-codemode/src/environments/js-installer.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/js-installer.ts"
+			],
+			"reason": "Node 15: %bun add / %npm add install into a per-session managed JavaScript environment (bare-import fallback root on the run input, host entries in the JS kernel queue); the two environment modules join the scoped census, plus the new contracts. No prompt or eval schema change."
+		},
 		"16": {
 			"additions": [
 				"legacyContracts/test/load-cell.test.ts/Given a Python file loaded with %load When the next cell calls its function, then the definition persists and a traceback names the file and line",

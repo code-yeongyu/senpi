@@ -1,6 +1,6 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { CHILD_LIFECYCLE_OP, INTERRUPT_ACK_OP } from "../../bridge/reserved.ts";
-import type { KernelInterruptHandle } from "../../tool/types.ts";
+import type { HostCellExecutor, KernelInterruptHandle } from "../../tool/types.ts";
 import { KernelToolHostPump } from "../shared/kernel-tools-pump.ts";
 import { ActiveCellControl } from "./active-cell-control.ts";
 import { DEFAULT_INTERRUPT_BOUNDS, type WorkerRetirement } from "./interrupt-bounds.ts";
@@ -21,7 +21,7 @@ import type {
 	KernelToolsInvokeRequest,
 } from "./kernel-tools-types.ts";
 import { type JavaScriptKernelOptions, LocalModuleLoader } from "./local-module-loader.ts";
-import { JavaScriptRunQueue } from "./run-queue.ts";
+import { JavaScriptRunQueue, type PendingJavaScriptRun } from "./run-queue.ts";
 import { ToolCallQueue } from "./tool-call-queue.ts";
 import { WorkerChildren } from "./worker-children.ts";
 import { crashedResult } from "./worker-host.ts";
@@ -34,6 +34,7 @@ export type { JavaScriptKernelOptions } from "./local-module-loader.ts";
 export { type JavaScriptWorkerEntryUrlOptions, resolveJsWorkerEntryUrl } from "./worker-startup.ts";
 
 export class JavaScriptKernel {
+	readonly #hostAborts = new Map<PendingJavaScriptRun, AbortController>();
 	readonly #options: JavaScriptKernelOptions;
 	readonly #moduleLoader: LocalModuleLoader;
 	readonly #slot: WorkerSlot;
@@ -128,6 +129,11 @@ export class JavaScriptKernel {
 			const cancelled = this.cancelQueued(cellId, reason);
 			return { stateRetained: Promise.resolve(true), ...(cancelled ? {} : { note: "cell not found" }) };
 		}
+		const hostAbort = active === null ? undefined : this.#hostAborts.get(active);
+		if (active && hostAbort !== undefined) {
+			hostAbort.abort(new Error(reason));
+			return { stateRetained: Promise.resolve(true) };
+		}
 		if (!active) {
 			// A worker still stuck in startup is not a healthy idle worker: retiring it is the only recovery.
 			const wedgedInStartup = this.#slot.startingUp;
@@ -195,6 +201,11 @@ export class JavaScriptKernel {
 		if (this.#lifecycle !== "open" || this.#runs.active || !this.#slot.present) return;
 		const next = this.#runs.startNext(performance.now());
 		if (!next) return;
+		const host = next.input.host;
+		if (host !== undefined) {
+			this.#runHostEntry(next, host);
+			return;
+		}
 		this.#activeCell.arm(next);
 		this.#slot.postMessage({
 			type: "kernel-tools-names",
@@ -204,7 +215,12 @@ export class JavaScriptKernel {
 		this.#slot.postMessage({
 			type: "run",
 			cellId: next.input.cellId,
-			code: this.#moduleLoader.prepareCell(next.input.code, next.input.kernelPreludes, next.input.sourceFile),
+			code: this.#moduleLoader.prepareCell(
+				next.input.code,
+				next.input.kernelPreludes,
+				next.input.sourceFile,
+				next.input.packageRoot,
+			),
 			timeoutMs: next.input.timeoutMs,
 		});
 	}
@@ -239,6 +255,43 @@ export class JavaScriptKernel {
 		this.#startNext();
 		// A kernel over its memory ceiling restarts only once no cell is running or queued on it.
 		if (this.#memory.claimRecycle(!this.#runs.active && !this.#runs.hasWaiting)) void this.#restartAfterStop();
+	}
+
+	// A host-executed entry (an install magic) holds the queue slot like a cell but never reaches the worker,
+	// so a cancel aborts the host work and the worker's state is untouched.
+	#runHostEntry(run: PendingJavaScriptRun, host: HostCellExecutor): void {
+		const abort = new AbortController();
+		this.#hostAborts.set(run, abort);
+		const emit = (message: KernelToHostMessage) => (run.input.onMessage ?? this.#options.onMessage)?.(message);
+		const finish = (result: ResultMessage) => {
+			this.#hostAborts.delete(run);
+			if (!this.#runs.releaseActive(run)) return;
+			this.#runs.settle(run, result);
+			this.#startNext();
+		};
+		const cellId = run.input.cellId;
+		host({ signal: abort.signal, emit }).then(
+			(outcome) =>
+				finish(
+					outcome.ok
+						? {
+								type: "result",
+								cellId,
+								ok: true,
+								durationMs: this.#runs.durationMs(run, performance.now()),
+								...(outcome.valueRepr === undefined ? {} : { valueRepr: outcome.valueRepr }),
+							}
+						: { type: "result", cellId, ok: false, error: outcome.error, durationMs: 0 },
+				),
+			(error: unknown) =>
+				finish({
+					type: "result",
+					cellId,
+					ok: false,
+					error: { message: error instanceof Error ? error.message : String(error) },
+					durationMs: 0,
+				}),
+		);
 	}
 
 	#handleCrash(error: Error): void {

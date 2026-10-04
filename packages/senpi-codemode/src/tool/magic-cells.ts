@@ -3,9 +3,10 @@ import type { EvalLanguage } from "./types.ts";
 export type MagicCell =
 	| { readonly kind: "pip"; readonly args: string }
 	| { readonly kind: "environment"; readonly mode: "managed" | "project" }
-	| { readonly kind: "load"; readonly target: string };
+	| { readonly kind: "load"; readonly target: string }
+	| { readonly kind: "js-add"; readonly installer: "bun" | "npm"; readonly args: string };
 
-const HOST_MAGICS = ["pip", "environment", "load"] as const;
+const HOST_MAGICS = ["pip", "environment", "load", "bun", "npm"] as const;
 const LOAD_LANGUAGES: ReadonlySet<EvalLanguage> = new Set(["py", "js"]);
 type HostMagic = (typeof HOST_MAGICS)[number];
 
@@ -18,6 +19,8 @@ function hostMagicOf(language: EvalLanguage, line: string): HostMagic | undefine
 	const name = match?.[1];
 	const magic = HOST_MAGICS.find((candidate) => candidate === name);
 	if (magic === "load") return LOAD_LANGUAGES.has(language) ? magic : undefined;
+	if (magic === "bun" || magic === "npm") return language === "js" ? magic : undefined;
+	if (magic === "environment") return language === "py" || language === "js" ? magic : undefined;
 	return language === "py" ? magic : undefined;
 }
 
@@ -36,6 +39,13 @@ export function parseMagicCell(language: EvalLanguage, code: string): MagicCell 
 		throw new MagicCellError(`put %${magic} on its own cell, then run the code that uses it in the next cell`);
 	const args = first.trim().slice(`%${magic}`.length).trim();
 	if (magic === "pip") return { kind: "pip", args };
+	if (magic === "bun" || magic === "npm") {
+		const [verb, ...rest] = args.split(/\s+/);
+		if (verb !== "add" && verb !== "install") {
+			throw new MagicCellError(`%${magic} supports only add: %${magic} add <package ...>`);
+		}
+		return { kind: "js-add", installer: magic, args: rest.join(" ") };
+	}
 	if (magic === "load") {
 		if (args === "") throw new MagicCellError("%load takes one argument: the path of the file to run");
 		return { kind: "load", target: args };

@@ -249,7 +249,12 @@ async function executeCell(
 			}
 			if (invocation.input.reset) await execution.wait(kernel.reset());
 			execution.setKernel(kernel);
-			const magic = planMagicCell(invocation.input.language, invocation.input.code, options.pythonEnvironments);
+			const magic = planMagicCell(
+				invocation.input.language,
+				invocation.input.code,
+				options.pythonEnvironments,
+				options.jsEnvironments,
+			);
 			const loaded =
 				magic.kind === "load"
 					? await execution.wait(
@@ -267,6 +272,7 @@ async function executeCell(
 				});
 			}
 			const envRoot = invocation.input.language === "py" ? options.pythonEnvironments?.activeRoot : undefined;
+			const packageRoot = invocation.input.language === "js" ? options.jsEnvironments?.packageRoot : undefined;
 			const result = await execution.wait(
 				kernel.run({
 					cellId: invocation.cellId,
@@ -274,6 +280,7 @@ async function executeCell(
 					...(loaded?.ok === true ? { sourceFile: loaded.sourceFile } : {}),
 					...(magic.kind === "host" ? { host: magic.executor } : {}),
 					...(envRoot === undefined ? {} : { envRoot }),
+					...(packageRoot === undefined ? {} : { packageRoot }),
 					kernelPreludes: options.kernelPreludes?.(),
 					onMessage,
 					onStarted: () => {

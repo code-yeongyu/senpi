@@ -171,6 +171,8 @@ export interface EvalKernelRunInput {
 	readonly envRoot?: string;
 	/** The file a `%load` cell runs: tracebacks name it and its relative imports resolve from its directory. */
 	readonly sourceFile?: string;
+	/** JavaScript only: the session's managed package revision; bare imports that do not resolve from cwd fall back to it. */
+	readonly packageRoot?: string;
 }
 
 export interface KernelInterruptHandle {
