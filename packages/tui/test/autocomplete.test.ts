@@ -583,6 +583,8 @@ describe("CombinedAutocompleteProvider", () => {
 		const values = (result: { items: { value: string }[] } | null) => result?.items.map((item) => item.value) ?? [];
 
 		it("answers a cold deep-only query from one listing and reuses it for the next keystroke", async (t) => {
+			// Freeze the clock so the 5 s background refresh cannot add a listing under load.
+			t.mock.timers.enable({ apis: ["Date"] });
 			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
 			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
 			const fd = fakeFd(t, ["packages/tui/src/editor.ts", "packages/tui/src/editor-row.ts", "README.md"]);
@@ -600,6 +602,8 @@ describe("CombinedAutocompleteProvider", () => {
 		// #2740: no separate one-level fd per keystroke; the fake answers one-level calls with an entry
 		// that must never show up.
 		it("answers a bare @ from the listing, without a one-level walk", async (t) => {
+			// Freeze the clock so the 5 s background refresh cannot add a listing under load.
+			t.mock.timers.enable({ apis: ["Date"] });
 			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
 			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
 			const fd = fakeFd(t, ["Developer/", "deep/Dev.txt"], ["one-level-walk/"]);
@@ -646,6 +650,8 @@ describe("CombinedAutocompleteProvider", () => {
 
 		// Tab from `@` into a directory must not wait for that directory's own listing.
 		it("answers a subdirectory from a cached ancestor listing at once", async (t) => {
+			// Freeze the clock so the 5 s background refresh cannot add a listing under load.
+			t.mock.timers.enable({ apis: ["Date"] });
 			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
 			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
 			mkdirSync(join(baseDir, "Developer"));
