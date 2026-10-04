@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -2462,6 +2462,76 @@ describe("Editor component", () => {
 				const rendered = editor.render(60).join("\n");
 				assert.ok(rendered.includes("a.ts") && rendered.includes("b.ts"), typed);
 			}
+		});
+
+		// #2738: only Tab drills into a directory; Enter keeps its meaning (accept and close).
+		it("Enter on a directory accepts it and closes the picker", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const requested: string[] = [];
+			editor.setAutocompleteProvider({
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					const prefix = lines[cursorLine]!.slice(0, cursorCol);
+					requested.push(prefix);
+					return { prefix, items: [{ value: prefix === "@src" ? "@src/" : `${prefix}a.ts`, label: "src/" }] };
+				},
+				applyCompletion,
+			});
+
+			for (const char of "@src") editor.handleInput(char);
+			t.mock.timers.tick(20);
+			await flushAutocomplete();
+			editor.handleInput("\r");
+			t.mock.timers.tick(20);
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.getText(), "@src/");
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+			assert.ok(!requested.includes("@src/"), JSON.stringify(requested));
+		});
+
+		// #2740: a 6-character @ query over a ~100k-entry tree costs one listing, and the picker matches
+		// the typed token one debounce interval after the last keystroke.
+		it("keeps up with a 6-character @ query over a 100k-entry listing with one walk", {
+			skip: process.platform === "win32",
+		}, async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-editor-index-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			const listing = join(baseDir, "listing.txt");
+			writeFileSync(
+				listing,
+				`${Array.from({ length: 100_000 }, (_, i) => `pkg${i % 97}/mod${i % 1009}/file${i}.ts`).join("\n")}\n`,
+			);
+			// The script and its log sit beside the listed directory so writing the log does not change it.
+			const tools = mkdtempSync(join(tmpdir(), "pi-fake-fd-"));
+			t.after(() => rmSync(tools, { recursive: true, force: true }));
+			const log = join(tools, "fd.log");
+			const fd = join(tools, "fake-fd.sh");
+			writeFileSync(fd, `#!/bin/sh\necho walk >> "${log}"\ncat "${listing}"\n`, { mode: 0o755 });
+			const provider = new CombinedAutocompleteProvider([], baseDir, fd);
+			const listed = new Promise<void>((resolve) => {
+				provider.onDidChangeSuggestions(resolve);
+			});
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.setAutocompleteProvider(provider);
+			const settle = async (done: () => boolean) => {
+				for (let turn = 0; turn < 50 && !done(); turn++) await new Promise((resolve) => setImmediate(resolve));
+			};
+			const screen = () => stripVTControlCharacters(editor.render(80).join("\n"));
+
+			editor.handleInput("@");
+			t.mock.timers.tick(20);
+			await listed;
+			for (const char of "file42") {
+				editor.handleInput(char);
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+			}
+			await settle(() => screen().includes("→ file42.ts"));
+
+			assert.ok(screen().includes("→ file42.ts"), screen());
+			assert.strictEqual(readFileSync(log, "utf-8").split("\n").filter(Boolean).length, 1);
 		});
 
 		it("completes Chinese path prefixes after whitespace or CJK punctuation with Tab", async (t) => {

@@ -6,13 +6,12 @@
 
 ### Added
 
-- `AutocompleteProvider.onDidChangeSuggestions?(listener)`: an optional subscription through which a provider reports that suggestions for the same text may now differ; the editor re-queries an open picker and keeps the highlighted row ([#2735](https://github.com/code-yeongyu/senpi/issues/2735)).
+- `AutocompleteProvider.onDidChangeSuggestions?(listener)`: an optional subscription through which a provider reports that suggestions for the same text may now differ; the editor re-queries an open picker and keeps the highlighted row ([#2740](https://github.com/code-yeongyu/senpi/issues/2740)).
 
 ### Changed
 
-- `@` file suggestions match an in-memory index built from one background `fd` listing per searched directory (up to 100k entries, refreshed after 5 s) instead of walking the tree on every keystroke, so the picker keeps up with typing in large trees such as `$HOME`. A subdirectory is answered from a cached parent listing ([#2735](https://github.com/code-yeongyu/senpi/issues/2735)).
-- Tab or Enter on a directory suggestion keeps the picker open on that directory's contents ([#2735](https://github.com/code-yeongyu/senpi/issues/2735)).
-- Among equally scored `@` matches, paths inside hidden directories rank after visible ones unless the query starts with `.` ([#2735](https://github.com/code-yeongyu/senpi/issues/2735)).
+- `@` file suggestions match an in-memory index built from one background `fd` listing per searched directory (up to 100k entries, refreshed after 5 s) instead of walking the tree on every keystroke, so the picker keeps up with typing in large trees such as `$HOME` and costs at most one listing per directory root. A subdirectory is answered from a cached parent listing ([#2740](https://github.com/code-yeongyu/senpi/issues/2740)).
+- Tab on a directory suggestion keeps the picker open on that directory's contents; Enter still accepts and closes ([#2738](https://github.com/code-yeongyu/senpi/issues/2738)).
 
 ### Fixed
 

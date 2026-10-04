@@ -165,15 +165,28 @@ interface FileIndex {
 	names: string[];
 	builtAt: number;
 	signature: string;
+	/** The listed directory's mtime when the listing started; a change means its own entries changed. */
+	dirMtimeMs: number | undefined;
 }
 
-function createFileIndex(entries: Array<{ path: string; isDirectory: boolean }>): FileIndex {
+function directoryMtime(dir: string): number | undefined {
+	try {
+		return statSync(dir).mtimeMs;
+	} catch {
+		return undefined;
+	}
+}
+
+function createFileIndex(
+	entries: Array<{ path: string; isDirectory: boolean }>,
+	dirMtimeMs: number | undefined,
+): FileIndex {
 	let hash = 2166136261;
 	const names = entries.map((entry) => {
 		for (let i = 0; i < entry.path.length; i++) hash = Math.imul(hash ^ entry.path.charCodeAt(i), 16777619);
 		return basename(entry.isDirectory ? entry.path.slice(0, -1) : entry.path);
 	});
-	return { entries, names, builtAt: Date.now(), signature: `${entries.length}:${hash >>> 0}` };
+	return { entries, names, builtAt: Date.now(), signature: `${entries.length}:${hash >>> 0}`, dirMtimeMs };
 }
 
 function untilAborted(signal: AbortSignal): Promise<undefined> {
@@ -181,12 +194,6 @@ function untilAborted(signal: AbortSignal): Promise<undefined> {
 		if (signal.aborted) resolve(undefined);
 		else signal.addEventListener("abort", () => resolve(undefined), { once: true });
 	});
-}
-
-function isHiddenPath(path: string): boolean {
-	return toDisplayPath(path)
-		.split("/")
-		.some((segment) => segment.startsWith(".") && segment !== "." && segment !== "..");
 }
 
 function parseFdOutput(stdout: string): Array<{ path: string; isDirectory: boolean }> {
@@ -887,12 +894,13 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	}
 
 	/** Starts a background listing when `baseDir` has no index or a stale one; returns a build in flight. */
-	private refreshFileIndex(baseDir: string, fdPath: string): Promise<FileIndex> | undefined {
+	private refreshFileIndex(baseDir: string, fdPath: string, force = false): Promise<FileIndex> | undefined {
 		const key = resolve(baseDir);
 		const inFlight = this.fileIndexBuilds.get(key);
 		if (inFlight) return inFlight;
 		const current = this.fileIndexes.get(key);
-		if (current && Date.now() - current.builtAt < FILE_INDEX_REFRESH_MS) return undefined;
+		if (!force && current && Date.now() - current.builtAt < FILE_INDEX_REFRESH_MS) return undefined;
+		const dirMtimeMs = directoryMtime(baseDir);
 
 		const build = walkDirectoryWithFd(
 			baseDir,
@@ -904,7 +912,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			FILE_INDEX_BUILD_BUDGET_MS,
 		).then((entries) => {
 			this.fileIndexBuilds.delete(key);
-			const index = createFileIndex(entries);
+			const index = createFileIndex(entries, dirMtimeMs);
 			const previous = this.fileIndexes.get(key);
 			this.fileIndexes.delete(key);
 			this.fileIndexes.set(key, index);
@@ -962,18 +970,6 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		return shallow.length >= 20 ? shallow : matches;
 	}
 
-	private async getBaseDirSuggestions(
-		baseDir: string,
-		query: string,
-		signal: AbortSignal,
-	): Promise<Array<{ path: string; isDirectory: boolean }>> {
-		if (!this.fdPath || signal.aborted) {
-			return [];
-		}
-
-		return await walkDirectoryWithFd(baseDir, this.fdPath, query, 100, signal, 1);
-	}
-
 	// Fuzzy file search using fd (fast, respects .gitignore)
 	private async getFuzzyFileSuggestions(
 		query: string,
@@ -987,31 +983,24 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			const scopedQuery = this.resolveScopedFuzzyQuery(query);
 			const fdBaseDir = scopedQuery?.baseDir ?? this.basePath;
 			const fdQuery = scopedQuery?.query ?? query;
-			const pendingIndex = this.refreshFileIndex(fdBaseDir, this.fdPath);
+			// One listing per directory root answers every keystroke. With no usable index yet, wait for it
+			// (typing aborts the wait); a later background refresh that changes the results signals a change.
+			let pendingIndex = this.refreshFileIndex(fdBaseDir, this.fdPath);
 			let index = this.findFileIndex(fdBaseDir);
-			const baseDirEntries = await this.getBaseDirSuggestions(fdBaseDir, fdQuery, options.signal);
-			// No usable index yet: wait for the listing (typing aborts the wait), so one answer carries deep
-			// matches. An empty query is answered by the one-level listing; the landing index signals a change.
-			if (!index && pendingIndex && !(fdQuery === "" && baseDirEntries.length > 0)) {
+			// The directory's own entries changed since its listing (one stat, not a walk): re-list before
+			// answering, so a new top-level file or folder shows up at once.
+			if (index?.prefix === "" && !pendingIndex && directoryMtime(fdBaseDir) !== index.index.dirMtimeMs) {
+				pendingIndex = this.refreshFileIndex(fdBaseDir, this.fdPath, true);
+				index = undefined;
+			}
+			if (!index && pendingIndex) {
 				const built = await Promise.race([pendingIndex, untilAborted(options.signal)]);
 				if (built) index = { index: built, prefix: "" };
 			}
 			if (options.signal.aborted) {
 				return [];
 			}
-			const recursiveEntries = index ? this.matchFileIndex(index, fdBaseDir, fdQuery) : [];
-			const seenPaths = new Set(baseDirEntries.map((entry) => entry.path));
-			const entries = [
-				...baseDirEntries,
-				...recursiveEntries.filter((entry) => {
-					if (seenPaths.has(entry.path)) return false;
-					seenPaths.add(entry.path);
-					return true;
-				}),
-			];
-			if (options.signal.aborted) {
-				return [];
-			}
+			const entries = index ? this.matchFileIndex(index, fdBaseDir, fdQuery) : [];
 
 			const scoredEntries = entries
 				.map((entry) => ({
@@ -1023,11 +1012,6 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			scoredEntries.sort((a, b) => {
 				const scoreDiff = b.score - a.score;
 				if (scoreDiff !== 0) return scoreDiff;
-
-				if (!fdQuery.startsWith(".")) {
-					const hiddenDiff = Number(isHiddenPath(a.path)) - Number(isHiddenPath(b.path));
-					if (hiddenDiff !== 0) return hiddenDiff;
-				}
 
 				const aDepth = toDisplayPath(a.path).split("/").filter(Boolean).length;
 				const bDepth = toDisplayPath(b.path).split("/").filter(Boolean).length;

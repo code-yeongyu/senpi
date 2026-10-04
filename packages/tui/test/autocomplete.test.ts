@@ -554,9 +554,17 @@ describe("CombinedAutocompleteProvider", () => {
 
 	describe("fd file index", { skip: process.platform === "win32" }, () => {
 		// Writes a fake fd that logs each listing (no --max-depth) and answers it with `listing`.
-		const fakeFd = (dir: string, listing: string[], oneLevel: string[] = []): { path: string; log: string } => {
-			const log = join(dir, "fd.log");
-			const path = join(dir, "fake-fd.sh");
+		// The script and its log live beside the listed directory: a file created inside it would change
+		// the directory's mtime and make the provider re-list.
+		const fakeFd = (
+			t: { after: (fn: () => void) => void },
+			listing: string[],
+			oneLevel: string[] = [],
+		): { path: string; log: string } => {
+			const tools = mkdtempSync(join(tmpdir(), "pi-fake-fd-"));
+			t.after(() => rmSync(tools, { recursive: true, force: true }));
+			const log = join(tools, "fd.log");
+			const path = join(tools, "fake-fd.sh");
 			const lines = (entries: string[]) => entries.map((entry) => `echo "${entry}"`).join("; ") || ":";
 			writeFileSync(
 				path,
@@ -577,7 +585,7 @@ describe("CombinedAutocompleteProvider", () => {
 		it("answers a cold deep-only query from one listing and reuses it for the next keystroke", async (t) => {
 			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
 			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
-			const fd = fakeFd(baseDir, ["packages/tui/src/editor.ts", "packages/tui/src/editor-row.ts", "README.md"]);
+			const fd = fakeFd(t, ["packages/tui/src/editor.ts", "packages/tui/src/editor-row.ts", "README.md"]);
 			const provider = new CombinedAutocompleteProvider([], baseDir, fd.path);
 			const signal = new AbortController().signal;
 
@@ -589,21 +597,51 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(listings(fd.log), 1);
 		});
 
-		it("answers a bare @ from one level, then signals when the listing lands", async (t) => {
+		// #2740: no separate one-level fd per keystroke; the fake answers one-level calls with an entry
+		// that must never show up.
+		it("answers a bare @ from the listing, without a one-level walk", async (t) => {
 			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
 			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
-			const fd = fakeFd(baseDir, ["Developer/", "deep/Dev.txt"], ["Developer/"]);
+			const fd = fakeFd(t, ["Developer/", "deep/Dev.txt"], ["one-level-walk/"]);
 			const provider = new CombinedAutocompleteProvider([], baseDir, fd.path);
-			const changed = new Promise<void>((resolve) => {
-				provider.onDidChangeSuggestions(resolve);
+
+			const result = await provider.getSuggestions(["@"], 0, 1, { signal: new AbortController().signal });
+
+			assert.deepStrictEqual(values(result), ["@Developer/", "@deep/Dev.txt"]);
+			assert.strictEqual(listings(fd.log), 1);
+		});
+
+		it("signals a change when a background refresh lists different entries", async (t) => {
+			t.mock.timers.enable({ apis: ["Date"] });
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			const listing = join(baseDir, "listing.txt");
+			writeFileSync(listing, "a/one.ts\n");
+			const fd = join(baseDir, "fake-fd.sh");
+			writeFileSync(fd, `#!/bin/sh\ncat "${listing}"\n`, { mode: 0o755 });
+			const provider = new CombinedAutocompleteProvider([], baseDir, fd);
+			const signal = new AbortController().signal;
+			let signals = 0;
+			let onSignal = () => {};
+			provider.onDidChangeSuggestions(() => {
+				signals++;
+				onSignal();
 			});
 
-			const first = await provider.getSuggestions(["@"], 0, 1, { signal: new AbortController().signal });
+			await provider.getSuggestions(["@one"], 0, 4, { signal });
+			assert.strictEqual(signals, 1);
+			writeFileSync(listing, "a/one.ts\na/one-more.ts\n");
+			t.mock.timers.tick(6000);
+			const changed = new Promise<void>((resolve) => {
+				onSignal = resolve;
+			});
+			const beforeRefresh = await provider.getSuggestions(["@one"], 0, 4, { signal });
 			await changed;
-			const second = await provider.getSuggestions(["@"], 0, 1, { signal: new AbortController().signal });
+			const afterRefresh = await provider.getSuggestions(["@one"], 0, 4, { signal });
 
-			assert.deepStrictEqual(values(first), ["@Developer/"]);
-			assert.deepStrictEqual(values(second), ["@Developer/", "@deep/Dev.txt"]);
+			assert.deepStrictEqual(values(beforeRefresh), ["@a/one.ts"]);
+			assert.deepStrictEqual(values(afterRefresh), ["@a/one.ts", "@a/one-more.ts"]);
+			assert.strictEqual(signals, 2);
 		});
 
 		// Tab from `@` into a directory must not wait for that directory's own listing.
@@ -611,7 +649,7 @@ describe("CombinedAutocompleteProvider", () => {
 			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
 			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
 			mkdirSync(join(baseDir, "Developer"));
-			const fd = fakeFd(baseDir, ["Developer/", "Developer/app/", "Developer/app/main.ts"]);
+			const fd = fakeFd(t, ["Developer/", "Developer/app/", "Developer/app/main.ts"]);
 			const provider = new CombinedAutocompleteProvider([], baseDir, fd.path);
 			const signal = new AbortController().signal;
 			await provider.getSuggestions(["@Dev"], 0, 4, { signal });
@@ -621,17 +659,6 @@ describe("CombinedAutocompleteProvider", () => {
 
 			assert.strictEqual(listingsBefore, 1);
 			assert.deepStrictEqual(values(result), ["@Developer/app/main.ts"]);
-		});
-
-		it("ranks hidden paths after visible ones with the same score unless the query is hidden", async (t) => {
-			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
-			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
-			const fd = fakeFd(baseDir, [".oracle/Device", "Documents/Devops"]);
-			const provider = new CombinedAutocompleteProvider([], baseDir, fd.path);
-
-			const result = await provider.getSuggestions(["@dev"], 0, 4, { signal: new AbortController().signal });
-
-			assert.deepStrictEqual(values(result), ["@Documents/Devops", "@.oracle/Device"]);
 		});
 	});
 
@@ -644,18 +671,17 @@ describe("CombinedAutocompleteProvider", () => {
 			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-latency-"));
 			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
 			const fakeFd = join(baseDir, "fake-fd.sh");
-			writeFileSync(
-				fakeFd,
-				'#!/bin/sh\ncase " $* " in *" --max-depth "*) echo "Developer/"; exit 0;; esac\necho "deep/Dev.txt"\nexec sleep 30\n',
-				{ mode: 0o755 },
-			);
+			writeFileSync(fakeFd, '#!/bin/sh\necho "Developer/"\necho "deep/Dev.txt"\nexec sleep 30\n', { mode: 0o755 });
 			const provider = new CombinedAutocompleteProvider([], baseDir, fakeFd);
 
 			const result = await provider.getSuggestions(["@Dev"], 0, 4, { signal: new AbortController().signal });
 
-			// Resolving at all proves the 30 s walk was not awaited; whether its first line beat the
-			// budget depends on machine load, so only the one-level match is pinned.
-			assert.strictEqual(result?.items[0]?.value, "@Developer/");
+			// Resolving at all proves the 30 s walk was not awaited (the budget is 3 s); both lines were
+			// written before fd stalled.
+			assert.deepStrictEqual(
+				result?.items.map((item) => item.value),
+				["@Developer/", "@deep/Dev.txt"],
+			);
 		});
 	});
 
