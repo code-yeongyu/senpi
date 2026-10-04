@@ -1,23 +1,5 @@
 # TUI delta rendering fork changes
 
-## 2026-10-04 - A space closes an unquoted @ or Tab path picker
-
-### What changed
-
-- `packages/tui/src/components/editor.ts`: `insertCharacter()` cancels the picker when a whitespace character is typed while `isUnquotedPathPicker()` holds (an unquoted `@` prefix or a forced Tab path list) instead of re-querying. Quoted paths and other trigger lists still re-query.
-
-### Why
-
-- The re-query found an empty token after the space and listed the working directory, so `@~/Developer/` followed by a space opened an unrelated directory picker.
-
-### Why an extension could not handle it
-
-- Typed-character handling and the open picker's state are private to `Editor`.
-
-### Expected merge conflict zones
-
-- `packages/tui/src/components/editor.ts`: the autocomplete branch at the end of `insertCharacter()`.
-
 ## 2026-10-04 - Accepting a suggestion list that predates the text re-queries instead of splicing
 
 ### What changed
