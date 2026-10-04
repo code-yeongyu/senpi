@@ -7,12 +7,14 @@ import {
 	kernelToolsStorage,
 } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
+import { resolveSandbox } from "../config/feature-settings.ts";
 import { DEFAULT_FOREGROUND_WINDOW_SECONDS, defaultCodemodeSettings } from "../config/settings.ts";
 import {
 	KERNEL_TOOLS_CAPABILITIES,
 	type KernelToolsCapability,
 	type KernelToolsDescribeResult,
 } from "../kernels/js/kernel-tools-types.ts";
+import { sandboxCellExecutor } from "../kernels/sandbox/sandbox-cell.ts";
 import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
 import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
 import { CellHandler, type CellState } from "./cell-handler.ts";
@@ -271,6 +273,15 @@ async function executeCell(
 					durationMs: 0,
 				});
 			}
+			const isolated =
+				invocation.input.isolate === true
+					? sandboxCellExecutor(invocation.input.code, {
+							sandbox: resolveSandbox(options.settings ?? {}),
+							executeTool: options.executeTool,
+							toolNames: () => (options.listTools?.() ?? []).map((tool) => tool.name),
+							describeTool: (name) => options.listTools?.().find((tool) => tool.name === name)?.description,
+						})
+					: undefined;
 			const envRoot = invocation.input.language === "py" ? options.pythonEnvironments?.activeRoot : undefined;
 			const packageRoot = invocation.input.language === "js" ? options.jsEnvironments?.packageRoot : undefined;
 			const result = await execution.wait(
@@ -279,6 +290,7 @@ async function executeCell(
 					code: loaded?.ok === true ? loaded.code : invocation.input.code,
 					...(loaded?.ok === true ? { sourceFile: loaded.sourceFile } : {}),
 					...(magic.kind === "host" ? { host: magic.executor } : {}),
+					...(isolated === undefined ? {} : { host: isolated }),
 					...(envRoot === undefined ? {} : { envRoot }),
 					...(packageRoot === undefined ? {} : { packageRoot }),
 					kernelPreludes: options.kernelPreludes?.(),

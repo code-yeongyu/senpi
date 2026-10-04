@@ -51,6 +51,8 @@ export interface EvalToolInput {
 	readonly timeout?: number;
 	readonly on_timeout?: "detach" | "error";
 	readonly reset?: boolean;
+	/** Run in a fresh sandbox VM instead of the persistent kernel; accepted only while `sandbox.enabled` is on. */
+	readonly isolate?: boolean;
 }
 
 export interface EvalListInput {
@@ -116,14 +118,26 @@ const fullEvalInputSchema = Type.Object(
 /** Runtime accepts a discriminated run/control union. */
 export type EvalInputSchema = TUnsafe<EvalToolRequest> & Pick<typeof fullEvalInputSchema, "properties">;
 
+const ISOLATE_FIELD_DESCRIPTION =
+	"js only. Fresh sandbox per call: no persistence, no fs/net/process/timers; only tool.* plus print/display.";
+
 export function createEvalInputSchema(
 	enabled: EnabledEvalLanguages,
 	deadlines: EvalDeadlineSeconds = defaultEvalDeadlineSeconds,
+	options: { readonly sandbox?: boolean } = {},
 ): EvalInputSchema {
 	const languages = enabledLanguageList(enabled);
 	if (languages.length === 0) throw new Error("eval requires at least one enabled language");
 	const languageSchema = evalLanguageUnion(languages);
-	const properties = evalInputProperties(languageSchema, deadlines);
+	// The sandbox field exists in the schema only while sandbox cells are turned on, so the default schema
+	// (and the prompt built from it) stays exactly what it was.
+	const properties =
+		options.sandbox === true && languages.includes("js")
+			? {
+					...evalInputProperties(languageSchema, deadlines),
+					isolate: Type.Optional(Type.Boolean({ description: ISOLATE_FIELD_DESCRIPTION })),
+				}
+			: evalInputProperties(languageSchema, deadlines);
 	return Type.Unsafe<EvalToolRequest>(
 		Type.Object(properties, {
 			// Keep branches self-contained for Mistral-hosted GLM (#2240).

@@ -17,9 +17,19 @@ export function normalizeEvalSummary(value: unknown): string | undefined {
 	return normalized.length === 0 ? undefined : normalized;
 }
 
+export class EvalIsolateInvalidError extends TypeError {
+	readonly name = "EvalIsolateInvalidError";
+	readonly code = "eval_isolate_invalid";
+
+	constructor(reason: string) {
+		super(`eval_isolate_invalid: ${reason}`);
+	}
+}
+
 export function parseEvalRequest(
 	params: unknown,
 	enabledLanguages: readonly EvalLanguage[] = evalLanguageOrder,
+	options: { readonly sandbox?: boolean } = {},
 ): EvalToolRequest {
 	if (!isRecord(params)) throw new TypeError("eval parameters must be an object");
 	if (params.action === "list") return { action: "list" };
@@ -40,6 +50,15 @@ export function parseEvalRequest(
 		);
 	if (params.on_timeout !== undefined && params.on_timeout !== "detach" && params.on_timeout !== "error")
 		throw new TypeError(`Unknown eval on_timeout value "${String(params.on_timeout)}"`);
+	if (params.isolate !== undefined && params.isolate !== false) {
+		if (params.isolate !== true) throw new EvalIsolateInvalidError("isolate must be true or false");
+		if (options.sandbox !== true) {
+			throw new EvalIsolateInvalidError("sandbox cells are turned off (set sandbox.enabled in codemode settings)");
+		}
+		if (params.language !== "js")
+			throw new EvalIsolateInvalidError('sandbox cells run JavaScript only (language: "js")');
+		if (params.reset === true) throw new EvalIsolateInvalidError("a sandbox cell starts fresh; reset does not apply");
+	}
 	return {
 		language: params.language,
 		code: params.code,
@@ -48,6 +67,7 @@ export function parseEvalRequest(
 		...(typeof params.timeout === "number" ? { timeout: params.timeout } : {}),
 		...(params.on_timeout === "detach" || params.on_timeout === "error" ? { on_timeout: params.on_timeout } : {}),
 		...(typeof params.reset === "boolean" ? { reset: params.reset } : {}),
+		...(params.isolate === true ? { isolate: true } : {}),
 	};
 }
 
