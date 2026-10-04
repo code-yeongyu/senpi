@@ -18,6 +18,7 @@ import inspect
 import io
 import json
 import locale
+import math
 import os
 import re
 import signal
@@ -48,6 +49,11 @@ EMIT_LOCK = Lock()
 RESERVED_AGENT_TOOL = "__agent__"
 RESERVED_OUTPUT_TOOL = "__output__"
 RESERVED_SCHEMA_TOOL = "__schema__"
+RESERVED_WAIT_TOOL = "__wait__"
+RESERVED_HANDLE_STATUS_TOOL = "__handle_status__"
+RESERVED_HANDLE_OUTPUT_TOOL = "__handle_output__"
+RESERVED_HANDLE_SEND_TOOL = "__handle_send__"
+RESERVED_HANDLE_CANCEL_TOOL = "__handle_cancel__"
 TIMEOUT_PAUSE_OP = "timeout-pause"
 TIMEOUT_RESUME_OP = "timeout-resume"
 
@@ -357,9 +363,12 @@ def write(path: str | Path, content: str) -> Path:
 # The bridge is a loopback call: urllib's default opener would route it through a configured proxy
 # (the environment everywhere, the registry on Windows), which a 127.0.0.1 request must never use.
 _BRIDGE_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+# Ordinary bridge calls keep this socket timeout; only `__wait__` passes its own bound (see `_bridge_wait_post`).
+_BRIDGE_SOCKET_TIMEOUT_SECONDS = 60
+_WAIT_SOCKET_GRACE_SECONDS = 30
 
 
-def bridge_post(path: str, payload: dict[str, Any]) -> Any:
+def bridge_post(path: str, payload: dict[str, Any], *, socket_timeout: float | None = _BRIDGE_SOCKET_TIMEOUT_SECONDS) -> Any:
     port = CONNECTION.get("port")
     token = CONNECTION.get("token")
     if not isinstance(port, int) or not isinstance(token, str):
@@ -374,7 +383,7 @@ def bridge_post(path: str, payload: dict[str, Any]) -> Any:
     emit_status(TIMEOUT_PAUSE_OP, force=True)
     try:
         try:
-            with _BRIDGE_OPENER.open(request, timeout=60) as response:
+            with _BRIDGE_OPENER.open(request, timeout=socket_timeout) as response:
                 response_data = response.read()
         except urllib.error.HTTPError as exc:
             response_data = exc.read()
@@ -500,6 +509,8 @@ def completion(
     if schema is not None:
         options["schema"] = schema
     response = bridge_post("/completion", {"prompt": prompt, "opts": options})
+    if options.get("handle") is True:
+        return handle(response)
     if not isinstance(response, dict):
         return response
     if "value" in response:
@@ -614,6 +625,129 @@ def agent(
         if key in response_record:
             node[key] = response_record[key]
     return node
+
+
+_HANDLE_KINDS = ("agent", "completion", "workpool")
+_WAIT_MODES = ("all", "any", "settled")
+_HANDLE_USAGE = (
+    "handle() expects an agent(..., handle=True) record, a workpool, a completion handle, "
+    "or a saved {kind, id, run_epoch} reference"
+)
+
+
+def _handle_ref(value: Any) -> dict[str, Any]:
+    if isinstance(value, HandleView):
+        return dict(value.ref)
+    if isinstance(value, Workpool):
+        return {"kind": "workpool", "id": value.pool_id, "run_epoch": 0}
+    if not isinstance(value, dict):
+        raise PreludeTypeError(_HANDLE_USAGE)
+    if isinstance(value.get("pool_id"), str):
+        return {"kind": "workpool", "id": value["pool_id"], "run_epoch": 0}
+    kind = value.get("kind")
+    if kind not in _HANDLE_KINDS:
+        handle_uri = value.get("handle")
+        scheme = handle_uri.split("://", 1)[0] if isinstance(handle_uri, str) else None
+        kind = scheme if scheme in _HANDLE_KINDS else None
+    identity = value.get("id", value.get("task_id"))
+    if kind is None or not isinstance(identity, str) or not identity:
+        raise PreludeTypeError(_HANDLE_USAGE)
+    run_epoch = value.get("run_epoch", 0 if kind == "workpool" else None)
+    if isinstance(run_epoch, bool) or not isinstance(run_epoch, int) or run_epoch < 0:
+        raise PreludeTypeError(f"{_HANDLE_USAGE}; run_epoch must be a non-negative integer")
+    return {"kind": kind, "id": identity, "run_epoch": run_epoch}
+
+
+def _handle_call(tool_name: str, args: dict[str, Any]) -> Any:
+    return bridge_post("/call", {"callId": f"py-{uuid.uuid4()}", "toolName": tool_name, "args": args})
+
+
+def _bridge_wait_post(args: dict[str, Any], timeout: float | None) -> Any:
+    # A long-lived request: no 60 s socket cap. An explicit timeout bounds it (plus grace for the host's
+    # reply); without one only the cell's own end does: SIGINT from the host (cancel, the cell's hard limit,
+    # which the eval timeout can raise) interrupts the blocking read, which closes the socket and so the
+    # host-side subscription.
+    socket_timeout = None if timeout is None else float(timeout) + _WAIT_SOCKET_GRACE_SECONDS
+    return bridge_post(
+        "/call",
+        {"callId": f"py-{uuid.uuid4()}", "toolName": RESERVED_WAIT_TOOL, "args": args},
+        socket_timeout=socket_timeout,
+    )
+
+
+def wait(handles: Any, *, timeout: float | None = None, mode: str = "all") -> Any:
+    """Block until the handles settle; never cancels work. See tool_schema("eval:wait")."""
+    if handles is None:
+        items: list[Any] = []
+    elif isinstance(handles, (list, tuple)):
+        items = list(handles)
+    else:
+        items = [handles]
+    if timeout is not None and (
+        isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout < 0
+    ):
+        raise PreludeValueError("wait() timeout must be a finite number of seconds >= 0")
+    if mode not in _WAIT_MODES:
+        raise PreludeValueError("wait() mode must be 'all', 'any' or 'settled'")
+    args: dict[str, Any] = {"refs": [_handle_ref(item) for item in items], "mode": mode}
+    if timeout is not None:
+        args["timeout"] = timeout
+    return _bridge_wait_post(args, timeout)
+
+
+class HandleControl:
+    """Epoch-fenced control over one handle; every call goes through the host capability."""
+
+    __slots__ = ("_ref",)
+
+    def __init__(self, ref: dict[str, Any]) -> None:
+        self._ref = dict(ref)
+
+    def __repr__(self) -> str:
+        return f"<handle.control {self._ref['kind']}://{self._ref['id']}@{self._ref['run_epoch']}>"
+
+    def status(self) -> Any:
+        return _handle_call(RESERVED_HANDLE_STATUS_TOOL, {"ref": self._ref})
+
+    def output(self, format: str = "raw", offset: int | None = None, limit: int | None = None) -> Any:
+        args: dict[str, Any] = {"ref": self._ref, "format": format}
+        if offset is not None:
+            args["offset"] = offset
+        if limit is not None:
+            args["limit"] = limit
+        return _handle_call(RESERVED_HANDLE_OUTPUT_TOOL, args)
+
+    def send(self, message: str) -> Any:
+        return _handle_call(RESERVED_HANDLE_SEND_TOOL, {"ref": self._ref, "message": str(message)})
+
+    def cancel(self) -> Any:
+        return _handle_call(RESERVED_HANDLE_CANCEL_TOOL, {"ref": self._ref})
+
+    def wait(self, timeout: float | None = None) -> Any:
+        return wait([self._ref], timeout=timeout, mode="all")[0]
+
+
+class HandleView(dict):
+    """The legacy record's fields as a dict, plus `control` and `ref` as attributes (never keys)."""
+
+    __slots__ = ("control", "ref")
+
+    def __init__(self, fields: dict[str, Any], ref: dict[str, Any]) -> None:
+        super().__init__(fields)
+        self.ref = dict(ref)
+        self.control = HandleControl(ref)
+
+
+def handle(value: Any) -> HandleView:
+    """Rich view of an agent record, workpool, completion handle or saved reference; see tool_schema("eval:helpers")."""
+    ref = _handle_ref(value)
+    fields: dict[str, Any] = {}
+    if isinstance(value, dict):
+        fields.update({key: item for key, item in value.items() if not callable(item)})
+    fields.setdefault("id", ref["id"])
+    fields.setdefault("run_epoch", ref["run_epoch"])
+    fields.setdefault("handle", f"{ref['kind']}://{ref['id']}")
+    return HandleView(fields, ref)
 
 
 def _pool_map(items: Iterable[Any], function: Callable[[Any], Any]) -> list[Any]:
@@ -997,6 +1131,8 @@ USER_NS.update(
         "workpool": workpool,
         "output": output,
         "tool_schema": tool_schema,
+        "wait": wait,
+        "handle": handle,
         "__senpi_magic": _magic,
         "__senpi_magic_cell": _magic_cell,
         "__senpi_shell": _shell,
@@ -1405,7 +1541,7 @@ def elapsed(start: float) -> int:
     return max(0, int((time.monotonic() - start) * 1000))
 
 
-def handle(message: dict[str, Any]) -> bool:
+def _handle_message(message: dict[str, Any]) -> bool:
     global CONNECTION
     message_type = message.get("type")
     if message_type == "init":
@@ -1483,7 +1619,7 @@ def main() -> None:
     host_closed = False
     for raw in sys.stdin:
         try:
-            if not handle(json.loads(raw)):
+            if not _handle_message(json.loads(raw)):
                 host_closed = True
                 break
         except BaseException as exc:  # noqa: BROAD_EXCEPT_OK — process boundary serializes malformed input and interrupts.

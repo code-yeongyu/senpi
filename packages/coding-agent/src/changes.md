@@ -1,3 +1,21 @@
+## 2026-10-03 - EvalHandleHost capability exports (codemode plan node 10)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports the `EvalHandleHost` capability surface from `core/extensions/eval-handle-host.ts` (`EvalHandleHost`, `HandleRef`, `HandlePhase`, `HandleSnapshot`, `HandleOutcome`, `HandleWatch`, `HandleCallContext`, `HandleError`, `HandleKind`, `CancelReceipt`, `OutputRequest`, `OutputSnapshot`, `EVAL_HANDLE_ERROR_CODES`, `EvalHandleErrorCode`, `EvalHandleError`) beside the kernel-tools context exports.
+
+### Why
+
+- The task owner (an extension) implements the capability and codemode (another extension) consumes it; both import the contract from the package root, never from each other.
+
+### Why an extension could not handle it
+
+- The package root is the only import path published to extensions; an extension cannot add exports to it.
+
+### Expected merge conflict zones
+
+- `index.ts`: the export block directly before the `kernel-tools-context.ts` re-exports.
+
 ## 2026-10-03 - A session's own fallback policy reaches its settings in memory only (omo#9512)
 
 ### What changed

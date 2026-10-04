@@ -37,6 +37,7 @@ import { time } from "../timings.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { EvalHandleHost } from "./eval-handle-host.ts";
 import { recordExtensionLoadKey } from "./extension-load-key.ts";
 import {
 	cachedExtensionFactory,
@@ -294,6 +295,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 				"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
 			for (const unsubscribe of eventBusUnsubscribers) unsubscribe();
 			eventBusUnsubscribers.clear();
+			runtime.evalHandleHost = undefined;
 			runtimeFactories.delete(runtime);
 		},
 		trackEventBusSubscription: (unsubscribe) => {
@@ -450,6 +452,11 @@ function createExtensionAPI(
 			activators.push(activator);
 			extension.lazyToolActivators = activators;
 			runtime.registerLazyToolActivator(activator);
+		},
+
+		provideEvalHandleHost(host: EvalHandleHost): void {
+			runtime.assertActive();
+			runtime.evalHandleHost = host;
 		},
 
 		registerRemovedToolHint(name: string, hint: string): void {

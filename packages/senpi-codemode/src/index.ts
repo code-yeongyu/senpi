@@ -1,4 +1,3 @@
-import * as os from "node:os";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
@@ -14,18 +13,21 @@ import {
 import { EvalNotifier } from "./extension/eval-notifier.ts";
 import { EVAL_CELLS_STATUS_KEY } from "./extension/eval-status.ts";
 import { EvalStatusTicker } from "./extension/eval-status-ticker.ts";
+import { hostLine, modelIdFrom } from "./extension/host-facts.ts";
 import { activeKernelPreludes, kernelPreludeDocsKey, promptKernelPreludes } from "./extension/kernel-preludes.ts";
+import { registerRemovedToolHints } from "./extension/removed-tool-hints.ts";
 import {
 	createExecuteTool,
 	createRuntime,
 	enabledLanguagesFrom,
 	type SessionRuntime,
 } from "./extension/runtime-factory.ts";
-import { jsRuntimeInfo, jsRuntimeLabel } from "./extension/runtime-info.ts";
+import { jsRuntimeInfo } from "./extension/runtime-info.ts";
 import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from "./extension/session-manager.ts";
 import { SessionManagerProxy } from "./extension/session-manager-proxy.ts";
 import { activeBunSkillPath, registerBunSkillContribution } from "./extension/skill-contribution.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "./extension/wake-source-state.ts";
+import { HandleRegistry } from "./handles/handle-registry.ts";
 import type { KernelToolsCapability } from "./kernels/js/kernel-tools-types.ts";
 import { EvalDetachedCellManager, type EvalDetachedCellStatusEntry } from "./tool/detached-cell-manager.ts";
 import {
@@ -93,6 +95,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	let activeModelId: string | undefined;
 	let activeContext: ExtensionContext | undefined;
 	let activeCells: EvalDetachedCellManager | undefined;
+	let activeHandles: HandleRegistry | undefined;
 	let promptPreludeDocs = "";
 	const notifier = new EvalNotifier({
 		sendMessage: (message, notifyOptions) => pi.sendMessage(message, notifyOptions),
@@ -126,6 +129,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		runtime: SessionRuntime,
 		modelId: string | undefined,
 		cellManager: EvalDetachedCellManager,
+		handles: HandleRegistry,
 	): void => {
 		const onCellSettled = (payload: EvalExecutionEventPayload): void => {
 			if (activeCells !== cellManager) return;
@@ -153,6 +157,7 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 				settings: runtime.settings,
 				artifactsDir: runtime.artifactsDir,
 				cellManager,
+				handles,
 				executionTracker: manager,
 				onCellSettled,
 				renderers,
@@ -170,10 +175,14 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	};
 	const dropRuntime = async (): Promise<void> => {
 		const cells = activeCells;
+		const handles = activeHandles;
 		activeRuntime = undefined;
 		activeModelId = undefined;
 		activeCells = undefined;
+		activeHandles = undefined;
 		statusTicker.stop();
+		// Fail every saved handle closed before the kernels go: a late wait() must never reach a successor generation.
+		handles?.dispose();
 		await cells?.dispose();
 		activeContext = undefined;
 		await manager.dispose();
@@ -209,24 +218,24 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			...(bunSkillPath === undefined ? {} : { bunSkillPath }),
 		}),
 	);
-	pi.registerRemovedToolHint(
-		"exec",
-		'exec was removed; use eval({ language: "js", code }) instead. Long eval cells detach on their own and notify when complete.',
-	);
-	pi.registerRemovedToolHint(
-		"wait",
-		'wait was removed; detached eval cells notify when complete. Use eval({ action: "peek"|"stop", cell_id }) to inspect or stop one.',
-	);
+	registerRemovedToolHints(pi);
 	registerBunSkillContribution(pi);
 
 	pi.on("session_start", async (event, ctx) => {
 		const previousCells = activeCells;
+		const previousHandles = activeHandles;
 		activeCells = undefined;
+		activeHandles = undefined;
+		previousHandles?.dispose();
 		await previousCells?.dispose();
 		const generation = manager.beginReplacement();
-		const runtime = await createRuntime(pi, ctx, event, complete, options);
+		const handles = new HandleRegistry({ ownerSessionId: ctx.sessionManager.getSessionId() });
+		const runtime = await createRuntime(pi, ctx, event, complete, options, handles);
 		const replaced = await manager.replace(generation, runtime.manager);
-		if (!replaced) return;
+		if (!replaced) {
+			handles.dispose();
+			return;
+		}
 		notifier.reset();
 		activeContext = ctx;
 		const cellManager = new EvalDetachedCellManager({
@@ -242,11 +251,12 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 			...(options.now === undefined ? {} : { now: options.now }),
 		});
 		activeCells = cellManager;
+		activeHandles = handles;
 		// The goal builtin clears its per-session counts at session_start; re-publish our snapshot.
 		cellManager.publishWakeSourceState();
 		activeRuntime = runtime;
 		activeModelId = ctx.model?.id;
-		registerEvalForRuntime(runtime, activeModelId, cellManager);
+		registerEvalForRuntime(runtime, activeModelId, cellManager, handles);
 	});
 	pi.on("session_shutdown", async () => dropRuntime());
 	pi.on("session_before_switch", async () => dropRuntime());
@@ -259,31 +269,19 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		if (modelId === undefined || modelId === activeModelId) return;
 		activeModelId = modelId;
 		const cellManager = activeCells;
-		if (cellManager === undefined) return;
-		registerEvalForRuntime(runtime, modelId, cellManager);
+		const handles = activeHandles;
+		if (cellManager === undefined || handles === undefined) return;
+		registerEvalForRuntime(runtime, modelId, cellManager, handles);
 	});
 	// Tool activation has no event of its own; the next turn re-documents a changed contribution set.
 	pi.on("turn_start", async () => {
 		const runtime = activeRuntime;
 		const cellManager = activeCells;
-		if (runtime === undefined || cellManager === undefined) return;
+		const handles = activeHandles;
+		if (runtime === undefined || cellManager === undefined || handles === undefined) return;
 		if (kernelPreludeDocsKey(promptKernelPreludes(pi)) === promptPreludeDocs) return;
-		registerEvalForRuntime(runtime, activeModelId, cellManager);
+		registerEvalForRuntime(runtime, activeModelId, cellManager, handles);
 	});
-}
-
-function hostLine(): string {
-	const cpu = os.cpus()[0]?.model?.trim();
-	return [`${os.platform()} ${os.arch()}`, cpu, `${os.availableParallelism()} cores`, jsRuntimeLabel()]
-		.filter((part): part is string => !!part)
-		.join(" \u00b7 ");
-}
-
-function modelIdFrom(event: unknown): string | undefined {
-	if (typeof event !== "object" || event === null || !("model" in event)) return undefined;
-	const model = event.model;
-	if (typeof model !== "object" || model === null || !("id" in model)) return undefined;
-	return typeof model.id === "string" ? model.id : undefined;
 }
 
 export {

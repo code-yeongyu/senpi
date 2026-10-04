@@ -62,6 +62,23 @@ export {
 	engineBuildIdentityFrom,
 } from "./core/engine-build-identity.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+export {
+	type CancelReceipt,
+	EVAL_HANDLE_ERROR_CODES,
+	EvalHandleError,
+	type EvalHandleErrorCode,
+	type EvalHandleHost,
+	type HandleCallContext,
+	type HandleError,
+	type HandleKind,
+	type HandleOutcome,
+	type HandlePhase,
+	type HandleRef,
+	type HandleSnapshot,
+	type HandleWatch,
+	type OutputRequest,
+	type OutputSnapshot,
+} from "./core/extensions/eval-handle-host.ts";
 // Extension system
 export type {
 	AfterProviderResponseEvent,

@@ -1,3 +1,25 @@
+## 2026-10-03 - Session-scoped EvalHandleHost provide/read pair (codemode plan node 10)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.provideEvalHandleHost(host)` registers the session's `EvalHandleHost` (the capability declared in `eval-handle-host.ts`: `watch`/`result`/`send`/`cancel`/`output` fenced by owner session, id and `run_epoch`); `ExtensionContext.evalHandleHost` reads it back, optional and absent on runtimes without a provider; `ExtensionRuntimeState.evalHandleHost` is the per-runtime slot.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API method stores the host on the extension runtime (last provider wins); `invalidate()` clears it so a replaced or reloaded session never reads a stale host.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createContext` exposes the slot as the `evalHandleHost` getter beside `kernelTools`.
+- `packages/coding-agent/src/index.ts` re-exports the capability types and `EvalHandleError`.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the task/workpool owner (an extension) provides the capability and codemode (another extension) consumes it per session; the direction is the reverse of `kernelTools` (long-lived, provider-to-consumer), so a call-scoped AsyncLocalStorage does not fit, and a process-global registry would let every session's task extension register into one slot on a multi-session host.
+- `packages/coding-agent/src/core/extensions/loader.ts` / `runner.ts`: the runtime is the only object both extensions of one session share, so it is the session-scoped carrier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns `ExtensionAPI` and `ExtensionContext`; an extension cannot add a surface other extensions receive, and two extensions have no shared per-session object other than the runtime.
+
+### Expected merge conflict zones
+
+- `types.ts`: the `ExtensionContext` body after `kernelTools`, the `ExtensionAPI` tool-registration block after `registerRemovedToolHint`, and the tail of `ExtensionRuntimeState`; `loader.ts` `createExtensionAPI` beside `registerRemovedToolHint` and the `invalidate` closure; `runner.ts` `createContext` getters.
+
 ## 2026-10-02 - Extension memory reporters (senpi#2561)
 
 ### What changed

@@ -1,6 +1,7 @@
 import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import { type Static, Type } from "typebox";
 import { Check, Errors } from "typebox/value";
+import { virtualEvalSchema } from "./eval-virtual-schemas.ts";
 
 const schemaArgsSchema = Type.Object(
 	{ name: Type.Optional(Type.String({ minLength: 1 })) },
@@ -46,6 +47,9 @@ export function runEvalSchema(args: unknown, options: RunEvalSchemaOptions): Eva
 	const tools = options.listTools();
 	if (parsed.name === undefined) return { tools: tools.map((tool) => tool.name) };
 
+	// Documentation-only entries; they are not tools and the listing above stays the ordinary catalog.
+	const virtual = virtualEvalSchema(parsed.name);
+	if (virtual !== undefined) return virtual;
 	const match = tools.find((tool) => tool.name === parsed.name);
 	if (match) return { name: match.name, description: match.description, parameters: match.parameters };
 	throw new SchemaUnknownToolError(parsed.name, nearestNames(parsed.name, tools));

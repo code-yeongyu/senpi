@@ -1322,6 +1322,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return kernelToolsStorage.getStore();
 			},
+			get evalHandleHost() {
+				runner.assertActive();
+				return runner.runtime.evalHandleHost;
+			},
 			abort: (source) => {
 				runner.assertActive();
 				runner.abortFn(source);

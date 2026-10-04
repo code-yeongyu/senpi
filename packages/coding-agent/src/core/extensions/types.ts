@@ -105,6 +105,7 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
 import type { SessionControlActions, SessionControlWakeEvent } from "./session-control-types.ts";
 
@@ -513,6 +514,12 @@ export interface ExtensionContext {
 	 * JavaScript eval owns the host-tool context; absent on older runtimes.
 	 */
 	readonly kernelTools?: ExtensionKernelTools;
+	/**
+	 * Session-scoped host capability behind the in-cell `wait()` / `handle()` helpers: watch, send to,
+	 * cancel and read host-owned work (agent runs, workpools) fenced by owner, id and run epoch.
+	 * Provided by the task owner through `pi.provideEvalHandleHost`; absent on runtimes without a provider.
+	 */
+	readonly evalHandleHost?: EvalHandleHost;
 	/** Abort the current agent operation */
 	abort(source?: "user" | "system"): void;
 	/** Whether there are queued messages waiting */
@@ -2302,6 +2309,13 @@ export interface ExtensionAPI {
 	registerRemovedToolHint(name: string, hint: string): void;
 
 	/**
+	 * Provide this session's `EvalHandleHost` (the task/workpool owner implements it). Session-scoped:
+	 * every extension loaded in the same session reads it back as `ctx.evalHandleHost`; the last
+	 * provider wins, and a replaced or reloaded session starts without one.
+	 */
+	provideEvalHandleHost(host: EvalHandleHost): void;
+
+	/**
 	 * Register a callback that may activate a registered-but-inactive tool on demand.
 	 * Called only when executeTool would otherwise fail with `inactive_tool`. Return
 	 * true only after the tool has actually been activated; returning false preserves
@@ -2950,6 +2964,8 @@ export interface ExtensionRuntimeState {
 	registerRemovedToolHint: RegisterRemovedToolHintHandler;
 	registerVirtualModel: (definition: VirtualModelDefinition, extensionPath?: string) => void;
 	unregisterVirtualModel: (provider: string, id: string) => void;
+	/** The session's eval handle host, set by `pi.provideEvalHandleHost`; cleared when the runtime is invalidated. */
+	evalHandleHost?: EvalHandleHost;
 }
 
 /**

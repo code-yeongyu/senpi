@@ -8,6 +8,7 @@
 
 - `open_session` accepts `retryFallback` (`{ modelFallback, fallbackChains }`) and hosts advertise the `retry_fallback_profile` capability: the chain is that session's own, applied as an in-memory override that is never written to a settings file and never seen by another session on the host, so a task child running on a shared host can fall back to its own models mid-turn ([code-yeongyu/oh-my-openagent#9512](https://github.com/code-yeongyu/oh-my-openagent/issues/9512)).
 - `auto` permission preset: approves, without asking, only actions it can prove stay inside the project, judged on the exact file each tool will open: reads, listings and writes of project files, `apply_patch` on project files, a content search of one or more project files, and a small set of read-only shell commands with plain in-project arguments. Everything else asks, including dotfiles such as `.env`, `.git/`, keys, anything outside the project, directory-wide searches, shell writes, `cd`, pipes, `git show`, test runners, builds and installs. Your own `deny` and `ask` rules always win, from settings, the CLI or RPC; your `allow` rules never widen it. Hosts advertise `permission_preset_auto`.
+- Extensions can provide and read a session-scoped `EvalHandleHost` (`pi.provideEvalHandleHost(host)` / `ctx.evalHandleHost`): the capability behind codemode's in-cell `wait()` and `handle()` helpers, fenced by owner session, id and run epoch. It is absent until a task owner provides it and is cleared when the session runtime is replaced.
 
 ### Changed
 

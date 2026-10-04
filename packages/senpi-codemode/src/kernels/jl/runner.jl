@@ -224,12 +224,15 @@ function senpi_http_body(response::AbstractString)
     String(output)
 end
 
-function senpi_bridge_request(path::String, payload)
+# `read_timeout` (seconds) bounds only the long-lived `wait()` request; ordinary calls read until the host closes.
+function senpi_bridge_request(path::String, payload; read_timeout=nothing)
     port = get(senpi_connection, "port", nothing)
     token = get(senpi_connection, "token", nothing)
     port isa Integer && token isa AbstractString || error("Julia tool bridge is not initialized")
     body = senpi_json(payload)
     socket = connect(ip"127.0.0.1", port)
+    timed_out = Ref(false)
+    timer = read_timeout === nothing ? nothing : Timer(_ -> (timed_out[] = true; close(socket)), Float64(read_timeout))
     try
         request = join([
             "POST " * path * " HTTP/1.1",
@@ -244,12 +247,14 @@ function senpi_bridge_request(path::String, payload)
         Base.write(socket, request)
         flush(socket)
         response = Base.read(socket, String)
+        timed_out[] && throw(SenpiBridgeError("bridge request timed out after $(read_timeout)s", "bridge_timeout"))
         parsed = senpi_json_parse(senpi_http_body(response))
         parsed isa AbstractDict || error("Bridge returned invalid JSON")
         get(parsed, "ok", false) === true && return get(parsed, "value", nothing)
         failure = get(parsed, "error", parsed)
         throw(SenpiBridgeError(failure isa AbstractDict ? string(get(failure, "message", failure)) : string(failure), failure isa AbstractDict ? get(failure, "code", nothing) : nothing))
     finally
+        timer === nothing || close(timer)
         close(socket)
     end
 end

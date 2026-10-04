@@ -2,6 +2,7 @@ import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import type { CodemodeSettings } from "../config/settings.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { InterpreterAvailability } from "../interpreters/detect.ts";
 import type { SessionEnvironment } from "../kernels/session-env.ts";
 import type { EvalKernelManager, ExecuteTool } from "../tool/types.ts";
@@ -39,4 +40,6 @@ export interface CreateCodemodeSessionManagerOptions {
 	readonly executeTool: ExecuteTool;
 	readonly listTools?: () => readonly EvalSchemaToolInfo[];
 	readonly complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
+	/** The session generation's handle registry; subprocess kernels reach `wait()`/`handle()` through the bridge. */
+	readonly handles?: HandleRegistry;
 }

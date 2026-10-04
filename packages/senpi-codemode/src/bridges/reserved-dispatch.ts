@@ -1,7 +1,9 @@
-import type { AgentToolResult } from "@code-yeongyu/senpi";
+import type { AgentToolResult, EvalHandleHost } from "@code-yeongyu/senpi";
 import { RESERVED_AGENT_TOOL, RESERVED_OUTPUT_TOOL, RESERVED_SCHEMA_TOOL } from "../bridge/reserved.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { EvalStatusEvent, ExecuteTool } from "../tool/types.ts";
 import { type AgentExecuteTool, runEvalAgent } from "./agent-bridge.ts";
+import { isHandleToolName, runHandleTool } from "./handle-bridge.ts";
 import { type MarshalledToolResult, type OutputExecuteTool, runEvalOutput } from "./output-bridge.ts";
 import { type EvalSchemaToolInfo, runEvalSchema } from "./schema-bridge.ts";
 
@@ -15,6 +17,10 @@ export interface ReservedDispatchContext {
 	readonly signal: AbortSignal | undefined;
 	readonly emitStatus: (event: EvalStatusEvent) => void;
 	readonly marshalToolResult: (result: AgentToolResult<unknown>) => MarshalledToolResult;
+	/** The session generation's handle registry; `wait()`/`handle()` fail with `eval_wait_unavailable` without one. */
+	readonly handles?: HandleRegistry;
+	/** `ctx.evalHandleHost` at dispatch time; agent/workpool refs need it, completion refs do not. */
+	readonly evalHandleHost?: EvalHandleHost;
 }
 
 class SchemaUnavailableError extends Error {
@@ -26,10 +32,22 @@ class SchemaUnavailableError extends Error {
 }
 
 export function isReservedToolName(toolName: string): boolean {
-	return toolName === RESERVED_AGENT_TOOL || toolName === RESERVED_OUTPUT_TOOL || toolName === RESERVED_SCHEMA_TOOL;
+	return (
+		toolName === RESERVED_AGENT_TOOL ||
+		toolName === RESERVED_OUTPUT_TOOL ||
+		toolName === RESERVED_SCHEMA_TOOL ||
+		isHandleToolName(toolName)
+	);
 }
 
 export async function runReservedTool(toolName: string, context: ReservedDispatchContext): Promise<unknown> {
+	if (isHandleToolName(toolName)) {
+		return await runHandleTool(toolName, context.args, {
+			registry: context.handles,
+			host: context.evalHandleHost,
+			signal: context.signal,
+		});
+	}
 	if (toolName === RESERVED_AGENT_TOOL) {
 		return await runEvalAgent(context.args, {
 			callId: context.callId,

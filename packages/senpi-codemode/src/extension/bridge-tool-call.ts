@@ -1,3 +1,4 @@
+import type { EvalHandleHost } from "@code-yeongyu/senpi";
 import { isReservedToolName, runReservedTool } from "../bridges/reserved-dispatch.ts";
 import { defaultCodemodeSettings } from "../config/settings.ts";
 import { marshalToolResult } from "../tool/image.ts";
@@ -16,8 +17,9 @@ export interface BridgeToolCallRequest {
 // and ordinary tool results are marshalled to { text, images, details, hasError } — the raw
 // { content } shape left python cells unable to reach tool.read image blocks.
 export async function routeBridgeToolCall(
-	options: Pick<CreateCodemodeSessionManagerOptions, "executeTool" | "listTools" | "settings">,
+	options: Pick<CreateCodemodeSessionManagerOptions, "executeTool" | "listTools" | "settings" | "handles">,
 	request: BridgeToolCallRequest,
+	evalHandleHost?: EvalHandleHost,
 ): Promise<unknown> {
 	if (!isReservedToolName(request.toolName)) {
 		return marshalToolResult(await options.executeTool(request.toolName, request.args, { signal: request.signal }));
@@ -33,5 +35,7 @@ export async function routeBridgeToolCall(
 		signal: request.signal,
 		emitStatus: () => {},
 		marshalToolResult,
+		...(options.handles === undefined ? {} : { handles: options.handles }),
+		...(evalHandleHost === undefined ? {} : { evalHandleHost }),
 	});
 }

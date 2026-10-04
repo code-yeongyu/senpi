@@ -19,42 +19,7 @@ def __senpi_emit_status(op, fields = {}, force: false)
   __senpi_emit({ "type" => "status", "event" => { "op" => op }.merge(fields.transform_keys(&:to_s)) })
 end
 
-def __senpi_resolve_path(value)
-  raw = value.to_s
-  match = SENPI_INTERNAL_URL.match(raw)
-  return File.expand_path(raw) unless match
-
-  scheme = match[1].downcase
-  roots = $__senpi_connection.is_a?(Hash) ? $__senpi_connection["localRoots"] : nil
-  root = roots[scheme] if roots.is_a?(Hash)
-  raise "Protocol paths are not supported by this helper: #{raw}" unless root.is_a?(String) && !root.empty?
-
-  relative = URI::DEFAULT_PARSER.unescape(match[2].tr("\\", "/"))
-  root_path = File.expand_path(root)
-  return root_path if relative.empty?
-  if relative.start_with?("/") || relative.split("/").include?("..")
-    raise "Unsafe #{scheme}:// path (absolute or traversal): #{raw}"
-  end
-
-  resolved = File.expand_path(relative, root_path)
-  unless resolved == root_path || resolved.start_with?(root_path + File::SEPARATOR)
-    raise "#{scheme}:// path escapes its root: #{raw}"
-  end
-  resolved
-end
-
-def __senpi_display_payload(value)
-  if value.is_a?(Hash)
-    kind = value["type"] || value[:type]
-    text_value = value["text"] || value[:text]
-    return ["text/markdown", text_value.to_s] if kind == "markdown" && !text_value.nil?
-    return ["image/png", value["data"].to_s] if kind == "image" && value["mimeType"] == "image/png"
-    return ["image/jpeg", value["data"].to_s] if kind == "image" && value["mimeType"] == "image/jpeg"
-    return ["application/json", JSON.generate(value)]
-  end
-  return ["application/json", JSON.generate(value)] if value.is_a?(Array)
-  ["text/plain", value.to_s]
-end
+require_relative "paths"
 
 def display(value)
   mime_type, payload = __senpi_display_payload(value)
@@ -118,7 +83,7 @@ def env(key = nil, value = nil)
   resolved
 end
 
-def __senpi_bridge_request(path, payload)
+def __senpi_bridge_request(path, payload, read_timeout: 60)
   connection = $__senpi_connection
   raise "Ruby tool bridge is not initialized" unless connection.is_a?(Hash)
   port = connection["port"]
@@ -132,7 +97,7 @@ def __senpi_bridge_request(path, payload)
   request.body = JSON.generate(payload)
   __senpi_emit_status("timeout-pause", force: true)
   begin
-    response = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 10, read_timeout: 60) { |http| http.request(request) }
+    response = Net::HTTP.start(uri.hostname, uri.port, open_timeout: 10, read_timeout: read_timeout) { |http| http.request(request) }
   ensure
     __senpi_emit_status("timeout-resume", force: true)
   end
@@ -187,12 +152,24 @@ def tool
 end
 
 require_relative "workpool"
+require_relative "handles"
+
+# Block until the handles settle; never cancels work. See tool_schema("eval:wait").
+def wait(handles, timeout: nil, mode: "all")
+  __senpi_wait(handles, timeout: timeout, mode: mode)
+end
+
+# Rich view of an agent record, workpool, completion handle or saved reference; see tool_schema("eval:helpers").
+def handle(value)
+  __senpi_handle_view(value)
+end
 
 def completion(prompt, model: "default", system: nil, schema: nil, **kwargs)
   options = { "model" => model }.merge(kwargs.transform_keys(&:to_s))
   options["system"] = system unless system.nil?
   options["schema"] = schema unless schema.nil?
   result = __senpi_bridge_request("/completion", { "prompt" => prompt.to_s, "opts" => options })
+  return handle(result) if options["handle"] == true
   return result unless result.is_a?(Hash)
   return result["value"] if result.key?("value")
 

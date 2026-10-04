@@ -14,6 +14,7 @@ import { appendSchemaHint } from "../bridges/schema-hint.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import { handleCompletionToolCall } from "../completion/tool-bridge.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import {
 	boundToolCallArgs,
@@ -24,6 +25,7 @@ import {
 	type ToolCallCapture,
 	toolCallResultPreview,
 } from "./call-capture.ts";
+import { completionCallOptions, reservedDispatchContext } from "./cell-reserved-dispatch.ts";
 import { CellResultBuilder, type CellState } from "./cell-runtime.ts";
 import { type EvalImageResizer, marshalToolResult, toolResultIsError } from "./image.ts";
 import { upsertStatusEvent } from "./status-events.ts";
@@ -48,6 +50,10 @@ export interface CellBridgeRuntime {
 	readonly imageResizer?: EvalImageResizer;
 	/** This cell's live kernel-tool capability; only a JS kernel has one (#1754). */
 	readonly kernelTools?: KernelToolsCapability;
+	/** The session generation's handle registry behind `wait()` / `handle()` / completion handles. */
+	readonly handles?: HandleRegistry;
+	/** Absolute wall-clock deadline of this cell; a completion handle it creates is bounded by it. */
+	readonly hardDeadlineMs?: number;
 }
 
 export class CellHandler {
@@ -159,17 +165,12 @@ export class CellHandler {
 			await this.#deliverToolReply(
 				message,
 				async () => ({
-					value: await runReservedTool(message.toolName, {
-						callId: message.callId,
-						args: message.args,
-						executeTool: this.#runtime.executeTool,
-						taskToolName: this.#runtime.settings.taskTools.task,
-						taskOutputToolName: this.#runtime.settings.taskTools.output,
-						listTools: this.#runtime.listTools,
-						signal: this.#state.signal,
-						emitStatus: (event) => this.#recordStatus(event),
-						marshalToolResult,
-					}),
+					value: await runReservedTool(
+						message.toolName,
+						reservedDispatchContext(message, this.#runtime, this.#state.signal, (event) =>
+							this.#recordStatus(event),
+						),
+					),
 					toolCallOk: true,
 				}),
 				capture,
@@ -177,13 +178,15 @@ export class CellHandler {
 			return;
 		}
 		if (message.toolName === "completion" && this.#runtime.complete) {
-			const result = await handleCompletionToolCall({
-				message,
-				kernel: this.#kernel,
-				complete: this.#runtime.complete,
-				ctx: this.#runtime.ctx,
-				isActive: () => this.#state.active,
-			});
+			const result = await handleCompletionToolCall(
+				completionCallOptions(
+					message,
+					this.#kernel,
+					this.#runtime,
+					this.#runtime.complete,
+					() => this.#state.active,
+				),
+			);
 			if (!this.#state.active) return;
 			recordToolCall(this.#state.toolCalls, result.ok, capture, undefined, result.ok ? undefined : result.error);
 			this.#resultBuilder.emitUpdate(false);
