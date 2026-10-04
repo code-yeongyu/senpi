@@ -9,7 +9,7 @@
 import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../../extensions/types.ts";
-import { renderToolDiff } from "../diff-render.ts";
+import { countDiffChanges, renderToolDiff } from "../diff-render.ts";
 import type { EditToolDetails } from "../edit.ts";
 import { computeEditsDiff, type Edit, type EditDiffError, type EditDiffResult } from "../edit-diff.ts";
 import { renderToolPath, str } from "../render-utils.ts";
@@ -80,9 +80,11 @@ function getRenderablePreviewInput(args: RenderableEditArgs | undefined): { path
 
 	return null;
 }
-function formatEditCall(args: RenderableEditArgs | undefined, theme: Theme, cwd: string): string {
+function formatEditCall(args: RenderableEditArgs | undefined, theme: Theme, cwd: string, diffText?: string): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
-	return `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
+	const counts = diffText === undefined ? undefined : countDiffChanges(diffText);
+	const countTag = counts === undefined ? "" : theme.fg("muted", ` (+${counts.added}/-${counts.removed})`);
+	return `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}${countTag}`;
 }
 function formatEditResult(
 	args: RenderableEditArgs | undefined,
@@ -136,7 +138,18 @@ function buildEditCallComponent(
 ): EditCallRenderComponent {
 	component.setBgFn(getEditHeaderBg(component.preview, component.settledError, theme));
 	component.detachAll();
-	component.addChild(new Text(formatEditCall(args, theme, cwd), 0, 0));
+	component.addChild(
+		new Text(
+			formatEditCall(
+				args,
+				theme,
+				cwd,
+				component.preview && !("error" in component.preview) ? component.preview.diff : undefined,
+			),
+			0,
+			0,
+		),
+	);
 
 	if (!component.preview) {
 		return component;

@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-10-04 - Biome skips the vendored pi codemode runtime (codemode plan node 18, part 1)
+
+### What changed
+
+- `biome.json`: `packages/senpi-codemode/src/kernels/sandbox/vendor/**` and `packages/senpi-codemode/test/sandbox/vendor/**` are excluded from formatting and lint.
+
+### Why
+
+- Those files are upstream's source and test, kept byte-identical (apart from an attribution header) so their provenance stays checkable against the release and a future sync re-applies only the marked local blocks. Formatting them would rewrite every line.
+
+### Why an extension could not handle it
+
+- This is repository tooling configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `files.includes` list in `biome.json`.
+
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
 
 ### What changed

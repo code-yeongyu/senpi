@@ -783,3 +783,21 @@ The bash tool's spawn environment is assembled in this function.
 ### Expected merge conflict zones
 
 The `delete env.PI_*` block and the session-exposure block in `resolveSpawnContext`.
+
+## 2026-10-03 - Edit card header shows the aggregate change count (senpi#2653)
+
+### What changed
+
+`packages/coding-agent/src/core/tools/diff-render.ts`: adds `countDiffChanges`, which returns net added/removed line counts for a unified diff (skipping `+++`/`---` headers and context). see `renderers/changes.md` for the edit-card header change.
+
+### Why
+
+The edit card showed the path but no aggregate change size at a glance.
+
+### Why an extension could not handle it
+
+The edit card header is produced inside the built-in edit renderer, below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to `renderToolDiff`/`renderers/edit.ts` at the next sync.

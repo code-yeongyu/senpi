@@ -38,6 +38,8 @@
 			"!**/api/cursor-agent/gen",
 			"!**/*.models.ts",
 			"!packages/mom/data/**/*",
+			"!packages/senpi-codemode/src/kernels/sandbox/vendor/**/*",
+			"!packages/senpi-codemode/test/sandbox/vendor/**/*",
 			"!!**/node_modules"
 		]
 	},

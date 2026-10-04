@@ -94,3 +94,21 @@ Built-in renderers own these detail-derived lines and run independently of exten
 Read, grep, and bash result formatting; ordinary collapse hints remain.
 
 - Covered production paths: `packages/coding-agent/src/core/tools/renderers/read.ts`, `packages/coding-agent/src/core/tools/renderers/grep.ts`, `packages/coding-agent/src/core/tools/renderers/bash.ts`.
+
+## 2026-10-03 — Edit card header shows the aggregate change count (senpi#2653)
+
+### What changed
+
+`packages/coding-agent/src/core/tools/renderers/edit.ts`: the edit card header now appends a `(+a/-d)` count next to the path, derived from the preview diff via the new `countDiffChanges` in `../diff-render.ts`.
+
+### Why
+
+The edit card showed the path but no aggregate change size at a glance.
+
+### Why an extension could not handle it
+
+The edit card header is produced inside the built-in edit renderer, below the extension API.
+
+### Expected merge conflict zones
+
+- Covered production paths: `packages/coding-agent/src/core/tools/renderers/edit.ts`.
