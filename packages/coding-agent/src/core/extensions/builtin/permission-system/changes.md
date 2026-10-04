@@ -376,3 +376,11 @@ The permission-system builtin owns preset policy and parsing; all policy remains
 ### Expected merge conflict zones
 
 Preset union, CLI switch and rules table. Existing workspace semantics and approval storage remain unchanged.
+
+## 2026-10-04 — A permission request records and sends its tool call (#2710)
+
+**What:** `index.ts` sets `Request.tool = { callID: event.toolCallId, parentCallID? }` (the field existed and was never set; `messageID` becomes optional because the hook has none). `prompt.ts` passes the call to `ctx.ui.select` and to the feedback `ctx.ui.input` as `{ toolCallId, parentToolCallId? }`.
+
+**Why:** clients bind each prompt to its call; see `modes/rpc/changes.md`.
+
+**Test:** `test/suite/regressions/issue-2710-permission-tool-call-id.test.ts`. Three reads in one message, over the real host core: each prompt carries its own call id. Answering "Allow once" per prompt returns each call's own file.

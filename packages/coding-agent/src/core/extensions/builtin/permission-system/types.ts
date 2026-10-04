@@ -30,9 +30,11 @@ export type Request = {
 	patterns: string[];
 	always: string[];
 	metadata: Record<string, unknown>;
+	/** The tool call that raised this request (`parentCallID` when another tool issued it). */
 	tool?: {
-		messageID: string;
+		messageID?: string;
 		callID: string;
+		parentCallID?: string;
 	};
 };
 

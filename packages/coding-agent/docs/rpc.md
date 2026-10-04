@@ -3562,6 +3562,19 @@ Prompt the user to choose from a list. Dialog methods with a `timeout` field inc
 
 Expected response: `extension_ui_response` with `value` (the selected option string) or `cancelled: true`.
 
+A permission prompt (title `Permission required: <permission>`) also carries `toolCallId`, the id of the tool call it approves, and `parentToolCallId` when another tool (for example a codemode script) issued that call. Clients bind the prompt to that call by id: the engine raises the prompts for every call of a message before any of them runs, so the order of `tool_execution_start` events does not say which call a prompt belongs to. The `input` that follows a "Deny with feedback" choice carries the same fields.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-3",
+  "method": "select",
+  "title": "Permission required: read\n\nPath: /project/a.txt\n\nPatterns:\n  - /project/a.txt",
+  "options": ["Allow once", "Allow always", "Deny", "Deny with feedback"],
+  "toolCallId": "call-a"
+}
+```
+
 #### confirm
 
 Prompt the user for yes/no confirmation.

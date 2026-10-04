@@ -6,6 +6,8 @@
 
 ### Added
 
+- A permission prompt sent to RPC clients now names the tool call it approves (`toolCallId`, plus `parentToolCallId` for a call another tool issued), and so does the feedback `input` after "Deny with feedback". The engine raises the prompts for every call of a message before any of them runs, so a client could not tell which of several calls of the same tool a prompt was for; an app can now show each prompt with its own call's input ([#2710](https://github.com/code-yeongyu/senpi/issues/2710)).
+
 ### Changed
 
 ### Fixed

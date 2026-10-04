@@ -6,11 +6,12 @@ import type { CompletionRequest, CompletionResult } from "../completion/handler.
 import { resolveKernelMemoryThresholds } from "../config/memory-settings.ts";
 import { collectOrphanedChildren } from "../host-sdk.ts";
 import { JavaScriptKernel } from "../kernels/js/context-manager.ts";
-import type { KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
+import type { KernelToolsCapability, KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
 import type { KernelLifecycle } from "../kernels/shared/kernel-death.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import { type BridgeDispatchContext, dispatchBridgeCompletion } from "./bridge-dispatch.ts";
 import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
+import { CellKernelTools } from "./cell-kernel-tools.ts";
 import { parkWhenIdle } from "./idle-parking-kernel.ts";
 import {
 	javaScriptKernelMemory,
@@ -65,6 +66,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	readonly #registrations: SessionKernelRegistrations;
 	#kernelCreations = new Map<EvalLanguage, Promise<EvalKernel>>();
 	#onMessageRefs = new Map<EvalLanguage, (message: KernelToHostMessage) => void>();
+	readonly #cellKernelTools = new CellKernelTools();
 	#context: ExtensionContext | undefined;
 	#generation = 0;
 	#disposePromise: Promise<void> | undefined;
@@ -91,7 +93,13 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	}
 
 	async #call(request: BridgeToolCallRequest): Promise<unknown> {
-		return await routeBridgeToolCall(this.#options, request, this.#context?.evalHandleHost);
+		return await this.#cellKernelTools.run(request.cellToken, () =>
+			routeBridgeToolCall(this.#options, request, this.#context?.evalHandleHost),
+		);
+	}
+
+	bindCellKernelTools(token: string, capability: KernelToolsCapability): () => void {
+		return this.#cellKernelTools.bind(token, capability);
 	}
 
 	async getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel> {

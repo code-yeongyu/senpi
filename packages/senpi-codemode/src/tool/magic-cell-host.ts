@@ -6,7 +6,8 @@ import type { EvalLanguage, HostCellExecutor } from "./types.ts";
 export type MagicCellPlan =
 	| { readonly kind: "ordinary" }
 	| { readonly kind: "host"; readonly executor: HostCellExecutor }
-	| { readonly kind: "refused"; readonly message: string };
+	| { readonly kind: "refused"; readonly message: string }
+	| { readonly kind: "load"; readonly target: string };
 
 export function planMagicCell(
 	language: EvalLanguage,
@@ -21,6 +22,7 @@ export function planMagicCell(
 		throw error;
 	}
 	if (magic === undefined) return { kind: "ordinary" };
+	if (magic.kind === "load") return { kind: "load", target: magic.target };
 	if (environments === undefined) {
 		return {
 			kind: "refused",

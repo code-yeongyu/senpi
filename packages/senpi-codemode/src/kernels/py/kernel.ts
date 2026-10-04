@@ -5,6 +5,7 @@ import type {
 	KernelToolsInvokeOptions,
 	KernelToolsInvokeRequest,
 } from "../js/kernel-tools-types.ts";
+import { inputAtStart } from "../shared/cell-source-at-start.ts";
 import { describeExit } from "../shared/kernel-death.ts";
 import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
 import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
@@ -243,10 +244,15 @@ export class PythonKernel {
 			});
 			return;
 		}
+		const input = inputAtStart(pending.input);
+		if ("refused" in input) {
+			this.#settleRun(pending, failedPythonResult(pending.input.cellId, input.refused));
+			return;
+		}
 		try {
 			this.#transport?.run({
-				...pending.input,
-				preludePlan: this.#preludes.plan(pending.input.kernelPreludes ?? []),
+				...input,
+				preludePlan: this.#preludes.plan(input.kernelPreludes ?? []),
 			});
 		} catch (error) {
 			const failure = error instanceof Error ? error : new Error(String(error));

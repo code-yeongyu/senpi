@@ -13,6 +13,7 @@ import type {
 	KernelInterruptHandle,
 	PendingCell,
 } from "../tool/types.ts";
+import { hasKernelTools, type KernelToolsMethods } from "./kernel-tools-probe.ts";
 
 export type StartKernel = (lifecycle: Required<KernelLifecycle>) => Promise<EvalKernel>;
 
@@ -50,10 +51,29 @@ export class ReplaceableKernel implements EvalKernel {
 	#closed = false;
 	#closeFailure: unknown;
 
+	// Present only when the instance has kernel tools, so a probe sees what it would see on the instance itself.
+	declare readonly describeKernelTools?: KernelToolsMethods["describeKernelTools"];
+	declare readonly invokeKernelTool?: KernelToolsMethods["invokeKernelTool"];
+
 	private constructor(language: EvalLanguage, start: StartKernel, first: EvalKernel) {
 		this.#language = language;
 		this.#start = start;
 		this.#kernel = first;
+		// Python is the one subprocess kernel with kernel tools; rb and jl only carry tools_unavailable stubs to hide.
+		if (language === "py" && hasKernelTools(first)) {
+			// Always the CURRENT instance: after a replacement the old definitions are gone with the old interpreter.
+			const tools: KernelToolsMethods = {
+				describeKernelTools: (names) => this.#currentTools().describeKernelTools(names),
+				invokeKernelTool: (request, options) => this.#currentTools().invokeKernelTool(request, options),
+			};
+			Object.assign(this, tools);
+		}
+	}
+
+	#currentTools(): KernelToolsMethods {
+		const current = this.#kernel;
+		if (!hasKernelTools(current)) throw new Error(`The ${this.#language} kernel has no kernel tools`);
+		return current;
 	}
 
 	/** Starts the first instance; one that cannot hand back its queue is returned as it is. */

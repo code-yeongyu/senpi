@@ -8,6 +8,7 @@ import {
 	DEFAULT_RUN_BUDGET_SECONDS,
 	defaultCodemodeSettings,
 } from "../config/settings.ts";
+import type { KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import type { TruncationMeta } from "../output/output-meta.ts";
 
 export const evalLanguageOrder = ["js", "py", "rb", "jl"] as const;
@@ -172,7 +173,23 @@ export interface EvalKernelRunInput {
 	 * sees the revision it published. `""` means no environment: the previous revision leaves the import path.
 	 */
 	readonly envRoot?: () => string;
+	/** The file a `%load` cell runs: tracebacks name it and its relative imports resolve from its directory. */
+	readonly sourceFile?: string;
+	/**
+	 * Called when the cell's turn comes in the kernel's queue, never earlier: what to run instead of `code` (a `%load`
+	 * cell's file), or a refusal that settles the cell as failed in queue order.
+	 */
+	readonly resolveAtStart?: () => CellSourceAtStart;
+	/**
+	 * Subprocess kernels attach this to the cell's host calls, and the host gives those calls the cell's kernel tools.
+	 * A fresh secret per run, sent only to the kernel that runs the cell; never a model-visible id.
+	 */
+	readonly bridgeCellToken?: string;
 }
+
+export type CellSourceAtStart =
+	| { readonly ok: true; readonly code: string; readonly sourceFile?: string }
+	| { readonly ok: false; readonly message: string };
 
 export interface KernelInterruptHandle {
 	/** Resolves once the kernel knows whether user state survived the interrupt. */
@@ -210,6 +227,11 @@ export interface EvalKernelManager {
 	 * Identity-checked, so releasing a superseded listener never unbinds a newer cell's listener.
 	 */
 	releaseKernelListener?(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): void;
+	/**
+	 * Binds a running cell's kernel-tools capability to the host calls that carry `token` (subprocess kernels reach
+	 * the host over the bridge, outside the cell's async context). The returned release runs when the cell settles.
+	 */
+	bindCellKernelTools?(token: string, capability: KernelToolsCapability): () => void;
 }
 
 export type ExecuteTool = (

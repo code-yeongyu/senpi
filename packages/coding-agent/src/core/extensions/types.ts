@@ -136,6 +136,10 @@ export interface ExtensionUIDialogOptions {
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
 	timeout?: number;
+	/** The tool call this dialog is about (a permission request), sent to RPC clients as is. */
+	toolCallId?: string;
+	/** Set with `toolCallId` when another tool (for example a codemode script) issued that call. */
+	parentToolCallId?: string;
 }
 
 /** Placement for extension widgets. */

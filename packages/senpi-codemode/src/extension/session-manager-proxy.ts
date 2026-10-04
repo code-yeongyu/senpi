@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { KernelToHostMessage } from "../bridge/protocol.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import type { KernelToolsCapability } from "../kernels/js/kernel-tools-types.ts";
 import type { EvalKernel, EvalLanguage } from "../tool/types.ts";
 import {
 	CodemodeSessionDisposedError,
@@ -104,6 +105,11 @@ export class SessionManagerProxy implements CodemodeSessionManager, EvalExecutio
 		// Best-effort like the rest of the proxy surface: a replaced or disposed
 		// generation has already cleared its listener refs, so there is nothing to release.
 		this.#current?.releaseKernelListener?.(language, onMessage);
+	}
+
+	bindCellKernelTools(token: string, capability: KernelToolsCapability): () => void {
+		// Bound to the generation that runs the cell: a later generation never serves that cell's host calls.
+		return this.#current?.bindCellKernelTools?.(token, capability) ?? (() => undefined);
 	}
 
 	async complete(request: CompletionRequest, ctx: ExtensionContext): Promise<CompletionResult> {

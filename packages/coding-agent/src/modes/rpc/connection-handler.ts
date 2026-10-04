@@ -158,6 +158,15 @@ export interface RpcConnectionHandler {
 	dispose(): Promise<void>;
 }
 
+/** The tool call a dialog is about, as wire fields (absent when the dialog is not a permission request). */
+function dialogCall(opts: ExtensionUIDialogOptions | undefined): { toolCallId?: string; parentToolCallId?: string } {
+	if (opts?.toolCallId === undefined) return {};
+	return {
+		toolCallId: opts.toolCallId,
+		...(opts.parentToolCallId === undefined ? {} : { parentToolCallId: opts.parentToolCallId }),
+	};
+}
+
 function loadedExtensionName(path: string): string {
 	const synthetic = /^<(?:builtin|inline):([^>]+)>$/.exec(path);
 	if (synthetic) return synthetic[1];
@@ -449,8 +458,11 @@ export function createRpcConnectionHandler(
 				? questions.ask(request, opts)
 				: degradeQuestion(createExtensionUIContext(), request, opts),
 		select: (title, options, opts) =>
-			createDialogPromise(opts, undefined, { method: "select", title, options, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "select", title, options, timeout: opts?.timeout, ...dialogCall(opts) },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
 			),
 
 		confirm: (title, message, opts) =>
@@ -459,8 +471,11 @@ export function createRpcConnectionHandler(
 			),
 
 		input: (title, placeholder, opts) =>
-			createDialogPromise(opts, undefined, { method: "input", title, placeholder, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "input", title, placeholder, timeout: opts?.timeout, ...dialogCall(opts) },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
 			),
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {

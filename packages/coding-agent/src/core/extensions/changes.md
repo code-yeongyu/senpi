@@ -3088,3 +3088,21 @@ The value lives in the session's launch profile and the bash tool environment is
 ### Expected merge conflict zones
 
 The context getter block in `runner.ts` (next to `goalStoreFile`) and the `SessionEnvSource` / `sessionEnvOverrides` pair in the terminal bash tool.
+
+## 2026-10-04 — `ExtensionUIDialogOptions` names the tool call a dialog is about (#2710)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIDialogOptions` gains optional `toolCallId` and `parentToolCallId`. UI contexts that do not use them (TUI, print) ignore them.
+
+### Why
+
+The engine runs a message's `tool_call` hooks (where the permission system asks) for every call before any of them runs, so with several calls of one tool in flight a client could not tell which call a prompt approved (#2710). The desktop had to show "the code can't be shown" for every prompt after the first.
+
+### Why an extension could not handle it
+
+The dialog options type is the public extension API that every UI context receives; the field has to exist there for the permission extension to hand the id to the RPC context.
+
+### Expected merge conflict zones
+
+The `ExtensionUIDialogOptions` interface in `types.ts`.

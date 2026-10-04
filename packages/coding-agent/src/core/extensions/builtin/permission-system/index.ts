@@ -158,6 +158,10 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 				patterns: permissionRequest.patterns,
 				always: permissionRequest.always,
 				metadata: createRequestMetadata(event.toolName, event.input),
+				tool: {
+					callID: event.toolCallId,
+					...(event.parentToolCallId === undefined ? {} : { parentCallID: event.parentToolCallId }),
+				},
 			};
 
 			const auto =

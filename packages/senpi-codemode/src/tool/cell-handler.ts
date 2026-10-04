@@ -48,7 +48,7 @@ export interface CellBridgeRuntime {
 	readonly ctx: ExtensionContext;
 	readonly artifactPath?: string;
 	readonly imageResizer?: EvalImageResizer;
-	/** This cell's live kernel-tool capability; only a JS kernel has one (#1754). */
+	/** This cell's live kernel-tool capability; JS and Python kernels have one (#1754, #2731). */
 	readonly kernelTools?: KernelToolsCapability;
 	/** The session generation's handle registry behind `wait()` / `handle()` / completion handles. */
 	readonly handles?: HandleRegistry;
