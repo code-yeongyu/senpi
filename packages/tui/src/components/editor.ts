@@ -289,6 +289,13 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	maxPrimaryColumnWidth: 32,
 };
 
+interface AutocompleteRequestOptions {
+	force: boolean;
+	explicitTab: boolean;
+	/** Apply the best match of the fresh suggestions instead of showing them. */
+	acceptSelection?: boolean;
+}
+
 const ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20;
 const DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS = ["@", "#", "$"];
 // Unquoted completions end at whitespace or CJK punctuation; quoted paths may contain either.
@@ -369,6 +376,8 @@ export class Editor implements Component, Focusable {
 	private autocompleteList?: SelectList;
 	private autocompleteState: "regular" | "force" | null = null;
 	private autocompletePrefix: string = "";
+	// Text and cursor the shown list was computed for; accepting after either changed must re-query.
+	private autocompleteListSnapshot?: { text: string; line: number; col: number };
 	/** The provider items behind `autocompleteList`, which only carries the display fields. */
 	private autocompleteItems: readonly AutocompleteItem[] = [];
 	private autocompleteMaxVisible: number = 5;
@@ -935,6 +944,10 @@ export class Editor implements Component, Focusable {
 			}
 
 			if (kb.matches(data, "tui.input.tab")) {
+				if (this.isAutocompleteListStale()) {
+					this.acceptRefreshedAutocomplete();
+					return;
+				}
 				const selected = this.autocompleteList.getSelectedItem();
 				if (selected && this.autocompleteProvider) {
 					const drillsIntoNamespace = this.isSlashNamespaceSelection(selected.value);
@@ -958,6 +971,10 @@ export class Editor implements Component, Focusable {
 			}
 
 			if (kb.matches(data, "tui.select.confirm")) {
+				if (!this.autocompletePrefix.startsWith("/") && this.isAutocompleteListStale()) {
+					this.acceptRefreshedAutocomplete();
+					return;
+				}
 				const selected = this.autocompleteList.getSelectedItem();
 				if (selected && this.autocompleteProvider) {
 					const drillsIntoNamespace = this.isSlashNamespaceSelection(selected.value);
@@ -2585,7 +2602,7 @@ export class Editor implements Component, Focusable {
 		this.requestAutocomplete({ force: true, explicitTab });
 	}
 
-	private requestAutocomplete(options: { force: boolean; explicitTab: boolean }): void {
+	private requestAutocomplete(options: AutocompleteRequestOptions): void {
 		if (!this.autocompleteProvider) return;
 
 		if (options.force) {
@@ -2616,10 +2633,7 @@ export class Editor implements Component, Focusable {
 		void this.startAutocompleteRequest(startToken, options);
 	}
 
-	private async startAutocompleteRequest(
-		startToken: number,
-		options: { force: boolean; explicitTab: boolean },
-	): Promise<void> {
+	private async startAutocompleteRequest(startToken: number, options: AutocompleteRequestOptions): Promise<void> {
 		const previousTask = this.autocompleteRequestTask;
 		this.autocompleteRequestTask = (async () => {
 			await previousTask;
@@ -2668,7 +2682,7 @@ export class Editor implements Component, Focusable {
 		snapshotText: string,
 		snapshotLine: number,
 		snapshotCol: number,
-		options: { force: boolean; explicitTab: boolean },
+		options: AutocompleteRequestOptions,
 	): Promise<void> {
 		if (!this.autocompleteProvider) return;
 
@@ -2687,6 +2701,29 @@ export class Editor implements Component, Focusable {
 
 		if (!suggestions || !Array.isArray(suggestions.items) || suggestions.items.length === 0) {
 			this.cancelAutocomplete();
+			this.tui.requestRender();
+			return;
+		}
+
+		if (options.acceptSelection) {
+			const bestMatchIndex = this.getBestAutocompleteMatchIndex(suggestions.items, suggestions.prefix);
+			const item = suggestions.items[Math.max(bestMatchIndex, 0)]!;
+			const drillsIntoNamespace = suggestions.prefix.startsWith("/") && isSlashNamespaceItem(item.value);
+			this.pushUndoSnapshot();
+			this.lastAction = null;
+			const result = this.autocompleteProvider.applyCompletion(
+				this.state.lines,
+				this.state.cursorLine,
+				this.state.cursorCol,
+				item,
+				suggestions.prefix,
+			);
+			this.state.lines = result.lines;
+			this.state.cursorLine = result.cursorLine;
+			this.setCursorCol(result.cursorCol);
+			this.clearAutocompleteUi();
+			if (this.onChange) this.onChange(this.getText());
+			if (drillsIntoNamespace) this.tryTriggerAutocomplete();
 			this.tui.requestRender();
 			return;
 		}
@@ -2732,6 +2769,11 @@ export class Editor implements Component, Focusable {
 
 	private applyAutocompleteSuggestions(suggestions: AutocompleteSuggestions, state: "regular" | "force"): void {
 		this.autocompletePrefix = suggestions.prefix;
+		this.autocompleteListSnapshot = {
+			text: this.getText(),
+			line: this.state.cursorLine,
+			col: this.state.cursorCol,
+		};
 		this.autocompleteItems = suggestions.items;
 		this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
 
@@ -2758,6 +2800,26 @@ export class Editor implements Component, Focusable {
 		this.autocompleteList = undefined;
 		this.autocompleteItems = [];
 		this.autocompletePrefix = "";
+		this.autocompleteListSnapshot = undefined;
+	}
+
+	private isAutocompleteListStale(): boolean {
+		const snapshot = this.autocompleteListSnapshot;
+		return (
+			snapshot !== undefined &&
+			(snapshot.text !== this.getText() ||
+				snapshot.line !== this.state.cursorLine ||
+				snapshot.col !== this.state.cursorCol)
+		);
+	}
+
+	/** Accept on a list that predates the text: re-query for the current token, then accept its best match. */
+	private acceptRefreshedAutocomplete(): void {
+		this.requestAutocomplete({
+			force: this.autocompleteState === "force",
+			explicitTab: true,
+			acceptSelection: true,
+		});
 	}
 
 	private cancelAutocomplete(): void {

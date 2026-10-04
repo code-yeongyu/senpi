@@ -2347,6 +2347,55 @@ describe("Editor component", () => {
 			assert.deepStrictEqual(requests, [{ text, force: true }]);
 		});
 
+		// A slow refresh (fd walking $HOME) left the "@" list on screen while "~/Dev" was typed;
+		// accepting it spliced the stale item into the new text: "@~/Dev" -> "@~/De@go/".
+		it("accepts against the current token when the shown list predates the text", async (t) => {
+			t.mock.timers.enable({ apis: ["setTimeout"] });
+			for (const acceptKey of ["\t", "\r"]) {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				let submitted = false;
+				editor.onSubmit = () => {
+					submitted = true;
+				};
+				let stall = false;
+				editor.setAutocompleteProvider({
+					getSuggestions: async (lines, cursorLine, cursorCol, options) => {
+						const prefix = lines[cursorLine]!.slice(0, cursorCol);
+						if (prefix === "@") return { prefix, items: [{ value: "@go/", label: "go/" }] };
+						if (stall) {
+							return new Promise((resolve) => options.signal.addEventListener("abort", () => resolve(null)));
+						}
+						return {
+							prefix,
+							items: [
+								{ value: "@~/Developer/", label: "Developer/" },
+								{ value: "@~/Dev.txt", label: "Dev.txt" },
+							],
+						};
+					},
+					applyCompletion,
+				});
+
+				editor.handleInput("@");
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+				assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+				stall = true;
+				for (const char of "~/Dev") editor.handleInput(char);
+				t.mock.timers.tick(20);
+				await flushAutocomplete();
+				stall = false;
+
+				editor.handleInput(acceptKey);
+				await flushAutocomplete();
+				assert.strictEqual(editor.getText(), "@~/Developer/", JSON.stringify(acceptKey));
+				assert.deepStrictEqual(editor.getCursor(), { line: 0, col: "@~/Developer/".length });
+				assert.strictEqual(editor.isShowingAutocomplete(), false);
+				assert.strictEqual(submitted, false);
+			}
+		});
+
 		// Re-querying after the space found an empty token and listed the working directory instead.
 		it("closes an @ or Tab path picker when a space ends the path", async (t) => {
 			t.mock.timers.enable({ apis: ["setTimeout"] });
