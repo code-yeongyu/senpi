@@ -282,3 +282,29 @@ Inactive-tool eligibility is intentionally owned by the registering extension. A
 ### Expected merge conflict zones
 
 - LOW: `preview-format.ts` around `truncatePreview()` when refreshing the vendored apply_patch renderer.
+
+## 2026-10-03 - Bounded, incremental apply_patch streaming render (senpi#2656)
+
+### What changed
+
+`streaming-parser.ts`: `pushDelta` returns the parser's live hunk list (no per-delta `structuredClone`; `finish()` still returns a defensive clone) and adds `getLiveHunks()` / `getPartialLine()` for the render path. `streaming-render.ts`: the streaming box is tail-windowed to 12 lines per file with a sticky per-file header carrying net `(+a -d)` counts (real changes only — unchanged context lines are excluded) and a `… (+N lines above)` marker when a file outgrows the window; the in-flight partial line renders dimmed as the last row; a delta that produces no new visible text keeps the already-rendered box instead of rebuilding or blanking it. `types.ts`: the streaming render state carries the non-cloning accessors, the render key, and a readonly hunk list.
+
+### Why
+
+The streaming box had no height bound and re-parsed plus re-rendered the whole body on every delta, with a per-delta `structuredClone` over every hunk — about 3x the CPU of the comparison TUI, and at 13 s only the first of three files was visible. A bounded, sticky-header box plus incremental, clone-free rendering keeps the stream readable and cuts the per-delta work.
+
+### Why an extension could not handle it
+
+The streaming parser and renderer are internal to this builtin's tool surface; the per-delta clone and the unbounded box are not reachable through the public extension API.
+
+
+### Covered production paths
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/streaming-render.ts`
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/streaming-parser.ts`
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/parser.ts`
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/types.ts`
+
+### Expected merge conflict zones
+
+Upstream edits to `streaming-parser.ts` or `streaming-render.ts` at the next sync.

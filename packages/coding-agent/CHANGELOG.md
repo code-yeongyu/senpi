@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- The apply_patch streaming preview is tail-windowed with a sticky per-file change count, so a long patch no longer fills the screen, and it no longer re-renders the whole box on every streamed chunk.
 - The edit tool card header now shows the aggregate change count next to the path (for example `edit src/greet.ts (+2/-1)`), so an edit's size is visible at a glance.
 - Diff lines in tool cards are readable again in both built-in themes: added and removed lines keep distinct backgrounds and read at 7:1 contrast or better, where the saturated card backgrounds had dropped them to about 4.5:1 ([#2655](https://github.com/code-yeongyu/senpi/issues/2655)).
 - `/files` and `/diff` open a selected file on Windows again: drive-letter paths are passed to VS Code as a plain file argument instead of through `--goto`, which rejected them while exiting 0. A `code` launcher that exits 0 but prints to stderr is now reported as a warning instead of being swallowed ([#2646](https://github.com/code-yeongyu/senpi/issues/2646)).
