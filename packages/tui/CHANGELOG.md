@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Typing a space after an unquoted `@` path or a Tab path completion closes the picker instead of opening a listing of the working directory; a quoted `@"...` path keeps narrowing across spaces ([#2739](https://github.com/code-yeongyu/senpi/issues/2739)).
+
 ### Removed
 
 ## [2026.10.8] - 2026-10-04
