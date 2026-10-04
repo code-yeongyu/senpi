@@ -2427,47 +2427,6 @@ describe("Editor component", () => {
 			assert.ok(rendered.includes("→ b.ts"), rendered);
 		});
 
-		// Re-querying after the space found an empty token and listed the working directory instead.
-		it("closes an @ or Tab path picker when a space ends the path", async (t) => {
-			t.mock.timers.enable({ apis: ["setTimeout"] });
-			for (const [typed, openWithTab] of [
-				["@src/", false],
-				["src/", true],
-			] as const) {
-				const editor = new Editor(createTestTUI(), defaultEditorTheme);
-				const requested: string[] = [];
-				editor.setAutocompleteProvider({
-					getSuggestions: async (lines, cursorLine, cursorCol) => {
-						const text = lines[cursorLine]!.slice(0, cursorCol);
-						requested.push(text);
-						if (text.endsWith(" ")) return { prefix: "", items: [{ value: "cwd-entry/", label: "cwd-entry/" }] };
-						return {
-							prefix: text,
-							items: [
-								{ value: `${text}a.ts`, label: "a.ts" },
-								{ value: `${text}b.ts`, label: "b.ts" },
-							],
-						};
-					},
-					applyCompletion,
-				});
-
-				for (const char of typed) editor.handleInput(char);
-				if (openWithTab) editor.handleInput("\t");
-				t.mock.timers.tick(20);
-				await flushAutocomplete();
-				assert.strictEqual(editor.isShowingAutocomplete(), true, typed);
-
-				editor.handleInput(" ");
-				t.mock.timers.tick(20);
-				await flushAutocomplete();
-
-				assert.strictEqual(editor.getText(), `${typed} `, typed);
-				assert.strictEqual(editor.isShowingAutocomplete(), false, typed);
-				assert.ok(!requested.some((text) => text.endsWith(" ")), typed);
-			}
-		});
-
 		it("keeps the picker open on a completed directory's contents", async (t) => {
 			t.mock.timers.enable({ apis: ["setTimeout"] });
 			const contents = [
@@ -2550,14 +2509,12 @@ describe("Editor component", () => {
 					assert.strictEqual(editor.isShowingAutocomplete(), true);
 					editor.handleInput(separator);
 					await flushAutocomplete();
-					// Whitespace closes an @ picker outright; re-querying would list the working directory.
-					const expected = trigger === "@" && /\s/.test(separator) ? [prefix] : [prefix, prefix + separator];
-					assert.deepStrictEqual(requests, expected);
+					assert.deepStrictEqual(requests, [prefix, prefix + separator]);
 					assert.strictEqual(editor.isShowingAutocomplete(), false);
 					editor.handleInput("文");
 					t.mock.timers.tick(20);
 					await flushAutocomplete();
-					assert.deepStrictEqual(requests, expected);
+					assert.deepStrictEqual(requests, [prefix, prefix + separator]);
 				}
 			}
 		});

@@ -1582,19 +1582,9 @@ export class Editor implements Component, Focusable {
 					this.tryTriggerAutocomplete();
 				}
 			}
-		} else if (isWhitespaceChar(char) && this.isUnquotedPathPicker()) {
-			// The space ends the path; re-querying would find an empty token and list the working directory.
-			this.cancelAutocomplete();
 		} else {
 			this.updateAutocomplete();
 		}
-	}
-
-	/** An unquoted @ mention or a Tab path list; quoted paths may contain spaces. */
-	private isUnquotedPathPicker(): boolean {
-		const prefix = this.autocompletePrefix;
-		if (prefix.startsWith('"') || prefix.startsWith('@"')) return false;
-		return prefix.startsWith("@") || this.autocompleteState === "force";
 	}
 
 	private handlePaste(pastedText: string): void {
