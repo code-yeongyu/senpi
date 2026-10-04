@@ -46,6 +46,17 @@ function projectRoot(cwd: string): string | undefined {
 	return root === path.parse(root).root || rootContainsHome || hiddenRoot ? undefined : root;
 }
 
+/** Whether something, even a dangling symlink, exists at `target` itself; git looks at the name. */
+export function existsAtName(target: string): boolean {
+	try {
+		return lstatSync(target, { throwIfNoEntry: false }) !== undefined;
+	} catch {
+		// A name the filesystem refuses (too long, a loop, no permission) is not a plain ref either:
+		// report it as existing so the caller checks it as a path, and that check asks.
+		return true;
+	}
+}
+
 /** Whether `cwd` is a root `auto` approves anything in (see `projectRoot`). */
 export function isProjectSession(cwd: string): boolean {
 	return projectRoot(cwd) !== undefined;

@@ -42,11 +42,10 @@ export class PermissionService {
 	/**
 	 * The one decision for a call, used when it is asked and again whenever an "Always" reply re-checks
 	 * the requests still pending. Without `presetBound` it is last-match-wins over every rule. With
-	 * `presetBound` the preset's
-	 * rules and the user's settings and CLI rules are evaluated apart and the more restrictive wins, so
-	 * no configured rule, in any order or layer, can widen the preset; only an "Always" answer given in
-	 * this or an earlier session (`permissions-approved.jsonl`, explicit consent for that pattern) can
-	 * then turn a remaining ask into allow.
+	 * `presetBound` the preset's rules and the user's settings and CLI rules are evaluated apart and
+	 * the more restrictive wins, so no configured rule, in any order or layer, can widen the preset;
+	 * only an "Always" answer given in this or an earlier session (`permissions-approved.jsonl`,
+	 * explicit consent for that pattern) can then turn a remaining ask into allow.
 	 */
 	private decide(permission: string, target: string | readonly string[], options: DecisionOptions): Rule["action"] {
 		if (!options.presetBound) return evaluate(permission, target, this.staticRuleset, this.approved).action;

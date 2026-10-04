@@ -3,7 +3,7 @@ import { rulesForPreset } from "../../src/core/extensions/builtin/permission-sys
 import { evaluate } from "../../src/core/extensions/builtin/permission-system/evaluate.ts";
 import { handleNoUI } from "../../src/core/extensions/builtin/permission-system/non-interactive.ts";
 import { createBuiltinParserRegistry } from "../../src/core/extensions/builtin/permission-system/parsers.ts";
-import type { Request, Ruleset } from "../../src/core/extensions/builtin/permission-system/types.ts";
+import type { Request } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
 function createRequest(overrides: Partial<Request> = {}): Request {
 	return {
@@ -86,33 +86,12 @@ describe("permission presets", () => {
 		expect(evaluate("unknown_tool", "*", ruleset).action).toBe("ask");
 	});
 
-	it("allows no-UI requests with full-access", () => {
-		// given
-		const events: Array<{ event: string; data: unknown }> = [];
-
-		// when
-		const result = handleNoUI(createRequest(), {
-			staticRuleset: rulesForPreset("full-access"),
-			cliOverride: [],
-			emitEvent: (event, data) => {
-				events.push({ event, data });
-			},
-		});
-
-		// then
-		expect(result).toBeUndefined();
-		expect(events.map((event) => event.event)).toEqual(["permission_asked", "permission_replied"]);
-	});
-
 	it("rejects no-UI requests when a preset still requires confirmation", () => {
 		// given
 		const events: Array<{ event: string; data: unknown }> = [];
-		const staticRuleset: Ruleset = rulesForPreset("read-only");
 
 		// when
 		const result = handleNoUI(createRequest(), {
-			staticRuleset: staticRuleset,
-			cliOverride: [],
 			emitEvent: (event, data) => {
 				events.push({ event, data });
 			},

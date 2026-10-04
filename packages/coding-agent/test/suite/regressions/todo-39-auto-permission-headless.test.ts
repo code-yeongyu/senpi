@@ -50,27 +50,36 @@ describe("auto permission preset with no UI to ask (print mode, unbound SDK)", (
 		30_000,
 	);
 
-	it("outside auto, refuses a call whose later path no rule allows, though its first path is allowed", async () => {
-		// Given the ask preset, a user allow for one outside folder, and no approver.
-		const safe = mkdtempSync(join(tmpdir(), "auto-noui-safe-"));
-		const other = mkdtempSync(join(tmpdir(), "auto-noui-other-"));
-		writeFileSync(join(safe, "a.txt"), "SAFE-CONTENT\n");
-		writeFileSync(join(other, "b.txt"), "OTHER-CONTENT\n");
-		try {
-			// When the agent reads a file there together with a file from a folder no rule allows.
-			const { result } = await headless(
-				[
-					["permission-preset", "ask"],
-					["permission", `bash=allow,external_directory:${safe}/*=allow`],
-				],
-				`cat ${join(safe, "a.txt")} ${join(other, "b.txt")}`,
-			);
-			// Then the call is refused at once and nothing of the other folder is read.
-			expect(result).not.toContain("OTHER-CONTENT");
-			expect(result).toMatch(/Permission (required|denied)/);
-		} finally {
-			rmSync(safe, { recursive: true, force: true });
-			rmSync(other, { recursive: true, force: true });
-		}
-	}, 30_000);
+	it.each([
+		["the allowed path first", true],
+		["the allowed path last", false],
+	] as const)(
+		"outside auto, refuses a call with one path no rule allows: %s",
+		async (_label, allowedFirst) => {
+			// Given the ask preset, a user allow for one outside folder, and no approver.
+			const safe = mkdtempSync(join(tmpdir(), "auto-noui-safe-"));
+			const other = mkdtempSync(join(tmpdir(), "auto-noui-other-"));
+			writeFileSync(join(safe, "a.txt"), "SAFE-CONTENT\n");
+			writeFileSync(join(other, "b.txt"), "OTHER-CONTENT\n");
+			try {
+				// When the agent reads a file there together with a file from a folder no rule allows.
+				const { result } = await headless(
+					[
+						["permission-preset", "ask"],
+						["permission", `bash=allow,external_directory:${safe}/*=allow`],
+					],
+					allowedFirst
+						? `cat ${join(safe, "a.txt")} ${join(other, "b.txt")}`
+						: `cat ${join(other, "b.txt")} ${join(safe, "a.txt")}`,
+				);
+				// Then the call is refused at once and nothing of the other folder is read.
+				expect(result).not.toContain("OTHER-CONTENT");
+				expect(result).toMatch(/Permission (required|denied)/);
+			} finally {
+				rmSync(safe, { recursive: true, force: true });
+				rmSync(other, { recursive: true, force: true });
+			}
+		},
+		30_000,
+	);
 });

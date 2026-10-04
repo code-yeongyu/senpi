@@ -38,6 +38,7 @@ beforeAll(() => {
 	writeFileSync(join(project, "server.pem"), "pem\n");
 	mkdirSync(join(project, "a", "b"), { recursive: true });
 	symlinkSync(join(project, "a", "b"), join(project, "link"));
+	symlinkSync(join(scratch, "does-not-exist"), join(project, "dangling"));
 });
 
 afterAll(() => {
@@ -51,6 +52,9 @@ describe("auto preset command judge: work it runs without asking", () => {
 		"git diff --stat main src/index.ts",
 		"git log --oneline HEAD",
 		"git log -n 1000",
+		"git log --oneline src",
+		"git log --stat src/index.ts",
+		"git log --oneline link",
 		"git log --oneline -n 5",
 		"git branch -a",
 		"git ls-files",
@@ -130,6 +134,8 @@ describe("auto preset command judge: actions it always asks about", () => {
 		["an object id after a flag value", "git log -n 1000 abcd"],
 		["a ref-shaped name that is a symlink out of the project", "git log --oneline innocent-name"],
 		["a ref-shaped name that is a credential file", "git log --stat server.pem"],
+		["a ref-shaped name that is a dangling symlink", "git log --oneline dangling"],
+		["a ref-shaped name too long for the filesystem", `git log --oneline ${"a".repeat(300)}`],
 		["cat with no file reads the terminal", "cat"],
 		["grep with no file reads the terminal", "grep TODO"],
 	])("asks for %s: %s", (_label, command) => {
@@ -313,6 +319,11 @@ describe("auto preset tool decisions", () => {
 		expect((await decideAuto("apply_patch", move("../outside.ts"), edit, project)).approveBlanketAsk).toBe(false);
 		const remove = { input: "*** Begin Patch\n*** Delete File: src/old.ts\n*** End Patch" };
 		expect((await decideAuto("apply_patch", remove, edit, project)).approveBlanketAsk).toBe(false);
+	});
+
+	it("asks for a grep with an empty path list", async () => {
+		expect(await approves("grep", { pattern: "x", path: [] }, "grep")).toBe(false);
+		expect(await approves("grep", { pattern: "x", path: ["src/index.ts"] }, "grep")).toBe(true);
 	});
 
 	it("follows read's macOS name fallbacks to the file the tool would open", async () => {

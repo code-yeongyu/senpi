@@ -4,7 +4,7 @@ import { normalizeApplyPatchArguments } from "../gpt-apply-patch/params.ts";
 import { parsePatch } from "../gpt-apply-patch/parser.ts";
 import { resolvePatchPath } from "../gpt-apply-patch/workspace.ts";
 import { isCredentialPath } from "./auto-credentials.ts";
-import { isApprovableTarget, isProjectSession, type TargetKind, targetKind } from "./auto-paths.ts";
+import { existsAtName, isApprovableTarget, isProjectSession, type TargetKind, targetKind } from "./auto-paths.ts";
 import { PROGRAM_RULES } from "./auto-program-rules.ts";
 import type { ClassifiedWord } from "./auto-shell-grammar.ts";
 import { splitShellSegments } from "./auto-shell-segments.ts";
@@ -34,7 +34,7 @@ function shellWordAllowed(entry: ClassifiedWord, cwd: string): boolean {
 	if (entry.role === "list") return approvedTarget(target, cwd, ["file", "directory"]);
 	if (entry.role === "ref-or-path") {
 		if (isCredentialPath(target)) return false;
-		return targetKind(target) === "missing" || approvedTarget(target, cwd, ["file", "directory"]);
+		return !existsAtName(target) || approvedTarget(target, cwd, ["file", "directory"]);
 	}
 	return false;
 }
