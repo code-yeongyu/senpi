@@ -2495,7 +2495,8 @@ describe("Editor component", () => {
 		it("keeps up with a 6-character @ query over a 100k-entry listing with one walk", {
 			skip: process.platform === "win32",
 		}, async (t) => {
-			t.mock.timers.enable({ apis: ["setTimeout"] });
+			// Date too: the 5 s background refresh must not add a walk when the machine is slow.
+			t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 			const baseDir = mkdtempSync(join(tmpdir(), "pi-editor-index-"));
 			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
 			const listing = join(baseDir, "listing.txt");
