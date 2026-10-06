@@ -26,7 +26,6 @@ import {
 	type SkillMcpDeclarations,
 	skillActivationTargets,
 } from "./skills.ts";
-import { MCP_ATTACH_SETTLE_TIMEOUT_MS } from "./startup-race.ts";
 import { reportMcpAsyncError, safeEventBusOn, wrapAsync } from "./wrap.ts";
 
 const MCP_BUILTIN_EXTENSION_PATH = "<builtin:mcp>";
@@ -108,16 +107,8 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			return undefined;
 		});
 
-		// Attach is SINGLE-FLIGHT. session_start handlers are dispatched
-		// fire-and-forget, so a slow attach (a cold MCP server's boot + catalog
-		// collection is awaited inside attachSession) can still be in flight when
-		// before_agent_start fires. The old `attached` boolean was only set on
-		// completion, so before_agent_start would start a SECOND concurrent attach —
-		// which found the connection entries already created (still "connecting"),
-		// collected an empty catalog, and registered no MCP tools for turn 1; the
-		// first attach then landed the real registration turns later. Memoizing the
-		// in-flight promise makes before_agent_start await the ORIGINAL attach, so
-		// the first turn's payload deterministically carries the MCP tool set.
+		// Attach is single-flight: the prompt uses the original attach's bindings
+		// and known catalog, without waiting for deferred remote discovery.
 		// session_start always starts a fresh attach (reloads must re-sync config).
 		const attach = (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
 			attachedSessionId = ctx.sessionManager?.getSessionId?.();
@@ -136,11 +127,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 		);
 		pi.on("session_start", (event, ctx) => {
 			const work = onSessionStart(event, ctx);
-			// session_start is dispatched serially inside interactive startup, so awaiting attach here
-			// puts a cold server's boot and catalog handshake in front of the first frame: measured at
-			// 254ms median of a 292ms dispatch on a real config, against 0.2ms with no servers. Attach
-			// is single-flight via attachPromise + service.#attachQueue and before_agent_start awaits
-			// it, so the first turn still carries the full tool set; only the first paint stops waiting.
+			// First paint does not wait for attach; prompt preparation reuses its promise.
 			void work;
 		});
 		const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (
@@ -168,16 +155,8 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 					];
 					for (const warning of warnings) createMcpLogger("skills").warn(warning);
 				}
-				// attachPromise resolves at the startup-race deadline, which leaves a slow
-				// server still handshaking: assembling the prompt here would publish that
-				// server's stale instructions - or none at all - for the whole session.
-				// Await the attach's own completion signal instead, bounded; on timeout the
-				// turn still goes out and the server's catalog lands on a later turn.
-				if ((await service.whenAttachSettled()) === "timeout") {
-					createMcpLogger("service").warn("MCP attach still settling at prompt build", {
-						timeoutMs: MCP_ATTACH_SETTLE_TIMEOUT_MS,
-					});
-				}
+				// Use the known instructions now. Deferred catalog registration refreshes
+				// the service for subsequent turns instead of gating this provider request.
 				const systemPrompt = injectMcpInstructions(service, event.systemPrompt);
 				return systemPrompt === undefined ? undefined : { systemPrompt };
 			} catch (error) {
