@@ -4,13 +4,19 @@ import { createServer } from "node:http";
 import type { Socket } from "node:net";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { CallToolRequestSchema, ListToolsRequestSchema, PingRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+	CallToolRequestSchema,
+	ListToolsRequestSchema,
+	PingRequestSchema,
+	type Tool,
+} from "@modelcontextprotocol/sdk/types.js";
 
 /** Real, stateful HTTP/SSE MCP fixture. All changes are explicitly triggered. */
 export async function sharingHttpFixture(port = 0) {
 	const sessions = new Map<string, { server: Server; transport: StreamableHTTPServerTransport }>();
 	let connects = 0;
 	let toolName = "echo";
+	let toolSchema: Tool["inputSchema"] = { type: "object" };
 	let pings = 0;
 	let entered = 0;
 	let release: (() => void) | undefined;
@@ -42,7 +48,7 @@ export async function sharingHttpFixture(port = 0) {
 				server.setRequestHandler(ListToolsRequestSchema, async () => {
 					listEntered?.();
 					await listBarrier;
-					return { tools: [{ name: toolName, inputSchema: { type: "object" } }] };
+					return { tools: [{ name: toolName, inputSchema: toolSchema }] };
 				});
 				server.setRequestHandler(PingRequestSchema, async () => {
 					pings++;
@@ -93,6 +99,9 @@ export async function sharingHttpFixture(port = 0) {
 		},
 		get pings() {
 			return pings;
+		},
+		get calls() {
+			return entered;
 		},
 		setTools(name: string) {
 			toolName = name;
@@ -171,8 +180,9 @@ export async function sharingHttpFixture(port = 0) {
 			releaseList?.();
 			listBarrier = undefined;
 		},
-		async changeTools(name: string) {
+		async changeTools(name: string, schema: Tool["inputSchema"] = { type: "object" }) {
 			toolName = name;
+			toolSchema = schema;
 			// One notification from the first physical connection, not one per owner.
 			const first = sessions.values().next().value;
 			if (!first) throw new Error("fixture has no session");

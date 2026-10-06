@@ -4,11 +4,14 @@ import { Text } from "@earendil-works/pi-tui";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import type { TSchema } from "typebox";
 import type { ToolDefinition } from "../../../types.ts";
+import { forgetDispatchApproval } from "../../permission-system/dispatch.ts";
+import { registerDispatchIdentity } from "../../permission-system/dispatch-metadata.ts";
 import type { McpToolCatalogEntry } from "../catalog.ts";
 import { ToolExecError } from "../errors.ts";
 import { applyMcpOutputGuard } from "../guard/output-guard.ts";
 import { ensureMcpToolCallConnection, withMcpRetriableFailedSendRetry, withMcpSessionExpiryRetry } from "../health.ts";
 import { runMcpConnectionLifecycleCall } from "../idle.ts";
+import type { McpInvocation, McpInvocationError } from "../invocation.ts";
 import {
 	buildMcpToolNames,
 	convertJsonSchemaToTypeBox,
@@ -23,6 +26,7 @@ export interface McpToolDetails {
 	tool: string;
 	preview?: string;
 	progress?: Progress;
+	error?: McpInvocationError;
 }
 
 type McpAgentContent = TextContent | ImageContent;
@@ -57,15 +61,27 @@ export function buildMcpToolDefinitions(entries: readonly McpToolCatalogEntry[],
 function createMcpToolDefinition(entry: McpToolCatalogEntry, name: string): McpToolDefinition {
 	const converted = convertJsonSchemaToTypeBox(entry.schema);
 	const label = `${entry.server}/${entry.tool}`;
+	registerDispatchIdentity(converted.schema, () => entry.invocation?.identity(entry));
 	return {
 		name,
 		label,
 		description: entry.description ?? `MCP tool ${label}`,
 		parameters: converted.schema,
 		executionMode: "parallel",
-		async execute(_toolCallId, params, signal, onUpdate): Promise<AgentToolResult<McpToolDetails | undefined>> {
+		async execute(
+			toolCallId,
+			params,
+			signal,
+			onUpdate,
+			context,
+		): Promise<AgentToolResult<McpToolDetails | undefined>> {
 			const args: Record<string, unknown> = isRecord(params) ? params : {};
-			return await executeMcpCatalogEntry(entry, args, signal, onUpdate);
+			return await executeMcpCatalogEntry(entry, args, signal, onUpdate, {
+				toolCallId,
+				toolName: name,
+				input: args,
+				context,
+			});
 		},
 		renderCall(args, theme) {
 			return new Text(theme.fg("toolTitle", theme.bold(`${name} ${previewArgs(args)}`.trim())), 0, 0);
@@ -86,21 +102,39 @@ export async function executeMcpCatalogEntry(
 	args: Record<string, unknown>,
 	signal: AbortSignal | undefined,
 	onUpdate: Parameters<McpToolDefinition["execute"]>[3],
+	invocation?: McpInvocation,
 ): Promise<AgentToolResult<McpToolDetails | undefined>> {
-	const label = `${entry.server}/${entry.tool}`;
-	const result = await callMcpTool(entry, args, signal, onUpdate, label);
-	const mapped = mapMcpToolResult(normalizeCallToolResult(result));
-	if (!mapped.ok) {
-		throw new ToolExecError(mapped.error.message, { phase: "call", serverName: entry.server });
+	try {
+		const label = `${entry.server}/${entry.tool}`;
+		const outcome = await callMcpTool(entry, args, signal, onUpdate, label, invocation);
+		if (outcome.kind === "refused") {
+			const guarded = await applyMcpOutputGuard([{ type: "text", text: JSON.stringify({ error: outcome.error }) }], {
+				agentDir: entry.agentDir,
+				artifacts: entry.artifacts,
+				outputGuard: entry.outputGuard,
+				server: entry.server,
+			});
+			return {
+				content: toAgentContent(guarded),
+				details: { error: outcome.error, preview: outcome.error.kind, server: entry.server, tool: entry.tool },
+			};
+		}
+		const current = outcome.entry;
+		const mapped = mapMcpToolResult(normalizeCallToolResult(outcome.result));
+		if (!mapped.ok) {
+			throw new ToolExecError(mapped.error.message, { phase: "call", serverName: entry.server });
+		}
+		const guarded = await applyMcpOutputGuard(mapped.content, {
+			agentDir: current.agentDir,
+			artifacts: current.artifacts,
+			outputGuard: current.outputGuard,
+			server: current.server,
+		});
+		const content = toAgentContent(guarded);
+		return { content, details: { preview: previewContent(content), server: entry.server, tool: entry.tool } };
+	} finally {
+		if (invocation !== undefined) forgetDispatchApproval(invocation.input);
 	}
-	const guarded = await applyMcpOutputGuard(mapped.content, {
-		agentDir: entry.agentDir,
-		artifacts: entry.artifacts,
-		outputGuard: entry.outputGuard,
-		server: entry.server,
-	});
-	const content = toAgentContent(guarded);
-	return { content, details: { preview: previewContent(content), server: entry.server, tool: entry.tool } };
 }
 
 async function callMcpTool(
@@ -109,23 +143,44 @@ async function callMcpTool(
 	signal: AbortSignal | undefined,
 	onUpdate: Parameters<McpToolDefinition["execute"]>[3],
 	label: string,
-): Promise<Awaited<ReturnType<McpToolCatalogEntry["connection"]["client"]["callTool"]>>> {
+	invocation: McpInvocation | undefined,
+): Promise<
+	| {
+			kind: "called";
+			entry: McpToolCatalogEntry;
+			result: Awaited<ReturnType<McpToolCatalogEntry["connection"]["client"]["callTool"]>>;
+	  }
+	| { kind: "refused"; error: McpInvocationError }
+> {
 	try {
 		return await runMcpConnectionLifecycleCall(entry.connection, () =>
 			withMcpSessionExpiryRetry(entry.connection, async () => {
-				await ensureMcpToolCallConnection(entry.connection, entry.ensureFresh);
-				await entry.ensureConnected?.();
+				if (entry.invocation === undefined) {
+					await ensureMcpToolCallConnection(entry.connection, entry.ensureFresh);
+					await entry.ensureConnected?.();
+				}
 				return await withMcpRetriableFailedSendRetry(entry.connection, async () => {
-					return await entry.connection.client.callTool({ name: entry.tool, arguments: args }, undefined, {
-						onprogress: (progress) => {
-							onUpdate?.({
-								content: [{ type: "text", text: formatProgress(label, progress) }],
-								details: { progress, server: entry.server, tool: entry.tool },
-							});
-						},
-						signal,
-						timeout: entry.requestTimeoutMs,
-					});
+					for (;;) {
+						const prepared = await entry.invocation?.resolve(entry, args, invocation, signal);
+						if (prepared?.kind === "refused") return prepared;
+						if (prepared !== undefined && !prepared.isCurrent()) continue;
+						const current = prepared?.entry ?? entry;
+						const result = await current.connection.client.callTool(
+							{ name: current.tool, arguments: args },
+							undefined,
+							{
+								onprogress: (progress) => {
+									onUpdate?.({
+										content: [{ type: "text", text: formatProgress(label, progress) }],
+										details: { progress, server: entry.server, tool: entry.tool },
+									});
+								},
+								signal,
+								timeout: current.requestTimeoutMs,
+							},
+						);
+						return { kind: "called" as const, entry: current, result };
+					}
 				});
 			}),
 		);

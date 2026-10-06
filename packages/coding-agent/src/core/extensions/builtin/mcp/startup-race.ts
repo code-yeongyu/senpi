@@ -96,6 +96,7 @@ export async function raceMcpStartupConnect(options: RaceMcpStartupConnectOption
 	const claim: McpStartupCatalogClaim = {
 		cachedCatalog: entry.cachedCatalog,
 		ownsRegistration: () => pi !== undefined && options.shouldRefreshTools(),
+		settled: () => connect,
 	};
 	entry.startupCatalogClaim = claim;
 	const releaseClaim = (): void => {
@@ -109,11 +110,28 @@ export async function raceMcpStartupConnect(options: RaceMcpStartupConnectOption
 	options.onDeferred(connect.then(() => refreshMcpToolsAfterStartupRace(options)));
 }
 
-export async function connectAndRefreshMcpCatalog(
+const catalogRefreshes = new WeakMap<McpConnectionEntry, Promise<void>>();
+
+export function connectAndRefreshMcpCatalog(
 	entry: McpConnectionEntry,
 	serverConfig: ResolvedMcpServer["config"],
 ): Promise<void> {
-	if (serverConfig === undefined) return;
+	const pending = catalogRefreshes.get(entry);
+	if (pending !== undefined) return pending;
+	const refresh = refreshConnectedMcpCatalog(entry, serverConfig);
+	catalogRefreshes.set(entry, refresh);
+	const finish = (): void => {
+		if (catalogRefreshes.get(entry) === refresh) catalogRefreshes.delete(entry);
+	};
+	void refresh.then(finish, finish);
+	return refresh;
+}
+
+async function refreshConnectedMcpCatalog(
+	entry: McpConnectionEntry,
+	serverConfig: ResolvedMcpServer["config"],
+): Promise<void> {
+	if (serverConfig === undefined || entry.isCurrent?.() === false) return;
 	try {
 		await entry.authPlan?.refresh?.ensureFresh();
 	} catch (error) {
@@ -125,21 +143,31 @@ export async function connectAndRefreshMcpCatalog(
 		throw error;
 	}
 	await connectMcpServer(entry.connection, entry.logger);
-	if (entry.connection.state !== "connected") return;
+	if (entry.connection.state !== "connected" || entry.isCurrent?.() === false) return;
+	const generation = entry.connection.generation;
+	const ownsCatalog = (): boolean =>
+		entry.isCurrent?.() !== false &&
+		entry.connection.state === "connected" &&
+		entry.connection.generation === generation;
 	if (entry.connection instanceof SharedMcpLease) {
-		entry.cachedCatalog = await entry.connection.catalog();
+		const catalog = await entry.connection.catalog();
+		if (!ownsCatalog()) return;
+		entry.cachedCatalog = catalog;
+		entry.catalogGeneration = generation;
 		entry.cacheRefreshedAfterConnect = true;
 		return;
 	}
-	if (entry.cacheRefreshedAfterConnect) return;
-	entry.cacheRefreshedAfterConnect = true;
+	if (entry.cacheRefreshedAfterConnect && entry.catalogGeneration === generation) return;
 	try {
 		const catalog = await collectServerCatalogForCache(entry.connection, serverConfig, entry.configHash);
+		if (!ownsCatalog()) return;
 		entry.cachedCatalog = catalog;
+		entry.catalogGeneration = generation;
+		entry.cacheRefreshedAfterConnect = true;
 		await writeMcpCachedServer(entry.agentDir, entry.name, catalog);
 		// Per-resource subscriptions (todo 39): only when the server declares
 		// resources.subscribe; best-effort, failures are non-fatal.
-		await ensureMcpResourceSubscriptions(entry.connection.client, catalog.resources ?? []);
+		if (ownsCatalog()) await ensureMcpResourceSubscriptions(entry.connection.client, catalog.resources ?? []);
 	} catch (error) {
 		entry.logger.warn("Failed to refresh MCP catalog cache", {
 			error: error instanceof Error ? error.message : String(error),

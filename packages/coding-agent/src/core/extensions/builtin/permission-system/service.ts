@@ -48,7 +48,19 @@ export class PermissionService {
 	 * explicit consent for that pattern) can then turn a remaining ask into allow.
 	 */
 	private decide(permission: string, target: string | readonly string[], options: DecisionOptions): Rule["action"] {
-		if (!options.presetBound) return evaluate(permission, target, this.staticRuleset, this.approved).action;
+		return this.dispatchDecision(permission, target, options).action;
+	}
+
+	/** Share the decision and its relevant rules with the final dispatch fence. */
+	dispatchDecision(
+		permission: string,
+		target: string | readonly string[],
+		options: DecisionOptions = {},
+	): { readonly action: Rule["action"]; readonly rules: readonly Rule[] } {
+		if (!options.presetBound) {
+			const rule = evaluate(permission, target, this.staticRuleset, this.approved);
+			return { action: rule.action, rules: [{ ...rule }] };
+		}
 		const presetRules = this.staticRuleset.filter((rule) => isPresetRule(rule));
 		const userRules = this.staticRuleset.filter((rule) => !isPresetRule(rule));
 		const presetRule = evaluate(permission, target, presetRules);
@@ -59,9 +71,13 @@ export class PermissionService {
 			user === undefined || PermissionService.RESTRICTIVENESS[preset] >= PermissionService.RESTRICTIVENESS[user]
 				? preset
 				: user;
-		if (combined !== "ask") return combined;
+		const rules = [presetRule, ...(user === undefined ? [] : [userRule])].map((rule) => ({ ...rule }));
+		if (combined !== "ask") return { action: combined, rules };
 		const remembered = evaluate(permission, target, this.approved);
-		return this.approved.includes(remembered) && remembered.action === "allow" ? "allow" : "ask";
+		if (this.approved.includes(remembered) && remembered.action === "allow") {
+			return { action: "allow", rules: [...rules, { ...remembered }] };
+		}
+		return { action: "ask", rules };
 	}
 
 	/** Request permission for a tool call. Resolves if allowed, throws on denial. */

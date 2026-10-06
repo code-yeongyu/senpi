@@ -1,3 +1,27 @@
+## 2026-10-06 - Nonblocking first-turn MCP admission (senpi#2843)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: first-turn and preview prompt assembly no longer wait for deferred remote catalog completion. They retain single-flight session attachment and compose from the known instructions; completed background registration refreshes subsequent turns.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: startup connections are backgrounded immediately, and RPC inventory reads the known catalog instead of issuing remote list requests during admission. Pending startup catalogs report a connecting state.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: background catalog collection also retains resource templates so the local RPC inventory can present them without remote requests.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: per-server cache updates merge under the existing bounded filesystem-lock pattern before atomic replacement, preserving different servers' concurrent updates rather than only preventing torn JSON.
+- `invocation.ts`, `catalog.ts`, `service-register.ts`, and `expose/{register,proxy,tier-b,session}.ts`: direct, promoted, and proxy calls use one current-catalog resolver, raw-schema validation without coercion, session/configuration checks, and a final synchronous permission fence. Removed tools return a structured unavailable result without a remote call; private offered-operation identity follows deferred promotion and each proxy owns its schema identity.
+- `startup-race.ts`, `service-types.ts`, `service-connection.ts`, and `service.ts`: readiness is single-flight per entry and bound to the connection generation. Successful metadata becomes available only after collection, remains in memory when persistence fails, and replaced/disabled entries cannot publish it as current.
+
+### Why
+
+- A cold MCP catalog delayed the first provider request even when the message required no MCP tool. A held local catalog response reproduces the admission barrier through the real session and extension harness.
+
+### Why an extension could not handle it
+
+- The wait belongs to the existing MCP builtin's prompt hook and cannot be removed by another extension.
+
+### Expected merge conflict zones
+
+- Single-flight attachment and `before_agent_start` in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
+- Startup synchronization and wire inventory in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; collection and normalization in `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`.
+
 ## 2026-10-04 - Interactive MCP server manager (senpi#2716)
 
 ### What changed

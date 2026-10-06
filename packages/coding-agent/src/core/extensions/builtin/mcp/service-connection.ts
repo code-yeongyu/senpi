@@ -59,6 +59,7 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 		artifacts: options.artifacts,
 		authPlan,
 		cacheRefreshedAfterConnect: false,
+		isCurrent: () => options.shouldReconnect(entry),
 		key,
 		name,
 		configHash: options.configHash,
