@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- File paths in tool output are clickable links again in VS Code's integrated terminal when `TERM_PROGRAM` is not set there, for example a VS Code terminal connected to WSL. The terminal is now also recognised by `VSCODE_IPC_HOOK_CLI`, which VS Code sets in every integrated terminal. Inside tmux the tmux check still decides, and `PI_HYPERLINKS=0` still turns links off ([#2826](https://github.com/code-yeongyu/senpi/issues/2826)).
+
 ### Removed
 
 ## [2026.10.10-4] - 2026-10-06
@@ -25,7 +27,6 @@
 
 ### Fixed
 
-- File paths in tool output are clickable links again in VS Code's integrated terminal when `TERM_PROGRAM` is not set there, for example a VS Code terminal connected to WSL. The terminal is now also recognised by `VSCODE_IPC_HOOK_CLI`, which VS Code sets in every integrated terminal. Inside tmux the tmux check still decides, and `PI_HYPERLINKS=0` still turns links off ([#2826](https://github.com/code-yeongyu/senpi/issues/2826)).
 - Two processes rebinding the same session at once both end at the moved session. The one that finds the move already done returns the new path instead of failing with `ENOENT` while reading the old file ([#2828](https://github.com/code-yeongyu/senpi/issues/2828)).
 
 - A global default extension shim left behind by an earlier install (for example after switching from npm to bun or to the standalone binary) no longer fails every start with `Cannot find module`. On start, a generated shim whose target is gone is rewritten to the current install's builtin when there is one, and removed when the engine has none; the loader skips any such shim without an error. A file you wrote yourself (no generated banner) is never touched ([#2765](https://github.com/code-yeongyu/senpi/issues/2765)).
