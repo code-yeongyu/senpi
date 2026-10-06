@@ -396,7 +396,10 @@ function toMistralWirePayload(payload: MistralChatPayload): Record<string, unkno
 	] as const) {
 		remapMistralProperty(wirePayload, source, target);
 	}
-	wirePayload.messages = payload.messages.map((message) => toMistralWireMessage(message));
+	const wireMessages = payload.messages.map((message) => toMistralWireMessage(message));
+	const lastMessage = wireMessages.at(-1);
+	if (lastMessage?.role === "assistant") lastMessage.prefix = true;
+	wirePayload.messages = wireMessages;
 
 	const responseFormat = wirePayload.response_format;
 	if (isMistralRecord(responseFormat)) {

@@ -101,7 +101,29 @@ describe("strict model generation", () => {
 			cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
 		}
 		const preloadPath = join(fixtureRoot, "mock-models-dev.mjs");
+		const individual: { "openai-completions": Record<string, { id: string }> } = JSON.parse(
+			readFileSync(join(packageRoot, "src/providers/data/qwen-token-plan-individual.json"), "utf8"),
+		);
 		const catalog = {
+			"alibaba-token-plan": {
+				models: Object.fromEntries(
+					Object.values(individual["openai-completions"]).map((model) => [
+						model.id,
+						{ id: model.id, name: model.id, tool_call: true },
+					]),
+				),
+			},
+			mistral: {
+				models: {
+					"mistral-large-4": {
+						id: "mistral-large-4",
+						name: "Mistral Large 4",
+						tool_call: true,
+						reasoning: false,
+						limit: { context: 4096, output: 4096 },
+					},
+				},
+			},
 			"zai-coding-plan": {
 				models: {
 					"glm-4.7": { id: "glm-4.7", name: "GLM 4.7", tool_call: true, reasoning: true },
@@ -119,14 +141,18 @@ describe("strict model generation", () => {
 				`globalThis.fetch = async (input) => {\n` +
 				`  const url = String(input);\n` +
 				`  if (url === "https://models.dev/api.json") return new Response(JSON.stringify(catalog), { status: 200 });\n` +
-				`  if (url === "https://openrouter.ai/api/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  if (url === "https://models.dev/models.json?type=decision") return Response.json({ "typesafe/jev-latest": { type: "decision", name: "Jev" } });\n` +
+				`  if (url === "https://openrouter.ai/api/v1/models?output_modalities=image") return Response.json({ data: [{ id: "fixture/image", name: "Image", architecture: { input_modalities: ["text"], output_modalities: ["image"] } }] });\n` +
+				`  if (url.startsWith("https://openrouter.ai/api/v1/models")) return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
 				`  if (url === "https://ai-gateway.vercel.sh/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
-				`  if (url === "https://apis.opengateway.ai/v1/models") return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  if (url === "https://apis.opengateway.ai/v1/models") return Response.json({ data: [{ id: "fixture/chat", endpoints: ["chat_completions"] }] });\n` +
+				`  if (url === "https://opengateway.ai/api/model-prices") return Response.json({ fixture: { provider: "fixture", modelOwner: "fixture", modelName: "chat", inputCostPerToken: 0, outputCostPerToken: 0 } });\n` +
+				`  if (url === "https://radius.pi.dev/v1/config") return Response.json({ baseUrl: "https://radius.pi.dev", models: [{ id: "fixture", name: "Fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 4096 }] });\n` +
 				`  if (url.includes("api.nvidia.com")) return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
 				`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
 				`};\n`,
 		);
-		const selected = ["zai", "zai-coding-cn"];
+		const selected = ["zai", "zai-coding-cn", "mistral"];
 		const unselectedPath = join(isolatedPackageRoot, "src/providers/data/openrouter.json");
 		const unselectedBefore = readFileSync(unselectedPath, "utf8");
 		const args = [
@@ -145,7 +171,25 @@ describe("strict model generation", () => {
 		const selectedFirst = selected.map((provider) =>
 			readFileSync(join(isolatedPackageRoot, `src/providers/data/${provider}.json`), "utf8"),
 		);
-		for (const content of selectedFirst) expect(content).toContain('"chat:glm-4.7"');
+		for (const content of selectedFirst.slice(0, 2)) expect(content).toContain('"chat:glm-4.7"');
+		const mistral = JSON.parse(readFileSync(join(isolatedPackageRoot, "src/providers/data/mistral.json"), "utf8"));
+		for (const id of ["mistral-large-4", "mistral-large-4-0"]) {
+			expect(mistral["mistral-conversations"][`chat:${id}`]).toMatchObject({
+				id,
+				reasoning: true,
+				thinkingLevelMap: {
+					off: "none",
+					minimal: "none",
+					low: "high",
+					medium: "high",
+					high: "high",
+					xhigh: "high",
+					max: "high",
+				},
+				contextWindow: 524288,
+				maxTokens: 262144,
+			});
+		}
 		const manifestFirst = readFileSync(join(isolatedPackageRoot, "src/providers/data/.manifest.json"), "utf8");
 
 		const second = spawnSync(process.execPath, args, { cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 });

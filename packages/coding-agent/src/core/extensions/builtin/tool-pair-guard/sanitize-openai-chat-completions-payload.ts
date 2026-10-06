@@ -15,59 +15,67 @@ function isToolCall(value: unknown): value is ChatCompletionToolCall {
 	return isObject(value) && typeof value.id === "string" && value.id.length > 0;
 }
 
-function isMessageWithToolCalls(
-	value: unknown,
-): value is ChatCompletionMessage & { tool_calls: ChatCompletionToolCall[] } {
-	if (!isObject(value) || value.role !== "assistant" || !Array.isArray(value.tool_calls)) return false;
-	for (const call of value.tool_calls) {
-		if (!isToolCall(call)) return false;
+function getToolCalls(value: unknown): ChatCompletionToolCall[] | undefined {
+	if (!isObject(value) || value.role !== "assistant") return undefined;
+	const calls = value.tool_calls ?? value.toolCalls;
+	if (!Array.isArray(calls)) return undefined;
+	for (const call of calls) {
+		if (!isToolCall(call)) return undefined;
 	}
-	return true;
+	return calls;
 }
 
 function isToolRoleMessage(value: unknown): value is ChatCompletionMessage {
 	return isObject(value) && value.role === "tool";
 }
 
-function isToolMessage(value: unknown): value is ChatCompletionMessage & { tool_call_id: string } {
-	return isObject(value) && value.role === "tool" && typeof value.tool_call_id === "string";
+function getToolCallId(value: ChatCompletionMessage): string | undefined {
+	const id = value.tool_call_id ?? value.toolCallId;
+	return typeof id === "string" ? id : undefined;
 }
 
-function createSyntheticToolMessage(toolCallId: string): ChatCompletionMessage {
+function createSyntheticToolMessage(toolCallId: string, nativeFields: boolean): ChatCompletionMessage {
 	return {
 		role: "tool",
-		tool_call_id: toolCallId,
+		...(nativeFields ? { toolCallId } : { tool_call_id: toolCallId }),
 		content: SYNTHETIC_OUTPUT,
 	};
 }
 
-function flushMissingToolResults(pendingToolCallIds: string[], sanitizedMessages: unknown[]): boolean {
+function flushMissingToolResults(
+	pendingToolCallIds: string[],
+	sanitizedMessages: unknown[],
+	nativeFields: boolean,
+): boolean {
 	if (pendingToolCallIds.length === 0) return false;
 	for (const toolCallId of pendingToolCallIds) {
-		sanitizedMessages.push(createSyntheticToolMessage(toolCallId));
+		sanitizedMessages.push(createSyntheticToolMessage(toolCallId, nativeFields));
 	}
 	pendingToolCallIds.length = 0;
 	return true;
 }
 
-/** Repairs OpenAI Chat Completions request messages by keeping tool call/output pairs balanced. */
+/** Repairs OpenAI-compatible request messages, including Mistral's pre-wire tool fields. */
 export function sanitizeOpenAIChatCompletionsPayload(payload: unknown): unknown {
 	if (!hasMessagesArray(payload)) return payload;
 
 	let changed = false;
+	let pendingNativeFields = false;
 	const sanitizedMessages: unknown[] = [];
 	const pendingToolCallIds: string[] = [];
 	const pendingToolCallIdSet = new Set<string>();
 
 	for (const message of payload.messages) {
-		if (isMessageWithToolCalls(message)) {
-			if (flushMissingToolResults(pendingToolCallIds, sanitizedMessages)) {
+		const toolCalls = getToolCalls(message);
+		if (toolCalls !== undefined) {
+			if (flushMissingToolResults(pendingToolCallIds, sanitizedMessages, pendingNativeFields)) {
 				pendingToolCallIdSet.clear();
 				changed = true;
 			}
 
 			sanitizedMessages.push(message);
-			for (const call of message.tool_calls) {
+			pendingNativeFields = isObject(message) && !Array.isArray(message.tool_calls);
+			for (const call of toolCalls) {
 				pendingToolCallIds.push(call.id);
 				pendingToolCallIdSet.add(call.id);
 			}
@@ -75,30 +83,27 @@ export function sanitizeOpenAIChatCompletionsPayload(payload: unknown): unknown 
 		}
 
 		if (isToolRoleMessage(message)) {
-			if (
-				!isToolMessage(message) ||
-				message.tool_call_id.length === 0 ||
-				!pendingToolCallIdSet.has(message.tool_call_id)
-			) {
+			const toolCallId = getToolCallId(message);
+			if (!toolCallId || !pendingToolCallIdSet.has(toolCallId)) {
 				changed = true;
 				continue;
 			}
 
 			sanitizedMessages.push(message);
-			pendingToolCallIdSet.delete(message.tool_call_id);
-			const pendingIndex = pendingToolCallIds.indexOf(message.tool_call_id);
+			pendingToolCallIdSet.delete(toolCallId);
+			const pendingIndex = pendingToolCallIds.indexOf(toolCallId);
 			if (pendingIndex >= 0) pendingToolCallIds.splice(pendingIndex, 1);
 			continue;
 		}
 
-		if (flushMissingToolResults(pendingToolCallIds, sanitizedMessages)) {
+		if (flushMissingToolResults(pendingToolCallIds, sanitizedMessages, pendingNativeFields)) {
 			pendingToolCallIdSet.clear();
 			changed = true;
 		}
 		sanitizedMessages.push(message);
 	}
 
-	if (flushMissingToolResults(pendingToolCallIds, sanitizedMessages)) changed = true;
+	if (flushMissingToolResults(pendingToolCallIds, sanitizedMessages, pendingNativeFields)) changed = true;
 
 	if (!changed) return payload;
 	return { ...payload, messages: sanitizedMessages };

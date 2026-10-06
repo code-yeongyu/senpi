@@ -4062,6 +4062,37 @@ async function generateModels() {
 	];
 	allModels.push(...codexModels);
 
+	// Large 4 accepts only none/high reasoning_effort, never Magistral's prompt_mode.
+	// Keep both native IDs available even before models.dev publishes the alias.
+	const mistralLarge4 = allModels.find(m => m.provider === "mistral" && m.id === "mistral-large-4");
+	for (const id of ["mistral-large-4", "mistral-large-4-0"]) {
+		const existing = allModels.find(m => m.provider === "mistral" && m.id === id);
+		const definition = {
+			...existing,
+			id,
+			name: "Mistral Large 4",
+			api: "mistral-conversations",
+			provider: "mistral",
+			baseUrl: "https://api.mistral.ai",
+			reasoning: true,
+			thinkingLevelMap: {
+				off: "none",
+				minimal: "none",
+				low: "high",
+				medium: "high",
+				high: "high",
+				xhigh: "high",
+				max: "high",
+			},
+			input: ["text", "image"],
+			cost: existing?.cost ?? mistralLarge4?.cost ?? { input: 0.68, output: 2.09, cacheRead: 0.07, cacheWrite: 0 },
+			contextWindow: 524288,
+			maxTokens: 262144,
+		} satisfies Model<"mistral-conversations">;
+		if (existing) Object.assign(existing, definition);
+		else allModels.push(definition);
+	}
+
 	// Add missing Mistral Medium 3.5 model until models.dev includes it
 	if (!allModels.some(m => m.provider === "mistral" && m.id === "mistral-medium-3.5")) {
 		allModels.push({

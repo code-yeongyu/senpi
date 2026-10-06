@@ -1,3 +1,24 @@
+## 2026-10-06 - Native Mistral Large 4 reasoning and alias catalog
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: author both `mistral-large-4` and `mistral-large-4-0` with reasoning enabled, off/minimal mapped to `none`, and low/medium/high/xhigh/max mapped to `high`. Pin context to 524288 and output to 262144; retain source pricing when present.
+- `packages/ai/src/providers/data/mistral.json` and `packages/ai/src/providers/data/.manifest.json`: regenerate only Mistral from frozen offline catalog inputs, with the original manifest timestamp and all other provider shards preserved.
+- `packages/ai/test/generate-models-strict.test.ts`: extend provider-scoped generation coverage with stale Large 4 metadata and the missing alias, using current offline endpoint fixtures.
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: Large 4 rejects Magistral's `prompt_mode`, accepts only `none`/`high` reasoning efforts, and must expose the native `4-0` alias even before models.dev lists it.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: builtin model capabilities and catalog identity are generated before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: the Mistral overrides beside the existing Medium 3.5 authoring block.
+- `packages/ai/src/providers/data/mistral.json` and `packages/ai/src/providers/data/.manifest.json`: regenerate instead of hand-merging.
+
 ## 2026-10-02 - OpenGateway catalog stays current: shared OpenAI input cap (senpi#2552)
 
 ### What changed

@@ -2,8 +2,8 @@ import { arch, platform, release } from "node:os";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
-import { getModel, normalizeContext } from "../src/compat.ts";
-import type { Api, FetchFunction, Model, ProviderResponse } from "../src/types.ts";
+import { getModel, normalizeContext, streamSimple } from "../src/compat.ts";
+import type { Api, AssistantMessage, FetchFunction, Model, ProviderResponse } from "../src/types.ts";
 
 const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
@@ -37,6 +37,91 @@ function createTerminalEvent(finishReason = "stop") {
 }
 
 describe("Mistral HTTP transport", () => {
+	it.each(["assistant", "user"] as const)("sets prefix only when the outgoing payload ends %s", async (ending) => {
+		const model = getModel("mistral", "mistral-large-4");
+		const assistant: AssistantMessage = {
+			role: "assistant",
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			content: [{ type: "text", text: "Earlier answer" }],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: 1,
+		};
+		const context = normalizeContext({
+			messages: [
+				{ role: "user", content: "First question", timestamp: 0 },
+				assistant,
+				{ role: "user", content: "Continue", timestamp: 2 },
+				{ ...assistant, content: [{ type: "text", text: "Partial answer" }], timestamp: 3 },
+				...(ending === "user" ? [{ role: "user" as const, content: "Next question", timestamp: 4 }] : []),
+			],
+		});
+		const original = structuredClone(context);
+		let requestInit: RequestInit | undefined;
+
+		const message = await streamMistral(model, context, {
+			apiKey: "test",
+			fetch: async (_input, init) => {
+				requestInit = init;
+				return createSseResponse([createTerminalEvent()]);
+			},
+		}).result();
+
+		expect(message.stopReason).toBe("stop");
+		const wirePayload = JSON.parse(String(requestInit?.body));
+		expect(wirePayload.messages.filter((entry: { role: string }) => entry.role === "assistant")).toEqual([
+			{ role: "assistant", prefix: false, content: [{ type: "text", text: "Earlier answer" }] },
+			{ role: "assistant", prefix: ending === "assistant", content: [{ type: "text", text: "Partial answer" }] },
+		]);
+		if (ending === "user") {
+			expect(wirePayload.messages.at(-1)).toEqual({ role: "user", content: "Next question" });
+		}
+		expect(context).toEqual(original);
+	});
+
+	describe.each(["mistral-large-4", "mistral-large-4-0"] as const)("%s reasoning wire controls", (modelId) => {
+		it.each([
+			[undefined, "none"],
+			["minimal", "none"],
+			["low", "high"],
+			["medium", "high"],
+			["high", "high"],
+			["xhigh", "high"],
+			["max", "high"],
+		] as const)("serializes %s thinking as reasoning_effort %s", async (reasoning, effort) => {
+			const model = getModel("mistral", modelId);
+			let requestInit: RequestInit | undefined;
+			const message = await streamSimple(
+				model,
+				{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+				{
+					apiKey: "test",
+					reasoning,
+					fetch: async (_input, init) => {
+						requestInit = init;
+						return createSseResponse([createTerminalEvent()]);
+					},
+				},
+			).result();
+
+			expect(message.stopReason).toBe("stop");
+			const wirePayload = JSON.parse(String(requestInit?.body));
+			expect(wirePayload.reasoning_effort).toBe(effort);
+			expect(wirePayload).not.toHaveProperty("prompt_mode");
+			expect(model.contextWindow).toBe(524288);
+			expect(model.maxTokens).toBe(262144);
+		});
+	});
+
 	it("serializes SDK-style payloads to the Mistral wire format", async () => {
 		const model = getModel("mistral", "mistral-large-latest");
 		const context = normalizeContext({
@@ -197,6 +282,7 @@ describe("Mistral HTTP transport", () => {
 			],
 		});
 		let requestInit: RequestInit | undefined;
+		const original = structuredClone(context);
 		const fetch: FetchFunction = async (_input, init) => {
 			requestInit = init;
 			return createSseResponse([createTerminalEvent()]);
@@ -233,6 +319,7 @@ describe("Mistral HTTP transport", () => {
 				],
 			},
 		]);
+		expect(context).toEqual(original);
 	});
 
 	it("parses native thinking, text, fragmented tool calls, and cached-token usage", async () => {

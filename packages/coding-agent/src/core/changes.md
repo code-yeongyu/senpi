@@ -9126,3 +9126,21 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 ### Expected merge conflict zones
 
 - LOW: the `projectCodemodeNamesExecutable` helpers after `LEGACY_PROJECT_CONFIG_DIR_NAME`, the `bundled-resources.ts` import, and the one-line call after the config-dir check at the top of `hasTrustRequiringProjectResources` in `packages/coding-agent/src/core/trust-manager.ts`.
+## 2026-10-06 - Preserve native Mistral tool responses before wire conversion
+
+### What changed
+
+- `extensions/builtin/tool-pair-guard/sanitize-openai-chat-completions-payload.ts`: recognize native camel-case tool pairs, preserve genuine responses, drop orphans/duplicates, and synthesize missing responses in their native field format.
+- `../../test/tool-pair-guard/sanitize-openai-chat-completions-payload.test.ts`: cover native pairs, malformed histories, unchanged caller input, and the native adapter-to-guard-to-wire path.
+
+### Why
+
+- The native Mistral adapter repairs pairs before hooks, but its wire conversion happens afterward. The OpenAI guard deleted genuine responses because `toolCalls`/`toolCallId` had not yet become `tool_calls`/`tool_call_id`, causing HTTP 400 after a successful tool execution.
+
+### Why an extension could not handle it
+
+- A late request hook cannot recover a response already deleted by the built-in guard. The local workaround has to wrap Mistral's stream and convert these field names before that guard.
+
+### Expected merge conflict zones
+
+- `extensions/builtin/tool-pair-guard/sanitize-openai-chat-completions-payload.ts`: camel-case and snake-case tool field access during pairing repair.

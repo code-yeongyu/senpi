@@ -1,3 +1,22 @@
+## 2026-10-06 - Mistral terminal assistant continuation prefix
+
+### What changed
+
+- `packages/ai/src/api/mistral-conversations.ts`: set `prefix: true` only on the final serialized assistant message after request hooks. Earlier assistants keep `prefix: false`, user/tool endings are unchanged, and caller-owned transcripts are not mutated.
+- `packages/ai/test/mistral-http-transport.test.ts`: cover assistant text continuation, user and tool-result endings, caller immutability, and Large 4/4-0 reasoning effort wire controls.
+
+### Why
+
+- `packages/ai/src/api/mistral-conversations.ts`: Mistral rejects an assistant-ended request with HTTP 400 unless the final assistant is marked as a prefix.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/mistral-conversations.ts`: a local extension is a workaround, but every native caller needs the same wire guarantee after other hooks can remove trailing orphaned results.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/mistral-conversations.ts`: `toMistralWirePayload`; preserve terminal prefix selection after request hooks and tool-result conversion.
+
 ## 2026-10-06 - A forced tool_choice refused inside a 200 stream is retried (senpi#2801)
 
 ### What changed

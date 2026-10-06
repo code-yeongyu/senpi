@@ -6,9 +6,13 @@
 
 ### Added
 
+- Added the native Mistral Large 4 `mistral-large-4-0` alias and enabled its supported `none`/`high` reasoning efforts ([#2841](https://github.com/code-yeongyu/senpi/pull/2841)).
+
 ### Changed
 
 ### Fixed
+
+- Fixed Mistral assistant-ending requests by applying the continuation prefix after request hooks, including when tool-history repair removes an orphaned result ([#2841](https://github.com/code-yeongyu/senpi/pull/2841)).
 
 ### Removed
 
