@@ -16,6 +16,7 @@ import {
 	detectCapabilities,
 	encodeITerm2,
 	encodeKitty,
+	fileLinkTarget,
 	getCapabilities,
 	getCellDimensions,
 	getKittyImageMetadata,
@@ -46,6 +47,8 @@ const ENV_KEYS = [
 	"WEZTERM_PANE",
 	"ITERM_SESSION_ID",
 	"WT_SESSION",
+	"WSL_DISTRO_NAME",
+	"WSL_INTEROP",
 	"CMUX_WORKSPACE_ID",
 	"WARP_SESSION_ID",
 	"WARP_TERMINAL_SESSION_UUID",
@@ -1142,5 +1145,68 @@ describe("hyperlink", () => {
 		const result = hyperlink("README.md", "file:///home/user/README.md");
 		assert.ok(result.includes("file:///home/user/README.md"));
 		assert.ok(result.includes("README.md"));
+	});
+});
+
+describe("file links under WSL in Windows Terminal (#2826)", () => {
+	const wslInWindowsTerminal = {
+		WT_SESSION: "session",
+		WSL_DISTRO_NAME: "Ubuntu-24.04",
+		WSL_INTEROP: "/run/WSL/1_interop",
+	};
+
+	it("links a home path through the distro share Windows can open", () => {
+		assert.strictEqual(
+			fileLinkTarget("/home/dev/my project/src/a#b.ts", wslInWindowsTerminal, "linux"),
+			"file://wsl.localhost/Ubuntu-24.04/home/dev/my%20project/src/a%23b.ts",
+		);
+	});
+
+	it("links a /mnt/<drive> path as the Windows file it already is", () => {
+		assert.strictEqual(
+			fileLinkTarget("/mnt/c/Users/dev/notes.md", wslInWindowsTerminal, "linux"),
+			"file:///C:/Users/dev/notes.md",
+		);
+		assert.strictEqual(fileLinkTarget("/mnt/d", wslInWindowsTerminal, "linux"), "file:///D:/");
+	});
+
+	it("gives no link for a Linux path when the distro name is unknown, but still links /mnt drives", () => {
+		const noDistro = { WT_SESSION: "session", WSL_INTEROP: "/run/WSL/1_interop" };
+		assert.strictEqual(fileLinkTarget("/home/dev/src/a.ts", noDistro, "linux"), undefined);
+		assert.strictEqual(fileLinkTarget("/mnt/c/a.ts", noDistro, "linux"), "file:///C:/a.ts");
+	});
+
+	it("keeps the plain file URL outside WSL and in a Linux-side terminal under WSL", {
+		skip: process.platform === "win32",
+	}, () => {
+		assert.strictEqual(fileLinkTarget("/home/dev/a.ts", {}, "linux"), "file:///home/dev/a.ts");
+		assert.strictEqual(fileLinkTarget("/home/dev/a.ts", { WT_SESSION: "session" }, "linux"), "file:///home/dev/a.ts");
+		assert.strictEqual(
+			fileLinkTarget("/home/dev/a.ts", { WSL_DISTRO_NAME: "Ubuntu", WSL_INTEROP: "/run/WSL/1_interop" }, "linux"),
+			"file:///home/dev/a.ts",
+		);
+		assert.strictEqual(
+			fileLinkTarget("/Users/dev/a.ts", { WT_SESSION: "session", WSL_DISTRO_NAME: "Ubuntu" }, "darwin"),
+			"file:///Users/dev/a.ts",
+		);
+	});
+
+	it("renders an image path link with the Windows target, and plain text when there is none", {
+		skip: process.platform !== "linux",
+	}, () => {
+		withEnv({ ...wslInWindowsTerminal }, () => {
+			resetCapabilitiesCache();
+			setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+			const linked = imageFallback("image/png", undefined, "/home/dev/shot.png");
+			assert.ok(linked.includes("\x1b]8;;file://wsl.localhost/Ubuntu-24.04/home/dev/shot.png\x1b\\"), linked);
+		});
+		withEnv({ WT_SESSION: "session", WSL_INTEROP: "/run/WSL/1_interop" }, () => {
+			resetCapabilitiesCache();
+			setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+			const plain = imageFallback("image/png", undefined, "/home/dev/shot.png");
+			assert.ok(!plain.includes("\x1b]8;"), plain);
+			assert.ok(plain.includes("shot.png"), plain);
+		});
+		resetCapabilitiesCache();
 	});
 });

@@ -1,3 +1,21 @@
+## 2026-10-07 - Tool-output file links open under WSL in Windows Terminal (senpi#2826)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/render-utils.ts`: `linkPath()` takes its target from the tui's `fileLinkTarget()` instead of `pathToFileURL`, and shows the path without a link when there is no target the terminal can open.
+
+### Why
+
+Under WSL in Windows Terminal, the `file:///home/...` link in read, grep and edit headers could not be opened by Ctrl+click (see the tui entry for the target rules).
+
+### Why an extension could not handle it
+
+The link is built by the built-in tool renderers.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/render-utils.ts`: `linkPath()`.
+
 # core/tools changes
 
 ## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers

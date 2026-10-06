@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Under WSL in Windows Terminal, Ctrl+click on a file path in tool output opens the file. The link used to target the Linux path (`file:///home/...`), which Windows cannot open. It now targets the same file through the distro share (`file://wsl.localhost/<distro>/...`), or as the Windows file for paths under `/mnt/<drive>/`. With no distro name the path is shown as plain text. Links outside WSL are unchanged ([#2826](https://github.com/code-yeongyu/senpi/issues/2826)).
 - A global default extension shim left behind by an earlier install (for example after switching from npm to bun or to the standalone binary) no longer fails every start with `Cannot find module`. On start, a generated shim whose target is gone is rewritten to the current install's builtin when there is one, and removed when the engine has none; the loader skips any such shim without an error. A file you wrote yourself (no generated banner) is never touched ([#2765](https://github.com/code-yeongyu/senpi/issues/2765)).
 - The input box is no longer pushed off-screen when something writes to the terminal behind the TUI (a child that inherits stdout, a raw fd 1 write, or `console.log` from an extension or a Worker). While the TUI owns the screen, those writes go to the debug log, which is now capped at 32 MiB. Windows keeps the existing JS-level guard ([#2815](https://github.com/code-yeongyu/senpi/issues/2815)).
 

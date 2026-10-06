@@ -187,6 +187,7 @@ export {
 	detectCapabilities,
 	encodeITerm2,
 	encodeKitty,
+	fileLinkTarget,
 	getCapabilities,
 	getCellDimensions,
 	getGifDimensions,

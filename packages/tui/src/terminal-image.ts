@@ -826,16 +826,45 @@ export function hyperlink(text: string, url: string): string {
 	return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
 }
 
+/**
+ * The OSC 8 target for a local file, or `undefined` when the terminal cannot open one (#2826).
+ *
+ * Under WSL, Windows Terminal passes `WT_SESSION` in and opens a link on the Windows side, where a
+ * `file:///home/...` URL names nothing. There the target is the Windows view of the same file: a path
+ * under `/mnt/<drive>/` is already a Windows file (`file:///C:/...`), and any other path is reached
+ * through the distro share (`file://wsl.localhost/<distro>/...`). Without the distro name there is no
+ * Windows path for it, so no link is better than a dead one. Everywhere else the plain `file://` URL
+ * stays as it was.
+ */
+export function fileLinkTarget(
+	absolutePath: string,
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+): string | undefined {
+	const wslInWindowsTerminal =
+		platform === "linux" && Boolean(env.WT_SESSION) && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP);
+	if (!wslInWindowsTerminal) return pathToFileURL(absolutePath).href;
+	const drive = /^\/mnt\/([a-zA-Z])(?:\/|$)/.exec(absolutePath);
+	if (drive) return windowsFileUrl("", `/${drive[1].toUpperCase()}:/${absolutePath.slice(drive[0].length)}`);
+	const distro = env.WSL_DISTRO_NAME;
+	return distro ? windowsFileUrl("wsl.localhost", `/${distro}${absolutePath}`) : undefined;
+}
+
+// The URL pathname setter percent-encodes the characters a path may hold (space, `#`, `?`, ...) the
+// same way on every host, unlike `pathToFileURL`, which reads the path as the running OS's own.
+function windowsFileUrl(host: string, path: string): string {
+	const url = new URL(`file://${host}/`);
+	url.pathname = path;
+	return url.href;
+}
+
 export function imageFallback(mimeType: string, dimensions?: ImageDimensions, filename?: string): string {
 	const parts: string[] = [];
 	if (filename) {
 		const sanitized = sanitizeTerminalLabel(filename);
 		const display = shortenImagePath(sanitized);
-		parts.push(
-			getCapabilities().hyperlinks && isAbsolute(sanitized)
-				? hyperlink(display, pathToFileURL(sanitized).href)
-				: display,
-		);
+		const target = getCapabilities().hyperlinks && isAbsolute(sanitized) ? fileLinkTarget(sanitized) : undefined;
+		parts.push(target === undefined ? display : hyperlink(display, target));
 	}
 	parts.push(`[${sanitizeTerminalLabel(mimeType)}]`);
 	if (dimensions) parts.push(`${dimensions.widthPx}x${dimensions.heightPx}`);

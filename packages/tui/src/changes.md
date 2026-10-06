@@ -1,3 +1,23 @@
+## 2026-10-07 - File links target what Windows can open under WSL (senpi#2826)
+
+### What changed
+
+- `packages/tui/src/terminal-image.ts`: new exported `fileLinkTarget(absolutePath, env, platform)`. Under WSL in Windows Terminal (`platform === "linux"`, `WT_SESSION` set, and `WSL_DISTRO_NAME` or `WSL_INTEROP` set) it returns `file:///C:/...` for a path under `/mnt/<drive>/`, `file://wsl.localhost/<distro>/...` for any other path, and `undefined` when the distro name is unknown. Elsewhere it returns the plain `pathToFileURL` href. `imageFallback()` uses it and prints plain text when there is no target. The WSL URLs are built with the URL pathname setter, so they encode the same on every host.
+- `packages/tui/src/index.ts`: exports `fileLinkTarget`.
+- `packages/tui/test/terminal-image.test.ts`: cases for a home path (with a space and `#`), `/mnt/c` and a bare `/mnt/d`, a missing distro name, the non-WSL and Linux-terminal cases, and the rendered image link (Linux only).
+
+### Why
+
+Windows Terminal passes `WT_SESSION` into WSL, so hyperlinks were on, but it opens the target on the Windows side, where `file:///home/...` names nothing. Ctrl+click on a file link did nothing.
+
+### Why an extension could not handle it
+
+Link targets are built inside the TUI's own renderers.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal-image.ts`: next to `hyperlink()` and `imageFallback()`.
+
 # TUI delta rendering fork changes
 
 ## 2026-10-04 - Accepting a suggestion list that predates the text re-queries instead of splicing

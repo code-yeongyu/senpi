@@ -1,7 +1,6 @@
 import * as os from "node:os";
-import { pathToFileURL } from "node:url";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { getCapabilities, getImageDimensions, hyperlink, imageFallback } from "@earendil-works/pi-tui";
+import { fileLinkTarget, getCapabilities, getImageDimensions, hyperlink, imageFallback } from "@earendil-works/pi-tui";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import { resolvePath } from "../../utils/paths.ts";
@@ -19,8 +18,10 @@ export function shortenPath(path: unknown): string {
 
 export function linkPath(styledText: string, rawPath: string, cwd: string): string {
 	if (!getCapabilities().hyperlinks) return styledText;
-	const absolutePath = resolvePath(rawPath, cwd);
-	return hyperlink(styledText, pathToFileURL(absolutePath).href);
+	// The target the terminal can actually open: under WSL in Windows Terminal that is the Windows view
+	// of the file, or no link at all when there is none (#2826).
+	const target = fileLinkTarget(resolvePath(rawPath, cwd));
+	return target === undefined ? styledText : hyperlink(styledText, target);
 }
 
 export function str(value: unknown): string | null {
