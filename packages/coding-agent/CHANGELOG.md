@@ -6,6 +6,18 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-4] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
 - A terminal session's control endpoint accepts `get_available_models`, `get_available_thinking_levels`, `set_model`, `set_thinking_level` and `interrupt`. It applies each one exactly as the pane's own `/model`, thinking-level selector or Esc would, with the same validation, footer update and persistence, and `get_protocol_info` lists the accepted `commands`. A multi-session host also answers `interrupt { turnId? }` with `{ interrupted, turnId }` once the turn has stopped ([oh-my-openagent#9660](https://github.com/code-yeongyu/oh-my-openagent/issues/9660)).
 - `pi.session.admitExternalMessage` takes an optional `sender` (another session's id and name, the command line, or an external chat) and `display_text`. The terminal then shows a delivered message under one label line, `Sent by another agent · <name>` or `Sent from the command line`, with the message as it was written, instead of the raw provenance header. The model still reads the header ([oh-my-openagent#9660](https://github.com/code-yeongyu/oh-my-openagent/issues/9660)).
 
