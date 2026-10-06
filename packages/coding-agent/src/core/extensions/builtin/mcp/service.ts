@@ -12,7 +12,6 @@ import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
 import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
-import { collectAllPages } from "./expose/pagination.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-guard.ts";
@@ -49,7 +48,6 @@ import {
 	McpDeferredAttach,
 	type McpStartupRaceResult,
 	raceMcpStartupConnect,
-	resolveMcpStartupTimeoutMs,
 	shouldRaceMcpStartup,
 } from "./startup-race.ts";
 import { safeTimer } from "./wrap.ts";
@@ -594,7 +592,7 @@ export class McpService {
 						// A later attach does not supersede this catalog: it registers in every live session. Skip it only
 						// once the service is gone or this connection was replaced (#2524 review).
 						shouldRefreshTools: () => !this.#disposed && this.#entryForName(name) === entry,
-						deadlineMs: resolveMcpStartupTimeoutMs(server.config.startupTimeoutMs),
+						deadlineMs: 0,
 						onDeferred: (settled) => this.#deferredAttach.track(settled),
 					}),
 				);
@@ -696,43 +694,15 @@ export class McpService {
 		const connection = entry?.connection;
 		const connected = connection?.state === "connected";
 		const cached = entry?.cachedCatalog;
-		let tools = cached?.tools ?? [];
-		let resources = cached?.resources ?? [];
-		let resourceTemplates: ListedResourceTemplate[] = [];
+		const tools = cached?.tools ?? [];
+		const resources = cached?.resources ?? [];
+		const resourceTemplates = cached?.resourceTemplates ?? [];
 		let serverInfo: McpWireServerInfo | null = null;
 
 		if (connected && connection !== undefined) {
 			const client = connection.client;
 			const version = client.getServerVersion();
 			if (version !== undefined) serverInfo = mapWireServerInfo(version);
-			try {
-				tools = (
-					await collectAllPages<ListedTool>((cursor) => client.listTools(cursor === undefined ? {} : { cursor }))
-				).items;
-			} catch (error: unknown) {
-				if (!(error instanceof Error)) throw error;
-				tools = cached?.tools ?? [];
-			}
-			try {
-				resources = (
-					await collectAllPages<ListedResource>((cursor) =>
-						client.listResources(cursor === undefined ? {} : { cursor }),
-					)
-				).items;
-			} catch (error: unknown) {
-				if (!(error instanceof Error)) throw error;
-				resources = cached?.resources ?? [];
-			}
-			try {
-				resourceTemplates = (
-					await collectAllPages<ListedResourceTemplate>((cursor) =>
-						client.listResourceTemplates(cursor === undefined ? {} : { cursor }),
-					)
-				).items;
-			} catch (error: unknown) {
-				if (!(error instanceof Error)) throw error;
-				resourceTemplates = [];
-			}
 		}
 
 		return {
@@ -744,7 +714,11 @@ export class McpService {
 			authStatus: wireAuthStatus(entry, server),
 			...(connection?.state === undefined && server?.state === undefined
 				? {}
-				: { status: connection?.state ?? server?.state }),
+				: {
+						status: entry?.startupCatalogClaim?.ownsRegistration()
+							? "connecting"
+							: (connection?.state ?? server?.state),
+					}),
 		};
 	}
 
