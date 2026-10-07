@@ -50,8 +50,8 @@ test/               telemetry + conformance Vitest files
 
 ## COMMANDS
 
-- `npm test` (vitest --run), `npm run build` (`tsgo -p tsconfig.build.json`), `npm run clean`.
-- Repository-wide `npm run check` from root after changes.
+- `bun run test` (vitest --run), `bun run build` (`tsgo -p tsconfig.build.json`), `bun run clean`.
+- Repository-wide `bun run check` from root after changes.
 
 ---
 Generated: 2026-08-24 | Commit `baf15a54d`

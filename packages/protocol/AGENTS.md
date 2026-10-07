@@ -34,6 +34,6 @@ test/               protocol.test.ts, framing.test.ts, cbor/cbor.test.ts (Vitest
 
 ## VALIDATION
 
-- `npm test` (Vitest `--run`) from this package; `npm run build` to typecheck against the build config.
-- Root `npm run check` after changes.
+- `bun run test` (Vitest `--run`) from this package; `bun run build` to typecheck against the build config.
+- Root `bun run check` after changes.
 - Schema/codec changes ripple to `packages/server` and `packages/client`; run their tests too.

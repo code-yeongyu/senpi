@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 export const MAX_CURSOR_CONVERSATION_ROTATIONS = 3;
+export const MAX_CURSOR_CONVERSATION_ROTATION_RECORDS = 512;
 export const CURSOR_CONVERSATION_POISONED_MESSAGE =
 	"Cursor conversation is poisoned for this session; use another provider";
 
@@ -39,6 +40,8 @@ export type ConversationRotationStore = {
 	shouldSurfaceBeforeRotating(baseId: string): boolean;
 	markSurfaced(baseId: string, currentWireId: string): void;
 	recordZeroTokenPoison(baseId: string, currentWireId: string): PoisonDecision;
+	/** Number of retained records (bounded; diagnostics for #1024). */
+	recordCount(): number;
 };
 
 export function isZeroTokenResourceExhausted(errorMessage: string, sawTokenDelta: boolean): boolean {
@@ -48,11 +51,28 @@ export function isZeroTokenResourceExhausted(errorMessage: string, sawTokenDelta
 export function createConversationRotationStore(options: {
 	readonly persistPath: string;
 	readonly randomId?: () => string;
+	readonly maxRecords?: number;
 }): ConversationRotationStore {
 	const randomId = options.randomId ?? randomUUID;
+	const maxRecords =
+		options.maxRecords ??
+		readRotationRecordLimit(process.env.PI_CURSOR_ROTATION_RECORD_LIMIT) ??
+		MAX_CURSOR_CONVERSATION_ROTATION_RECORDS;
 	const records = loadRecords(options.persistPath);
 
+	// #1024: records accumulate one per base conversation id for process
+	// lifetime (and each persist rewrites the whole file). Object key order is
+	// insertion order for these uuid-shaped ids, so the oldest records drop
+	// first. Poison memory survives process restarts via the persisted file;
+	// trimming only forgets the oldest ids, which re-derive cheaply (at most a
+	// surfaced 0-token RE per id).
+	const trimRecords = (): void => {
+		const keys = Object.keys(records);
+		for (let i = 0; i < keys.length - maxRecords; i++) delete records[keys[i]];
+	};
+
 	const persist = (): void => {
+		trimRecords();
 		mkdirSync(dirname(options.persistPath), { recursive: true });
 		writeFileSync(options.persistPath, `${JSON.stringify(records, null, 2)}\n`);
 	};
@@ -91,6 +111,9 @@ export function createConversationRotationStore(options: {
 			records[baseId] = existing;
 			persist();
 		},
+		recordCount(): number {
+			return Object.keys(records).length;
+		},
 		recordZeroTokenPoison(baseId: string, currentWireId: string): PoisonDecision {
 			const existing = records[baseId] ?? {
 				wireId: currentWireId,
@@ -122,6 +145,11 @@ export function resolveConversationRotationPersistPath(env: NodeJS.ProcessEnv = 
 	const agentDir =
 		env.SENPI_CODING_AGENT_DIR ?? env.CODING_AGENT_DIR ?? `${(env.HOME ?? ".").replace(/\/$/, "")}/.senpi/agent`;
 	return `${agentDir.replace(/\/$/, "")}/cursor-conversation-ids.json`;
+}
+
+function readRotationRecordLimit(raw: string | undefined): number | undefined {
+	const parsed = Number(raw);
+	return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 }
 
 function loadRecords(persistPath: string): Record<string, MutableRecord> {

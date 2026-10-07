@@ -1,6 +1,7 @@
 // allow: SIZE_OK — parity cases stay beside the live kernel harness they exercise.
 import { execFileSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -17,9 +18,10 @@ function hasRuby(): boolean {
 	}
 }
 
+/** Runners this test file started: other files' kernels run in parallel workers and are not its leaks. */
 function runnerProcessIds(runnerPath: string): Set<string> {
 	try {
-		const output = execFileSync("pgrep", ["-fl", escapeRegExp(runnerPath)], {
+		const output = execFileSync("pgrep", ["-P", String(process.pid), "-fl", escapeRegExp(runnerPath)], {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "ignore"],
 			timeout: 3_000,
@@ -47,17 +49,12 @@ describe("RubyKernel", () => {
 	it("routes tool calls through the authenticated loopback bridge contract", async () => {
 		const prelude = await readFile(join(import.meta.dirname, "..", "src", "kernels", "rb", "prelude.rb"), "utf8");
 		const runner = await readFile(runnerPath, "utf8");
-		expect(prelude).toContain('URI("http://127.0.0.1:#{port}#{path}")');
-		expect(prelude).toContain('request["authorization"] = "Bearer #{token}"');
-		expect(prelude).toContain('"callId" => "rb-#{Process.pid}-#{rand(1_000_000)}"');
-		expect(prelude).toContain('"toolName" => name');
+		// The wire bytes the host reads: loopback /call, a bearer token, and the callId/toolName keys.
+		expect(prelude).toContain("http://127.0.0.1:");
+		expect(prelude).toContain("Bearer ");
+		expect(prelude).toContain('"callId" =>');
+		expect(prelude).toContain('"toolName" =>');
 		expect(runner).not.toContain('"type" => "tool-call"');
-	});
-
-	it("ships the stdlib-only prelude asset", async () => {
-		await expect(
-			access(join(import.meta.dirname, "..", "src", "kernels", "rb", "prelude.rb")),
-		).resolves.toBeUndefined();
 	});
 
 	it.skipIf(!hasRuby())(
@@ -179,6 +176,112 @@ describe("RubyKernel", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+
+	it.skipIf(!hasRuby())(
+		"reports the largest globals in the result memory notice when live memory crosses the notice threshold",
+		async () => {
+			const root = await mkdtemp(join(tmpdir(), "senpi-rb-kernel-globals-"));
+			const server = await startBridgeServer({
+				token: "live-token",
+				onCall: async () => "unexpected",
+				onEmit: async () => {},
+				onCompletion: async () => {
+					throw new Error("unexpected completion");
+				},
+			});
+			const MiB = 1024 * 1024;
+			try {
+				const kernel = RubyKernel.start({
+					cwd: root,
+					sessionId: "rb-globals",
+					connection: { port: server.port, token: server.token },
+					memory: {
+						thresholds: { gcWatermarkBytes: 32 * MiB, noticeBytes: 64 * MiB, ceilingBytes: 512 * MiB },
+						readFootprint: (pid) => {
+							try {
+								const status = readFileSync(`/proc/${pid}/status`, "utf8");
+								const kb = Number(status.match(/VmRSS:\s*(\d+)/)?.[1]);
+								if (Number.isFinite(kb) && kb > 0) return { bytes: kb * 1024 };
+							} catch {}
+							try {
+								const rss = Number(
+									execFileSync("ps", ["-o", "rss=", "-p", String(pid)], { encoding: "utf8" }).trim(),
+								);
+								if (Number.isFinite(rss) && rss > 0) return { bytes: rss * 1024 };
+							} catch {}
+							return undefined;
+						},
+					},
+				});
+				try {
+					const result = await kernel.run({
+						cellId: "big",
+						code: '$big_blob = "a" * (128 * 1024 * 1024); nil',
+						timeoutMs: 15_000,
+					});
+					expect(result).toMatchObject({ ok: true });
+					expect(result.memory?.globals).toBeDefined();
+					expect(result.memory?.globals?.map((global) => global.name)).toContain("$big_blob");
+					expect(
+						result.memory?.globals?.find((global) => global.name === "$big_blob")?.bytes,
+					).toBeGreaterThanOrEqual(128 * MiB);
+					expect(result.memory?.notice).toContain("$big_blob");
+
+					const rows = await kernel.run({
+						cellId: "rows",
+						code: [
+							'system("false")',
+							'stdout_read.instance_variable_set(:@pad, "p" * 2_000_000)',
+							'$LOADED_FEATURES << ("q" * 2_000_000)',
+							'big = "x" * 30_000_000',
+							// 90,000 nodes: far past one global's walk budget, small enough to stay under the 512 MiB ceiling.
+							'nested = Array.new(300) { Array.new(300) { "y" * 10 } }',
+							'rows = Array.new(300_000) { |i| "x" * 200 + i.to_s }',
+							"nil",
+						].join("; "),
+						timeoutMs: 30_000,
+					});
+					const named = rows.memory?.globals ?? [];
+					const sizedRows = named.find((global) => global.name === "rows");
+					expect(sizedRows?.bytes).toBeGreaterThanOrEqual(60 * MiB);
+					expect(sizedRows?.approximate).toBe(true);
+					for (const internal of [
+						"stdout_read",
+						"stdout_write",
+						"stderr_read",
+						"stderr_write",
+						"$stdout",
+						"$LOAD_PATH",
+						"$LOADED_FEATURES",
+						'$"',
+					]) {
+						expect(named.map((global) => global.name)).not.toContain(internal);
+					}
+					expect(named.find((global) => global.name === "big")?.bytes).toBeGreaterThanOrEqual(25 * MiB);
+					expect(named.map((global) => global.name)).toContain("nested");
+
+					// Numeric leaves count against a global's walk budget like strings do: a 600x600 Integer grid stops
+					// early and is reported as an estimate instead of walking all 360,000 leaves on every cell.
+					const grid = await kernel.run({
+						cellId: "grid",
+						code: "int_grid = Array.new(600) { Array.new(600) { |i| i * 1_000_000_007 } }; nil",
+						timeoutMs: 30_000,
+					});
+					expect(grid.memory?.globals?.find((global) => global.name === "int_grid")).toMatchObject({
+						approximate: true,
+					});
+
+					const status = await kernel.run({ cellId: "status", code: "$?.exitstatus", timeoutMs: 15_000 });
+					expect(status).toMatchObject({ ok: true, valueRepr: "1" });
+				} finally {
+					await kernel.close();
+				}
+			} finally {
+				await server.close();
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
 
 	it.skipIf(!hasRuby())("does not leave runner.rb alive after a timeout restart and close", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-rb-kernel-cleanup-"));

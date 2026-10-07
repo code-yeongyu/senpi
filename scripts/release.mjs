@@ -10,16 +10,14 @@
  *
  * Flow (matches AGENTS.md "Releasing"):
  *   1. Pre-flight: branch must be `main`; working tree must be clean (--dry-run warns
- *      and continues so the preview is usable during development). Then restore a
- *      CI-parity dependency tree (`npm ci`) if a prior publish/local-release left a
- *      stale bundled workspace overlay in `packages/coding-agent/node_modules`.
+ *      and continues so the preview is usable during development).
  *   2. Resolve version: `--version` override or `computeNextVersion()` from calver.mjs.
  *   3. Write `version` into all release workspace package.json files directly (TAB indent,
  *      trailing newline). `npm version` is intentionally NOT used; the `-N` suffix on
  *      same-day re-releases looks like a prerelease tag to npm.
  *   4. Run `scripts/sync-versions.js` to propagate the new version to source
  *      inter-package deps, then refresh `package-lock.json`.
- *   5. Regenerate AI model artifacts and `packages/coding-agent/publish-deps.lock.json`.
+ *   5. Regenerate AI model artifacts and `packages/coding-agent/install-lock/`.
  *   6. For each `packages/*\/CHANGELOG.md`, replace `## [Unreleased]` with
  *      `## [<version>] - <YYYY-MM-DD>`, remembering its subsection structure
  *      (`### Added`, `### Fixed`, ...) for re-insertion in step 8.
@@ -32,19 +30,17 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync } from "node:fs";
-import { join } from "node:path";
 import { computeNextVersion } from "./calver.mjs";
 import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import {
-	runGenerateImageModels,
+	runClaudeCodeModelSupportReport,
 	runGenerateModels,
+	runProviderDefaultsCheck,
 	runInstallLock,
 	runPackageLockRefresh,
-	runShrinkwrap,
 } from "./release-artifacts.mjs";
 import { reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
-import { decideTestGate } from "./release-test-gate.mjs";
+import { catalogChangedSinceHead, decideTestGate } from "./release-test-gate.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
@@ -122,8 +118,7 @@ function runCommand(bin, args, extraEnv) {
 		execFileSync(bin, args, extraEnv ? { stdio: "inherit", env: { ...process.env, ...extraEnv } } : { stdio: "inherit" });
 	} catch (err) {
 		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
-		process.stderr.write(`[release] error: ${bin} ${args.join(" ")} failed: ${message}\n`);
-		process.exit(1);
+		throw new Error(`${bin} ${args.join(" ")} failed: ${message}`, { cause: err });
 	}
 }
 
@@ -221,34 +216,6 @@ function gitPush(refspec, dryRun) {
 	runCommand("git", ["push", "origin", refspec]);
 }
 
-// `scripts/prepare-senpi-bundled-workspaces.mjs` (run by `npm run publish` and
-// the local-release smoke test) copies the built internal packages —
-// `@earendil-works/pi-tui`, `pi-ai`, `pi-agent-core`, `pi-pty` — into
-// `packages/coding-agent/node_modules` as REAL directories, shadowing the
-// workspace symlinks so the published tarball can bundle them. Left behind,
-// those copies go stale and win module resolution over the freshly built
-// workspace, so the release test gate's spawned-CLI tests (which resolve
-// `@earendil-works/pi-*` from coding-agent's own node_modules) load an old
-// build and fail — e.g. `SyntaxError: ... does not provide an export named
-// 'sanitizeTerminalLabel'`. CI never hits this because it starts from a clean
-// `npm ci`. Detect the stale overlay and restore the CI-parity dependency tree
-// before building and testing. Cheap when clean: only reinstalls when the
-// bundled overlay is actually present.
-function ensureCleanWorkspaceDeps(dryRun) {
-	const overlayMarker = join("packages", "coding-agent", "node_modules", "@earendil-works", "pi-tui");
-	const hasBundledOverlay = existsSync(overlayMarker) && !lstatSync(overlayMarker).isSymbolicLink();
-	if (!hasBundledOverlay) {
-		log("workspace dependency tree is clean (no bundled overlay)");
-		return;
-	}
-	if (dryRun) {
-		dryRunLog("npm ci (stale bundled workspace overlay detected)");
-		return;
-	}
-	log("npm ci (restoring CI-parity deps: stale bundled workspace overlay detected)");
-	runCommand("npm", ["ci"]);
-}
-
 function runCheck(dryRun) {
 	if (dryRun) {
 		dryRunLog("npm run check");
@@ -300,7 +267,7 @@ function lookupCiCheckRuns(sha) {
 	}
 }
 
-function runTests(dryRun, forceTests) {
+function runTests(dryRun, forceTests, catalogChanged) {
 	if (dryRun) {
 		const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
 		const checkRuns = lookupCiCheckRuns(sha);
@@ -310,7 +277,7 @@ function runTests(dryRun, forceTests) {
 		return;
 	}
 	const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
-	const decision = decideTestGate({ forceTests, dryRun: false, sha, checkRuns: lookupCiCheckRuns(sha) });
+	const decision = decideTestGate({ forceTests, dryRun: false, sha, checkRuns: lookupCiCheckRuns(sha), catalogChanged });
 	log(`test gate: ${decision.reason}`);
 	if (decision.skip) {
 		return;
@@ -332,7 +299,6 @@ function main() {
 	}
 
 	preflight(args.dryRun);
-	ensureCleanWorkspaceDeps(args.dryRun);
 
 	const version = resolveVersion(args);
 	const date = todayISO();
@@ -346,14 +312,16 @@ function main() {
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
 	runGenerateModels(args.dryRun, runCommand, log, dryRunLog);
-	runGenerateImageModels(args.dryRun, runCommand, log, dryRunLog);
-	runShrinkwrap(args.dryRun, runCommand, log, dryRunLog);
+	runProviderDefaultsCheck(args.dryRun, runCommand, log, dryRunLog);
+	// Read before anything is committed: HEAD still holds the pre-regeneration catalog.
+	const catalogChanged = !args.dryRun && catalogChangedSinceHead(process.cwd());
+	runClaudeCodeModelSupportReport(args.dryRun, runCommand, log, dryRunLog);
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);
 	runClean(args.dryRun);
 	runBuild(args.dryRun);
-	runTests(args.dryRun, args.forceTests);
+	runTests(args.dryRun, args.forceTests, catalogChanged);
 
 	stageChangedFiles(args.dryRun);
 	gitCommit(`release: v${version}`, args.dryRun);
@@ -374,4 +342,9 @@ function main() {
 	}
 }
 
-main();
+try {
+	main();
+} catch (err) {
+	process.stderr.write(`[release] error: ${err instanceof Error ? err.message : String(err)}\n`);
+	process.exitCode = 1;
+}

@@ -1,5 +1,14 @@
+import type { CompactionPreparation } from "../../src/core/compaction/compaction.ts";
 import type { ExtensionSessionSettings } from "../../src/core/extensions/types.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
+
+/** Hard-limit test settings; `toolAdmissionEnabled: false` pins the pre-admission blocking path. */
+export const HARD_LIMIT_SETTINGS: CompactionPreparation["settings"] = {
+	enabled: true,
+	reserveTokens: 16_384,
+	keepRecentTokens: 20_000,
+	toolAdmissionEnabled: false,
+};
 
 /** Creates an isolated, in-memory settings facade for extension context fixtures. */
 export function createInMemoryExtensionSessionSettings(): ExtensionSessionSettings {

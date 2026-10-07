@@ -17,8 +17,9 @@ class QaScenarioError extends Error {
 }
 
 async function main(): Promise<void> {
-	const suppliedAgentDir = process.env.SENPI_CODING_AGENT_DIR;
-	const agentDir = suppliedAgentDir ?? (await mkdtemp(join(tmpdir(), "senpi-codemode-agent-")));
+	// A live Senpi or branded launcher exports its real agent directory to child commands.
+	// Cleanup below must own every path it removes, so inherited runtime state is never scratch space.
+	const agentDir = await mkdtemp(join(tmpdir(), "senpi-codemode-agent-"));
 	const settingsJson = settingsJsonFromArgs();
 	const cwd = await mkdtemp(join(tmpdir(), "senpi-codemode-e2e-"));
 	await mkdir(agentDir, { recursive: true });
@@ -104,10 +105,25 @@ async function runDefaultScenario(
 		else throw error;
 	}
 	console.log(`RB_REJECTED: ${rubyRejected}`);
+	// senpi#2240: incomplete runs must now fail schema validation before execution.
+	let omittedLanguageError = "";
+	try {
+		const rejected = await session.executeTool("eval", { summary: "Run a cell without naming its kernel", timeout: 60 });
+		omittedLanguageError = textOf(rejected).trim();
+	} catch (error) {
+		if (error instanceof Error) omittedLanguageError = error.message;
+		else throw error;
+	}
+	console.log(`OMITTED_LANGUAGE_ERROR: ${omittedLanguageError}`);
 	if (tokens.join(",") !== "py,js") throw new QaScenarioError(`unexpected eval languages: ${tokens.join(",")}`);
 	if (!result.details.truncated) throw new QaScenarioError("eval output was not truncated");
 	if (!spillExists) throw new QaScenarioError("eval spill artifact was not written");
 	if (!rubyRejected) throw new QaScenarioError("disabled Ruby input was accepted");
+	if (
+		!omittedLanguageError.includes('Validation failed for tool "eval"') ||
+		!omittedLanguageError.includes("required properties language, code")
+	)
+		throw new QaScenarioError(`omitted-language call did not fail schema validation: ${omittedLanguageError}`);
 }
 
 async function runAbortScenario(

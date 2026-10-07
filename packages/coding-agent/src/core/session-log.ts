@@ -9,7 +9,7 @@ const DEBUG_PREFIX = `[${APP_NAME}-session]`;
 const BLOCKED_KEY =
 	/^(?:__proto__|constructor|prototype|headers?|env(?:ironment)?|authorization|credential(?:s)?|password|secret|token|api_?key|client_?secret)$/i;
 const ALLOWED_DATA_KEY =
-	/^(?:action|attemptId|disposition|stage|error|mode|count|willRetry|deferAdmission|delivered|restored|cause|accepted|skipped|rejectionCause|reason|durationMs|kind|retryable|phase|op|bytes|generation|requestId|tokens|tokensBefore|tokensAfter|contextWindow|attempt|aborted)$/;
+	/^(?:action|attemptId|disposition|stage|error|mode|count|willRetry|deferAdmission|delivered|restored|cause|accepted|skipped|rejectionCause|reason|durationMs|kind|retryable|phase|op|bytes|generation|requestId|tokens|tokensBefore|tokensAfter|contextWindow|attempt|aborted|sessionId|role|provider|model|source|actor|from|to|duringTurn|persistDefault)$/;
 const SENSITIVE_TEXT =
 	/((?:authorization\s*[:=]\s*(?:bearer|basic)\s+)|(?:bearer\s+)|(?:[?&](?:api[_-]?key|token|secret|password|auth(?:orization)?)=))[^\s&,"'}\]]+/gi;
 
@@ -23,6 +23,8 @@ export interface SessionLoggerOptions {
 	sink?: (line: string) => void;
 	mirrorToStderr?: boolean;
 	maxBytes?: number;
+	/** Fields stamped on every line (same allowlist), read at log time; an event's own data wins. */
+	context?: () => Record<string, unknown>;
 }
 
 export function createSessionLogger(agentDir: string | undefined, options: SessionLoggerOptions = {}): SessionLogger {
@@ -35,7 +37,7 @@ export function createSessionLogger(agentDir: string | undefined, options: Sessi
 
 	function log(level: "debug" | "info" | "warn", event: string, data?: Record<string, unknown>): void {
 		try {
-			const line = formatLine(level, event, data);
+			const line = formatLine(level, event, options.context ? { ...options.context(), ...data } : data);
 			options.sink?.(line);
 			writeLine(filePath, line, maxBytes);
 			if (options.mirrorToStderr ?? envValue("SESSION_DEBUG") === "1") {

@@ -11,14 +11,35 @@ export interface Bm25Result {
 	readonly name: string;
 	readonly score: number;
 	readonly exact: boolean;
+	/** Share of the query's content terms that this document contains (0..1). */
+	readonly coverage: number;
 	readonly doc: ToolSearchDocument;
 }
+
+/**
+ * Precision gate applied after scoring. A hit must contain at least `minCoverage`
+ * of the query's content terms AND score at least `minScoreRatio` of the best
+ * non-exact hit; exact-name hits always pass.
+ */
+export interface Bm25Precision {
+	readonly minCoverage: number;
+	readonly minScoreRatio: number;
+}
+
+/**
+ * Half of the query's content terms and a third of the best score: a single
+ * incidental term ("search" inside a six-word query) no longer surfaces an
+ * unrelated tool, while a two-word query still tolerates one missing term.
+ */
+export const DEFAULT_BM25_PRECISION: Bm25Precision = { minCoverage: 0.5, minScoreRatio: 0.35 };
 
 export interface Bm25SearchOptions {
 	readonly source?: ToolSearchSource;
 	readonly group?: string;
 	/** Disable the exact-name short-circuit (used to prove BM25-alone behaviour). */
 	readonly exactMatch?: boolean;
+	/** Drop weak hits; omitted means every positive score is returned. */
+	readonly precision?: Bm25Precision;
 }
 
 export interface Bm25Index {
@@ -53,8 +74,9 @@ export function buildBm25Index(docs: readonly ToolSearchDocument[]): Bm25Index {
 					(options.source === undefined || entry.doc.source === options.source) &&
 					(options.group === undefined || entry.doc.group === options.group),
 			);
-			const queryTerms = tokenizeToolText(query);
+			const queryTerms = tokenizeToolText(query).map(stemToken);
 			if (queryTerms.length === 0) return [];
+			const contentTerms = contentTermsOf(queryTerms);
 
 			const useExact = options.exactMatch !== false;
 			const normQuery = normalizeToolName(query);
@@ -63,24 +85,90 @@ export function buildBm25Index(docs: readonly ToolSearchDocument[]): Bm25Index {
 				const exact = useExact && normQuery.length > 0 && entry.exactNames.has(normQuery);
 				const score = bm25Score(entry, queryTerms, docFreq, avgLength, docCount);
 				if (!exact && score <= 0) continue;
-				results.push({ doc: entry.doc, exact, name: entry.doc.name, score });
+				results.push({
+					coverage: coverageOf(entry, contentTerms),
+					doc: entry.doc,
+					exact,
+					name: entry.doc.name,
+					score,
+				});
 			}
 			results.sort(compareResults);
-			return results.slice(0, Math.max(0, limit));
+			const gated = options.precision === undefined ? results : applyPrecision(results, options.precision);
+			return gated.slice(0, Math.max(0, limit));
 		},
 	};
 }
 
+function applyPrecision(results: readonly Bm25Result[], precision: Bm25Precision): Bm25Result[] {
+	const best = results.find((result) => !result.exact)?.score ?? 0;
+	const floor = best * precision.minScoreRatio;
+	return results.filter(
+		(result) => result.exact || (result.coverage >= precision.minCoverage && result.score >= floor),
+	);
+}
+
+/** Query words that carry no intent on their own; they never count toward coverage. */
+const STOPWORDS: ReadonlySet<string> = new Set([
+	"a",
+	"an",
+	"and",
+	"are",
+	"be",
+	"by",
+	"can",
+	"do",
+	"for",
+	"from",
+	"how",
+	"i",
+	"in",
+	"is",
+	"it",
+	"me",
+	"my",
+	"need",
+	"of",
+	"on",
+	"or",
+	"please",
+	"that",
+	"the",
+	"this",
+	"to",
+	"tool",
+	"use",
+	"using",
+	"via",
+	"want",
+	"we",
+	"with",
+	"you",
+	"your",
+]);
+
+function contentTermsOf(queryTerms: readonly string[]): ReadonlySet<string> {
+	const content = new Set(queryTerms.filter((term) => !STOPWORDS.has(term)));
+	return content.size > 0 ? content : new Set(queryTerms);
+}
+
+function coverageOf(entry: IndexedDoc, contentTerms: ReadonlySet<string>): number {
+	if (contentTerms.size === 0) return 0;
+	let matched = 0;
+	for (const term of contentTerms) if (entry.termFreq.has(term)) matched++;
+	return matched / contentTerms.size;
+}
+
 function indexDoc(doc: ToolSearchDocument): IndexedDoc {
 	const termFreq = new Map<string, number>();
-	addField(termFreq, tokenizeToolText(doc.name), NAME_FIELD_WEIGHT);
-	addField(termFreq, tokenizeToolText(doc.label), NAME_FIELD_WEIGHT);
-	for (const alias of doc.aliases) addField(termFreq, tokenizeToolText(alias), NAME_FIELD_WEIGHT);
-	for (const keyword of doc.keywords) addField(termFreq, tokenizeToolText(keyword), NAME_FIELD_WEIGHT);
-	addField(termFreq, tokenizeToolText(doc.group), GROUP_FIELD_WEIGHT);
-	addField(termFreq, tokenizeToolText(doc.ownerLabel), GROUP_FIELD_WEIGHT);
-	addField(termFreq, tokenizeToolText(doc.description ?? ""), DESCRIPTION_FIELD_WEIGHT);
-	addField(termFreq, tokenizeToolText(doc.searchText ?? ""), DESCRIPTION_FIELD_WEIGHT);
+	addField(termFreq, indexTokens(doc.name), NAME_FIELD_WEIGHT);
+	addField(termFreq, indexTokens(doc.label), NAME_FIELD_WEIGHT);
+	for (const alias of doc.aliases) addField(termFreq, indexTokens(alias), NAME_FIELD_WEIGHT);
+	for (const keyword of doc.keywords) addField(termFreq, indexTokens(keyword), NAME_FIELD_WEIGHT);
+	addField(termFreq, indexTokens(doc.group), GROUP_FIELD_WEIGHT);
+	addField(termFreq, indexTokens(doc.ownerLabel), GROUP_FIELD_WEIGHT);
+	addField(termFreq, indexTokens(doc.description ?? ""), DESCRIPTION_FIELD_WEIGHT);
+	addField(termFreq, indexTokens(doc.searchText ?? ""), DESCRIPTION_FIELD_WEIGHT);
 
 	let length = 0;
 	for (const count of termFreq.values()) length += count;
@@ -128,6 +216,20 @@ function compareResults(left: Bm25Result, right: Bm25Result): number {
 	if (left.exact !== right.exact) return left.exact ? -1 : 1;
 	if (right.score !== left.score) return right.score - left.score;
 	return left.name.localeCompare(right.name);
+}
+
+function indexTokens(text: string): string[] {
+	return tokenizeToolText(text).map(stemToken);
+}
+
+/**
+ * Fold the plural a tool description tends to use ("forecasts", "messages")
+ * onto the singular a query tends to use. Deliberately minimal: only a trailing
+ * "s" on words of four or more letters that do not end in "ss" or "us".
+ */
+export function stemToken(token: string): string {
+	if (token.length < 4 || !token.endsWith("s") || token.endsWith("ss") || token.endsWith("us")) return token;
+	return token.endsWith("ies") ? `${token.slice(0, -3)}y` : token.slice(0, -1);
 }
 
 /** Tokenise searchable text into lowercase word tokens, splitting identifiers. */

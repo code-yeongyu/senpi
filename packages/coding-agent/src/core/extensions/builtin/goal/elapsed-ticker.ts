@@ -60,6 +60,8 @@ export class GoalElapsedTicker {
 		this.measuredFromMilliseconds = measuredFromMilliseconds;
 		this.lastRenderedElapsedLabel = undefined;
 		this.tick();
+		// The immediate render hit a retired ctx and stopped the ticker: arm nothing for it.
+		if (this.ctx === undefined) return;
 		if (this.intervalId !== undefined) return;
 		const handle = setInterval(() => this.tick(), GOAL_ELAPSED_TICK_INTERVAL_MS);
 		handle.unref();

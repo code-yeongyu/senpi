@@ -51,6 +51,9 @@ const FG_COLORS = {
 	thinkingMax: "#2d2d2d",
 	bashMode: "#2e2e2e",
 	searchMatchText: "#2f2f2f",
+	skillMention: "#303030",
+	scrollbarTrack: "#3a3a3a",
+	scrollbarThumb: "#3b3b3b",
 } satisfies Record<ThemeColor, string>;
 
 const BG_COLORS = {
@@ -158,9 +161,31 @@ describe("eval renderer theme hierarchy", () => {
 
 		// When
 		const lines = [
-			...renderEvalCall({ language: "js", code, summary: "collapse previews" }, TEST_THEME, callContext()).render(
-				80,
-			),
+			...renderEvalResult(
+				evalResult(
+					{
+						language: "js",
+						durationMs: 1,
+						toolCalls: [],
+						truncated: false,
+						cells: [
+							{
+								index: 0,
+								code,
+								language: "js",
+								output: "",
+								status: "complete",
+								durationMs: 1,
+								summary: "collapse previews",
+							},
+						],
+					},
+					"",
+				),
+				{ expanded: false, isPartial: false },
+				TEST_THEME,
+				resultContext(),
+			).render(80),
 			...renderEvalResult(result, { expanded: false, isPartial: false }, TEST_THEME, resultContext()).render(80),
 		];
 
@@ -196,7 +221,7 @@ describe("eval renderer theme hierarchy", () => {
 		const component = renderEvalCall(
 			{ language: "js", code: "const answer = 42;", summary: "compute" },
 			TEST_THEME,
-			callContext(),
+			callContext({ expanded: true }),
 		);
 
 		// When

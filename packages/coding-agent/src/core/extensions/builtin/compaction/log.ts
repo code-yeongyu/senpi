@@ -1,4 +1,5 @@
-import { closeSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
+import { appendFileSync } from "node:fs";
+import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { envValue } from "../../../brand.ts";
 
@@ -10,6 +11,7 @@ const ALLOWED_KEYS = new Set([
 	"variant",
 	"generation",
 	"requestId",
+	"sessionId",
 	"tokens",
 	"tokensBefore",
 	"savedTokens",
@@ -36,6 +38,8 @@ const EVENTS = new Set([
 	"skip_cursor_mid_turn",
 	"threshold_trigger",
 	"hard_limit_trigger",
+	"grace_deferred",
+	"breaker_deterministic_fallback",
 	"emergency_prune",
 	"ineffective_counted",
 	"summary_failed",
@@ -56,6 +60,8 @@ export type CompactionLoggerEvent =
 	| "skip_cursor_mid_turn"
 	| "threshold_trigger"
 	| "hard_limit_trigger"
+	| "grace_deferred"
+	| "breaker_deterministic_fallback"
 	| "emergency_prune"
 	| "ineffective_counted"
 	| "idle_trigger"
@@ -71,6 +77,7 @@ export interface CompactionLoggerData {
 	variant?: string;
 	generation?: number;
 	requestId?: string;
+	sessionId?: string;
 	tokens?: number;
 	tokensBefore?: number;
 	savedTokens?: number;
@@ -88,6 +95,7 @@ export interface CompactionLogger {
 }
 
 export interface CompactionLoggerOptions {
+	getSessionId?: () => string;
 	sink?: (line: string) => void;
 	mirrorToStderr?: boolean;
 	maxBytes?: number;
@@ -107,7 +115,7 @@ export function createCompactionLogger(
 	function log(level: "debug" | "info", event: CompactionLoggerEvent, data?: CompactionLoggerData): void {
 		try {
 			if (!EVENTS.has(event)) return;
-			const line = formatLine(level, event, data);
+			const line = formatLine(level, event, { ...data, sessionId: options.getSessionId?.() ?? data?.sessionId });
 			writeLine(filePath, line, maxBytes, options.sink);
 			if (options.mirrorToStderr ?? envValue("COMPACTION_DEBUG") === "1") {
 				console.error(DEBUG_PREFIX, line);
@@ -142,27 +150,101 @@ function formatLine(level: "debug" | "info", event: CompactionLoggerEvent, data?
 	return JSON.stringify(entry);
 }
 
+/**
+ * Lines waiting to be appended, per log file. Writing synchronously stalled the UI thread on a busy
+ * disk (one 486 ms write was measured while a background event stream ran), so lines are appended
+ * in order by one asynchronous writer per file; whatever is still queued at exit is written then.
+ */
+const pendingLines = new Map<string, { text: string; unconfirmed: string; readonly maxBytes: number }>();
+
 function writeLine(filePath: string, line: string, maxBytes: number, sink?: (line: string) => void): void {
 	const text = `${line}\n`;
 	if (sink) sink(line);
-	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
-	if (needsRotate(filePath, Buffer.byteLength(text), maxBytes)) {
-		const rotated = `${filePath}.1`;
-		renameSync(filePath, rotated);
+	const pending = pendingLines.get(filePath);
+	if (pending) {
+		pending.text += text;
+		return;
 	}
-	const fd = openSync(filePath, "a", 0o600);
+	pendingLines.set(filePath, { text, unconfirmed: "", maxBytes });
+	if (!exitFlushRegistered) {
+		exitFlushRegistered = true;
+		process.once("exit", flushPendingLinesSync);
+	}
+	const drain = drainLines(filePath);
+	activeDrains.add(drain);
+	void drain.finally(() => activeDrains.delete(drain));
+}
+
+const activeDrains = new Set<Promise<void>>();
+
+/** Resolves once every line logged so far was appended, or its write failed (logging is best-effort). */
+export async function flushCompactionLogs(): Promise<void> {
+	while (activeDrains.size > 0) await Promise.all([...activeDrains]);
+}
+
+let exitFlushRegistered = false;
+let reportedWriteFailure = false;
+
+/**
+ * Appends queued lines in order. Rotation is decided per line, as when each line was written on its
+ * own: a line that would push the file past `maxBytes` starts a new file. `unconfirmed` holds what is
+ * not yet known to be appended, so an exit during a write still writes it (that chunk may then appear
+ * twice, which beats losing it).
+ */
+async function drainLines(filePath: string): Promise<void> {
+	const pending = pendingLines.get(filePath);
 	try {
-		writeSync(fd, text);
+		if (!pending) return;
+		await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
+		let size = await fileSize(filePath);
+		while (pending.text.length > 0) {
+			pending.unconfirmed = pending.text;
+			pending.text = "";
+			let chunk = "";
+			let chunkBytes = 0;
+			for (const line of pending.unconfirmed.split(/(?<=\n)/)) {
+				const lineBytes = Buffer.byteLength(line);
+				if (size + chunkBytes + lineBytes > pending.maxBytes && size + chunkBytes > 0) {
+					if (chunk) await appendFile(filePath, chunk, { mode: 0o600 });
+					pending.unconfirmed = pending.unconfirmed.slice(chunk.length);
+					await rename(filePath, `${filePath}.1`).catch(() => undefined);
+					size = 0;
+					chunk = "";
+					chunkBytes = 0;
+				}
+				chunk += line;
+				chunkBytes += lineBytes;
+			}
+			if (chunk) await appendFile(filePath, chunk, { mode: 0o600 });
+			size += chunkBytes;
+			pending.unconfirmed = "";
+		}
+	} catch (error) {
+		if (!reportedWriteFailure) {
+			reportedWriteFailure = true;
+			console.error("Unable to write compaction log", error);
+		}
 	} finally {
-		closeSync(fd);
+		pendingLines.delete(filePath);
 	}
 }
 
-function needsRotate(filePath: string, incomingBytes: number, maxBytes: number): boolean {
+function flushPendingLinesSync(): void {
+	for (const [filePath, pending] of pendingLines) {
+		const text = pending.unconfirmed + pending.text;
+		if (text.length === 0) continue;
+		try {
+			appendFileSync(filePath, text, { mode: 0o600 });
+		} catch {}
+	}
+	pendingLines.clear();
+}
+
+async function fileSize(filePath: string): Promise<number> {
 	try {
-		return statSync(filePath).size + incomingBytes > maxBytes;
+		return (await stat(filePath)).size;
 	} catch {
-		return false;
+		return 0;
 	}
 }
 

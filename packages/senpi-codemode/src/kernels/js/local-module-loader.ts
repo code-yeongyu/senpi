@@ -1,5 +1,6 @@
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { KernelPreludeContribution } from "@code-yeongyu/senpi";
 import type { BridgeConnectionConfig } from "../../bridge/protocol.ts";
 import {
 	RESERVED_AGENT_TOOL,
@@ -8,6 +9,7 @@ import {
 	TIMEOUT_PAUSE_OP,
 	TIMEOUT_RESUME_OP,
 } from "../../bridge/reserved.ts";
+import { type KernelPreludePlan, KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import type { JavaScriptKernelOptions as BaseJavaScriptKernelOptions } from "./kernel-contract.ts";
 import { rewriteImports } from "./rewrite-imports.ts";
 
@@ -75,6 +77,8 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 		"globalThis.__senpi_import__ = async (source, options) => {",
 		"  const context = globalThis.__senpi_module_context__;",
 		"  const specifier = String(source);",
+		"  const kernelBun = globalThis[Symbol.for('senpi.kernel.bun')];",
+		"  if (specifier === 'bun' && kernelBun) return { ...(await import('bun')), WebView: kernelBun.WebView, default: kernelBun };",
 		"  const match = /^([a-z][a-z0-9+.-]*):\\/\\/(.*)$/i.exec(specifier);",
 		"  let target = specifier;",
 		"  if (match) {",
@@ -94,19 +98,47 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 		"    const urlModule = await import('node:url');",
 		"    target = urlModule.pathToFileURL(specifier).href;",
 		"  }",
-		"  return options === undefined ? import(target) : import(target, options);",
+		"  const load = (resolved) => (options === undefined ? import(resolved) : import(resolved, options));",
+		"  const resolvePackage = globalThis[Symbol.for('senpi.kernel.resolvePackage')];",
+		"  if (target === specifier && typeof resolvePackage === 'function') {",
+		"    const resolved = resolvePackage(specifier, [context.cwdUrl, context.packageRootUrl]);",
+		"    if (resolved !== undefined) return await load(resolved);",
+		"  }",
+		"  return await load(target);",
 		"};",
 	].join("\n");
 }
 
+/** Removes deactivated exports, then installs each contribution only while one of its exports is missing. */
+function contributionPrelude(plan: KernelPreludePlan): string {
+	const removals = plan.remove.map((name) => `delete globalThis[${JSON.stringify(name)}];`);
+	const installs = plan.install.map((contribution) => {
+		const missing = contribution.exports.map((name) => `!globalThis[${JSON.stringify(name)}]`).join(" || ");
+		return `if (${missing}) {\n${contribution.javascript}\n}`;
+	});
+	return [...removals, ...installs].join("\n");
+}
+
 export class LocalModuleLoader {
 	readonly #prelude: string;
+	readonly #cwdUrl: string;
+	readonly #contributions = new KernelPreludeTracker();
 
 	constructor(options: LocalModuleLoaderOptions) {
 		this.#prelude = loaderPrelude(runtimeContext(options));
+		this.#cwdUrl = directoryUrl(options.cwd);
 	}
 
-	prepareCell(code: string): string {
-		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude: this.#prelude, code: rewriteImports(code) })}`;
+	prepareCell(
+		code: string,
+		contributions: readonly KernelPreludeContribution[] = [],
+		sourceFile?: string,
+		packageRoot?: string,
+	): string {
+		// A %load cell resolves its relative imports from its own file's directory for that cell only.
+		const cwdUrl = sourceFile === undefined ? this.#cwdUrl : directoryUrl(dirname(sourceFile));
+		const base = `\nglobalThis.__senpi_module_context__ = { ...globalThis.__senpi_module_context__, cwdUrl: ${JSON.stringify(cwdUrl)}, packageRootUrl: ${JSON.stringify(packageRoot === undefined ? null : directoryUrl(packageRoot))} };`;
+		const prelude = `${this.#prelude}${base}\n${contributionPrelude(this.#contributions.plan(contributions))}`;
+		return `${PREPARED_CELL_PREFIX}${JSON.stringify({ prelude, code: rewriteImports(code), ...(sourceFile === undefined ? {} : { sourceFile }) })}`;
 	}
 }

@@ -37,6 +37,7 @@ type UncaughtCrashThis = {
 	isShuttingDown: boolean;
 	showWarning: (message: string) => void;
 	ui: { stop: () => void };
+	pauseQuestionMouseCapture: () => void;
 	unregisterSignalHandlers: () => void;
 };
 
@@ -60,6 +61,7 @@ function createCrashContext(): UncaughtCrashThis {
 		isShuttingDown: false,
 		showWarning: vi.fn(),
 		ui: { stop: vi.fn() },
+		pauseQuestionMouseCapture: vi.fn(),
 		unregisterSignalHandlers: vi.fn(),
 	};
 }
@@ -84,6 +86,20 @@ function createDeadTerminalError(shape: "errno-string" | "errno-number"): Error 
 	return shape === "errno-string"
 		? Object.assign(new Error("EIO: i/o error, read"), { code: "EIO", errno: -5, syscall: "read" })
 		: Object.assign(new Error("read failed with errno: 5"), { errno: 5 });
+}
+
+function createStorageWriteError(code: "EDQUOT" | "ENOSPC"): Error & {
+	code: "EDQUOT" | "ENOSPC";
+	errno: -122 | -28;
+	syscall: "write";
+} {
+	const error = Object.assign(new Error(`${code}: unknown error, write`), {
+		code,
+		errno: code === "EDQUOT" ? (-122 as const) : (-28 as const),
+		syscall: "write" as const,
+	});
+	error.stack = `${error.message}\nAuthorization: Bearer crash-secret-value`;
+	return error;
 }
 
 /** Drives the dead-terminal route and asserts it still ends in the silent `process.exit(129)`. */
@@ -152,6 +168,63 @@ afterEach(() => {
 });
 
 describe("uncaught crash debug log", () => {
+	test("explains an EDQUOT write crash while preserving cleanup, logging, and exit semantics", () => {
+		useTempAgentDir("edquot");
+		const context = createCrashContext();
+		const error = createStorageWriteError("EDQUOT");
+		const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+			throw new ProcessExitError(code);
+		});
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		expect(() => interactiveModePrototype.uncaughtCrash.call(context, error, "uncaughtException")).toThrow(
+			ProcessExitError,
+		);
+
+		const stderr = consoleError.mock.calls.flat().map(String).join("\n");
+		expect(stderr).toContain("Disk quota exceeded (EDQUOT)");
+		expect(stderr).toContain("Free space or quota on the filesystem, then retry.");
+		expect(stderr).toContain("EDQUOT: unknown error, write");
+		expect(stderr).not.toContain("model quota");
+		expect(stderr).not.toContain("provider quota");
+		expect(exit).toHaveBeenCalledWith(1);
+		expect(exit).not.toHaveBeenCalledWith(129);
+		expect(context.ui.stop).toHaveBeenCalledTimes(1);
+		expect(context.unregisterSignalHandlers).toHaveBeenCalledTimes(1);
+		expect(context.isShuttingDown).toBe(true);
+		expect(error.code).toBe("EDQUOT");
+
+		const debugLogPath = getDebugLogPath();
+		const log = readFileSync(debugLogPath, "utf8");
+		expect(log).toContain("uncaught crash (uncaughtException)");
+		expect(log).toContain("EDQUOT: unknown error, write");
+		expect(log).toContain("Authorization: Bearer [REDACTED]");
+		expect(log).not.toContain("crash-secret-value");
+		expect(log).not.toContain("hidden stdout while TUI active");
+		expect((statSync(debugLogPath).mode & 0o777).toString(8)).toBe("600");
+		expect(restoreObservations).toEqual([{ debugLogExisted: true }]);
+	});
+
+	test("distinguishes an ENOSPC write crash from a quota failure", () => {
+		useTempAgentDir("enospc");
+		const context = createCrashContext();
+		const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+			throw new ProcessExitError(code);
+		});
+		const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		expect(() =>
+			interactiveModePrototype.uncaughtCrash.call(context, createStorageWriteError("ENOSPC"), "uncaughtException"),
+		).toThrow(ProcessExitError);
+
+		const stderr = consoleError.mock.calls.flat().map(String).join("\n");
+		expect(stderr).toContain("Disk full (ENOSPC)");
+		expect(stderr).toContain("Free space on the filesystem, then retry.");
+		expect(stderr).not.toContain("Disk quota exceeded");
+		expect(exit).toHaveBeenCalledWith(1);
+		expect(context.ui.stop).toHaveBeenCalledTimes(1);
+	});
+
 	test("records origin and error in the brand debug log before restoring stderr", () => {
 		useTempAgentDir("write");
 		const error = new Error("extension exploded after boot");

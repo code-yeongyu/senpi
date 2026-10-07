@@ -4,6 +4,7 @@ import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection, ServerConnectionState } from "./connection.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
+import type { HostMcpRegistry } from "./host-registry.ts";
 import type { McpLogger } from "./log.ts";
 
 export type McpDisposeReason = Extract<SessionShutdownEvent["reason"], "quit" | "reload">;
@@ -99,6 +100,7 @@ export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted
 };
 
 export interface McpSessionOptions {
+	readonly mcpRegistry?: HostMcpRegistry;
 	readonly agentDir?: string;
 	readonly env?: Record<string, string | undefined>;
 	readonly logDir?: string;
@@ -136,6 +138,18 @@ export interface McpServerCounters {
 	reconnectCount: number;
 }
 
+/**
+ * Held by a startup connect from its start until it hands the server's catalog
+ * to a registration pass. While it owns registration, other passes register the
+ * catalog known when the connect began, never the in-flight one, so the catalog
+ * lands exactly once (#2177).
+ */
+export interface McpStartupCatalogClaim {
+	readonly cachedCatalog: McpCachedServerCatalog | undefined;
+	readonly ownsRegistration: () => boolean;
+	readonly settled: () => Promise<void>;
+}
+
 export interface McpConnectionEntry {
 	readonly key: string;
 	readonly name: string;
@@ -147,8 +161,14 @@ export interface McpConnectionEntry {
 	readonly agentDir?: string;
 	readonly artifacts?: McpOutputArtifacts;
 	readonly authPlan?: ServerAuthPlan;
+	readonly isCurrent?: () => boolean;
+	readonly credentialIdentity?: string;
+	readonly credentialsCurrent?: () => boolean;
+	readonly onCredentialsChanged?: () => Promise<void>;
 	cachedCatalog?: McpCachedServerCatalog;
 	cacheRefreshedAfterConnect: boolean;
+	catalogGeneration?: number;
+	startupCatalogClaim?: McpStartupCatalogClaim;
 	/** Full mcp tool names last registered for this server (list_changed diffing). */
 	knownToolNames?: string[];
 	/** Latest `/mcp status` list_changed delta line, e.g. "2 added (inactive), 1 removed". */

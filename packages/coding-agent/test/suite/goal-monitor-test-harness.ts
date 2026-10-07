@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from "node:timers";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
 
@@ -155,7 +156,8 @@ export async function makeGoalContext(
 		isIdle: () => true,
 		hasPendingMessages: () => state.pendingMessages,
 		getPromptCacheSafeWaitSeconds: () => state.cacheSafeWaitSeconds,
-		getPromptCacheGoalBackstopMaxSeconds: () => state.goalBackstopMaxSeconds ?? 3570,
+		getPromptCacheGoalBackstopMaxSeconds: () =>
+			state.goalBackstopMaxSeconds ?? GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS / 1000,
 		ui: {
 			notify: (message: string) => notices.push(message),
 			select: async () => undefined,

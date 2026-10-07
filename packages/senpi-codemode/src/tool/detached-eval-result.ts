@@ -5,27 +5,87 @@ import type {
 	EvalDetachedCellState,
 } from "./detached-cell-manager.ts";
 import { interruptionStateNote } from "./interrupt-note.ts";
-import type { EvalCellResult, EvalControlInput, EvalToolDetails, EvalToolInput } from "./types.ts";
+import type {
+	EvalCellResult,
+	EvalControlInput,
+	EvalListDetails,
+	EvalListedCell,
+	EvalResultDetails,
+	EvalToolDetails,
+	EvalToolInput,
+} from "./types.ts";
+
+export class EvalBackgroundCapacityError extends Error {
+	readonly code = "eval_background_capacity_reached";
+	readonly name = "EvalBackgroundCapacityError";
+
+	constructor(cap: number, cellId: string, foregroundMs: number, liveCellIds: readonly string[]) {
+		super(
+			`Background capacity (${cap}) reached: cell ${cellId} ran ${Math.floor(foregroundMs / 1_000)}s in the foreground and was cancelled when the foreground window elapsed. Live cells: ${liveCellIds.join(", ")}. Stop one with eval({ action: "stop", cell_id }) or wait for a notification, then re-run this step.`,
+		);
+	}
+}
 
 export async function executeEvalControl(
 	cellManager: EvalDetachedCellManager,
 	request: EvalControlInput,
-): Promise<AgentToolResult<EvalToolDetails>> {
+): Promise<AgentToolResult<EvalResultDetails>> {
+	if (request.action === "list") return createEvalListResult(cellManager);
 	const snapshot =
 		request.action === "stop" ? await cellManager.stop(request.cell_id) : cellManager.peek(request.cell_id);
 	return createDetachedControlResult(snapshot);
 }
 
+function createEvalListResult(cellManager: EvalDetachedCellManager): AgentToolResult<EvalListDetails> {
+	const { live, recent } = cellManager.list();
+	const snapshots = [...live, ...recent];
+	const cells: EvalListedCell[] = snapshots.map((snapshot) => {
+		const summary = snapshot.result.details.summary;
+		return {
+			cellId: snapshot.cellId,
+			language: snapshot.language,
+			state: snapshot.state,
+			startedAtMs: snapshot.startedAtMs,
+			...(snapshot.queuedBehind === undefined ? {} : { queuedBehind: [...snapshot.queuedBehind] }),
+			...(summary ? { summary } : {}),
+		};
+	});
+	const text = snapshots
+		.map((snapshot, index) => {
+			const cell = cells[index];
+			const preview = (cell.summary || snapshot.result.details.cells?.[0]?.code?.slice(0, 60) || "").replace(
+				/\s+/gu,
+				" ",
+			);
+			const elapsed = Math.floor(snapshot.result.details.durationMs / 1000);
+			const queued = cell.queuedBehind === undefined ? "" : ` ${queuedPhrase(cell.queuedBehind, cell.language)}`;
+			return `${cell.cellId} ${cell.language} ${cell.state} ${elapsed}s${queued} - ${preview}`;
+		})
+		.join("\n");
+	return {
+		content: [{ type: "text", text: text || "No eval cells are live; recent: none" }],
+		details: { action: "list", cells },
+	};
+}
+
 export function resultAfterDetach(
 	snapshot: EvalDetachedCellSnapshot,
 	input: EvalToolInput,
+	otherLiveCells: number,
 ): AgentToolResult<EvalToolDetails> {
 	if (snapshot.state !== "detached" && snapshot.state !== "running") return createDetachedControlResult(snapshot);
+	const queuedBehind = snapshot.queuedBehind;
+	const text =
+		queuedBehind === undefined
+			? `Eval cell ${snapshot.cellId} detached and is running in the ${input.language} kernel (${otherLiveCells} other live cells). Completion arrives as a notification; do not re-run it. eval({ action: "peek" | "stop", cell_id }) or eval({ action: "list" }).`
+			: queuedBehind.length === 0
+				? `Eval cell ${snapshot.cellId} is detached and waiting for the ${input.language} kernel to be ready; it runs first once the kernel is ready and completes as one notification. peek/stop/list with eval({ action, cell_id })`
+				: `Eval cell ${snapshot.cellId} is queued behind ${queuedBehind.join(", ")} in the ${input.language} kernel and detached; it runs after ${queuedBehind.join(", ")} and completes as one notification. peek/stop/list with eval({ action, cell_id })`;
 	return {
 		content: [
 			{
 				type: "text",
-				text: `Eval cell ${snapshot.cellId} detached and is still running in the ${input.language} kernel. Completion will arrive as a notification. Use eval({ action: "peek", cell_id: "${snapshot.cellId}" }) or eval({ action: "stop", cell_id: "${snapshot.cellId}" }).`,
+				text,
 			},
 		],
 		details: snapshot.result.details,
@@ -40,6 +100,7 @@ export function createDetachedControlResult(snapshot: EvalDetachedCellSnapshot):
 		`Eval cell ${snapshot.cellId} (${snapshot.language}) is ${snapshot.state}.`,
 		output.length === 0 ? "(no buffered output)" : output,
 		...(terminationNote === undefined ? [] : [terminationNote]),
+		...(snapshot.interruptNote === undefined ? [] : [snapshot.interruptNote.trim()]),
 	].join("\n");
 	return {
 		content: [{ type: "text", text }, ...snapshot.result.content.filter((part) => part.type === "image")],
@@ -54,21 +115,23 @@ export function resultForDetachedState(
 	result: AgentToolResult<EvalToolDetails>,
 	state: EvalDetachedCellState,
 	durationMs: number,
+	queuedBehind?: readonly string[],
 ): AgentToolResult<EvalToolDetails> {
 	const details = result.details;
 	const cells = details.cells ?? [];
 	const nextCells =
 		cells.length === 0
 			? []
-			: cells.map((cell, index) =>
-					index === 0
-						? {
-								...cell,
-								durationMs: terminalDuration(cell, state, durationMs),
-								status: cellStatus(state),
-							}
-						: { ...cell },
-				);
+			: cells.map((cell, index) => {
+					if (index !== 0) return { ...cell };
+					const { queuedBehind: _previousQueue, ...current } = cell;
+					return {
+						...current,
+						durationMs: terminalDuration(cell, state, durationMs),
+						status: state === "detached" && queuedBehind !== undefined ? "queued" : cellStatus(state),
+						...(queuedBehind === undefined ? {} : { queuedBehind }),
+					};
+				});
 	return {
 		content: result.content.map((part) => ({ ...part })),
 		details: {
@@ -101,11 +164,10 @@ export function resultForDetachedState(
 	};
 }
 
-export function detachedKernelBusyError(snapshot: EvalDetachedCellSnapshot): Error {
-	const tail = snapshot.outputTail.length === 0 ? "(no output yet)" : snapshot.outputTail;
-	return new Error(
-		`The ${snapshot.language} eval kernel is busy running detached cell ${snapshot.cellId}. Do not re-run it; use eval({ action: "peek", cell_id: "${snapshot.cellId}" }). Current output tail:\n${tail}`,
-	);
+function queuedPhrase(queuedBehind: readonly string[], language: string): string {
+	return queuedBehind.length === 0
+		? `waiting for the ${language} kernel to be ready`
+		: `queued behind ${queuedBehind.join(", ")}`;
 }
 
 function textContent(result: AgentToolResult<EvalToolDetails>): string {
@@ -126,6 +188,8 @@ function terminalDuration(
 
 function cellStatus(state: EvalDetachedCellState): EvalCellResult["status"] {
 	switch (state) {
+		case "queued":
+			return "queued";
 		case "running":
 			return "running";
 		case "detached":

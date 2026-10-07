@@ -1,6 +1,6 @@
 # scripts/qa-app-server
 
-Real-surface QA harness for app-server. `npm run qa:app-server` runs `run-all.mjs`, which executes handshake, multiclient, approval-roundtrip, real-client, and real-client-sweep probes against the locally built CLI. `differential/` is the source-oracle parity harness referenced by `src/modes/app-server/AGENTS.md`. 27 standalone `.mjs` files, ~3.5k LOC. Score 15 — own driver/oracle/compare stack, no other directory owns this surface.
+Real-surface QA harness for app-server. `bun run qa:app-server` runs `run-all.mjs`, which executes handshake, multiclient, approval-roundtrip, real-client, and real-client-sweep probes against the locally built CLI. `differential/` is the source-oracle parity harness referenced by `src/modes/app-server/AGENTS.md`. 27 standalone `.mjs` files, ~3.5k LOC. Score 15 — own driver/oracle/compare stack, no other directory owns this surface.
 
 ## STRUCTURE
 

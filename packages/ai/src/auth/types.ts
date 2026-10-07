@@ -48,8 +48,9 @@ export interface AuthOperationOptions {
 }
 
 /**
- * App-owned credential storage, keyed by `Provider.id`, one credential per
- * provider. `modify` is the only write path, so every mutation is a
+ * App-owned credential storage, keyed by `Provider.id`, one entry per
+ * provider; an entry may pool sibling slots under `accounts` while its flat
+ * fields remain a valid credential. `modify` is the only write path, so every mutation is a
  * serialized read-modify-write; `Models.getAuth()` runs OAuth refresh inside
  * `modify` so concurrent requests cannot double-refresh a rotated token. The
  * app persists a credential after login via
@@ -107,11 +108,18 @@ export interface AuthResult {
 	env?: ProviderEnv;
 	/** Human-readable label for status UI: "ANTHROPIC_API_KEY", "OAuth", "~/.aws/credentials". */
 	source?: string;
+	/**
+	 * Resolved only from a shared cloud credential chain (AWS profile/keys/roles, Google ADC)
+	 * that exists for other tools too, not from a credential configured for this provider.
+	 */
+	ambient?: true;
 }
 
 export interface AuthCheck {
 	source?: string;
 	type: "api_key" | "oauth";
+	/** Same meaning as `AuthResult.ambient`. */
+	ambient?: true;
 }
 
 export type AuthType = "api_key" | "oauth";
@@ -146,6 +154,13 @@ export type AuthEvent =
 	  }
 	| { type: "progress"; message: string };
 
+/** Secret-free receipt emitted only after the account write succeeds. */
+export interface AccountLoginReceipt {
+	readonly providerId: string;
+	readonly name: string;
+	readonly origin: "generated" | "provider";
+}
+
 /**
  * Login interaction callbacks serving both api-key and OAuth flows.
  *
@@ -155,13 +170,15 @@ export type AuthEvent =
  */
 export interface AuthInteraction {
 	signal?: AbortSignal;
+	/** Absent for provider-owned envelopes without one unambiguous new slot ID. */
+	onAccountCommitted?(receipt: AccountLoginReceipt): void;
 
 	prompt(prompt: AuthPrompt): Promise<string>;
 	notify(event: AuthEvent): void;
 }
 
 /** Normalized interaction passed to provider login implementations. */
-export type ProviderAuthInteraction = AuthInteraction & { signal: AbortSignal };
+export type ProviderAuthInteraction = Omit<AuthInteraction, "onAccountCommitted"> & { signal: AbortSignal };
 
 /**
  * Api-key auth: stored key/provider env plus ambient sources (env vars, AWS
@@ -201,6 +218,16 @@ export interface ApiKeyAuth {
 	}): Promise<AuthResult | undefined>;
 }
 
+/** App-supplied context for `Models.login`. */
+export interface LoginOptions {
+	/**
+	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
+	 * agent host ID. Called only by login flows that need it, so apps can create
+	 * the ID on first use and must return the same ID on every later call.
+	 */
+	getDeviceId?: () => string;
+}
+
 /**
  * OAuth auth. The `refresh`/`toAuth` split lets `Models` own the locked
  * refresh pattern: `refresh` produces a credential, `toAuth` derives request
@@ -216,7 +243,15 @@ export interface OAuthAuth {
 	/** Selector label for the OAuth login option, e.g. "Sign in with SuperGrok or X Premium". */
 	loginLabel?: string;
 
-	login(interaction: ProviderAuthInteraction): Promise<OAuthCredential>;
+	/**
+	 * HTTP statuses with which the provider refuses a stored access token before its
+	 * own expiry says so (GitHub Copilot revokes its short-lived token server-side and
+	 * answers 401/403). The runtime re-exchanges that exact token once and retries the
+	 * request before surfacing the failure.
+	 */
+	rejectedTokenStatuses?: readonly number[];
+
+	login(interaction: ProviderAuthInteraction, options?: LoginOptions): Promise<OAuthCredential>;
 
 	/**
 	 * Exchange the refresh token. Network call; throws on failure

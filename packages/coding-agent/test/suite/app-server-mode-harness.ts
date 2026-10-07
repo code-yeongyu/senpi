@@ -58,6 +58,7 @@ export async function startWsAppServerMode(preferredPort: QaPort): Promise<Runni
 				port,
 			},
 			wsAuth: { kind: "off" },
+			extensions: [],
 			jsonLogs: false,
 		});
 		runningModes.push(mode);

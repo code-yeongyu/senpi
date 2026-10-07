@@ -17,6 +17,9 @@ describe("terminal monitor event delivery", () => {
 			customType: "senpi-monitor:notification",
 			content: expect.stringContaining("Monitor event(build): line-1\nline-2"),
 			display: false,
+			details: {
+				monitors: [{ id: "bash_1", description: "build", eventCount: 10, kinds: ["line"] }],
+			},
 		});
 		expect(sent[0]?.message.content).toContain("line-10");
 		expect(sent[0]?.options).toEqual({ triggerTurn: true, deliverAs: "steer" });
@@ -45,6 +48,21 @@ describe("terminal monitor event delivery", () => {
 		expect(sent[1]?.message.content).toContain("Monitor paused after repeated updates");
 		expect(sent[1]?.options).toEqual({ triggerTurn: true, deliverAs: "steer" });
 		expect(pauseMonitors).toHaveBeenCalledTimes(1);
+	});
+
+	it("mutes only the noisy monitor and still delivers a quiet monitor line", () => {
+		const { notifier, pauseMonitors, scheduler, sent } = createNotifier({
+			settings: { coalesceWindowMs: 10, rateLimitMs: 1, wakeBudget: 1 },
+		});
+		notifier.notifyEvent(line("A", "noisy", "wake-1"));
+		scheduler.advanceBy(10);
+
+		expect(pauseMonitors).toHaveBeenCalledWith(["A"]);
+		notifier.notifyEvent(line("B", "quiet", "still-running"));
+		scheduler.advanceBy(10);
+
+		expect(sent).toHaveLength(2);
+		expect(sent[1]?.message.content).toContain("Monitor event(quiet): still-running");
 	});
 
 	it("enforces the per-monitor rate limit while retaining an overflow event for the next wake", () => {
@@ -120,6 +138,46 @@ describe("terminal monitor event delivery", () => {
 		scheduler.advanceBy(2000);
 		expect(sent).toHaveLength(6);
 		expect(sent[5]?.message.content).toContain("resumed");
+	});
+
+	it("delivers an exit summary even when the injection queue is full", () => {
+		const { notifier, scheduler, sent } = createNotifier({
+			settings: { coalesceWindowMs: 10, rateLimitMs: 5000, maxLinesPerInjection: 1, wakeBudget: 5 },
+		});
+		notifier.notifyEvent(line("A", "noisy", "busy"));
+		notifier.notifyEvent(summary("B", "done-b", "watcher completed (exit code 0)"));
+		scheduler.advanceBy(10);
+
+		expect(sent.some(({ message }) => message.content.includes("watcher completed (exit code 0)"))).toBe(true);
+	});
+
+	it("delivers a summary that arrives while its own monitor is rate-limited and the queue is full", () => {
+		const { notifier, scheduler, sent } = createNotifier({
+			settings: { coalesceWindowMs: 10, rateLimitMs: 5000, maxLinesPerInjection: 1, wakeBudget: 5 },
+		});
+		notifier.notifyEvent(line("A", "running", "started"));
+		scheduler.advanceBy(10);
+		notifier.notifyEvent(line("B", "noisy", "busy"));
+		notifier.notifyEvent(summary("A", "running", "watcher completed (exit code 0)"));
+		scheduler.advanceBy(10);
+
+		expect(sent.some(({ message }) => message.content.includes("watcher completed (exit code 0)"))).toBe(true);
+	});
+
+	it("delivers a muted monitor summary without resuming another muted monitor", () => {
+		const { notifier, pauseMonitors, scheduler, sent } = createNotifier({
+			settings: { coalesceWindowMs: 10, rateLimitMs: 1, wakeBudget: 1 },
+		});
+		notifier.notifyEvent(line("A", "muted-a", "wake"));
+		scheduler.advanceBy(10);
+		notifier.notifyEvent(line("B", "muted-b", "wake"));
+		scheduler.advanceBy(10);
+		notifier.notifyEvent(summary("A", "muted-a", "completed"));
+		scheduler.advanceBy(10);
+
+		expect(pauseMonitors).toHaveBeenCalledTimes(2);
+		expect(sent).toHaveLength(3);
+		expect(sent[2]?.message.content).toContain("Monitor event(muted-a): completed");
 	});
 
 	it("delivers a paused monitor completion without rearm", () => {

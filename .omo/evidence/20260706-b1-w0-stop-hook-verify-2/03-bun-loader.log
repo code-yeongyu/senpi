@@ -1,4 +1,0 @@
-error: Cannot find module './packages/pty/dist/loader.js' from '/private/tmp/senpi-w0-node-loader-probe.mjs'
-
-Bun v1.3.14 (macOS arm64)
-exit=1

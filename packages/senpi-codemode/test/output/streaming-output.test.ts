@@ -3,7 +3,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OutputSink, resolveSessionArtifactsDir, TailBuffer } from "../../src/output/streaming-output.ts";
+import {
+	OutputSink,
+	resolveSessionArtifactsDir,
+	TailBuffer,
+	truncateTailBytes,
+} from "../../src/output/streaming-output.ts";
 
 const cleanupPaths: string[] = [];
 
@@ -43,6 +48,73 @@ describe("TailBuffer", () => {
 		// Then
 		expect(tail.text()).toBe("x");
 		expect(tail.bytes()).toBe(1);
+	});
+
+	it("replaces the window when a single append exceeds the budget", () => {
+		// Given
+		const tail = new TailBuffer(10);
+		tail.append("old-content");
+
+		// When
+		tail.append("0123456789ABCDEF");
+
+		// Then
+		expect(tail.text()).toBe("6789ABCDEF");
+		expect(tail.bytes()).toBe(10);
+	});
+
+	it("matches the truncate-per-append reference across randomized streams", () => {
+		// Given
+		let state = 0x2262 >>> 0;
+		const random = () => {
+			state = (state + 0x6d2b79f5) >>> 0;
+			let t = state;
+			t = Math.imul(t ^ (t >>> 15), t | 1);
+			t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+			return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+		};
+		const referenceTail = (chunks: readonly string[], maxBytes: number): { text: string; bytes: number } => {
+			let text = "";
+			for (const chunk of chunks) {
+				if (chunk.length === 0) continue;
+				if (maxBytes === 0) {
+					text = "";
+					continue;
+				}
+				const next =
+					Buffer.byteLength(chunk, "utf8") >= maxBytes
+						? truncateTailBytes(chunk, maxBytes)
+						: truncateTailBytes(text + chunk, maxBytes);
+				text = next.text;
+			}
+			return { text, bytes: Buffer.byteLength(text, "utf8") };
+		};
+
+		for (let round = 0; round < 12; round++) {
+			const maxBytes = [0, 5, 24, 300, 5_000][round % 5];
+			const buffer = new TailBuffer(maxBytes);
+			const chunks: string[] = [];
+
+			// When
+			for (let index = 0; index < 160; index++) {
+				const kind = random();
+				const chunk =
+					kind < 0.1
+						? ""
+						: kind < 0.3
+							? "abcdefghij".slice(0, 1 + Math.floor(random() * 10))
+							: kind < 0.45
+								? "가😀é\ud800".slice(0, 1 + Math.floor(random() * 5))
+								: `${"xy".repeat(1 + Math.floor(random() * 60))}\n`;
+				chunks.push(chunk);
+				buffer.append(chunk);
+
+				// Then
+				const reference = referenceTail(chunks, maxBytes);
+				expect(buffer.text()).toBe(reference.text);
+				expect(buffer.bytes()).toBe(reference.bytes);
+			}
+		}
 	});
 });
 
@@ -96,6 +168,76 @@ describe("OutputSink", () => {
 		expect(summary.columnTruncatedLines).toBe(1);
 		expect(summary.columnDroppedBytes).toBe(4);
 		expect(summary.totalBytes).toBe(Buffer.byteLength("abcdefgh\nnext", "utf8"));
+	});
+
+	it("mirrors raw output when a column cap truncates before spill", async () => {
+		// Given
+		const dir = await createTempDir();
+		const artifactPath = join(dir, "column-cap.log");
+		const input = `${"x".repeat(50)}\n`;
+		const sink = new OutputSink({
+			artifactPath,
+			spillThreshold: 50 * 1024,
+			maxColumns: 8,
+		});
+
+		// When
+		sink.push(input);
+		const summary = await sink.dump();
+
+		// Then
+		expect(summary.output).toBe("xxxxxxxx…\n");
+		expect(summary.truncated).toBe(true);
+		expect(summary.columnTruncatedLines).toBe(1);
+		expect(summary.columnDroppedBytes).toBe(42);
+		expect(summary.artifactId).toBe(artifactPath);
+		expect(await readFile(artifactPath, "utf8")).toBe(input);
+	});
+
+	it("preserves split UTF-8 output in the column-cap artifact", async () => {
+		// Given
+		const dir = await createTempDir();
+		const artifactPath = join(dir, "column-cap-utf8.log");
+		const input = `${"가".repeat(20)}\n`;
+		const sink = new OutputSink({
+			artifactPath,
+			spillThreshold: 50 * 1024,
+			maxColumns: 8,
+		});
+
+		// When
+		sink.push(input.slice(0, 7));
+		sink.push(input.slice(7));
+		const summary = await sink.dump();
+
+		// Then
+		expect(summary.truncated).toBe(true);
+		expect(summary.columnTruncatedLines).toBe(1);
+		expect(summary.columnDroppedBytes).toBeGreaterThan(0);
+		expect(summary.output).not.toContain("\ufffd");
+		expect(await readFile(artifactPath, "utf8")).toBe(input);
+	});
+
+	it("mirrors a narrow column-cap loss below the ellipsis size", async () => {
+		// Given
+		const dir = await createTempDir();
+		const artifactPath = join(dir, "column-cap-narrow-gap.log");
+		const input = `${"x".repeat(770)}\n`;
+		const sink = new OutputSink({
+			artifactPath,
+			spillThreshold: 50 * 1024,
+			maxColumns: 768,
+		});
+
+		// When
+		sink.push(input);
+		const summary = await sink.dump();
+
+		// Then
+		expect(summary.truncated).toBe(true);
+		expect(summary.columnDroppedBytes).toBe(2);
+		expect(summary.artifactId).toBe(artifactPath);
+		expect(await readFile(artifactPath, "utf8")).toBe(input);
 	});
 
 	it("flushes throttled chunks without dropping preview data", async () => {

@@ -76,4 +76,22 @@ describe("cursor conversation rotation", () => {
 			}),
 		).toBe("/tmp/store.json");
 	});
+
+	it("bounds the number of retained records, dropping the oldest first (#1024)", () => {
+		const persistPath = storePath();
+		const store = createConversationRotationStore({
+			persistPath,
+			randomId: () => `wire-${Math.random()}`,
+			maxRecords: 3,
+		});
+		for (const baseId of ["rec-1", "rec-2", "rec-3", "rec-4", "rec-5"]) {
+			store.markSurfaced(baseId, baseId);
+		}
+		expect(store.recordCount()).toBe(3);
+		expect(store.shouldSurfaceBeforeRotating("rec-1")).toBe(true);
+		expect(store.shouldSurfaceBeforeRotating("rec-2")).toBe(true);
+		// The oldest records were trimmed from memory and from the persisted file.
+		const persisted = JSON.parse(readFileSync(persistPath, "utf8")) as Record<string, unknown>;
+		expect(Object.keys(persisted).sort()).toEqual(["rec-3", "rec-4", "rec-5"]);
+	});
 });

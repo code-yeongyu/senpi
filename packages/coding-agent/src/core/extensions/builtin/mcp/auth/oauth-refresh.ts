@@ -1,12 +1,10 @@
-import {
-	discoverOAuthServerInfo,
-	type OAuthServerInfo,
-	refreshAuthorization,
-} from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthServerInfo } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { AuthorizationServerMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { loadMcpSdkAuth } from "../sdk.lazy.ts";
 import { safeDelay } from "../wrap.ts";
 import { isInvalidGrant, isTransientTokenError, OAuthFlowError } from "./oauth-errors.ts";
+import { oauthFetch } from "./oauth-fetch.ts";
 import {
 	type McpOAuthProvider,
 	mergeTokensIntoStoredAuth,
@@ -53,7 +51,7 @@ export class McpRefreshManager {
 	}
 
 	async ensureFresh(): Promise<OAuthTokens | undefined> {
-		const record = this.#provider.store.read();
+		const record = await this.#provider.store.readAsync();
 		if (record?.accessToken === undefined) return undefined;
 		if (!isTokenStale(record, Date.now())) return storedAuthToTokens(record);
 		return this.refresh();
@@ -94,6 +92,7 @@ export class McpRefreshManager {
 			});
 		}
 		const resource = new URL(current.resource ?? this.#provider.serverUrl);
+		const { refreshAuthorization } = await loadMcpSdkAuth();
 		const maxRetries = this.#options.maxRetries ?? 2;
 		for (let attempt = 0; ; attempt++) {
 			try {
@@ -102,7 +101,7 @@ export class McpRefreshManager {
 					clientInformation,
 					refreshToken,
 					resource,
-					fetchFn: this.#options.fetchFn,
+					fetchFn: oauthFetch(this.#options.fetchFn),
 				});
 				this.#provider.store.writeUnlocked(mergeTokensIntoStoredAuth(current, tokens, this.#provider.serverUrl));
 				return tokens;
@@ -137,8 +136,9 @@ export class McpRefreshManager {
 		}
 	}
 
-	#discover(): Promise<OAuthServerInfo> {
+	async #discover(): Promise<OAuthServerInfo> {
 		if (this.#options.discover !== undefined) return this.#options.discover(this.#provider.serverUrl);
-		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: this.#options.fetchFn });
+		const { discoverOAuthServerInfo } = await loadMcpSdkAuth();
+		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: oauthFetch(this.#options.fetchFn) });
 	}
 }

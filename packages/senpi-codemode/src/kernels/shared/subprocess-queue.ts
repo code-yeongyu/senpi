@@ -2,6 +2,9 @@ import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { KernelResult, KernelRunInput, ToolCallMessage } from "./subprocess-contract.ts";
 import { createPendingRun, failureResult, type PendingRun, settlePendingRun } from "./subprocess-run.ts";
 
+// Same bound as the JS kernel's pull-API fallback queue (context-manager.ts); clears happen at run teardown.
+const MAX_PENDING_TOOL_CALLS = 256;
+
 export class SubprocessRunQueue {
 	readonly #queue: PendingRun[] = [];
 	readonly #pendingCalls: ToolCallMessage[] = [];
@@ -21,11 +24,29 @@ export class SubprocessRunQueue {
 		const next = this.#queue.shift() ?? null;
 		if (next) next.startedAt = startedAt;
 		this.#active = next;
+		next?.input.onStarted?.();
 		return next;
 	}
 
-	takeWaiting(): PendingRun | null {
-		return this.#queue.shift() ?? null;
+	remove(cellId: string, reason = "interrupted"): boolean {
+		const index = this.#queue.findIndex((run) => run.input.cellId === cellId);
+		if (index < 0) return false;
+		const [run] = this.#queue.splice(index, 1);
+		if (!run) return false;
+		this.settle(run, failureResult(run, new Error(reason)));
+		return true;
+	}
+
+	snapshot(): { activeCellId: string | null; queuedCellIds: readonly string[] } {
+		return {
+			activeCellId: this.#active?.input.cellId ?? null,
+			queuedCellIds: this.#queue.map((run) => run.input.cellId),
+		};
+	}
+
+	/** Removes every queued run that has not started, oldest first. */
+	drain(): PendingRun[] {
+		return this.#queue.splice(0);
 	}
 
 	releaseActive(run: PendingRun): boolean {
@@ -59,7 +80,10 @@ export class SubprocessRunQueue {
 	pushToolCall(message: ToolCallMessage): void {
 		const waiter = this.#callWaiters.shift();
 		if (waiter) waiter(message);
-		else this.#pendingCalls.push(message);
+		else {
+			this.#pendingCalls.push(message);
+			if (this.#pendingCalls.length > MAX_PENDING_TOOL_CALLS) this.#pendingCalls.shift();
+		}
 	}
 
 	handleMessage(
@@ -70,14 +94,14 @@ export class SubprocessRunQueue {
 			case "result": {
 				const run = this.#active;
 				if (!run || run.input.cellId !== message.cellId) return false;
-				onMessage?.(message);
+				(run.input.onMessage ?? onMessage)?.(message);
 				this.releaseActive(run);
 				this.settle(run, message);
 				return true;
 			}
 			case "tool-call":
 				if (!this.#active) return false;
-				onMessage?.(message);
+				(this.#active.input.onMessage ?? onMessage)?.(message);
 				this.pushToolCall(message);
 				return false;
 			case "text":
@@ -85,12 +109,18 @@ export class SubprocessRunQueue {
 			case "log":
 			case "phase":
 			case "status":
-				if (this.#active) onMessage?.(message);
+				if (this.#active) (this.#active.input.onMessage ?? onMessage)?.(message);
 				return false;
 			case "ready":
 			case "init-failed":
 			case "closed":
+			case "kernel-tool-describe-reply":
+			case "kernel-tool-invoke-reply":
 				onMessage?.(message);
+				return false;
+			case "webview-connect":
+			case "memory-query-result":
+			case "kernel-tools-defined":
 				return false;
 			default: {
 				const exhaustive: never = message;

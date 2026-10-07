@@ -1,4 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
+import { VERSION } from "../src/config.ts";
+import { engineBuildIdentityFrom } from "../src/core/engine-build-identity.ts";
 import {
 	RPC_ERROR_MISSING_SESSION_ID,
 	RPC_ERROR_MULTI_SESSION_DISABLED,
@@ -32,6 +34,9 @@ describe("multi-session RPC routing", () => {
 			error: RPC_ERROR_UNKNOWN_SESSION,
 		});
 		expect(
+			await routerFor().handle({ id: "live-without-binding", type: "prompt", message: "hello", sessionId: "known" }),
+		).toMatchObject({ error: RPC_ERROR_UNKNOWN_SESSION });
+		expect(
 			await routerFor("closing").handle({ id: "p", type: "prompt", message: "hello", sessionId: "known" }),
 		).toMatchObject({ error: RPC_ERROR_SESSION_CLOSING });
 	});
@@ -42,7 +47,40 @@ describe("multi-session RPC routing", () => {
 			type: "response",
 			command: "get_protocol_info",
 			success: true,
-			data: { protocolVersion: 1, capabilities: ["multi_session"], mode: "multi" },
+			data: {
+				protocolVersion: 1,
+				serverVersion: VERSION,
+				capabilities: [
+					"multi_session",
+					"auto_title_sessions",
+					"media_placeholders",
+					"durable_client_message_id",
+					"continue_from_leaf",
+					"retain_on_disconnect",
+					"session_context",
+					"session_kind",
+					"auto_title_per_session",
+					"durable_session_id",
+					"prompt_surface",
+					"prompt_surface_chat",
+					"browser_engine",
+					"retry_fallback_profile",
+					"permission_preset_accept_edits",
+					"permission_preset_auto",
+				],
+				mode: "multi",
+				// Host identity (`protocol-identity.ts`): the instance is this process, the
+				// engine ordinal is built from this tree's VERSION by an independent builder,
+				// and the launch profile of a router built here is whatever argv the test
+				// runner has - `test/rpc-protocol-identity.test.ts` pins its contents against
+				// a host launched with known flags.
+				instanceId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+				generation: 0,
+				engineVersion: VERSION,
+				engineOrdinal: engineBuildIdentityFrom({ version: VERSION }).ordinal,
+				launch_profile: { profile_id: expect.stringMatching(/^[0-9a-f]{64}$/), core: expect.anything() },
+				memory_pressure: false,
+			},
 		});
 	});
 
@@ -68,6 +106,7 @@ describe("multi-session RPC routing", () => {
 			list: () => [],
 			beginClose: () => entry,
 			closeMarked: async () => {},
+			peek: () => undefined,
 		} as never;
 		const createBinding = vi.fn(async () => ({
 			handle: async () => {},
@@ -84,9 +123,103 @@ describe("multi-session RPC routing", () => {
 
 		await router.handle({ id: "open", type: "open_session", cwd: "/tmp" });
 
-		expect(createBinding).toHaveBeenCalledWith("rpc-session-beta", entry, writer, expect.any(Function), {
-			capabilities: ["extension_events"],
+		expect(createBinding).toHaveBeenCalledWith(
+			"rpc-session-beta",
+			entry,
+			writer,
+			expect.any(Function),
+			expect.objectContaining({ capabilities: ["extension_events"], clientInfo: expect.any(Object) }),
+		);
+	});
+
+	test("forwards launch capabilities to connection-owned bindings and honors explicit empty capabilities", async () => {
+		const entry = {
+			runtime: {
+				session: {
+					model: undefined,
+					thinkingLevel: "off",
+					isStreaming: false,
+					isCompacting: false,
+					steeringMode: "one-at-a-time",
+					followUpMode: "one-at-a-time",
+					sessionFile: undefined,
+					sessionId: "durable-session",
+					sessionName: undefined,
+				},
+			},
+		};
+		const sessionIds = ["rpc-session-env", "rpc-session-explicit-empty"];
+		const registry = {
+			openSession: async () => ({ sessionId: sessionIds.shift() ?? "unexpected" }),
+			getForCommand: () => entry,
+			list: () => [],
+			beginClose: () => entry,
+			closeMarked: async () => {},
+			peek: () => undefined,
+		} as never;
+		const chunks: string[] = [];
+		const writer = new SessionEventWriter(
+			(chunk) => chunks.push(chunk),
+			(flush) => flush(),
+		);
+		writer.registerConnection("client", {
+			writeRaw: (chunk) => chunks.push(chunk),
+			waitForBackpressure: async () => {},
 		});
+		const emitters = new Map<string, () => void>();
+		const createBinding = vi.fn(
+			async (
+				sessionId: string,
+				_entry: unknown,
+				eventWriter: SessionEventWriter,
+				_close: unknown,
+				options: { capabilities?: readonly string[] },
+			) => {
+				const forwardsExtensionEvents = options.capabilities?.includes("extension_events") ?? false;
+				emitters.set(sessionId, () => {
+					if (!forwardsExtensionEvents) return;
+					eventWriter.enqueue(sessionId, {
+						type: "extension_event",
+						name: "fixture.progress",
+						data: { step: 1 },
+					});
+				});
+				return { handle: async () => {}, dispose: async () => {} };
+			},
+		);
+		const router = Reflect.construct(SessionCommandRouter, [
+			registry,
+			writer,
+			{ cwd: "/tmp" },
+			createBinding,
+			{ capabilities: ["extension_events"] },
+		]) as SessionCommandRouter;
+
+		await writer.withConnection("client", () => router.handle({ id: "open-env", type: "open_session", cwd: "/tmp" }));
+		emitters.get("rpc-session-env")?.();
+		await writer.flush();
+		expect(JSON.parse(chunks.join("").split("\n").filter(Boolean).at(-1) ?? "{}")).toMatchObject({
+			type: "extension_event",
+			name: "fixture.progress",
+			sessionId: "rpc-session-env",
+		});
+
+		await writer.withConnection("client", () =>
+			router.handle({ id: "info", type: "set_client_info", width: 80, capabilities: [] }),
+		);
+		await writer.withConnection("client", () =>
+			router.handle({ id: "open-empty", type: "open_session", cwd: "/tmp" }),
+		);
+		emitters.get("rpc-session-explicit-empty")?.();
+		await writer.flush();
+		expect(
+			chunks
+				.join("")
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => JSON.parse(line) as { type?: string; sessionId?: string })
+				.filter((record) => record.type === "extension_event" && record.sessionId === "rpc-session-explicit-empty"),
+		).toEqual([]);
 	});
 
 	test("routes extension requests only to the addressed session binding", async () => {
@@ -115,6 +248,7 @@ describe("multi-session RPC routing", () => {
 			list: () => [],
 			beginClose: () => entryFor("closing"),
 			closeMarked: async () => {},
+			peek: () => undefined,
 		} as never;
 		const alphaHandle = vi.fn(async () => {});
 		const betaHandle = vi.fn(async () => {});
@@ -147,6 +281,211 @@ describe("multi-session RPC routing", () => {
 			name: "fixture.owner",
 			data: { expected: "beta" },
 		});
+	});
+
+	test("preserves terminal record order for a joined close", async () => {
+		const entry: { state: "open" | "closing"; runtime: object } = {
+			state: "open",
+			runtime: {
+				session: {
+					model: undefined,
+					thinkingLevel: "off",
+					isStreaming: false,
+					isCompacting: false,
+					steeringMode: "one-at-a-time",
+					followUpMode: "one-at-a-time",
+					sessionFile: undefined,
+					sessionId: "durable-session",
+					sessionName: undefined,
+				},
+			},
+		};
+		let releaseDispose!: () => void;
+		const disposing = new Promise<void>((resolve) => {
+			releaseDispose = resolve;
+		});
+		const closeCompletion = Promise.resolve();
+		let closeCalls = 0;
+		const registry = {
+			openSession: async () => ({ sessionId: "rpc-session" }),
+			getForCommand: () => entry,
+			list: () => [],
+			beginClose: (_id: string, onRole?: (finalizer: boolean) => void) => {
+				const finalizer = closeCalls === 0;
+				closeCalls += 1;
+				entry.state = "closing";
+				onRole?.(finalizer);
+				return entry;
+			},
+			closeMarked: async () => closeCompletion,
+			peek: () => ({ closeCompletion }),
+		} as never;
+		const dispose = vi.fn(() => disposing);
+		const records: Array<Record<string, unknown>> = [];
+		const writer = new SessionEventWriter(
+			(chunk) => records.push(JSON.parse(chunk) as Record<string, unknown>),
+			(flush) => flush(),
+		);
+		const router = Reflect.construct(SessionCommandRouter, [
+			registry,
+			writer,
+			{ cwd: "/tmp" },
+			async () => ({ handle: async () => {}, dispose }),
+		]) as SessionCommandRouter;
+		await router.handle({ id: "open", type: "open_session", cwd: "/tmp" });
+		const first = router.handle({ id: "first", type: "close_session", sessionId: "rpc-session" });
+		const second = router.handle({ id: "second", type: "close_session", sessionId: "rpc-session" });
+		expect(dispose).toHaveBeenCalledTimes(1);
+		releaseDispose();
+		await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+		await writer.flush();
+		expect(records.filter((record) => record.sessionId === "rpc-session")).toEqual([
+			{ type: "session_closed", sessionId: "rpc-session", reason: "client_close" },
+			expect.objectContaining({ id: "first", command: "close_session", success: true, sessionId: "rpc-session" }),
+			expect.objectContaining({ id: "second", command: "close_session", success: true, sessionId: "rpc-session" }),
+		]);
+	});
+
+	test("answers a close once and releases joiners when the binding fails to dispose", async () => {
+		const entry: { state: "open" | "closing"; runtime: object } = { state: "open", runtime: { session: {} } };
+		let closeCalls = 0;
+		const closeMarked = vi.fn(async () => {});
+		const registry = {
+			openSession: async () => ({ sessionId: "rpc-session" }),
+			getForCommand: () => entry,
+			list: () => [],
+			beginClose: (_id: string, onRole?: (finalizer: boolean) => void) => {
+				const finalizer = closeCalls === 0;
+				closeCalls += 1;
+				entry.state = "closing";
+				onRole?.(finalizer);
+				return entry;
+			},
+			closeMarked,
+			peek: () => undefined,
+		} as never;
+		const records: Array<Record<string, unknown>> = [];
+		const writer = new SessionEventWriter(
+			(chunk) => records.push(JSON.parse(chunk) as Record<string, unknown>),
+			(flush) => flush(),
+		);
+		const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		try {
+			const router = Reflect.construct(SessionCommandRouter, [
+				registry,
+				writer,
+				{ cwd: "/tmp" },
+				async () => ({
+					handle: async () => {},
+					dispose: async () => Promise.reject(new Error("binding exploded")),
+				}),
+			]) as SessionCommandRouter;
+			await router.handle({ id: "open", type: "open_session", cwd: "/tmp" });
+			const first = router.handle({ id: "first", type: "close_session", sessionId: "rpc-session" });
+			const second = router.handle({ id: "second", type: "close_session", sessionId: "rpc-session" });
+			await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+			await writer.flush();
+			expect(closeMarked).toHaveBeenCalledTimes(1);
+			expect(records.filter((record) => record.sessionId === "rpc-session")).toEqual([
+				{ type: "session_closed", sessionId: "rpc-session", reason: "client_close" },
+				expect.objectContaining({ id: "first", command: "close_session", success: true }),
+				expect.objectContaining({ id: "second", command: "close_session", success: true }),
+			]);
+			expect(stderr.mock.calls.some(([chunk]) => String(chunk).includes("binding exploded"))).toBe(true);
+		} finally {
+			stderr.mockRestore();
+		}
+	});
+
+	test("releases a joining close and disposes the binding once", async () => {
+		const entry: { state: "open" | "closing"; runtime: object } = { state: "open", runtime: { session: {} } };
+		let closeCalls = 0;
+		const registry = {
+			openSession: async () => ({ sessionId: "rpc-session" }),
+			getForCommand: () => entry,
+			list: () => [],
+			beginClose: (_id: string, onRole?: (finalizer: boolean) => void) => {
+				const finalizer = closeCalls === 0;
+				closeCalls += 1;
+				entry.state = "closing";
+				onRole?.(finalizer);
+				return entry;
+			},
+			closeMarked: async () => {},
+			peek: () => undefined,
+		} as never;
+		const writer = new SessionEventWriter(() => {});
+		writer.registerConnection("owner", { writeRaw: () => {}, waitForBackpressure: async () => {} });
+		const dispose = vi.fn(async () => {});
+		const router = Reflect.construct(SessionCommandRouter, [
+			registry,
+			writer,
+			{ cwd: "/tmp" },
+			async () => ({ handle: async () => {}, dispose }),
+		]) as SessionCommandRouter;
+		await writer.withConnection("owner", () => router.handle({ id: "open", type: "open_session", cwd: "/tmp" }));
+		const first = writer.withConnection("owner", () =>
+			router.handle({ id: "first", type: "close_session", sessionId: "rpc-session" }),
+		);
+		const second = router.handle({ id: "second", type: "close_session", sessionId: "rpc-session" });
+		const settled = await Promise.race([
+			Promise.all([first, second]).then(() => "settled" as const),
+			new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 2_000)),
+		]);
+		expect(settled).toBe("settled");
+		expect(dispose).toHaveBeenCalledTimes(1);
+	});
+
+	test("does not dispose a binding twice when idle eviction races explicit close", async () => {
+		const entry: { state: "open" | "closing"; runtime: object } = {
+			state: "open",
+			runtime: {
+				session: {
+					model: undefined,
+					thinkingLevel: "off",
+					isStreaming: false,
+					isCompacting: false,
+					steeringMode: "one-at-a-time",
+					followUpMode: "one-at-a-time",
+					sessionFile: undefined,
+					sessionId: "durable-session",
+					sessionName: undefined,
+				},
+			},
+		};
+		let releaseDispose!: () => void;
+		const disposing = new Promise<void>((resolve) => {
+			releaseDispose = resolve;
+		});
+		const registry = {
+			openSession: async () => ({ sessionId: "known" }),
+			getForCommand: () => entry,
+			list: () => [{ sessionId: "known", status: entry.state }],
+			peek: () => entry,
+			beginClose: (_id: string, onRole?: (finalizer: boolean) => void) => {
+				const finalizer = entry.state === "open";
+				entry.state = "closing";
+				onRole?.(finalizer);
+				return entry;
+			},
+			closeMarked: async () => {},
+		} as never;
+		const dispose = vi.fn(() => disposing);
+		const router = Reflect.construct(SessionCommandRouter, [
+			registry,
+			new SessionEventWriter(() => {}),
+			{ cwd: "/tmp" },
+			async () => ({ handle: async () => {}, dispose }),
+			{},
+			{ idleEvictionMs: 1, now: () => 100 },
+		]) as SessionCommandRouter;
+		await router.handle({ id: "open", type: "open_session", cwd: "/tmp" });
+		const close = router.handle({ id: "close", type: "close_session", sessionId: "known" });
+		router.sweepIdleSessions();
+		const disposingRouter = router.dispose();
+		releaseDispose();
+		await expect(Promise.all([close, disposingRouter])).resolves.toEqual([undefined, undefined]);
+		expect(dispose).toHaveBeenCalledTimes(1);
 	});
 
 	test("keeps the classic-only open error code stable", () => {

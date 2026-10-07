@@ -1,20 +1,22 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
-import { createServer, type Server } from "node:net";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	parseDaemonPidFile,
 	processMatchesPidFile,
+	readProcessStartTime,
 	stopValidatedPid,
+	waitForStartTime,
 } from "../../src/modes/app-server/daemon/process.ts";
 import { createDaemonPaths, withDaemonStateLock } from "../../src/modes/app-server/daemon.ts";
-import { listenOnQaPort, type QaPort, qaPortsFrom } from "../helpers/qa-port.ts";
+import { listenOnQaPort } from "../helpers/qa-port.ts";
+import { closeServer, runDaemonCli, type StartedDaemon, startDaemonOnQaPort } from "./app-server-daemon-cli-harness.ts";
 
 const roots: string[] = [];
-const packageRoot = resolve(import.meta.dirname, "../..");
 
 afterEach(async () => {
 	for (const root of roots.splice(0)) {
@@ -36,6 +38,39 @@ describe("app-server daemon state", () => {
 		expect(malformed).toBeUndefined();
 		expect(matches).toBe(true);
 		expect(stale).toBe(false);
+	});
+
+	it("retries transient process identity errors while waiting for startup", async () => {
+		vi.useFakeTimers();
+		try {
+			let attempts = 0;
+			const result = waitForStartTime(42, 1_000, async () => {
+				attempts++;
+				if (attempts === 1) throw new Error("process identity temporarily unavailable");
+				return "stable-process-identity";
+			});
+			await vi.advanceTimersByTimeAsync(20);
+			await expect(result).resolves.toBe("stable-process-identity");
+			expect(attempts).toBe(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("reads a stable identity for a live process and none for an exited process", async () => {
+		const liveIdentity = await readProcessStartTime(process.pid);
+		expect(liveIdentity).toBeTruthy();
+		expect(await readProcessStartTime(process.pid)).toBe(liveIdentity);
+
+		const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+			stdio: ["ignore", "ignore", "ignore"],
+		});
+		await withTimeout(once(child, "spawn"), 2_000, "identity probe child did not spawn");
+		if (child.pid === undefined) throw new Error("expected identity probe child pid");
+		const childPid = child.pid;
+		child.kill();
+		await withTimeout(once(child, "exit"), 2_000, "identity probe child did not exit");
+		expect(await readProcessStartTime(childPid)).toBeUndefined();
 	});
 
 	it("serializes daemon commands with the state lock", async () => {
@@ -76,8 +111,10 @@ describe("app-server daemon state", () => {
 		});
 		await withTimeout(once(child, "spawn"), 2_000, "child process did not spawn");
 		if (child.pid === undefined) throw new Error("expected child pid");
-		const processStartTime = await readProcessStartTime(child.pid);
-		if (!processStartTime) throw new Error(`child pid ${child.pid} had no process start time after spawning`);
+		// The fixture child is live, so its identity must resolve; waitForStartTime returns undefined
+		// only when the probe is starved on a loaded host, which this fixture does not exercise.
+		const processStartTime = await waitForStartTime(child.pid, 5_000);
+		if (processStartTime === undefined) throw new Error("fixture child had no process identity");
 		const pidFile = { pid: child.pid, processStartTime };
 		await rm(stateDir, { recursive: true, force: true });
 
@@ -91,10 +128,10 @@ describe("app-server daemon state", () => {
 		} finally {
 			if (await processMatchesPidFile(pidFile)) child.kill("SIGKILL");
 		}
-	});
+	}, 15_000);
 });
 
-describe.sequential("app-server daemon CLI", () => {
+describe("app-server daemon CLI", () => {
 	it("starts, reports status, attaches idempotently, and stops a managed daemon", async () => {
 		// Given: a scratch agent directory and a non-default loopback port.
 		const root = await scratchRoot("senpi-daemon-cli-");
@@ -119,7 +156,7 @@ describe.sequential("app-server daemon CLI", () => {
 			expect(typeof started.json.pid).toBe("number");
 			expect(pidFile?.pid).toBe(started.json.pid);
 			expect(pidMatches).toBe(true);
-			expect(settings).toEqual({ listen: { kind: "ws", url: listen, host: "127.0.0.1", port } });
+			expect(settings).toEqual({ listen: { kind: "ws", url: listen, host: "127.0.0.1", port }, extensions: [] });
 			expect(status.json).toMatchObject({ status: "running", pid: started.json.pid, listen });
 			expect(attached.json).toMatchObject({ status: "already-running", pid: started.json.pid, listen });
 			expect(stopped.json).toEqual({ status: "stopped" });
@@ -129,17 +166,6 @@ describe.sequential("app-server daemon CLI", () => {
 		}
 	}, 180_000);
 });
-
-type DaemonCliResult = {
-	readonly json: Record<string, unknown>;
-	readonly stderr: string;
-};
-
-type StartedDaemon = {
-	readonly listen: string;
-	readonly port: QaPort;
-	readonly started: DaemonCliResult;
-};
 
 function createDeferred<T>(): {
 	readonly promise: Promise<T>;
@@ -175,97 +201,6 @@ async function startDaemonAfterAddressInUse(agentDir: string): Promise<StartedDa
 	}
 }
 
-async function startDaemonOnQaPort(agentDir: string, preferredPort: QaPort = 18999): Promise<StartedDaemon> {
-	const failures: string[] = [];
-	for (const port of qaPortsFrom(preferredPort)) {
-		const listen = `ws://127.0.0.1:${port}`;
-		try {
-			const started = await runDaemonCli(agentDir, ["start", "--listen", listen]);
-			return { listen, port, started };
-		} catch (error: unknown) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (message.includes("EADDRINUSE") || message.includes("address already in use")) {
-				failures.push(`${port}:${message}`);
-				continue;
-			}
-			throw error;
-		}
-	}
-	throw new Error(`No free QA daemon port in ${qaPortsFrom().join(", ")} (${failures.join("; ")})`);
-}
-
-function closeServer(server: Server): Promise<void> {
-	return new Promise((resolveClose, rejectClose) => {
-		server.close((error) => {
-			if (error) {
-				rejectClose(error);
-				return;
-			}
-			resolveClose();
-		});
-	});
-}
-
-function runDaemonCli(agentDir: string, daemonArgs: readonly string[]): Promise<DaemonCliResult> {
-	return new Promise((resolveResult, reject) => {
-		const child = spawn("npx", ["tsx", "src/cli.ts", "app-server", "daemon", ...daemonArgs], {
-			cwd: packageRoot,
-			env: {
-				...process.env,
-				PI_OFFLINE: "1",
-				HOME: join(agentDir, "home"),
-				SENPI_CODING_AGENT_DIR: agentDir,
-				SENPI_CODING_AGENT_SESSION_DIR: join(agentDir, "sessions"),
-				XDG_CACHE_HOME: join(agentDir, "xdg-cache"),
-				XDG_CONFIG_HOME: join(agentDir, "xdg-config"),
-				XDG_DATA_HOME: join(agentDir, "xdg-data"),
-			},
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-		const timeout = setTimeout(() => {
-			child.kill("SIGKILL");
-			reject(new Error(`daemon command timed out: ${daemonArgs.join(" ")}`));
-		}, 60_000);
-		child.stdout.on("data", (chunk) => {
-			stdout += chunk.toString("utf8");
-		});
-		child.stderr.on("data", (chunk) => {
-			stderr += chunk.toString("utf8");
-		});
-		child.once("error", (error) => {
-			clearTimeout(timeout);
-			reject(error);
-		});
-		child.once("close", (code) => {
-			clearTimeout(timeout);
-			if (code !== 0) {
-				const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
-				reject(new Error(`daemon command failed (${code}): ${daemonArgs.join(" ")}\n${output}`));
-				return;
-			}
-			const lines = stdout.trim().split("\n").filter(Boolean);
-			expect(lines).toHaveLength(1);
-			const parsed: unknown = JSON.parse(lines[0] ?? "");
-			expectRecord(parsed);
-			resolveResult({ json: parsed, stderr });
-		});
-	});
-}
-
-async function readProcessStartTime(pid: number): Promise<string | undefined> {
-	return await new Promise((resolveStartTime, reject) => {
-		execFile("ps", ["-o", "lstart=", "-p", String(pid)], (error, stdout) => {
-			if (error) {
-				resolveStartTime(undefined);
-				return;
-			}
-			resolveStartTime(stdout.trim() || undefined);
-		}).once("error", reject);
-	});
-}
-
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
 	return new Promise((resolveResult, rejectResult) => {
 		const timeout = setTimeout(() => rejectResult(new Error(message)), timeoutMs);
@@ -280,13 +215,4 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 			},
 		);
 	});
-}
-
-function expectRecord(value: unknown): asserts value is Record<string, unknown> {
-	expect(typeof value).toBe("object");
-	expect(value).not.toBeNull();
-	expect(Array.isArray(value)).toBe(false);
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		throw new Error("expected record");
-	}
 }

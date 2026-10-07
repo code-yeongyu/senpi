@@ -78,7 +78,7 @@ export function createNotifier(
 ) {
 	const scheduler = new FakeScheduler();
 	const sent: SentMessage[] = [];
-	const pauseMonitors = vi.fn(() => ["bash_budget"]);
+	const pauseMonitors = vi.fn((_ids: readonly string[]) => ["bash_budget"]);
 	const notifier = new MonitorNotifier({
 		sendMessage: (message, options) => sent.push({ message, options }),
 		getContext: () =>

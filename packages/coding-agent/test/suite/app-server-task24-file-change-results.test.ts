@@ -9,6 +9,7 @@ import {
 	APPLY_PATCH_RESULT_PATCH_MAX_BYTES,
 	createApplyPatchTool,
 } from "../../src/core/extensions/builtin/gpt-apply-patch/index.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { createEditTool } from "../../src/core/tools/edit.ts";
 import { createWriteTool } from "../../src/core/tools/write.ts";
 import { fileChangeProjection } from "../../src/modes/app-server/threads/projection-file-changes.ts";
@@ -32,7 +33,13 @@ async function createApplyPatchHarness(): Promise<Harness> {
 
 async function executeApplyPatch(harness: Harness, input: string) {
 	const tool = createApplyPatchTool();
-	return tool.execute("apply-call", { input }, undefined, undefined, harness.session.extensionRunner.createContext());
+	return tool.execute(
+		"apply-call",
+		{ input },
+		undefined,
+		undefined,
+		harness.session.extensionRunner.createContext() as ExtensionToolContext,
+	);
 }
 
 afterEach(async () => {

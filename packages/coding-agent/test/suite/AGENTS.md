@@ -44,7 +44,7 @@ Local `README.md` carries the same harness/faux-provider rules; keep both in syn
 ## COMMANDS
 
 ```bash
-npm --prefix packages/coding-agent test -- --run test/suite/<file>.test.ts
-npm --prefix packages/coding-agent test -- --run test/suite   # whole suite dir
-CI=1 npm --prefix packages/coding-agent test -- --run test/suite/app-server-mode-ws.test.ts
+bun run --cwd packages/coding-agent test --run test/suite/<file>.test.ts
+bun run --cwd packages/coding-agent test --run test/suite   # whole suite dir
+CI=1 bun run --cwd packages/coding-agent test --run test/suite/app-server-mode-ws.test.ts
 ```

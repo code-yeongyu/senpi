@@ -73,6 +73,17 @@ export function registerCursorExecLifecycleTests(): void {
 	});
 
 	describe("cursor-agent turn termination", () => {
+		it("clears the stream health timer after teardown", async () => {
+			vi.useFakeTimers();
+			try {
+				const message = await runTurnTerminationScenario("turnEndedOpen");
+				expect(message.stopReason).toBe("stop");
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it("completes after turnEnded while the server keeps the stream open", async () => {
 			const message = await runTurnTerminationScenario("turnEndedOpen");
 			expect(message.stopReason).toBe("stop");

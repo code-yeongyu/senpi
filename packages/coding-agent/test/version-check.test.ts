@@ -142,3 +142,11 @@ describe("version checks", () => {
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 });
+
+describe("unparseable version pairs", () => {
+	it("never advertises an update for branded build labels", () => {
+		const label = "omo@c6e7dd7 2026-09-04 10:17 +09:00";
+		expect(isNewerPackageVersion("2026.9.3-3", label)).toBe(false);
+		expect(isNewerPackageVersion(label, "2026.9.3-3")).toBe(false);
+	});
+});

@@ -10,6 +10,7 @@
 
 import { getProviders } from "@earendil-works/pi-ai/compat";
 import type { ModelRegistry } from "./model-registry.ts";
+import type { AuthStatus } from "./provider-composer.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
 
 /** Built-in model providers (used to decide API-key vs oauth login eligibility). */
@@ -99,4 +100,25 @@ export function buildLogoutProviderInfos(modelRegistry: ModelRegistry): AuthProv
 		});
 	}
 	return options.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * The status of ONE login method row. Provider-level auth status says whether the provider has
+ * any credential; a provider listed with both an oauth and an api_key row must not light both
+ * for one credential. A stored credential belongs to the row of its own type. Every other source
+ * (runtime `--api-key`, environment, models.json, fallback) is a key, so it belongs to the
+ * api_key row when the provider has one, and to the only row otherwise.
+ */
+export function authMethodStatus(
+	modelRegistry: ModelRegistry,
+	info: AuthProviderInfo,
+	providerHasApiKeyRow: boolean,
+): AuthStatus {
+	const status = modelRegistry.getProviderAuthStatus(info.id);
+	if (!status.configured) return status;
+	if (status.source === "stored") {
+		const storedType = modelRegistry.authStorage.get(info.id)?.type;
+		return storedType === undefined || storedType === info.authType ? status : { configured: false };
+	}
+	return info.authType === "api_key" || !providerHasApiKeyRow ? status : { configured: false };
 }

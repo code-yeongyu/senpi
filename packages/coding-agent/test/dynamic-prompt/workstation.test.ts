@@ -105,13 +105,13 @@ describe("buildDynamicSystemPrompt workstation integration", () => {
 		skills: [],
 	};
 
-	test("renders the workstation block before the date/cwd footer", () => {
+	test("renders the workstation block without a date/cwd footer", () => {
 		const prompt = buildDynamicSystemPrompt(baseOptions);
 
 		const workstation = prompt.indexOf("<workstation>");
-		const cwd = prompt.indexOf("Current working directory:");
 		expect(workstation).toBeGreaterThanOrEqual(0);
-		expect(cwd).toBeGreaterThan(workstation);
+		// senpi#2093: no date/cwd footer follows it any more.
+		expect(prompt).not.toContain("Current working directory:");
 		expect(prompt).toContain("**EXECUTION HAPPENS HERE.**");
 	});
 

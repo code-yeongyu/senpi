@@ -1,9 +1,10 @@
+import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../manual-continue.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { continueGoalAfterAgentEnd } from "./agent-end-continuation.ts";
 import { GOAL_CACHE_WARMUP_ENTRY_TYPE } from "./cache-warm.ts";
-import { renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
+import { isSameGoalCacheWarmCard, renderGoalCacheWarmupEntry } from "./cache-warm-renderer.ts";
 import { registerGoalCommand } from "./command-registration.ts";
 import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
@@ -11,13 +12,13 @@ import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
 import { isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
-import { migrateLegacyGoalFile } from "./persistence.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
-import { accountGoalUsage, readGoal, updateGoal } from "./store.ts";
+import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
 import { staleGoalTodoReminder, todoResultAddsOpenTasks } from "./todo-gate.ts";
+import { TodoOwedBackstop } from "./todo-owed-backstop.ts";
 import { registerGoalTools } from "./tool-registration.ts";
 import { TurnUsageTracker } from "./turn-usage.ts";
 import type { Goal, GoalAccountingMode, GoalStoreRef } from "./types.ts";
@@ -55,19 +56,23 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		},
 		goalWaitTicker,
 	);
+	const todoOwedBackstop = new TodoOwedBackstop(pi);
 	const directInputLifecycle = new GoalDirectInputLifecycle({
 		monitor: monitorContinuation,
 		goalStoreRef,
 		beginAgentGoalAccounting,
 		refreshGoalUi: refreshGoalUiBestEffort,
 		resumeAfterSuppressedLoad: (resumeCtx, goal) => queueGoalContinuationForCurrentSession(pi, resumeCtx, goal),
+		onAcceptedDirectInput: () => todoOwedBackstop.resetChain(),
 	});
 
 	const goalTicker = new GoalElapsedTicker({
 		render: (renderCtx, renderGoal, live) => updateGoalUi(renderCtx, renderGoal, live),
 	});
 
-	pi.registerEntryRenderer(GOAL_CACHE_WARMUP_ENTRY_TYPE, renderGoalCacheWarmupEntry);
+	pi.registerEntryRenderer(GOAL_CACHE_WARMUP_ENTRY_TYPE, renderGoalCacheWarmupEntry, {
+		replaces: isSameGoalCacheWarmCard,
+	});
 	registerGoalTools(pi, {
 		goalStoreRef: (ctx) => buildGoalStoreRef(ctx.sessionManager, ctx.cwd),
 		accountCurrentAgentTurn,
@@ -122,8 +127,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		activeContext = ctx;
 		monitorContinuation.start(ctx);
 		directInputLifecycle.reset();
+		todoOwedBackstop.resetChain();
 		const ref = goalStoreRef(ctx);
-		await migrateLegacyGoalFile(ref);
+		await migrateLegacyGoal(ref);
 		const goal = await readGoal(goalStoreRef(ctx));
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
@@ -167,6 +173,10 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 	});
 
+	pi.on("session_tree", async () => {
+		todoOwedBackstop.resetChain();
+	});
+
 	pi.on("input", async (event, ctx) => {
 		await directInputLifecycle.onInput(event, ctx);
 	});
@@ -207,6 +217,14 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		}
 	});
 
+	pi.on("message_start", async (event, ctx) => {
+		if (event.message.role !== "custom" || event.message.customType !== MANUAL_CONTINUE_CUSTOM_TYPE) return;
+		const ref = goalStoreRef(ctx);
+		const goal = await readGoal(ref);
+		if (goal?.status !== "blocked") return;
+		syncContinuationGoal(ctx, await updateGoal(ref, { status: "active" }, "user"));
+	});
+
 	pi.on("message_end", async (event) => {
 		turnUsage.noteMessageEnd(event.message);
 	});
@@ -240,6 +258,13 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			goal = continuationGoal;
 			syncContinuationGoal(ctx, goal);
 		}
+		todoOwedBackstop.afterAgentEnd({
+			ctx,
+			event,
+			goal,
+			continuationPending,
+			hasActiveWakeSources: monitorContinuation.hasActiveWakeSources(),
+		});
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
@@ -282,6 +307,16 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	): Promise<boolean> {
 		if (!isResumeOfStoppedGoal(ctx, sessionStartReason, goal)) {
 			return false;
+		}
+		// RPC switch_session cannot service a nested interactive UI request until the
+		// switch response completes. Keep the goal stopped and let the user resume it
+		// explicitly after the new session finishes binding.
+		if (ctx.mode === "rpc") {
+			ctx.ui.notify(
+				`Goal remains ${goal.status} after session resume. Resume it explicitly after the session finishes loading.`,
+				"info",
+			);
+			return true;
 		}
 
 		const choice = await ctx.ui.select(`Resume ${goal.status} goal?\nGoal: ${goal.objective}`, [

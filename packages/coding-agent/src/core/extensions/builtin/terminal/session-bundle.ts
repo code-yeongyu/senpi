@@ -1,11 +1,13 @@
 import type { WakeSourceStateItem } from "../monitor-state-event.ts";
 import { TerminalManager, type TerminalManagerOptions } from "./manager.ts";
+import type { MonitorEndedEvent } from "./monitor-registry.ts";
 import { type MonitorEvent, MonitorRegistry, type MonitorSnapshotEntry } from "./monitor-registry.ts";
 import type { TerminalRuntimeSession } from "./runtime-session.ts";
 
 export interface TerminalEventSinks {
 	readonly onMonitorEvent: (event: MonitorEvent) => void;
-	readonly onMonitorState: (snapshot: readonly MonitorSnapshotEntry[]) => void;
+	readonly onMonitorState: (snapshot: readonly MonitorSnapshotEntry[], transition?: boolean) => void;
+	readonly onMonitorEnded: (event: MonitorEndedEvent) => void;
 	readonly onBackgroundState: (snapshot: readonly WakeSourceStateItem[]) => void;
 	readonly onBackgroundExit: (id: string, runtime: TerminalRuntimeSession) => void;
 }
@@ -25,6 +27,7 @@ export class TerminalSessionBundle {
 	readonly monitors: MonitorRegistry;
 	#sinks: TerminalEventSinks | null = null;
 	#parkedMonitorEvents: MonitorEvent[] = [];
+	#parkedMonitorEndings: MonitorEndedEvent[] = [];
 	#parkedExits = new Map<string, TerminalRuntimeSession>();
 	#backgrounds = new Map<string, WakeSourceStateItem>();
 	#torndown = false;
@@ -33,6 +36,12 @@ export class TerminalSessionBundle {
 		this.manager = new TerminalManager(options);
 		this.monitors = new MonitorRegistry((event) => this.#dispatchMonitorEvent(event), {
 			onChange: (snapshot) => this.#sinks?.onMonitorState(snapshot),
+			onFire: (snapshot) => this.#sinks?.onMonitorState(snapshot, false),
+			onEnded: (event) => {
+				if (this.#sinks) this.#sinks.onMonitorEnded(event);
+				else this.#parkedMonitorEndings.push(event);
+			},
+			reserve: () => this.manager.reserve(),
 		});
 	}
 
@@ -42,11 +51,14 @@ export class TerminalSessionBundle {
 		this.#sinks = sinks;
 		const parkedMonitorEvents = this.#parkedMonitorEvents;
 		this.#parkedMonitorEvents = [];
+		const parkedMonitorEndings = this.#parkedMonitorEndings;
+		this.#parkedMonitorEndings = [];
 		const parkedExits = [...this.#parkedExits];
 		this.#parkedExits.clear();
 		sinks.onMonitorState(this.monitors.snapshot());
 		sinks.onBackgroundState(this.backgroundSnapshot());
 		for (const event of parkedMonitorEvents) sinks.onMonitorEvent(event);
+		for (const event of parkedMonitorEndings) sinks.onMonitorEnded(event);
 		for (const [id, runtime] of parkedExits) sinks.onBackgroundExit(id, runtime);
 	}
 
@@ -85,6 +97,7 @@ export class TerminalSessionBundle {
 			this.#sinks?.onBackgroundState([]);
 		}
 		this.#torndown = true;
+		this.#parkedMonitorEndings = [];
 		this.#sinks = null;
 		await this.manager.teardown();
 	}

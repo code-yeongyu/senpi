@@ -140,16 +140,6 @@ describe("parseArgs", () => {
 			expect(result.appendSystemPrompt).toEqual(["Context A", "Context B"]);
 		});
 
-		test("parses --mode", () => {
-			const result = parseArgs(["--mode", "json"]);
-			expect(result.mode).toBe("json");
-		});
-
-		test("parses --mode rpc", () => {
-			const result = parseArgs(["--mode", "rpc"]);
-			expect(result.mode).toBe("rpc");
-		});
-
 		test("parses --session", () => {
 			const result = parseArgs(["--session", "/path/to/session.jsonl"]);
 			expect(result.session).toBe("/path/to/session.jsonl");
@@ -179,6 +169,48 @@ describe("parseArgs", () => {
 		test("parses --models as comma-separated list", () => {
 			const result = parseArgs(["--models", "gpt-4o,claude-sonnet,gemini-pro"]);
 			expect(result.models).toEqual(["gpt-4o", "claude-sonnet", "gemini-pro"]);
+		});
+	});
+
+	// Issue #9045
+	describe("--mode flag", () => {
+		test.each(["text", "json", "rpc"] as const)("parses --mode %s", (mode) => {
+			const result = parseArgs(["--mode", mode]);
+			expect(result.mode).toBe(mode);
+			expect(result.diagnostics).toEqual([]);
+		});
+
+		test.each(["yaml", ""])("rejects invalid --mode value %j", (mode) => {
+			const result = parseArgs(["--mode", mode, "--version"]);
+			expect(result.mode).toBeUndefined();
+			expect(result.version).toBe(true);
+			expect(result.messages).toEqual([]);
+			expect(result.unknownFlags.size).toBe(0);
+			expect(result.diagnostics).toEqual([
+				{ type: "error", message: `Invalid mode "${mode}". Valid values: text, json, rpc` },
+			]);
+		});
+
+		test("reports a missing --mode value", () => {
+			const result = parseArgs(["--mode"]);
+			expect(result.mode).toBeUndefined();
+			expect(result.unknownFlags.size).toBe(0);
+			expect(result.diagnostics).toEqual([{ type: "error", message: "--mode requires text, json, or rpc" }]);
+		});
+
+		test("does not consume another option as a --mode value", () => {
+			const result = parseArgs(["--mode", "--version"]);
+			expect(result.mode).toBeUndefined();
+			expect(result.version).toBe(true);
+			expect(result.unknownFlags.size).toBe(0);
+			expect(result.diagnostics).toEqual([{ type: "error", message: "--mode requires text, json, or rpc" }]);
+		});
+
+		test("reports an invalid --mode value after a valid one", () => {
+			const result = parseArgs(["--mode", "json", "--mode", "yaml"]);
+			expect(result.diagnostics).toEqual([
+				{ type: "error", message: 'Invalid mode "yaml". Valid values: text, json, rpc' },
+			]);
 		});
 	});
 
@@ -464,6 +496,27 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--no-builtin-tools", "--tools", "read,bash"]);
 			expect(result.noBuiltinTools).toBe(true);
 			expect(result.tools).toEqual(["read", "bash"]);
+		});
+	});
+
+	describe("--auto-title-sessions flag", () => {
+		test("parses --auto-title-sessions", () => {
+			const result = parseArgs(["--auto-title-sessions"]);
+			expect(result.autoTitleSessions).toBe(true);
+			expect(result.unknownFlags.has("auto-title-sessions")).toBe(false);
+		});
+
+		test("is undefined when the flag is absent", () => {
+			const result = parseArgs(["--mode", "rpc", "--multi-session"]);
+			expect(result.autoTitleSessions).toBeUndefined();
+			expect(result.multiSession).toBe(true);
+		});
+
+		test("combines with rpc multi-session flags", () => {
+			const result = parseArgs(["--mode", "rpc", "--multi-session", "--auto-title-sessions"]);
+			expect(result.mode).toBe("rpc");
+			expect(result.multiSession).toBe(true);
+			expect(result.autoTitleSessions).toBe(true);
 		});
 	});
 

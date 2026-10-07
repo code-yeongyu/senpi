@@ -3,7 +3,9 @@ import { isAnthropicWebSearchEnabled, supportsNativeAnthropicWebSearch } from ".
 import { isOpenaiWebSearchEnabled, supportsNativeOpenAiWebSearch } from "../openai-web-search/index.ts";
 
 import { loadWebsearchConfig } from "./websearch/config.ts";
+import { attemptRouteLabel } from "./websearch/route-attempts.ts";
 import { providerEntryLabel } from "./websearch/search.ts";
+import { resolveNativeSearchModel } from "./websearch/search-model.ts";
 import { createWebSearchTool } from "./websearch/tool.ts";
 import type { ConfigLoadResult, WebsearchConfig } from "./websearch/types.ts";
 
@@ -56,7 +58,36 @@ export default function (pi: ExtensionAPI): void {
 		ctx.ui.notify(state.message, "error");
 	}
 
-	pi.registerTool(createWebSearchTool(() => state));
+	let lastServedBy: string | undefined;
+
+	// senpi#2340: status names the model native search runs on, warns about an ignored nativeModel,
+	// and reports which route and model served the last search.
+	function nativeModelStatus(config: WebsearchConfig, ctx: ExtensionContext): { text: string; warning?: string } {
+		const choice = config.auto
+			? resolveNativeSearchModel(ctx.model, ctx.modelRegistry, config.nativeModel)
+			: undefined;
+		const parts: string[] = [];
+		if (choice) {
+			const fallback = choice.fallbackModel ? ` (falls back to ${choice.fallbackModel})` : "";
+			parts.push(`native model=${choice.model}${fallback}`);
+		}
+		if (lastServedBy) parts.push(`last search via ${lastServedBy}`);
+		const text = parts.map((part) => `, ${part}`).join("");
+		if (choice?.warning) return { text, warning: choice.warning };
+		if (config.nativeModel && !choice) {
+			const reason = config.auto ? "the session model has no hosted web search route" : "auto is disabled";
+			return { text, warning: `nativeModel "${config.nativeModel}" is ignored: ${reason}.` };
+		}
+		return { text };
+	}
+
+	pi.registerTool(
+		createWebSearchTool(() => state, {
+			onSearchComplete: (details) => {
+				if (!details.error) lastServedBy = attemptRouteLabel(details);
+			},
+		}),
+	);
 
 	async function refreshState(model: NativeCapableModel, ctx: ExtensionContext): Promise<void> {
 		state = isProviderNativeBypass(model)
@@ -66,6 +97,7 @@ export default function (pi: ExtensionAPI): void {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
+		lastServedBy = undefined;
 		await refreshState(ctx.model, ctx);
 	});
 
@@ -86,9 +118,11 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 			if (state.ok) {
+				const native = nativeModelStatus(state.config, ctx);
+				const summary = `Web search active: strategy=${state.config.strategy}, auto=${state.config.auto ? "enabled" : "disabled"}, providers=${providerList(state.config)}${native.text}`;
 				ctx.ui.notify(
-					`Web search active: strategy=${state.config.strategy}, auto=${state.config.auto ? "enabled" : "disabled"}, providers=${providerList(state.config)}`,
-					"info",
+					native.warning ? `${summary}\nWarning: ${native.warning}` : summary,
+					native.warning ? "warning" : "info",
 				);
 				return;
 			}

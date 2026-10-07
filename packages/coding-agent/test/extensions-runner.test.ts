@@ -28,6 +28,8 @@ import type {
 	ExtensionActions,
 	ExtensionContext,
 	ExtensionContextActions,
+	ExtensionError,
+	ExtensionFactory,
 	ExtensionUIContext,
 	ProviderConfig,
 } from "../src/core/extensions/types.ts";
@@ -128,6 +130,7 @@ describe("ExtensionRunner", () => {
 		executeTool: async <TDetails = unknown>() => ({ content: [], details: undefined as TDetails }),
 		getActiveTools: () => [],
 		getAllTools: () => [],
+		getSettings: () => ({}),
 		setActiveTools: () => {},
 		refreshTools: () => {},
 		registerRemovedToolHint: () => {},
@@ -569,6 +572,32 @@ describe("ExtensionRunner", () => {
 			expect(tools.map((t) => t.definition.name).sort()).toEqual(["tool_a", "tool_b"]);
 		});
 
+		// Regression test for #9300.
+		it("rejects extension tools without a parameter schema", async () => {
+			const extensionPath = path.join(extensionsDir, "missing-parameters.js");
+			fs.writeFileSync(
+				extensionPath,
+				`export default function(pi) {
+	pi.registerTool({
+		name: "noop",
+		label: "No-op",
+		description: "Do nothing",
+		execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+	});
+}`,
+			);
+
+			const result = await loadExtensions([extensionPath], tempDir);
+
+			expect(result.extensions).toHaveLength(0);
+			expect(result.errors).toEqual([
+				{
+					path: extensionPath,
+					error: `Failed to load extension: Tool "noop" registered by extension "${extensionPath}" must define an object parameter schema.`,
+				},
+			]);
+		});
+
 		it("keeps first tool when two extensions register the same name", async () => {
 			const first = `
 				import { Type } from "typebox";
@@ -812,6 +841,84 @@ describe("ExtensionRunner", () => {
 			expect(errors.length).toBe(1);
 			expect(errors[0].error).toContain("Handler error!");
 			expect(errors[0].event).toBe("context");
+		});
+
+		// Regression test for #9068.
+		it("fails closed when a user_bash handler throws", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("user_bash", async () => {
+						throw new Error("Routing failed");
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "throws.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ event: string; error: string }> = [];
+			runner.onError((error) => errors.push(error));
+
+			await expect(
+				runner.emitUserBash({ type: "user_bash", command: "pwd", excludeFromContext: false, cwd: tempDir }),
+			).rejects.toThrow("Routing failed");
+			expect(errors).toMatchObject([{ event: "user_bash", error: "Routing failed" }]);
+		});
+
+		// Regression test for #9068.
+		it.each([
+			["an empty object", "{}"],
+			["null operations", "{ operations: null }"],
+			["operations without exec", "{ operations: {} }"],
+			["a null result", "{ result: null }"],
+			["an incomplete result", '{ result: { output: "handled" } }'],
+			[
+				"operations and a result",
+				'{ operations: { exec: async () => ({ exitCode: 0 }) }, result: { output: "handled", exitCode: 0, cancelled: false, truncated: false } }',
+			],
+		])("fails closed when a user_bash handler returns %s", async (_description, handlerResult) => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("user_bash", async () => (${handlerResult}));
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "invalid-result.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ event: string; error: string }> = [];
+			runner.onError((error) => errors.push(error));
+
+			await expect(
+				runner.emitUserBash({ type: "user_bash", command: "pwd", excludeFromContext: false, cwd: tempDir }),
+			).rejects.toThrow("Invalid user_bash handler result");
+			expect(errors).toMatchObject([
+				{ event: "user_bash", error: expect.stringContaining("Invalid user_bash handler result") },
+			]);
+		});
+
+		it("accepts valid user_bash operations and result overrides", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("user_bash", async (event) => {
+						if (event.command === "operations") {
+							return { operations: { exec: async () => ({ exitCode: 0 }) } };
+						}
+						return { result: { output: "handled", exitCode: 0, cancelled: false, truncated: false } };
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "valid-results.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const event = { type: "user_bash" as const, excludeFromContext: false, cwd: tempDir };
+
+			const operations = await runner.emitUserBash({ ...event, command: "operations" });
+			expect(operations).toEqual({ operations: { exec: expect.any(Function) } });
+			await expect(runner.emitUserBash({ ...event, command: "result" })).resolves.toEqual({
+				result: { output: "handled", exitCode: 0, cancelled: false, truncated: false },
+			});
 		});
 	});
 
@@ -1110,6 +1217,149 @@ describe("ExtensionRunner", () => {
 				messages: undefined,
 				systemPrompt: "base\nfirst\nsecond",
 			});
+		});
+	});
+
+	describe("boundary chaining", () => {
+		it("chains shared draft proposals and preserves omitted result fields", async () => {
+			const runtime = createExtensionRuntime();
+			const eventBus = createEventBus();
+			const observations: Array<{ entries: number; continuation: boolean; preview: number }> = [];
+			const first = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("agent_before_settle", (event) => {
+						observations.push({
+							entries: event.entries.length,
+							continuation: event.continue,
+							preview: event.context.contextEntries.length,
+						});
+						event.entries.push({ type: "custom", customType: "first", data: 1 });
+						return { continue: true };
+					});
+				},
+				tempDir,
+				eventBus,
+				runtime,
+				"<inline:first>",
+			);
+			const second = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("agent_before_settle", (event) => {
+						observations.push({
+							entries: event.entries.length,
+							continuation: event.continue,
+							preview: event.context.contextEntries.length,
+						});
+						return { entries: [] };
+					});
+				},
+				tempDir,
+				eventBus,
+				runtime,
+				"<inline:second>",
+			);
+			const runner = new ExtensionRunner([first, second], runtime, tempDir, sessionManager, modelRegistry);
+
+			const result = await runner.emitBoundary({ type: "agent_before_settle", outcome: "completed" }, (entries) => ({
+				contextEntries: entries.map((entry, index) => ({
+					sourceEntry: {
+						type: "custom",
+						id: `draft-${index}`,
+						parentId: null,
+						timestamp: "",
+						customType: entry.type,
+					},
+					messages: [],
+				})),
+				contextMessages: [],
+				llmMessages: [],
+				pendingMessages: [],
+				canContinue: false,
+			}));
+
+			expect(observations).toEqual([
+				{ entries: 0, continuation: false, preview: 0 },
+				{ entries: 1, continuation: true, preview: 1 },
+			]);
+			expect(result.entries).toEqual([]);
+			expect(result.continue).toBe(true);
+		});
+
+		it("reports invalid boundary previews and lets later handlers repair the proposal", async () => {
+			const runtime = createExtensionRuntime();
+			let secondRan = false;
+			const first = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("agent_before_settle", () => ({
+						entries: [{ type: "context_edit", targetId: "missing", replacement: null }],
+					}));
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<inline:invalid>",
+			);
+			const second = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("agent_before_settle", (event) => {
+						secondRan = true;
+						expect(event.entries).toHaveLength(1);
+						return { entries: [] };
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+				"<inline:repair>",
+			);
+			const runner = new ExtensionRunner([first, second], runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+
+			const result = await runner.emitBoundary({ type: "agent_before_settle", outcome: "completed" }, (entries) => {
+				if (entries.some((entry) => entry.type === "context_edit")) throw new Error("Entry missing not found");
+				return {
+					contextEntries: [],
+					contextMessages: [],
+					llmMessages: [],
+					pendingMessages: [],
+					canContinue: false,
+				};
+			});
+
+			expect(secondRan).toBe(true);
+			expect(errors).toContain("Invalid boundary entries: Entry missing not found");
+			expect(result.entries).toEqual([]);
+			expect(result.valid).toBe(true);
+		});
+
+		it("keeps shared mutations made before a handler throws", async () => {
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("agent_before_settle", (event) => {
+						event.entries.push({ type: "custom", customType: "kept" });
+						throw new Error("boundary failed");
+					});
+				},
+				tempDir,
+				createEventBus(),
+				runtime,
+			);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+
+			const result = await runner.emitBoundary({ type: "agent_before_settle", outcome: "completed" }, () => ({
+				contextEntries: [],
+				contextMessages: [],
+				llmMessages: [],
+				pendingMessages: [],
+				canContinue: false,
+			}));
+
+			expect(result.entries).toMatchObject([{ type: "custom", customType: "kept" }]);
+			expect(errors).toEqual(["boundary failed"]);
 		});
 	});
 
@@ -1635,6 +1885,8 @@ describe("ExtensionRunner", () => {
 				newSession: async () => ({ cancelled: false }),
 				fork: async () => ({ cancelled: false }),
 				navigateTree: async () => ({ cancelled: false }),
+				editAssistantMessage: async () => ({ cancelled: false }),
+				editUserMessage: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
 				reload,
 			});
@@ -1701,6 +1953,8 @@ describe("ExtensionRunner", () => {
 				newSession: async () => ({ cancelled: false }),
 				fork,
 				navigateTree: async () => ({ cancelled: false }),
+				editAssistantMessage: async () => ({ cancelled: false }),
+				editUserMessage: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
 				reload: async () => {},
 			});
@@ -1711,6 +1965,127 @@ describe("ExtensionRunner", () => {
 
 			await commandContext.fork("entry-2", { position: "at" });
 			expect(fork).toHaveBeenLastCalledWith("entry-2", { position: "at" });
+		});
+	});
+
+	// #8967: event handler unsubscription must not disturb other registrations.
+	describe("event subscriptions", () => {
+		async function loadSubscriptionExtension(factory: ExtensionFactory) {
+			const runtime = createExtensionRuntime();
+			const extension = await loadExtensionFromFactory(factory, tempDir, createEventBus(), runtime);
+			const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry);
+			return { extension, runner };
+		}
+
+		it("allows self-removal without skipping neighboring handlers", async () => {
+			const calls: string[] = [];
+			const { runner } = await loadSubscriptionExtension((pi) => {
+				const unsubscribe = pi.on("agent_end", () => {
+					calls.push("A");
+					unsubscribe();
+				});
+				pi.on("agent_end", () => {
+					calls.push("B");
+				});
+			});
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B"]);
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B", "B"]);
+		});
+
+		it("removes duplicate registrations independently and cleans up the last handler", async () => {
+			const calls: string[] = [];
+			const unsubscribers: Array<() => void> = [];
+			const { extension, runner } = await loadSubscriptionExtension((pi) => {
+				const shared = () => {
+					calls.push("shared");
+				};
+				unsubscribers.push(pi.on("agent_end", shared));
+				unsubscribers.push(
+					pi.on("agent_end", () => {
+						calls.push("B");
+					}),
+				);
+				unsubscribers.push(pi.on("agent_end", shared));
+			});
+			const [stopFirst, stopB, stopSecond] = unsubscribers;
+
+			stopSecond();
+			stopSecond();
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["shared", "B"]);
+
+			stopFirst();
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["shared", "B", "B"]);
+
+			stopB();
+			expect(extension.handlers.has("agent_end")).toBe(false);
+		});
+
+		it("keeps removed pending handlers in the current dispatch", async () => {
+			const calls: string[] = [];
+			const { runner } = await loadSubscriptionExtension((pi) => {
+				pi.on("agent_end", () => {
+					calls.push("A");
+					stopB();
+				});
+				const stopB = pi.on("agent_end", () => {
+					calls.push("B");
+				});
+				pi.on("agent_end", () => {
+					calls.push("C");
+				});
+			});
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B", "C"]);
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B", "C", "A", "C"]);
+		});
+
+		it("defers registrations made during dispatch until the next dispatch", async () => {
+			const calls: string[] = [];
+			const { runner } = await loadSubscriptionExtension((pi) => {
+				pi.on("agent_end", () => {
+					calls.push("A");
+					pi.on("agent_end", () => {
+						calls.push("C");
+					});
+				});
+				pi.on("agent_end", () => {
+					calls.push("B");
+				});
+			});
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B"]);
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "B", "A", "B", "C"]);
+		});
+
+		it("uses a fresh handler list for nested dispatches", async () => {
+			const calls: string[] = [];
+			const { runner } = await loadSubscriptionExtension((pi) => {
+				const stopA = pi.on("agent_end", async () => {
+					calls.push("A");
+					stopA();
+					stopB();
+					pi.on("agent_end", () => {
+						calls.push("C");
+					});
+					await runner.emit({ type: "agent_end", messages: [] });
+				});
+				const stopB = pi.on("agent_end", () => {
+					calls.push("B");
+				});
+			});
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			expect(calls).toEqual(["A", "C", "B"]);
 		});
 	});
 
@@ -1862,6 +2237,193 @@ describe("ExtensionRunner", () => {
 			const runner = new ExtensionRunner([a, b], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
 			await runner.emit({ type: "session_start", reason: "startup" });
 			expect(captured?.map((s) => s.name)).toEqual(["gamma"]);
+		});
+	});
+
+	describe("session_shutdown handler budget", () => {
+		/** Writes the host budget the runner reads at shutdown; an empty object keeps the shipped defaults. */
+		function writeShutdownBudget(budget: { warnMs?: number; timeoutMs?: number }): string {
+			const agentDir = path.join(tempDir, "agent");
+			fs.mkdirSync(agentDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(agentDir, "settings.json"),
+				JSON.stringify({
+					...(budget.warnMs === undefined ? {} : { sessionShutdownHandlerWarnMs: budget.warnMs }),
+					...(budget.timeoutMs === undefined ? {} : { sessionShutdownHandlerTimeoutMs: budget.timeoutMs }),
+				}),
+			);
+			return agentDir;
+		}
+
+		it("aborts a hung handler at the hard cap, reports it once, and still runs the next extension", async () => {
+			const agentDir = writeShutdownBudget({ warnMs: 0, timeoutMs: 50 });
+			let signalInsideHandler: AbortSignal | undefined;
+			let abortedInsideHandler = false;
+			const hung = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_shutdown", (event) => {
+						signalInsideHandler = event.signal;
+						event.signal?.addEventListener("abort", () => {
+							abortedInsideHandler = true;
+						});
+						return new Promise<void>(() => {});
+					});
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<hung-ext>",
+			);
+			let secondRan = false;
+			const second = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_shutdown", () => {
+						secondRan = true;
+					});
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<second-ext>",
+			);
+			const runner = new ExtensionRunner(
+				[hung, second],
+				createExtensionRuntime(),
+				tempDir,
+				sessionManager,
+				modelRegistry,
+			);
+			runner.bindCore(extensionActions, { ...extensionContextActions, getAgentDir: () => agentDir });
+			const errors: ExtensionError[] = [];
+			runner.onError((error) => errors.push(error));
+
+			const startedAt = Date.now();
+			await runner.emit({ type: "session_shutdown", reason: "quit" });
+			const elapsedMs = Date.now() - startedAt;
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0]).toMatchObject({ extensionPath: "<hung-ext>", event: "session_shutdown" });
+			expect(errors[0].error).toContain("timed out after 50ms");
+			expect(secondRan).toBe(true);
+			expect(abortedInsideHandler).toBe(true);
+			expect(signalInsideHandler?.aborted).toBe(true);
+			// The configured cap is 50ms; the ceiling only has to exclude "waited for the hung handler".
+			expect(elapsedMs).toBeLessThan(5_000);
+		});
+
+		it("warns once for a handler that outlives the warn threshold and emits no error", async () => {
+			const agentDir = writeShutdownBudget({ warnMs: 5, timeoutMs: 10_000 });
+			let releaseHandler: (() => void) | undefined;
+			const slow = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on(
+						"session_shutdown",
+						() =>
+							new Promise<void>((resolve) => {
+								releaseHandler = resolve;
+							}),
+					);
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<slow-ext>",
+			);
+			const runner = new ExtensionRunner([slow], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, { ...extensionContextActions, getAgentDir: () => agentDir });
+			const errors: ExtensionError[] = [];
+			runner.onError((error) => errors.push(error));
+			const warnings: string[] = [];
+			let firstWarningSeen: (() => void) | undefined;
+			const firstWarning = new Promise<void>((resolve) => {
+				firstWarningSeen = resolve;
+			});
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+				warnings.push(args.map((arg) => String(arg)).join(" "));
+				firstWarningSeen?.();
+			});
+
+			try {
+				const emitted = runner.emit({ type: "session_shutdown", reason: "reload" });
+				await firstWarning;
+				releaseHandler?.();
+				await emitted;
+			} finally {
+				warnSpy.mockRestore();
+			}
+
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain("<slow-ext>");
+			expect(warnings[0]).toContain("session_shutdown");
+			expect(errors).toEqual([]);
+		});
+
+		it("leaves a prompt handler's signal unaborted and stays silent", async () => {
+			const agentDir = writeShutdownBudget({});
+			let observedSignal: AbortSignal | undefined;
+			let observedReason: string | undefined;
+			const fast = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_shutdown", (event) => {
+						observedSignal = event.signal;
+						observedReason = event.reason;
+					});
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<fast-ext>",
+			);
+			const runner = new ExtensionRunner([fast], createExtensionRuntime(), tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, { ...extensionContextActions, getAgentDir: () => agentDir });
+			const errors: ExtensionError[] = [];
+			runner.onError((error) => errors.push(error));
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+			try {
+				await runner.emit({ type: "session_shutdown", reason: "new", targetSessionFile: "/tmp/next.jsonl" });
+			} finally {
+				warnSpy.mockRestore();
+			}
+
+			expect(observedReason).toBe("new");
+			expect(observedSignal).toBeInstanceOf(AbortSignal);
+			expect(observedSignal?.aborted).toBe(false);
+			expect(warnSpy).not.toHaveBeenCalled();
+			expect(errors).toEqual([]);
+		});
+
+		it("keeps the existing error shape when a shutdown handler throws", async () => {
+			const agentDir = writeShutdownBudget({});
+			const throwing = await loadExtensionFromFactory(
+				(pi) => {
+					pi.on("session_shutdown", () => {
+						throw new Error("shutdown boom");
+					});
+				},
+				tempDir,
+				createEventBus(),
+				createExtensionRuntime(),
+				"<throwing-ext>",
+			);
+			const runner = new ExtensionRunner(
+				[throwing],
+				createExtensionRuntime(),
+				tempDir,
+				sessionManager,
+				modelRegistry,
+			);
+			runner.bindCore(extensionActions, { ...extensionContextActions, getAgentDir: () => agentDir });
+			const errors: ExtensionError[] = [];
+			runner.onError((error) => errors.push(error));
+
+			await runner.emit({ type: "session_shutdown", reason: "quit" });
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toBe("<throwing-ext>");
+			expect(errors[0].event).toBe("session_shutdown");
+			expect(errors[0].error).toBe("shutdown boom");
+			expect(errors[0].stack).toBeDefined();
 		});
 	});
 });

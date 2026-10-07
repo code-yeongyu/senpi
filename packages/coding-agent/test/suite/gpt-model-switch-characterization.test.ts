@@ -34,13 +34,13 @@ describe("GPT model-switch toolset characterization", () => {
 		});
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write", "grep"]);
 
 		// When
 		await harness.session.setModel(modelWithApi(harness, "gpt-5.5", "openai-responses"));
 
 		// Then
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
 	});
 
 	it("s2 restores edit tools when selecting an anthropic model from a Responses GPT", async () => {
@@ -53,13 +53,13 @@ describe("GPT model-switch toolset characterization", () => {
 		});
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
 
 		// When
 		await harness.session.setModel(modelWithApi(harness, "claude-sonnet", "anthropic-messages"));
 
 		// Then
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "grep", "edit", "write"]);
 	});
 
 	it("s3 restores apply_patch after a GPT to anthropic to GPT round trip", async () => {
@@ -78,7 +78,7 @@ describe("GPT model-switch toolset characterization", () => {
 		await harness.session.setModel(modelWithApi(harness, "gpt-5.5", "openai-responses"));
 
 		// Then
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "grep", "apply_patch"]);
 	});
 
 	it("s4 exposes apply_patch as a JSON function tool for a completions GPT", async () => {
@@ -95,7 +95,7 @@ describe("GPT model-switch toolset characterization", () => {
 		await harness.session.bindExtensions({});
 
 		// Then
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
 		// Chat Completions cannot carry freeform tools, so the registered variant
 		// must be the plain JSON function definition.
 		expect(harness.session.getToolDefinition("apply_patch")?.freeform).toBeUndefined();

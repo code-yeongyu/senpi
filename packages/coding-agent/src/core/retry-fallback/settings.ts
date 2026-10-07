@@ -12,6 +12,8 @@ export interface RetrySettings {
 	enabled?: boolean;
 	maxRetries?: number;
 	baseDelayMs?: number;
+	/** Hard ceiling on one agent-level retry wait, applied after profile/hint/jitter planning; default: 60000. */
+	maxAgentDelayMs?: number;
 	provider?: ProviderRetrySettings;
 	providers?: Record<string, import("./profile-override.ts").RetryPolicyOverride>;
 	modelFallback?: boolean;
@@ -30,15 +32,21 @@ export interface ResolvedRetryFallbackSettings {
 
 /**
  * Shipped defaults are declared as model families (bare ids, no provider prefix).
- * `canonicalizeFallbackChains` expands them against the live registry, so the
- * chain follows Fable 5 whichever provider serves it - the builtin Anthropic
- * provider, the Claude SDK OAuth extension, a gateway, or Bedrock.
+ * `canonicalizeFallbackChains` expands them against the live registry, so the chain
+ * follows Fable 5 whichever provider serves it - the builtin Anthropic provider, the
+ * Anthropic Subscription extension, a gateway, or Bedrock.
+ *
+ * The ladder never leaves the Anthropic Opus family. The previous shipped default was
+ * removed because it led with cross-family rungs (`k3`, `kimi-k3`), which moved a Claude
+ * session onto another vendor mid-turn and could rank a guaranteed-refusal OAuth lane
+ * first; a same-family step-down carries neither problem. There is still deliberately no
+ * wildcard lane.
  */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	// `kimi-k3:max` is an alias entry for providers that expose Kimi K3 under the
-	// vendor-prefixed id `kimi-k3` (e.g. OpenCode Go), which the conservative `k3`
-	// family matcher intentionally cannot capture (issue #793).
-	"claude-fable-5": ["k3:max", "kimi-k3:max", "claude-opus-5:xhigh", "claude-opus-4-8:xhigh"],
+	// Every rung is `:max`: Opus 5.5 is recommended at max, and `claude-opus-4-6` publishes only that thinking level.
+	"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+	"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+	"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
 };
 
 function cloneDefaultFallbackChains(): Record<string, readonly string[]> {
@@ -70,9 +78,7 @@ function isStringArray(value: unknown): value is string[] {
  * `deepMergeSettings`; this only resolves defaults against the merged result.
  */
 function resolveFallbackChains(value: unknown): FallbackChains {
-	if (value === undefined) return cloneDefaultFallbackChains();
-	if (!isPlainObject(value)) return cloneDefaultFallbackChains();
-
+	if (value === undefined || !isPlainObject(value)) return cloneDefaultFallbackChains();
 	const chains: Record<string, readonly string[]> = cloneDefaultFallbackChains();
 	for (const [key, entries] of Object.entries(value)) {
 		if (!isStringArray(entries)) return cloneDefaultFallbackChains();

@@ -4,6 +4,7 @@ import type { Model, ThinkingSelection } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { drainPendingProviderRegistrations } from "./extensions/loader.ts";
@@ -18,6 +19,7 @@ import {
 import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./sdk.ts";
 import type { SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
+import { joinStartupBranches } from "./startup-branch-join.ts";
 
 /**
  * Non-fatal issues collected while creating services or sessions.
@@ -43,6 +45,7 @@ export interface CreateAgentSessionServicesOptions {
 	agentDir?: string;
 	settingsManager?: SettingsManager;
 	modelRuntime?: ModelRuntime;
+	mcpRegistry?: HostMcpRegistry;
 	modelRuntimeSignal?: AbortSignal;
 	extensionFlagValues?: Map<string, boolean | string>;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
@@ -60,8 +63,10 @@ export interface CreateAgentSessionFromServicesOptions {
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
+	initialModelProvenance?: CreateAgentSessionOptions["initialModelProvenance"];
 	thinkingLevel?: ThinkingLevel;
 	thinkingSelection?: ThinkingSelection;
+	serviceTier?: ServiceTier;
 	scopedModels?: Array<{
 		model: Model<any>;
 		thinkingLevel?: ThinkingLevel;
@@ -79,6 +84,8 @@ export interface CreateAgentSessionFromServicesOptions {
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
 	autoTitleSessions?: boolean;
+	promptSurface?: CreateAgentSessionOptions["promptSurface"];
+	browserEngine?: CreateAgentSessionOptions["browserEngine"];
 }
 
 /**
@@ -159,33 +166,44 @@ export async function createAgentSessionServices(
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
 	const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-	const modelRuntime =
-		options.modelRuntime ??
-		(await ModelRuntime.create({
-			credentials: authStorage,
-			modelsPath: join(agentDir, "models.json"),
-			signal: options.modelRuntimeSignal,
-		}));
-	const modelRegistry = new ModelRegistry(modelRuntime, authStorage);
+	const runtimePromise =
+		options.modelRuntime !== undefined
+			? Promise.resolve(options.modelRuntime)
+			: ModelRuntime.create({
+					credentials: authStorage,
+					authPath: join(agentDir, "auth.json"),
+					agentDir,
+					modelsPath: join(agentDir, "models.json"),
+					signal: options.modelRuntimeSignal,
+				});
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,
 		agentDir,
 		settingsManager,
+		mcpRegistry: options.mcpRegistry,
 	});
-	await resourceLoader.reload(options.resourceLoaderReloadOptions);
+	const { primary: modelRuntime } = await joinStartupBranches(
+		runtimePromise,
+		resourceLoader.reload(options.resourceLoaderReloadOptions),
+	);
+	const modelRegistry = new ModelRegistry(modelRuntime, authStorage);
+	modelRuntime.setSettingsManager(settingsManager);
 
 	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
 	const extensionsResult = resourceLoader.getExtensions();
+	const registeredProviders = new Set<string>();
 	// Replay registrations queued during extension loading in original call order
 	// so last-registration-wins holds across mixed legacy/native registrations.
 	for (const registration of drainPendingProviderRegistrations(extensionsResult.runtime)) {
 		try {
 			if (registration.kind === "config") {
 				void modelRuntime.registerProvider(registration.name, registration.config, { refresh: false });
+				registeredProviders.add(registration.name);
 			} else {
 				void modelRuntime.registerNativeProvider(registration.provider, { refresh: false });
+				registeredProviders.add(registration.provider.id);
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -195,7 +213,28 @@ export async function createAgentSessionServices(
 			});
 		}
 	}
-	await modelRuntime.refresh({ allowNetwork: false });
+	// A runtime built for this session refreshes everything it has, which is what
+	// it just composed. A runtime shared across a host's sessions already holds
+	// every provider earlier opens refreshed, so this open recomposes only what
+	// it added - an unscoped refresh there rebuilt every provider on every open,
+	// serialized on the one instance (senpi#1844).
+	if (options.modelRuntime === undefined) {
+		await modelRuntime.refresh({ allowNetwork: false });
+	} else if (registeredProviders.size > 0) {
+		await modelRuntime.refresh({ allowNetwork: false, providers: [...registeredProviders] });
+	}
+	for (const { definition, extensionPath } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+		try {
+			modelRuntime.registerVirtualModel(definition);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			diagnostics.push({
+				type: "error",
+				message: `Extension "${extensionPath}" error: ${message}`,
+			});
+		}
+	}
+	extensionsResult.runtime.pendingVirtualModelRegistrations = [];
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 
 	return {
@@ -230,8 +269,10 @@ export async function createAgentSessionFromServices(
 		resourceLoader: options.services.resourceLoader,
 		sessionManager: options.sessionManager,
 		model: options.model,
+		initialModelProvenance: options.initialModelProvenance,
 		thinkingLevel: options.thinkingLevel,
 		thinkingSelection: options.thinkingSelection,
+		serviceTier: options.serviceTier,
 		scopedModels: options.scopedModels,
 		favoriteModels: options.favoriteModels,
 		tools: options.tools,
@@ -240,5 +281,7 @@ export async function createAgentSessionFromServices(
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
 		autoTitleSessions: options.autoTitleSessions,
+		promptSurface: options.promptSurface,
+		browserEngine: options.browserEngine,
 	});
 }

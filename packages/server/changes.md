@@ -1,5 +1,114 @@
 # changes
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): chord, client, protocol, server, telemetry, sqlite-node
+
+### What changed
+
+- `packages/server/package.json`: resolved by L11 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; chord/client/protocol/server/telemetry/sqlite-node take upstream versions with fork exact pins (plan D-12).
+
+### Why an extension could not handle it
+
+Package manifests and wire-protocol packages are shared infrastructure below the extension layer.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-21 - Migrate the test runner to Vitest 5 (senpi#1895)
+
+### What changed
+
+- `packages/server/package.json`: Updated the test runner to Vitest 5.0.1.
+
+### Why
+
+- Run this workspace on the pinned Vitest 5 release.
+
+### Why an extension could not handle it
+
+- The package manager resolves development tools before extensions load.
+
+### Expected merge conflict zones
+
+- The development dependency pins in `packages/server/package.json`.
+
+## 2026-09-12 - Pin the chord dependency to upstream's published version
+
+### What changed
+
+- packages/server/package.json: `@earendil-works/chord` is pinned to the exact upstream `0.85.1` it resolves to, instead of a fork CalVer range.
+
+### Why
+
+- chord is bundled but kept on upstream's own release identity (issue #1632): the fork does not publish it, so a CalVer range was unresolvable on the registry and broke `bun add @code-yeongyu/senpi`. Pinning the exact published `0.85.1` keeps the declared edge resolvable while the bundled copy shadows it at runtime.
+
+### Why an extension could not handle it
+
+- packages/server/package.json is static manifest data consumed by the package manager and the release/publish pipeline, never reachable from the runtime extension system.
+
+### Expected merge conflict zones
+
+- The `@earendil-works/chord` dependency range in packages/server/package.json.
+
+## 2026-09-12 - Remove the ai-to-protocol mapper with the protocol v8 adoption
+
+### What changed
+
+- `packages/server/src/protocol.ts` (the `toProtocolModelMetadata()` / `toProtocolAssistantMessage()` / `toProtocolUserMessage()` / `toProtocolToolResultMessage()` bridge), `packages/server/test/protocol.test.ts`, and the matching re-export in `packages/server/src/index.ts` are deleted (C13). Upstream replaced the mapping layer with service-addressed RPC routed through `src/session-router.ts` and deleted `packages/protocol/src/schemas.ts`, so the DTOs the mapper produced no longer exist.
+- The 2026-09-04, 2026-08-25, and 2026-08-13 blocks below that describe `protocol.ts` field accounting remain as history; they no longer name live code.
+
+### Why
+
+- Keeping a mapper for schemas upstream removed would mean re-inventing the wire contract inside the fork; the server now forwards opaque service envelopes and never decodes business payloads.
+
+### Why an extension could not handle it
+
+- The server package sits below the extension layer; the wire contract is not something an extension can shape.
+
+### Expected merge conflict zones
+
+- `packages/server/src/index.ts` exports and any upstream change that reintroduces a typed mapping module; expect fork-side deletions, not edits.
+
+## 2026-09-10 - Use native TypeScript builds for omob performance
+
+### What changed
+
+- packages/server/package.json: build uses tsgo for the emitted workspace build.
+
+### Why
+
+- The native compiler reduces omob build time without changing runtime JavaScript.
+
+### Why this lives in the fork
+
+- The package build manifest owns the compiler used by the fork's release pipeline.
+
+### Expected merge conflict zones
+
+- The `build` script in packages/server/package.json.
+
+## 2026-09-04 - Account for providerThinkingLevel in the protocol types
+
+### What changed
+
+- `packages/server/src/protocol.ts`: the AssistantMessage field-accounting assertion gains `providerThinkingLevel`, mirroring the field the v0.84.4 sync added to the shared AI message type (upstream 4e69b0c28).
+
+### Why
+
+- The server protocol type must stay in lockstep with the shared AssistantMessage shape; the exhaustiveness assertion fails compilation when a field is added upstream but not accounted for here.
+
+### Why an extension could not handle it
+
+- The protocol type is the compiled wire contract shared by server and clients; extensions operate above it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/server/src/protocol.ts` field-accounting list whenever upstream extends the AssistantMessage shape.
+
 ## Server manifest re-diverges from upstream dcd4619 (2026-08-25)
 
 ### What changed
@@ -81,3 +190,43 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 
 - MEDIUM: `src/protocol.ts`, in `ExactKeys` manifests and assistant/tool-call
   conversion switches.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/server/package.json`: stays `@code-yeongyu/senpi-server 2026.9.12` (`senpi` keyword, `code-yeongyu/senpi` repository, `private: true`), `tsc` for `dev`/`typecheck`, `@earendil-works/chord`/`pi-agent-core`/`pi-protocol` at `^2026.9.12` plus the fork's `@earendil-works/pi-ai` runtime dependency, `vitest 4.1.11`.
+- `packages/server/src/testing/client.ts`: upstream service-addressed test client with the fork `(chunk: Buffer)` typing on the socket data handler.
+- `packages/server/src/transports/unix/listener.ts`: upstream `ServerListener` with `.bind-` ownership and stale-socket cleanup, with the fork `(chunk: Buffer)` typing on the socket data handler.
+
+### Why
+
+- The server publishes under the fork name and lockstep, and the fork's `@types/node 26.2.0` requires explicit `Buffer` typing on socket chunks.
+
+### Why an extension could not handle it
+
+- Manifest identity and transport source typing are compile-time concerns of the server package.
+
+### Expected merge conflict zones
+
+- LOW: `socket.on("data", ...)` handlers in both source files; `packages/server/package.json` name/version/dependency lines.
+
+## 2026-10-02 - Server drops its agent-core dependency (D-16) (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/server/package.json`
+
+The server package's dependency set follows upstream: `pi-agent-core` is removed and `BACKGROUND_CONTEXT` imports from `@earendil-works/chord/context`.
+
+### Why
+
+Upstream simplified the server's dependencies; the fork modifies nothing here.
+
+### Why an extension could not handle it
+
+Package dependency declarations are not an extension surface.
+
+### Expected merge conflict zones
+
+Upstream server manifest edits at the next sync.

@@ -1,0 +1,324 @@
+{
+	"source": "cursor GetUsableModels live capture 2026-09-23 (senpi 2026.9.23 models-store), ids absent from cursor-variant-aliases.json",
+	"models": [
+		{
+			"id": "claude-fable-5-1-high",
+			"name": "Claude Fable 5.1 1M (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-low",
+			"name": "Claude Fable 5.1 1M Low (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-max",
+			"name": "Claude Fable 5.1 1M Max (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-medium",
+			"name": "Claude Fable 5.1 1M Medium (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-high",
+			"name": "Claude Fable 5.1 1M Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-low",
+			"name": "Claude Fable 5.1 1M Low Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-max",
+			"name": "Claude Fable 5.1 1M Max Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-medium",
+			"name": "Claude Fable 5.1 1M Medium Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-thinking-xhigh",
+			"name": "Claude Fable 5.1 1M Extra High Thinking (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-fable-5-1-xhigh",
+			"name": "Claude Fable 5.1 1M Extra High (NO ZDR)",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-high",
+			"name": "Claude Opus 5.5 1M High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-high-fast",
+			"name": "Claude Opus 5.5 1M High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-5-low",
+			"name": "Claude Opus 5.5 1M Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-low-fast",
+			"name": "Claude Opus 5.5 1M Low Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-5-max",
+			"name": "Claude Opus 5.5 1M Max",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-max-fast",
+			"name": "Claude Opus 5.5 1M Max Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-5-medium",
+			"name": "Claude Opus 5.5 1M",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-medium-fast",
+			"name": "Claude Opus 5.5 1M Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "claude-opus-5-5-xhigh",
+			"name": "Claude Opus 5.5 1M Extra High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "claude-opus-5-5-xhigh-fast",
+			"name": "Claude Opus 5.5 1M Extra High Fast",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": true
+		},
+		{
+			"id": "gemini-3.8-flash-high",
+			"name": "Gemini 3.8 Flash High",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.8-flash-low",
+			"name": "Gemini 3.8 Flash Low",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "gemini-3.8-flash-medium",
+			"name": "Gemini 3.8 Flash Medium",
+			"input": [
+				"text",
+				"image"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-high",
+			"name": "Grok 4.7  High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-high-fast",
+			"name": "Grok 4.7  High Fast​​",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-low",
+			"name": "Grok 4.7  Low",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-low-fast",
+			"name": "Grok 4.7  Low Fast​​",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-medium",
+			"name": "Grok 4.7  Medium",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-medium-fast",
+			"name": "Grok 4.7  Medium Fast​​",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-xhigh",
+			"name": "Grok 4.7  Extra High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "grok-4.7-xhigh-fast",
+			"name": "Grok 4.7  Extra High Fast​​",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-high",
+			"name": "Muse Spark 1.3 1M",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-low",
+			"name": "Muse Spark 1.3 1M Low",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-max",
+			"name": "Muse Spark 1.3 1M Max",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-medium",
+			"name": "Muse Spark 1.3 1M Medium",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-minimal",
+			"name": "Muse Spark 1.3 1M Minimal",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		},
+		{
+			"id": "muse-spark-1.3-xhigh",
+			"name": "Muse Spark 1.3 1M Extra High",
+			"input": [
+				"text"
+			],
+			"cursorMaxMode": false
+		}
+	]
+}

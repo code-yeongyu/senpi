@@ -6,7 +6,15 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { copyContextProvenance, type ImageContent, type Message, type TextContent } from "@earendil-works/pi-ai";
+import {
+	copyContextProvenance,
+	dropFailedAssistantTurns,
+	type ImageContent,
+	type Message,
+	type TextContent,
+} from "@earendil-works/pi-ai";
+import { ENVIRONMENT_CONTEXT_MESSAGE_TYPE, foldEnvironmentContextIntoNextUserMessage } from "./environment-context.ts";
+import { omitProviderRejectedImages } from "./provider-rejected-images.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -78,7 +86,7 @@ export interface CustomMessage<T = unknown> {
 export interface BranchSummaryMessage {
 	role: "branchSummary";
 	summary: string;
-	fromId: string;
+	fromId: string | null;
 	timestamp: number;
 }
 
@@ -90,12 +98,20 @@ export interface CompactionSummaryMessage {
 	timestamp: number;
 }
 
+export interface ConfigurationUpdateMessage {
+	role: "configurationUpdate";
+	content: (TextContent | ImageContent)[];
+	effort: string;
+	timestamp: number;
+}
+
 // Extend CustomAgentMessages via declaration merging
 declare module "@earendil-works/pi-agent-core" {
 	interface CustomAgentMessages {
 		bashExecution: BashExecutionMessage;
 		custom: CustomMessage;
 		branchSummary: BranchSummaryMessage;
+		configurationUpdate: ConfigurationUpdateMessage;
 	}
 }
 
@@ -175,7 +191,8 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 		copyContextProvenance(source, target);
 	// Continuations are append-only here too: the transport array must extend the
 	// previous request verbatim to keep the provider's cache prefix valid.
-	return messages
+	const environmentMessages = new Set<Message>();
+	const converted = messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
@@ -194,11 +211,13 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					}
 
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					return withContextProvenance(m, {
-						role: "user",
+					const converted = withContextProvenance(m, {
+						role: "user" as const,
 						content,
 						timestamp: m.timestamp,
 					});
+					if (m.customType === ENVIRONMENT_CONTEXT_MESSAGE_TYPE) environmentMessages.add(converted);
+					return converted;
 				}
 				case "branchSummary":
 					return withContextProvenance(m, {
@@ -214,6 +233,9 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						],
 						timestamp: m.timestamp,
 					});
+				case "configurationUpdate":
+					return m;
+				case "system":
 				case "user":
 				case "assistant":
 				case "toolResult":
@@ -225,6 +247,19 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			}
 		})
 		.filter((m) => m !== undefined);
+	// Failed provider turns (stopReason error/aborted) must never reach an LLM
+	// request: lanes that build requests straight from this output (claude-sdk
+	// prompt bridge, cursor turns) would otherwise replay their partial text and
+	// unexecuted tool calls, and token estimation would count them. Dropping is
+	// deterministic per session state, so the cache-prefix guarantee above holds.
+	// senpi#2118: the environment context then becomes the leading block of the
+	// user message it precedes, so strict-alternation chat templates never see
+	// two consecutive user messages. senpi#2170: images a failed turn proves the
+	// provider rejected are replaced first, while the failed turn is still visible.
+	return foldEnvironmentContextIntoNextUserMessage(
+		dropFailedAssistantTurns(omitProviderRejectedImages(converted)),
+		environmentMessages,
+	);
 }
 
 // ============================================================================

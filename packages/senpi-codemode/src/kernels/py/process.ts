@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type { Readable, Writable } from "node:stream";
 
 export interface KernelChild {
@@ -22,6 +24,13 @@ export interface KernelSpawnOptions {
 
 export type KernelSpawnProcess = (options: KernelSpawnOptions) => KernelChild;
 
+/** Signals a kernel's whole process group (addressed by its leader pid); throws like `process.kill`. */
+export type KillProcessGroup = (pid: number, signal: NodeJS.Signals) => void;
+
+export const killProcessGroup: KillProcessGroup = (pid, signal) => {
+	process.kill(-pid, signal);
+};
+
 export class PythonKernelRetirementError extends Error {
 	constructor(pid: number | undefined) {
 		super(`Python kernel process${pid === undefined ? "" : ` ${pid}`} did not exit after SIGKILL`);
@@ -30,19 +39,33 @@ export class PythonKernelRetirementError extends Error {
 }
 
 export function defaultSpawn(options: KernelSpawnOptions): KernelChild {
-	return spawn(options.command, [...options.args], {
+	// Detached children survive their host, so the prelude needs the host pid to
+	// watch for a parent that is already gone by the time the interpreter boots.
+	const env =
+		process.platform === "win32" ? options.env : { ...options.env, SENPI_PY_KERNEL_PARENT_PID: String(process.pid) };
+	const child = spawn(options.command, [...options.args], {
 		cwd: options.cwd,
-		env: options.env,
+		env,
 		stdio: "pipe",
 		detached: process.platform !== "win32",
 		windowsHide: true,
 	});
+	globalThis.__senpiCodemodeGateObserveResource?.("processes", child, "close");
+	return child;
 }
 
 export function splitCommand(commandLine: string): { readonly command: string; readonly args: readonly string[] } {
+	// A configured interpreter path is one executable even when it contains spaces.
+	if (isAbsolute(commandLine) && existsSync(commandLine)) return { command: commandLine, args: [] };
 	const [command, ...args] = commandLine.split(" ").filter(Boolean);
 	if (!command) throw new Error("Python interpreter path is empty");
 	return { command, args };
+}
+
+function errorCode(error: unknown): string | undefined {
+	if (typeof error !== "object" || error === null) return undefined;
+	const code = Reflect.get(error, "code");
+	return typeof code === "string" ? code : undefined;
 }
 
 export function numberOrNull(value: unknown): number | null {
@@ -80,7 +103,25 @@ export async function waitForExit(child: KernelChild, timeoutMs: number): Promis
 	});
 }
 
-export async function hardKill(child: KernelChild, timeoutMs: number): Promise<void> {
+// A cell's own subprocess is spawned into the detached kernel's process group. When the
+// leader exits gracefully on close, kill the group so a Popen the cell left running does
+// not outlive the kernel; the group is addressed by the leader pid (== pgid) while members live.
+export function sweepProcessGroup(child: KernelChild, killGroup: KillProcessGroup = killProcessGroup): void {
+	if (child.pid === undefined || process.platform === "win32") return;
+	try {
+		killGroup(child.pid, "SIGKILL");
+	} catch (error) {
+		// ESRCH means the group is already gone (the success case). Any other error
+		// (for example EPERM on a member we cannot signal) must not fail a graceful close.
+		if (errorCode(error) !== "ESRCH") return;
+	}
+}
+
+export async function hardKill(
+	child: KernelChild,
+	timeoutMs: number,
+	killGroup: KillProcessGroup = killProcessGroup,
+): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		let timer: NodeJS.Timeout | undefined;
 		let settled = false;
@@ -97,7 +138,7 @@ export async function hardKill(child: KernelChild, timeoutMs: number): Promise<v
 		let signalDelivered = true;
 		if (child.pid !== undefined && process.platform !== "win32") {
 			try {
-				process.kill(-child.pid, "SIGKILL");
+				killGroup(child.pid, "SIGKILL");
 			} catch (error) {
 				if (!(error instanceof Error)) {
 					settle(new Error(String(error)));

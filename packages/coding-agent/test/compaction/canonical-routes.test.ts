@@ -1,4 +1,4 @@
-import { type AssistantMessage, fauxAssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { type AssistantMessage, fauxAssistantMessage, type Model, normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { convertResponsesMessages } from "../../../ai/src/api/openai-responses-shared.ts";
 import { type CompactionResult, DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
@@ -18,6 +18,7 @@ import { createExtensionRuntime, loadExtensionFromFactory } from "../../src/core
 import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX, convertToLlm } from "../../src/core/messages.ts";
 import {
 	buildSessionContext,
+	SESSION_CONTEXT_ENTRY_ID,
 	type SessionEntry,
 	type SessionMessageEntry,
 	sessionEntryToContextMessages,
@@ -119,6 +120,7 @@ describe("builtin compaction canonical routes", () => {
 		await handler(
 			{
 				type: "before_agent_start",
+				trigger: "prompt",
 				prompt: "incoming prompt ".repeat(1_500),
 				systemPrompt: "You are senpi.",
 				systemPromptOptions: { cwd: process.cwd() },
@@ -257,7 +259,7 @@ describe("builtin compaction canonical routes", () => {
 		const checkpointIndex = branch.findIndex((entry) => entry.id === "checkpoint");
 		const canonicalInput = convertResponsesMessages(
 			OPENAI_MODEL,
-			{
+			normalizeContext({
 				systemPrompt: "current system prompt",
 				messages: [
 					...convertToLlm(
@@ -267,7 +269,7 @@ describe("builtin compaction canonical routes", () => {
 					),
 					{ role: "user", content: [{ type: "text", text: currentPrompt }], timestamp: 7 },
 				],
-			},
+			}),
 			new Set(["openai"]),
 		);
 		const canonicalPayload = JSON.stringify(canonicalInput);
@@ -400,13 +402,13 @@ describe("builtin compaction canonical routes", () => {
 
 		const canonicalInput = convertResponsesMessages(
 			OPENAI_MODEL,
-			{
+			normalizeContext({
 				systemPrompt: "current system prompt",
 				messages: [
 					...canonicalMessages,
 					{ role: "user", content: [{ type: "text", text: currentPrompt }], timestamp: 7 },
 				],
-			},
+			}),
 			new Set(["openai"]),
 		);
 
@@ -502,7 +504,7 @@ describe("builtin compaction canonical routes", () => {
 				]);
 			const finalProviderInput = convertResponsesMessages(
 				model,
-				{ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) },
+				normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) }),
 				new Set(["openai"]),
 			);
 			const finalPayload = { model: model.id, input: finalProviderInput, stream: true };
@@ -589,7 +591,7 @@ describe("builtin compaction canonical routes", () => {
 				]);
 			const finalProviderInput = convertResponsesMessages(
 				model,
-				{ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) },
+				normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) }),
 				new Set(["openai"]),
 			);
 			const finalPayload = { model: model.id, input: finalProviderInput, stream: true };
@@ -759,7 +761,7 @@ describe("builtin compaction canonical routes", () => {
 				model: model.id,
 				input: convertResponsesMessages(
 					model,
-					{ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) },
+					normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) }),
 					new Set(["openai"]),
 				),
 				stream: true,
@@ -891,7 +893,7 @@ describe("builtin compaction canonical routes", () => {
 				model: model.id,
 				input: convertResponsesMessages(
 					model,
-					{ systemPrompt: "current system prompt", messages: convertToLlm(transformedContext) },
+					normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(transformedContext) }),
 					new Set(["openai"]),
 				),
 				stream: true,
@@ -960,7 +962,7 @@ describe("builtin compaction canonical routes", () => {
 				model: OPENAI_MODEL.id,
 				input: convertResponsesMessages(
 					OPENAI_MODEL,
-					{ messages: convertToLlm(markedContext) },
+					normalizeContext({ messages: convertToLlm(markedContext) }),
 					new Set(["openai"]),
 				),
 				stream: true,
@@ -1013,5 +1015,110 @@ describe("builtin compaction canonical routes", () => {
 		expect(first).toBeDefined();
 		expect(onlyVolatileHeadersChanged).toEqual(first);
 		expect(finalNonVolatileHeaderChanged?.authTenantFingerprint).not.toBe(first?.authTenantFingerprint);
+	});
+
+	it("keeps enumerable checkpoint entry identity through oversized tool admission and native replay", async () => {
+		// Given: a real session context contains a checkpoint-owned oversized tool result.
+		const harness = await createHarness({
+			api: "openai-responses",
+			provider: "openai",
+			models: [
+				{ id: OPENAI_MODEL.id, contextWindow: OPENAI_MODEL.contextWindow, maxTokens: OPENAI_MODEL.maxTokens },
+			],
+			extensionFactories: [compactionExtension],
+		});
+
+		try {
+			const model = harness.getModel() as Model<"openai-responses">;
+			const headers = createOpenAiRemoteCompactionHeaders(
+				model,
+				{ apiKey: "faux-key" },
+				harness.sessionManager.getSessionId(),
+			);
+			const origin = headers ? openAiRemoteCompactionOrigin(model, headers) : undefined;
+			expect(origin).toBeDefined();
+			if (!origin) return;
+
+			const retainedEntryId = harness.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "Inspect the oversized result." }],
+				timestamp: 1,
+			});
+			harness.sessionManager.appendMessage({
+				role: "assistant",
+				api: "openai-responses",
+				provider: "openai",
+				model: model.id,
+				content: [{ type: "toolCall", id: "call_large|fc_large", name: "read", arguments: { path: "large.txt" } }],
+				usage: {
+					input: 10,
+					output: 2,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 12,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: 2,
+			});
+			const toolEntryId = harness.sessionManager.appendMessage({
+				role: "toolResult",
+				toolCallId: "call_large|fc_large",
+				toolName: "read",
+				content: [{ type: "text", text: `head\n${"x".repeat(400_000)}\ntail` }],
+				isError: false,
+				timestamp: 3,
+			});
+			const checkpoint = buildOpenAiRemoteCompactionResult({
+				model,
+				firstKeptEntryId: retainedEntryId,
+				tokensBefore: 123_456,
+				requestInputItemCount: 3,
+				response: {
+					id: "resp_oversized_tool_checkpoint",
+					created_at: 1_775_000_001,
+					object: "response.compaction",
+					output: [{ type: "compaction", encrypted_content: "encrypted-oversized-tool-checkpoint" }],
+				},
+				origin,
+			});
+			harness.sessionManager.appendCompaction(
+				checkpoint.summary,
+				checkpoint.firstKeptEntryId,
+				checkpoint.tokensBefore,
+				checkpoint.details,
+				true,
+			);
+
+			// When: the extension runner performs admission and the final OpenAI replay rewrite.
+			const transformedContext = await harness
+				.getExtensionRunner()
+				.emitContext([
+					...harness.sessionManager.buildSessionContext().messages,
+					{ role: "user", content: [{ type: "text", text: "Continue after the checkpoint." }], timestamp: 4 },
+				]);
+			const admittedToolResult = transformedContext.find(
+				(message) => message.role === "toolResult" && message.toolCallId === "call_large|fc_large",
+			);
+			const rewritten = await harness.getExtensionRunner().emitBeforeProviderRequest({
+				model: model.id,
+				input: convertResponsesMessages(
+					model,
+					normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(transformedContext) }),
+					new Set(["openai"]),
+				),
+				stream: true,
+			});
+
+			// Then: admission preserves the enumerable identity used to authorize native replay.
+			const entryIdentity = admittedToolResult
+				? Object.getOwnPropertyDescriptor(admittedToolResult, SESSION_CONTEXT_ENTRY_ID)
+				: undefined;
+			expect(entryIdentity).toMatchObject({ value: toolEntryId, enumerable: true });
+			expect(JSON.stringify(admittedToolResult)).toContain("[tool result projected:");
+			expect(JSON.stringify(rewritten)).toContain("encrypted-oversized-tool-checkpoint");
+		} finally {
+			harness.cleanup();
+		}
 	});
 });

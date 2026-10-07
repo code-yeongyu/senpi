@@ -4,7 +4,7 @@
 
 Extensions and custom tools can render custom TUI components for interactive user interfaces. This page covers the component system and available building blocks.
 
-**Source:** [`@earendil-works/pi-tui`](https://github.com/earendil-works/pi-mono/tree/main/packages/tui)
+**Source:** [`@earendil-works/pi-tui`](https://github.com/earendil-works/pi/tree/main/packages/tui)
 
 ## Component Interface
 
@@ -14,6 +14,7 @@ All components implement:
 interface Component {
   render(width: number): string[];
   handleInput?(data: string): void;
+  handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
   wantsKeyRelease?: boolean;
   invalidate(): void;
 }
@@ -23,6 +24,7 @@ interface Component {
 |--------|-------------|
 | `render(width)` | Return array of strings (one per line). Each line **must not exceed `width`**. |
 | `handleInput?(data)` | Receive keyboard input when component has focus. |
+| `handleMouse?(event)` | Receive normalized pointer input in fullscreen mode, or scoped clicks in regular mode. |
 | `wantsKeyRelease?` | If true, component receives key release events (Kitty protocol). Default: false. |
 | `invalidate()` | Clear cached render state. Called on theme changes. |
 
@@ -52,7 +54,7 @@ When a `Focusable` component has focus, TUI:
 3. Positions the hardware terminal cursor at that location
 4. Shows the hardware cursor only when `showHardwareCursor` is enabled
 
-The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with `showHardwareCursor`, `setShowHardwareCursor(true)`, or `PI_HARDWARE_CURSOR=1`. The `Editor` and `Input` built-in components already implement this interface.
+The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer's `showHardwareCursor` constructor argument or `setShowHardwareCursor(true)`. Pi also maps `PI_HARDWARE_CURSOR=1` to this setting before it creates its renderer. The `Editor` and `Input` built-in components already implement this interface.
 
 ### Container Components with Embedded Inputs
 
@@ -175,6 +177,22 @@ const result = await ctx.ui.custom<string | null>(
 A focused visible overlay keeps input ownership across temporary non-overlay UI. If an overlay opens another `ctx.ui.custom()` component without `{ overlay: true }`, that replacement UI receives input while it is active; when it closes, the focused overlay can reclaim input.
 
 Use `handle.unfocus()` when a visible overlay should stop owning input and let TUI fall back to another visible capturing overlay or the previous focus target. Use `handle.unfocus({ target })` when a specific component should receive input while the overlay stays visible. Passing `{ target: null }` intentionally leaves no focused component until focus is set again.
+
+### Question Overlay and Async Widget
+
+When the agent asks a blocking question (`waitForAnswer: true`), a full-screen overlay appears with a tab for each question and a final Submit tab. Use digits or arrows to choose options, Space to toggle multi-select choices, and Enter to confirm and advance. The Submit tab contains the optional comment editor and accepts partial answers after confirmation; unanswered questions are reported back as unanswered. Esc backs out of an editor or asks for confirmation before discarding a draft.
+
+Pending option buttons are clickable in regular and fullscreen modes. A single-question single-select click writes the selected highlight before answering; multi-select clicks toggle choices. Click the header to expand, own answer to type a custom reply, or `+N more` to cycle requests. Expanded tabs and Submit are clickable too. Pressing without releasing, dragging away, double-clicking, or clicking a gap does not answer.
+
+Async questions (`waitForAnswer: false`) queue above the editor without taking focus or replacing earlier requests. The widget shows the pending count, the shown question and options, its countdown, and `+N more`. `alt+down` cycles requests from an empty composer; Tab still completes and Shift+Tab still cycles thinking. Each request keeps its own draft and idle deadline.
+
+Open the shown request with empty Enter or `app.question.answer` (defaults `alt+up` and `alt+a`, shown as Option on macOS). A pending question wins the shared `alt+up` chord; without one it restores queued messages. Windows/WSL dequeue uses `alt+q` instead. The hint prefers `alt+a` in tmux, Apple Terminal, Warp and VS Code; the macOS `å` fallback still works. Rebind either action in `keybindings.json`.
+
+A valid digit on an empty composer selects the corresponding option of the first unanswered sub-question. A single-question single-select digit or Enter submits immediately; multiple sub-questions advance through the component. `/answer` lists multiple pending requests, `/answer <n>` opens the n-th, and `/answer skip` dismisses the shown request. Esc collapses the component with its draft kept.
+
+An answered question collapses in the transcript to a compact `↳ <header>: <answer>` chip; comments render quoted and dismissed or timed-out questions render `(no answer)`. Click the chip to expand the original message and click again to collapse it. `/answer skip` also tells the agent that you dismissed the question. While a question is pending, the terminal title shows `? <header>`, and `askUser.bell` controls the one-time arrival bell.
+
+Text first typed or pasted into an empty composer binds to the shown request and labels the border `↳ reply to <header>`. Enter sends that comment only to its bound request; the follow-up chord (`alt+enter`, or `ctrl+q` on Windows/WSL) sends an ordinary message instead. Text present before arrival and recalled history stay chat. If a bound request settles, the text is preserved, the label clears with a notice, and the next Enter sends chat rather than answering another request.
 
 ### Overlay Lifecycle
 
@@ -306,6 +324,34 @@ handleInput(data: string) {
 - Arrow keys: `Key.up`, `Key.down`, `Key.left`, `Key.right`
 - With modifiers: `Key.ctrl("c")`, `Key.shift("tab")`, `Key.alt("left")`, `Key.ctrlShift("p")`
 - String format also works: `"enter"`, `"ctrl+c"`, `"shift+tab"`, `"ctrl+shift+p"`
+
+## Mouse Input
+
+Fullscreen mode routes normalized press, release, click, move, drag, and wheel events to components and overlays. Return `{ handled: true }` to suppress default behavior, `capture: true` to retain drag/release ownership, `focus: true` to request keyboard focus, and `render: true` when a hover or release visibly changes the component. Press, click, drag, and wheel render by default; no-op move/release events do not.
+
+```typescript
+import { MouseRegion } from "@earendil-works/pi-tui";
+
+const clickable = new MouseRegion(content, (event) => {
+  if (event.button !== "left") return undefined;
+  if (event.type === "press") return { handled: true };
+  if (event.type !== "click") return undefined;
+  expanded = !expanded;
+  return { handled: true };
+});
+```
+
+In fullscreen mode, unhandled wheel input scrolls the nearest `ScrollView`; unhandled primary-button drags retain transcript selection. OSC 8 links take precedence over parent click regions. `Input`, `Editor`, `SelectList`, and `SettingsList` include fullscreen mouse behavior.
+
+Regular mode supports scoped capture through `const release = tui.acquireMouseCapture("pending-question")`; the host releases it when the interactive surface closes and reapplies its intent to a replacement renderer after a mode switch. Only an acknowledged, unmodified left press followed by release in the same cell within 500 ms produces a click. Wheel, motion, other buttons, and modified reports are consumed without action. Native selection and scrollback remain unchanged outside the lease; while captured, use the terminal's selection bypass (usually Shift-drag, or Option-drag in iTerm2/Terminal.app). Unknown, stale, resized, or image-bearing frame placement disables click dispatch rather than guessing. Short frames use private cursor-position calibration; after external output the next render appends a fresh frame before recalibration, preserving diagnostics and scrollback. Keyboard paths remain available. This library foundation does not itself enable capture for every regular-mode component.
+
+The `terminal.mouse` setting defaults to `"whilePending"`: the host captures regular-mode input only while an async or blocking question is pending. `"off"` disables mouse capture in both modes; `"always"` keeps regular-mode capture active even without a question. Change it in `/settings` or settings JSON. The default `tuiMode` remains `"regular"`. While captured, wheel reports are consumed, not native scrollback; use the terminal's bypass modifier (Shift-drag on Ghostty/kitty/WezTerm/Alacritty/Windows Terminal, Option-drag on iTerm2/Terminal.app) or disable capture for native selection.
+
+### Multiplexers
+
+**tmux:** Short startup frames work even when tmux swallows private `ESC[?6n`. When `TMUX_PANE` is set, the terminal reads `tmux display-message -p -t "$TMUX_PANE" "#{cursor_y} #{cursor_x}"` twice at least 10 ms apart. Only matching numeric pane-relative readings within the total 750 ms query budget establish an anchor. Command errors, movement and timeout leave clicks disabled; no bare CPR is sent. Outside tmux the private cursor-query path is unchanged. Enable tmux mouse forwarding to deliver clicks.
+
+**herdr:** The builtin reporter shows a pending question as blocked and returns to working or idle after settlement. Mouse forwarding and `alt+up`, `alt+down`, digits and `/answer skip` were verified in herdr 0.9.0. Regular-mode clicks work on a viewport-filled frame. Fresh short frames have a known fail-closed limitation: the pane writes `ESC[?6n` but receives no private reply. In a 120x40 test, outer-client `ESC[<0;27;25M` then `ESC[<0;27;25m` did not answer that short frame; after filling the pane, `ESC[<0;27;34M` then `ESC[<0;27;34m` answered successfully. Use keyboard answers when the initial anchor is unavailable. Tracked in [#1688](https://github.com/code-yeongyu/senpi/issues/1688); unknown placement is never guessed.
 
 ## Line Width
 
@@ -446,6 +492,14 @@ renderResult(result, options, theme, context) {
 
 `selectedBg`, `searchMatchBg`, `userMessageBg`, `customMessageBg`, `toolPendingBg`, `toolSuccessBg`, `toolErrorBg`
 
+**Combined styles** (`theme.style(text, options)`) apply foreground and background colors with text attributes in one call:
+
+```typescript
+return new Text(theme.style("Done!", { fg: "success", bg: "toolSuccessBg", bold: true }), 0, 0);
+```
+
+A style color can be a semantic theme token or a concrete `Color`. Foreground tokens are accepted as `fg` and background tokens as `bg`; to use a token's color in the other position, pass its concrete color, for example `{ fg: theme.colors.userMessageBg }`. Read concrete colors from `theme.colors` and use the TUI library's color utilities, such as `mixColors()`, for color math. Tokens a theme sets to the terminal default report the color the terminal announced, or a guess when it did not. Use `theme.appearance` (`"dark"` or `"light"`) to decide, for example, whether to lighten or darken a color.
+
 **For Markdown**, use `getMarkdownTheme()`:
 
 ```typescript
@@ -472,7 +526,7 @@ interface MyTheme {
 Set `PI_TUI_WRITE_LOG` to capture the raw ANSI stream written to stdout.
 
 ```bash
-PI_TUI_WRITE_LOG=/tmp/tui-ansi.log npx tsx packages/tui/test/chat-simple.ts
+PI_TUI_WRITE_LOG=/tmp/tui-ansi.log bunx tsx packages/tui/test/chat-simple.ts
 ```
 
 ## Performance
@@ -912,6 +966,7 @@ export default function (pi: ExtensionAPI) {
 
 - **Extend `CustomEditor`** (not base `Editor`) to get app keybindings (escape to abort, ctrl+d to exit, model switching, etc.)
 - **Call `super.handleInput(data)`** for keys you don't handle
+- **Status spinners**: custom editors keep standalone status rows by default. Pass `{ embedWorkingStatus: true }` as the fourth `CustomEditor` constructor argument to embed working, compaction, branch summarization, and retry spinners in the editor border instead.
 - **Factory pattern**: `setEditorComponent` receives a factory function that gets `tui`, `theme`, and `keybindings`
 - **Pass `undefined`** to restore the default editor: `ctx.ui.setEditorComponent(undefined)`
 

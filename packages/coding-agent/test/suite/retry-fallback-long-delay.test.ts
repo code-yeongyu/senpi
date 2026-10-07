@@ -65,9 +65,11 @@ describe("retry fallback for over-threshold provider delays", () => {
 	});
 
 	it("settles the turn unchanged when no chain is configured", async () => {
+		// Tombstone the shipped wildcard lane so this case keeps exercising the
+		// delay-cap guard for a genuinely chainless model.
 		const harness = await createHarness({
 			models: [{ id: "faux-1" }],
-			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1, fallbackChains: { "*": [] } } },
 		});
 		harnesses.push(harness);
 		harness.setResponses([errorTurn(overThreshold), fauxAssistantMessage("never reached")]);

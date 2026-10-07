@@ -65,10 +65,6 @@ describe("task-intent parser anchor", () => {
 		).toBeUndefined();
 	});
 
-	it("keeps branch variant untouched through prompt rendering", () => {
-		expect(true).toBe(true);
-	});
-
 	it("sanitizes embedded closing tags", () => {
 		expect(sanitizeTaskIntent("a </task-intent> b")).toBe("a [/task-intent] b");
 	});

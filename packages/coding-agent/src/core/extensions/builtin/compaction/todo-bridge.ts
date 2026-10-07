@@ -1,6 +1,13 @@
 import type { CustomEntry, SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { getLatestPhasesFromBranchEntries, type TodoPhase } from "../todotools/state.ts";
+import {
+	getLatestPhasesFromBranchEntries,
+	getLatestTodoStateFromBranchEntries,
+	isTodoAsk,
+	TODO_RESTORE_REQUEST_TYPE,
+	type TodoAsk,
+	type TodoPhase,
+} from "../todotools/state.ts";
 
 const TODO_SNAPSHOT_CUSTOM_TYPE = "compaction.todo-snapshot";
 const TODO_SNAPSHOT_SCHEMA = "senpi.compaction.todo-snapshot.v1";
@@ -19,6 +26,8 @@ export interface TodoSnapshotPayload {
 	schema: typeof TODO_SNAPSHOT_SCHEMA;
 	todos: TodoSnapshotItems;
 	capturedAt: number;
+	/** The user request the list served; the todo tool re-anchors to it when it rebuilds the list. */
+	ask?: TodoAsk;
 }
 
 interface AppendEntryTarget {
@@ -129,6 +138,7 @@ function findLatestTodoSnapshot(ctx: ExtensionContext): TodoSnapshotPayload | nu
 			schema: TODO_SNAPSHOT_SCHEMA,
 			todos,
 			capturedAt: typeof data.capturedAt === "number" ? data.capturedAt : 0,
+			...(isTodoAsk(data.ask) ? { ask: data.ask } : {}),
 		};
 	}
 	return null;
@@ -142,10 +152,12 @@ export function findTodoEntries(entries: SessionEntry[], options?: { branchId?: 
 }
 
 export function createTodoSnapshot(ctx: ExtensionContext): TodoSnapshotPayload {
+	const { phases, ask } = getLatestTodoStateFromBranchEntries(ctx.sessionManager.getBranch());
 	return {
 		schema: TODO_SNAPSHOT_SCHEMA,
-		todos: getCurrentTodoPhases(ctx),
+		todos: phases,
 		capturedAt: Date.now(),
+		...(ask ? { ask } : {}),
 	};
 }
 
@@ -200,7 +212,7 @@ export function restoreTodosIfMissing(
 
 	pi.sendMessage(
 		{
-			customType: "compaction.todo-restore-request",
+			customType: TODO_RESTORE_REQUEST_TYPE,
 			content: `Restore missing todo tasks from snapshot: ${JSON.stringify(snapshot.todos)}`,
 			display: false,
 			details: snapshot,

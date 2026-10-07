@@ -179,9 +179,9 @@ describe("MCP session isolation", () => {
 		expect(existsSync(bPath)).toBe(true);
 	});
 
-	it("does not cache command results across explicit session environments", () => {
+	it("does not cache command results across explicit session environments", async () => {
 		const command = '!printf "$MCP_SESSION_VALUE"';
-		expect(resolveConfigValue(command, { MCP_SESSION_VALUE: "A" })).toBe("A");
-		expect(resolveConfigValue(command, { MCP_SESSION_VALUE: "B" })).toBe("B");
+		expect(await resolveConfigValue(command, { MCP_SESSION_VALUE: "A" })).toBe("A");
+		expect(await resolveConfigValue(command, { MCP_SESSION_VALUE: "B" })).toBe("B");
 	});
 });

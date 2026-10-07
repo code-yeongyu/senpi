@@ -3,9 +3,9 @@ import type { TodoPhase, TodoStatus } from "./todo-types.ts";
 const STATUSES = new Set<TodoStatus>(["pending", "in_progress", "completed", "abandoned"]);
 const DEFAULT_PHASE_NAME = "Tasks";
 
-export function phasesFromCursorTodos(todos: unknown): TodoPhase[] {
+export function phasesFromCursorTodos(todos: unknown): TodoPhase[] | undefined {
 	if (!Array.isArray(todos)) {
-		return [];
+		return undefined;
 	}
 	const tasks = [];
 	for (const item of todos) {

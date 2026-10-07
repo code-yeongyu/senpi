@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadMcpConfig } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { ConnectError, ToolExecError } from "../../src/core/extensions/builtin/mcp/errors.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	capturingPi,
 	registeredTool,
@@ -86,7 +87,13 @@ describe("MCP startup race", () => {
 
 		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 		const tool = registeredTool(pi, "mcp_fx_tool_2");
-		const result = await tool.execute("tc-hot-swap", { value: "late" }, undefined, undefined, testContext());
+		const result = await tool.execute(
+			"tc-hot-swap",
+			{ value: "late" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 		expect(textContent(result)).toBe("fixture tool_2 value=late mode=alpha");
 		const cache = await readCache(root);
 		expect(cache.servers.fx.tools.map((item) => item.name)).toEqual(["tool_1", "tool_2"]);
@@ -119,7 +126,13 @@ describe("MCP startup race", () => {
 		const attachElapsedMs = await timedAttach(root, pi);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 		const callStartedAt = performance.now();
-		const call = tool.execute("tc-wedge", { value: "wedge" }, undefined, undefined, testContext());
+		const call = tool.execute(
+			"tc-wedge",
+			{ value: "wedge" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 
 		await expect(call).rejects.toSatisfy((error: unknown) => {
 			return error instanceof ToolExecError && getErrorCause(error) instanceof ConnectError;
@@ -136,7 +149,7 @@ describe("MCP startup race", () => {
 		// --slow-start 800 clears the 250ms startup race window (so attach cannot
 		// settle synchronously) while staying inside connectTimeoutMs, so the
 		// background connect still completes and surfaces tools. This is the cold
-		// lazy analogue of the wedged codegraph server that used to gate the UI.
+		// lazy analogue of a wedged MCP server that used to gate the UI.
 		setConfig(root, {
 			fx: { ...stdioServer(["--tools", "2", "--slow-start", "800"]), lifecycle: "lazy", connectTimeoutMs: 5000 },
 		});
@@ -158,23 +171,33 @@ describe("MCP startup race", () => {
 		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 	});
 
-	it("honors a per-server startupTimeoutMs by waiting for a slow cold lazy server to settle", async () => {
+	it("does not put a configured startupTimeoutMs on cold session admission", async () => {
 		const root = makeStartupRoot("configured-startup-timeout");
-		// A generous per-server startupTimeoutMs widens the race window past the
-		// 500ms server start, so attach waits for the connect to settle (tools
-		// registered on return) instead of backgrounding at the 250ms default.
+		const gate = join(root.cwd, "catalog-ready");
 		setConfig(root, {
 			fx: {
-				...stdioServer(["--tools", "1", "--slow-start", "500"]),
+				...stdioServer(["--tools", "1", "--list-tools-gate", gate]),
 				lifecycle: "lazy",
 				connectTimeoutMs: 5000,
-				startupTimeoutMs: 5000,
+				startupTimeoutMs: 20_000,
 			},
 		});
 		const pi = capturingPi();
 
-		const elapsedMs = await timedAttach(root, pi);
-		expect(elapsedMs).toBeGreaterThanOrEqual(400);
+		const signal = AbortSignal.timeout(5000);
+		const attached = attach(root, pi);
+		try {
+			await new Promise<void>((resolve, reject) => {
+				const abort = () => reject(new Error("Admission waited for configured startup timeout"));
+				signal.addEventListener("abort", abort, { once: true });
+				void attached.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+			});
+			expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual([]);
+		} finally {
+			writeFileSync(gate, "ready");
+			await attached;
+			await getMcpService().whenAttachSettled();
+		}
 		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1"]);
 		expect(getMcpService().getServerSnapshots()).toMatchObject([
 			{ name: "fx", lifecycleState: "connected", configState: "enabled" },

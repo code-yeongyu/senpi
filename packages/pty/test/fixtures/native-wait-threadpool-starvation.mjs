@@ -79,14 +79,16 @@ try {
 } finally {
 	for (const session of sessions) {
 		try {
-			session.kill("SIGKILL");
+			// Mark cancellation before signalling so a fast exit cannot beat the
+			// waiter's cancellation flag observation.
+			session.kill();
 		} catch {
 			// The child may have exited while another session was being stopped.
 		}
 		try {
-			session.kill();
+			session.kill("SIGKILL");
 		} catch {
-			// Mark cancellation even if the explicit SIGKILL already won the race.
+			// The cancellation-marking kill already stopped the process.
 		}
 	}
 	const exits = await deadline(Promise.all(waits), 5_000, "PTY_CLEANUP_TIMEOUT");

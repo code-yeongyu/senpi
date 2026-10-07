@@ -211,6 +211,8 @@ export const SERVER_NOTIFICATION_METHODS = [
 ] as const;
 
 // Senpi-only additions deliberately stay outside the pinned Codex arrays above.
+export const ADDITIVE_CLIENT_NOTIFICATION_METHODS = ["item/tool/userInputProgress"] as const;
+
 export const ADDITIVE_SERVER_NOTIFICATION_METHODS = [
 	"account/providerAccounts/failover",
 	"account/providerAccounts/updated",

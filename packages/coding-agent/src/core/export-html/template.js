@@ -314,41 +314,41 @@
       }
 
       /**
-       * Parse a current or legacy skill invocation from message text.
-       * Kept in sync with core/agent-session.ts for standalone HTML exports.
+       * Parse every chained current or legacy skill invocation from message text.
+       * Kept in sync with core/skill-invocation.ts for standalone HTML exports.
        */
       function parseSkillBlock(text) {
         const instructionPattern =
           /^The user explicitly invoked the "([^"]+)" skill\. Follow the instructions in <skill-instruction> as binding for this request, while respecting higher-priority instructions\.\n\n<skill-instruction name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill-instruction>/;
-        const instructionMatch = text.match(instructionPattern);
-        if (instructionMatch) {
-          if (instructionMatch[1] !== instructionMatch[2]) return null;
-          let remainder = text.slice(instructionMatch[0].length);
+        const matchSkill = (source) => {
+          const match = source.match(instructionPattern);
+          if (!match || match[1] !== match[2]) return null;
+          return { skill: { name: match[1], location: match[3], content: match[4] }, length: match[0].length };
+        };
+        const toBlock = (skills, userMessage) => ({ ...skills[0], skills, userMessage });
+        const first = matchSkill(text);
+        if (first) {
+          const skills = [first.skill];
+          let remainder = text.slice(first.length);
           while (remainder.startsWith("\n\nThe user explicitly invoked the ")) {
-            const chainedMatch = remainder.slice(2).match(instructionPattern);
-            if (!chainedMatch || chainedMatch[1] !== chainedMatch[2]) return null;
-            remainder = remainder.slice(chainedMatch[0].length + 2);
+            const chained = matchSkill(remainder.slice(2));
+            if (!chained) return null;
+            skills.push(chained.skill);
+            remainder = remainder.slice(chained.length + 2);
           }
           const requestMatch = remainder.match(/^\n\n<user-request>\n([\s\S]*?)\n<\/user-request>$/);
           if (remainder && !requestMatch) return null;
-          return {
-            name: instructionMatch[1],
-            location: instructionMatch[3],
-            content: instructionMatch[4],
-            userMessage: requestMatch?.[1].trim() || undefined,
-          };
+          return toBlock(skills, requestMatch?.[1].trim() || undefined);
         }
 
         const legacyMatch = text.match(
           /^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/,
         );
         if (!legacyMatch) return null;
-        return {
-          name: legacyMatch[1],
-          location: legacyMatch[2],
-          content: legacyMatch[3],
-          userMessage: legacyMatch[4]?.trim() || undefined,
-        };
+        return toBlock(
+          [{ name: legacyMatch[1], location: legacyMatch[2], content: legacyMatch[3] }],
+          legacyMatch[4]?.trim() || undefined,
+        );
       }
 
       function getSearchableText(entry, label) {
@@ -379,6 +379,9 @@
           case 'thinking_level_change':
             parts.push('thinking', entry.thinkingLevel);
             break;
+          case 'context_edit':
+            parts.push('context edit', entry.replacement === null ? 'omit' : 'replace', entry.targetId);
+            break;
         }
 
         return parts.join(' ').toLowerCase();
@@ -407,7 +410,7 @@
           }
 
           // Apply filter mode
-          const isSettingsEntry = ['label', 'custom', 'model_change', 'thinking_level_change'].includes(entry.type);
+          const isSettingsEntry = ['label', 'custom', 'context_edit', 'model_change', 'thinking_level_change'].includes(entry.type);
           let passesFilter = true;
 
           switch (filterMode) {
@@ -669,7 +672,8 @@
               const rawContent = extractContent(msg.content);
               const skillBlock = parseSkillBlock(rawContent);
               if (skillBlock) {
-                let treeHtml = labelHtml + `<span class="tree-role-skill">skill:</span> ${escapeHtml(skillBlock.name)}`;
+                const skillNames = skillBlock.skills.map((skill) => skill.name).join(', ');
+                let treeHtml = labelHtml + `<span class="tree-role-skill">skill:</span> ${escapeHtml(skillNames)}`;
                 if (skillBlock.userMessage) {
                   treeHtml += ` · <span class="tree-role-user">user:</span> ${escapeHtml(truncate(normalize(skillBlock.userMessage)))}`;
                 }
@@ -718,6 +722,8 @@
             return labelHtml + `<span class="tree-muted">[model: ${escapeHtml(entry.modelId)}]</span>`;
           case 'thinking_level_change':
             return labelHtml + `<span class="tree-muted">[thinking: ${escapeHtml(entry.thinkingLevel)}]</span>`;
+          case 'context_edit':
+            return labelHtml + `<span class="tree-muted">[context ${entry.replacement === null ? 'omit' : 'replace'}: ${escapeHtml(entry.targetId)}]</span>`;
           default:
             return labelHtml + `<span class="tree-muted">[${escapeHtml(entry.type)}]</span>`;
         }
@@ -968,6 +974,21 @@
             '</div>';
         };
 
+        // Calls this tool made to other tools (for example from a codemode script), recorded without results.
+        const renderNestedCalls = () => {
+          const nested = result?.nestedCalls;
+          if (!nested || !Array.isArray(nested.calls) || nested.calls.length === 0) return '';
+          const icons = { ok: '✓', error: '✗', unfinished: '…' };
+          const lines = nested.calls.map(c => {
+            const args = c.arguments ? JSON.stringify(c.arguments) : `[arguments omitted, ${c.argumentsBytes} bytes]`;
+            const duration = c.durationMs !== undefined ? ` ${c.durationMs}ms` : '';
+            const error = c.error ? `\n    ${c.error.split('\n').join('\n    ')}` : '';
+            return `${icons[c.status] || '?'} ${c.name} ${args}${duration}${error}`;
+          });
+          const title = `Nested calls: ${nested.calls.length}${nested.complete ? '' : ' (incomplete record)'}`;
+          return formatExpandableOutput([title, ...lines].join('\n'), 1);
+        };
+
         const toolDomId = `tool-call-${escapeHtml(call.id)}`;
         let html = `<div class="tool-execution ${statusClass}" id="${toolDomId}">`;
         const args = call.arguments || {};
@@ -1101,6 +1122,7 @@
           }
         }
 
+        html += renderNestedCalls();
         html += '</div>';
         return html;
       }
@@ -1235,11 +1257,15 @@
               const hasUserContent = skillBlock.userMessage || images.length > 0;
               let html = `<div class="skill-user-entry" id="${entryDomId}">${copyBtnHtml}${tsHtml}`;
 
-              // Skill invocation (collapsed by default, click to expand)
+              // Skill invocation (collapsed by default, click to expand); one body per invoked skill
+              const skillNames = skillBlock.skills.map((skill) => skill.name).join(', ');
+              const skillBodies = skillBlock.skills
+                .map((skill) => `<div class="skill-invocation-name">${escapeHtml(skill.name)}</div>${safeMarkedParse(skill.content)}`)
+                .join('');
               html += `<div class="skill-invocation" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
-                <div class="skill-invocation-label">[skill] ${escapeHtml(skillBlock.name)}</div>
-                <div class="skill-invocation-collapsed">${escapeHtml(skillBlock.name)} (click to expand)</div>
-                <div class="skill-invocation-content markdown-content">${safeMarkedParse(skillBlock.content)}</div>
+                <div class="skill-invocation-label">[skill] ${escapeHtml(skillNames)}</div>
+                <div class="skill-invocation-collapsed">${escapeHtml(skillNames)} (click to expand)</div>
+                <div class="skill-invocation-content markdown-content">${skillBodies}</div>
               </div>`;
 
               // User message (separate block if present)
@@ -1351,9 +1377,10 @@
           </div>`;
         }
 
-        if (entry.type === 'custom_message' && entry.display) {
-          return `<div class="hook-message" id="${entryDomId}">${tsHtml}
-            <div class="hook-type">[${escapeHtml(entry.customType)}]</div>
+        if (entry.type === 'custom_message') {
+          const hidden = entry.display === false;
+          return `<div class="hook-message${hidden ? ' hook-message-hidden' : ''}" id="${entryDomId}">${tsHtml}
+            <div class="hook-type">[${escapeHtml(entry.customType)}]${hidden ? ' · Hidden in terminal' : ''}</div>
             <div class="markdown-content">${safeMarkedParse(typeof entry.content === 'string' ? entry.content : JSON.stringify(entry.content))}</div>
           </div>`;
         }
@@ -1429,10 +1456,11 @@
           <div class="header">
             <h1>Session: ${escapeHtml(header?.id || 'unknown')}</h1>
             <div class="help-bar">
-              <span class="help-hint">T toggle thinking · O toggle tools</span>
+              <span class="help-hint">T toggle thinking · O toggle tools · H toggle hidden messages</span>
               <div class="help-actions">
-                <button type="button" class="header-toggle-btn" data-action="toggle-thinking" title="Toggle thinking (T)">Toggle thinking</button>
-                <button type="button" class="header-toggle-btn" data-action="toggle-tools" title="Toggle tools (O)">Toggle tools</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-thinking" aria-pressed="${thinkingExpanded}" title="Toggle thinking (T)">Toggle thinking</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-tools" aria-pressed="${toolOutputsExpanded}" title="Toggle tools (O)">Toggle tools</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-hidden-messages" aria-pressed="${showHiddenMessages}" title="Show custom messages marked as hidden in the terminal (H).">${showHiddenMessages ? 'Hide hidden messages' : 'Show hidden messages'}</button>
                 <button type="button" class="download-json-btn" onclick="downloadSessionJson()" title="Download session as JSONL">↓ JSONL</button>
               </div>
             </div>
@@ -1540,6 +1568,10 @@
       function navigateTo(targetId, scrollMode = 'target', scrollToEntryId = null) {
         currentLeafId = targetId;
         currentTargetId = scrollToEntryId || targetId;
+        const targetEntry = byId.get(currentTargetId);
+        if (scrollMode === 'target' && targetEntry?.type === 'custom_message' && targetEntry.display === false) {
+          setHiddenMessagesVisible(true);
+        }
         const path = getPath(targetId);
 
         renderTree();
@@ -1560,6 +1592,10 @@
 
         messagesEl.innerHTML = '';
         messagesEl.appendChild(fragment);
+
+        // Cached nodes contain their initial presentation; reapply the viewer's toggle states.
+        setThinkingExpanded(thinkingExpanded);
+        setToolOutputsExpanded(toolOutputsExpanded);
 
         // Attach click handlers for copy-link buttons
         messagesEl.querySelectorAll('.copy-link-btn').forEach(btn => {
@@ -1833,19 +1869,32 @@
       // Toggle states
       let thinkingExpanded = true;
       let toolOutputsExpanded = false;
+      let showHiddenMessages = false;
 
-      const toggleThinking = () => {
-        thinkingExpanded = !thinkingExpanded;
+      function setHiddenMessagesVisible(visible) {
+        showHiddenMessages = visible;
+        document.body.classList.toggle('show-hidden-messages', visible);
+        const button = document.querySelector('[data-action="toggle-hidden-messages"]');
+        if (button) {
+          button.setAttribute('aria-pressed', String(visible));
+          button.textContent = visible ? 'Hide hidden messages' : 'Show hidden messages';
+        }
+      }
+
+      function setThinkingExpanded(expanded) {
+        thinkingExpanded = expanded;
+        document.querySelector('[data-action="toggle-thinking"]')?.setAttribute('aria-pressed', String(expanded));
         document.querySelectorAll('.thinking-text').forEach(el => {
           el.style.display = thinkingExpanded ? '' : 'none';
         });
         document.querySelectorAll('.thinking-collapsed').forEach(el => {
           el.style.display = thinkingExpanded ? 'none' : 'block';
         });
-      };
+      }
 
-      const toggleToolOutputs = () => {
-        toolOutputsExpanded = !toolOutputsExpanded;
+      function setToolOutputsExpanded(expanded) {
+        toolOutputsExpanded = expanded;
+        document.querySelector('[data-action="toggle-tools"]')?.setAttribute('aria-pressed', String(expanded));
         document.querySelectorAll('.tool-output.expandable').forEach(el => {
           el.classList.toggle('expanded', toolOutputsExpanded);
         });
@@ -1855,11 +1904,18 @@
         document.querySelectorAll('.skill-invocation').forEach(el => {
           el.classList.toggle('expanded', toolOutputsExpanded);
         });
-      };
+      }
 
       const attachHeaderHandlers = () => {
-        document.querySelector('[data-action="toggle-thinking"]')?.addEventListener('click', toggleThinking);
-        document.querySelector('[data-action="toggle-tools"]')?.addEventListener('click', toggleToolOutputs);
+        document.querySelector('[data-action="toggle-thinking"]')?.addEventListener('click', () => {
+          setThinkingExpanded(!thinkingExpanded);
+        });
+        document.querySelector('[data-action="toggle-tools"]')?.addEventListener('click', () => {
+          setToolOutputsExpanded(!toolOutputsExpanded);
+        });
+        document.querySelector('[data-action="toggle-hidden-messages"]')?.addEventListener('click', () => {
+          setHiddenMessagesVisible(!showHiddenMessages);
+        });
       };
 
       const isEditableTarget = (element) => {
@@ -1879,17 +1935,20 @@
           navigateTo(leafId, 'bottom');
         }
 
-        if (isEditableTarget(document.activeElement)) {
+        if (e.ctrlKey || e.metaKey || e.altKey || isEditableTarget(document.activeElement)) {
           return;
         }
 
         const key = e.key.toLowerCase();
         if (key === 't') {
           e.preventDefault();
-          toggleThinking();
+          setThinkingExpanded(!thinkingExpanded);
         } else if (key === 'o') {
           e.preventDefault();
-          toggleToolOutputs();
+          setToolOutputsExpanded(!toolOutputsExpanded);
+        } else if (key === 'h') {
+          e.preventDefault();
+          setHiddenMessagesVisible(!showHiddenMessages);
         }
       });
 

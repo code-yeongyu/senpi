@@ -332,7 +332,7 @@ async function expectSpeculativeCompactionInvalidatedBy(
 	const branchEntries = [firstUser, firstAssistant, secondUser, secondAssistant];
 	const appliedSummaries: string[] = [];
 	let currentModel = previousModel;
-	let usageTokens = 100_000;
+	let usageTokens = 130_000;
 	let releaseStale: (() => void) | undefined;
 	const speculativeStarted = new Promise<void>((resolveStarted) => {
 		completeMock.mockImplementationOnce(async (_model: Model<string>, _context: Context, options: StreamOptions) => {
@@ -532,6 +532,62 @@ describe("estimateContextTokens", () => {
 		expect(estimate.trailingTokens).toBeGreaterThan(0);
 		expect(estimate.tokens).toBe(150 + estimate.trailingTokens);
 	});
+
+	it.each(["error", "aborted"] as const)("excludes trailing %s turns from the estimate", (stopReason) => {
+		const big = "x".repeat(40_000);
+		const failed: AssistantMessage = {
+			...createAssistantMessage(big),
+			stopReason,
+			content: [
+				{ type: "text", text: big },
+				{ type: "toolCall", id: "c-failed", name: "bash", arguments: { command: "ls" } },
+			],
+		};
+		const orphanResult: AgentMessage = {
+			role: "toolResult",
+			toolCallId: "c-failed",
+			toolName: "bash",
+			content: [{ type: "text", text: big }],
+			isError: true,
+			timestamp: Date.now(),
+		};
+		const withFailed: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			failed,
+			orphanResult,
+			createUserMessage("next"),
+		];
+		const baseline: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			createUserMessage("next"),
+		];
+
+		const withFailedEstimate = estimateContextTokens(withFailed);
+		const baselineEstimate = estimateContextTokens(baseline);
+
+		expect(withFailedEstimate.tokens).toBe(baselineEstimate.tokens);
+		expect(withFailedEstimate.trailingTokens).toBe(baselineEstimate.trailingTokens);
+	});
+
+	it("reports lastUsageIndex against the input array when a failed turn precedes the anchor", () => {
+		const failed: AssistantMessage = { ...createAssistantMessage("failed"), stopReason: "error" };
+		const anchor = createAssistantMessage("anchor", createMockUsage(200, 100));
+		const messages: AgentMessage[] = [
+			createUserMessage("Hello"),
+			createAssistantMessage("Hi", createMockUsage(100, 50)),
+			failed,
+			anchor,
+			createUserMessage("next"),
+		];
+
+		const estimate = estimateContextTokens(messages);
+
+		expect(estimate.lastUsageIndex).not.toBeNull();
+		expect(messages[estimate.lastUsageIndex as number]).toBe(anchor);
+		expect(estimate.usageTokens).toBe(300);
+	});
 });
 
 describe("estimateTokens base64 weighting", () => {
@@ -584,6 +640,11 @@ describe("estimateTokens base64 weighting", () => {
 });
 
 describe("shouldCompact", () => {
+	it("case 2: applies the effective reserve and preserves the scaling opt-out", () => {
+		const settings: CompactionSettings = { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 };
+		expect(shouldCompact(980_000, 1_000_000, settings)).toBe(true);
+		expect(shouldCompact(980_000, 1_000_000, { ...settings, reserveScalingEnabled: false })).toBe(false);
+	});
 	it("should return true when context exceeds threshold", () => {
 		const settings: CompactionSettings = {
 			enabled: true,
@@ -714,6 +775,70 @@ describe("findCutPoint", () => {
 		expect(customFitsBudget.firstKeptEntryIndex).toBe(2);
 		expect(customFitsBudget.isSplitTurn).toBe(false);
 		expect(customFitsBudget.turnStartIndex).toBe(-1);
+	});
+
+	// senpi#2480: the attempts that follow the overflowing turn are never sent, so they
+	// must not absorb the budget of the overflow ladder's second rung (keepRecentTokens 0).
+	it("lands a zero keep budget on the turn being answered, past a failed attempt and its orphaned tool result", () => {
+		const oldUser = createMessageEntry(createUserMessage("old history"));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old answer"));
+		const currentUser = createMessageEntry(createUserMessage("continue the task"));
+		const failedToolCall = createMessageEntry({
+			...createAssistantMessage(""),
+			content: [{ type: "toolCall", id: "failed-call", name: "read", arguments: { path: "big.txt" } }],
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+		});
+		const orphanedResult = createMessageEntry({
+			role: "toolResult",
+			toolCallId: "failed-call",
+			toolName: "read",
+			content: [{ type: "text", text: "x".repeat(8000) }],
+			isError: false,
+			timestamp: Date.now(),
+		});
+		const entries = [oldUser, oldAssistant, currentUser, failedToolCall, orphanedResult];
+
+		const result = findCutPoint(entries, 0, entries.length, 0);
+
+		expect(result.firstKeptEntryIndex).toBe(2);
+		expect(result.isSplitTurn).toBe(false);
+	});
+
+	// Regression test for #9740.
+	it("should fall back to the latest valid cut point before oversized trailing tool results", () => {
+		const oldUser = createMessageEntry(createUserMessage("old history"));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old answer"));
+		const currentUser = createMessageEntry(createUserMessage("read the large file"));
+		const toolCall = createMessageEntry({
+			...createAssistantMessage(""),
+			content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "big.txt" } }],
+			stopReason: "toolUse",
+		});
+		const toolResult = createMessageEntry({
+			role: "toolResult",
+			toolCallId: "call-1",
+			toolName: "read",
+			content: [{ type: "text", text: "x".repeat(8000) }],
+			isError: false,
+			timestamp: Date.now(),
+		});
+		const entries = [oldUser, oldAssistant, currentUser, toolCall, toolResult];
+
+		const result = findCutPoint(entries, 0, entries.length, 1000);
+		expect(result).toEqual({
+			firstKeptEntryIndex: 3,
+			turnStartIndex: 2,
+			isSplitTurn: true,
+		});
+
+		const preparation = prepareCompaction(entries, {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1000,
+		});
+		expect(preparation?.firstKeptEntryId).toBe(toolCall.id);
+		expect(preparation?.messagesToSummarize).toEqual([oldUser.message, oldAssistant.message]);
+		expect(preparation?.turnPrefixMessages).toEqual([currentUser.message]);
 	});
 });
 
@@ -857,6 +982,59 @@ describe("prepareCompaction source messages", () => {
 		expect(preparation.turnPrefixSourceMessages).toEqual(preparation.turnPrefixMessages);
 		expect(extractText(preparation.turnPrefixSourceMessages)).toContain("large request");
 		expect(extractText(preparation.turnPrefixSourceMessages)).not.toContain("kept");
+	});
+
+	it("summarizes only entries after a retain-none compaction", () => {
+		const oldUser = createMessageEntry(createUserMessage("old user ".repeat(20)));
+		const oldAssistant = createMessageEntry(createAssistantMessage("old assistant ".repeat(20)));
+		const handoff = createCompactionEntry("handoff", "pending");
+		// appendCompaction(summary, null, ...) records a compaction that keeps no earlier entry as its own first kept id.
+		handoff.firstKeptEntryId = handoff.id;
+		const afterUser = createMessageEntry(createUserMessage("after handoff ".repeat(20)));
+		const afterAssistant = createMessageEntry(createAssistantMessage("after work ".repeat(20)));
+		const recentUser = createMessageEntry(createUserMessage("recent user"));
+		const recentAssistant = createMessageEntry(createAssistantMessage("ok"));
+		const settings: CompactionSettings = {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 3,
+		};
+
+		const preparation = prepareCompaction(
+			[oldUser, oldAssistant, handoff, afterUser, afterAssistant, recentUser, recentAssistant],
+			settings,
+		);
+
+		expect(preparation).toBeDefined();
+		requireSourceMessages(preparation);
+		expect(preparation.firstKeptEntryId).toBe(recentUser.id);
+		expect(preparation.previousSummary).toBe("handoff");
+		expect(preparation.messagesToSummarize).toEqual([afterUser.message, afterAssistant.message]);
+		expect(preparation.sourceMessages[0]?.role).toBe("compactionSummary");
+		expect(preparation.sourceMessages.slice(1)).toEqual(preparation.messagesToSummarize);
+		expect(extractText(preparation.sourceMessages)).not.toContain("old user");
+	});
+});
+
+describe("prepareCompaction", () => {
+	it("does not treat system messages as conversation history", () => {
+		const system = createMessageEntry({
+			role: "system",
+			content: "",
+			sections: { preamble: "current prompt" },
+			timestamp: Date.now(),
+		});
+		const user = createMessageEntry(createUserMessage("one long turn"));
+		const assistant = createMessageEntry(createAssistantMessage("assistant suffix"));
+		const preparation = prepareCompaction([system, user, assistant], {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		});
+
+		expect(preparation).toBeDefined();
+		expect(preparation?.firstKeptEntryId).toBe(assistant.id);
+		expect(preparation?.isSplitTurn).toBe(true);
+		expect(preparation?.messagesToSummarize).toEqual([]);
+		expect(preparation?.turnPrefixMessages).toEqual([user.message]);
 	});
 });
 
@@ -1064,10 +1242,7 @@ describe("builtin compaction extension threshold regressions", () => {
 				contextWindow: 200_000,
 				percent: 0.95,
 			}),
-			getCompactionSettings: () => ({
-				...DEFAULT_COMPACTION_SETTINGS,
-				keepRecentTokens: 1,
-			}),
+			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1, reserveTokens: 100 }),
 		});
 
 		// when
@@ -1185,10 +1360,7 @@ describe("builtin compaction extension threshold regressions", () => {
 				contextWindow: 200_000,
 				percent: 0.95,
 			}),
-			getCompactionSettings: () => ({
-				...DEFAULT_COMPACTION_SETTINGS,
-				keepRecentTokens: 1,
-			}),
+			getCompactionSettings: () => ({ ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1, reserveTokens: 100 }),
 		});
 
 		// when

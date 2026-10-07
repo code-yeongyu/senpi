@@ -31,7 +31,7 @@ function resolveRangeNameStatus(from, to) {
 function buildAuditReport(upstreamPath) {
 	const pin = readUpstreamPin(upstreamPath);
 	ensureCommitExists(pin.sha);
-	const { changedFiles, renames, deletions } = resolveRangeNameStatus(pin.sha, "HEAD");
+	const { changedFiles, renames } = resolveRangeNameStatus(pin.sha, "HEAD");
 	const upstreamTree = filesInCommit(pin.sha);
 	const upstreamRenames = renames.filter((rename) => upstreamTree.has(rename.from));
 	const upstreamRenameTargets = new Set(upstreamRenames.map((rename) => rename.to));
@@ -50,7 +50,6 @@ function buildAuditReport(upstreamPath) {
 		trackerDiffs,
 		existingTrackers,
 		renames: upstreamRenames,
-		deletions,
 		upstreamSync: { pinChanged: true, divergentFiles },
 	};
 	const { covered, uncovered } = auditChangesMdCoverage({ changedFiles, trackerPolicy });

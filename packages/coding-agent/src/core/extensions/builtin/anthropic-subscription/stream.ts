@@ -1,0 +1,266 @@
+import {
+	type Api,
+	type AssistantMessageEventStream,
+	type Context,
+	createAssistantMessageDiagnostic,
+	createAssistantMessageEventStream,
+	type Model,
+	type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
+import { getSessionClaudeAccountPin } from "./account-command.ts";
+import { queryWithAuthLane } from "./auth-lane.ts";
+import { markColdSeedOverflow } from "./cold-seed-budget.ts";
+import { buildCustomToolServers } from "./custom-tools.ts";
+import { sdkAssistantFailure, sdkResultFailure, sdkResultFailureUsage } from "./errors.ts";
+import { type ClaudeCodeRun, defaultExecutableDeps, resolveClaudeCodeRun } from "./executable.ts";
+import { buildAnthropicSubscriptionQueryOptions } from "./options.ts";
+import { buildPromptBlocks, buildPromptStream } from "./prompt-bridge.ts";
+import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
+import { refusalError } from "./refusal.ts";
+import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
+import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
+import { forgetBinding } from "./session-reattach.ts";
+import { residentSessionMessages } from "./session-stream.ts";
+import { loadAnthropicSubscriptionProviderSettingsFromDisk, resolveCompactionOwner } from "./settings.ts";
+import { applyStreamEvent } from "./stream-events.ts";
+import { withAuthGuidance } from "./stream-guidance.ts";
+import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
+import { toolWatch } from "./tool-watch.ts";
+import { resolveSdkTools } from "./tools.ts";
+
+export const NATIVE_COMPACTION_WHILE_SENPI_OWNS =
+	'Claude Code compacted this session natively although senpi owns compaction on this lane (compactionOwner: "senpi"); the turn was stopped so only one side compacts. Run /compact, or set anthropicSubscriptionProvider.compactionOwner to "sdk" to let Claude Code compact.';
+
+export function streamAnthropicSubscription(
+	model: Model<Api>,
+	context: Context,
+	options?: SimpleStreamOptions,
+): AssistantMessageEventStream {
+	const stream = createAssistantMessageEventStream();
+	void (async () => {
+		const output = emptyOutput(model);
+		const blocks: StreamBlock[] = [];
+		let sdkQuery: SdkQueryHandle | undefined;
+		let closed = false;
+		let wasAborted = false;
+		let started = false;
+		let sawStreamEvent = false;
+		const closeQuery = (): void => {
+			if (closed || !sdkQuery) return;
+			closed = true;
+			sdkQuery.close();
+		};
+		const requestAbort = (): void => {
+			if (!sdkQuery) return;
+			void sdkQuery
+				.interrupt()
+				.catch(() => {})
+				.finally(closeQuery);
+		};
+		const onAbort = (): void => {
+			wasAborted = true;
+			requestAbort();
+		};
+		if (options?.signal?.aborted) onAbort();
+		else options?.signal?.addEventListener("abort", onAbort, { once: true });
+		let claudeCodeRun: ClaudeCodeRun | undefined;
+		let coldSeedAttempt = false;
+		let coldSeedEstimate: number | undefined;
+		let nativeCompactionStopped = false;
+
+		try {
+			// Resident before the synchronous SDK member below (getSdkBoundary().query)
+			// reads it - see sdk-boundary.lazy.ts.
+			await loadClaudeAgentSdk();
+			const resolvedTools = resolveSdkTools(context);
+			const affinityKey = options?.affinitySessionId ?? options?.sessionId;
+			const sessionKey = options?.sessionId ? toolWatch.sessionKey(options.sessionId) : undefined;
+			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
+			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
+			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
+			const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
+			const toolLessRequest = options?.toolChoice === "none";
+			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
+			claudeCodeRun = resolveClaudeCodeRun(defaultExecutableDeps());
+			const executable = claudeCodeRun.executable;
+			const buildOptions = (authLane: Parameters<typeof buildAnthropicSubscriptionQueryOptions>[0]["authLane"]) => {
+				const queryOptions = buildAnthropicSubscriptionQueryOptions({
+					model,
+					context,
+					streamOptions: options,
+					providerSettings,
+					authLane,
+					tools: resolvedTools.sdkTools,
+					pathToClaudeCodeExecutable: executable,
+					sessionId: options?.sessionId,
+					onGuidance: (text) => {
+						output.diagnostics = [
+							...(output.diagnostics ?? []),
+							createAssistantMessageDiagnostic("claude_sdk_oauth_deprecation", text),
+						];
+					},
+				});
+				if (mcpServers) queryOptions.mcpServers = mcpServers;
+				return queryOptions;
+			};
+			const recordContinuity = (observation: ContinuityObservation): void => {
+				// Not a failure: carry the observation as details only, with no synthesized error.
+				output.diagnostics = [
+					...(output.diagnostics ?? []),
+					{
+						type: "claude_sdk_oauth_session_continuity",
+						timestamp: Date.now(),
+						details: { ...observation },
+					},
+				];
+			};
+			const useResidentSession =
+				options?.streamKind === "main" && providerSettings.resumeMode !== "off" && options.sessionId !== undefined;
+			if (options?.streamKind === "main" && !useResidentSession) {
+				// The reason must reflect the ACTUAL cause: resume mode "off"
+				// disables the lane by setting, while any other mode simply has no
+				// resident session to reuse yet.
+				emitContinuityObservation(
+					{
+						kind: "disabled",
+						reason: providerSettings.resumeMode === "off" ? "resume_mode_off" : "registry_miss",
+					},
+					options.sessionId,
+					recordContinuity,
+				);
+			}
+			const messages = useResidentSession
+				? residentSessionMessages({
+						model,
+						context,
+						streamOptions: options,
+						providerSettings,
+						pinnedAccount: getSessionClaudeAccountPin(options.sessionId),
+						buildOptions,
+						customToolNameToSdk: resolvedTools.customToolNameToSdk,
+						toolWatchNote,
+						onContinuityDecision: recordContinuity,
+						onDispatchShape: (coldSeed, estimatedTokens) => {
+							coldSeedAttempt = coldSeed;
+							coldSeedEstimate = estimatedTokens;
+						},
+						onResumeFallback: (error) => {
+							output.diagnostics = [
+								...(output.diagnostics ?? []),
+								createAssistantMessageDiagnostic("claude_sdk_oauth_resume_fallback", error),
+							];
+						},
+					})
+				: queryWithAuthLane({
+						prompt: buildPromptStream(
+							dedupeUltraworkBlocks(buildPromptBlocks(context, resolvedTools.customToolNameToSdk, toolWatchNote))
+								.blocks,
+						),
+						query: getSdkBoundary().query,
+						providerSettings,
+						env: options?.env,
+						signal: options?.signal,
+						sessionId: affinityKey,
+						model: model.id,
+						pinnedAccount: getSessionClaudeAccountPin(options?.sessionId),
+						onQuery: (query) => {
+							sdkQuery = query;
+							if (wasAborted) requestAbort();
+						},
+						buildOptions,
+					});
+
+			for await (const message of messages) {
+				const refusal = refusalError(message);
+				if (refusal) throw refusal;
+				const failure =
+					message.type === "assistant"
+						? sdkAssistantFailure(message)
+						: message.type === "result"
+							? sdkResultFailure(message)
+							: undefined;
+				if (failure) throw failure;
+				if (!started) {
+					stream.push({ type: "start", partial: output });
+					started = true;
+				}
+				if (message.type === "stream_event") {
+					sawStreamEvent = true;
+					applyStreamEvent(
+						{ model, output, blocks, stream, customToolNameToPi: resolvedTools.customToolNameToPi },
+						message.event,
+					);
+				} else if (message.type === "system" && message.subtype === "compact_boundary") {
+					// The query was started with native auto-compact off: a boundary here means Claude
+					// Code compacted anyway. Fail the turn loudly instead of letting a second owner
+					// rewrite the transcript behind senpi's compaction.
+					if (senpiOwnsCompaction) {
+						nativeCompactionStopped = true;
+						throw new Error(NATIVE_COMPACTION_WHILE_SENPI_OWNS);
+					}
+					// Native compactions must reach the ledger: attach the boundary as a
+					// diagnostic so the lane-policy collector can build a ledger entry
+					// instead of the boundary being discarded in the stream.
+					output.diagnostics = [
+						...(output.diagnostics ?? []),
+						{
+							type: "claude_sdk_oauth_compact_boundary",
+							timestamp: Date.now(),
+							details: {
+								boundary: {
+									trigger: message.compact_metadata?.trigger ?? "unknown",
+									preTokens: message.compact_metadata?.pre_tokens ?? 0,
+									postTokens: message.compact_metadata?.post_tokens ?? 0,
+									lineageId: message.session_id ?? "",
+									observedAt: Date.now(),
+								},
+							},
+						},
+					];
+				} else if (message.type === "result" && message.subtype === "success") {
+					// Both fields are optional on the wire, so only adopt them when present.
+					// A terminal result must never downgrade a toolUse turn that the stream
+					// already established, or the agent loop would stop instead of running
+					// the tool call sitting in `output.content`.
+					if (message.usage) updateUsage(model, output, message.usage);
+					if (message.stop_reason != null && output.stopReason !== "toolUse") {
+						output.stopReason = mapStopReason(message.stop_reason);
+					}
+					if (!sawStreamEvent) output.content.push({ type: "text", text: message.result });
+				}
+			}
+
+			if (wasAborted || options?.signal?.aborted) {
+				output.stopReason = "aborted";
+				output.errorMessage = "Operation aborted";
+				stream.push({ type: "error", reason: "aborted", error: output });
+			} else {
+				stream.push({
+					type: "done",
+					reason: output.stopReason === "toolUse" ? "toolUse" : output.stopReason === "length" ? "length" : "stop",
+					message: output,
+				});
+			}
+		} catch (error) {
+			// no-excuse-ok: catch
+			// Provider boundary converts every thrown SDK value into the stream error contract.
+			// Unwinding the stopped attempt kept a retry checkpoint on the Claude Code session that
+			// just compacted natively. Drop it, so the next turn rebuilds the resident session from
+			// senpi's own history instead of resuming that rewritten transcript.
+			if (nativeCompactionStopped && options?.sessionId) forgetBinding(options.sessionId);
+			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+			// A failed result still bills its tokens; managed and resident lanes
+			// throw before the result reaches this loop, so account for it here.
+			const billed = sdkResultFailureUsage(error);
+			if (billed) updateUsage(model, output, billed);
+			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
+			markColdSeedOverflow(output, model, coldSeedAttempt, coldSeedEstimate, options?.sessionId);
+			stream.push({ type: "error", reason: output.stopReason, error: output });
+		} finally {
+			options?.signal?.removeEventListener("abort", onAbort);
+			closeQuery();
+			stream.end();
+		}
+	})();
+	return stream;
+}

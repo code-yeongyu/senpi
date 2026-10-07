@@ -4,6 +4,7 @@
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { legacyProviderIdRejection } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
@@ -29,6 +30,7 @@ export interface Args {
 	session?: string;
 	sessionId?: string;
 	fork?: string;
+	rebind?: string;
 	sessionDir?: string;
 	models?: string[];
 	tools?: string[];
@@ -55,13 +57,43 @@ export interface Args {
 	projectTrustOverride?: boolean;
 	/** Launch the experimental grok interactive chrome. */
 	grokNeo?: boolean;
-	/** Serve independently routed plain-RPC sessions over one stdio process. */
+	/** Serve independently routed plain-RPC sessions over one host. */
 	multiSession?: boolean;
+	/**
+	 * Opt non-interactive app modes (notably RPC) into engine-side session auto-titling.
+	 * Deprecated for shared hosts: prefer per-session `open_session.auto_title`.
+	 */
+	autoTitleSessions?: boolean;
+	/** Multi-session RPC listener: stdio://, unix://, unix:///path, or a socket path. */
+	listen?: string;
+	/** Explicit session runtime for a multi-session host; `resolveSessionRuntime` owns the default. */
+	sessionRuntime?: SessionRuntimeKind;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
 	unknownFlags: Map<string, boolean | string>;
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
+}
+
+const SESSION_RUNTIMES = ["in-process", "worker"] as const;
+
+/** Where a multi-session host runs its sessions: in the host process, or one worker isolate each. */
+export type SessionRuntimeKind = (typeof SESSION_RUNTIMES)[number];
+
+export function isSessionRuntimeKind(value: string): value is SessionRuntimeKind {
+	return SESSION_RUNTIMES.includes(value as SessionRuntimeKind);
+}
+
+/**
+ * Session runtime of a multi-session host. A `--listen` SOCKET host is the
+ * machine-wide daemon every client shares: it runs every session IN the host
+ * process, so there is no worker isolate per session and no worker cap. stdio
+ * hosts and embedders keep the worker runtime unchanged. An explicit
+ * `--session-runtime` always wins over both defaults.
+ */
+export function resolveSessionRuntime(parsed: Pick<Args, "sessionRuntime" | "listen">): SessionRuntimeKind {
+	if (parsed.sessionRuntime) return parsed.sessionRuntime;
+	return parsed.listen !== undefined && parsed.listen !== "stdio://" ? "in-process" : "worker";
 }
 
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -100,17 +132,33 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.help = true;
 		} else if (arg === "--version" || arg === "-v") {
 			result.version = true;
-		} else if (arg === "--mode" && i + 1 < args.length) {
-			const mode = args[++i];
-			if (mode === "text" || mode === "json" || mode === "rpc") {
-				result.mode = mode;
+		} else if (arg === "--mode") {
+			const mode = args[i + 1];
+			if (mode === undefined || mode.startsWith("-")) {
+				result.diagnostics.push({ type: "error", message: "--mode requires text, json, or rpc" });
+				continue;
 			}
+			i++;
+			if (mode !== "text" && mode !== "json" && mode !== "rpc") {
+				result.diagnostics.push({
+					type: "error",
+					message: `Invalid mode "${mode}". Valid values: text, json, rpc`,
+				});
+				continue;
+			}
+			result.mode = mode;
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
 			result.resume = true;
 		} else if (arg === "--provider" && i + 1 < args.length) {
-			result.provider = args[++i];
+			const typedProvider = args[++i];
+			// A TYPED legacy provider id is rejected by name so the user learns the
+			// new id (senpi#1989), instead of a generic "Unknown provider" later.
+			// Ids read from disk are normalized instead and never rejected.
+			const rejection = typedProvider === undefined ? undefined : legacyProviderIdRejection(typedProvider);
+			if (rejection) throw new Error(rejection);
+			result.provider = typedProvider;
 		} else if (arg === "--model" && i + 1 < args.length) {
 			result.model = args[++i];
 		} else if (arg === "--api-key" && i + 1 < args.length) {
@@ -134,6 +182,8 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.sessionId = args[++i];
 		} else if (arg === "--fork" && i + 1 < args.length) {
 			result.fork = args[++i];
+		} else if (arg === "--rebind" && i + 1 < args.length) {
+			result.rebind = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
@@ -236,6 +286,22 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.grokNeo = true;
 		} else if (arg === "--multi-session") {
 			result.multiSession = true;
+		} else if (arg === "--auto-title-sessions") {
+			result.autoTitleSessions = true;
+		} else if (arg === "--session-runtime") {
+			const value = args[i + 1];
+			if (value !== undefined && !value.startsWith("--")) i++;
+			if (value !== undefined && isSessionRuntimeKind(value)) result.sessionRuntime = value;
+			else result.diagnostics.push({ type: "error", message: "--session-runtime must be in-process or worker" });
+		} else if (arg === "--listen" && result.mode === "rpc") {
+			const value = args[i + 1];
+			if (value === undefined || value.startsWith("--")) {
+				result.diagnostics.push({ type: "error", message: "--listen requires a value" });
+			} else {
+				result.listen = value;
+				result.multiSession = true;
+				i++;
+			}
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
@@ -290,15 +356,21 @@ ${chalk.bold("Commands:")}
                                  List installed extensions from settings
   ${APP_NAME} config [--no-approve]
                                  Open TUI to enable/disable package resources (Tab switches scope)
-  ${APP_NAME} app-server [--listen <url>]
+  ${APP_NAME} models discover <provider>
+                                 Add an OpenAI-compatible provider's /models listing to models.json
+  ${APP_NAME} app-server [--listen <url>] [--extension <path>]...
                                  Serve agent sessions over the Codex app-server protocol
-  ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>]
+  ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>] [--extension <path>]...
                                  Manage the app-server daemon
+  ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [--launch-spec <file>]
+                                 Get, inspect or end the shared RPC daemon (one JSON line per call)
+  ${APP_NAME} schedule <list|cancel|run> [--watch] [--exec <command>]
+                                 List, cancel or fire durable scheduled prompts
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
 ${chalk.bold("Options:")}
-  --provider <name>              Provider name (default: google)
+  --provider <name>              Provider to search for --model (requires --model)
   --model <pattern>              Model pattern or ID (supports "provider/id" and optional ":<thinking>")
   --api-key <key>                API key (defaults to env vars)
   --system-prompt <text>         System prompt (default: coding assistant prompt)
@@ -310,6 +382,7 @@ ${chalk.bold("Options:")}
   --session <path|id>            Use specific session file or partial UUID
   --session-id <id>              Use exact project session ID, creating it if missing
   --fork <path|id>               Fork specific session file or partial UUID into a new session
+  --rebind <path|id>             Move a session from a moved or re-cloned repository into this directory and continue it
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name
@@ -322,8 +395,8 @@ ${chalk.bold("Options:")}
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names to disable
                                  Applies to built-in, extension, and custom tools
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
-  --extension, -e <path>         Load an extension file (can be used multiple times)
-  --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
+  --extension, -e <path>         Load an extension file or builtin:<name> (can be used multiple times)
+  --no-extensions, -ne           Disable extension discovery and built-in extensions (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
   --no-skills, -ns               Disable skills discovery and loading
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
@@ -340,7 +413,11 @@ ${chalk.bold("Options:")}
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
-${grokNeoOptionsText}  --help, -h                     Show this help
+${grokNeoOptionsText}  --multi-session               Serve multiple routed RPC sessions
+  --listen <address>            RPC listener: stdio://, unix://, unix:///path, or a socket path
+  --session-runtime <kind>      Multi-session host runtime: in-process (socket default) or worker
+  --auto-title-sessions         Auto-generate session titles outside interactive mode (deprecated for hosts; prefer open_session.auto_title)
+  --help, -h                     Show this help
   --version, -v                  Show version number
 
 Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
@@ -350,7 +427,7 @@ ${chalk.bold("Examples:")}
   ${APP_NAME} auth print-api-key --provider openai
 
   # Print an OAuth bearer token for an external client (refreshes if expired)
-  ${APP_NAME} auth print-bearer-token --provider openai-codex
+  ${APP_NAME} auth print-bearer-token --provider chatgpt-subscription
 
   # Interactive mode
   ${APP_NAME}
@@ -428,6 +505,7 @@ ${chalk.bold("Environment Variables:")}
   GEMINI_API_KEY                   - Google Gemini API key
   GROQ_API_KEY                     - Groq API key
   CEREBRAS_API_KEY                 - Cerebras API key
+  VENICE_API_KEY                   - Venice AI API key
   XAI_API_KEY                      - xAI Grok API key
   FIREWORKS_API_KEY                - Fireworks API key
   TOGETHER_API_KEY                 - Together AI API key
@@ -442,6 +520,7 @@ ${chalk.bold("Environment Variables:")}
   MOONSHOT_API_KEY                 - Moonshot AI API key
   OPENCODE_API_KEY                 - OpenCode Zen/OpenCode Go API key
   KIMI_API_KEY                     - Kimi For Coding API key
+  META_API_KEY                     - Meta Model API key
   CLOUDFLARE_API_KEY               - Cloudflare API token (Workers AI and AI Gateway)
   CLOUDFLARE_ACCOUNT_ID            - Cloudflare account id (required for both)
   CLOUDFLARE_GATEWAY_ID            - Cloudflare AI Gateway slug (required for AI Gateway)

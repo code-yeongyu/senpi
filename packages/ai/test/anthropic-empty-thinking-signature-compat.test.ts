@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getModel, streamSimple } from "../src/compat.ts";
+import { getModel, getModels, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
+import { fireworksMessagesModels, requireModels } from "./fireworks-catalog.ts";
+
+const messagesModels = requireModels(fireworksMessagesModels(), 2);
 
 interface AnthropicPayload {
 	messages?: Array<{
@@ -95,6 +98,39 @@ describe("Anthropic empty thinking signature compat", () => {
 		const payload = await capturePayload(makeModel(true), makeContext(" "));
 		const assistant = payload.messages?.find((message) => message.role === "assistant");
 		expect(assistant?.content).toEqual([{ type: "thinking", thinking: "internal reasoning", signature: "" }]);
+	});
+
+	// Regression for #9676: Vercel AI Gateway emits unsigned thinking for translated models.
+	it("allows empty thinking signatures for every Vercel AI Gateway model", () => {
+		const models = getModels("vercel-ai-gateway");
+		expect(models.length).toBeGreaterThan(0);
+		expect(models.every((model) => model.compat?.allowEmptySignature === true)).toBe(true);
+	});
+
+	// Regression for #9323: Fireworks emits unsigned thinking that must survive replay.
+	it.each(messagesModels.map((model) => [model.id, model] as const))(
+		"preserves unsigned thinking for Fireworks %s",
+		async (modelId, model) => {
+			expect(model.compat?.allowEmptySignature).toBe(true);
+			const context = makeContext("", "internal reasoning", "fireworks", modelId);
+			const assistant = context.messages[1] as AssistantMessage;
+			assistant.content.push({ type: "text", text: "answer" });
+			const payload = await capturePayload(model, context);
+			expect(payload.messages?.find((message) => message.role === "assistant")?.content).toEqual([
+				{ type: "thinking", thinking: "internal reasoning", signature: "" },
+				{ type: "text", text: "answer" },
+			]);
+		},
+	);
+
+	// Regression for #9323: opting into unsigned replay must not change cross-model conversion.
+	it("still converts cross-model Fireworks thinking to text", async () => {
+		const [model, otherModel] = messagesModels;
+		if (!model || !otherModel) throw new Error("expected two Fireworks Messages models");
+		const payload = await capturePayload(model, makeContext("", "internal reasoning", "fireworks", otherModel.id));
+		expect(payload.messages?.find((message) => message.role === "assistant")?.content).toEqual([
+			{ type: "text", text: "internal reasoning" },
+		]);
 	});
 
 	it.each(["k3"] as const)("allows empty signatures for Kimi Coding %s", async (modelId) => {

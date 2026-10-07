@@ -19,7 +19,7 @@ import type {
 	ExtensionHandler,
 } from "../../src/core/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import { createInMemoryExtensionSessionSettings } from "../helpers/extension-session-settings.ts";
+import { createInMemoryExtensionSessionSettings, HARD_LIMIT_SETTINGS } from "../helpers/extension-session-settings.ts";
 import { createTempAgentDir } from "../support/temp-agent-dir.ts";
 
 const AGENT_DIR = createTempAgentDir();
@@ -112,7 +112,7 @@ function createContext(contextWindow: number, maxTokens = contextWindow, compact
 		hasPendingMessages: () => false,
 		shutdown: vi.fn(),
 		getContextUsage: () => ({ tokens: contextWindow + 1, contextWindow, percent: 1.01 }),
-		getCompactionSettings: () => ({ enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 }),
+		getCompactionSettings: () => HARD_LIMIT_SETTINGS,
 		getLookAtSettings: () => ({ enabled: true, models: undefined }),
 		getImageSettings: () => ({ autoResize: true, blockImages: false }),
 		sessionSettings: createInMemoryExtensionSessionSettings(),
@@ -333,6 +333,7 @@ describe("compaction hard-limit emergency behavior", () => {
 				const context = createCompactionContext();
 				const event: BeforeAgentStartEvent = {
 					type: "before_agent_start",
+					trigger: "prompt",
 					prompt: "continue",
 					systemPrompt: "system",
 					systemPromptOptions: Object.create(null) as BeforeAgentStartEvent["systemPromptOptions"],

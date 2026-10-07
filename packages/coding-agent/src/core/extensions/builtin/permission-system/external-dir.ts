@@ -1,6 +1,25 @@
-import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+
+export type AlwaysScope = "file" | "directory";
+
+export function toParentDirectoryPattern(inputPath: string, scope: AlwaysScope): string {
+	if (inputPath === "~" || inputPath === "$HOME") {
+		return `${inputPath}/*`;
+	}
+	if (scope === "directory") {
+		return inputPath.endsWith("/") || inputPath.endsWith("\\") ? `${inputPath}*` : `${inputPath}/*`;
+	}
+	if (inputPath.endsWith("/") || inputPath.endsWith("\\")) {
+		return `${inputPath}*`;
+	}
+	const parentPattern = inputPath.replace(/[\\/][^\\/]+$/, "/*");
+	if (parentPattern.replaceAll("\\", "/") === `${path.parse(inputPath).root.replaceAll("\\", "/")}*`) {
+		return inputPath;
+	}
+	return parentPattern;
+}
 
 export function expandHome(inputPath: string): string {
 	if (inputPath === "~") {
@@ -18,20 +37,13 @@ export function expandHome(inputPath: string): string {
 	return inputPath;
 }
 
-function normalizePath(inputPath: string): string {
-	try {
-		if (fs.existsSync(inputPath)) {
-			return fs.realpathSync(inputPath);
-		}
-	} catch {}
-	return path.normalize(inputPath);
-}
-
 export function isExternalPath(inputPath: string, cwd: string): boolean {
 	const expandedPath = expandHome(inputPath);
-	const normalizedCwd = normalizePath(cwd);
+	// Resolution must never open(2) a component (autofs triggers block, execute-only dirs EACCES):
+	// realpathWithoutOpen walks lstat/readlink only, exactly what the classifier needs.
+	const normalizedCwd = realpathWithoutOpen(cwd);
 	const absolutePath = path.isAbsolute(expandedPath) ? expandedPath : path.resolve(normalizedCwd, expandedPath);
-	const normalizedTarget = normalizePath(absolutePath);
+	const normalizedTarget = realpathWithoutOpen(absolutePath);
 
 	if (normalizedTarget === normalizedCwd) {
 		return false;

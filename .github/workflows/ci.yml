@@ -3,26 +3,78 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every pull request runs CI, whatever its base: a PR stacked on another feature branch must not reach main untested
+  # (senpi#2759).
   pull_request:
-    branches: [main]
 
+# One run per pull request (its ref is refs/pull/<n>/merge): a push or restack cancels the run it supersedes.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  codemode-gate:
+    name: codemode-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gate reviews baseline.json changes against the pull request's merge base, so it needs history.
+          fetch-depth: 0
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: "4.0"
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@e89cce584bf1958661244c90fdf08fea80dadbd1 # v3.0.2 + 16 commits (includes upstream #416)
+        with:
+          version: "1.12"
+      - name: Install Ruby prelude dependency
+        run: gem install base64 --version 0.3.0 --no-document
+      - name: Install dependencies
+        run: bun install --ignore-scripts --frozen-lockfile
+      - name: Build workspace entries
+        run: bun packages/senpi-codemode/scripts/gate-build.ts
+      - name: Eval regression gate
+        run: bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
+      - name: Codemode package tests (including gate regressions)
+        run: bun run --cwd packages/senpi-codemode test -- test/gate
+      - name: Gate harness types
+        run: bunx tsc --noEmit --project packages/senpi-codemode/scripts/tsconfig.gate.json
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codemode-gate-report
+          path: packages/senpi-codemode/gate-report.json
+          if-no-files-found: error
+
   check:
     name: Static checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install system dependencies
@@ -35,11 +87,22 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      # check:bun-lock resolves bun.lock in an isolated island and fails when a fresh `bun install` would rewrite it (senpi#2352).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
       - name: Check
         run: npm run check
 
       - name: Build workspace package entries
         run: npm run build
+
+      # The publish workflow's release step refuses a dirty tree after `npm run build`, so a committed
+      # dist file that the build rewrites (the bin stubs kept by .gitignore) must match the build output.
+      - name: Committed dist files match the build
+        run: git diff --exit-code -- ':(glob)packages/*/dist/**'
 
       - name: Workflow summary
         if: always()
@@ -65,12 +128,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install system dependencies
@@ -85,6 +148,11 @@ jobs:
 
       - name: Build workspace package entries
         run: npm run build
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
 
       - name: Test shard
         timeout-minutes: 25
@@ -100,19 +168,515 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  grep-native-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install system dependencies
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y ripgrep
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Setup Rust
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build native grep crate
+        run: cargo build -p senpi-grep --release --locked
+
+      - name: Build native grep addon
+        run: npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+        working-directory: crates/senpi-grep
+
+      - name: Test grep with both engines
+        run: |
+          node_file=$(ls crates/senpi-grep/senpi_grep.*.node)
+          export SENPI_GREP_NATIVE_PATH="$PWD/$node_file"
+          cd packages/coding-agent
+          echo "engine=native"
+          SENPI_GREP_ENGINE=native bunx vitest run test/grep --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/grep-native-contract.json"
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          const report = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/grep-native-contract.json`, "utf8"));
+          const contract = report.testResults.find((file) => file.name.endsWith("/engine-contract.native.test.ts"));
+          assert.ok(contract?.assertionResults.length > 1, "native contract cases must run");
+          assert.ok(contract.assertionResults.every((test) => test.status === "passed"));
+          console.log(`engine=native engine-contract.native.test.ts: ${contract.assertionResults.length} passed, 0 skipped`);
+          NODE
+          echo "engine=rg"
+          SENPI_GREP_ENGINE=rg bunx vitest run test/grep
+
+  hooks-trust-storage-windows:
+    name: Hooks trust storage (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run hooks trust-storage regressions
+        run: npx vitest run test/suite/hooks-trust.test.ts test/suite/hooks-trust-storage-errors.test.ts test/suite/hooks-trust-storage-release-errors.test.ts test/suite/hooks-trust-storage-aba.test.ts
+        working-directory: packages/coding-agent
+
+  # Durable scheduled prompts: rename claims, runner leases, ungated delivery locks, taskkill
+  # timeouts and cmd.exe `--exec` hooks all behave differently on Windows.
+  schedule-windows:
+    name: Scheduled prompts (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # schedule-cli spawns the source CLI, which resolves workspace packages through their dist.
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Run scheduled-prompt suites
+        run: npx vitest run test/suite/schedule-runner.test.ts test/suite/schedule-extension.test.ts test/suite/schedule-cli.test.ts
+        working-directory: packages/coding-agent
+
+  rpc-windows:
+    name: RPC named pipes (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      # Each suite runs in its own process; lifecycle failures are not retried in-process. The verbose
+      # reporter names every test in the log, so a Windows-only case is provably run, not just counted.
+      - name: Run RPC host ensure tests
+        run: bunx vitest run test/rpc-host-ensure.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      - name: Run RPC host lifecycle tests
+        run: bunx vitest run test/rpc-host-lifecycle.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      - name: Run RPC socket transport tests
+        shell: bash
+        run: bunx vitest run test/rpc-socket-transport.test.ts --reporter=verbose --reporter=json --outputFile=vitest-socket-transport.json
+        working-directory: packages/coding-agent
+
+      # The `senpi host` contract over the named-pipe transport: a second ensure reuses the daemon
+      # on the pipe, and a generation handoff refuses (a pipe can be neither renamed nor drained).
+      - name: Run senpi host CLI tests (named pipes)
+        run: bunx vitest run test/suite/host-cli-win32.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      - name: Run app-server daemon tests
+        run: bunx vitest run test/suite/app-server-daemon.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      # endpoint.json written and read back on Windows paths: registry_version, endpoint_kind, and a
+      # legacy record read as rpc_host.
+      - name: Run endpoint registry tests
+        run: bunx vitest run test/suite/rpc-endpoint-registry.test.ts --reporter=verbose
+        working-directory: packages/coding-agent
+
+      # The session gateway is POSIX-only: an interactive TUI on win32 starts normally, its endpoint
+      # request answers unsupported_platform, and nothing is registered.
+      - name: Run interactive TUI control endpoint tests (win32)
+        shell: bash
+        run: bunx vitest run test/suite/interactive-session-control-win32.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
+        working-directory: packages/coding-agent
+
+      # A skipped suite exits 0: fail unless the win32-only cases (the named-pipe wrong-secret test and
+      # the TUI no-registration suite) executed and every test in those files passed.
+      - name: Require the win32 gateway parity tests to have executed
+        shell: bash
+        run: |
+          for pair in vitest-socket-transport.json:rpc-socket-transport.test.ts vitest-tui-control-win32.json:interactive-session-control-win32.test.ts; do
+            node -e '
+              const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+              const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith(process.argv[2]));
+              const passed = file ? file.assertionResults.filter((a) => a.status === "passed").length : 0;
+              const other = file ? file.assertionResults.filter((a) => a.status !== "passed").length : 0;
+              console.log(process.argv[1] + ": " + process.argv[2] + " passed=" + passed + " other=" + other);
+              if (passed === 0 || other !== 0) process.exit(1);
+            ' "${pair%%:*}" "${pair#*:}"
+          done
+        working-directory: packages/coding-agent
+
+  compiled-extensions-windows:
+    name: Compiled extensions (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install archive tool
+        run: choco install zip --no-progress -y
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Verify native importer
+        shell: bash
+        run: npx vitest run test/extensions/bun-extension-importer.test.ts test/extensions/bun-extension-regressions.test.ts
+        working-directory: packages/coding-agent
+
+      - name: Verify relocated compiled extensions
+        shell: bash
+        run: bun test scripts/compiled-extension-platform.test.ts scripts/compiled-extension-load.test.ts
+
+  # omo#8700: npm installs Claude Code on Windows as a claude.cmd shim around bin\claude.exe. The
+  # shim-resolution test only runs on a real Windows host, under Node and under Bun (the omo engine
+  # runtime); the JSON check fails the job if that file was skipped instead of executed.
+  claude-executable-windows:
+    name: Claude Code executable (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Claude executable resolution tests (Node)
+        shell: bash
+        run: npx vitest run test/anthropic-subscription-executable-path-lookup.test.ts test/anthropic-subscription-executable-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-node.json
+        working-directory: packages/coding-agent
+
+      - name: Run Claude executable shim test (Bun)
+        shell: bash
+        run: bunx --bun vitest run test/anthropic-subscription-executable-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-bun.json
+        working-directory: packages/coding-agent
+
+      - name: Require the Windows shim test to have executed
+        shell: bash
+        run: |
+          for report in vitest-node.json vitest-bun.json; do
+            node -e '
+              const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+              const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith("anthropic-subscription-executable-windows.test.ts"));
+              const passed = file ? file.assertionResults.filter((a) => a.status === "passed").length : 0;
+              const other = file ? file.assertionResults.filter((a) => a.status !== "passed").length : 0;
+              console.log(process.argv[1] + ": windows shim test passed=" + passed + " other=" + other);
+              if (passed === 0 || other !== 0) process.exit(1);
+            ' "$report"
+          done
+        working-directory: packages/coding-agent
+
+  # senpi#2248: Bun builds Chrome-backed WebViews only on the process main thread, so eval cells
+  # reach them through the main-thread service. The suites need Bun and a real Chrome (preinstalled
+  # on hosted runners) and are skipped elsewhere; the JSON check fails the job if they were skipped.
+  webview-kernel:
+    name: Eval kernel WebView (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # senpi#2353: a hung suite must not run into the job timeout: GitHub discards a cancelled job's
+      # log, and a runner that stops answering never enforces a step timeout either. The step watches
+      # the suite itself and, after 9 minutes (a normal Windows run takes about 3), prints what it has,
+      # the processes still running, and the readiness log, then fails.
+      - name: Run eval kernel WebView suites (Bun)
+        shell: bash
+        timeout-minutes: 12
+        env:
+          SENPI_WEBVIEW_READINESS_LOG: ${{ runner.temp }}/webview-readiness.log
+        run: |
+          out="$RUNNER_TEMP/vitest-webview.txt"
+          bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts test/js-kernel-webview-readiness.test.ts --reporter=verbose --reporter=hanging-process --reporter=json --outputFile=vitest-webview.json > "$out" 2>&1 &
+          suite=$!
+          for _ in $(seq 1 540); do kill -0 "$suite" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$suite" 2>/dev/null; then
+            cat "$out"
+            echo "::error::WebView suites still running after 9 minutes; the last finished test is above"
+            if command -v tasklist >/dev/null; then tasklist //FO CSV | grep -iE 'chrome|bun|node|powershell|tasklist|taskkill' || true; else ps -axo pid,ppid,etime,command | grep -iE 'chrom|bun|node' || true; fi
+            cat "$SENPI_WEBVIEW_READINESS_LOG" 2>/dev/null || true
+            kill "$suite" 2>/dev/null || true
+            exit 1
+          fi
+          wait "$suite"
+          status=$?
+          cat "$out"
+          exit "$status"
+        working-directory: packages/senpi-codemode
+
+      # senpi#2353: one line per Chrome launch (time to attach, or the stalled phase and the retirement).
+      - name: Show the WebView readiness log
+        if: always()
+        shell: bash
+        run: cat "$RUNNER_TEMP/webview-readiness.log" 2>/dev/null || echo "no readiness log"
+
+      - name: Require the WebView suites to have executed
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-webview.json", "utf8"));
+            const results = r.testResults.flatMap((file) => file.assertionResults);
+            const passed = results.filter((a) => a.status === "passed").length;
+            const failed = results.filter((a) => a.status === "failed").length;
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed").length;
+            const allowedSkips = process.platform === "win32" ? 1 : 0;
+            console.log("webview suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped);
+            if (passed < 10 || failed !== 0 || skipped > allowedSkips) process.exit(1);
+          '
+        working-directory: packages/senpi-codemode
+
+  process-kernel:
+    name: Eval kernel process isolation (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # How this runner handles a crashing process: a piped core-dump handler keeps a crashed kernel child alive
+      # until its dump is consumed, which the SIGSEGV case waits on.
+      - name: Show the crash-handling environment
+        shell: bash
+        run: |
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern 2>/dev/null || sysctl -n kern.corefile 2>/dev/null || echo n/a)"
+          echo "ulimit -c: $(ulimit -c)"
+          ( bun -e 'process.kill(process.pid, "SIGSEGV")' >/dev/null 2>&1; echo "bun SIGSEGV exit status: $?" ) &
+          start=$(date +%s); wait; echo "bun SIGSEGV took $(( $(date +%s) - start ))s to exit"
+
+      # Process mode spawns its kernel child with bun on both platforms; a platform where the child cannot start
+      # (senpi#2706: a Linux spawn's stdout is a socket) fails here instead of shipping.
+      - name: Run the process-mode kernel suite
+        timeout-minutes: 12
+        run: npx vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
+        working-directory: packages/senpi-codemode
+
+      # Runs whatever the suite's outcome: a failed run is when a kernel child is most likely to leak.
+      - name: Fail on any orphaned kernel child
+        if: always()
+        shell: bash
+        run: |
+          orphans=$(ps -eo pid,ppid,command | grep '[p]rocess-entry.js' | awk '$2 == 1' || true)
+          if [ -n "$orphans" ]; then echo "$orphans"; echo "::error::kernel children outlived the suite"; exit 1; fi
+
+      - name: Require the process-mode suite to have executed
+        if: always()
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-process.json", "utf8"));
+            const results = r.testResults.flatMap((file) => file.assertionResults);
+            const passed = results.filter((a) => a.status === "passed").length;
+            const failed = results.filter((a) => a.status === "failed").length;
+            const skipped = results.filter((a) => a.status !== "passed" && a.status !== "failed");
+            // A skip is allowed only for a Linux-only case off Linux (named, so a newly skipped test still fails here).
+            const linuxOnly = /When a Linux kernel child|SENPI_KERNEL_CORE_DUMPS=1|parent is a subreaper/;
+            const unexpected = skipped.filter((a) => process.platform === "linux" || !linuxOnly.test(a.title));
+            console.log("process-mode suite: passed=" + passed + " failed=" + failed + " skipped=" + skipped.length);
+            for (const a of unexpected) console.log("unexpected skip: " + a.title);
+            if (passed < 30 || failed !== 0 || unexpected.length !== 0) process.exit(1);
+          '
+        working-directory: packages/senpi-codemode
+
+  python-kernel-windows:
+    name: Python kernel cold startup (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12.10"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Slow and hung bootstrap regressions
+        working-directory: packages/senpi-codemode
+        run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
+      - name: Python environments stay inside the revision on Windows
+        working-directory: packages/senpi-codemode
+        shell: pwsh
+        run: |
+          bun ../../node_modules/vitest/vitest.mjs run test/environments/py-environment.test.ts -t "pip config file|staged revision|null device" --reporter=default --reporter=json --outputFile="$env:RUNNER_TEMP/py-env-win.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # A skipped test is not a pass: the pip-config case must have run on this Windows interpreter.
+          bun -e "const r = JSON.parse(await Bun.file(process.argv[1]).text()); const t = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.startsWith('When a pip config file names a root')); const d = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.includes('pointed at the null device')); if (!t || t.status !== 'passed' || !d || d.status !== 'passed') { console.error('pip config test: ' + (t ? t.status : 'missing') + ', null device test: ' + (d ? d.status : 'missing')); process.exit(1) }" "$env:RUNNER_TEMP/py-env-win.json"
+      # Plan node 11: Python kernel tools serve callbacks on threads beside a SIGTERM-only interrupt; run them on Windows too.
+      - name: Kernel-tool suites
+        working-directory: packages/senpi-codemode
+        run: python --version && bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-tools.test.ts test/kernel-tools-registry.test.ts test/kernel-tools-reentrancy.test.ts --reporter=default --reporter=json --outputFile.json=vitest-kernel-tools.json
+      - name: Require the kernel-tool suites to have executed
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-kernel-tools.json", "utf8"));
+            const results = r.testResults.flatMap((file) => file.assertionResults);
+            const python = r.testResults.filter((file) => file.name.endsWith("py-kernel-tools.test.ts")).flatMap((file) => file.assertionResults);
+            const passed = results.filter((a) => a.status === "passed").length;
+            const failed = results.filter((a) => a.status === "failed").length;
+            const skipped = results.length - passed - failed;
+            console.log("kernel-tool suites: passed=" + passed + " failed=" + failed + " skipped=" + skipped + " python=" + python.length);
+            if (failed !== 0 || skipped !== 0 || python.length < 15 || python.some((a) => a.status !== "passed")) process.exit(1);
+            const forward = python.find((a) => a.title.startsWith("a cell compiles a bare forward annotation"));
+            if (!forward || forward.status !== "passed") { console.error("bare forward annotation test: " + (forward ? forward.status : "missing")); process.exit(1); }
+          '
+        working-directory: packages/senpi-codemode
+      - name: Build isolated packaged Python host
+        shell: pwsh
+        run: |
+          $hostRoot = "$env:RUNNER_TEMP/python-host"
+          New-Item -ItemType Directory -Force $hostRoot | Out-Null
+          bun build --compile --target bun-windows-x64 packages/senpi-codemode/scripts/qa-python-startup.ts --outfile "$hostRoot/python-host.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sidecar = "$hostRoot/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py"
+          New-Item -ItemType Directory -Force $sidecar | Out-Null
+          Copy-Item packages/senpi-codemode/src/kernels/py/prelude.py "$sidecar/prelude.py"
+      - name: Packaged cold and warm Python cells
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP/python-host/python-host.exe"
+          exit $LASTEXITCODE
+
   test-workspaces:
     name: Test (workspaces + scripts)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
 
       - name: Install system dependencies
         run: |
@@ -124,23 +688,45 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build workspace package entries
-        run: npm run build
+      # Codemode's graph suite rebuilds workspace entries and compile assets itself.
+      # Keep both graph checks ahead of script tests, which can invalidate dist.
+      - name: Fresh release entry graphs (codemode and exclusions)
+        run: |
+          npm rebuild canvas --foreground-scripts
+          bun test scripts/release-graph-codemode.test.ts
+          bun test scripts/release-graph-exclusions.test.ts
+
+      - name: Node bundle isolation and RPC smoke
+        run: |
+          bun test scripts/node-bundle-provider-isolation.test.ts
+          bun test scripts/node-bundle-smoke.test.ts
+          bun test scripts/node-bundle-cursor-exec.test.ts
+          bun test scripts/node-bundle-reinstall.test.ts
+          bun test scripts/bun-bundle-provider-coverage.test.ts
+          bun test scripts/compiled-provider-probe.test.ts
 
       - name: Script tests
         run: npm run test:scripts
 
+      # The same script tests launched by bun: scripts/run-workspaces.test.mjs drives the
+      # workspace runner with whichever package manager started the run, so this step is
+      # the CI proof that root `bun run <script>` fans out through bun, not npm.
+      - name: Script tests (bun)
+        run: bun run test:scripts
+
+      # The workspace runner is the same code path root `npm run test` / `bun run test` use.
       - name: Workspace tests (all but coding-agent)
         timeout-minutes: 25
         run: >
-          npm run test
+          node scripts/run-workspaces.mjs
+          --if-present
           --workspace packages/agent
           --workspace packages/ai
           --workspace packages/pty
           --workspace packages/senpi-codemode
           --workspace packages/server
           --workspace packages/tui
-          --if-present
+          test
 
       - name: Workflow summary
         if: always()
@@ -156,7 +742,21 @@ jobs:
   # so the required-status contract is unchanged while the work runs in parallel.
   check-and-test:
     name: Check and test
-    needs: [check, test-coding-agent, test-workspaces]
+    needs:
+      [
+        check,
+        codemode-gate,
+        test-coding-agent,
+        grep-native-contract,
+        hooks-trust-storage-windows,
+        schedule-windows,
+        rpc-windows,
+        compiled-extensions-windows,
+        claude-executable-windows,
+        webview-kernel,
+        python-kernel-windows,
+        test-workspaces,
+      ]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -180,7 +780,16 @@ jobs:
           {
             echo "## Check and test (fan-in)"
             echo "- check: ${{ needs.check.result }}"
+            echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
+            echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
+            echo "- schedule-windows: ${{ needs.schedule-windows.result }}"
+            echo "- rpc-windows: ${{ needs.rpc-windows.result }}"
+            echo "- compiled-extensions-windows: ${{ needs.compiled-extensions-windows.result }}"
+            echo "- claude-executable-windows: ${{ needs.claude-executable-windows.result }}"
+            echo "- webview-kernel: ${{ needs.webview-kernel.result }}"
+            echo "- python-kernel-windows: ${{ needs.python-kernel-windows.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -194,12 +803,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies
@@ -214,7 +823,7 @@ jobs:
 
       - name: Terminal extension + shell resolution tests
         shell: bash
-        run: npx vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts
+        run: npx vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts test/suite/regressions/issue-1229-win-fswatch-noncanonical-abort.test.ts
         working-directory: packages/coding-agent
 
   inspector-handoff:
@@ -227,12 +836,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24'
+          node-version: "24"
           cache: npm
 
       - name: Install dependencies

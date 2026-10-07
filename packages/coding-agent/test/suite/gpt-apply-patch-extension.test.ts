@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getCurrentTools, normalizeContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { streamOpenAICompletions } from "../../../ai/src/providers/openai-completions.ts";
@@ -439,7 +440,7 @@ describe("gpt-apply-patch builtin extension", () => {
 		await harness.session.bindExtensions({});
 		harness.setResponses([
 			(context) => {
-				providerToolNames = (context.tools ?? []).map((tool) => tool.name);
+				providerToolNames = getCurrentTools(context.messages).map((tool) => tool.name);
 				return {
 					role: "assistant",
 					content: [{ type: "text", text: "done" }],
@@ -462,8 +463,8 @@ describe("gpt-apply-patch builtin extension", () => {
 
 		await harness.session.prompt("test");
 
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
-		expect(providerToolNames).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
+		expect(providerToolNames).toEqual(["read", "bash", "apply_patch", "grep"]);
 	});
 
 	it("restores write and edit when the session switches away from an OpenAI GPT model", async () => {
@@ -496,6 +497,8 @@ describe("gpt-apply-patch builtin extension", () => {
 
 	it("preserves toolset changes made while on a GPT model when restoring non-GPT tools", async () => {
 		const harness = await createHarness({
+			// Start without grep so the later activation remains a real promotion.
+			initialActiveToolNames: ["read", "bash", "edit", "write"],
 			api: "openai-responses",
 			provider: "openai",
 			models: [
@@ -644,13 +647,17 @@ describe("gpt-apply-patch builtin extension", () => {
 		let capturedTools: unknown;
 
 		// when: the JSON variant flows through completions conversion without throwing
-		const acceptStream = streamOpenAICompletions(createCompletionsModel(), createUserContext([jsonTool]), {
-			apiKey: "test-key",
-			onPayload(payload) {
-				capturedTools = (payload as { tools?: unknown }).tools;
-				throw new Error("capture-sentinel");
+		const acceptStream = streamOpenAICompletions(
+			createCompletionsModel(),
+			normalizeContext(createUserContext([jsonTool])),
+			{
+				apiKey: "test-key",
+				onPayload(payload) {
+					capturedTools = (payload as { tools?: unknown }).tools;
+					throw new Error("capture-sentinel");
+				},
 			},
-		});
+		);
 		const acceptResult = await acceptStream.result();
 
 		// then
@@ -676,7 +683,7 @@ describe("gpt-apply-patch builtin extension", () => {
 		// when
 		const rejectStream = streamOpenAICompletions(
 			createCompletionsModel(),
-			createUserContext([jsonTool, otherFreeformTool]),
+			normalizeContext(createUserContext([jsonTool, otherFreeformTool])),
 			{ apiKey: "test-key" },
 		);
 		const rejectResult = await rejectStream.result();
@@ -698,7 +705,10 @@ describe("gpt-apply-patch builtin extension", () => {
 		await harness.session.bindExtensions({});
 		harness.setResponses([
 			(context) => {
-				providerTools = (context.tools ?? []).map((tool) => ({ name: tool.name, freeform: tool.freeform }));
+				providerTools = getCurrentTools(context.messages).map((tool) => ({
+					name: tool.name,
+					freeform: tool.freeform,
+				}));
 				return {
 					role: "assistant",
 					content: [{ type: "text", text: "done" }],
@@ -721,13 +731,15 @@ describe("gpt-apply-patch builtin extension", () => {
 
 		await harness.session.prompt("test");
 
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
-		expect(providerTools.map((tool) => tool.name)).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
+		expect(providerTools.map((tool) => tool.name)).toEqual(["read", "bash", "apply_patch", "grep"]);
 		expect(providerTools.find((tool) => tool.name === "apply_patch")?.freeform).toBeUndefined();
 	});
 
 	it("keeps tools promoted while a GPT model is active across a non-GPT round trip", async () => {
 		const harness = await createHarness({
+			// Start without grep so the later activation remains a real promotion.
+			initialActiveToolNames: ["read", "bash", "edit", "write"],
 			api: "anthropic-messages",
 			provider: "anthropic",
 			models: [{ id: "claude-sonnet" }, { id: "gpt-5.5" }],
@@ -758,7 +770,7 @@ describe("gpt-apply-patch builtin extension", () => {
 		});
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write", "grep"]);
 
 		// Deliberate edit-family disable while non-GPT.
 		harness.session.setActiveToolsByName(["read", "bash", "write"]);
@@ -785,7 +797,7 @@ describe("gpt-apply-patch builtin extension", () => {
 		});
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
 		expect(harness.session.getToolDefinition("apply_patch")?.freeform).toBeDefined();
 
 		harness.session.setActiveToolsByName(["read", "bash", "apply_patch", "grep"]);
@@ -852,7 +864,7 @@ describe("gpt-apply-patch builtin extension", () => {
 
 			await harness.session.bindExtensions({});
 
-			expect(harness.session.getActiveToolNames()).toEqual(["read", "bash"]);
+			expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "grep"]);
 		}
 	});
 });

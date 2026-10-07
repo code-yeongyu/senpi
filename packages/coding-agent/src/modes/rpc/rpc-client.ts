@@ -5,25 +5,73 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
+import { createConnection, type Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { SessionStats } from "../../core/agent-session.ts";
+import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
+import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
+import type { BrowserEngine } from "../../core/browser-engine.ts";
+import { type ClientMessageIdentity, clientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
+import { MissingSessionCwdError } from "../../core/session-cwd.ts";
+import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
+
+/** A command the host refused; `errorCode` carries the typed code when the command defines one. */
+export class RpcCommandError extends Error {
+	readonly errorCode: string | undefined;
+	readonly errorData: unknown;
+
+	constructor(message: string, errorCode: string | undefined, errorData: unknown) {
+		super(message);
+		this.name = "RpcCommandError";
+		this.errorCode = errorCode;
+		this.errorData = errorData;
+	}
+}
+
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import {
+	armRequestDeadline,
+	OPEN_AFTER_QUEUED_DEADLINE_MS,
+	openStalledMessage,
+	PROMPT_ACK_MAX_WAIT_MS,
+	PROMPT_AFTER_QUEUED_DEADLINE_MS,
+	PROMPT_COMPACTION_DEADLINE_MS,
+	promptStalledMessage,
+	REQUEST_DEADLINE_MS,
+} from "./rpc-request-deadline.ts";
 import type {
+	EditAssistantMessageResult,
+	EditUserMessageResult,
 	RpcAccountFailoverEvent,
 	RpcAuthAccountsChangedEvent,
 	RpcCommand,
 	RpcExtensionEvent,
+	RpcExtensionUIProgress,
+	RpcExtensionUIRequest,
+	RpcExtensionUIResponse,
+	RpcOpenQueuedEvent,
 	RpcProviderAccount,
 	RpcResponse,
+	RpcSessionModelEntry,
+	RpcSessionParkedEvent,
+	RpcSessionReplacedEvent,
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.ts";
+import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
+import {
+	readSocketSecret,
+	resolveSocketTransportAddress,
+	sendSocketHandshake,
+	socketSecretPath,
+} from "./socket-transport.ts";
+import { socketNeedsHandshake } from "./tui-socket.ts";
 
 // ============================================================================
 // Types
@@ -36,6 +84,10 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 type RpcCommandBody = DistributiveOmit<RpcCommand, "id">;
 
 export interface RpcClientOptions {
+	/** Connect to an existing multi-session Unix socket instead of spawning a child. */
+	socketPath?: string;
+	/** Called once when an established transport disconnects. */
+	onDisconnect?: (error: RpcTransportGoneError) => void;
 	/** Path to the CLI entry point (default: searches for dist/cli.js) */
 	cliPath?: string;
 	/** Working directory for the agent */
@@ -58,8 +110,38 @@ export interface ModelInfo {
 	supportedThinkingLevels?: ThinkingLevel[];
 }
 
+type PromptOptions = ClientMessageIdentity & {
+	images?: ImageContent[];
+	streamingBehavior?: "steer" | "followUp";
+	thinkingLevel?: ThinkingLevel;
+	promptDisposition?: (disposition: PromptDisposition) => void;
+	preflightResult?: (success: boolean) => void;
+	sessionTitlePrompt?: string | false;
+	expandPromptTemplates?: boolean;
+	unknownCommandAsText?: boolean;
+};
+
 export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
-export type RpcClientEvent = JsonAgentSessionEvent | RpcProviderAccountEvent | RpcExtensionEvent;
+export type RpcClientEvent =
+	| (JsonAgentSessionEvent & ClientMessageIdentity & { readonly clientMessages?: readonly ClientMessageIdentity[] })
+	| RpcProviderAccountEvent
+	| RpcExtensionEvent
+	| RpcExtensionUIRequest
+	// The host swapped the live session behind this connection. Part of the public
+	// union so a typed client can discriminate on the type and read the new
+	// `durableSessionId` without casting: the command response carries only
+	// `{ cancelled }`, and a replacement may be driven by another client or an
+	// extension, so this is the only channel delivering the new identity.
+	| RpcSessionReplacedEvent
+	// The host parked a retained session at its idle window. Part of the public union
+	// because it REPLACES `session_closed` for that handle: a client that treats it as
+	// a close loses the session it was told to reopen by path.
+	| RpcSessionParkedEvent
+	// The host accepted an open_session and says where it is queued; the client also uses it to
+	// switch that open to its post-acknowledgement deadline (senpi#2209).
+	| RpcOpenQueuedEvent
+	| { type: "bash_start" }
+	| { type: "bash_end" };
 export type RpcEventListener = (event: RpcClientEvent) => void;
 
 function isProviderAccountEvent(event: RpcClientEvent): event is RpcProviderAccountEvent {
@@ -70,35 +152,121 @@ function isProviderAccountEvent(event: RpcClientEvent): event is RpcProviderAcco
 // RPC Client
 // ============================================================================
 
+export class RpcTransportGoneError extends Error {
+	readonly code = "rpc_transport_gone" as const;
+
+	constructor(message = "Shared RPC host is unavailable") {
+		super(message);
+		this.name = "RpcTransportGoneError";
+	}
+}
+
+export function isTransportGoneError(error: unknown): error is RpcTransportGoneError {
+	return (
+		error instanceof RpcTransportGoneError ||
+		(error instanceof Error &&
+			(error.message === "Client not started" ||
+				error.message.startsWith("RPC transport is not writable.") ||
+				error.message === "RPC socket closed"))
+	);
+}
+
+export class RpcClientOpenInFlightError extends Error {
+	readonly code = "open_session_in_flight" as const;
+
+	constructor() {
+		super("An open_session request is already in flight");
+		this.name = "RpcClientOpenInFlightError";
+	}
+}
+
+// Keep pre-lease startup delivery bounded by both record count and wire size.
+const MAX_PENDING_SESSION_EVENTS = 512;
+const MAX_PENDING_SESSION_EVENT_BYTES = 1024 * 1024;
+
 export class RpcClient {
 	private process: ChildProcess | null = null;
+	private socket: Socket | null = null;
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
-	private pendingRequests: Map<string, { resolve: (response: RpcResponse) => void; reject: (error: Error) => void }> =
-		new Map();
+	private pendingRequests: Map<
+		string,
+		{
+			readonly sessionId: string | undefined;
+			resolve: (response: RpcResponse) => void;
+			reject: (error: Error) => void;
+			onResponse?: (response: RpcResponse) => void;
+			onReject?: (error: Error) => void;
+			onQueued?: (position: unknown) => void;
+			onCompaction?: (compacting: boolean) => void;
+		}
+	> = new Map();
 	private requestId = 0;
+	private sessionId: string | undefined;
+	/**
+	 * Compactions observed for this client's session and not yet ended, keyed by operation id (`""` for
+	 * hosts that send none), with the time each started. Tracking each operation separately means a
+	 * stale or overlapping start never hides another operation's end.
+	 */
+	private readonly compactions = new Map<string, number>();
+	private pendingOpenSession = false;
+	private pendingSessionEvents: Array<{ sessionId: string; event: RpcClientEvent; bytes: number }> = [];
+	private pendingSessionEventBytes = 0;
 	private stderr = "";
 	private exitError: Error | null = null;
+	private disconnectNotified = false;
+	private stopping = false;
 	private options: RpcClientOptions;
 
 	constructor(options: RpcClientOptions = {}) {
 		this.options = options;
+		// The event stream is already scoped to this client's session, including
+		// pre-lease events replayed after open_session.
+		this.onEvent((event) => {
+			switch (event.type) {
+				case "compaction_start": {
+					const key = event.requestId ?? "";
+					if (this.compactions.has(key)) return;
+					this.compactions.set(key, Date.now());
+					break;
+				}
+				case "compaction_end":
+					if (!this.compactions.delete(event.requestId ?? "")) return;
+					break;
+				case "session_replaced":
+					this.compactions.clear();
+					break;
+				default:
+					return;
+			}
+			for (const pending of this.pendingRequests.values()) {
+				if (pending.sessionId === this.sessionId) pending.onCompaction?.(this.isCompacting());
+			}
+		});
 	}
 
 	/**
 	 * Start the RPC agent process.
 	 */
 	async start(): Promise<void> {
-		if (this.process) {
+		if (this.process || this.socket) {
 			throw new Error("Client already started");
 		}
 
 		this.exitError = null;
+		this.compactions.clear();
+		this.stopping = false;
+		this.disconnectNotified = false;
+		if (this.options.socketPath) {
+			await this.startSocket(this.options.socketPath);
+			return;
+		}
 
 		const cliPath = this.options.cliPath ?? "dist/cli.js";
 		const args = ["--mode", "rpc"];
 
-		if (this.options.provider) {
+		// A lone --provider is a CLI error; without a model the host keeps its default model, as before.
+		if (this.options.provider && this.options.model) {
 			args.push("--provider", this.options.provider);
 		}
 		if (this.options.model) {
@@ -110,8 +278,21 @@ export class RpcClient {
 
 		const childProcess = spawn("node", [cliPath, ...args], {
 			cwd: this.options.cwd,
-			env: { ...process.env, ...this.options.env },
+			env: {
+				...process.env,
+				// The spawned child must BE the process this client signals and reaps. An ambient
+				// SENPI_RUNTIME=bun pin makes the launcher re-exec under Bun via spawnSync, so a
+				// SIGTERM to the wrapper leaves the Bun host running: it keeps the session lease
+				// and keeps writing session state after stop() resolved. Pin the runtime to the
+				// interpreter chosen here, the same way app-server/daemon.ts does; options.env is
+				// spread last so a caller can still override the pin explicitly.
+				SENPI_RUNTIME: "node",
+				...this.options.env,
+			},
 			stdio: ["pipe", "pipe", "pipe"],
+			// Callers may be console-less on win32 (GUI hosts, detached daemons), and a
+			// console-subsystem child would then allocate a fresh visible terminal window.
+			windowsHide: true,
 		});
 		this.process = childProcess;
 
@@ -157,9 +338,38 @@ export class RpcClient {
 	}
 
 	/**
+	 * Whether a compaction is in progress for this client's session. A start whose end never arrives (a
+	 * dropped frame, or a host that stopped without one) stops counting once it is older than the
+	 * compaction budget, so it cannot leave every later prompt on the long wait.
+	 */
+	private isCompacting(): boolean {
+		const now = Date.now();
+		for (const [key, startedAt] of this.compactions) {
+			if (now - startedAt >= PROMPT_COMPACTION_DEADLINE_MS) this.compactions.delete(key);
+		}
+		return this.compactions.size > 0;
+	}
+
+	/**
 	 * Stop the RPC agent process.
 	 */
 	async stop(): Promise<void> {
+		this.compactions.clear();
+		this.pendingOpenSession = false;
+		this.pendingSessionEvents = [];
+		this.pendingSessionEventBytes = 0;
+		if (this.socket) {
+			this.stopping = true;
+			this.stopReadingStdout?.();
+			this.stopReadingStdout = null;
+			this.socket.destroy();
+			this.socket = null;
+			this.sessionId = undefined;
+			this.pendingOpenSession = false;
+			this.pendingSessionEvents = [];
+			this.notifyDisconnect(new RpcTransportGoneError());
+			return;
+		}
 		if (!this.process) return;
 
 		this.stopReadingStdout?.();
@@ -181,6 +391,41 @@ export class RpcClient {
 
 		this.process = null;
 		this.pendingRequests.clear();
+	}
+
+	private async startSocket(path: string): Promise<void> {
+		const secret = socketNeedsHandshake(path) ? await readSocketSecret(socketSecretPath(path)) : undefined;
+		const socket = createConnection(resolveSocketTransportAddress(path, process.platform, secret));
+		this.socket = socket;
+		await new Promise<void>((resolve, reject) => {
+			const onConnect = () => {
+				cleanup();
+				resolve();
+			};
+			const onError = (error: Error) => {
+				cleanup();
+				this.socket = null;
+				reject(error);
+			};
+			const cleanup = () => {
+				socket.off("connect", onConnect);
+				socket.off("error", onError);
+			};
+			socket.once("connect", onConnect);
+			socket.once("error", onError);
+		});
+		if (secret) sendSocketHandshake(socket, secret);
+		this.stopReadingStdout = attachJsonlLineReader(socket, (line) => this.handleLine(line));
+		socket.once("close", () => {
+			if (this.socket !== socket) return;
+			this.socket = null;
+			this.notifyDisconnect(new RpcTransportGoneError());
+		});
+		socket.once("error", (error) => {
+			if (this.socket !== socket) return;
+			this.notifyDisconnect(new RpcTransportGoneError());
+			void error;
+		});
 	}
 
 	/**
@@ -207,42 +452,272 @@ export class RpcClient {
 	// Command Methods
 	// =========================================================================
 
+	async setClientInfo(width: number, capabilities?: string[]): Promise<void> {
+		await this.send({ type: "set_client_info", width, capabilities }, this.sessionId !== undefined);
+	}
+
+	async openSession(options: {
+		sessionPath?: string;
+		cwd?: string;
+		provider?: string;
+		modelId?: string;
+		thinkingLevel?: ThinkingLevel;
+		permissionPreset?: string;
+		/** Keep the session alive when its last client disconnects; needs the host's `retain_on_disconnect`. */
+		retain_on_disconnect?: boolean;
+		/** Per-session auto-titling; needs the host's `auto_title_per_session`. */
+		auto_title?: boolean;
+		/** Where this session's replies render; needs the host's `prompt_surface` (`prompt_surface_chat` for `chat`). */
+		promptSurface?: PromptSurface;
+		/** Which browser this session's skills drive; needs the host's `browser_engine`. */
+		browserEngine?: BrowserEngine;
+		/** This session's own fallback policy, in memory only; needs the host's `retry_fallback_profile`. */
+		retryFallback?: SessionRetryFallbackProfile;
+	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
+		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
+		this.pendingOpenSession = true;
+		try {
+			const response = await this.send({ type: "open_session", ...options }, false);
+			const opened = this.getData<{ sessionId: string; state: RpcSessionState; attached?: boolean }>(response);
+			this.sessionId = opened.sessionId;
+			this.compactions.clear();
+			this.pendingOpenSession = false;
+			this.flushPendingSessionEvents();
+			return opened;
+		} catch (error) {
+			this.pendingOpenSession = false;
+			this.pendingSessionEvents = [];
+			this.pendingSessionEventBytes = 0;
+			throw error;
+		}
+	}
+
+	async sendExtensionUIResponse(response: RpcExtensionUIResponse): Promise<void> {
+		await this.send(response, true, undefined, false);
+	}
+
+	/** Draft update for an open `question` request; fire-and-forget like the response. */
+	async sendExtensionUIProgress(progress: RpcExtensionUIProgress): Promise<void> {
+		await this.send(progress, true, undefined, false);
+	}
+
+	async closeSession(sessionId = this.sessionId): Promise<void> {
+		if (!sessionId) return;
+		try {
+			this.getData(await this.send({ type: "close_session", sessionId }, false));
+		} catch (error) {
+			if (!isTransportGoneError(error)) throw error;
+		}
+		if (this.sessionId === sessionId) {
+			this.sessionId = undefined;
+			this.compactions.clear();
+		}
+	}
+
+	async listSessions(): Promise<
+		Array<{
+			sessionId: string;
+			durableSessionId?: string;
+			sessionPath?: string;
+			cwd: string;
+			name?: string;
+			status: "opening" | "open" | "closing" | "closed";
+			/** Live client attachments; absent from hosts older than the `retain_on_disconnect` capability. */
+			attachments?: number;
+		}>
+	> {
+		const response = await this.send({ type: "list_sessions" }, false);
+		return this.getData<{
+			sessions: Array<{
+				sessionId: string;
+				durableSessionId?: string;
+				sessionPath?: string;
+				cwd: string;
+				name?: string;
+				status: "opening" | "open" | "closing" | "closed";
+				attachments?: number;
+			}>;
+		}>(response).sessions;
+	}
+
 	/**
 	 * Send a prompt to the agent.
-	 * Returns immediately after sending; use onEvent() to receive streaming events.
-	 * Use waitForIdle() to wait for completion.
+	 * Returns the prompt's disposition after acceptance; use onEvent() to receive streaming events.
+	 * If the disposition is "handled", no run started for this prompt, so don't wait for agent_settled.
+	 *
+	 * The disposition/preflight callbacks mirror AgentSession's local prompt contract:
+	 * they fire synchronously while the response frame is dispatched — before any
+	 * queued message_start event — so optimistic-echo eligibility is settled in wire
+	 * order. A success response without a disposition (older host) maps to "handled"
+	 * so the echo degrades to canonical-only rendering instead of double-rendering.
 	 */
-	async prompt(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "prompt", message, images });
+	async prompt(message: string, images?: ImageContent[]): Promise<PromptDisposition>;
+	async prompt(message: string, options?: PromptOptions): Promise<PromptDisposition>;
+	async prompt(message: string, optionsOrImages?: PromptOptions | ImageContent[]): Promise<PromptDisposition> {
+		const options: PromptOptions = Array.isArray(optionsOrImages)
+			? { images: optionsOrImages }
+			: (optionsOrImages ?? {});
+		const response = await this.send(
+			{
+				type: "prompt",
+				message,
+				...clientMessageIdentity(options),
+				...(options.images ? { images: options.images } : {}),
+				...(options.streamingBehavior ? { streamingBehavior: options.streamingBehavior } : {}),
+				...(options.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
+				...(options.sessionTitlePrompt !== undefined ? { sessionTitlePrompt: options.sessionTitlePrompt } : {}),
+				...(options.expandPromptTemplates !== undefined
+					? { expandPromptTemplates: options.expandPromptTemplates }
+					: {}),
+				...(options.unknownCommandAsText ? { unknownCommandAsText: true } : {}),
+			},
+			true,
+			{
+				onResponse: (wireResponse) => {
+					if (!wireResponse.success) {
+						options?.preflightResult?.(false);
+						return;
+					}
+					const data = (wireResponse as { data?: { disposition?: PromptDisposition } }).data;
+					options?.promptDisposition?.(data?.disposition ?? "handled");
+					options?.preflightResult?.(true);
+				},
+				onReject: () => {
+					options?.preflightResult?.(false);
+				},
+			},
+		);
+		if (!response.success) {
+			const failure = response as Extract<RpcResponse, { success: false }>;
+			const unknownCommand =
+				failure.errorCode === RPC_ERROR_UNKNOWN_COMMAND
+					? unknownCommandErrorFromWire(failure.errorData)
+					: undefined;
+			throw unknownCommand ?? new RpcCommandError(failure.error, failure.errorCode, failure.errorData);
+		}
+		// Older hosts omit the disposition; "handled" matches the promptDisposition callback fallback.
+		return (response as { data?: { disposition?: PromptDisposition } }).data?.disposition ?? "handled";
+	}
+
+	async appendUserMessage(content: unknown): Promise<void> {
+		await this.send({ type: "append_user_message", content });
+	}
+
+	async appendSessionEntry(entry: import("../../core/session-manager.ts").SessionEntry): Promise<void> {
+		await this.send({ type: "append_session_entry", entry });
+	}
+
+	async sendCustomMessage<T = unknown>(
+		message: { customType: string; content: unknown; display: boolean; details?: T },
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	): Promise<void> {
+		await this.send({ type: "send_custom_message", ...message, ...options });
+	}
+
+	/**
+	 * Start a turn from the current leaf with no new prompt (#1930), for example after an
+	 * edited assistant response. Refused with `streaming` or `nothing_to_continue`.
+	 */
+	async continueFromLeaf(): Promise<void> {
+		const response = await this.send({ type: "continue_from_leaf" });
+		this.getData(response);
 	}
 
 	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
-	async steer(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "steer", message, images });
+	async steer(
+		message: string,
+		images?: ImageContent[],
+		recovery?: ClientMessageIdentity & { enqueueOrder?: number },
+	): Promise<QueuedInputDisposition> {
+		const response = await this.send({
+			type: "steer",
+			message,
+			images,
+			enqueueOrder: recovery?.enqueueOrder,
+			...clientMessageIdentity(recovery),
+		});
+		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
+		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}
 
 	/**
 	 * Queue a follow-up message to be processed after the agent finishes.
 	 */
-	async followUp(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "follow_up", message, images });
+	async followUp(
+		message: string,
+		images?: ImageContent[],
+		recovery?: ClientMessageIdentity & { enqueueOrder?: number },
+	): Promise<QueuedInputDisposition> {
+		const response = await this.send({
+			type: "follow_up",
+			message,
+			images,
+			enqueueOrder: recovery?.enqueueOrder,
+			...clientMessageIdentity(recovery),
+		});
+		// Older hosts omit the disposition; degrade like prompt() so clients render only canonical events.
+		return this.getData<{ disposition?: QueuedInputDisposition } | undefined>(response)?.disposition ?? "handled";
 	}
 
 	/**
 	 * Abort current operation.
 	 */
 	async abort(): Promise<void> {
-		await this.send({ type: "abort" });
+		try {
+			await this.send({ type: "abort" });
+		} catch (error) {
+			if (!isTransportGoneError(error)) throw error;
+		}
+	}
+
+	async abortCompaction(): Promise<void> {
+		await this.send({ type: "abort_compaction" });
+	}
+
+	async reload(): Promise<{ cancelled: boolean; reason?: string }> {
+		const response = await this.send({ type: "reload" });
+		return this.getData(response);
+	}
+
+	async checkReloadVeto(): Promise<{ cancelled: boolean; reason?: string }> {
+		const response = await this.send({ type: "check_reload_veto" });
+		return this.getData(response);
 	}
 
 	/**
 	 * Clear queued steering and follow-up messages, returning their text.
 	 */
-	async clearQueue(): Promise<{ steering: string[]; followUp: string[] }> {
-		const response = await this.send({ type: "clear_queue" });
+	async clearQueue(options?: { abortWillFollow?: boolean }): Promise<{
+		steering: string[];
+		followUp: string[];
+		ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
+	}> {
+		const response = await this.send({ type: "clear_queue", abortWillFollow: options?.abortWillFollow });
 		return this.getData(response);
+	}
+
+	async getSteeringMessages(): Promise<string[]> {
+		const response = await this.send({ type: "get_steering_messages" });
+		return this.getData<{ messages: string[] }>(response).messages;
+	}
+
+	async getFollowUpMessages(): Promise<string[]> {
+		const response = await this.send({ type: "get_follow_up_messages" });
+		return this.getData<{ messages: string[] }>(response).messages;
+	}
+
+	async abortBranchSummary(): Promise<void> {
+		await this.send({ type: "abort_branch_summary" });
+	}
+
+	async recordBashResult(command: string, result: BashResult, excludeFromContext?: boolean): Promise<void> {
+		await this.send({ type: "record_bash_result", command, result, excludeFromContext });
+	}
+
+	async setLabel(entryId: string, label?: string): Promise<void> {
+		await this.send({ type: "set_label", entryId, label });
 	}
 
 	/**
@@ -266,7 +741,10 @@ export class RpcClient {
 	/**
 	 * Set model by provider and ID.
 	 */
-	async setModel(provider: string, modelId: string): Promise<{ provider: string; id: string }> {
+	async setModel(
+		provider: string,
+		modelId: string,
+	): Promise<{ provider: string; id: string; systemPromptName?: string }> {
 		const response = await this.send({ type: "set_model", provider, modelId });
 		return this.getData(response);
 	}
@@ -274,12 +752,20 @@ export class RpcClient {
 	/**
 	 * Cycle to next model.
 	 */
-	async cycleModel(): Promise<{
+	async setFavoriteModels(models: RpcSessionModelEntry[]): Promise<void> {
+		await this.send({ type: "set_favorite_models", models });
+	}
+
+	async setScopedModels(models: RpcSessionModelEntry[]): Promise<void> {
+		await this.send({ type: "set_scoped_models", models });
+	}
+
+	async cycleModel(direction: "forward" | "backward" = "forward"): Promise<{
 		model: { provider: string; id: string };
 		thinkingLevel: ThinkingLevel;
 		isScoped: boolean;
 	} | null> {
-		const response = await this.send({ type: "cycle_model" });
+		const response = await this.send({ type: "cycle_model", direction });
 		return this.getData(response);
 	}
 
@@ -322,7 +808,7 @@ export class RpcClient {
 	}
 
 	/**
-	 * Turn OpenAI Codex fast mode (the `priority` service tier) on or off for the active model.
+	 * Turn ChatGPT Subscription fast mode (the `priority` service tier) on or off for the active model.
 	 *
 	 * The choice is remembered per model, so a later session on the same model starts the same
 	 * way. Throws when the request is refused: a non-Codex model, or an active `:priority` model
@@ -385,10 +871,48 @@ export class RpcClient {
 	}
 
 	/**
+	 * Give this single-session process its fallback chain before the first turn (`set_retry_fallback`).
+	 * Requires the `retry_fallback_command` capability.
+	 */
+	async setRetryFallback(retryFallback: SessionRetryFallbackProfile): Promise<void> {
+		await this.send({ type: "set_retry_fallback", retryFallback });
+	}
+
+	/**
 	 * Execute a bash command.
 	 */
-	async bash(command: string): Promise<BashResult> {
-		const response = await this.send({ type: "bash", command });
+	async bash(
+		command: string,
+		options?: { excludeFromContext?: boolean; executionId?: string; operations?: Record<string, unknown> },
+	): Promise<BashResult> {
+		const response = await this.send({
+			type: "bash",
+			command,
+			excludeFromContext: options?.excludeFromContext,
+			executionId: options?.executionId,
+			operations: options?.operations,
+		});
+		return this.getData(response);
+	}
+
+	async navigateTree(
+		targetId: string,
+		options?: {
+			intent?: "select" | "resume";
+			summarize?: boolean;
+			customInstructions?: string;
+			replaceInstructions?: boolean;
+			label?: string;
+			expectedLeafId?: string;
+		},
+	): Promise<{
+		cancelled: boolean;
+		leafId: string | null;
+		editorText?: string;
+		aborted?: boolean;
+		summaryEntry?: unknown;
+	}> {
+		const response = await this.send({ type: "navigate_tree", targetId, ...options });
 		return this.getData(response);
 	}
 
@@ -397,6 +921,10 @@ export class RpcClient {
 	 */
 	async abortBash(): Promise<void> {
 		await this.send({ type: "abort_bash" });
+	}
+
+	async cleanupBashOutput(path: string): Promise<void> {
+		await this.send({ type: "cleanup_bash_output", path });
 	}
 
 	/**
@@ -410,8 +938,13 @@ export class RpcClient {
 	/**
 	 * Export session to HTML.
 	 */
-	async exportHtml(outputPath?: string): Promise<{ path: string }> {
-		const response = await this.send({ type: "export_html", outputPath });
+	async exportHtml(outputPath?: string, themeName?: string): Promise<{ path: string }> {
+		const response = await this.send({ type: "export_html", outputPath, themeName });
+		return this.getData(response);
+	}
+
+	async exportJsonl(outputPath?: string): Promise<{ path: string }> {
+		const response = await this.send({ type: "export_jsonl", outputPath });
 		return this.getData(response);
 	}
 
@@ -419,8 +952,8 @@ export class RpcClient {
 	 * Switch to a different session file.
 	 * @returns Object with `cancelled: true` if an extension cancelled the switch
 	 */
-	async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
-		const response = await this.send({ type: "switch_session", sessionPath });
+	async switchSession(sessionPath: string, options?: { cwdOverride?: string }): Promise<{ cancelled: boolean }> {
+		const response = await this.send({ type: "switch_session", sessionPath, cwdOverride: options?.cwdOverride });
 		return this.getData(response);
 	}
 
@@ -428,8 +961,11 @@ export class RpcClient {
 	 * Fork from a specific message.
 	 * @returns Object with `text` (the message text) and `cancelled` (if extension cancelled)
 	 */
-	async fork(entryId: string): Promise<{ text: string; cancelled: boolean }> {
-		const response = await this.send({ type: "fork", entryId });
+	async fork(
+		entryId: string,
+		options?: { position?: "before" | "at" },
+	): Promise<{ text: string; cancelled: boolean }> {
+		const response = await this.send({ type: "fork", entryId, position: options?.position });
 		return this.getData(response);
 	}
 
@@ -467,6 +1003,48 @@ export class RpcClient {
 	}
 
 	/**
+	 * Replace an assistant response with an edited copy (branches to the target's parent and appends
+	 * the copy as the new leaf). Pass the `leafId` you last observed as `expectedLeafId` so a stale
+	 * edit is refused with `errorCode: "stale_leaf"` instead of rewriting a conversation another client
+	 * moved. Failures reject with an {@link RpcCommandError} carrying the typed `errorCode`.
+	 */
+	async editAssistantMessage(
+		entryId: string,
+		text: string,
+		options: { expectedLeafId?: string; summarize?: boolean; customInstructions?: string } = {},
+	): Promise<EditAssistantMessageResult> {
+		const response = await this.send({
+			type: "edit_assistant_message",
+			entryId,
+			text,
+			expectedLeafId: options.expectedLeafId,
+			summarize: options.summarize,
+			customInstructions: options.customInstructions,
+		});
+		return this.getData<EditAssistantMessageResult>(response);
+	}
+
+	/**
+	 * Replace a user prompt without starting a turn. Address the message by entryId and pass the
+	 * separately observed leafId as expectedLeafId. Refusals reject with RpcCommandError.
+	 */
+	async editUserMessage(
+		entryId: string,
+		text: string,
+		options: { expectedLeafId?: string; summarize?: boolean; customInstructions?: string } = {},
+	): Promise<EditUserMessageResult> {
+		const response = await this.send({
+			type: "edit_user_message",
+			entryId,
+			text,
+			expectedLeafId: options.expectedLeafId,
+			summarize: options.summarize,
+			customInstructions: options.customInstructions,
+		});
+		return this.getData<EditUserMessageResult>(response);
+	}
+
+	/**
 	 * Get text of last assistant message.
 	 */
 	async getLastAssistantText(): Promise<string | null> {
@@ -481,12 +1059,29 @@ export class RpcClient {
 		await this.send({ type: "set_session_name", name });
 	}
 
+	async importJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {
+		const response = await this.send({ type: "import_jsonl", inputPath, cwdOverride });
+		return this.getData(response);
+	}
+
 	/**
 	 * Get all messages in the session.
 	 */
 	async getMessages(): Promise<AgentMessage[]> {
 		const response = await this.send({ type: "get_messages" });
 		return this.getData<{ messages: AgentMessage[] }>(response).messages;
+	}
+
+	/**
+	 * Fetch one media block that arrived as an `image_ref` placeholder.
+	 *
+	 * `contentIndex` is the index inside the tool result's `content` array carried by
+	 * the placeholder's `ref`. Rejects with `media_not_found` when the tool call is
+	 * unknown or the index does not point at an image block.
+	 */
+	async getMedia(toolCallId: string, contentIndex: number): Promise<ImageContent> {
+		const response = await this.send({ type: "get_media", toolCallId, contentIndex });
+		return this.getData<{ toolCallId: string; contentIndex: number; content: ImageContent }>(response).content;
 	}
 
 	/**
@@ -560,7 +1155,18 @@ export class RpcClient {
 			}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
-				if (isProviderAccountEvent(event) || event.type === "extension_event") return;
+				if (
+					isProviderAccountEvent(event) ||
+					event.type === "extension_event" ||
+					event.type === "bash_start" ||
+					event.type === "bash_end" ||
+					event.type === "extension_ui_request" ||
+					// Connection-level, not part of the agent's event stream.
+					event.type === "session_replaced" ||
+					event.type === "session_parked" ||
+					event.type === "queued"
+				)
+					return;
 				events.push(event);
 				if (event.type === "agent_settled") {
 					clearTimeout(timer);
@@ -576,7 +1182,7 @@ export class RpcClient {
 	 */
 	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<JsonAgentSessionEvent[]> {
 		const eventsPromise = this.collectEvents(timeout);
-		await this.prompt(message, images);
+		await this.prompt(message, images ? { images } : undefined);
 		return eventsPromise;
 	}
 
@@ -592,12 +1198,38 @@ export class RpcClient {
 			if (data.type === "response" && data.id && this.pendingRequests.has(data.id)) {
 				const pending = this.pendingRequests.get(data.id)!;
 				this.pendingRequests.delete(data.id);
+				// Response hooks run synchronously inside the frame dispatch so ordering-sensitive
+				// contracts (e.g. optimistic-echo disposition) settle before the NEXT frame —
+				// never through the microtask scheduled by resolve().
+				pending.onResponse?.(data as RpcResponse);
 				pending.resolve(data as RpcResponse);
 				return;
 			}
 
-			// Otherwise it's an event
-			for (const listener of this.eventListeners) {
+			if (data.type === "queued" && typeof data.for_request === "string")
+				this.pendingRequests.get(data.for_request)?.onQueued?.(data.position);
+
+			// Otherwise it's an event. During open_session, retain tagged events until
+			// the response establishes the lease so startup hooks are not lost.
+			if (typeof data.sessionId === "string" && data.sessionId !== this.sessionId) {
+				if (this.pendingOpenSession) {
+					const bytes = Buffer.byteLength(line);
+					this.pendingSessionEvents.push({ sessionId: data.sessionId, event: data as RpcClientEvent, bytes });
+					this.pendingSessionEventBytes += bytes;
+					while (
+						this.pendingSessionEvents.length > MAX_PENDING_SESSION_EVENTS ||
+						this.pendingSessionEventBytes > MAX_PENDING_SESSION_EVENT_BYTES
+					) {
+						const oldest = this.pendingSessionEvents.shift();
+						if (!oldest) break;
+						this.pendingSessionEventBytes -= oldest.bytes;
+					}
+				}
+				return;
+			}
+			// Iterate a snapshot so listeners that unsubscribe during dispatch
+			// do not cause later listeners to miss this event.
+			for (const listener of [...this.eventListeners]) {
 				listener(data as RpcClientEvent);
 			}
 		} catch {
@@ -605,63 +1237,148 @@ export class RpcClient {
 		}
 	}
 
+	private flushPendingSessionEvents(): void {
+		const pending = this.pendingSessionEvents;
+		this.pendingSessionEvents = [];
+		this.pendingSessionEventBytes = 0;
+		for (const { sessionId, event } of pending) {
+			if (sessionId !== this.sessionId) continue;
+			for (const listener of [...this.eventListeners]) listener(event);
+		}
+	}
+
 	private createProcessExitError(code: number | null, signal: NodeJS.Signals | null): Error {
 		return new Error(`Agent process exited (code=${code} signal=${signal}). Stderr: ${this.stderr}`);
 	}
 
+	private notifyDisconnect(error: RpcTransportGoneError): void {
+		this.rejectPendingRequests(error);
+		if (!this.disconnectNotified && !this.stopping) {
+			this.disconnectNotified = true;
+			this.options.onDisconnect?.(error);
+		}
+	}
+
 	private rejectPendingRequests(error: Error): void {
 		for (const pending of this.pendingRequests.values()) {
+			pending.onReject?.(error);
 			pending.reject(error);
 		}
 		this.pendingRequests.clear();
 	}
 
-	private async send(command: RpcCommandBody): Promise<RpcResponse> {
+	private async send(
+		command: RpcCommandBody | RpcExtensionUIResponse | RpcExtensionUIProgress,
+		route = true,
+		hooks?: { onResponse?: (response: RpcResponse) => void; onReject?: (error: Error) => void },
+		expectResponse = true,
+	): Promise<RpcResponse> {
 		const childProcess = this.process;
-		const stdin = childProcess?.stdin;
-		if (!childProcess || !stdin) {
-			throw new Error("Client not started");
+		const stream = this.socket ?? childProcess?.stdin;
+		if (!stream) {
+			throw new RpcTransportGoneError();
 		}
 		if (this.exitError) {
 			throw this.exitError;
 		}
-		if (childProcess.exitCode !== null) {
+		if (childProcess?.exitCode !== null && childProcess?.exitCode !== undefined) {
 			const error = this.createProcessExitError(childProcess.exitCode, childProcess.signalCode);
 			this.exitError = error;
 			throw error;
 		}
-		if (stdin.destroyed || !stdin.writable) {
-			const error = new Error(`Agent process stdin is not writable. Stderr: ${this.stderr}`);
-			this.exitError = error;
+		if (stream.destroyed || !stream.writable) {
+			const error = new RpcTransportGoneError();
+			this.notifyDisconnect(error);
 			throw error;
 		}
 
-		const id = `req_${++this.requestId}`;
-		const fullCommand = { ...command, id } as RpcCommand;
+		// Extension-UI replies and progress carry the host's request id; never mint one.
+		const ownId =
+			command.type === "extension_ui_response" || command.type === "extension_ui_progress" ? command.id : undefined;
+		const id = ownId ?? `req_${++this.requestId}`;
+		const fullCommand = {
+			...command,
+			...(route && this.sessionId && !("sessionId" in command) ? { sessionId: this.sessionId } : {}),
+			...(ownId === undefined ? { id } : {}),
+		} as RpcCommand;
 
+		if (!expectResponse) {
+			stream.write(serializeJsonLine(fullCommand));
+			return Promise.resolve({ type: "response", command: command.type, success: true } as RpcResponse);
+		}
+		const sessionId = "sessionId" in fullCommand ? fullCommand.sessionId : undefined;
 		return new Promise((resolve, reject) => {
-			const timeout = setTimeout(() => {
+			const timeoutMessage = () => `Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`;
+			let promptCap: ReturnType<typeof setTimeout> | undefined;
+			let promptReceived = false;
+			const expire = (timeoutError: Error) => {
+				clearTimeout(promptCap);
+				const pending = this.pendingRequests.get(id);
 				this.pendingRequests.delete(id);
-				reject(new Error(`Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`));
-			}, 30000);
+				pending?.onReject?.(timeoutError);
+				reject(timeoutError);
+			};
+			const deadline = armRequestDeadline(
+				command.type === "prompt" && sessionId === this.sessionId && this.isCompacting()
+					? PROMPT_COMPACTION_DEADLINE_MS
+					: REQUEST_DEADLINE_MS,
+				timeoutMessage,
+				expire,
+			);
+			// Compaction events extend a prompt's wait, but never past this cap from when it was sent.
+			if (command.type === "prompt") {
+				promptCap = setTimeout(() => {
+					deadline.clear();
+					expire(new Error(timeoutMessage()));
+				}, PROMPT_ACK_MAX_WAIT_MS);
+			}
 
 			this.pendingRequests.set(id, {
+				sessionId,
 				resolve: (response) => {
-					clearTimeout(timeout);
+					deadline.clear();
+					clearTimeout(promptCap);
 					resolve(response);
 				},
 				reject: (error) => {
-					clearTimeout(timeout);
+					deadline.clear();
+					clearTimeout(promptCap);
 					reject(error);
 				},
+				...(command.type === "prompt"
+					? {
+							onCompaction: (compacting: boolean) =>
+								compacting
+									? deadline.extend(PROMPT_COMPACTION_DEADLINE_MS, timeoutMessage)
+									: promptReceived
+										? deadline.extend(PROMPT_AFTER_QUEUED_DEADLINE_MS, promptStalledMessage)
+										: deadline.extend(REQUEST_DEADLINE_MS, timeoutMessage),
+							// The host received the prompt: its preflight may outlive the plain request deadline (senpi#2871).
+							// A compaction's own wait is longer: the acknowledgement must never shorten it.
+							onQueued: () => {
+								promptReceived = true;
+								if (!this.isCompacting())
+									deadline.extend(PROMPT_AFTER_QUEUED_DEADLINE_MS, promptStalledMessage);
+							},
+						}
+					: {}),
+				...(command.type === "open_session"
+					? {
+							onQueued: (position: unknown) =>
+								deadline.extend(OPEN_AFTER_QUEUED_DEADLINE_MS, () => openStalledMessage(position)),
+						}
+					: {}),
+				...(hooks?.onResponse ? { onResponse: hooks.onResponse } : {}),
+				...(hooks?.onReject ? { onReject: hooks.onReject } : {}),
 			});
 
 			try {
-				stdin.write(serializeJsonLine(fullCommand));
+				stream.write(serializeJsonLine(fullCommand));
 			} catch (error: unknown) {
 				const writeError = error instanceof Error ? error : new Error(String(error));
 				const pending = this.pendingRequests.get(id);
 				this.pendingRequests.delete(id);
+				pending?.onReject?.(writeError);
 				pending?.reject(writeError);
 			}
 		});
@@ -670,7 +1387,12 @@ export class RpcClient {
 	private getData<T>(response: RpcResponse): T {
 		if (!response.success) {
 			const errorResponse = response as Extract<RpcResponse, { success: false }>;
-			throw new Error(errorResponse.error);
+			if (errorResponse.errorCode === "missing_session_cwd" && errorResponse.errorData) {
+				throw new MissingSessionCwdError(
+					errorResponse.errorData as ConstructorParameters<typeof MissingSessionCwdError>[0],
+				);
+			}
+			throw new RpcCommandError(errorResponse.error, errorResponse.errorCode, errorResponse.errorData);
 		}
 		// Type assertion: we trust response.data matches T based on the command sent.
 		// This is safe because each public method specifies the correct T for its command.

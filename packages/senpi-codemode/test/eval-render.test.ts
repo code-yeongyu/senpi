@@ -80,8 +80,6 @@ describe("eval renderer", () => {
 			"",
 			"- tool.search: ok",
 			"- tool.write: error (denied)",
-			"",
-			"[eval output truncated]",
 		]);
 	});
 
@@ -303,7 +301,7 @@ describe("eval renderer", () => {
 		);
 
 		// Then only the pre-result render draws a frame; the post-result call lane is empty
-		expect.soft(renderLines(withoutResult).some((line) => line.includes("╭─"))).toBe(true);
+		expect.soft(renderLines(withoutResult).some((line) => line.includes("╭─") || line.includes("╶─"))).toBe(true);
 		expect.soft(renderLines(withResult)).toEqual([]);
 	});
 

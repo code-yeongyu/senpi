@@ -6,12 +6,13 @@ import {
 	isWakeSourceStateEvent,
 	TERMINAL_MONITOR_STATE_EVENT,
 	WAKE_SOURCE_STATE_EVENT,
+	type WakeSourceStateEvent,
 } from "../monitor-state-event.ts";
 
 type GoalChannelEvents = NonNullable<ExtensionAPI["events"]>;
 
 interface GoalChannelCallbacks {
-	readonly onWakeSource: (source: string, activeCount: number) => void;
+	readonly onWakeSource: (source: string, activeCount: number, event?: WakeSourceStateEvent) => void;
 	readonly onContinuationHold: (source: string, active: boolean) => void;
 }
 
@@ -24,7 +25,7 @@ export function subscribeGoalChannelState(
 			if (isTerminalMonitorStateEvent(data)) callbacks.onWakeSource("terminal-monitors", data.activeCount);
 		}),
 		events.on(WAKE_SOURCE_STATE_EVENT, (data) => {
-			if (isWakeSourceStateEvent(data)) callbacks.onWakeSource(data.source, data.activeCount);
+			if (isWakeSourceStateEvent(data)) callbacks.onWakeSource(data.source, data.activeCount, data);
 		}),
 		events.on(CONTINUATION_HOLD_STATE_EVENT, (data) => {
 			if (isContinuationHoldStateEvent(data)) callbacks.onContinuationHold(data.source, data.active);

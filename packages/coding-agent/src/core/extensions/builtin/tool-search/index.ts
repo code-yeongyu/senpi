@@ -1,7 +1,11 @@
 import { bindToProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { ExtensionAPI, ExtensionFactory } from "../../types.ts";
 import { AnthropicNativeToolSearchAdapter, isMcpNativeToolSearchEnabled } from "./native-search.ts";
-import { getToolSearchService, installScopedToolSearchService, ToolSearchService } from "./service.ts";
+import {
+	installScopedToolSearchService,
+	registerToolSearchServiceForExtensionLoad,
+	ToolSearchService,
+} from "./service.ts";
 import { createToolSearchTool, TOOL_SEARCH_TOOL_NAME } from "./tool.ts";
 
 export function createToolSearchExtension(service: ToolSearchService): ExtensionFactory {
@@ -12,10 +16,15 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 			service.beginSession();
 			service.maybeRehydrateFromHistory(ctx.sessionManager.getEntries());
 		});
-		pi.on("context", (event) => {
-			service.maybeRehydrateFromHistory(event.messages);
-		});
-		pi.registerLazyToolActivator((toolName) => service.activateTool(toolName));
+		pi.on(
+			"context",
+			(event) => {
+				service.maybeRehydrateFromHistory(event.messages);
+			},
+			{ mutatesMessages: false },
+		);
+		// A retired generation's activator declines, so the current generation's activator answers.
+		pi.registerLazyToolActivator((toolName) => !service.isDisposed && service.activateTool(toolName));
 		let toolRegistered = false;
 		service.bindToolRegistrar(() => {
 			if (toolRegistered) return;
@@ -45,8 +54,11 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 				return doc?.source === "extension" && !pi.getActiveTools().includes(name);
 			},
 			searchToolName: TOOL_SEARCH_TOOL_NAME,
+			onFallback: (reason) => service.noteNativeInjectionFailure(reason),
 		});
-		pi.on("before_provider_request", (event, ctx) => nativeAdapter.applyBeforeRequest(ctx.model?.api, event.payload));
+		pi.on("before_provider_request", (event, ctx) =>
+			nativeAdapter.applyBeforeRequest(event.model ?? ctx.model, event.payload),
+		);
 		pi.on("after_provider_response", (event) => nativeAdapter.noteResponseStatus(event.status));
 	};
 }
@@ -66,9 +78,9 @@ export default function toolSearchExtension(pi: ExtensionAPI): void | Promise<vo
 		getActiveTools: () => pi.getActiveTools(),
 		setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
 	};
-	const sessionOwned = hasProviderScope();
-	const service = sessionOwned ? new ToolSearchService(runtime) : getToolSearchService(runtime);
-	if (sessionOwned) installScopedToolSearchService(service);
+	const service = new ToolSearchService(runtime);
+	if (hasProviderScope()) installScopedToolSearchService(service);
+	registerToolSearchServiceForExtensionLoad(pi, service);
 	return createToolSearchExtension(service)(pi);
 }
 

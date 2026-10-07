@@ -20,6 +20,7 @@ function fakeRuntime() {
 		spawn(_command, options) {
 			dataHandler = options.terminal.data;
 			return {
+				pid: 4242,
 				terminal: {
 					write(data) {
 						writes.push(typeof data === "string" ? data : new TextDecoder().decode(data));

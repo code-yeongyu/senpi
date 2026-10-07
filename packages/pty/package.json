@@ -1,7 +1,7 @@
 {
 	"name": "@earendil-works/pi-pty",
 	"private": true,
-	"version": "2026.8.26-2",
+	"version": "2026.10.10-6",
 	"description": "Typed PTY session loader for Senpi persistent terminals",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -27,12 +27,13 @@
 	},
 	"files": [
 		"dist",
+		"!dist/**/*.map",
 		"native",
 		"README.md"
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsc -p tsconfig.build.json",
+		"build": "tsgo -p tsconfig.build.json",
 		"test": "vitest --run test",
 		"check:prebuild": "node native/check-prebuild-fresh.mjs",
 		"prepublishOnly": "npm run clean && npm run build"
@@ -57,6 +58,6 @@
 		"@xterm/headless": "6.0.0"
 	},
 	"devDependencies": {
-		"@types/node": "26.2.0"
+		"@types/node": "26.6.2"
 	}
 }

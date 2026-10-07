@@ -20,6 +20,7 @@ name: Release
         default: false
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -28,32 +29,46 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native-prebuilds:
+    if: ${{ inputs.publish-only == true }}
+    uses: ./.github/workflows/native-prebuilds.yml
+
   release:
+    needs: native-prebuilds
+    if: ${{ always() && (inputs.publish-only != true || needs.native-prebuilds.result == 'success') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # `--ref main` resolves at run start, so the release can always check out a commit
+    # whose CI has not finished yet; the test gate then runs the full suite in-job.
+    # Measured full-gate releases land at 22-26 min, so a 30 min cap has under 5 min
+    # of headroom and kills the job mid-suite (run 33605173502). Budget for the slow
+    # path plus growth; gate-reused releases still finish in ~4 min.
+    # A regenerated catalog now always forces the full serial `CI=1 npm test` (senpi#2645),
+    # and that suite outgrew 50 min: run 37138537174 was still in the gate at the 50 min
+    # kill. A timed-out job keeps no log, so the cap must clear the slow path with room.
+    timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Configure git identity
         run: |
-          git config user.name "senpi-release-bot"
-          git config user.email "actions@github.com"
+          git config --global user.name "YeonGyu-Kim"
+          git config --global user.email "code.yeon.gyu@gmail.com"
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org/'
           package-manager-cache: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.0'
+          bun-version: '1.4.2'
 
       - name: Assert bun 1.4 toolchain
         run: bash scripts/assert-bun-toolchain.sh
@@ -61,11 +76,42 @@ jobs:
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
 
+      - name: Download native prebuilds
+        if: inputs.publish-only == true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: native-prebuild-*
+          path: packages/pty/.native-prebuild-artifacts
+          merge-multiple: true
+
+      # The merged download root is untracked scratch. Copy every target's PTY prebuild
+      # into the loader tree explicitly (native/prebuilds/<target>/senpi_pty.<target>.node)
+      # so the pack check below fails on a missing addon instead of packing the scratch
+      # root, which holds the grep addon and manifest files as well.
+      - name: Stage PTY prebuilds into the pty package
+        if: inputs.publish-only == true
+        run: |
+          set -euo pipefail
+          artifacts="packages/pty/.native-prebuild-artifacts"
+          for prebuild in "${artifacts}"/native/prebuilds/*/senpi_pty.*.node; do
+            test -f "${prebuild}" || continue
+            target="$(basename "$(dirname "${prebuild}")")"
+            mkdir -p "packages/pty/native/prebuilds/${target}"
+            cp "${prebuild}" "packages/pty/native/prebuilds/${target}/senpi_pty.${target}.node"
+          done
+
+      # coding-agent tool tests resolve rg/fd via system binaries first and only
+      # download from GitHub releases as a fallback. Unauthenticated downloads
+      # are rate-limited on shared runner egress IPs, which flakes the release
+      # gate; provisioning the binaries here keeps the fallback unused.
+      - name: Provision ripgrep and fd
+        run: sudo apt-get update && sudo apt-get install -y ripgrep fd-find
+
       - name: Build all workspaces (so husky pre-commit type check resolves)
         run: npm run build
 
       - name: Reset auto-generated and npm-install drift files (not part of release diff)
-        run: git checkout -- packages/ai/src/models.generated.ts packages/ai/src/image-models.generated.ts package-lock.json
+        run: git checkout -- packages/ai/src/models.generated.ts package-lock.json
 
       - name: Run release
         if: inputs.publish-only != true
@@ -106,7 +152,8 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
             PUBLISH_ARGS+=(--dry-run)
           fi
-          node scripts/publish.mjs "${PUBLISH_ARGS[@]}"
+          node scripts/publish.mjs "${PUBLISH_ARGS[@]}" \
+            --require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64
 
       - name: Workflow summary
         if: always()

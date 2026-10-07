@@ -23,8 +23,17 @@ import { EventEmitter } from "events";
 const ESC = "\x1b";
 const DEFAULT_SEQUENCE_TIMEOUT_MS = 50;
 const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
+const DEFAULT_BURST_WINDOW_MS = 20;
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
+const LINE_BREAK = /\r\n|\r|\n/g;
+const TRAILING_LINE_BREAK_RUN = /(\r\n|\r|\n)+$/;
+const LINE_BREAK_BEFORE_TEXT = /[\r\n][^\r\n]/;
+
+function countLineBreaks(text: string): number {
+	const matches = text.match(LINE_BREAK);
+	return matches === null ? 0 : matches.length;
+}
 
 type StatefulStringDecoder = StringDecoder & {
 	readonly lastNeed?: number;
@@ -273,6 +282,16 @@ export type StdinBufferOptions = {
 	 * (default: 10ms). Increase for high-latency Alt+key input (SSH).
 	 */
 	escapeTimeout?: number;
+	/**
+	 * Window after the previous input inside which a trailing newline is held
+	 * as a possible paste fragment instead of being emitted at once
+	 * (default: 20ms). Keystroke-paced input is unaffected.
+	 */
+	burstWindowMs?: number;
+	/**
+	 * Clock used for burst pacing (default: Date.now). Tests inject a manual clock.
+	 */
+	now?: () => number;
 };
 
 export type StdinBufferEventMap = {
@@ -289,15 +308,26 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private timeout: ReturnType<typeof setTimeout> | null = null;
 	private readonly timeoutMs: number;
 	private readonly escapeTimeoutMs: number;
+	private mouseFragmentStartedAt?: number;
+	private discardingMouseFragment = false;
 	private pasteMode: boolean = false;
 	private pasteBuffer: string = "";
 	private pendingKittyPrintableCodepoint: number | undefined;
 	private decoder: StatefulStringDecoder = new StringDecoder("utf8");
+	private readonly burstWindowMs: number;
+	private readonly clock: () => number;
+	private lastInputAt: number | undefined;
+	private heldNewline: string = "";
+	private heldNewlineEndsPaste = false;
+	private lastBurstPasteAt: number | undefined;
+	private burstTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(options: StdinBufferOptions = {}) {
 		super();
 		this.timeoutMs = options.timeout ?? DEFAULT_SEQUENCE_TIMEOUT_MS;
 		this.escapeTimeoutMs = options.escapeTimeout ?? DEFAULT_ESCAPE_TIMEOUT_MS;
+		this.burstWindowMs = options.burstWindowMs ?? DEFAULT_BURST_WINDOW_MS;
+		this.clock = options.now ?? Date.now;
 	}
 
 	public process(data: string | Buffer): void {
@@ -306,7 +336,6 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			clearTimeout(this.timeout);
 			this.timeout = null;
 		}
-
 		let str: string;
 		let decodedFromBuffer = false;
 		if (Buffer.isBuffer(data)) {
@@ -329,7 +358,40 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return;
 		}
 
+		if (this.discardingMouseFragment) {
+			const terminator = str.search(/[\x40-\x7e]/);
+			const escapeIndex = str.indexOf(ESC);
+			if (escapeIndex !== -1 && (terminator === -1 || escapeIndex < terminator)) {
+				str = str.slice(escapeIndex);
+			} else {
+				if (terminator === -1) return;
+				str = str.slice(terminator + 1);
+			}
+			this.discardingMouseFragment = false;
+		}
+		// Only a read that adds input takes over a held line break. A read that leaves above (an empty
+		// decode of half a multibyte character, a dropped mouse fragment) must keep its release timer running.
+		if (this.burstTimer) {
+			clearTimeout(this.burstTimer);
+			this.burstTimer = null;
+		}
 		this.buffer += str;
+		const chunkAt = str.length > 0 ? this.clock() : undefined;
+		const burstGap = chunkAt !== undefined && this.lastInputAt !== undefined ? chunkAt - this.lastInputAt : undefined;
+		if (chunkAt !== undefined) {
+			this.lastInputAt = chunkAt;
+		}
+		if (this.heldNewline.length > 0) {
+			// The clock decides, not timer delivery: a read outside the window means the held line
+			// break was an Enter, even when its release timer has not fired yet (a stalled loop).
+			if (burstGap !== undefined && burstGap >= this.burstWindowMs) {
+				this.releaseHeldNewline();
+			} else {
+				this.buffer = this.heldNewline + this.buffer;
+				this.heldNewline = "";
+				this.heldNewlineEndsPaste = false;
+			}
+		}
 
 		if (this.pasteMode) {
 			this.pasteBuffer += this.buffer;
@@ -387,8 +449,21 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return;
 		}
 
+		if (this.consumeUnbracketedBurst(burstGap)) {
+			return;
+		}
+
 		const result = extractCompleteSequences(this.buffer);
 		this.buffer = result.remainder;
+		if (this.buffer.startsWith("\x1b[<")) {
+			this.mouseFragmentStartedAt ??= Date.now();
+			if (this.buffer.length > 64) {
+				this.buffer = "";
+				this.discardingMouseFragment = true;
+			}
+		} else {
+			this.mouseFragmentStartedAt = undefined;
+		}
 
 		for (const sequence of result.sequences) {
 			this.emitDataSequence(sequence);
@@ -403,6 +478,75 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 					this.emitDataSequence(sequence);
 				}
 			}, timeoutMs);
+		}
+	}
+
+	private consumeUnbracketedBurst(burstGap: number | undefined): boolean {
+		const text = this.buffer;
+		if (text.length === 0 || text.includes(ESC) || text.includes(BRACKETED_PASTE_START)) {
+			return false;
+		}
+		const breaks = countLineBreaks(text);
+		if (breaks === 0) {
+			return false;
+		}
+		// Typing delivers one key per read, so a single read that holds two line breaks, or text after a
+		// line break, is pasted. Both carry text: a run of bare Enters stays keystrokes.
+		if ((breaks >= 2 || LINE_BREAK_BEFORE_TEXT.test(text)) && /[^\r\n]/.test(text)) {
+			this.buffer = "";
+			this.lastBurstPasteAt = this.lastInputAt;
+			this.emit("paste", text);
+			return true;
+		}
+		const trailing = text.match(TRAILING_LINE_BREAK_RUN)?.[0];
+		if (trailing === undefined || burstGap === undefined || burstGap >= this.burstWindowMs) {
+			return false;
+		}
+		const head = text.slice(0, text.length - trailing.length);
+		// A newline that lands inside the window right after a burst paste ends that paste: releasing it
+		// as Enter would submit the block, which the same text in one read never does.
+		const endsPaste =
+			this.lastBurstPasteAt !== undefined &&
+			this.lastInputAt !== undefined &&
+			this.lastInputAt - this.lastBurstPasteAt < this.burstWindowMs;
+		// A read of bare line breaks is a keystroke unless it closes a paste, so it is forwarded at once.
+		if (head.length === 0 && !endsPaste) {
+			return false;
+		}
+		for (const chunk of head) {
+			this.emitDataSequence(chunk);
+		}
+		this.buffer = "";
+		this.holdTrailingNewline(trailing, endsPaste);
+		return true;
+	}
+
+	private holdTrailingNewline(run: string, endsPaste: boolean): void {
+		this.heldNewline = run;
+		this.heldNewlineEndsPaste = endsPaste;
+		if (this.burstTimer) {
+			clearTimeout(this.burstTimer);
+		}
+		this.burstTimer = setTimeout(() => {
+			this.burstTimer = null;
+			this.releaseHeldNewline();
+		}, this.burstWindowMs);
+	}
+
+	private releaseHeldNewline(): void {
+		if (this.heldNewline.length === 0) {
+			return;
+		}
+		const held = this.heldNewline;
+		const endsPaste = this.heldNewlineEndsPaste;
+		this.heldNewline = "";
+		this.heldNewlineEndsPaste = false;
+		if (endsPaste) {
+			this.emit("paste", held);
+			return;
+		}
+		for (const chunk of held) {
+			this.emitDataSequence(chunk);
 		}
 	}
 
@@ -422,8 +566,25 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			clearTimeout(this.timeout);
 			this.timeout = null;
 		}
+		if (this.burstTimer) {
+			clearTimeout(this.burstTimer);
+			this.burstTimer = null;
+		}
+		this.releaseHeldNewline();
 
 		if (this.buffer.length === 0) {
+			return [];
+		}
+
+		if (this.buffer.startsWith("\x1b[<")) {
+			const remaining = 750 - (Date.now() - (this.mouseFragmentStartedAt ?? Date.now()));
+			if (remaining > 0 && this.buffer.length <= 64) {
+				this.timeout = setTimeout(() => this.flush(), remaining);
+			} else {
+				this.buffer = "";
+				this.mouseFragmentStartedAt = undefined;
+				this.discardingMouseFragment = true;
+			}
 			return [];
 		}
 
@@ -438,9 +599,18 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			clearTimeout(this.timeout);
 			this.timeout = null;
 		}
+		if (this.burstTimer) {
+			clearTimeout(this.burstTimer);
+			this.burstTimer = null;
+		}
+		this.heldNewline = "";
+		this.heldNewlineEndsPaste = false;
+		this.lastBurstPasteAt = undefined;
 		this.buffer = "";
 		this.pasteMode = false;
 		this.pasteBuffer = "";
+		this.mouseFragmentStartedAt = undefined;
+		this.discardingMouseFragment = false;
 		this.pendingKittyPrintableCodepoint = undefined;
 		this.decoder = new StringDecoder("utf8");
 	}

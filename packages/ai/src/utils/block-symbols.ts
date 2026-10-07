@@ -2,10 +2,14 @@
  * Symbol-keyed markers carried on streamed content blocks. Symbol keys never
  * survive the JSONL persistence round-trip, so these are strictly in-memory
  * coordination between a provider stream and the agent loop that consumes it.
+ *
+ * They are registry symbols (`Symbol.for`) because the stream and the loop can
+ * hold different copies of this module: the release bundle emits the Cursor
+ * provider as a self-contained chunk beside the main graph (#2334).
  */
 
 /** Stores streamed tool-call argument JSON for live renderers and parser recovery. */
-export const kStreamingPartialJson = Symbol("provider.block.partialJson");
+export const kStreamingPartialJson = Symbol.for("provider.block.partialJson");
 
 /** Carries streamed tool-call argument JSON without exposing a string-keyed property. */
 export type StreamingPartialJsonCarrier = object & { [kStreamingPartialJson]?: string };
@@ -16,10 +20,10 @@ export function clearStreamingPartialJson(block: StreamingPartialJsonCarrier): v
 }
 
 /** Stores a provider-local stream block index without exposing a string-keyed property. */
-export const kStreamingBlockIndex = Symbol("provider.block.index");
+export const kStreamingBlockIndex = Symbol.for("provider.block.index");
 
 /** Stores the last parsed argument prefix length for throttled streaming JSON parsing. */
-export const kStreamingLastParseLen = Symbol("provider.block.lastParseLen");
+export const kStreamingLastParseLen = Symbol.for("provider.block.lastParseLen");
 
 /**
  * The Cursor interaction envelope's `call_id` for a streamed tool-call block.
@@ -31,10 +35,10 @@ export const kStreamingLastParseLen = Symbol("provider.block.lastParseLen");
  * completions against the block id would mis-route every call whose args carry
  * their own id.
  */
-export const kStreamingEnvelopeId = Symbol("provider.block.envelopeId");
+export const kStreamingEnvelopeId = Symbol.for("provider.block.envelopeId");
 
 /** Classifies Cursor's in-flight tool-call kind without leaking provider-private state. */
-export const kStreamingBlockKind = Symbol("provider.block.kind");
+export const kStreamingBlockKind = Symbol.for("provider.block.kind");
 
 /**
  * Marks a `toolCall` content block that Cursor's exec channel already
@@ -47,7 +51,7 @@ export const kStreamingBlockKind = Symbol("provider.block.kind");
  * so it never persists across the JSONL round-trip, where rebuild instead
  * pairs the block with its already-persisted `toolResult` message by id.
  */
-export const kCursorExecResolved = Symbol("provider.block.cursorExecResolved");
+export const kCursorExecResolved = Symbol.for("provider.block.cursorExecResolved");
 
 /** Carries the resolved marker without exposing a string-keyed property. */
 export type CursorExecResolvedCarrier = object & { [kCursorExecResolved]?: true };

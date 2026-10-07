@@ -2,6 +2,42 @@
 
 Tracker for git hook divergence from upstream `badlogic/pi-mono`.
 
+## Pre-commit runs the autofixing check script (2026-09-17)
+
+### What changed
+
+- `.husky/pre-commit`: the formatting/linting/type-check step runs `npm run check:fix` instead of `npm run check`.
+
+### Why
+
+- #1443 made the root `check` script read-only so CI can fail on format drift. The hook's intent is local autofix-then-verify, so it moves to the new `check:fix` script (`biome check --write ... && npm run check`) and keeps its previous behavior exactly.
+
+### Why an extension could not handle it
+
+- The pre-commit hook is repository git policy executed by Husky before any Senpi runtime loads.
+
+### Expected merge conflict zones
+
+- LOW: the check invocation line in `.husky/pre-commit`.
+
+## Pre-commit package-manager verify also triggers on scripts/package-manager.mjs (2026-09-07)
+
+### What changed
+
+- `.husky/pre-commit`: `scripts/package-manager.mjs` joins `scripts/build-all.mjs`, `scripts/create-bin-stubs.mjs`, and `scripts/verify-package-managers.mjs` in the staged-file list that triggers `npm run verify:pms`.
+
+### Why
+
+- The npm/bun/pnpm detection and spawning that `scripts/build-all.mjs` used to inline now live in `scripts/package-manager.mjs`; a change there alters how every package manager's build is spawned, which is exactly what the multi-manager verify exists to catch.
+
+### Why an extension could not handle it
+
+- The pre-commit hook is repository git policy executed by Husky before any Senpi runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `case` pattern list in `.husky/pre-commit`.
+
 ## Repository-wide upstream divergence audit (2026-08-17)
 
 ### What changed

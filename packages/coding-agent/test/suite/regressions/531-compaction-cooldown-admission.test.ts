@@ -51,7 +51,7 @@ function privateSessionMethod(session: Harness["session"], name: string): (...ar
 async function createOverThresholdHarness(extension: InlineExtension): Promise<Harness> {
 	const harness = await createHarness({
 		models: [{ id: "faux-large", contextWindow: 20_000, maxTokens: 4_096 }],
-		settings: { compaction: { reserveTokens: 1_000 } },
+		settings: { compaction: { reserveTokens: 1_000, speculativeEnabled: false } },
 		extensionFactories: [extension],
 	});
 	harnesses.push(harness);

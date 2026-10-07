@@ -62,6 +62,15 @@ describe("createSessionLogger", () => {
 		expect(line).not.toHaveProperty("messageText");
 	});
 
+	it("keeps the session id so lines from concurrent sessions can be attributed", () => {
+		const agentDir = makeAgentDir();
+		const logger = createSessionLogger(agentDir);
+
+		logger.info("claude_sdk_oauth_session_continuity", { kind: "delta", sessionId: "01a0-session" });
+
+		expect(readLines(agentDir)[0]).toMatchObject({ kind: "delta", sessionId: "01a0-session" });
+	});
+
 	it("redacts bearer tokens embedded in allow-listed string values", () => {
 		const agentDir = makeAgentDir();
 		const logger = createSessionLogger(agentDir);

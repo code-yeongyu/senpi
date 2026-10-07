@@ -213,11 +213,10 @@ pin that exact SDK version, while the isolated npm installation, npm audit, stan
 binary, and npm/Bun package CLIs all pass. Treat this as a Bun resolver warning; it does not
 change the supported Node/npm installation path or require a configuration migration.
 
-`release:local` stages the publish manifest and bundled package tree inside the source checkout
-while packing. Run it from a clean, dedicated release checkout rather than a shared dirty
-worktree. After packing, verify `packages/coding-agent/package.json` still has only the five
-intentional internal bundle entries and run `npm install --ignore-scripts` before resuming
-development so workspace dependency resolution is restored. Do not use destructive Git cleanup
+`release:local` stages the publish manifest and the vendored client/protocol tree inside the
+source checkout while packing. Run it from a clean, dedicated release checkout rather than a
+shared dirty worktree. After packing, restore `packages/coding-agent/package.json` with
+`git checkout --` and rebuild coding-agent before resuming development. Do not use destructive Git cleanup
 when other work is present.
 
 ## Build and static verification
@@ -225,25 +224,24 @@ when other work is present.
 Run from the repository root:
 
 ```bash
-npm run check
-npm run build
-CI=1 npm test
+bun run check
+bun run build
+CI=1 bun run test
 npm audit --omit=dev
 ```
 
 The release-script checks are:
 
 ```bash
-node scripts/generate-coding-agent-shrinkwrap.mjs --check
-node scripts/generate-coding-agent-install-lock.mjs --check
-node scripts/upstream-release-worthy.mjs
-npm run release -- --dry-run
-node scripts/release-notes.mjs extract \
+bun scripts/generate-coding-agent-install-lock.mjs --check
+bun scripts/upstream-release-worthy.mjs
+bun run release --dry-run
+bun scripts/release-notes.mjs extract \
   --version 2026.7.30-2 \
   --tag v2026.7.30-2
 ```
 
-`npm run release -- --dry-run` is safe for this workflow. Do not run the live release command:
+`bun run release --dry-run` is safe for this workflow. Do not run the live release command:
 the live path commits, tags, and pushes.
 
 ## Plugin verification
@@ -251,13 +249,13 @@ the live path commits, tags, and pushes.
 Run the focused extension suites:
 
 ```bash
-npm --prefix packages/coding-agent exec vitest -- \
+bunx --cwd packages/coding-agent vitest \
   --run \
   test/suite/builtin-extension-sync.test.ts \
   test/suite/vendored-builtins.test.ts \
   test/extensions/loader-concurrency.test.ts \
   test/mcp/ \
-  test/suite/claude-sdk-oauth-extension.test.ts \
+  test/suite/anthropic-subscription-extension.test.ts \
   test/suite/terminal-extension.test.ts \
   test/compaction/ \
   test/ttsr/
@@ -304,7 +302,7 @@ Choose one durable output directory outside the repository:
 ```bash
 cd /Users/yeongyu/local-workspaces/senpi
 ARTIFACT_ROOT="$HOME/.local/share/senpi-releases/2026.7.30-2"
-npm run release:local -- --force --out "$ARTIFACT_ROOT"
+bun run release:local --force --out "$ARTIFACT_ROOT"
 ```
 
 The canonical npm tarball is:
@@ -341,7 +339,7 @@ Install the verified tarball through npm without lifecycle scripts, then refresh
 command cache:
 
 ```bash
-npm install -g --ignore-scripts "$TARBALL"
+bun add -g --ignore-scripts "$TARBALL"
 hash -r
 command -v senpi
 senpi --version
@@ -358,7 +356,7 @@ upgrade.
 Install the verified tarball:
 
 ```bash
-npm install -g --ignore-scripts "$TARBALL"
+bun add -g --ignore-scripts "$TARBALL"
 ```
 
 Create an isolated runtime home:
@@ -437,7 +435,7 @@ Install the transferred artifact:
 
 ```bash
 ssh mengmotaHost \
-  'npm install -g --ignore-scripts \
+  'bun add -g --ignore-scripts \
   /tmp/senpi-2026.7.30-2/code-yeongyu-senpi-2026.7.30-2.tgz'
 ```
 
@@ -516,10 +514,9 @@ counts must match exactly on each machine.
 Re-run version synchronization and lock generation:
 
 ```bash
-node scripts/sync-versions.js
-PI_ALLOW_LOCKFILE_CHANGE=1 npm install --package-lock-only --ignore-scripts
-node scripts/generate-coding-agent-shrinkwrap.mjs
-node scripts/generate-coding-agent-install-lock.mjs
+bun scripts/sync-versions.js
+PI_ALLOW_LOCKFILE_CHANGE=1 bun install --lockfile-only --ignore-scripts
+bun scripts/generate-coding-agent-install-lock.mjs
 ```
 
 Then rebuild before packaging.
@@ -567,7 +564,7 @@ configuration paths.
 Run the MCP suite directly:
 
 ```bash
-npm --prefix packages/coding-agent exec vitest -- --run test/mcp/
+bunx --cwd packages/coding-agent vitest --run test/mcp/
 ```
 
 Make only compatibility changes required by a reproduced failure. Do not add fallback logic
@@ -581,7 +578,7 @@ Rollback changes the executable package only. It does not remove or modify
 Reinstall the prior published version:
 
 ```bash
-npm install -g @code-yeongyu/senpi@2026.7.30
+bun add -g @code-yeongyu/senpi@2026.7.30
 ```
 
 Verify rollback from an isolated home:
@@ -627,7 +624,7 @@ For the next release:
 5. Query registry-verifiable plugin dependencies for newer exact versions.
 6. Preserve vendored snapshots when no authoritative upstream source is available.
 7. Update the seven lockstep package versions.
-8. Regenerate package-lock, publish-deps lock, and install lock.
+8. Regenerate package-lock and install lock.
 9. Run focused plugin tests.
 10. Run `check`, `build`, and the full test suite.
 11. Run the real Senpi QA channels.

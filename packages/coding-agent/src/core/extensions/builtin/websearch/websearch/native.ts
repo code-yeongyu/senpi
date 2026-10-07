@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { credentialHeaders, hostedRouteMapping } from "./hosted-routes.ts";
 import { isAllowedProviderBaseUrl } from "./provider-endpoints.ts";
 import type { SearchProvider, SearchProviderEntry } from "./types.ts";
 
@@ -8,10 +9,12 @@ export interface NativeModelInfo {
 	id: string;
 	baseUrl: string;
 	api?: string;
+	cost?: { input: number; output: number };
+	headers?: Record<string, string>;
 }
 
 export type NativeAuthResult =
-	| { ok: true; apiKey?: string; headers?: Record<string, string | null> }
+	| { ok: true; apiKey?: string; headers?: Record<string, string | null>; baseUrl?: string }
 	| { ok: false; error: string };
 
 export interface NativeModelRegistry {
@@ -19,11 +22,12 @@ export interface NativeModelRegistry {
 	getAvailable?(): NativeModelInfo[];
 }
 
-interface NativeProviderMapping {
+export interface NativeProviderMapping {
 	provider: SearchProvider;
 	resource: string;
 	routeLabel?: string;
 	endpointPath?: string;
+	endpoint?: (baseUrl: string) => string;
 }
 
 interface NativeEntryOptions {
@@ -31,7 +35,9 @@ interface NativeEntryOptions {
 	signal?: AbortSignal;
 }
 
-function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
+export function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
+	const hosted = hostedRouteMapping(model);
+	if (hosted) return hosted;
 	const isOpenAiModel = /^gpt-(4o|4\.1|5)/.test(model.id) && !model.id.includes("codex");
 	if (model.provider === "openai" && isOpenAiModel) {
 		return { provider: "openai", resource: "responses" };
@@ -120,10 +126,16 @@ function buildEndpointUrl(baseUrl: string, resource: string, endpointPath?: stri
 	return configured.href;
 }
 
-function nativeRouteKey(model: NativeModelInfo): string | null {
+function mappingEndpointUrl(mapping: NativeProviderMapping, baseUrl: string): string {
+	return mapping.endpoint
+		? mapping.endpoint(baseUrl)
+		: buildEndpointUrl(baseUrl, mapping.resource, mapping.endpointPath);
+}
+
+export function nativeRouteKey(model: NativeModelInfo): string | null {
 	const mapping = nativeMapping(model);
 	if (!mapping) return null;
-	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource, mapping.endpointPath);
+	const baseUrl = mappingEndpointUrl(mapping, model.baseUrl);
 	if (!isAllowedProviderBaseUrl(baseUrl)) return null;
 	const routeUrl = new URL(baseUrl);
 	routeUrl.hostname = routeUrl.hostname.replace(/\.$/, "");
@@ -146,7 +158,7 @@ async function buildNativeEntryForModel(
 	const mapping = nativeMapping(model);
 	if (!mapping) return null;
 	const entryId = id ?? (mapping.routeLabel ? `${mapping.routeLabel}/native` : "native");
-	const baseUrl = buildEndpointUrl(model.baseUrl, mapping.resource, mapping.endpointPath);
+	const baseUrl = mappingEndpointUrl(mapping, model.baseUrl);
 	if (!isAllowedProviderBaseUrl(baseUrl)) return null;
 
 	signal?.throwIfAborted();
@@ -169,20 +181,27 @@ async function buildNativeEntryForModel(
 		}
 	}
 	if (!auth.ok || !auth.apiKey) return null;
+	// A credential-specific host (a Copilot Business or Enterprise account's own API host) replaces
+	// the catalog host, exactly as it does for the account's chat requests.
+	const requestBaseUrl = auth.baseUrl ? mappingEndpointUrl(mapping, auth.baseUrl) : baseUrl;
+	if (!isAllowedProviderBaseUrl(requestBaseUrl)) return null;
+	const headers = credentialHeaders(model.headers, auth.headers);
 
 	return {
 		id: entryId,
 		provider: mapping.provider,
 		apiKey: auth.apiKey,
-		baseUrl,
+		baseUrl: requestBaseUrl,
 		model: model.id,
 		priority: -1,
+		...(headers ? { headers } : {}),
 	};
 }
 export async function buildNativeEntries(
 	model: NativeModelInfo | undefined,
 	modelRegistry: NativeModelRegistry | undefined,
 	signal?: AbortSignal,
+	searchModel?: { model: string; fallbackModel?: string },
 ): Promise<SearchProviderEntry[]> {
 	signal?.throwIfAborted();
 	if (!modelRegistry) return [];
@@ -194,7 +213,7 @@ export async function buildNativeEntries(
 	if (activeRouteKey) {
 		seenRoutes.add(activeRouteKey);
 		const activeEntry = await buildNativeEntryForModel(model, modelRegistry, { signal });
-		if (activeEntry) entries.push(activeEntry);
+		if (activeEntry) entries.push(searchModel ? { ...activeEntry, ...searchModel } : activeEntry);
 	}
 
 	if (!modelRegistry.getAvailable) return entries;

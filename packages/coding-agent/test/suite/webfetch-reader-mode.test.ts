@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Static } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { webfetch } from "../../src/core/extensions/builtin/webfetch/webfetch/tool.ts";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 
 type RouteHandler = (request: IncomingMessage, response: ServerResponse) => void;
 type WebfetchParams = Static<typeof webfetch.parameters>;
@@ -25,7 +25,7 @@ async function createFixtureServer(
 }
 
 async function executeWebfetch(params: WebfetchParams) {
-	return webfetch.execute("tool", params, undefined, undefined, context);
+	return webfetch.execute("tool", params, undefined, undefined, context as ExtensionToolContext);
 }
 
 function textContent(result: Awaited<ReturnType<typeof executeWebfetch>>): string {
@@ -174,6 +174,34 @@ describe("webfetch reader-mode cleanup", () => {
 		expect(headerValue(challengeHeaders, "sec-fetch-mode")).toBe("navigate");
 		expect(headerValue(challengeHeaders, "sec-fetch-dest")).toBe("document");
 		expect(headerValue(challengeHeaders, "sec-ch-ua-platform")).toBe('"Windows"');
+	});
+
+	it("#given one redirect #when fetching #then returns the final response body", async () => {
+		// given
+		const visitedPaths: string[] = [];
+		const server = await createFixtureServer((request, response) => {
+			visitedPaths.push(request.url ?? "");
+			if (request.url === "/start") {
+				response.writeHead(302, {
+					location: "/final",
+					"content-type": "text/plain; charset=utf-8",
+				});
+				response.end("redirecting");
+				return;
+			}
+
+			response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+			response.end("<html><body><h1>Redirect Complete</h1><p>Final page.</p></body></html>");
+		});
+
+		// when
+		const result = await executeWebfetch({ url: `${server.baseUrl}/start`, format: "markdown" });
+		const text = textContent(result);
+
+		// then
+		expect(text).toContain("# Redirect Complete");
+		expect(text).toContain("Final page.");
+		expect(visitedPaths).toEqual(["/start", "/final"]);
 	});
 
 	it("#given too many redirects #when fetching #then returns the final redirect response body", async () => {

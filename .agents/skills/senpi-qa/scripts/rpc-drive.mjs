@@ -76,7 +76,7 @@ async function selfTest() {
 	process.exit(passed ? 0 : 1);
 }
 
-async function driveScenarioClaudeSdkOauthAccounts() {
+async function driveScenarioAnthropicSubscriptionAccounts() {
 	installCleanupHooks();
 	const guard = guardRealAuth();
 	const checks = createChecks("rpc-drive.mjs --scenario claude-sdk-oauth-accounts");
@@ -256,7 +256,7 @@ if (argv[0] === "--self-test") {
 } else if (argv[0] === "--state") {
 	driveState();
 } else if (argv[0] === "--scenario" && argv[1] === "claude-sdk-oauth-accounts") {
-	driveScenarioClaudeSdkOauthAccounts().catch((e) => {
+	driveScenarioAnthropicSubscriptionAccounts().catch((e) => {
 		process.stderr.write(`${e instanceof Error ? e.stack : String(e)}\n`);
 		process.exit(1);
 	});

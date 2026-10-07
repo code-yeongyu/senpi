@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -130,5 +130,76 @@ describe("SessionManager open and lightweight state", () => {
 
 		expect(session.buildSessionContext().messages).toHaveLength(1);
 		expect(session.hasContextMessages()).toBe(true);
+	});
+
+	it("does not replace a live session when its file is transiently empty", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		const file = session.getSessionFile();
+		expect(file).toBeDefined();
+		const entryId = session.appendMessage({ role: "user", content: "keep me", timestamp: 1 });
+		writeFileSync(file!, "");
+
+		session.reloadFromDisk();
+
+		expect(session.getSessionId()).not.toBe("");
+		expect(session.getEntry(entryId)?.id).toBe(entryId);
+		expect(session.getEntries()).toHaveLength(1);
+	});
+
+	it("leaves all state unchanged when a replacement session file is malformed", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		const file = session.getSessionFile();
+		expect(file).toBeDefined();
+		const entryId = session.appendMessage({ role: "user", content: "keep me", timestamp: 1 });
+		const originalId = session.getSessionId();
+		writeFileSync(file!, '{"type":"not-a-session"}\\n');
+
+		expect(() => session.reloadFromDisk()).toThrow();
+		expect(session.getSessionId()).toBe(originalId);
+		expect(session.getEntry(entryId)?.id).toBe(entryId);
+		expect(session.getEntries()).toHaveLength(1);
+	});
+
+	it("reloads entries from disk when session file changes externally", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		const file = session.getSessionFile();
+		expect(file).toBeDefined();
+		expect(session.getEntries()).toHaveLength(0);
+
+		const userEntry = {
+			type: "message",
+			id: "ext-1",
+			parentId: null,
+			timestamp: "2025-01-01T00:00:01Z",
+			message: { role: "user", content: "hello from outside", timestamp: 1 },
+		};
+		const compactionEntry = {
+			type: "compaction",
+			id: "ext-2",
+			parentId: "ext-1",
+			timestamp: "2025-01-01T00:00:02Z",
+			summary: "external compaction",
+			firstKeptEntryId: "ext-1",
+			tokensBefore: 100,
+		};
+		const header = {
+			type: "session",
+			version: 3,
+			id: session.getSessionId(),
+			timestamp: new Date().toISOString(),
+			cwd: tempDir,
+		};
+		appendFileSync(
+			file!,
+			`${JSON.stringify(header)}\n${JSON.stringify(userEntry)}\n${JSON.stringify(compactionEntry)}\n`,
+		);
+
+		expect(session.getEntries()).toHaveLength(0);
+
+		session.reloadFromDisk();
+		expect(session.getEntries()).toHaveLength(2);
+		const contextEntries = session.buildContextEntries();
+		expect(contextEntries[0]?.type).toBe("compaction");
+		expect(session.getLeafId()).toBe("ext-2");
 	});
 });

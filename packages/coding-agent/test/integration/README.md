@@ -6,10 +6,10 @@ This directory contains API-key-gated integration tests that make real LLM calls
 
 ```bash
 # Run all integration tests
-PI_RUN_INTEGRATION=1 npx vitest run test/integration/
+PI_RUN_INTEGRATION=1 bunx vitest run test/integration/
 
 # Run a specific suite
-PI_RUN_INTEGRATION=1 npx vitest run test/integration/compaction-real-api.test.ts
+PI_RUN_INTEGRATION=1 bunx vitest run test/integration/compaction-real-api.test.ts
 ```
 
 ## Gating

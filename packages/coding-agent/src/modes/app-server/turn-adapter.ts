@@ -1,12 +1,14 @@
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { TurnInterruptParams, TurnStartParams, TurnSteerParams, UserInput } from "./protocol/index.ts";
+import { ADDITIVE_CLIENT_NOTIFICATION_METHODS } from "./protocol/methods.ts";
 import type { ClassifiedIncoming, RpcResponse } from "./rpc/envelope.ts";
 import type { MethodRegistry, RpcRequest } from "./rpc/registry.ts";
 import type { ApprovalBridge } from "./server/approvals.ts";
 import type { Connection, ConnectionId, ConnectionInput, TransportKind } from "./server/connection.ts";
 import type { ConnectionTransport, NotificationRouter } from "./server/notifications.ts";
-import type { ServerCoreOptions } from "./server/server-core.ts";
-import { ServerCore } from "./server/server-core.ts";
+import { ServerCore, type ServerCoreOptions } from "./server/server-core.ts";
+import type { UserInputBridge } from "./server/user-input-bridge.ts";
+import { UserInputProtocolError } from "./server/user-input-types.ts";
 import { decodeCursor, encodeCursor, objectValue, optionalNumber, optionalString } from "./threads/handler-params.ts";
 import type { ThreadEntry, ThreadRegistry } from "./threads/registry.ts";
 import { TurnEngineError } from "./threads/turn-runtime.ts";
@@ -24,6 +26,7 @@ export function turnStartParams(request: RpcRequest): TurnStartParams {
 		threadId: requiredStringParam(params.threadId, "threadId"),
 		clientUserMessageId: optionalNullableStringParam(params.clientUserMessageId, "clientUserMessageId"),
 		input: userInputArrayParam(params.input),
+		...(params.unknownCommandAsText === true ? { unknownCommandAsText: true } : {}),
 	};
 }
 
@@ -51,8 +54,9 @@ export function createRoutedServerCore(
 	approvals: ApprovalBridge,
 	onThreadSubscribersEmpty?: (threadId: string) => void,
 	options: Omit<ServerCoreOptions, "registry"> = {},
+	userInput?: UserInputBridge,
 ): ServerCore {
-	return new RoutedServerCore(registry, notifications, approvals, onThreadSubscribersEmpty, options);
+	return new RoutedServerCore(registry, notifications, approvals, onThreadSubscribersEmpty, options, userInput);
 }
 
 export function registerLoadedThreadObjectListHandler(registry: MethodRegistry, threads: ThreadRegistry): void {
@@ -76,6 +80,7 @@ export function registerLoadedThreadObjectListHandler(registry: MethodRegistry, 
 class RoutedServerCore extends ServerCore {
 	private readonly notifications: NotificationRouter;
 	private readonly approvals: ApprovalBridge;
+	private readonly userInput: UserInputBridge | undefined;
 	private readonly onThreadSubscribersEmpty: ((threadId: string) => void) | undefined;
 
 	constructor(
@@ -84,10 +89,12 @@ class RoutedServerCore extends ServerCore {
 		approvals: ApprovalBridge,
 		onThreadSubscribersEmpty?: (threadId: string) => void,
 		options: Omit<ServerCoreOptions, "registry"> = {},
+		userInput?: UserInputBridge,
 	) {
 		super({ ...options, registry });
 		this.notifications = notifications;
 		this.approvals = approvals;
+		this.userInput = userInput;
 		this.onThreadSubscribersEmpty = onThreadSubscribersEmpty;
 	}
 
@@ -124,9 +131,35 @@ class RoutedServerCore extends ServerCore {
 	}
 
 	override async receive(connectionId: ConnectionId, envelope: ClassifiedIncoming): Promise<void> {
-		if (envelope.kind === "response" && this.resolveApproval(envelope.message)) {
-			return;
+		const connection = this.getConnection(connectionId);
+		if (connection?.initialized && this.userInput) {
+			try {
+				if (
+					envelope.kind === "notification" &&
+					envelope.message.method === ADDITIVE_CLIENT_NOTIFICATION_METHODS[0]
+				) {
+					this.userInput.progress(envelope.message.params);
+					return;
+				}
+				if (envelope.kind === "response" && envelope.message.id !== null) {
+					const response = { ...envelope.message, id: envelope.message.id };
+					if (this.userInput.resolveResponse(response) || this.resolveApproval(response)) return;
+					await connection.send({
+						id: envelope.message.id,
+						error: { code: -32600, message: "Unknown server request id" },
+					});
+					return;
+				}
+			} catch (error) {
+				if (!(error instanceof UserInputProtocolError)) throw error;
+				await connection.send({
+					id: envelope.kind === "response" ? envelope.message.id : null,
+					error: { code: -32602, message: error.message },
+				});
+				return;
+			}
 		}
+		if (!this.userInput && envelope.kind === "response" && this.resolveApproval(envelope.message)) return;
 		await super.receive(connectionId, envelope);
 	}
 
@@ -218,8 +251,10 @@ class ModeTurnSession implements TurnEngineSession {
 		return this.session.prompt(text, options);
 	}
 
-	steer(text: string): Promise<void> {
-		return this.session.steer(text);
+	async steer(text: string, options?: { readonly source?: "rpc" }): Promise<void> {
+		// App-server steering is client-driven input, exactly like its prompts:
+		// tag it "rpc" so extension `input` handlers see the real source.
+		await this.session.steer(text, undefined, { source: options?.source ?? "rpc" });
 	}
 
 	abort(): Promise<void> {

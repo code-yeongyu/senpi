@@ -14,6 +14,7 @@ export default function modelFallbackExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("fallback", {
 		description: "View and manage retry model fallback chains.",
 		argumentHint: "[target [fallback1 fallback2 ...]]",
+		requiresArguments: false,
 		handler: async (rawArgs, ctx) => handleFallbackCommand(rawArgs, ctx),
 	});
 }

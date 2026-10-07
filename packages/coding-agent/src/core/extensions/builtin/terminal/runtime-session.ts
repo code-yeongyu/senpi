@@ -1,11 +1,15 @@
-import {
+import type {
 	TerminalScreen,
-	type TerminalScreenSnapshot,
+	TerminalScreenSnapshot,
 	TerminalSession,
-	type TerminalSessionExit,
-	type TerminalSessionOptions,
+	TerminalSessionExit,
+	TerminalSessionOptions,
 } from "@earendil-works/pi-pty";
+import { type ChildProcessIdentity, processBootAtMs } from "./process-identity.ts";
+import { loadPty } from "./pty.lazy.ts";
 import { DEFAULT_SCROLLBACK, MAX_SESSION_OUTPUT_CHARS } from "./shared.ts";
+
+const pty = await loadPty();
 
 export interface TerminalRuntimeOptions extends TerminalSessionOptions {
 	readonly scrollback?: number;
@@ -24,6 +28,8 @@ export interface DeltaRead {
 export class TerminalRuntimeSession {
 	readonly session: TerminalSession;
 	readonly command: string;
+	readonly startedAtMs: number;
+	private readonly argv: readonly string[];
 	private readonly screen: TerminalScreen;
 	private readonly decoder = new TextDecoder("utf-8", { fatal: false });
 	private buffer = "";
@@ -34,12 +40,13 @@ export class TerminalRuntimeSession {
 
 	constructor(command: string, options: TerminalRuntimeOptions) {
 		this.command = command;
-		this.screen = new TerminalScreen({
+		this.argv = [options.command ?? command, ...(options.args ?? [])];
+		this.screen = new pty.TerminalScreen({
 			cols: options.cols,
 			rows: options.rows,
 			scrollback: options.scrollback ?? DEFAULT_SCROLLBACK,
 		});
-		this.session = new TerminalSession(options);
+		this.session = new pty.TerminalSession(options);
 		this.unsubscribeData = this.session.onData((chunk) => {
 			const text = this.ingest(chunk);
 			if (text.length === 0) return;
@@ -52,10 +59,25 @@ export class TerminalRuntimeSession {
 			}
 		});
 		this.session.start();
+		this.startedAtMs = Date.now();
 	}
 
 	get backend(): string | null {
 		return this.session.backend;
+	}
+
+	/** The spawned child as a later process can recognise it; undefined when the backend exposes no pid. */
+	identity(): ChildProcessIdentity | undefined {
+		const pid = this.session.pid;
+		if (pid === undefined) return undefined;
+		const processGroupId = this.session.processGroupId;
+		return {
+			pid,
+			...(processGroupId === undefined ? {} : { processGroupId }),
+			startedAtMs: this.startedAtMs,
+			bootAtMs: processBootAtMs(),
+			argv: this.argv,
+		};
 	}
 
 	get exited(): boolean {
@@ -74,7 +96,7 @@ export class TerminalRuntimeSession {
 	private ingest(chunk: Uint8Array): string {
 		const text = this.decoder.decode(chunk, { stream: true });
 		if (text.length === 0) return text;
-		void this.screen.feed(text);
+		this.ownScreenWrite(this.screen.feed(text));
 		this.buffer += text;
 		if (this.buffer.length > MAX_SESSION_OUTPUT_CHARS) {
 			const overflow = this.buffer.length - MAX_SESSION_OUTPUT_CHARS;
@@ -109,7 +131,24 @@ export class TerminalRuntimeSession {
 	}
 
 	resizeScreen(cols: number, rows: number): void {
-		void this.screen.resize(cols, rows);
+		this.ownScreenWrite(this.screen.resize(cols, rows));
+	}
+
+	/**
+	 * The screen is a best-effort projection; a rejected feed/resize must never
+	 * become an unhandled rejection that kills the host process (#837), and
+	 * `buffer` remains the source of truth for reads. The screen hands every
+	 * caller coalesced into one queued operation the same memoized promise, so
+	 * attach the rejection handler once per distinct promise - re-attaching per
+	 * PTY chunk would grow promise reactions without bound while a replay is
+	 * stalled behind a slow parser.
+	 */
+	private lastScreenWrite: Promise<void> | null = null;
+
+	private ownScreenWrite(written: Promise<void>): void {
+		if (written === this.lastScreenWrite) return;
+		this.lastScreenWrite = written;
+		written.catch(() => {});
 	}
 
 	dispose(): void {

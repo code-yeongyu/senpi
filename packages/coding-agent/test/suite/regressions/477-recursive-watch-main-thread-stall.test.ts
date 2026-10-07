@@ -40,16 +40,22 @@ describe("issue #477 recursive watch main-thread stall", () => {
 		worker.emit("message", { kind: "event", id: 1, eventType: "change", filename: ".omo/omo.json" });
 
 		expect(createRecursiveWorker).toHaveBeenCalledTimes(1);
-		expect(worker.postMessage).toHaveBeenCalledWith({
-			kind: "watch",
-			id: 1,
-			path: "/large-workspace-mount",
-		});
-		expect(worker.postMessage).toHaveBeenCalledWith({
-			kind: "watch",
-			id: 2,
-			path: "/another-config-root",
-		});
+		expect(worker.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "watch",
+				id: 1,
+				path: "/large-workspace-mount",
+				recursive: true,
+			}),
+		);
+		expect(worker.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "watch",
+				id: 2,
+				path: "/another-config-root",
+				recursive: true,
+			}),
+		);
 		expect(mocks.fsWatch).not.toHaveBeenCalled();
 		expect(listener).toHaveBeenCalledWith("change", ".omo/omo.json");
 
@@ -59,12 +65,12 @@ describe("issue #477 recursive watch main-thread stall", () => {
 		expect(worker.terminate).toHaveBeenCalledTimes(1);
 	});
 
-	it("keeps non-recursive config file watches on direct fs.watch", () => {
+	it("keeps non-recursive config file watches on direct fs.watch on non-offloaded platforms", () => {
 		const watcher = new WatcherProbe();
 		mocks.fsWatch.mockReturnValue(watcher);
 		const createRecursiveWorker = vi.fn(() => new WorkerProbe());
 		const source = createFsWatchEventSource(vi.fn(), {
-			platform: "linux",
+			platform: "win32",
 			createRecursiveWorker,
 		});
 

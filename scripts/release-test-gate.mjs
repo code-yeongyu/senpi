@@ -9,7 +9,25 @@
  * (unit-testable without network); `release.mjs` owns the `gh` lookup.
  */
 
+import { execFileSync } from "node:child_process";
+
 export const REQUIRED_CHECK_NAME = "Check and test";
+
+/** What `packages/ai/scripts/generate-models.ts` writes: the aggregator and the provider shards/data. */
+export const REGENERATED_CATALOG_PATHS = ["packages/ai/src/models.generated.ts", "packages/ai/src/providers"];
+
+/**
+ * True when the release's catalog regeneration left the catalog different from HEAD (a changed or a
+ * new file). HEAD's CI ran on the old catalog, so it says nothing about the regenerated one (senpi#2645).
+ * @param {string} cwd repository root
+ */
+export function catalogChangedSinceHead(cwd) {
+	const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...REGENERATED_CATALOG_PATHS], {
+		cwd,
+		encoding: "utf8",
+	});
+	return status.trim().length > 0;
+}
 
 /**
  * @param {Array<{name: string, status: string, conclusion: string|null, head_sha: string}>} checkRuns
@@ -26,16 +44,22 @@ export function isCiCheckGreen(checkRuns, sha) {
 }
 
 /**
- * @param {{forceTests: boolean, dryRun: boolean, sha: string, checkRuns: Array|null}} input
+ * @param {{forceTests: boolean, dryRun: boolean, sha: string, checkRuns: Array|null, catalogChanged?: boolean}} input
  *   checkRuns === null means the lookup failed (offline, gh missing, API error).
  * @returns {{skip: boolean, reason: string}}
  */
-export function decideTestGate({ forceTests, dryRun, sha, checkRuns }) {
+export function decideTestGate({ forceTests, dryRun, sha, checkRuns, catalogChanged = false }) {
 	if (forceTests) {
 		return { skip: false, reason: "--force-tests given; running the test gate unconditionally" };
 	}
 	if (dryRun) {
 		return { skip: false, reason: "dry-run previews the real gate; tests still listed" };
+	}
+	if (catalogChanged) {
+		return {
+			skip: false,
+			reason: "the regeneration changed the model catalog and HEAD's CI ran on the old one; running the full test gate on the regenerated tree",
+		};
 	}
 	if (checkRuns === null) {
 		return { skip: false, reason: "CI check lookup failed; running the test gate locally" };

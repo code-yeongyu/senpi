@@ -1,0 +1,329 @@
+{
+	"documentation": "Baseline for test/suite/no-sync-in-session-path.test.ts. `blocking` lists the blocking primitives that are already reachable from the RPC session path and are NOT owned by the async-credential/footer work; a blocking call site that is not listed here fails the audit. `syncFs` lists every synchronous filesystem call reachable from that path with the bytes it moves; a NEW entry or a higher count fails the audit, a removed one never does. Entries are keyed by (file, api, enclosing symbol) - line numbers are informational and are not compared.",
+	"blocking": [
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "Atomics.wait",
+			"symbol": "acquireLockSyncWithRetry",
+			"count": 1,
+			"note": "sync credential-lock backoff, bounded by FILE_STORAGE_SYNC_LOCK_BUDGET_MS (1s). Pre-existing and NOT owned by the async-credential work: the sync `withLock` API is what the TUI and every sync credential writer use. Tracked for a follow-up that gives those callers an async lock."
+		},
+		{
+			"file": "src/core/settings-manager.ts",
+			"api": "Atomics.wait",
+			"symbol": "acquireLockSyncWithRetry",
+			"count": 1,
+			"note": "sync settings-lock backoff, same 1s budget and same shape as the credential lock above. Pre-existing; a settings write from a session can hold the loop for up to 1s under contention."
+		},
+		{
+			"file": "src/utils/shell.ts",
+			"api": "spawnSync",
+			"symbol": "findExecutableOnPath",
+			"count": 2,
+			"note": "`which`/`where` probe with a 5s timeout, memoized per executable by the shell-config cache, so a session pays it at most once per host lifetime per binary. Pre-existing."
+		},
+		{
+			"file": "src/utils/shell.ts",
+			"api": "spawnSync",
+			"symbol": "taskkillHandledTree",
+			"count": 1,
+			"note": "win32-only `taskkill /T` on a tracked child, 5s timeout. Reachable only from the Windows kill path of a tool's child process. Pre-existing."
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"api": "spawnSync",
+			"symbol": "runExtractionCommand",
+			"count": 1,
+			"note": "archive extraction for an on-demand tool download, 60s timeout, off the hot path (first use of a missing bundled tool). Pre-existing."
+		}
+	],
+	"syncFs": [
+		{
+			"file": "src/core/agent-session.ts",
+			"api": "readFileSync",
+			"symbol": "_expandSkillCommand",
+			"count": 1,
+			"note": "one skill markdown file per explicit $skill token (KB-scale, read once per expansion)"
+		},
+		{
+			"file": "src/core/agent-session.ts",
+			"api": "writeFileSync",
+			"symbol": "exportToJsonl",
+			"count": 1,
+			"note": "whole transcript written on an explicit export command (session-scale, MB on long sessions)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "readFileSync",
+			"symbol": "load",
+			"count": 1,
+			"note": "auth.json (KB-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "readFileSync",
+			"symbol": "readStoredCredential",
+			"count": 1,
+			"note": "auth.json (KB-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "readFileSync",
+			"symbol": "withLock",
+			"count": 1,
+			"note": "auth.json read+write under the sync file lock (KB-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "readFileSync",
+			"symbol": "withLockAsync",
+			"count": 1,
+			"note": "auth.json read+write inside the async lock (KB-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "writeFileSync",
+			"symbol": "ensureFileExists",
+			"count": 1,
+			"note": "2-byte auth.json seed"
+		},
+		{
+			"file": "src/core/credential-pool/state-store.ts",
+			"api": "readFileSync",
+			"symbol": "withDocument",
+			"count": 1,
+			"note": "credential-pool state JSON (KB-scale)"
+		},
+		{
+			"file": "src/core/credential-pool/state-store.ts",
+			"api": "writeFileSync",
+			"symbol": "ensureFile",
+			"count": 1,
+			"note": "2-byte state seed"
+		},
+		{
+			"file": "src/core/credential-pool/state-store.ts",
+			"api": "writeFileSync",
+			"symbol": "withDocument",
+			"count": 1,
+			"note": "credential-pool state JSON (KB-scale)"
+		},
+		{
+			"file": "src/core/dynamic-prompt/workstation.ts",
+			"api": "readFileSync",
+			"symbol": "cpuModel",
+			"count": 1,
+			"note": "/proc/cpuinfo on linux (KB-scale, workstation prompt block)"
+		},
+		{
+			"file": "src/core/export-html/index.ts",
+			"api": "readFileSync",
+			"symbol": "generateHtml",
+			"count": 5,
+			"note": "five bundled template assets on an explicit HTML export (~100 KB each, highlight.js dominates)"
+		},
+		{
+			"file": "src/core/export-html/index.ts",
+			"api": "writeFileSync",
+			"symbol": "exportSessionToHtml",
+			"count": 1,
+			"note": "rendered HTML export (session-scale, MB on long sessions)"
+		},
+		{
+			"file": "src/core/model-config.ts",
+			"api": "readFileSync",
+			"symbol": "loadSync",
+			"count": 1,
+			"note": "models config JSON (KB-scale, cached after the first load)"
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"api": "readFileSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 1,
+			"note": "one-shot legacy provider-id migration (senpi#2044): re-reads models.json (KB-scale) right before the rename to refuse clobbering a concurrent edit. Runs only while the file still carries a legacy id, so at most once per file"
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"api": "writeFileSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 2,
+			"note": "one-shot legacy provider-id migration (senpi#2044): the backup copy and the temp file renamed over models.json (KB-scale each). Runs only while the file still carries a legacy id, so at most once per file"
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"api": "writeFileSync",
+			"symbol": "rewriteInPlace",
+			"count": 1,
+			"note": "DELIBERATE transcript path: the pre-atomic in-place whole-transcript rewrite (session-scale), taken only when the session directory refuses the temp file (EACCES/EPERM/EROFS)"
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"api": "writeFileSync",
+			"symbol": "writeDurably",
+			"count": 1,
+			"note": "DELIBERATE transcript path: whole transcript written to a temp file and renamed over the session file (session-scale, MB on long sessions), reached from SessionManager._rewriteFile on open-time migration, empty-file init, caller-id create, and branched-session create"
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"api": "readFileSync",
+			"symbol": "activeMover",
+			"count": 1,
+			"note": "session move lock (~100 bytes), read once when a runtime opens or switches to a session (senpi#2184)"
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"api": "writeFileSync",
+			"symbol": "publishHolderRecord",
+			"count": 1,
+			"note": "this process's holder record for the open session (~100 bytes), written once per session open or switch (senpi#2184)"
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"api": "appendFileSync",
+			"symbol": "_persist",
+			"count": 2,
+			"note": "DELIBERATE transcript path: one JSONL entry appended per persisted entry (KB-scale), or a full flush of the pending entries on the first assistant message (session-scale)"
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"api": "appendFileSync",
+			"symbol": "forkFrom",
+			"count": 1,
+			"note": "DELIBERATE transcript path: forked transcript written once (session-scale)"
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"api": "appendFileSync",
+			"symbol": "open",
+			"count": 1,
+			"note": "DELIBERATE transcript path: session file read and re-appended on open (session-scale)"
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"api": "readFileSync",
+			"symbol": "open",
+			"count": 1,
+			"note": "DELIBERATE transcript path: session file read and re-appended on open (session-scale)"
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"api": "writeFileSync",
+			"symbol": "_persist",
+			"count": 1,
+			"note": "DELIBERATE transcript path: one JSONL entry appended per persisted entry (KB-scale), or a full flush of the pending entries on the first assistant message (session-scale)"
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"api": "writeFileSync",
+			"symbol": "forkFrom",
+			"count": 1,
+			"note": "DELIBERATE transcript path: forked transcript written once (session-scale)"
+		},
+		{
+			"file": "src/core/session-resident-store.ts",
+			"api": "readFileSync",
+			"symbol": "_readBlob",
+			"count": 1,
+			"note": "one evicted entry blob on rehydration (KB-MB)"
+		},
+		{
+			"file": "src/core/session-resident-store.ts",
+			"api": "writeFileSync",
+			"symbol": "_writeBlob",
+			"count": 1,
+			"note": "one evicted entry blob (up to the eviction threshold, KB-MB)"
+		},
+		{
+			"file": "src/core/settings-manager.ts",
+			"api": "readFileSync",
+			"symbol": "withLock",
+			"count": 2,
+			"note": "settings.json read+write under the sync file lock (KB-scale)"
+		},
+		{
+			"file": "src/core/settings-manager.ts",
+			"api": "writeFileSync",
+			"symbol": "withLock",
+			"count": 1,
+			"note": "settings.json read+write under the sync file lock (KB-scale)"
+		},
+		{
+			"file": "src/core/hidden-stdout-log.ts",
+			"api": "fs.appendFileSync",
+			"symbol": "appendDebugLogEntry",
+			"count": 1,
+			"note": "one debug-log line (bytes), reached from settings loading only when rewriting the global settings file to drop a retired key fails; recorded once per settings file per process"
+		},
+		{
+			"file": "src/core/trust-manager.ts",
+			"api": "readFileSync",
+			"symbol": "readTrustFile",
+			"count": 1,
+			"note": "trust store JSON (KB-scale)"
+		},
+		{
+			"file": "src/core/trust-manager.ts",
+			"api": "writeFileSync",
+			"symbol": "writeTrustFile",
+			"count": 1,
+			"note": "trust store JSON (KB-scale)"
+		},
+		{
+			"file": "src/modes/interactive/theme/theme.ts",
+			"api": "fs.readFileSync",
+			"symbol": "getBuiltinThemes",
+			"count": 4,
+			"note": "four bundled theme JSON files (KB-scale, startup)"
+		},
+		{
+			"file": "src/modes/interactive/theme/theme.ts",
+			"api": "fs.readFileSync",
+			"symbol": "loadThemeJson",
+			"count": 2,
+			"note": "one theme JSON file (KB-scale)"
+		},
+		{
+			"file": "src/utils/paths.ts",
+			"api": "readFileSync",
+			"symbol": "getFileContentRevision",
+			"count": 1,
+			"note": "whole file hashed for a content revision (file-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "writeFileSync",
+			"symbol": "writeAuthFile",
+			"count": 1,
+			"note": "auth.json atomic persist (temp+rename, 0600); the credential write formerly in withLock/withLockAsync, now factored into one helper (KB-scale)"
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"api": "writeFileSync",
+			"symbol": "backupAuthFile",
+			"count": 1,
+			"note": "one-shot timestamped auth.json backup taken before the senpi#1989 provider-key migration rewrites it; runs once per install (KB-scale)"
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"api": "writeFileSync",
+			"symbol": "writeImage",
+			"count": 1,
+			"note": "one tool-result image (at most 20 MiB) written before the placeholder naming it is emitted; the publish-after-write contract needs the file to exist first, and a re-emitted image is memoized so it is written once"
+		},
+		{
+			"file": "src/utils/bundled-bun.ts",
+			"api": "readFileSync",
+			"symbol": "writeIfChanged",
+			"count": 1,
+			"note": "bundled bun/bunx script (~80 bytes) compared before writing (omo#9362); bundledBunDir memoizes per executable, so it runs at most twice per process (bun + bunx) and only inside a compiled executable"
+		},
+		{
+			"file": "src/utils/bundled-bun.ts",
+			"api": "writeFileSync",
+			"symbol": "writeIfChanged",
+			"count": 1,
+			"note": "bundled bun/bunx script (~80 bytes) written only when missing or stale (omo#9362); bundledBunDir memoizes per executable, so it runs at most twice per process (bun + bunx) and only inside a compiled executable"
+		}
+	]
+}

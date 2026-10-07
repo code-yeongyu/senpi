@@ -1711,6 +1711,31 @@ bar`,
 			assert.strictEqual(latexToUnicode("\\quadruple"), "\\quadruple");
 		});
 
+		it("LaTeX drops TeX font-switch commands and keeps their text", () => {
+			assert.strictEqual(
+				latexToUnicode(
+					String.raw`{\rm roman}+{\bf bold}+{\it italic}+{\sf sans}+{\tt mono}+{\cal calligraphic}+{\sl slanted}`,
+				),
+				"roman+bold+italic+sans+mono+calligraphic+slanted",
+			);
+			assert.strictEqual(latexToUnicode(String.raw`F_{\rm intrinsic}(\lambda)`), "F_{intrinsic}(λ)");
+			assert.strictEqual(latexToUnicode(String.raw`\rmfoo`), String.raw`\rmfoo`);
+		});
+
+		it("LaTeX renders a bare arrow command inline", () => {
+			const markdown = new Markdown(
+				String.raw`Map $a \rightarrow b$, then $\rightarrow$.`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			assert.deepStrictEqual(
+				markdown.render(80).map((line) => stripAnsi(line).trimEnd()),
+				["Map a → b, then →."],
+			);
+		});
+
 		it("LaTeX handles TeX delimiter whitespace and grouping", () => {
 			assert.strictEqual(latexToUnicode("\\left\\{x\\right\\}"), "{x}");
 			assert.strictEqual(latexToUnicode("\\frac {a}{b}"), "(a)⁄(b)");

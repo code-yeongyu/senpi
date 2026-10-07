@@ -1,20 +1,29 @@
-import { randomUUID } from "node:crypto";
-import { join } from "node:path";
-import type { AgentToolResult, ExtensionContext, ToolDefinition } from "@code-yeongyu/senpi";
-import { defaultCodemodeSettings } from "../config/settings.ts";
+import type { AgentToolResult, ToolDefinition } from "@code-yeongyu/senpi";
+import type { TUnsafe } from "typebox";
+import { resolveAdvertiseHelpers, resolveSandbox } from "../config/feature-settings.ts";
+import {
+	DEFAULT_FOREGROUND_WINDOW_SECONDS,
+	defaultCodemodeSettings,
+	resolveMaxDetachedCells,
+} from "../config/settings.ts";
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
-import { TIMEOUT_PAUSE_OP, TIMEOUT_RESUME_OP } from "../timeouts/bridge-timeout.ts";
-import { abortError, CellExecution, defaultTimeoutFactory } from "./cell-execution.ts";
-import { CellHandler, type CellState } from "./cell-handler.ts";
 import { EvalDetachedCellManager } from "./detached-cell-manager.ts";
-import { detachedKernelBusyError, executeEvalControl, resultAfterDetach } from "./detached-eval-result.ts";
-import { buildEvalExecutionEventPayload, type EvalExecutionSettleOutcome } from "./eval-execution-event.ts";
-import { clampEvalSummary, evalTimeoutBehavior, isEvalControlRequest, parseEvalRequest } from "./eval-request.ts";
-import type { CreateEvalToolOptions, EvalCellInvocation } from "./eval-tool-options.ts";
-import { describeTimeoutState } from "./interrupt-note.ts";
+import { executeEvalControl } from "./detached-eval-result.ts";
+import {
+	EvalIsolateInvalidError,
+	isEvalControlRequest,
+	normalizeEvalSummary,
+	parseEvalRequest,
+} from "./eval-request.ts";
+import type { CreateEvalToolOptions } from "./eval-tool-options.ts";
+import { runEvalCell } from "./run-eval-cell.ts";
 import {
 	createEvalInputSchema,
+	defaultEvalDeadlineSeconds,
 	type EvalInputSchema,
+	type EvalListDetails,
+	type EvalListInput,
+	type EvalResultDetails,
 	type EvalToolDetails,
 	type EvalToolRequest,
 	enabledLanguageList,
@@ -24,21 +33,83 @@ export type { EvalTimeoutFactory } from "./cell-execution.ts";
 export type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 export type { EnabledEvalLanguages, EvalKernel, EvalKernelManager } from "./types.ts";
 
-export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<EvalInputSchema, EvalToolDetails> {
-	const parameters = createEvalInputSchema(options.enabledLanguages);
+type EvalExecuteArgs<Request extends EvalToolRequest> = Parameters<
+	ToolDefinition<TUnsafe<Request>, EvalToolDetails>["execute"]
+>;
+
+export function createEvalTool(options: CreateEvalToolOptions) {
+	const foregroundWindowSeconds = options.foregroundWindowSeconds ?? DEFAULT_FOREGROUND_WINDOW_SECONDS;
+	const maxDetachedCells =
+		options.cellManager?.maxDetachedCells ??
+		options.maxDetachedCells ??
+		resolveMaxDetachedCells(options.settings ?? defaultCodemodeSettings);
+	const deadlines = {
+		runBudgetSeconds: options.runBudgetSeconds ?? defaultEvalDeadlineSeconds.runBudgetSeconds,
+		detachAfterSeconds: Math.min(options.cellTimeoutSeconds, foregroundWindowSeconds),
+		foregroundWindowSeconds,
+		hardLimitSeconds: options.hardLimitSeconds ?? defaultEvalDeadlineSeconds.hardLimitSeconds,
+	};
+	const sandbox = resolveSandbox(options.settings ?? defaultCodemodeSettings).enabled;
+	const parameters = createEvalInputSchema(options.enabledLanguages, deadlines, { sandbox });
 	const prompt = buildEvalPrompt(options.enabledLanguages, {
 		spawns: options.spawns ?? false,
+		...(resolveAdvertiseHelpers(options.settings ?? defaultCodemodeSettings) ? { advertiseHelpers: true } : {}),
+		monitor: options.monitor,
+		maxDetachedCells,
+		runBudgetSeconds: deadlines.runBudgetSeconds,
 		...(options.spawnDefaultAgent === undefined ? {} : { spawnDefaultAgent: options.spawnDefaultAgent }),
 		...(options.modelId === undefined ? {} : { modelId: options.modelId }),
 		...(options.hostLine === undefined ? {} : { hostLine: options.hostLine }),
+		...(options.runtimes?.js === undefined ? {} : { jsRuntime: options.runtimes.js }),
+		...(options.bunSkillPath === undefined ? {} : { bunSkillPath: options.bunSkillPath }),
+		...(options.promptKernelPreludes === undefined ? {} : { kernelPreludes: options.promptKernelPreludes }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
 	const cellManager =
 		options.cellManager ??
 		new EvalDetachedCellManager({
+			maxDetachedCells,
 			...(options.artifactsDir === undefined ? {} : { artifactsDir: options.artifactsDir }),
 			...(options.hardLimitSeconds === undefined ? {} : { hardLimitSeconds: options.hardLimitSeconds }),
+			...(options.runBudgetSeconds === undefined ? {} : { runBudgetSeconds: options.runBudgetSeconds }),
 		});
+	// Keep run/peek/stop results typed as execution details; list has no single language or output cell.
+	function execute(
+		...args: EvalExecuteArgs<Exclude<EvalToolRequest, EvalListInput>>
+	): Promise<AgentToolResult<EvalToolDetails>>;
+	function execute(...args: EvalExecuteArgs<EvalListInput>): Promise<AgentToolResult<EvalListDetails>>;
+	function execute(...args: EvalExecuteArgs<EvalToolRequest>): Promise<AgentToolResult<EvalResultDetails>>;
+	async function execute(
+		...[toolCallId, params, signal, onUpdate, ctx]: EvalExecuteArgs<EvalToolRequest>
+	): Promise<AgentToolResult<EvalResultDetails>> {
+		const request = parseEvalRequest(params, languages, { sandbox });
+		if (isEvalControlRequest(request)) return await executeEvalControl(cellManager, request);
+		if (options.proxyExecutor) {
+			// A proxy runs cells elsewhere and knows nothing of sandbox cells: an isolated cell must never run unisolated.
+			if ("isolate" in request && request.isolate === true)
+				throw new EvalIsolateInvalidError("isolate: true is not available through this eval proxy");
+			return await options.proxyExecutor(request, signal);
+		}
+		if (!languages.includes(request.language))
+			throw new RangeError(
+				`Unsupported eval language "${request.language}". Enabled languages: ${languages.join(", ")}`,
+			);
+		options.executionTracker?.assertEvalExecutionAllowed();
+		const lifecycleController = new AbortController();
+		const combinedSignal = signal
+			? AbortSignal.any([signal, lifecycleController.signal])
+			: lifecycleController.signal;
+		const execution = runEvalCell(options, cellManager, {
+			cellId: toolCallId,
+			input: request,
+			signal: combinedSignal,
+			onUpdate,
+			ctx,
+		});
+		return options.executionTracker
+			? await options.executionTracker.trackEvalExecution(execution, lifecycleController)
+			: await execution;
+	}
 	return {
 		name: "eval",
 		label: "Eval",
@@ -50,201 +121,15 @@ export function createEvalTool(options: CreateEvalToolOptions): ToolDefinition<E
 		prepareArguments: (args) => {
 			if (typeof args !== "object" || args === null) return args as EvalToolRequest;
 			const record = args as Record<string, unknown>;
-			if (record.action === "peek" || record.action === "stop") return args as EvalToolRequest;
-			const summary = clampEvalSummary(record.summary);
+			if (record.action === "peek" || record.action === "stop" || record.action === "list")
+				return args as EvalToolRequest;
+			const summary = normalizeEvalSummary(record.summary);
 			if (summary === undefined) delete record.summary;
 			else record.summary = summary;
 			return args as EvalToolRequest;
 		},
 		...(options.renderers?.renderCall === undefined ? {} : { renderCall: options.renderers.renderCall }),
 		...(options.renderers?.renderResult === undefined ? {} : { renderResult: options.renderers.renderResult }),
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const request = parseEvalRequest(params);
-			if (isEvalControlRequest(request)) return await executeEvalControl(cellManager, request);
-			if (options.proxyExecutor) return await options.proxyExecutor(request, signal);
-			if (!languages.includes(request.language))
-				throw new RangeError(
-					`Unsupported eval language "${request.language}". Enabled languages: ${languages.join(", ")}`,
-				);
-			const busy = cellManager.busyFor(request.language);
-			if (busy !== undefined) throw detachedKernelBusyError(busy);
-			options.executionTracker?.assertEvalExecutionAllowed();
-			const lifecycleController = new AbortController();
-			const combinedSignal = signal
-				? AbortSignal.any([signal, lifecycleController.signal])
-				: lifecycleController.signal;
-			const execution = runEvalCell(options, cellManager, {
-				cellId: toolCallId,
-				input: request,
-				signal: combinedSignal,
-				onUpdate,
-				ctx,
-			});
-			return options.executionTracker
-				? await options.executionTracker.trackEvalExecution(execution, lifecycleController)
-				: await execution;
-		},
-	};
-}
-
-async function runEvalCell(
-	options: CreateEvalToolOptions,
-	cellManager: EvalDetachedCellManager,
-	invocation: EvalCellInvocation,
-): Promise<AgentToolResult<EvalToolDetails>> {
-	if (invocation.signal.aborted) throw abortError(invocation.signal.reason);
-	const timeoutMs = Math.floor((invocation.input.timeout ?? options.cellTimeoutSeconds) * 1_000);
-	const timeoutBehavior = evalTimeoutBehavior(invocation.input, invocation.ctx);
-	const bridgeAbortController = new AbortController();
-	const cellSignal = AbortSignal.any([invocation.signal, bridgeAbortController.signal]);
-	const bridgeContext: ExtensionContext = { ...invocation.ctx, signal: cellSignal };
-	const runtime = options.runtimes?.[invocation.input.language];
-	const state: CellState = {
-		input: invocation.input,
-		...(runtime === undefined ? {} : { runtime }),
-		startedAt: Date.now(),
-		signal: cellSignal,
-		onUpdate: invocation.onUpdate,
-		toolCalls: [],
-		toolCallMetrics: [],
-		pendingBridgeCalls: [],
-		statusEvents: [],
-		active: true,
-		output: "",
-		phase: undefined,
-		error: undefined,
-		durationMs: 0,
-		status: "pending",
-	};
-	const cell = cellManager.create(invocation.cellId, invocation.input);
-	let detached = false;
-	let execution: CellExecution;
-	execution = new CellExecution({
-		callerSignal: invocation.signal,
-		cellId: invocation.cellId,
-		timeoutMs,
-		timeoutFactory: options.timeoutFactory ?? defaultTimeoutFactory,
-		onTimeout: (error) => {
-			if (timeoutBehavior === "detach" && cellManager.detach(cell)) {
-				detached = true;
-				execution.detach();
-				return;
-			}
-			execution.cancel(error);
-		},
-		onAbort: (error) => {
-			state.active = false;
-			bridgeAbortController.abort(error);
-		},
-	});
-	const running = executeCell(
-		options,
-		invocation,
-		cellManager,
-		cell,
-		state,
-		execution,
-		bridgeContext,
-		bridgeAbortController,
-	);
-	let settleEventEmitted = false;
-	const emitSettled = (outcome: EvalExecutionSettleOutcome): void => {
-		if (settleEventEmitted) return;
-		settleEventEmitted = true;
-		options.onCellSettled?.(
-			buildEvalExecutionEventPayload({
-				cellId: invocation.cellId,
-				state,
-				outcome,
-				completedAt: Date.now(),
-				detached,
-			}),
-		);
-	};
-	const finalized = running.then(
-		(result) => {
-			cellManager.complete(cell, result);
-			emitSettled({ result });
-			return result;
-		},
-		(error: unknown) => {
-			cellManager.fail(cell, error instanceof Error ? error : new Error(String(error)));
-			emitSettled({ error });
-			throw error;
-		},
-	);
-	const outcome = await Promise.race([
-		finalized.then((result) => ({ kind: "result" as const, result })),
-		execution.detached.then(() => ({ kind: "detached" as const })),
-	]);
-	if (outcome.kind === "detached") return resultAfterDetach(cellManager.peek(invocation.cellId), invocation.input);
-	return outcome.result;
-}
-
-async function executeCell(
-	options: CreateEvalToolOptions,
-	invocation: EvalCellInvocation,
-	cellManager: EvalDetachedCellManager,
-	cell: Parameters<EvalDetachedCellManager["markRunning"]>[0],
-	state: CellState,
-	execution: CellExecution,
-	bridgeContext: ExtensionContext,
-	bridgeAbortController: AbortController,
-): Promise<AgentToolResult<EvalToolDetails>> {
-	let handler: CellHandler | undefined;
-	try {
-		const kernel = await execution.wait(
-			options.kernelManager.getKernel(invocation.input.language, (message) => {
-				if (!state.active || handler === undefined) return;
-				if (message.type === "status") {
-					if (message.event.op === TIMEOUT_PAUSE_OP) {
-						execution.pause();
-						return;
-					}
-					if (message.event.op === TIMEOUT_RESUME_OP) {
-						execution.resume();
-						return;
-					}
-				}
-				const pending = handler.handle(message);
-				void pending.catch((error: unknown) => execution.cancel(error));
-			}),
-		);
-		execution.setKernel(kernel);
-		const activeHandler = new CellHandler(kernel, state, {
-			executeTool: options.executeTool,
-			...(options.listTools === undefined ? {} : { listTools: options.listTools }),
-			settings: options.settings ?? defaultCodemodeSettings,
-			...(options.complete === undefined ? {} : { complete: options.complete }),
-			ctx: bridgeContext,
-			...(options.artifactsDir === undefined
-				? {}
-				: { artifactPath: join(options.artifactsDir, `eval-${randomUUID()}.log`) }),
-			...(options.imageResizer === undefined ? {} : { imageResizer: options.imageResizer }),
-		});
-		handler = activeHandler;
-		cellManager.markRunning(
-			cell,
-			kernel,
-			() => activeHandler.liveResult(),
-			(error) => execution.cancel(error),
-		);
-		if ("setContext" in options.kernelManager && typeof options.kernelManager.setContext === "function") {
-			options.kernelManager.setContext(bridgeContext);
-		}
-		if (invocation.input.reset) await execution.wait(kernel.reset());
-		const result = await execution.wait(kernel.run({ cellId: invocation.cellId, code: invocation.input.code }));
-		if (result.ok && state.pendingBridgeCalls.length > 0) await execution.wait(Promise.all(state.pendingBridgeCalls));
-		return await handler.finalize(result);
-	} catch (error) {
-		if (handler && error instanceof Error && error.name === "CodemodeSessionDisposedError")
-			return await handler.finalizeCancellation(error);
-		if (error instanceof Error && error.name === "TimeoutError") throw await describeTimeoutState(error, execution);
-		throw error;
-	} finally {
-		state.active = false;
-		bridgeAbortController.abort();
-		execution.finish();
-		if (handler) await handler.flushOutput();
-	}
+		execute,
+	} satisfies ToolDefinition<EvalInputSchema, EvalResultDetails>;
 }

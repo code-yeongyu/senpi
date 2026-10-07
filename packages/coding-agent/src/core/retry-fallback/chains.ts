@@ -43,10 +43,26 @@ function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
 			typeof registry.hasConfiguredAuth === "function"
 				? (model) => registry.hasConfiguredAuth?.(model) === true
 				: undefined,
-		isFallbackEligible:
-			typeof registry.isFallbackEligible === "function"
-				? (model) => registry.isFallbackEligible?.(model) !== false
-				: undefined,
+		isFallbackEligible: typeof registry.isFallbackEligible === "function" ? memoizedEligibility(registry) : undefined,
+	};
+}
+
+/**
+ * Eligibility is a provider's switch (`fallbackEligible`), read from settings on disk; one
+ * canonicalization pass used to ask it once per catalog model, a 150-450 ms stall on the first
+ * fallback check of a session. Settings cannot change within one synchronous pass, so each
+ * provider is asked once per pass.
+ */
+function memoizedEligibility(registry: {
+	isFallbackEligible?(model: Model<Api>): boolean;
+}): (model: Model<Api>) => boolean {
+	const known = new Map<string, boolean>();
+	return (model) => {
+		const cached = known.get(model.provider);
+		if (cached !== undefined) return cached;
+		const eligible = registry.isFallbackEligible?.(model) !== false;
+		known.set(model.provider, eligible);
+		return eligible;
 	};
 }
 
@@ -127,6 +143,14 @@ export function baseSelector(selector: Pick<FallbackSelector, "provider" | "id">
  * Provider-qualified keys and entries keep exact semantics, and an explicit key
  * always overrides the expansion it collides with.
  */
+/**
+ * Chain key matched when no exact or base key resolves for the current model.
+ * Exists so a model without its own configured chain still has an escape lane:
+ * without it, a hard-failing upstream wedges the session terminal even though
+ * healthy fallback targets exist (desktop thread 487d7c29, 2026-08-28: nine
+ * consecutive upstream 500s, zero fallback attempts, terminal error).
+ * Users disable it with the `"*": []` tombstone.
+ */
 export function canonicalizeFallbackChains(chains: FallbackChains, lookup: FallbackModelLookup): FallbackChains {
 	const models = availableModels(lookup);
 	const tiers = authTiers(lookup);
@@ -193,11 +217,13 @@ export function resolveChainKey(
 	currentModel: Model<Api>,
 	currentThinking: ThinkingLevel | undefined,
 	chains: FallbackChains,
+	_options?: { allowWildcard?: boolean },
 ): string | undefined {
 	const base = formatSelector(currentModel);
 	const exact = currentThinking ? `${base}:${currentThinking}` : base;
 	if (Object.hasOwn(chains, exact)) return exact;
-	return Object.hasOwn(chains, base) ? base : undefined;
+	if (Object.hasOwn(chains, base)) return base;
+	return undefined;
 }
 
 function formatParsedSelector(selector: FallbackSelector): string {

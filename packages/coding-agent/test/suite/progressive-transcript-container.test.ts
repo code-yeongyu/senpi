@@ -55,6 +55,11 @@ function countingLines(index: number): readonly [string, string] {
 	return [`component-${index}-w${WIDTH}`, `component-${index}-body`];
 }
 
+function firstRenderedComponentIndex(lines: readonly string[]): number | undefined {
+	const first = lines.find((line) => /^component-\d+-w\d+$/u.test(line));
+	return first === undefined ? undefined : Number(/^component-(\d+)-w\d+$/u.exec(first)?.[1]);
+}
+
 function createProgressive(rerender: () => void): ProgressiveTranscriptContainer {
 	return new ProgressiveTranscriptContainer({
 		tailBudget: TAIL_BUDGET,
@@ -100,6 +105,24 @@ describe("ProgressiveTranscriptContainer", () => {
 		const expectedTail = components.slice(LARGE_TRANSCRIPT - TAIL_BUDGET);
 		expect(rendered).toStrictEqual([...expectedTail]);
 		expect(lines).toStrictEqual(expectedTail.flatMap((component) => countingLines(component.index)));
+	});
+
+	it("keeps the painted tail fixed while warming after a live append", async () => {
+		// Given: a large resumed transcript with deferred history
+		const container = createProgressive(() => {});
+		populate(container, LARGE_TRANSCRIPT);
+		const first = container.render(WIDTH);
+
+		// When: exactly one warm chunk finishes, then a live message arrives
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		const live = new CountingComponent(LARGE_TRANSCRIPT);
+		container.addChild(live);
+		const afterLiveAppend = container.render(WIDTH);
+
+		// Then: the already-painted tail stays anchored and the live child is visible
+		expect(firstRenderedComponentIndex(first)).toBe(LARGE_TRANSCRIPT - TAIL_BUDGET);
+		expect(firstRenderedComponentIndex(afterLiveAppend)).toBe(LARGE_TRANSCRIPT - TAIL_BUDGET);
+		expect(afterLiveAppend.slice(-2)).toStrictEqual(countingLines(live.index));
 	});
 
 	it("eventually renders the full history exactly like an ordinary Container", async () => {
@@ -264,6 +287,45 @@ describe("ProgressiveTranscriptContainer", () => {
 		expect(thrower.renderCount).toBe(1);
 		expect(container.render(WIDTH)).toContain("[render error: ThrowingComponent]");
 		expect(thrower.renderCount).toBe(2);
+	});
+
+	it("re-arms hydration when a disposed container is cleared and reused", async () => {
+		// Given: a container whose hydration was halted by disposal
+		const container = createProgressive(() => {});
+		populate(container, LARGE_TRANSCRIPT);
+		container.render(WIDTH);
+		container.dispose();
+
+		// When: the container is cleared for reuse and rebuilt past the tail budget
+		container.clear();
+		const rebuilt = populate(container, LARGE_TRANSCRIPT);
+		container.render(WIDTH);
+		await awaitHydration(container, LARGE_TRANSCRIPT / WARM_CHUNK + 8);
+
+		// Then: the deferred head warms, exactly as it would for a fresh container.
+		// Without re-arming, `hydrationHalted` stays latched and the head never renders.
+		const head = rebuilt.slice(0, LARGE_TRANSCRIPT - TAIL_BUDGET);
+		expect(head.every((component) => component.renderCount > 0)).toBe(true);
+		expect(container.isFullyHydrated).toBe(true);
+	});
+
+	it("re-arms hydration when a disposed container is detached and reused", async () => {
+		// Given: a container whose hydration was halted by disposal
+		const container = createProgressive(() => {});
+		populate(container, LARGE_TRANSCRIPT);
+		container.render(WIDTH);
+		container.dispose();
+
+		// When: the children are detached for reuse and rebuilt past the tail budget
+		container.detachAll();
+		const rebuilt = populate(container, LARGE_TRANSCRIPT);
+		container.render(WIDTH);
+		await awaitHydration(container, LARGE_TRANSCRIPT / WARM_CHUNK + 8);
+
+		// Then: the deferred head warms instead of staying permanently cold
+		const head = rebuilt.slice(0, LARGE_TRANSCRIPT - TAIL_BUDGET);
+		expect(head.every((component) => component.renderCount > 0)).toBe(true);
+		expect(container.isFullyHydrated).toBe(true);
 	});
 
 	it("forwards theme invalidation to every child, warmed or not", () => {

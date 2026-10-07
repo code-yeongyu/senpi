@@ -61,10 +61,10 @@ scripts/generate-telemetry-docs.ts  Regenerates docs/telemetry-schema.md
 
 ## VALIDATION
 
-- Run `npm test` from this package for agent-loop coverage.
-- Run `npm run test:harness` for harness/session/env changes.
-- Telemetry schema changes: `npm run generate-telemetry-docs` to rewrite `docs/telemetry-schema.md`, then `npm run check:telemetry-docs`; the generated file must never be edited by hand.
-- Runtime changes also require root `npm run check` and the root QA evidence gate.
+- Run `bun run test` from this package for agent-loop coverage.
+- Run `bun run test:harness` for harness/session/env changes.
+- Telemetry schema changes: `bun run generate-telemetry-docs` to rewrite `docs/telemetry-schema.md`, then `bun run check:telemetry-docs`; the generated file must never be edited by hand.
+- Runtime changes also require root `bun run check` and the root QA evidence gate.
 - Keep `README.md`, `docs/harness.md`, `docs/search.md`, and `src/changes.md` aligned with public or fork-specific changes.
 
 ## NOTES

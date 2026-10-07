@@ -36,6 +36,6 @@ One-concern-per-file regression tests, 162 files / ~22,790 LOC. Score 16 — dis
 ## COMMANDS
 
 ```bash
-npm --prefix packages/coding-agent test -- --run test/suite/regressions/<name>.test.ts
-npm --prefix packages/coding-agent test -- --run test/suite/regressions
+bun run --cwd packages/coding-agent test --run test/suite/regressions/<name>.test.ts
+bun run --cwd packages/coding-agent test --run test/suite/regressions
 ```

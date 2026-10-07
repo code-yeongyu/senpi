@@ -15,7 +15,28 @@ describe("app-server CLI subcommand parsing", () => {
 			listen: { kind: "stdio", url: "stdio://" },
 			wsAuth: undefined,
 			jsonLogs: false,
+			extensions: [],
 		});
+	});
+
+	it("collects repeated --extension paths for the server and every daemon verb", () => {
+		// Given: extension paths before and after other server and daemon flags.
+		// When: the subcommand args are parsed.
+		const server = parseAppServerCliArgs([
+			"--extension",
+			"/p/plugin",
+			"--listen",
+			"stdio://",
+			"--extension",
+			"./x.ts",
+		]);
+		const daemon = parseAppServerCliArgs(["daemon", "restart", "--extension", "/p/plugin"]);
+		const missing = parseAppServerCliArgs(["--extension"]);
+
+		// Then: paths keep their order, and a dangling flag is a usage error.
+		expect(server).toMatchObject({ kind: "server", extensions: ["/p/plugin", "./x.ts"] });
+		expect(daemon).toMatchObject({ kind: "daemon", verb: "restart", extensions: ["/p/plugin"] });
+		expect(missing).toEqual({ kind: "usage-error", message: "--extension requires <path>." });
 	});
 
 	it("parses ws listen host and port", () => {
@@ -29,6 +50,7 @@ describe("app-server CLI subcommand parsing", () => {
 			listen: { kind: "ws", url: "ws://127.0.0.1:18991", host: "127.0.0.1", port: 18991 },
 			wsAuth: undefined,
 			jsonLogs: false,
+			extensions: [],
 		});
 	});
 
@@ -43,6 +65,7 @@ describe("app-server CLI subcommand parsing", () => {
 			listen: { kind: "unix", url: "unix:///tmp/senpi-app.sock", path: "/tmp/senpi-app.sock" },
 			wsAuth: undefined,
 			jsonLogs: false,
+			extensions: [],
 		});
 	});
 
@@ -68,6 +91,7 @@ describe("app-server CLI subcommand parsing", () => {
 			kind: "daemon",
 			verb: "start",
 			listen: { kind: "ws", url: "ws://127.0.0.1:18991", host: "127.0.0.1", port: 18991 },
+			extensions: [],
 		});
 	});
 

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToolExecError } from "../../src/core/extensions/builtin/mcp/errors.ts";
 import { disposeMcpReconnect } from "../../src/core/extensions/builtin/mcp/reconnect.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	attach,
 	awaitMcpToolRegistration,
@@ -44,13 +45,25 @@ describe("MCP ping-on-call health", () => {
 		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
-		const first = await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext());
+		const first = await tool.execute(
+			"tc-first",
+			{ value: "first" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 		const firstPid = readNumberFile(pidFile);
 		process.kill(firstPid, "SIGKILL");
 		await assertProcessDead(firstPid);
 		advanceDateOnly(31_000);
 
-		const second = await tool.execute("tc-second", { value: "second" }, undefined, undefined, testContext());
+		const second = await tool.execute(
+			"tc-second",
+			{ value: "second" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 		const secondPid = readNumberFile(pidFile);
 
 		expect(textContent(first)).toBe("fixture tool_1 value=first mode=alpha");
@@ -67,8 +80,8 @@ describe("MCP ping-on-call health", () => {
 		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
-		await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext());
-		await tool.execute("tc-second", { value: "second" }, undefined, undefined, testContext());
+		await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext() as ExtensionToolContext);
+		await tool.execute("tc-second", { value: "second" }, undefined, undefined, testContext() as ExtensionToolContext);
 
 		expect(readNumberFile(pingCounterFile)).toBe(1);
 	});
@@ -102,7 +115,7 @@ describe("MCP ping-on-call health", () => {
 		if (connection !== undefined) disposeMcpReconnect(connection);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
-		await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext());
+		await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext() as ExtensionToolContext);
 		const firstPid = readNumberFile(pidFile);
 		writeFileSync(modeFile, "fail\n");
 		process.kill(firstPid, "SIGKILL");
@@ -110,7 +123,7 @@ describe("MCP ping-on-call health", () => {
 		advanceDateOnly(31_000);
 
 		await expect(
-			tool.execute("tc-second", { value: "second" }, undefined, undefined, testContext()),
+			tool.execute("tc-second", { value: "second" }, undefined, undefined, testContext() as ExtensionToolContext),
 		).rejects.toBeInstanceOf(ToolExecError);
 		expect(readNumberFile(attemptsFile)).toBe(2);
 	});
@@ -127,8 +140,8 @@ describe("MCP ping-on-call health", () => {
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
 		const [first, second] = await Promise.all([
-			tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext()),
-			tool.execute("tc-second", { value: "second" }, undefined, undefined, testContext()),
+			tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext() as ExtensionToolContext),
+			tool.execute("tc-second", { value: "second" }, undefined, undefined, testContext() as ExtensionToolContext),
 		]);
 
 		expect(readNumberFile(pingCounterFile)).toBe(1);

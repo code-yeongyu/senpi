@@ -7,7 +7,7 @@ import { FileSettingsStorage, getSettingsPath } from "../src/core/settings-manag
 const lockState = vi.hoisted(() => ({
 	attempts: 0,
 	// Throw ELOCKED for attempts 1..9, succeed on the 10th => 9x ~20ms waits.
-	succeedOnAttempt: 10,
+	succeedOnAttempt: 4,
 }));
 
 vi.mock("proper-lockfile", async (importOriginal) => {
@@ -46,7 +46,7 @@ describe("FileSettingsStorage lock-retry CPU spin", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	it("#given a contended lock #when withLock waits through 9 retries #then user CPU stays a small fraction of wall time (no busy-wait spin)", () => {
+	it("#given a contended lock #when withLock waits through the bounded retry schedule #then user CPU stays a small fraction of wall time (no busy-wait spin)", () => {
 		const storage = new FileSettingsStorage(cwd, join(root, "agent"), root);
 		const cpuBefore = process.cpuUsage();
 		const wallBefore = Date.now();
@@ -60,7 +60,7 @@ describe("FileSettingsStorage lock-retry CPU spin", () => {
 		const wallMs = Date.now() - wallBefore;
 		const userMs = (cpuAfter.user - cpuBefore.user) / 1000;
 
-		// 9 retries x 20ms = ~180ms wall. The wait MUST happen (proves the retry
+		// 3 retries at 100/200/400ms = ~700ms wall. The wait MUST happen (proves the retry
 		// path ran) but CPU must NOT burn near wall-clock (a busy-wait spin does).
 		// A real sleep keeps user CPU near zero; a spin makes it ~= wall time.
 		expect(wallMs).toBeGreaterThan(100);

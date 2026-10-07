@@ -81,10 +81,20 @@ export const COMPLETIONS_COMPAT = {
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",
 	supportsPromptCacheKey: false,
+	supportsMaxOutputTokens: true,
+	supportsForcedToolChoice: true,
 	supportsLongCacheRetention: true,
+	supportsMidConvoSystemMessages: false,
+	supportsMidConvoToolAdditions: false,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "toolCallFormat" | "deferredToolsMode" | "toolSchemaFlavor" | "thinkingTokenBudgetField"
+	| "cacheControlFormat"
+	| "toolCallFormat"
+	| "deferredToolsMode"
+	| "toolSchemaFlavor"
+	| "thinkingTokenBudgetField"
+	| "vllmPriority"
+	| "veniceParameters"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];

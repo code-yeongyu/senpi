@@ -38,6 +38,14 @@ export class CustomMessageComponent extends Container {
 		this.rebuild();
 	}
 
+	/**
+	 * The default rendering is built from revisioned primitives. A custom renderer's component counts
+	 * only if it reports its own revision; otherwise the message keeps rendering every frame.
+	 */
+	override getRenderRevision(): number | undefined {
+		return this.childRenderRevision();
+	}
+
 	setExpanded(expanded: boolean): void {
 		if (this._expanded !== expanded) {
 			this._expanded = expanded;

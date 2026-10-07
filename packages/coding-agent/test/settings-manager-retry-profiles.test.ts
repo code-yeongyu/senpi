@@ -111,7 +111,7 @@ describeProfile("resolveRetryProfile precedence", () => {
 			expectProfile(kimi.turn.backoff.perAttemptCapMs).toBe(32_000);
 
 			const anthropic = manager.resolveRetryProfile({ id: "anthropic" });
-			expectProfile(anthropic.turn.maxRetries).toBe(3);
+			expectProfile(anthropic.turn.maxRetries).toBe(5);
 			expectProfile(anthropic.turn.backoff.baseDelayMs).toBe(2000);
 			// Phase-2 default policy: locally computed turn backoff gained +0..25%
 			// additive jitter and an 8s per-attempt cap (see profiles.ts senpi-default).
@@ -144,7 +144,7 @@ describeProfile("resolveRetryProfile precedence", () => {
 		expectProfile(kimi.turn.maxRetries).toBe(4);
 
 		const anthropic = manager.resolveRetryProfile({ id: "anthropic" });
-		expectProfile(anthropic.turn.maxRetries).toBe(3);
+		expectProfile(anthropic.turn.maxRetries).toBe(5);
 	});
 
 	itProfile("retry.enabled false forces turn.enabled false on both", () => {

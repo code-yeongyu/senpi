@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { type PiMessagesOptions, stream, streamSimple } from "../src/api/pi-messages.ts";
 import type { Api, AssistantMessageEvent, Context, Model, StopReason } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 type RecordedRequest = {
 	url: string;
@@ -110,14 +111,20 @@ describe("pi-messages", () => {
 					contentIndex: 1,
 					toolCall: { type: "toolCall", id: "call_1", name: "read", arguments: { path: "a.txt" } },
 				},
-				{ type: "done", reason: "toolUse", usage, responseId: "resp_1" },
+				{
+					type: "done",
+					reason: "toolUse",
+					usage,
+					responseId: "resp_1",
+					providerThinkingLevel: "high",
+				},
 			],
 		});
 		const model = createModel(baseUrl);
 
 		const events: AssistantMessageEvent[] = [];
 		const partialStopReasons: StopReason[] = [];
-		const eventStream = stream(model, context, {
+		const eventStream = stream(model, normalizeContext(context), {
 			apiKey: "test-key",
 			sessionId: "session-1",
 			toolChoice: "auto",
@@ -136,6 +143,7 @@ describe("pi-messages", () => {
 		expect(message.stopReason).toBe("toolUse");
 		expect(message.usage).toEqual(usage);
 		expect(message.responseId).toBe("resp_1");
+		expect(message.providerThinkingLevel).toBe("high");
 		expect(message.model).toBe("auto");
 		expect(message.provider).toBe("radius");
 		expect(message.content).toEqual([
@@ -157,6 +165,34 @@ describe("pi-messages", () => {
 		});
 	});
 
+	it("forwards parsed wire events in order before converting them", async () => {
+		const wireEvents = [
+			{ type: "start" },
+			{ type: "text_start", contentIndex: 0 },
+			{ type: "text_delta", contentIndex: 0, delta: "Hello", gatewayField: "upstream-value" },
+			{ type: "text_end", contentIndex: 0, content: "Hello" },
+			{ type: "done", reason: "stop", usage, responseId: "resp_1" },
+		];
+		const { baseUrl } = await startServer({ events: wireEvents });
+		const model = createModel(baseUrl);
+		const received: unknown[] = [];
+		const eventModels: Model<Api>[] = [];
+		const message = await streamSimple(model, normalizeContext(context), {
+			apiKey: "test-key",
+			onProviderStreamEvent: async (event, eventModel) => {
+				await Promise.resolve();
+				received.push(event);
+				eventModels.push(eventModel);
+			},
+		}).result();
+
+		expect(received).toEqual(wireEvents);
+		expect(eventModels).toEqual(wireEvents.map(() => model));
+		expect(message.stopReason).toBe("stop");
+		expect(message.responseId).toBe("resp_1");
+		expect(message.content).toEqual([{ type: "text", text: "Hello", textSignature: undefined }]);
+	});
+
 	it("appends debug=1 and reports response headers via onResponse", async () => {
 		const { baseUrl, requests } = await startServer({
 			headers: { "x-pi-gateway-upstream-provider": "anthropic" },
@@ -172,7 +208,7 @@ describe("pi-messages", () => {
 				observedHeaders = response.headers;
 			},
 		} satisfies PiMessagesOptions;
-		const message = await streamSimple(model, context, options).result();
+		const message = await streamSimple(model, normalizeContext(context), options).result();
 
 		expect(message.stopReason).toBe("stop");
 		expect(requests[0].url).toBe("/v1/messages?debug=1");
@@ -186,7 +222,7 @@ describe("pi-messages", () => {
 		});
 		const model = createModel(baseUrl);
 
-		const message = await stream(model, context, { apiKey: "stale" }).result();
+		const message = await stream(model, normalizeContext(context), { apiKey: "stale" }).result();
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toContain("401");
@@ -202,7 +238,7 @@ describe("pi-messages", () => {
 		});
 		const model = createModel(baseUrl);
 
-		const message = await stream(model, context, { apiKey: "test-key" }).result();
+		const message = await stream(model, normalizeContext(context), { apiKey: "test-key" }).result();
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toBe("Upstream failed");
@@ -212,7 +248,7 @@ describe("pi-messages", () => {
 	it("errors when no API key is provided", async () => {
 		const model = createModel("http://127.0.0.1:1/v1");
 
-		const message = await stream(model, context).result();
+		const message = await stream(model, normalizeContext(context)).result();
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toContain("No API key provided");
@@ -228,7 +264,7 @@ describe("pi-messages", () => {
 		});
 		const model = createModel(baseUrl);
 
-		const message = await stream(model, context, { apiKey: "test-key" }).result();
+		const message = await stream(model, normalizeContext(context), { apiKey: "test-key" }).result();
 
 		expect(message.stopReason).toBe("error");
 		expect(message.errorMessage).toContain("stream ended without a terminal event");

@@ -53,6 +53,32 @@ function resolveWithRealRegistrySurface(modelRegistry: ModelRegistry) {
 void resolveWithRealRegistrySurface;
 
 describe("imagegen credential resolution", () => {
+	// Regression: a placeholder key seeded into the openai store entry (SK-SENTINEL-DO-NOT-LOG-*)
+	// won step 1 and sent gpt-image-2 requests to api.openai.com, which answered 401
+	// "Incorrect API key provided: SK-SENTI***OG-2" while a working gateway sat unused. Fixed by
+	// deleting the entry on 2026-08-21; it reappeared on 2026-09-04. A placeholder is not a
+	// credential, so resolution must fall through to the gateway chain.
+	it("#given a placeholder openai store key and a configured gateway #when resolving #then the gateway wins", async () => {
+		const result = await resolve({
+			models: [model("openai-quotio", { baseUrl: "https://quotio.example/v1" })],
+			storedOpenAi: { type: "api_key", key: "SK-SENTINEL-DO-NOT-LOG-2" },
+			providerAuth: { openai: { auth: { apiKey: "SK-SENTINEL-DO-NOT-LOG-2" } } },
+			modelAuth: { "openai-quotio": { ok: true, apiKey: "quotio-local-real" } },
+		});
+
+		expect(result.kind).toBe("gateway");
+		expect(result.kind === "gateway" && result.baseUrl).toBe("https://quotio.example/v1");
+	});
+
+	it("#given only a placeholder openai store key #when resolving #then image generation is reported as not configured", async () => {
+		const result = await resolve({
+			storedOpenAi: { type: "api_key", key: "SK-SENTINEL-DO-NOT-LOG-2" },
+			providerAuth: { openai: { auth: { apiKey: "SK-SENTINEL-DO-NOT-LOG-2" } } },
+		});
+
+		expect(result.kind).toBe("none");
+	});
+
 	it("prefers stored native OpenAI auth over a pinned gateway", async () => {
 		const result = await resolve(
 			{

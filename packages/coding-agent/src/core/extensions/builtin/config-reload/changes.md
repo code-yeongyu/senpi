@@ -1,5 +1,117 @@
 # config-reload Extension Changes
 
+## 2026-10-01 - Ignore runtime-only project directory creation and preserve request admission
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`: rechecks the live idle, pending-message, and compaction state after awaiting extension reload vetoes.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts`: separates presence-watch rearming from a real configuration change. Newly discovered files still request a reload; creating only the project configuration container does not.
+- Files discovered by that rearm pass through the same self-write, routine-settings and generated-shim filters as the event's own paths.
+
+### Why
+
+- The first prompt can begin while a reload veto handler is pending. The previous idle snapshot then allowed configuration reload to retire the generation during that prompt (oh-my-openagent#9365).
+- Desktop task projections created an otherwise configuration-free project directory while the first request was starting (oh-my-openagent#9363). Directory discovery must not reload extensions merely because task runtime state appeared there.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` owns pending configuration changes and the decision to request their reload.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`, `flushPending`, watcher rearming, and extracted change grouping.
+
+## 2026-09-21 - Share one recursive FS-watch worker across sessions (#1794)
+
+### What changed
+
+- `watch-event-source.ts` hoists the recursive watch worker, its subscription table, and the subscription id counter from per-source closure state into a process-wide registry keyed by the worker-factory identity. The default factory resolves to a single entry, so every `createFsWatchEventSource()` without an injected factory — one per config-reload extension instance, i.e. one per session — shares one `node:worker_threads` Worker instead of each constructing its own.
+- Subscriptions carry their owning source's `onError`, so message-kind errors and worker-death fan-out still reach the right handler while the worker is shared. Id-routed dispatch, crash replacement, and last-unsubscribe termination semantics are unchanged, now process-wide per factory key.
+- New `resetFsWatchWorkersForTests()` export terminates live workers best-effort and clears the registry for test isolation.
+
+### Why
+
+- The shared in-process RPC host loads one config-reload instance per session and every session added one watch thread and a few MB (1,023 threads at 1,000 sessions — #1794). The watched directories are identical per host, so N workers were N-1 redundant.
+
+### Why an extension could not handle it
+
+- The event source and its worker lifecycle are internal to this builtin; no extension API controls worker construction.
+
+### Expected merge conflict zones
+
+- MEDIUM: `watch-event-source.ts` worker registry and `createFsWatchEventSource` body. Tests extended in `test/suite/config-reload-worker-shutdown.test.ts` and `test/rpc-multi-session-isolation.test.ts`.
+
+## 2026-09-14 - Join watcher disposal and skip nonpersistent RPC probes (#1656)
+
+### What changed
+
+- Watch-worker registration checks a shared cancellation flag before and after `fs.watch`, so a shutdown that wins the post-load/pre-registration interleaving never retains a native watcher.
+- `ConfigReloadWatchEngine.close()` cancels synchronously and joins returned disposers; repeated close shares that join and surfaces `AggregateError` if any disposer fails.
+- `session_shutdown` awaits those joins. Nonpersistent RPC sessions (`getSessionFile() === undefined`) do not start OS watches.
+
+### Why
+
+- Fire-and-forget unsubscribe during exit left FSEvents streams running into process teardown (`pthread_join` hang). Snapshot-only RPC probes never needed live watches.
+
+### Why an extension could not handle it
+
+- The event source and watch engine are internal to this builtin; process shutdown must observe their disposal.
+
+### Expected merge conflict zones
+
+- MEDIUM: `watch-event-source.ts` worker source and unsubscribe join; `watch-engine.ts` `close()`; `index.ts` `session_shutdown` / `rebuildWatchers`.
+
+## 2026-09-11 - Keep per-source changelog acknowledgements routine (senpi#1583)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts`: classifies `changelogSeen` as routine settings during reload filtering.
+
+### Why
+
+- Acknowledging a changelog must not trigger a substantive configuration reload or cascade across sessions.
+
+### Why an extension could not handle it
+
+- The routine-setting classification is internal to the builtin reload diff before extension callbacks run.
+
+### Expected merge conflict zones
+
+- LOW: the routine settings key set.
+
+
+## Offload non-recursive watch creation to the worker (2026-09-02)
+
+### What changed
+
+- `watch-event-source.ts` routes EVERY `fs.watch` subscription — recursive and
+  non-recursive — through the existing watch worker on darwin and linux. The
+  worker message gained a `recursive` flag; the worker passes it to `fs.watch`.
+- Windows (and other platforms) keep the direct main-thread `fs.watch` path.
+
+### Why
+
+- The per-directory watch redesign (2026-08-20) made every engine subscription
+  `{ recursive: false }`, which silently bypassed the worker offload added for
+  recursive watches: the offload gate required `watchOptions.recursive`. Every
+  FSEvents stream was again created synchronously on the interactive main
+  thread. Measured with PI_TIMING + dist probes on an M4 Pro under load:
+  `#attach` cost 8.0s for `~/.omo/agent/extensions` and 2.7s for the cwd
+  target; `rebuildWatchers` inside config-reload's `session_start` handler hit
+  89s worst-case, dominating the reload `lifecycle` phase (2.0-3.2s idle,
+  12s+ loaded). After offloading: lifecycle ~150ms, reload total ~180-230ms.
+
+### Why an extension could not handle it
+
+- The event source is internal to this builtin; nothing outside it controls how
+  subscriptions reach `fs.watch`.
+
+### Expected merge conflict zones
+
+- LOW: `watch-event-source.ts` offload gate and worker source string;
+  `config-reload-extension.test.ts` macOS offload describe block.
+
+
 ## Watch only in-scope directories instead of whole subtrees (2026-08-20)
 
 ### What changed

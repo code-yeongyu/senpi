@@ -24,6 +24,10 @@ function createModel(id: string, provider: string, api: Api = "openai-responses"
 	};
 }
 
+// gpt-apply-patch swaps edit/write out for apply_patch, so a session carries one shape or the other.
+const PATCH_SESSION_TOOLS = ["read", "bash", "grep", "apply_patch"];
+const EDIT_SESSION_TOOLS = ["read", "bash", "grep", "edit", "write"];
+
 function fallbackPrompt(): string {
 	return buildDynamicSystemPrompt({
 		cwd: "/repo",
@@ -86,7 +90,7 @@ describe("prompt preset resolver", () => {
 	it.each([
 		{
 			id: "gpt-5.5",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			api: "openai-codex-responses" as const,
 		},
 		{
@@ -146,7 +150,7 @@ describe("prompt preset resolver", () => {
 		},
 		{
 			id: "gpt-5.6-sol",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			api: "openai-codex-responses" as const,
 		},
 		{
@@ -160,7 +164,11 @@ describe("prompt preset resolver", () => {
 		const model = createModel(id, provider, api);
 
 		// when
-		const preset = resolvePreset(model, settings);
+		// `monitor` is selected so the tool-gated execution directives render for the sweep below.
+		const preset = resolvePreset(model, settings, {
+			selectedTools: ["eval", "monitor", "read", "bash"],
+			toolSnippets: { eval: "eval snippet", monitor: "monitor snippet", read: "read snippet", bash: "bash snippet" },
+		});
 
 		// then
 		expect(preset?.name).toBe("gpt-5.6");
@@ -172,7 +180,7 @@ describe("prompt preset resolver", () => {
 		expect(preset?.prompt).toContain("reconcile every item");
 		// GPT-5.6 tuning: prioritization instead of brevity, tool-loop stopping conditions.
 		expect(preset?.prompt).toContain("fewest useful tool loops");
-		expect(preset?.prompt).toContain("Lead with the conclusion");
+		expect(preset?.prompt).toContain("Final message:");
 		// Execution discipline: every typed directive ships in the rendered core.
 		for (const rule of GPT56_EXECUTION_RULES) {
 			expect(preset?.prompt).toContain(rule.directive);
@@ -224,7 +232,11 @@ describe("prompt preset resolver", () => {
 
 		// then
 		expect(catalogModelIds).toEqual(
-			expect.arrayContaining(["openai/gpt-5.6-sol", "openai-codex/gpt-5.6-sol", "openrouter/openai/gpt-5.6-sol"]),
+			expect.arrayContaining([
+				"openai/gpt-5.6-sol",
+				"chatgpt-subscription/gpt-5.6-sol",
+				"openrouter/openai/gpt-5.6-sol",
+			]),
 		);
 		expect(misses).toEqual([]);
 	});
@@ -332,7 +344,7 @@ describe("prompt preset resolver", () => {
 	it("allows settings.json to force kimi-k2-7 regardless of model id", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "kimi-k2-7" };
-		const model = createModel("gpt-5.5", "openai-codex", "openai-codex-responses");
+		const model = createModel("gpt-5.5", "chatgpt-subscription", "openai-codex-responses");
 
 		// when
 		const preset = resolvePreset(model, settings);
@@ -355,11 +367,7 @@ describe("prompt preset resolver", () => {
 
 		// then
 		expect(catalogModelIds).toEqual(
-			expect.arrayContaining([
-				"fireworks/accounts/fireworks/models/kimi-k2p6",
-				"moonshotai/kimi-k2.6",
-				"openrouter/moonshotai/kimi-k2.6",
-			]),
+			expect.arrayContaining(["moonshotai/kimi-k2.6", "openrouter/moonshotai/kimi-k2.6"]),
 		);
 		expect(misses).toEqual([]);
 	});
@@ -377,11 +385,7 @@ describe("prompt preset resolver", () => {
 
 		// then
 		expect(catalogModelIds).toEqual(
-			expect.arrayContaining([
-				"fireworks/accounts/fireworks/models/kimi-k2p7-code",
-				"moonshotai/kimi-k2.7-code",
-				"openrouter/moonshotai/kimi-k2.7-code",
-			]),
+			expect.arrayContaining(["moonshotai/kimi-k2.7-code", "openrouter/moonshotai/kimi-k2.7-code"]),
 		);
 		expect(misses).toEqual([]);
 	});
@@ -415,17 +419,17 @@ describe("prompt preset resolver", () => {
 		const activePrompt = fallbackPrompt();
 		expect(activePrompt).toContain("You are senpi");
 		expect(activePrompt).toContain("## Intent Gate");
-		expect(activePrompt).toContain("## Parallel Tool Calls");
-		expect(activePrompt).toContain("## Exploration");
+		expect(activePrompt).toContain("## Working the Task");
 		expect(activePrompt).toContain("## Verification");
 		expect(activePrompt).toContain("## Available Tools");
-		expect(activePrompt).toContain("Current working directory: /repo");
+		// senpi#2093: cwd travels in the environment-context message, not the prompt.
+		expect(activePrompt).not.toContain("Current working directory:");
 	});
 
 	it("allows settings.json to force claude-opus-4-7 regardless of model id", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "claude-opus-4-7" };
-		const model = createModel("gpt-5.5", "openai-codex", "openai-codex-responses");
+		const model = createModel("gpt-5.5", "chatgpt-subscription", "openai-codex-responses");
 
 		// when
 		const preset = resolvePreset(model, settings);
@@ -451,7 +455,7 @@ describe("prompt preset resolver", () => {
 	it("allows settings.json to force kimi-k2-6 regardless of model id", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "kimi-k2-6" };
-		const model = createModel("gpt-5.5", "openai-codex", "openai-codex-responses");
+		const model = createModel("gpt-5.5", "chatgpt-subscription", "openai-codex-responses");
 
 		// when
 		const preset = resolvePreset(model, settings);
@@ -524,7 +528,7 @@ describe("prompt preset resolver", () => {
 	it("does not include Kimi tuning in gpt-5 preset", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
-		const model = createModel("gpt-5.5", "openai-codex", "openai-codex-responses");
+		const model = createModel("gpt-5.5", "chatgpt-subscription", "openai-codex-responses");
 
 		// when
 		const preset = resolvePreset(model, settings);
@@ -585,7 +589,7 @@ describe("prompt preset resolver", () => {
 
 	it("resolves gpt-5.3-codex preset", () => {
 		const settings: PromptPresetSettings = { promptPreset: "auto" };
-		const model = createModel("gpt-5.3-codex", "openai-codex", "openai-codex-responses");
+		const model = createModel("gpt-5.3-codex", "chatgpt-subscription", "openai-codex-responses");
 		const preset = resolvePreset(model, settings);
 		expect(preset?.name).toBe("gpt-5.3-codex");
 		expect(preset?.prompt).toContain("Bias hard toward action");
@@ -618,32 +622,39 @@ describe("prompt preset resolver", () => {
 		{
 			presetName: "gpt-5.3-codex" as const,
 			modelId: "gpt-5.3-codex",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			api: "openai-codex-responses" as const,
 		},
 		{ presetName: "gpt-5.4" as const, modelId: "gpt-5.4", provider: "openai", api: "openai-responses" as const },
 		{ presetName: "gpt-5.5" as const, modelId: "gpt-5.5", provider: "openai", api: "openai-responses" as const },
 		{ presetName: "gpt-5.6" as const, modelId: "gpt-5.6-sol", provider: "openai", api: "openai-responses" as const },
-	])("$presetName preset includes the codex-style File operations guard", ({ presetName, modelId, provider, api }) => {
-		const settings: PromptPresetSettings = { promptPreset: presetName };
-		const model = createModel(modelId, provider, api);
+	])(
+		"$presetName preset routes file edits through the tools the session has",
+		({ presetName, modelId, provider, api }) => {
+			const settings: PromptPresetSettings = { promptPreset: presetName };
+			const model = createModel(modelId, provider, api);
 
-		const preset = resolvePreset(model, settings);
+			const withPatch = resolvePreset(model, settings, { selectedTools: [...PATCH_SESSION_TOOLS] });
+			const withoutPatch = resolvePreset(model, settings, { selectedTools: [...EDIT_SESSION_TOOLS] });
 
-		if (!preset) {
-			throw new Error(`expected ${presetName} preset to resolve`);
-		}
-		expect(preset.name).toBe(presetName);
+			if (!withPatch || !withoutPatch) {
+				throw new Error(`expected ${presetName} preset to resolve`);
+			}
+			expect(withPatch.name).toBe(presetName);
 
-		const prompt = preset.prompt;
-		// Positive routing: apply_patch is the canonical edit verb.
-		expect(prompt).toMatch(/apply_patch/);
-		// Positive routing: read is the canonical inspect verb.
-		expect(prompt).toMatch(/\bread\b/);
-		// Negative guard: no inline python through bash for file mutation/inspection.
-		expect(prompt.toLowerCase()).toMatch(/python/);
-		// Negative guard: codex's "do not waste tokens re-reading after apply_patch".
-		// Positive routing: prefer the senpi `grep` tool over invoking grep/rg through bash.
-		expect(prompt.toLowerCase()).toMatch(/\brg\b|ripgrep/);
-	});
+			// Positive routing: the canonical edit verb is the one the session actually carries (#1968).
+			expect(withPatch.prompt).toMatch(/apply_patch/);
+			expect(withoutPatch.prompt).not.toMatch(/apply_patch/);
+			expect(withoutPatch.prompt).toContain("Use `edit` and `write` for ALL file edits");
+
+			for (const prompt of [withPatch.prompt, withoutPatch.prompt]) {
+				// Positive routing: read is the canonical inspect verb.
+				expect(prompt).toMatch(/\bread\b/);
+				// Negative guard: no inline python through bash for file mutation/inspection.
+				expect(prompt.toLowerCase()).toMatch(/python/);
+				// Positive routing: prefer the senpi `grep` tool over invoking grep/rg through bash.
+				expect(prompt.toLowerCase()).toMatch(/\brg\b|ripgrep/);
+			}
+		},
+	);
 });

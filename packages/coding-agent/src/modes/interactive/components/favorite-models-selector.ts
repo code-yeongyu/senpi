@@ -8,6 +8,7 @@ import {
 	matchesKey,
 	Spacer,
 	Text,
+	TruncatedText,
 } from "@earendil-works/pi-tui";
 import { rankModelSearchItems } from "../model-search-rank.ts";
 import { theme } from "../theme/theme.ts";
@@ -226,7 +227,7 @@ export class FavoriteModelsSelectorComponent extends Container implements Focusa
 			const currentMarker =
 				this.currentModel && modelsAreEqual(this.currentModel, item.model) ? theme.fg("success", " ✓") : "";
 			this.listContainer.addChild(
-				new Text(`${prefix}${favoriteMarker} ${modelText}${providerBadge}${currentMarker}`, 0, 0),
+				new TruncatedText(`${prefix}${favoriteMarker} ${modelText}${providerBadge}${currentMarker}`),
 			);
 		}
 

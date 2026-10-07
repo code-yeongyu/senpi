@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
 import {
+	EMPTY_RESPONSE_ERROR,
+	EMPTY_TOOL_USE_ERROR,
+	FORWARDED_EMPTY_RESPONSE_ERROR,
+	FORWARDED_EMPTY_TOOL_USE_ERROR,
+} from "../src/utils/empty-response-errors.ts";
+import {
 	isProviderStreamStallError,
 	isProviderTimeoutError,
 	isRetryableAssistantError,
@@ -27,6 +33,8 @@ const anthropicOrphanServerToolMessage =
 	'400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.1: `web_search` tool use with id `srvtoolu_01Gchdhqw1UaCNUuVq2LhMH9` was found without a corresponding `web_search_tool_result` block"},"request_id":"req_011CdQL9JsEk5NWJxWQX4NiG"}';
 const anthropicInvalidMaxTokensMessage =
 	'400 {"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: must be greater than or equal to 1"}}';
+const gatewayStreamingIndexReplayRejectionMessage =
+	"the reasoning_details at position 1271 entry 0 must not contain streaming index";
 const apitopiaToolSchemaRejectionMessage =
 	'500 data: {"error":{"message":"500 server_error: Invalid request: tools.function.parameters.type is required and must be \\"object\\"","type":"server_error","code":500,"status":500,"statusCode":500,"isRetryable":true}}\n\ndata:[DONE]\n\n';
 const moonshotToolSchemaRejectionMessage =
@@ -37,21 +45,18 @@ const nonCanonicalModelRequestRejectionMessages = [
 	"Error: The model request was rejected because max_tokens must be greater than or equal to 1.",
 	"Error: The model request was rejected by the safety classifier.",
 ] as const;
+const azurePeakLoadError =
+	"The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.";
 
 describe("provider retry classification", () => {
 	it("applies bounded injectable Codex-style jitter", () => {
-		expect(retryDelayMs(1_000, 1, () => 0)).toBe(900);
-		expect(retryDelayMs(1_000, 1, () => 1)).toBe(1_100);
+		expect(retryDelayMs({ baseDelayMs: 1_000, random: () => 0 }, 1)).toBe(900);
+		expect(retryDelayMs({ baseDelayMs: 1_000, random: () => 1 }, 1)).toBe(1_100);
 	});
 
 	it("keeps provider retry hints above the jittered schedule", () => {
 		const hinted = 1_050;
-		expect(
-			Math.max(
-				hinted,
-				retryDelayMs(1_000, 1, () => 0),
-			),
-		).toBe(hinted);
+		expect(Math.max(hinted, retryDelayMs({ baseDelayMs: 1_000, random: () => 0 }, 1))).toBe(hinted);
 	});
 	it("matches explicit provider retry guidance", () => {
 		expect(
@@ -67,6 +72,18 @@ describe("provider retry classification", () => {
 		expect(
 			isRetryableAssistantError(
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: nvidiaNIMResourceExhaustedMessage }),
+			),
+		).toBe(true);
+	});
+
+	it("classifies credential-store lock exhaustion as retryable infrastructure", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage:
+						"Credential store is busy: lock /tmp/auth.json was held for 1234ms. Another process may be refreshing credentials",
+				}),
 			),
 		).toBe(true);
 	});
@@ -110,6 +127,14 @@ describe("provider retry classification", () => {
 		).toBe(true);
 		expect(
 			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "WebSocket liveness timeout after 70000ms (2 pings unanswered)",
+				}),
+			),
+		).toBe(true);
+		expect(
+			isRetryableAssistantError(
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: "Provider stream never started" }),
 			),
 		).toBe(false);
@@ -118,6 +143,14 @@ describe("provider retry classification", () => {
 	it.each([
 		["Idle timeout waiting for provider stream after 300000ms", true, true],
 		["Provider stream start timed out after 90000ms", true, true],
+		[
+			"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
+			true,
+			true,
+		],
+		["Idle timeout waiting for provider stream after 5ms (x)", false, false],
+		["WebSocket liveness timeout after 70000ms (2 pings unanswered)", true, true],
+		["WebSocket liveness timeout after 70000ms (2 pings unanswered) extra", false, false],
 		["Request timed out.", false, true],
 		["Request timed out", false, true],
 		["Command timed out after 30000ms", false, false],
@@ -209,7 +242,8 @@ describe("provider retry classification", () => {
 			isProviderStreamStallError(
 				fauxAssistantMessage("", {
 					stopReason: "error",
-					errorMessage: "Provider stream start timed out after 90000ms",
+					errorMessage:
+						"Provider stream start timed out after 90000ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)",
 				}),
 			),
 		).toBe(true);
@@ -237,6 +271,17 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", {
 					stopReason: "error",
 					errorMessage: "Idle timeout waiting for provider stream after 300000ms",
+				}),
+			),
+		).toBe(true);
+	});
+
+	it("matches Claude Agent SDK session lock contention", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Lock file is already being held",
 				}),
 			),
 		).toBe(true);
@@ -279,6 +324,51 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: anthropicOrphanServerToolMessage }),
 			),
 		).toBe(true);
+	});
+
+	it("classifies replayed-reasoning streaming-index rejections as retryable", () => {
+		// A gateway rejects a replayed `reasoning_details` entry that still carries the
+		// streaming-assembly `index`, and the offending bytes live in stored history, so
+		// every later request fails identically. The request builder strips the field
+		// before the retried request is built, so the retry sends a valid payload and
+		// unwedges the session instead of dead-ending it (senpi#2122).
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: gatewayStreamingIndexReplayRejectionMessage,
+				}),
+			),
+		).toBe(true);
+	});
+
+	it("keeps unrelated request-shape rejections terminal", () => {
+		// The streaming-index pattern must not widen into the request-shape class: a
+		// rejected tool schema is the same bytes on every attempt and stays terminal.
+		for (const errorMessage of [apitopiaToolSchemaRejectionMessage, moonshotToolSchemaRejectionMessage]) {
+			expect(
+				isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage })),
+				errorMessage,
+			).toBe(false);
+		}
+	});
+
+	it("retries an empty outcome only when its reasoning was already forwarded live", () => {
+		// A forwarded attempt cannot be replayed inside the stream wrapper (a second `start`
+		// would duplicate the partial), so the turn retry owns it; the bounded "twice" errors
+		// already spent the wrapper's own retry and stay terminal.
+		for (const errorMessage of [FORWARDED_EMPTY_RESPONSE_ERROR, FORWARDED_EMPTY_TOOL_USE_ERROR]) {
+			expect(
+				isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage })),
+				errorMessage,
+			).toBe(true);
+		}
+		for (const errorMessage of [EMPTY_RESPONSE_ERROR, EMPTY_TOOL_USE_ERROR]) {
+			expect(
+				isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage })),
+				errorMessage,
+			).toBe(false);
+		}
 	});
 
 	it("keeps unrelated invalid_request errors non-retryable", () => {
@@ -375,6 +465,13 @@ describe("provider retry classification", () => {
 		).toBe(false);
 	});
 
+	it("matches Azure peak-load capacity errors", () => {
+		// Regression for #9669.
+		expect(
+			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: azurePeakLoadError })),
+		).toBe(true);
+	});
+
 	it("keeps provider limit errors non-retryable", () => {
 		expect(
 			isRetryableAssistantError(
@@ -394,9 +491,28 @@ describe("provider retry classification", () => {
 		).toBe(false);
 	});
 
+	it("keeps the ChatGPT subscription usage limit non-retryable", () => {
+		const errorMessage =
+			'OpenAI API error (429): {"code":"subscription_sharing_usage_limit_exceeded","message":"Usage limit reached."}';
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
+	});
+
+	it.each([
+		"subscription_sharing_usage_unavailable: Usage cannot be checked.",
+		"subscription_sharing_user_unavailable: User cannot be loaded.",
+	])("retries temporary ChatGPT subscription errors: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
 	it("classifies assistant error messages", () => {
 		expect(
 			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),
+		).toBe(true);
+		// Regression for #9627.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "520 status code (no body)" }),
+			),
 		).toBe(true);
 		expect(
 			isRetryableAssistantError(
@@ -404,6 +520,28 @@ describe("provider retry classification", () => {
 			),
 		).toBe(true);
 		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
+	});
+});
+
+describe("retryDelayMs", () => {
+	it("caps agent retry delay", () => {
+		// Regression for #8826. The fork jitters the scheduled delay by +/-10% before the
+		// cap applies, so the jitter source is pinned here instead of relying on the exact
+		// unjittered product upstream asserts.
+		expect(retryDelayMs({ baseDelayMs: 2000, random: () => 1 }, 6)).toBe(60000);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000, random: () => 1 }, 5)).toBe(5000);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 0, random: () => 1 }, 5)).toBe(0);
+	});
+
+	it("clamps an exponentially overflowed delay to the cap", () => {
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 60000, random: () => 1 }, 20)).toBe(60000);
+		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 60000, random: () => 0 }, 2000)).toBe(60000);
+	});
+
+	it("never exceeds the default cap for any jitter sample", () => {
+		for (const sample of [0, 0.25, 0.5, 0.75, 1]) {
+			expect(retryDelayMs({ baseDelayMs: 2000, random: () => sample }, 8)).toBe(60000);
+		}
 	});
 });
 
@@ -449,6 +587,32 @@ describe("retryAssistantCall", () => {
 		expect(produce).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
 		expect(onRetryScheduled).toHaveBeenCalledTimes(3);
 		expect(onRetryFinished).toHaveBeenCalledWith(false, 3, "terminated");
+	});
+
+	it("reports capped retry delays", async () => {
+		// Regression for #8826. The fork jitters the scheduled delay by +/-10% before
+		// the cap applies, so pin the jitter source to its neutral midpoint
+		// (multiplier exactly 1.0) instead of letting Math.random perturb the
+		// schedule: without this the first reported delay is 9, 10, or 11 by luck.
+		const policy: RetryPolicy = {
+			enabled: true,
+			maxRetries: 4,
+			baseDelayMs: 10,
+			maxAgentDelayMs: 15,
+			random: () => 0.5,
+		};
+		let n = 0;
+		const produce = vi.fn(async () => {
+			n++;
+			return n < 5
+				? fauxAssistantMessage("", { stopReason: "error", errorMessage: "terminated" })
+				: fauxAssistantMessage("recovered");
+		});
+		const onRetryScheduled = vi.fn();
+
+		await retryAssistantCall(produce, policy, undefined, { onRetryScheduled });
+
+		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([10, 15, 15, 15]);
 	});
 
 	it("stops retrying once a call succeeds", async () => {

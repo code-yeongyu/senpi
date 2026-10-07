@@ -8,6 +8,8 @@ const LOOPBACK_HOST = "127.0.0.1";
 
 export interface BridgeHttpCallRequest {
 	callId: string;
+	/** The calling run's secret; the host resolves that run's kernel-tools capability from it. */
+	cellToken?: string;
 	toolName: string;
 	args: unknown;
 	signal: AbortSignal;
@@ -49,6 +51,7 @@ export async function startBridgeServer(options: BridgeServerOptions): Promise<B
 	const server = createServer((request, response) => {
 		void handleRequest(request, response, token, options);
 	});
+	globalThis.__senpiCodemodeGateObserveResource?.("handles", server, "close");
 	server.on("connection", (socket) => {
 		sockets.add(socket);
 		socket.on("close", () => sockets.delete(socket));
@@ -131,7 +134,13 @@ async function dispatchCall(body: unknown, options: BridgeServerOptions, signal:
 	try {
 		return {
 			ok: true,
-			value: await options.onCall({ callId: body.callId, toolName: body.toolName, args: body.args, signal }),
+			value: await options.onCall({
+				callId: body.callId,
+				...(typeof body.cellToken === "string" ? { cellToken: body.cellToken } : {}),
+				toolName: body.toolName,
+				args: body.args,
+				signal,
+			}),
 		};
 	} catch (error) {
 		return { ok: false, error: bridgeError(error) };
@@ -217,7 +226,13 @@ function sendJson(response: ServerResponse, status: number, body: JsonReply): vo
 }
 
 function bridgeError(error: unknown): BridgeError {
-	if (error instanceof Error) return { name: error.name, message: error.message, stack: error.stack };
+	if (error instanceof Error)
+		return {
+			name: error.name,
+			message: error.message,
+			stack: error.stack,
+			...("code" in error && typeof error.code === "string" ? { code: error.code } : {}),
+		};
 	return { message: String(error) };
 }
 

@@ -18,6 +18,9 @@ task-tool names are known.
 	events, tool-call summaries, elapsed duration, and structured display state;
 	a terminal peek preserves the exact final result.
 - Loopback, bearer-authenticated kernel bridge with bounded JSONL frames.
+- Tool calls retain the submitting cell's host context, including its RPC approval
+  channel, even after detachment or kernel reuse. Headless sessions deny commands
+  that require approval rather than waiting for an absent UI.
 - Structured status events for file operations, environment access, phases,
   bridge activity, and delegated task progress.
 - One versioned `senpi.eval.execution` event at terminal cell settlement. The
@@ -29,14 +32,18 @@ task-tool names are known.
   session-adjacent spill files for large streams.
 - TUI and HTML-export rendering for syntax-highlighted cells, status rows,
   task progress, structured display values, truncation warnings, and image
-  fallbacks.
+  fallbacks. A JavaScript cell sent as dense one-line code is previewed broken
+  at statement, block, and long-array boundaries; the cell itself runs exactly
+  as sent.
 - Runtime identity badges in eval headers — `eval py (3.14.7, ~/.venv/bin/python3)`,
   `eval js (node 26.7.0, /opt/…/bin/node)` — with the same `runtime` info on
   `EvalToolDetails` and its `cells` for RPC consumers; interpreter detection
   resolves absolute executable paths, and the eval prompt host line names the
   JS runtime (`node`/`bun`).
 - JavaScript import rewriting for supported local modules and package imports
-  in the persistent Node.js worker.
+  in the persistent JS worker (Bun when senpi runs on bun, Node.js otherwise).
+- On a Bun >= 1.4 kernel the eval prompt names the bundled `bun-1-4` skill as
+  MUST READ before the first js cell; node kernels keep the Node.js wording.
 - GPT models receive a terse `eval` prompt dialect that prioritizes composing
   active tools through `tool.<name>(args)` and documents detach-on-timeout.
 
@@ -44,13 +51,216 @@ task-tool names are known.
 
 | Language | Default | Runtime | Notes |
 | --- | --- | --- | --- |
-| `js` | enabled | Node.js worker | Requires Node.js 24 or newer; supports top-level `await` and `return`. |
+| `js` | enabled | In-process worker on senpi's own runtime (Bun or Node.js 24+) | Supports top-level `await` and `return`; the eval prompt's runtime line follows the kernel. |
 | `py` | enabled | `python3` or `python` | Optional interpreter detected at session start. |
 | `rb` | disabled | `ruby` | Optional interpreter detected at session start. |
 | `jl` | disabled | `julia` | Optional interpreter detected at session start. |
 
 A missing optional interpreter removes that language from the session's `eval`
 schema; it is not an installation failure.
+
+### JavaScript process isolation
+
+By default the JavaScript kernel runs as a worker thread on the host's own
+runtime (`isolation.js: "worker"`). Setting `isolation.js: "process"` (or
+`SENPI_CODEMODE_JS_ISOLATION=process`, which wins over the file) runs each
+JavaScript kernel in its own subprocess instead, so a kernel crash (a native
+`SIGSEGV`, an out-of-memory, `process.exit`, an uncaught error) cannot take down
+the host session. The next cell runs on a replacement child, and its result
+carries the restart notice and names the crash.
+
+**Trust model.** Process mode isolates crashes, not hostile code. A cell runs in
+the same process that talks to the host, so it can reach everything that process
+holds, exactly as a worker-mode cell can. The frame token described below guards
+only against accidental corruption of the channel. Hostile code belongs in
+`isolate: true` sandbox cells. Hostile-cell isolation for process mode is tracked
+in [#2752](https://github.com/code-yeongyu/senpi/issues/2752).
+
+**Core dumps (Linux).** The kernel child marks itself non-dumpable at start
+(`prctl(PR_SET_DUMPABLE, 0)`). A Linux system that pipes core dumps to
+`systemd-coredump` or apport otherwise holds a crashed child until its dump is
+read, which froze the cell for about 30 s; without the dump the crash is reported
+at once, still naming its signal. Two side effects: no core file is written for a
+crash of the kernel child itself, and a same-user debugger cannot attach to it
+(`ptrace` needs a dumpable process). A cell's own subprocesses are unaffected,
+because `exec` resets the flag. Set `SENPI_KERNEL_CORE_DUMPS=1` to keep dumps and
+debugger access while debugging the kernel.
+
+How it works:
+
+- **Runtime.** The child runs on the host's own runtime: bun when senpi runs on
+  Bun, node otherwise. A compiled binary whose executable is neither falls back to
+  `bun` or `node` on `PATH`, preferring the host's kind. The badge names the
+  runtime that actually runs the child, for example `js (bun 1.4.x, process)`.
+- **Frames.** The host writes a random token as the child's first line on fd 0,
+  and every frame the child sends carries it. The host parses only lines that
+  carry the token; any other line (a cell's raw fd write, a child process's
+  output) is delivered as text. Frames are written in full. Large text is split
+  below the 10 MiB frame limit, and a result too large to return fails its cell,
+  not the kernel. A `BigInt` or an `undefined` field reaches the host as it does
+  in worker mode.
+- **File descriptors.** Under Bun, the control channel moves to a private
+  duplicate of fd 0, fd 0 becomes `/dev/null`, and fd 1 is re-pointed at a
+  pipe that a reader thread turns into `text` frames as it is written. The pipe is kept
+  blocking (a child that switches it to non-blocking is undone before every cell and around
+  every child process a cell starts),
+  so output is never held in memory while a cell is busy. A cell's direct
+  `process.stdout.write` or fd 1 write (or a child process inheriting fd 1)
+  arrives before that cell's result. In a bun child, raw fd 1 bytes are not
+  interleaved with `console` output in the order they were written. A node
+  child cannot move its fds: cell output shares the channel, and fd 0 is the
+  channel. If libc cannot be loaded through `bun:ffi`, a bun child runs
+  the same way and still starts; the first cell's stderr says why.
+- **Lifetime.** The child exits as soon as its control channel closes. That
+  covers every way the host ends, including `SIGKILL`. A watchdog thread also
+  compares the parent pid with the one recorded at start, so a child whose cell
+  never yields (a busy loop, a blocking call) still ends with its host, including
+  under a Linux subreaper. A process-mode kernel never outlives its host.
+- **Failed start.** There is no inline fallback in process mode. A failed start
+  settles the waiting cell with a capability-gap result naming the missing
+  runtime (`Install bun or node, or use isolation.js: "worker"`). The result's
+  memory reading is the child's process footprint.
+
+The default stays `"worker"`, and worker-mode behaviour is unchanged.
+
+To run the `environments` suites with bun children (the runtime the product
+uses), run them under bun: `SENPI_CODEMODE_JS_ISOLATION=process bunx --bun vitest
+run test/environments`. Under plain `vitest` the children follow the test
+runner's runtime, which is node.
+
+Python startup waits for the interpreter's `ready` event. It reports progress
+through `stdlib-imports`, `runtime-init`, and `host-init`; advancing to the next
+stage resets an inactivity guard rather than consuming a total startup budget.
+The default guard is 11 seconds per stage, derived from a measured 5.220-second
+Windows fresh-cache bootstrap p99 (30 samples). A stalled or failed start names
+the last stage and retains the interpreter's diagnostic error. The low-level
+`PythonKernel.start({ startupTimeoutMs })` override applies per stage.
+
+Every `eval` run must explicitly select an enabled `language` (`js`, `py`, `rb`,
+or `jl`); there is no default kernel, even when only one language is enabled.
+Omitting `action` means `run`, so it also requires `language`. Control requests
+with `action: "peek"` or `action: "stop"` use `cell_id` and do not require a
+language.
+
+### Session environment
+
+Every kernel starts with the active session's `PI_*` environment — `PI_SESSION_ID`,
+`PI_SESSION_FILE` (when the session is persistent), `PI_SESSION_CWD` (the session's
+working directory), `PI_GOAL_STORE_FILE` (the authoritative goal-store path, when the
+host provides it), `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` (when set) — resolved at session start, mirroring the bash tool's
+session environment contract. The values are visible to `env()`/`process.env`/`os.environ`
+inside cells and are inherited by every child process a cell spawns
+(`Bun.$`, `Bun.spawn`, `child_process`, `subprocess`, ...). Inherited `PI_*` values from
+the launching environment are dropped first, so a child spawned from a cell sees exactly
+what a child spawned from the bash tool sees. The values snapshot at kernel start, so a
+mid-session model switch updates the bash tool's next command but not already-running
+kernels; a new session starts fresh kernels with fresh values.
+
+### Working directory
+
+Every kernel runs in the session's working directory, the same directory the read,
+edit, and bash tools use. Python, Ruby, and Julia start their interpreter there. The
+JavaScript kernel is a worker thread, which cannot change directory, so it applies the
+session directory itself: `process.cwd()`, `path.resolve`, `node:fs` and
+`node:fs/promises`, `node:child_process`, `Bun.file`, `Bun.write`, `Bun.$`,
+`Bun.spawn`/`Bun.spawnSync`, `Bun.Glob` scans, and relative `import()` all resolve a
+relative path inside the session directory, never the host process directory. The host
+process and the bash tool keep their own directory. When the session directory is
+missing or deleted, the next cell fails with `CodemodeSessionCwdUnavailableError` naming
+the directory instead of running somewhere else. A new session (including a switch to
+another project) starts fresh kernels in its own directory.
+
+`PI_GOAL_STORE_FILE` is supplied by the host's optional `ExtensionContext.goalStoreFile`
+getter and may name a file that does not exist yet. It honors session-directory overrides
+and in-memory sessions; it cannot be derived reliably from `PI_SESSION_FILE`. If the host
+omits the getter, the variable is unset rather than inherited from the launching process.
+
+### Loading a file
+
+A Python or JavaScript cell whose only line is `%load <path>` reads that file and
+runs it as the cell, so its definitions persist like any cell. The path is relative
+to the session directory, or a `local://` or `file://` URL; other URL schemes are
+refused and nothing is fetched. The cell runs as its file: Python compiles it under
+the file's name, so tracebacks name the file and line, and sets `__file__` and puts
+the file's directory first on the import path, so `from sibling import g` resolves
+next to it. JavaScript evaluates it under the file's name and resolves its relative
+imports from the file's directory. The file is read when the cell's turn comes in
+the kernel's queue, so a `%load` queued behind the cell that writes the file runs
+what that cell wrote. When the cell ends, Python takes the file's directory back off
+the import path and restores `__file__`, so later cells import as before. A file that
+cannot be read fails the cell with a message naming the path as written
+(`file not found: <path>`, `permission denied: <path>`); files over 8 MiB, and
+anything that is not a regular file, are refused.
+
+### JavaScript packages
+
+A JavaScript cell whose only line is `%bun add <package ...>` or `%npm add <package ...>`
+installs packages without restarting the kernel; the next cell imports them by bare name.
+`%bun add` uses bun and `%npm add` uses npm; `environments.js.installer` (`bun`, `npm` or
+`auto`: bun when it is on `PATH`, else npm) applies only where the magic names none, and the
+kernel's own runtime never changes to get one.
+
+In the default managed mode packages go into an environment revision under the session's
+artifacts directory, never into the project's `package.json` or `node_modules`. With
+`environments.managedRoot` set, every session using that root shares one revision chain: their
+installs are serialized and each revision carries the packages installed before it.
+A bare import resolves from the session directory's `node_modules` first and then from the
+active revision, using each package's `exports` for `import` (ESM-only packages load), so the
+project's own packages still win, and both win over Senpi's own dependencies (a package neither has may still load from Senpi's install). When a
+newly added package is also in the project's `node_modules`, the result says
+`environment_resolution_conflict` because the project copy resolves first.
+
+Each install builds a new revision that carries the previous one forward (its `package.json`,
+lockfile, and from `.npmrc` only `registry`, `@scope:registry`, `strict-ssl`, `ca` and `cafile`, rewritten as a regular file; credentials and every other key are dropped, and `bunfig.toml` is not carried)
+and is published only when the installer succeeds; a failed or cancelled install, or one still
+running when the session closes, leaves the previous revision active. Lifecycle scripts never run
+(`--ignore-scripts`), installer flags are refused because the host picks the destination, and a
+path-like package (`./pkg`, `file:../pkg`) is a path from the session directory. Package names
+are split on whitespace; quoting is not supported. Error and installer text names the session directory as
+`<cwd>`, the revision as `<root>`, the temp directory as `<tmp>`, the home directory as `~`, and an
+absolute package path by its file name only. `%environment project` installs
+into the session directory itself instead.
+
+### Python packages
+
+A Python cell whose only line is `%pip install <requirements>` installs packages
+without restarting the kernel: variables, the process and its working directory
+stay as they were. The cell runs in the kernel's queue like any other cell (it waits
+for the cell ahead of it, can be cancelled while queued, and detaches past the
+foreground window), but the install runs on the host, so its time does not count
+against the run budget. The next cell imports the new packages; modules a cell
+already imported stay cached until `reset`.
+
+Packages go into the session's own environment, never into the interpreter's
+site-packages or the user site: pip always runs as
+`<kernel interpreter> -m pip install --target <environment>`, and flags that pick
+another destination (`--target`, `--user`, `--prefix`, `--root`, `--home`,
+`-e`) are refused. Each install builds a new revision of the environment and
+publishes it only when pip succeeds, so a failed or cancelled install leaves the
+previous packages active and importable. A cell that mixes `%pip` with code is
+refused; put `%pip` on its own cell.
+
+`%environment managed` (the default) keeps the environment under the session's
+artifacts directory, or `environments.managedRoot` when set; `%environment project`
+installs into `<cwd>/.senpi/python-packages` instead, shared by every session in
+that project, with concurrent installs serialised by a lock. Setting
+`environments.autoProvision` to `false` turns installs off
+(`environment_installer_unavailable`). Failures carry pip's error output and one
+of `environment_install_failed`, `environment_install_cancelled`,
+`environment_installer_unavailable` or `environment_resolution_conflict`.
+
+### Isolated cells
+
+With `sandbox.enabled: true`, a JavaScript call may pass `isolate: true`. The cell then runs in a fresh QuickJS VM (the vendored pi codemode runtime) instead of the persistent kernel:
+
+- Nothing persists: globals from the kernel are not visible, and a global set in one isolated cell is gone in the next. `store()` throws `eval_isolate_no_state` and `load()` returns `undefined`.
+- No ambient host: there is no `process`, `require`, file system, network, child processes or timers. The cell's only reach is `tools.<name>` (also `tool.<name>`; every active tool except `eval`, run through the same permission hooks as a direct call) plus `print`, `display`, `text` and `image`.
+- `isolate: true` isolates the JavaScript, not the tools it calls: a tool keeps its normal reach. `tools.bash`, for example, runs a shell with the session's environment and files, under the same permission hooks as any other call.
+- Output streams from the VM in frames under a 256 KiB credit window, so the VM never holds a large item; the host joins an item's frames before adding it to the result, and memory stays bounded by `sandbox.memoryMb`.
+- It is a host entry in the JavaScript queue: it waits for earlier cells, Stop and the run budget end it, and the persistent kernel is never restarted for it.
+- Limits: `sandbox.memoryMb` (default 64) and `sandbox.timeoutSeconds` (default 300). Failures are named: `eval_isolate_memory_limit`, `eval_isolate_timeout`, `eval_isolate_unresolved_promise` (a top-level promise that can never settle) and `eval_isolate_unavailable` (the runtime could not start).
+
+While `sandbox.enabled` is `false` (the default) the `isolate` field is absent from the eval schema, and passing it is refused with `eval_isolate_invalid`, as are `isolate` with another language and `isolate` with `reset`.
 
 ## Settings
 
@@ -69,6 +279,10 @@ Configuration is loaded in this order:
     "jl": false
   },
   "cellTimeoutSeconds": 30,
+  "foregroundWindowSeconds": 60,
+  "runBudgetSeconds": 300,
+  "hardLimitSeconds": 1800,
+  "maxDetachedCells": 15,
   "parallelPoolWidth": 4,
   "taskTools": {
     "task": "task",
@@ -78,27 +292,60 @@ Configuration is loaded in this order:
     "headBytes": 20480,
     "maxColumns": 768
   },
-  "statusEvents": true
+  "statusEvents": true,
+  "memory": {
+    "gcWatermarkMb": 256,
+    "noticeMb": 1024,
+    "ceilingMb": 8192,
+    "retainedResultsMb": 32,
+    "retainedImagesMb": 256
+  }
 }
 ```
 
 | Key | Default | Effect |
 | --- | --- | --- |
 | `languages` | `py`/`js` enabled; `rb`/`jl` disabled | Selects desired languages before interpreter detection. |
-| `cellTimeoutSeconds` | `30` | Idle timeout for one cell unless the call supplies `timeout`; interactive calls detach by default and print/json calls error. |
+| `cellTimeoutSeconds` | `30` | Idle time an interactive call blocks the turn before the cell detaches. Print/json calls never detach. |
+| `foregroundWindowSeconds` | `60` | Submission-based foreground limit, including queue and bridge pauses. The cell detaches if capacity is available; otherwise it is cancelled with `eval_background_capacity_reached`. Env override: `SENPI_CODEMODE_FOREGROUND_SECONDS`. |
+| `runBudgetSeconds` | `300` | Kill deadline for a cell's own execution time - child processes, network, timers, CPU. Time queued or parked in host tool calls (`agent()`, `tool.*`) is not charged, and the budget keeps counting after the cell detaches. A per-call `timeout` replaces it for that cell. Env override: `SENPI_CODEMODE_RUN_BUDGET_SECONDS`. |
+| `hardLimitSeconds` | `1800` | Wall-clock kill deadline from submission, including queue and parked time; a per-call `timeout` above it raises it. Env override: `SENPI_CODEMODE_HARD_LIMIT_SECONDS`. |
+| `maxDetachedCells` | `15` | Global detached-cell capacity across all kernels, including queued cells. At capacity, interactive cells stay foreground until completion or the foreground window elapses. Env override: `SENPI_CODEMODE_MAX_DETACHED_CELLS`. |
 | `parallelPoolWidth` | `4` | Maximum concurrent `parallel()` thunks. |
 | `taskTools.task` | `"task"` | Registered tool name used by `agent()`. |
 | `taskTools.output` | `"task_output"` | Registered tool name used by `output()`. |
 | `outputSink.headBytes` | `20480` | Bytes retained from the beginning of a middle-truncated preview; `0` disables it. |
-| `outputSink.maxColumns` | `768` | Maximum rendered output columns; `0` disables column clamping. |
+| `outputSink.maxColumns` | `768` | Maximum columns per printed output line; `0` disables column clamping. A cell's return value is never column-clamped (the byte and line budgets still apply). |
 | `statusEvents` | `true` | Enables kernel status-event forwarding and rendering. Each cell retains at most 100 status rows; after overflow, one omitted-count row precedes the latest 99 events. |
+| `memory.gcWatermarkMb` | `256` | JavaScript kernel: a finished cell whose heap reached this size and grew runs a full collection before its result; whenever at least this much stays live, an idle full collection runs about a second after the cell, so dropped globals return their memory without a reset. Python kernel: a finished cell whose process footprint reached this size and grew runs `gc.collect()` (plus glibc `malloc_trim(0)` on Linux) before its result, and while at least this much stays live the next cells collect too (at most 1/20 of the time), so `del rows` returns its memory. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_GC_WATERMARK_MB`. |
+| `memory.noticeMb` | `1024` | When live memory (JS heap or Python footprint after a collection; Ruby and Julia interpreter footprint read by the host after each cell) reaches this size (first time, or 25% more than at the last notice), the result gets one bracketed notice naming the largest globals and how to drop them (`rows = undefined`, `del rows`, `rows = nil`, `rows = nothing`), plus `details.memory`. `0` disables. Env override: `SENPI_CODEMODE_MEMORY_NOTICE_MB`. |
+| `memory.ceilingMb` | a quarter of physical memory, 2048-8192 | Every kernel (JS heap and Python footprint after a collection; Ruby and Julia interpreter footprint read by the host after each result, without a globals list): when live memory reaches this size, the result says so and the kernel restarts once no cell is running or queued on it; the next result says it was restarted (`details.memory.recycled`). `0` disables. Env override: `SENPI_CODEMODE_MEMORY_CEILING_MB`. Non-zero memory thresholds must satisfy watermark <= notice <= ceiling, otherwise all three use their defaults. |
+| `memory.retainedResultsMb` | `32` | In-memory byte budget (MiB) for the settled cells kept for `peek`/`list`, on top of the 32-cell count cap; the oldest go first and the newest is always kept. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_RESULTS_MB` (a non-negative integer). |
+| `memory.retainedImagesMb` | `256` | Disk budget (MiB) for settled-cell images. Images of settled cells (foreground and detached) are written as base64 files under `<session artifacts>/settled-images/` instead of staying in memory, and `peek` reads them back, so it returns the full result. Beyond the budget the oldest files are deleted first; an evicted cell's files are deleted with it; the directory is removed when the session ends. A `peek` whose image file is gone returns the text plus a one-line note. `0` keeps only the count cap. Env override: `SENPI_CODEMODE_RETAINED_IMAGES_MB` (a non-negative integer). |
+| `memory.idleParkMinutes` | `0` | Off by default. When greater than 0, a kernel with no cell running or queued for this many minutes is closed to give its memory back, and the next cell for that language starts a fresh one; that cell's result says the kernel was restarted and every earlier global is lost. Applies to every language. |
+| `languages.pyInterpreter` | unset | Explicit Python interpreter path: the Python kernel runs exactly that executable (a path with spaces is fine). A path that does not answer `--version` makes Python unavailable for the session, with a warning naming the setting. Unset keeps `PATH` detection. |
+| `environments.managedRoot` | unset | Root directory for managed per-session environments; unset uses the session's default location. |
+| `environments.autoProvision` | `true` | Lets installs provision a managed environment. `false` makes installs refuse with `environment_installer_unavailable`. |
+| `environments.js.installer` | `auto` | Installer for the managed JavaScript environment: `auto`, `bun` or `npm`. |
+| `environments.py.installer` | `pip` | Installer for the managed Python environment. |
+| `isolation.js` | `worker` | JavaScript kernel isolation: `worker` (today's worker thread) or `process`. Env override: `SENPI_CODEMODE_JS_ISOLATION`. |
+| `sandbox.enabled` | `false` | Allows sandbox cells. While `false` the sandbox option is neither accepted nor advertised. |
+| `sandbox.memoryMb` | `64` | Memory cap (MiB) for a sandbox cell. Env override: `SENPI_CODEMODE_SANDBOX_MEMORY_MB` (a positive integer wins). |
+| `sandbox.timeoutSeconds` | `300` | Time limit for a sandbox cell. |
+| `prompt.advertiseHelpers` | `false` | When `true`, one pointer line to `tool_schema('eval:helpers')` is appended to the eval description. |
+| `kernelTools.enabled` | `true` | Allows cells to define kernel tools. `false` makes JavaScript `tool(fn)` and Python `@tool` refuse with `tools_unavailable`, naming this setting. |
+
+Every key in the table takes the effect its row describes.
 
 `SENPI_CODEMODE_PY`, `SENPI_CODEMODE_JS`, `SENPI_CODEMODE_RB`, and
 `SENPI_CODEMODE_JL` override the corresponding file setting. `1` or `true`
 enables; `0` or `false` disables. Any other value leaves the file setting in
 effect.
 
-Malformed JSON or invalid settings fall back to defaults with a warning.
+Settings problems reach the user as a notice in the interactive UI, or a `[senpi-codemode]` line on stderr without one. A top-level key this version does not know is ignored with one warning naming it, and the rest of the file still applies, so a settings file written for a newer senpi keeps working. Malformed JSON, or an invalid value or an unknown key inside a known setting, falls back to all defaults with a warning.
+The detached-cell environment override uses the run-budget parser: a positive
+base-10 integer wins over the file value; zero, negative, and malformed values
+leave the file value in effect.
 
 ## Cell helpers
 
@@ -108,15 +355,25 @@ options object and asynchronous helpers are `await`-able.
 
 | Helper | Contract |
 | --- | --- |
-| `display(value)` | Emits text, structured JSON, markdown, or supported image display data. |
+| `display(value)` | Emits text, structured JSON, markdown, or image display data. Images reach the model only through `display`: pass a figure, raw image bytes (PNG/JPEG/GIF/WebP/BMP sniffed), a `data:` URL, a `Blob`-like or `Bun.Image` value, a marshalled tool result, or one of its `images[i]` frames. |
 | `print(value, ...)` | Emits text output. |
+| `text(value)` (rb, jl) | Emits `value` as one text item without separators (`print` joins its arguments and calls it). |
+| `display_image(base64, mime_type)` (rb, jl) | Emits an image from base64 data; `mime_type` defaults to `image/png` (Ruby: `mime_type:` keyword). |
 | `read(path, offset?, limit?)` | Reads text with 1-indexed line slicing. `local://` paths resolve under the session artifact root. |
 | `write(path, content)` | Creates parent directories and writes text. `local://` paths persist in the session artifact root. |
-| `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. |
-| `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline. |
-| `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. |
+| `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. Includes the session's `PI_*` values (see [Session environment](#session-environment)). |
+| `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline and returns `{ text, images?, details?, hasError? }` in every kernel; image blocks arrive as `images[i] = { mimeType, dataBase64 }`. |
+| `packages.install(manager, requirements, {timeout?})` (js, py) | The `%pip install` (py, manager `"pip"`) or `%bun add` / `%npm add` (js, `"bun"` / `"npm"`) installer as a call: same session environment, receipt (`py`: manager, mode, root, revision, requested, resolved, changed; `js`: installer, mode, revision, added, shadowed), cancellation by `stop` and `environment_install_*` codes; `timeout` defaults to 600 seconds and fails with `environment_install_timeout`. Python: `packages.install("pip", [...], timeout=...)`. |
+| `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. Five virtual entries document codemode itself on demand and are never listed: `eval:wait`, `eval:helpers`, `eval:kernel-tools`, `eval:environments` (the `%pip`, `%bun`/`%npm`, `%environment` and `%load` magics, their results and error codes) and `eval:isolation` (`isolate: true` cells, their limits and error codes). |
+| `require(specifier)`, `createRequire(path)` (js) | CommonJS loading inside a cell, resolved like `import`: builtins (with or without `node:`), relative files and JSON from the cell's directory, bare packages from the session's project and then its managed package environment (`%bun add`/`%npm add`). A missing module raises the runtime's own `MODULE_NOT_FOUND` error. Like Node's `require`, it carries `require.resolve` (the same lookup the call uses, so both name the same copy; builtins resolve to the runtime's own id), `require.resolve.paths` and `require.cache` (the runtime's CommonJS cache). |
+| `tool(fn, metadata?)` (js) | Registers a named function as a kernel tool for in-process children. `metadata.name` registers it under that name instead of the function's; arguments are still passed in the function's parameter order. |
+| `tool.defined()` / `tool.undefine(name)` (js) | List the kernel tools this kernel defines (sorted), and remove one (`true` if it existed). A descriptor taken before `undefine` can no longer be invoked. Both names are reserved: a kernel tool can't be registered as `defined` or `undefine` (`reserved_tool_name`), and a host tool with either name is shadowed in the `tool` namespace, so it can't be called from a JavaScript cell. |
+| `@tool` / `@tool(name=, description=, schema=)` (py) | Registers a Python function as a kernel tool for in-process children; the schema is inferred from its type hints (`tool_schema("eval:kernel-tools")` lists the rules). Callbacks run while the kernel is idle or its cell is parked in a host call, never in the middle of a running computation. `tool.defined()` and `tool.undefine(name)` work as in JavaScript. Ruby and Julia kernels answer `tools_unavailable`. |
 | `completion(prompt, model?, system?, schema?)` | Requests a one-shot host completion; `schema` asks the host to parse structured output. |
 | `agent(prompt, ...)` | Delegates to the configured active `taskTools.task` tool. Supports background handles and structured JSON results. |
+| `wait(handles, timeout?, mode?)` | Blocks the cell until the given handles settle (agent handle records, `handle()` views, completion handles, closed workpools, or saved `{kind, id, run_epoch}` references). `mode` is `all` (values in input order; the first failed, cancelled, or lost handle raises), `any` (`{index, ref, value}` of the first success), or `settled` (one outcome per input slot). `timeout` is wall-clock seconds from entry; on expiry `eval_wait_timeout` is raised and nothing is cancelled. Rides the bridge-call path, so the run budget pauses while parked. Agent and workpool handles need the host's `EvalHandleHost` capability (`eval_wait_unavailable` without it); completion handles always work. Julia extends `Base.wait` for handle views (`wait(handle(node))`). Details: `tool_schema("eval:wait")`. |
+| `handle(node \| ref \| {pool_id})` | Returns a rich view: the legacy record's fields plus a non-enumerable `control` (Python: attribute on a `dict` subclass; Ruby: singleton method) with `.status()`, `.output(format?, offset?, limit?)`, `.send(message)` (agent handles only), `.cancel()` (idempotent for that run epoch; never touches a successor run), and `.wait(timeout?)`. Every control call is fenced by owner, id, and `run_epoch` inside the task owner (`eval_handle_stale`, `eval_handle_forbidden`). `completion(prompt, handle: true)` returns such a view for a host completion. The `agent(..., handle: true)` record itself is unchanged. Details: `tool_schema("eval:helpers")`. |
+| `workpool(agent, name, mode?, tools?)` | Creates a thin adapter over the normal host `workpool` tool; exposes `pool_id`, `push(items)`, `close()`, `inspect()`, and `cancel()`. JS awaits creation and operations. `tools` is a list of kernel-tool names this cell defined; the pool's workers may call exactly those, the host refuses any name the caller doesn't hold, and a value that isn't a list of names raises `invalid_tools`. Ruby and Julia define no kernel tools, so they have nothing to grant. |
 | `output(ids, format?, offset?, limit?)` | Delegates transcript retrieval to the configured active `taskTools.output` tool. |
 | `parallel(thunks)` | Runs thunks through the configured bounded pool while preserving input order. |
 | `pipeline(items, ...stages)` | Applies stages left to right with a barrier between stages. |
@@ -127,6 +384,13 @@ into the cell carries the tool's expected parameters, so the cell can correct th
 arguments and retry instead of falling back to one-at-a-time tool calls.
 `tool_schema()` exposes the same catalog up front.
 
+A tool may also contribute globals of its own through `ToolDefinition.kernelPrelude`
+(JavaScript and Python snippets that call the ordinary `tool.<name>()`, one
+documentation line, and the exported names). While the tool is active, each
+JavaScript and Python cell installs any missing export first and the eval prompt
+lists the documentation line; once the tool is deactivated, the next cell deletes
+those names. Exports that shadow a built-in helper are rejected by the host.
+
 `agent()` is available only when the configured task tool is active in the
 session. `output()` similarly requires the configured task-output tool and
 returns immediately: a running task reports its current status, while completed
@@ -134,46 +398,183 @@ tasks return the requested transcript. Missing tools produce a clear
 availability error instead of importing an orchestration package. `agent()`
 delegates through the tool contract, so task-engine permissions, progress
 updates, and transcripts remain owned by that engine.
-`isolated`, `apply`, and `merge` are accepted for compatibility but emit a
-warning because this task-engine integration has no isolation model.
+`isolated` and `apply` accept booleans; `merge` accepts `"patch"` or `"branch"`
+(and `false`/`true` aliases respectively). The bridge checks the configured task
+parameter schema once per bridge, using the same host catalog as `tool_schema()`.
+If it advertises `isolated`, these options are forwarded; otherwise they are
+omitted with the existing warning. Senpi does not implement isolation itself.
+A foreground host result with `details.isolation.changes_applied === false`
+raises `AgentIsolationNotAppliedError` (`isolation_not_applied`), including any
+`patch_path`, `branch_name`, and `manual_command` recovery fields in its message.
+The bridge retains host `details.isolation`; successful foreground helpers still
+return text or parsed JSON.
 
-## Required summary
+Background `agent()` handles retain `id` and `agent://<id>` and include `run_epoch`.
+The host must return structured `details.task_id` (`st_` plus lowercase hex) and
+an integer `details.run_epoch >= 0`. Missing or malformed details raise
+`invalid_task_handle`; prose IDs are never used. Handles return immediately,
+so final isolation results are not available on the initial handle: await the
+completion notification or read `task_output` (via `output()`) after completion.
+Any isolation metadata supplied by the host on a handle is preserved as
+`details.isolation`, not interpreted as a foreground apply failure.
 
-Every `eval` run call MUST include a `summary` — one line in the user's
-conversational language stating what the cell does and for what purpose (e.g.
-a Korean conversation produces a Korean summary such as "src 전체에서
-legacyClient 사용처 집계"). The summary is shown in the TUI while the cell
-runs and in the finished result, so you can always tell what is running and
-why. Values longer than 80 characters are force-truncated. A run request
-without a `summary` fails with a teaching error.
+`workpool` takes exactly one of `{category, prompt, model?}` or
+`{subagent_type, prompt, model?}` as its plain-data agent spec. Mode is `fresh`
+or `keep_alive`: pass `{mode: "fresh"}` in JS, `mode="fresh"` in Python/Julia,
+or `mode: "fresh"` in Ruby. Omission is forwarded unchanged to the engine;
+hosts without an approved default still require an explicit mode. `tools`
+(kernel-tool names, for example from Python `@tool` or JavaScript `tool(fn)`) is
+forwarded unchanged to the host's `create`, which validates it: `{tools: ["add"]}`
+in JS, `tools=["add"]` in Python/Julia, `tools: ["add"]` in Ruby. There is no
+`pool.wait()`; the host delivers the aggregate.
+
+`push` forwards `[{key, input}]` and returns the host receipt without waiting
+for admission. Operations return the same `{text, details, images?, hasError?}`
+envelope as direct tool calls. Creation refuses host errors instead of returning
+a broken adapter; a missing host raises `workpool_unavailable`. The host owns
+workers, keyed yields, cancellation, and aggregate delivery after explicit
+`close()`; none is implemented in a kernel. Aggregate support requires a host
+that implements it. Reset only removes kernel variables: save `pool_id` and use
+`tool.workpool({op: "inspect", pool_id})` from a new JS cell (equivalent keyword
+arguments in other languages). An open pool's adapter can be recreated with the
+same name/spec/mode; no worker state is reconstructed in the prelude.
+
+## Required run fields
+
+Every `eval` run call MUST include a `language` (the kernel that runs the
+cell, one of the enabled languages), the `code` cell body, and a `summary` —
+one line in the language the
+user writes in: a progress update saying what the agent is doing and why, not
+a label for the code. The
+summary is shown in the TUI while the cell runs and in the finished result, so
+you can always tell what is running and why. It has no length limit; a
+collapsed block shows its first three lines. The schema requires all three
+for runs, including when `action` is omitted. Control actions (`peek`, `stop`,
+`list`) do not require run fields. Each action branch declares its own fields
+so providers can interpret it independently.
 
 ## Detached cells
 
 `eval` accepts `on_timeout: "detach"|"error"`. The default is `"detach"` in
 interactive TUI, RPC, and app-server sessions; print and JSON one-shot runs
 default to `"error"` so their result is never silently detached. A detached
-cell keeps only its own language kernel busy. A new same-language call returns
-a busy error with its cell id and output tail; calls in other languages continue
-normally. Do not re-run the cell.
+cell keeps only its own language kernel busy. New same-language cells are admitted
+into its FIFO queue; calls in other languages continue normally. Queued cells may
+also detach, within the global `maxDetachedCells` cap. At capacity, the first idle
+detach attempt leaves the cell foreground and re-arms one wait for the remaining
+submission-based foreground window. At the window, it detaches if a slot is now
+free; otherwise it settles `cancelled` with `eval_background_capacity_reached`,
+listing the live cells and a stop-or-wait remedy. Cells that complete inside the
+window return normally. Cancelling a queued cell never interrupts its predecessor.
+Do not re-run a detached or queued cell; each detached cell completes as one notification.
+The notification carries the same text the cell's result would have shown in the
+foreground (the output sink's configured head, its tail, the middle-elision marker and
+the full-output artifact notice), framed by the outcome line and the kernel-state note,
+plus any images the cell displayed.
+
+Queued steering also detaches an eligible interactive foreground call, including
+one paused in a host tool bridge, without cancelling its computation. If the
+global detached cap is reached, steering leaves the call waiting. Follow-up
+messages, explicit `on_timeout: "error"`, and print/JSON calls do not trigger this
+transition; caller abort and existing deadlines retain their cancellation behavior.
+
+Every cell, detached or not, is bounded by two kill deadlines. The run budget
+(`runBudgetSeconds`, or the call's `timeout`) charges only the cell's own
+execution time and is paused while queued or while a host tool call is in flight, so a cell
+waiting on `agent()` survives while a runaway child process or loop does not.
+The hard limit (`hardLimitSeconds`, raised by a larger `timeout`) is wall-clock
+from submission and bounds queued and parked cells too. A cell killed by either deadline reports which one
+in its result or completion notification, together with whether kernel state
+survived; the tool schema states the configured numbers. The `timeout` value
+never changes the idle detach deadline: that is `cellTimeoutSeconds` capped by
+`foregroundWindowSeconds`; queued steering can detach the call earlier.
 
 While any cell is detached, the interactive footer shows a highlighted
 `↗ <language> · <summary>` status on the extension status line (the cell id
 when the call had no summary), clearing as soon as the last detached cell settles.
+Queued entries are labelled `queued`; an all-queued footer shows `(queued)` instead
+of an elapsed duration. Elapsed time counts only from execution start.
+
+Use `eval({ action: "list" })` without a language or cell id to see live and
+recently settled cells across languages. Each line includes the id, language,
+state, elapsed execution seconds, queue predecessors, and summary (or a short code
+preview); `details.cells` carries the typed cell metadata. Listing never consumes
+completion notifications.
+
+A run with `reset: true` resets only its selected language and is refused with
+`eval_kernel_busy_reset_refused` while any other cell in that language is live,
+including queued cells. The requesting cell fails without changing the kernel or
+cancelling existing work. Stop those cells explicitly or wait for their completion
+notifications before resetting; live cells in other languages do not block reset.
 
 Use `eval({ action: "peek", cell_id })` for its state and buffered output, or
-`eval({ action: "stop", cell_id })` to cancel it. Python stop interrupts the
-existing kernel and preserves variables. JavaScript stop kills and restarts its
-worker, so JavaScript VM state is lost. Detached completion messages state when
-kernel variables are available to the next eval cell; oversized buffered output
-is written under the session local root and referenced as `local://…`.
+`eval({ action: "stop", cell_id })` to cancel it. Stopping a queued cell removes it
+without interrupting the active cell; kernel state is retained. Python running-cell stop interrupts the
+existing kernel and preserves variables. JavaScript stop is cooperative first:
+Stop ends the cell and everything it started, not the kernel's variables. The
+worker rejects the cell's pending bridge `tool.*` calls and releases the cell:
+its timers are cleared (the globals and the `node:timers` module alike), its
+pending `Bun.sleep`, `node:timers/promises` waits, `fetch` requests and file
+reads reject with the interruption, and the sockets, servers, file streams,
+`readline` interfaces, WebSockets, WebViews, nested workers and child processes
+it opened are closed or terminated, whether made with a factory or a
+constructor. A resource that will not close is reported on the cell output. The stop result arrives once those children are gone, and the
+worker and every global from earlier cells survive. If the stopped cell's own
+`catch`/`finally` still runs, it cannot print, call tools, start processes,
+schedule timers or open connections. One boundary remains: code that resumes
+because a later cell resolves a promise the stopped cell was awaiting runs
+until it reaches an operation a stopped cell may no longer start (output, tool
+calls, processes, timers, network, files, message channels, workers).
+
+An unhandled promise rejection never crashes the JavaScript kernel; its
+variables are kept, as in the Node REPL and Jupyter. The rejection is reported
+on the cell that is running, or on the next cell, naming the cell that started
+the work when it is known ("from cell <id>, after it was stopped"), with the
+error message and the top of its stack. A burst becomes one report plus
+"... and K more unhandled promise rejections". A fatal error (an uncaught
+exception) still restarts the worker, and the result says variables are lost. Only a cell stopped during a `Bun.$` command costs
+the worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
+`child_process.spawnSync`) cannot be stopped at all; after a 3 s termination
+deadline a fresh worker replaces it, the cell output gains a stderr line naming
+the blocked synchronous call, and the blocked call keeps running until it
+returns. Kernel-level timeouts follow the same path. Stop results and detached
+completion messages report the real outcome - variables preserved, worker
+restarted, or outcome unknown - never a per-language assumption; oversized
+buffered output is written under the session local root and referenced as
+`local://…`.
+
+When Stop restarts a kernel waiting on `Bun.$`, the result explicitly says that
+the kernel restarted and its variables were cleared. Use `Bun.spawn` or the
+bash tool for long-running commands you may want to stop. Native `Bun.$`
+cancellation is tracked in [Bun #11868](https://github.com/oven-sh/bun/issues/11868);
+the shell's interpretation and object redirects are not replaced.
+
+When a Python, Ruby, or Julia interpreter dies on its own (a crash, an OOM kill,
+`os.kill(os.getpid(), 9)`), the cell it was running fails once and is never run
+again: its side effects may already have happened. Cells queued behind it keep
+their order, callbacks, and deadlines and run on one fresh interpreter started
+for that death; the first result there carries
+`[<language> kernel was restarted after <reason>; every global is lost]`. If the
+fresh interpreter dies too before it finished a cell, the queued cells fail with
+`eval_kernel_unavailable` naming the reason, and the next cell you run starts
+another. An interpreter whose exit cannot be confirmed is reported, never
+replaced by a second one. The JavaScript worker keeps its own restart path.
+
+Commands a cell runs through `Bun.$` never read the host's terminal: the worker
+thread shares the TUI's stdin, so the shell wrapper hands every template an
+empty pipe (`true | ( … )`) while a cell is active. Output, exit codes, `cwd`,
+`env`, and explicit `< ${input}` redirects are unchanged; `Bun.spawn` and
+`Bun.spawnSync` already default stdin to `/dev/null`.
 
 ## Output and artifacts
 
 Cell output is streamed while the cell runs. Large streams spill to an absolute
-file after the default 50 KiB threshold. With a session file such as
-`/path/session.jsonl`, artifacts live in `/path/session-artifacts/`; sessions
-without a file use a unique temporary directory. Truncated results include a
-plain-path notice such as `[Full output: /absolute/path/eval-….log]`.
+file after the default 50 KiB threshold or when the output column cap drops
+bytes. With a session file such as `/path/session.jsonl`, artifacts live in
+`/path/session-artifacts/`; sessions without a file use a unique temporary
+directory. A truncated result tells the model so in its text: the kept and
+original sizes, then a plain-path notice such as
+`[Full output: /absolute/path/eval-….log]`.
 
 ## Deliberate differences from oh-my-pi
 
@@ -185,6 +586,13 @@ plain-path notice such as `[Full output: /absolute/path/eval-….log]`.
   package.
 - Task transcript formats are limited to full (`raw`) and trailing (`tail`)
   output. Query, JSON, and stripped metadata formats are task-engine concerns.
+- There is no `pool.wait()`: a workpool's aggregate is delivered by the host after
+  `close()`, so a kernel never blocks on another engine's workers.
+- There is no `code_mode_only` mode and no speculative cell execution; both are
+  deferred to a separate design (omo#9232) rather than approximated here.
+- Kernels are never shared across owners: each session (and each in-process child
+  with its own eval tool) owns its kernels, and handles are fenced by owner, id and
+  run epoch.
 
 ## Security and lifecycle
 
@@ -200,12 +608,117 @@ namespace to prevent recursive execution.
 
 ## Validation
 
+The regression gate compares full prompt content (240 dialect/capability/runtime/host
+combinations), schemas, helper census, live helper witnesses and eager imports,
+and runs the legacy contracts. It requires Bun, Node, Python, Ruby and Julia; a missing
+interpreter fails rather than skipping a runtime. It does not gate wall-clock
+timing or absolute memory footprints; those belong to the paired benchmark.
+Ruby 3.4 and later also require the `base64` gem (`gem install base64 --version 0.3.0 --no-document`).
+
+The eager-import probe starts without third-party validation modules loaded.
+It validates observer records only after measurement, so a target sharing the
+harness dependency tree has the same cold census as a separate checkout.
+Module IDs are package-relative. The exact census covers codemode, its non-virtual
+dependency closure and Node builtins. The observer records parent edges and reads
+both loader `VIRTUAL_MODULES` tables: their backing packages and dependencies
+reachable only across virtual edges belong to the host and are excluded from
+set equality. Every observed edge and classification remains in the report.
+Workspace imports resolve through built `dist` entries. The gate build records
+the source file set, inherited build configs and content hashes after a successful
+build; preflight rejects missing, changed or deleted inputs. Unchanged content
+remains valid after timestamp refreshes. Each ignored `.senpi-gate-inputs.json`
+certificate sits beside its workspace manifest, outside the published `dist` tree.
+
+```bash
+bun packages/senpi-codemode/scripts/gate-build.ts
+bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
+bun run --cwd packages/senpi-codemode test -- test/gate
+```
+
+The package test script already selects `test/`, so the last command intentionally
+runs the full package suite. For a focused gate-only run, invoke Vitest directly:
+
+```bash
+bun run --cwd packages/senpi-codemode vitest run test/gate
+```
+
+Install and build both the head checkout and a clean checkout of the PR merge
+base with `bun install --ignore-scripts --frozen-lockfile`. Build each target with
+the head harness, `bun packages/senpi-codemode/scripts/gate-build.ts <checkout>`.
+Record the baseline with the **head harness** against that freshly built base
+checkout, not by running an older harness:
+
+```bash
+bun run --cwd packages/senpi-codemode gate --target <base-checkout> \
+  --baseline test/gate/baseline.json --write-baseline
+```
+
+Record with the canonical runtimes, so the baseline's runtime observations do not
+flip between recordings: Bun 1.4.2, Python 3.14, Julia 1.12 and Ruby 4.x from
+Homebrew (put `/opt/homebrew/opt/ruby/bin` first on `PATH`; macOS's system Ruby
+2.6 records a different runtime). Check `ruby --version` and `python3 --version`
+before `--write-baseline`.
+
+The report is gitignored `gate-report.json` by default (`--report <path>` overrides it).
+`test/gate/allowlist.json` contains reviewed additive changes keyed by plan node.
+A pull request that changes the committed `baseline.json` itself (an intended
+schema or prompt change, a renamed contract, a deleted module) must list every
+cell it edits or removes under that node's `changes`, each as
+`{ "key": "<section>/<cell>", "reason": "..." }`. In a pull request the gate reads
+the baseline at the merge base and fails any baseline edit or removal that is
+not listed, any edited or added cell that differs from what the head measures,
+and any listed removal the head still measures. A cell written into the baseline that
+was absent at the merge base must be listed under some node's `additions` (an entry an earlier
+pull request added counts, so a re-record can write in cells approved before); only `changes`
+entries must be new in this pull request. Reviewers read each `changes`
+entry: it is the only record of why a protected surface moved. If the merge
+base cannot be resolved in a pull request, the gate fails closed; the gate job
+checks out full history for this. A local run outside a pull request reviews
+baseline changes only with `--base-ref <ref>`. The test-only
+`SENPI_CODEMODE_GATE_MUTATE=drop-phase` report mutation proves that helper removal
+is rejected. `SENPI_CODEMODE_GATE_MUTATE=leak-kernel` leaves the real kernel
+alive at the teardown witness, then closes it in `finally`; nonzero process,
+worker, socket, handle, subscription and active-resource listener counts fail
+by name. Constructors are observed because Bun's active-handle/report APIs
+return empty arrays even for live workers.
+Live timers are observed independently of the import census, including unref'd
+global timers, named and namespace imports from `node:timers`,
+`node:timers/promises` (including interval iterators and the scheduler), and
+self-rearming `AbortSignal.timeout` polls. Failures name the timer API and its
+creation site. The gate installs delegating wrappers before the kernel graph
+loads; on Bun its module-replacement API also updates builtin ESM bindings.
+These wrappers run only in gate processes and keep the native timer behavior.
+The only production-source additions are an inert gate observer at the existing
+worker, interpreter-process and bridge-server constructors. It is undefined in
+normal execution. This hook is necessary because Bun does not refresh named
+builtin exports when `syncBuiltinESMExports()` runs; patching their default
+exports alone otherwise reports zero resources even for a leaked real kernel.
+
+| Inert hook site | Measured resource | Verification |
+| --- | --- | --- |
+| `src/kernels/js/worker-host.ts` | Worker exit | Real Bun kernel close/leak tests |
+| `src/kernels/py/process.ts` | Python child close | Five-runtime gate and kernel-leak mutation |
+| `src/kernels/shared/subprocess-process.ts` | Ruby/Julia child close | Five-runtime gate and kernel-leak mutation |
+| `src/bridge/http-server.ts` | Server close and accepted sockets | Real Bun bridge close/leak tests |
+
+The gate-only `leak-bridge` mutation leaves the real bridge server open for the
+witness and closes it in `finally`; the real-runtime test must observe an open
+handle. Neither mutation is read by production code.
+
+Legacy scenario identities are compared exactly, so deleting or renaming a
+test cannot make the gate green. Platform-dependent skip outcomes remain
+visible in the report. Driver tests await child close events, with a generous
+hang watchdog; the infinite-loop timeout uses an injected clock after the
+worker announces execution. No deadline tests are excluded from the gate.
+The held-child probe advances the parent clock past all former startup
+deadlines three times before releasing the child's IPC barrier.
+
 ```bash
 cd packages/senpi-codemode
-npm test
+bun run test
 
 cd ../..
-npm run check
+bun run check
 ```
 
 Direct real-surface QA drivers live in `scripts/qa-*.ts`: kernel cells

@@ -1,10 +1,22 @@
 import { constants as bufferConstants } from "buffer";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "fs";
+import {
+	appendFileSync,
+	closeSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	openSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+	writeSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { APP_NAME } from "../../src/config.ts";
 import { findMostRecentSession, loadEntriesFromFile, SessionManager } from "../../src/core/session-manager.ts";
+import { assistantMsg, readSessionFileRoles, userMsg } from "../utilities.ts";
 
 const HEADER_SCAN_LIMIT_BYTES = 1024 * 1024;
 
@@ -79,6 +91,59 @@ describe("loadEntriesFromFile", () => {
 		);
 		const entries = loadEntriesFromFile(file);
 		expect(entries).toHaveLength(2);
+	});
+
+	it("leaves an unterminated valid record byte-identical (reader path never writes)", () => {
+		const file = join(tempDir, "unterminated.jsonl");
+		const content =
+			'{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' +
+			'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"user","content":"hi","timestamp":1}}';
+		writeFileSync(file, content);
+
+		expect(loadEntriesFromFile(file)).toHaveLength(2);
+		// D5: the trailing-newline repair moved to SessionManager.open (owner side);
+		// loadEntriesFromFile is a reader and leaves the file untouched.
+		expect(readFileSync(file, "utf8")).toBe(content);
+	});
+
+	it("leaves an unterminated malformed final fragment byte-identical (reader path never writes)", () => {
+		const file = join(tempDir, "malformed-tail.jsonl");
+		const content =
+			'{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' + '{"type":"message"';
+		writeFileSync(file, content);
+
+		expect(loadEntriesFromFile(file)).toHaveLength(1);
+		// D5: the trailing-newline repair moved to SessionManager.open (owner side);
+		// loadEntriesFromFile is a reader and leaves the file untouched.
+		expect(readFileSync(file, "utf8")).toBe(content);
+	});
+
+	it("repairs a missing trailing newline on open before the first append (owner path)", () => {
+		const file = join(tempDir, "repair-on-open.jsonl");
+		// Already at the current session version, so open performs only the newline repair.
+		const content =
+			'{"type":"session","version":3,"id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n' +
+			'{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z","message":{"role":"user","content":"hi","timestamp":1}}';
+		writeFileSync(file, content);
+
+		// D5: SessionManager.open owns the repair so the first append lands on its own line.
+		const session = SessionManager.open(file, tempDir);
+		expect(readFileSync(file, "utf8")).toBe(`${content}\n`);
+
+		session.appendMessage({ role: "user", content: "after repair", timestamp: 1735689602000 });
+		const after = readFileSync(file, "utf8");
+		expect(after.startsWith(`${content}\n`)).toBe(true);
+		const appendedLine = after.slice(content.length + 1).trim();
+		expect(JSON.parse(appendedLine).message.content).toBe("after repair");
+	});
+
+	it("does not modify an unterminated non-session file", () => {
+		const file = join(tempDir, "invalid.jsonl");
+		const content = '{"type":"message","id":"1"}';
+		writeFileSync(file, content);
+
+		expect(loadEntriesFromFile(file)).toEqual([]);
+		expect(readFileSync(file, "utf8")).toBe(content);
 	});
 
 	it.each([
@@ -375,6 +440,22 @@ describe("SessionManager custom flat session directory", () => {
 		const continuedA = SessionManager.continueRecent(projectA, tempDir);
 		expect(continuedA.getSessionFile()).toBe(sessionA);
 	});
+
+	it("rejects a cancelled session listing", async () => {
+		createPersistedSession(projectA, "from A");
+		createPersistedSession(projectB, "from B");
+		const controller = new AbortController();
+		const listing = SessionManager.listAll(
+			tempDir,
+			(_loaded, _total, partialSessions) => {
+				if (partialSessions) controller.abort();
+			},
+			controller.signal,
+		);
+
+		await expect(listing).rejects.toMatchObject({ name: "AbortError" });
+		await expect(SessionManager.listAll(undefined, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+	});
 });
 
 describe("SessionManager.setSessionFile with corrupted files", () => {
@@ -452,5 +533,45 @@ describe("SessionManager.setSessionFile with corrupted files", () => {
 		const sm2 = SessionManager.open(emptyFile, tempDir);
 		expect(sm2.getSessionId()).toBe(sessionId);
 		expect(sm2.getHeader()?.type).toBe("session");
+	});
+});
+
+describe("SessionManager session file creation", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-session-persist-"));
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("does not create a file for a session with only setup entries", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendModelChange("anthropic", "claude-sonnet-4-5");
+		session.appendThinkingLevelChange("off");
+
+		expect(existsSync(session.getSessionFile()!)).toBe(false);
+	});
+
+	// #10000: the first prompt must survive a first turn that never produces an assistant message
+	it("creates the file when the first user message is appended", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendModelChange("anthropic", "claude-sonnet-4-5");
+		session.appendMessage(userMsg("first question"));
+
+		const file = session.getSessionFile()!;
+		expect(readSessionFileRoles(file)).toEqual(["session", "model_change", "user"]);
+		expect(SessionManager.open(file, tempDir).buildSessionContext().messages).toHaveLength(1);
+	});
+
+	it("appends later entries to the file without rewriting earlier ones", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendMessage(userMsg("first question"));
+		session.appendCustomEntry("preset-state", { name: "plan" });
+		session.appendMessage(assistantMsg("first answer"));
+
+		expect(readSessionFileRoles(session.getSessionFile()!)).toEqual(["session", "user", "custom", "assistant"]);
 	});
 });

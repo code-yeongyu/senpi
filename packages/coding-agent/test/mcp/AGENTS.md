@@ -46,6 +46,6 @@ fixtures/schema/       nasty-input.schema.json + nasty-input.typebox.golden.json
 ## COMMANDS
 
 ```bash
-npm --prefix packages/coding-agent test -- --run test/mcp/<file>.test.ts
-CI=1 npm --prefix packages/coding-agent test -- --run test/mcp   # subprocess-heavy: one fork
+bun run --cwd packages/coding-agent test --run test/mcp/<file>.test.ts
+CI=1 bun run --cwd packages/coding-agent test --run test/mcp   # subprocess-heavy: one fork
 ```

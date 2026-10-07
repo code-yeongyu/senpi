@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { FORK_OWNED_MODEL_SHARDS, importedModelShards, MODEL_SHARD_SUFFIX } from "./model-shards.ts";
 
-export const MODEL_DATA_SCHEMA_VERSION = 3;
+export const MODEL_DATA_SCHEMA_VERSION = 6;
 export const MODEL_DATA_MANIFEST_FILE = ".manifest.json";
 
 export type ModelDataStructure = Record<string, Record<string, string>>;
@@ -15,7 +16,7 @@ export interface ModelDataManifest {
 }
 
 const MODEL_DATA_IMPORT_PATTERN =
-	/^import \{ [A-Z][A-Z0-9_]*_MODELS \} from "\.\/providers\/([^"/]+)\.models\.ts";$/gm;
+	/^import \{ [A-Z][A-Z0-9_]*_CLASSIFIER_MODELS, [A-Z][A-Z0-9_]*_IMAGE_MODELS, [A-Z][A-Z0-9_]*_MODELS \} from "\.\/providers\/([^"/]+)\.models\.ts";$/gm;
 
 function sha256(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
@@ -50,6 +51,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isModalityList(value: unknown): value is ("text" | "image")[] {
+	return Array.isArray(value) && value.length > 0 && value.every((entry) => entry === "text" || entry === "image");
+}
+
+/** Input modalities also admit the fork's video input (kimi-coding k3). */
+function isInputModalityList(value: unknown): value is ("text" | "image" | "video")[] {
+	return (
+		Array.isArray(value) &&
+		value.length > 0 &&
+		value.every((entry) => entry === "text" || entry === "image" || entry === "video")
+	);
+}
+
 function readJsonObject(path: string, description: string, errors: string[]): Record<string, unknown> | undefined {
 	let parsed: unknown;
 	try {
@@ -73,9 +87,9 @@ function readProviderStructure(path: string, providerId: string): Record<string,
 	const models = new Map<string, string>();
 	for (const [api, value] of Object.entries(groups)) {
 		if (!isRecord(value)) throw new Error(`${path} API group ${JSON.stringify(api)} must be an object`);
-		for (const modelId of Object.keys(value)) {
-			if (models.has(modelId)) throw new Error(`${path} contains model ${modelId} in more than one API group`);
-			models.set(modelId, api);
+		for (const modelKey of Object.keys(value)) {
+			if (models.has(modelKey)) throw new Error(`${path} contains ${modelKey} in more than one API group`);
+			models.set(modelKey, api);
 		}
 	}
 	if (models.size === 0) throw new Error(`${path} contains no generated model data`);
@@ -98,8 +112,21 @@ export function readModelDataStructure(packageRoot: string): ModelDataStructure 
 	const dataDir = join(providersDir, "data");
 	const providerIds = readModelDataProviderIds(packageRoot);
 	const expectedShards = providerIds.map((providerId) => `${providerId}.models.ts`).sort();
+	// A shard a provider module imports is kept by the prune even when the run wrote none of them -
+	// models.dev can stop describing a provider the fork still ships. Such a shard is outside the
+	// aggregator's bookkeeping for the same reason a fork-owned one is: its module imports it directly.
+	const importedShards = importedModelShards(
+		readdirSync(providersDir)
+			.filter((entry) => entry.endsWith(".ts") && !entry.endsWith(MODEL_SHARD_SUFFIX))
+			.map((entry) => readFileSync(join(providersDir, entry), "utf8")),
+	);
 	const actualShards = readdirSync(providersDir)
-		.filter((entry) => entry.endsWith(".models.ts"))
+		.filter(
+			(entry) =>
+				entry.endsWith(MODEL_SHARD_SUFFIX) &&
+				!FORK_OWNED_MODEL_SHARDS.has(entry) &&
+				!(importedShards.has(entry) && !expectedShards.includes(entry)),
+		)
 		.sort();
 	if (!sameStrings(expectedShards, actualShards)) {
 		throw new Error(
@@ -158,19 +185,36 @@ function validateModelValue(
 	}
 	if (typeof value.name !== "string" || value.name.length === 0) errors.push(`${label} has no model name`);
 	if (typeof value.baseUrl !== "string") errors.push(`${label} has no baseUrl string`);
-	if (typeof value.reasoning !== "boolean") errors.push(`${label} has no reasoning boolean`);
-	if (
-		!Array.isArray(value.input) ||
-		value.input.length === 0 ||
-		value.input.some((entry) => entry !== "text" && entry !== "image" && entry !== "video")
-	) {
-		errors.push(`${label} has invalid input modalities`);
+	if (!isInputModalityList(value.input)) errors.push(`${label} has invalid input modalities`);
+	if (value.type === "image") {
+		if (!isModalityList(value.output) || !value.output.includes("image")) {
+			errors.push(`${label} has invalid output modalities`);
+		}
+	} else if (value.output !== undefined) {
+		errors.push(`${label} has unsupported output modalities`);
 	}
-	if (typeof value.contextWindow !== "number" || !Number.isFinite(value.contextWindow) || value.contextWindow <= 0) {
-		errors.push(`${label} has invalid contextWindow`);
-	}
-	if (typeof value.maxTokens !== "number" || !Number.isFinite(value.maxTokens) || value.maxTokens <= 0) {
-		errors.push(`${label} has invalid maxTokens`);
+	if (value.type === "chat") {
+		if (typeof value.reasoning !== "boolean") errors.push(`${label} has no reasoning boolean`);
+		if (
+			typeof value.contextWindow !== "number" ||
+			!Number.isFinite(value.contextWindow) ||
+			value.contextWindow <= 0
+		) {
+			errors.push(`${label} has invalid contextWindow`);
+		}
+		if (typeof value.maxTokens !== "number" || !Number.isFinite(value.maxTokens) || value.maxTokens <= 0) {
+			errors.push(`${label} has invalid maxTokens`);
+		}
+	} else if (value.type === "classifier") {
+		if (
+			typeof value.contextWindow !== "number" ||
+			!Number.isFinite(value.contextWindow) ||
+			value.contextWindow <= 0
+		) {
+			errors.push(`${label} has invalid contextWindow`);
+		}
+	} else if (value.type !== "image") {
+		errors.push(`${label} has type ${JSON.stringify(value.type)}, expected "chat", "image", or "classifier"`);
 	}
 	if (!isRecord(value.cost)) {
 		errors.push(`${label} has invalid cost metadata`);
@@ -246,13 +290,18 @@ export function validateModelDataDirectory(structure: ModelDataStructure, dataDi
 				errors.push(`${filename} API group ${JSON.stringify(api)} must be an object`);
 				continue;
 			}
-			for (const [modelId, model] of Object.entries(value)) {
-				if (actualModels.has(modelId)) {
-					errors.push(`${providerId}/${modelId} appears in more than one API group`);
+			for (const [modelKey, model] of Object.entries(value)) {
+				if (actualModels.has(modelKey)) {
+					errors.push(`${providerId}/${modelKey} appears in more than one API group`);
 					continue;
 				}
-				actualModels.set(modelId, api);
+				actualModels.set(modelKey, api);
+				const separator = modelKey.indexOf(":");
+				const modelId = separator >= 0 ? modelKey.slice(separator + 1) : modelKey;
 				validateModelValue(model, providerId, modelId, api, errors);
+				if (isRecord(model) && modelKey !== `${String(model.type)}:${String(model.id)}`) {
+					errors.push(`${providerId}/${modelKey} has mismatched type/id identity`);
+				}
 			}
 		}
 

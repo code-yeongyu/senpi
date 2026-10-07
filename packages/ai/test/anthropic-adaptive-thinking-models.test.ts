@@ -11,6 +11,9 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"anthropic/claude-sonnet-4-6",
 	"anthropic/claude-sonnet-5",
 	"cloudflare-ai-gateway/claude-fable-5",
+	"fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
+	"fireworks/accounts/fireworks/models/gpt-oss-120b",
+	"fireworks/accounts/fireworks/models/qwen3p8-max",
 	"github-copilot/claude-opus-4.6",
 	"github-copilot/claude-opus-4.7",
 	"github-copilot/claude-opus-4.8",
@@ -46,16 +49,25 @@ function getAllModels(): Model<Api>[] {
 
 describe("Anthropic adaptive thinking model metadata", () => {
 	it("marks built-in Anthropic Messages models that use adaptive thinking", () => {
-		const flaggedModels = getAllModels()
+		const allModels = getAllModels();
+		const catalogIds = new Set(allModels.map((model) => `${model.provider}/${model.id}`));
+		const expectedInCatalog = EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS.filter((id) => catalogIds.has(id)).sort();
+		expect(expectedInCatalog.length).toBeGreaterThan(0);
+
+		const flaggedModels = allModels
 			.filter((model): model is Model<"anthropic-messages"> => model.api === "anthropic-messages")
 			.filter((model) => model.compat?.forceAdaptiveThinking === true)
 			.map((model) => `${model.provider}/${model.id}`)
 			.sort();
 
-		expect(flaggedModels).toEqual(expect.arrayContaining([...EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS].sort()));
+		expect(flaggedModels).toEqual(expect.arrayContaining(expectedInCatalog));
 		expect(flaggedModels).toEqual(
-			flaggedModels.filter((modelId) =>
-				/(opus[-.]4[-.][678]|opus[-.]5|sonnet[-.]4[-.]6|sonnet[-.]5|fable[-.]5|kimi-coding\/)/.test(modelId),
+			flaggedModels.filter(
+				(modelId) =>
+					// Regression for #9323: Fireworks uses catalog effort metadata and
+					// verified fallbacks, not a fixed set of adaptive model names.
+					modelId.startsWith("fireworks/") ||
+					/(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|fable[-.]5|kimi-coding\/)/.test(modelId),
 			),
 		);
 	});

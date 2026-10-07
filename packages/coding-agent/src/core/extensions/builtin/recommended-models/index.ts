@@ -12,18 +12,34 @@ const AUTO_SWITCH_PROVENANCE = new Set<NonNullable<SessionStartEvent["initialMod
 ]);
 const MODEL_ID_SUFFIXES = ["-ultrafast", "-unlocked", "-256k", "-fast"] as const;
 
-export const RECOMMENDED_DEFAULT_MODELS = [
-	["kimi-k3", "max"],
-	["gpt-5.6-sol", "medium"],
-	["claude-fable-5", "high"],
-	["claude-opus-5", "xhigh"],
-	["glm-5.2", "max"],
-] as const satisfies ReadonlyArray<readonly [string, ThinkingLevel]>;
+// Provider lanes ranked like the category and model-profile chains: the subscription lane first.
+// A shipped rung is served ONLY by its ranked lanes, so gateway aggregators (opengateway,
+// openrouter, vercel-ai-gateway) and other resellers are never pulled in. A `recommendedModels`
+// override id outside this table carries no ranking and any provider may serve it.
+const CLAUDE_PROVIDERS = [
+	"anthropic-subscription",
+	"anthropic",
+	"anthropic-api",
+	"github-copilot",
+	"opencode",
+] as const;
+const KIMI_PROVIDERS = ["kimi-coding", "kimi-for-coding", "moonshotai", "opencode-go"] as const;
+const GPT_PROVIDERS = ["chatgpt-subscription", "openai", "github-copilot", "opencode"] as const;
+const GLM_PROVIDERS = ["zai-coding-plan", "opencode-go"] as const;
 
-type RecommendedModel = { modelId: string; thinkingLevel: ThinkingLevel };
+export const RECOMMENDED_DEFAULT_MODELS = [
+	["claude-opus-5-5", "medium", CLAUDE_PROVIDERS],
+	["claude-fable-5-1", "xhigh", CLAUDE_PROVIDERS],
+	["kimi-k3", "max", KIMI_PROVIDERS],
+	["gpt-6-astra", "xhigh", GPT_PROVIDERS],
+	["gpt-6.1-sol", "medium", GPT_PROVIDERS],
+	["glm-5.3", "max", GLM_PROVIDERS],
+] as const satisfies ReadonlyArray<readonly [string, ThinkingLevel, readonly string[]]>;
+
+type RecommendedModel = { modelId: string; thinkingLevel: ThinkingLevel; providers: readonly string[] };
 
 const DEFAULT_RECOMMENDATIONS: readonly RecommendedModel[] = RECOMMENDED_DEFAULT_MODELS.map(
-	([modelId, thinkingLevel]) => ({ modelId, thinkingLevel }),
+	([modelId, thinkingLevel, providers]) => ({ modelId, thinkingLevel, providers }),
 );
 const DEFAULT_RECOMMENDATIONS_BY_MODEL_ID = new Map(
 	DEFAULT_RECOMMENDATIONS.map((recommendation) => [recommendation.modelId, recommendation]),
@@ -54,7 +70,7 @@ function recommendationsFor(configuredModelIds: string[] | undefined): readonly 
 		.filter((modelId) => modelId.length > 0)
 		.map(
 			(modelId): RecommendedModel =>
-				DEFAULT_RECOMMENDATIONS_BY_MODEL_ID.get(modelId) ?? { modelId, thinkingLevel: "medium" },
+				DEFAULT_RECOMMENDATIONS_BY_MODEL_ID.get(modelId) ?? { modelId, thinkingLevel: "medium", providers: [] },
 		);
 }
 
@@ -64,7 +80,13 @@ function findAvailableRecommendation(
 ): { recommendation: RecommendedModel; model: Model<Api> } | undefined {
 	const available = ctx.modelRegistry.getAvailable().filter((model) => ctx.modelRegistry.hasConfiguredAuth(model));
 	for (const recommendation of recommendations) {
-		const model = available.find((candidate) => canonicalModelId(candidate.id) === recommendation.modelId);
+		const candidates = available.filter((candidate) => canonicalModelId(candidate.id) === recommendation.modelId);
+		const model =
+			recommendation.providers.length === 0
+				? candidates[0]
+				: recommendation.providers
+						.map((provider) => candidates.find((candidate) => candidate.provider === provider))
+						.find((candidate) => candidate !== undefined);
 		if (model) {
 			return { recommendation, model };
 		}

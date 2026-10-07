@@ -2,22 +2,30 @@
  * Shared utilities for Google Generative AI and Google Vertex providers.
  */
 
-import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
+import {
+	type Content,
+	FinishReason,
+	FunctionCallingConfigMode,
+	ThinkingLevel as GoogleSdkThinkingLevel,
+	type Part,
+	type ThinkingConfig,
+} from "@google/genai";
+import { clampThinkingLevel } from "../models.ts";
 import type {
-	Context,
 	ImageContent,
 	Model,
-	ModelThinkingLevel,
 	ProviderNativeContent,
 	StopReason,
 	StreamOptions,
 	TextContent,
 	ThinkingLevel,
 	Tool,
+	TranscriptContext,
 } from "../types.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { normalizeToolCallId } from "../utils/tool-call-id.ts";
+import { collapseSystemMessages, withoutInitialSystemMessage } from "../utils/transcript.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -30,13 +38,19 @@ type GoogleApiType = "google-generative-ai" | "google-vertex";
 export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
 export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
 
+const GOOGLE_SDK_THINKING_LEVEL_MAP: Record<GoogleApiThinkingLevel, GoogleSdkThinkingLevel> = {
+	THINKING_LEVEL_UNSPECIFIED: GoogleSdkThinkingLevel.THINKING_LEVEL_UNSPECIFIED,
+	MINIMAL: GoogleSdkThinkingLevel.MINIMAL,
+	LOW: GoogleSdkThinkingLevel.LOW,
+	MEDIUM: GoogleSdkThinkingLevel.MEDIUM,
+	HIGH: GoogleSdkThinkingLevel.HIGH,
+};
+
 /** Resolve a supported pi level or model-specific Google mapping to a standard Google level. */
 export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
 	model: Model<T>,
-	level: ModelThinkingLevel,
+	level: ThinkingLevel,
 ): ResolvedGoogleThinkingLevel {
-	if (level === "off") return "high";
-
 	const mapped = model.thinkingLevelMap?.[level];
 	const resolvedLevel = typeof mapped === "string" ? mapped.toLowerCase() : level;
 	switch (resolvedLevel) {
@@ -50,6 +64,52 @@ export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
 				`Unsupported Google thinking level mapping for ${model.provider}/${model.id}: ${level} -> ${String(mapped)}`,
 			);
 	}
+}
+
+/**
+ * Whether this model uses Gemini's discrete `thinkingLevel` control instead of
+ * the token-based `thinkingBudget` control. Supported levels come from the
+ * model's `thinkingLevelMap`; this only selects the Google wire format.
+ */
+export function usesGoogleThinkingLevel<T extends GoogleApiType>(model: Model<T>): boolean {
+	const id = model.id.toLowerCase();
+	return (
+		// Match Gemini 3 Pro/Flash IDs with or without a minor version, such as
+		// gemini-3-flash-preview, gemini-3.1-pro-preview, and gemini-3.8-flash.
+		/gemini-3(?:\.\d+)?-(?:pro|flash)/.test(id) ||
+		id === "gemini-flash-latest" ||
+		id === "gemini-flash-lite-latest" ||
+		// Match both hosted Gemma 4 naming forms: gemma-4-* and gemma4-*.
+		/gemma-?4/.test(id)
+	);
+}
+
+export function toGoogleThinkingLevel(level: ResolvedGoogleThinkingLevel): GoogleApiThinkingLevel {
+	switch (level) {
+		case "minimal":
+			return "MINIMAL";
+		case "low":
+			return "LOW";
+		case "medium":
+			return "MEDIUM";
+		case "high":
+			return "HIGH";
+	}
+}
+
+export function toGoogleSdkThinkingLevel(level: GoogleApiThinkingLevel): GoogleSdkThinkingLevel {
+	return GOOGLE_SDK_THINKING_LEVEL_MAP[level];
+}
+
+export function getDisabledGoogleThinkingConfig<T extends GoogleApiType>(model: Model<T>): ThinkingConfig {
+	if (!usesGoogleThinkingLevel(model)) return { thinkingBudget: 0 };
+
+	const fallback = clampThinkingLevel(model, "off");
+	if (fallback === "off") return { thinkingBudget: 0 };
+
+	const resolvedLevel = resolveGoogleThinkingLevel(model, fallback);
+	const apiLevel = toGoogleThinkingLevel(resolvedLevel);
+	return { thinkingLevel: toGoogleSdkThinkingLevel(apiLevel) };
 }
 
 /**
@@ -127,28 +187,46 @@ function supportsMultimodalFunctionResponse(modelId: string): boolean {
 	return true;
 }
 
+// Gemini expects `contents` to alternate between user and model turns: the @google/genai Chat history contract is
+// "a list of contents alternating between user and model", and generateContent answers 400 "Please ensure that
+// multiturn requests alternate between user and model" for adjacent same-role turns. Adjacent senpi messages can
+// share a role (the hidden environment-context user message right before the prompt, a user prompt after tool
+// results, the Gemini < 3 tool-result image turn), so a turn whose role matches the previous one is folded into it
+// with its parts kept in order. This also keeps every function response of one model turn in a single user turn,
+// which Cloud Code Assist requires.
+function appendContent(contents: Content[], content: Content): void {
+	const previous = contents[contents.length - 1];
+	if (previous?.role === content.role && previous.parts && content.parts) {
+		previous.parts.push(...content.parts);
+		return;
+	}
+	contents.push(content);
+}
+
 /**
  * Convert internal messages to Gemini Content[] format.
  */
 export function convertMessages<T extends GoogleApiType>(
 	model: Model<T>,
-	context: Context,
+	context: TranscriptContext,
 	options: { preserveThinking?: boolean } = {},
 ): Content[] {
+	// Gemini has no mid-conversation system messages; the leading prompt is sent as systemInstruction.
+	const conversation = withoutInitialSystemMessage(collapseSystemMessages(context).messages);
 	const contents: Content[] = [];
 	const normalizeId = (id: string): string => {
 		if (!requiresToolCallId(model.id)) return id;
 		return normalizeToolCallId(id);
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, normalizeId, {
+	const transformedMessages = transformMessages(conversation, model, normalizeId, {
 		preserveThinking: options.preserveThinking,
 	});
 
 	for (const msg of transformedMessages) {
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
-				contents.push({
+				appendContent(contents, {
 					role: "user",
 					parts: [{ text: sanitizeSurrogates(msg.content) }],
 				});
@@ -166,7 +244,7 @@ export function convertMessages<T extends GoogleApiType>(
 					}
 				});
 				if (parts.length === 0) continue;
-				contents.push({
+				appendContent(contents, {
 					role: "user",
 					parts,
 				});
@@ -224,7 +302,7 @@ export function convertMessages<T extends GoogleApiType>(
 			}
 
 			if (parts.length === 0) continue;
-			contents.push({
+			appendContent(contents, {
 				role: "model",
 				parts,
 			});
@@ -264,21 +342,14 @@ export function convertMessages<T extends GoogleApiType>(
 				},
 			};
 
-			// Cloud Code Assist API requires all function responses to be in a single user turn.
-			// Check if the last content is already a user turn with function responses and merge.
-			const lastContent = contents[contents.length - 1];
-			if (lastContent?.role === "user" && lastContent.parts?.some((p) => p.functionResponse)) {
-				lastContent.parts.push(functionResponsePart);
-			} else {
-				contents.push({
-					role: "user",
-					parts: [functionResponsePart],
-				});
-			}
+			appendContent(contents, {
+				role: "user",
+				parts: [functionResponsePart],
+			});
 
-			// For Gemini < 3, add images in a separate user message
+			// For Gemini < 3, images follow the function response as plain parts of the same user turn
 			if (hasImages && !modelSupportsMultimodalFunctionResponse) {
-				contents.push({
+				appendContent(contents, {
 					role: "user",
 					parts: [{ text: "Tool result image:" }, ...imageParts],
 				});

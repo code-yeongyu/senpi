@@ -1,12 +1,13 @@
 import { join } from "node:path";
+import { normalizeProviderId } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../../../config.ts";
 import { AuthStorage } from "../../../core/auth-storage.ts";
-import type { ProviderAccountEvent } from "../../../core/extensions/builtin/claude-sdk-oauth/account-events.ts";
 import {
-	getProviderAccounts,
-	pinProviderAccount,
-	removeProviderAccount,
-} from "../../../core/extensions/builtin/claude-sdk-oauth/account-management.ts";
+	getCredentialAccounts,
+	pinCredentialAccount,
+	removeCredentialAccount,
+} from "../../../core/credential-accounts.ts";
+import type { ProviderAccountEvent } from "../../../core/extensions/builtin/anthropic-subscription/account-events.ts";
 import { resolvePath } from "../../../utils/paths.ts";
 import type {
 	AccountReadParams,
@@ -48,7 +49,7 @@ export function registerAppServerAccountMethods(
 		scope: "global",
 		handler: async ({ request }) => {
 			const params = parseProviderAccountsPinParams(request.params);
-			await pinProviderAccount(AuthStorage.create(join(agentDir, "auth.json")), params.provider, params.name);
+			await pinCredentialAccount(AuthStorage.create(join(agentDir, "auth.json")), params.provider, params.name);
 			return {};
 		},
 	});
@@ -56,7 +57,7 @@ export function registerAppServerAccountMethods(
 		scope: "global",
 		handler: async ({ request }) => {
 			const params = parseProviderAccountsRemoveParams(request.params);
-			await removeProviderAccount(AuthStorage.create(join(agentDir, "auth.json")), params.provider, params.name);
+			await removeCredentialAccount(AuthStorage.create(join(agentDir, "auth.json")), params.provider, params.name);
 			return {};
 		},
 	});
@@ -92,9 +93,12 @@ function accountReadResponse(agentDir: string): AccountReadResponse {
 	};
 }
 
-function providerAccountsResponse(agentDir: string, params: ProviderAccountsReadParams): ProviderAccountsReadResponse {
+async function providerAccountsResponse(
+	agentDir: string,
+	params: ProviderAccountsReadParams,
+): Promise<ProviderAccountsReadResponse> {
 	const storage = AuthStorage.create(join(agentDir, "auth.json"));
-	return { provider: params.provider, accounts: getProviderAccounts(storage, params.provider) };
+	return { provider: params.provider, accounts: await getCredentialAccounts(storage, params.provider) };
 }
 
 function parseAccountReadParams(value: unknown): AccountReadParams {
@@ -137,7 +141,11 @@ function requiredProvider(params: Record<string, unknown>, method: string): stri
 	if (typeof params.provider !== "string" || params.provider.length === 0) {
 		throw invalidParams(`${method} provider must be a non-empty string`);
 	}
-	return params.provider;
+	// Read boundary (senpi#1989): an older client still sends the legacy provider
+	// id in its account payloads. Normalize at this single entry point so every
+	// account method resolves the same lane; this is inbound state from an
+	// earlier version, not a legacy id typed by the user.
+	return normalizeProviderId(params.provider);
 }
 
 function requiredRecord(value: unknown, method: string): Record<string, unknown> {

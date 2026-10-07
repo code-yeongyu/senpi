@@ -39,7 +39,7 @@ describe("issue #543: compaction with a runtime-registered provider", () => {
 			id: "runtime-model",
 			name: "Runtime-only model",
 			baseUrl: PROVIDER_ID,
-			contextWindow: 32_000,
+			contextWindow: 128_000,
 		};
 		let summarizationCalls = 0;
 		await runtime.registerProvider(PROVIDER_ID, {
@@ -102,7 +102,7 @@ describe("issue #543: compaction with a runtime-registered provider", () => {
 			id: "header-auth-model",
 			name: "Header-auth model",
 			baseUrl: HEADER_PROVIDER_ID,
-			contextWindow: 32_000,
+			contextWindow: 128_000,
 		};
 		let seenApiKey: string | undefined;
 		let seenHeaders: Record<string, string> | undefined;

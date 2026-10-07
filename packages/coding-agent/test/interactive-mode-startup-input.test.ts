@@ -17,6 +17,8 @@ function createEchoControllerStub() {
 }
 
 type SubmitContext = {
+	composerDestination: { kind: "chat" };
+	submitAsyncQuestionComment: (text: string) => boolean;
 	defaultEditor: { onSubmit?: (text: string) => void | Promise<void> };
 	editor: {
 		addToHistory?: (text: string) => void;
@@ -26,6 +28,7 @@ type SubmitContext = {
 		isCompacting: boolean;
 		isStreaming: boolean;
 		isBashRunning: boolean;
+		messages: unknown[];
 		prompt: (text: string, options?: unknown) => Promise<void>;
 	};
 	flushPendingBashComponents: () => void;
@@ -37,6 +40,7 @@ type SubmitContext = {
 	pendingImages: Map<number, unknown>;
 	optimisticUserEchoes: EchoControllerStub;
 	takeSubmissionImages: (submittedText: string) => unknown[];
+	beginUserEcho: (text: string, images?: readonly unknown[]) => string | undefined;
 };
 
 type InputContext = {
@@ -47,6 +51,13 @@ type InputContext = {
 type StartupSubmitContext = {
 	editor: { setText: (text: string) => void };
 	showStatus: (message: string) => void;
+	shutdown?: () => Promise<void>;
+};
+
+type ExtensionShutdownContext = {
+	shutdownRequested: boolean;
+	session: { isIdle: boolean };
+	shutdown: () => Promise<void>;
 };
 
 type RunContext = {
@@ -55,7 +66,11 @@ type RunContext = {
 	version: string;
 	options: Record<string, never>;
 	session: {
-		modelRuntime: { getError: () => string | undefined; refresh: () => Promise<void> };
+		modelRuntime: {
+			getError: () => string | undefined;
+			getWarnings: () => readonly string[];
+			refresh: () => Promise<void>;
+		};
 		fallbackValidationWarnings: readonly string[];
 		prompt: (text: string, options?: unknown) => Promise<void>;
 	};
@@ -80,9 +95,13 @@ type RunContext = {
 
 type InteractiveModePrivate = {
 	handleStartupSubmit(this: StartupSubmitContext, text: string): void;
+	requestExtensionShutdown(this: ExtensionShutdownContext): void;
+	checkShutdownRequested(this: ExtensionShutdownContext): Promise<void>;
 	setupEditorSubmitHandler(this: SubmitContext): void;
+	submitAsyncQuestionComment(this: SubmitContext, text: string): boolean;
 	getUserInput(this: InputContext): Promise<{ text: string; images?: unknown[] }>;
 	takeSubmissionImages(this: SubmitContext, submittedText: string): unknown[];
+	beginUserEcho(this: SubmitContext, text: string, images?: readonly unknown[]): string | undefined;
 	buildMainLoopPromptOptions(
 		this: RunContext,
 		userInput: { text: string; images?: unknown[]; pendingEchoId: string },
@@ -94,6 +113,9 @@ const interactiveModePrototype = InteractiveMode.prototype as unknown as Interac
 
 function createSubmitContext(): SubmitContext {
 	const context: SubmitContext = {
+		// Refs #1645: preserve the production classifier in this borrowed receiver.
+		composerDestination: { kind: "chat" },
+		submitAsyncQuestionComment: (text) => interactiveModePrototype.submitAsyncQuestionComment.call(context, text),
 		defaultEditor: {},
 		editor: {
 			addToHistory: vi.fn(),
@@ -103,6 +125,7 @@ function createSubmitContext(): SubmitContext {
 			isCompacting: false,
 			isStreaming: false,
 			isBashRunning: false,
+			messages: [],
 			prompt: vi.fn(async () => {}),
 		},
 		flushPendingBashComponents: vi.fn(),
@@ -113,10 +136,12 @@ function createSubmitContext(): SubmitContext {
 		pendingImages: new Map(),
 		optimisticUserEchoes: createEchoControllerStub(),
 		takeSubmissionImages: vi.fn(() => []),
+		beginUserEcho: vi.fn(() => undefined),
 	};
 	// Borrowed receiver: resolve markers with the REAL production helper (its
 	// only dependencies are the pendingImages map above).
 	context.takeSubmissionImages = interactiveModePrototype.takeSubmissionImages.bind(context);
+	context.beginUserEcho = interactiveModePrototype.beginUserEcho.bind(context);
 	return context;
 }
 
@@ -131,6 +156,65 @@ describe("InteractiveMode startup input", () => {
 
 		expect(context.editor.setText).toHaveBeenCalledWith("early prompt");
 		expect(context.showStatus).toHaveBeenCalledWith("Startup is still in progress");
+	});
+
+	it.each(["/quit", "/exit"])(
+		"shuts down when %s is submitted while managed-tool setup is running",
+		(command: string) => {
+			const context: StartupSubmitContext = {
+				editor: { setText: vi.fn() },
+				showStatus: vi.fn(),
+				shutdown: vi.fn(async () => {}),
+			};
+
+			interactiveModePrototype.handleStartupSubmit.call(context, command);
+
+			// The quit command is a control action, not a prompt: it must not be parked in
+			// the editor, because a non-empty editor also disables the Ctrl+D quit escape.
+			expect(context.shutdown).toHaveBeenCalledTimes(1);
+			expect(context.editor.setText).not.toHaveBeenCalledWith(command);
+			expect(context.showStatus).not.toHaveBeenCalledWith("Startup is still in progress");
+		},
+	);
+
+	it("honors an extension shutdown request immediately while the session is idle", () => {
+		const context: ExtensionShutdownContext = {
+			shutdownRequested: false,
+			session: { isIdle: true },
+			shutdown: vi.fn(async () => {}),
+		};
+
+		interactiveModePrototype.requestExtensionShutdown.call(context);
+
+		// An idle session emits no further agent_settled event, so a deferred request
+		// would strand until the user happened to run another turn.
+		expect(context.shutdownRequested).toBe(true);
+		expect(context.shutdown).toHaveBeenCalledTimes(1);
+	});
+
+	it("defers an extension shutdown request raised mid-turn", () => {
+		const context: ExtensionShutdownContext = {
+			shutdownRequested: false,
+			session: { isIdle: false },
+			shutdown: vi.fn(async () => {}),
+		};
+
+		interactiveModePrototype.requestExtensionShutdown.call(context);
+
+		expect(context.shutdownRequested).toBe(true);
+		expect(context.shutdown).not.toHaveBeenCalled();
+	});
+
+	it("consumes a pending shutdown request when the agent reaches idle", async () => {
+		const context: ExtensionShutdownContext = {
+			shutdownRequested: true,
+			session: { isIdle: true },
+			shutdown: vi.fn(async () => {}),
+		};
+
+		await interactiveModePrototype.checkShutdownRequested.call(context);
+
+		expect(context.shutdown).toHaveBeenCalledTimes(1);
 	});
 
 	it("queues a normal prompt submitted before the input callback is installed", async () => {
@@ -170,7 +254,11 @@ describe("InteractiveMode startup input", () => {
 			version: "test",
 			options: {},
 			session: {
-				modelRuntime: { getError: vi.fn(() => undefined), refresh: vi.fn(async () => undefined) },
+				modelRuntime: {
+					getError: vi.fn(() => undefined),
+					getWarnings: vi.fn(() => []),
+					refresh: vi.fn(async () => undefined),
+				},
 				fallbackValidationWarnings: [],
 				prompt,
 			},

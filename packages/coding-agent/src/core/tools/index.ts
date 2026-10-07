@@ -79,7 +79,7 @@ export {
 	type WriteToolOptions,
 } from "./write.ts";
 
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { type AgentTool, selectedReadFolder } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
@@ -117,7 +117,7 @@ export interface ToolsOptions {
 
 export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): Record<ToolName, ToolDef> {
 	return {
-		read: createReadToolDefinition(cwd, options?.read),
+		read: createReadToolDefinition(cwd, { folder: selectedReadFolder, ...options?.read }),
 		bash: createBashToolDefinition(cwd, options?.bash),
 		powershell: createPowerShellToolDefinition(cwd, options?.powershell),
 		edit: createEditToolDefinition(cwd, options?.edit),
@@ -130,7 +130,7 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 
 export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 	return [
-		createReadTool(cwd, options?.read),
+		createReadTool(cwd, { folder: selectedReadFolder, ...options?.read }),
 		createBashTool(cwd, options?.bash),
 		createEditTool(cwd, options?.edit),
 		createWriteTool(cwd, options?.write),
@@ -139,7 +139,7 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
 	return [
-		createReadTool(cwd, options?.read),
+		createReadTool(cwd, { folder: selectedReadFolder, ...options?.read }),
 		createGrepTool(cwd, options?.grep),
 		createFindTool(cwd, options?.find),
 		createLsTool(cwd, options?.ls),

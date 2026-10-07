@@ -1,8 +1,9 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
-import { getModel, stream, streamSimple } from "../src/compat.ts";
+import { getModel, normalizeContext, stream, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
+import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
 
 type MockChunk = null | {
 	id?: string;
@@ -15,11 +16,16 @@ type MockChunk = null | {
 	};
 };
 
+/** A stream event the fake gateway sends, or an error it raises in-band after answering 200. */
+type MockStreamStep = MockChunk | { readonly inBandError: string };
+
 interface OpenAIMockState {
 	lastParams: unknown | undefined;
 	calls: unknown[];
 	createErrors: Error[];
 	chunks: MockChunk[] | undefined;
+	/** One script per create call, consumed in order; falls back to `chunks`. */
+	streamScripts: MockStreamStep[][];
 }
 
 const mockState = vi.hoisted<OpenAIMockState>(() => ({
@@ -27,6 +33,7 @@ const mockState = vi.hoisted<OpenAIMockState>(() => ({
 	calls: [],
 	createErrors: [],
 	chunks: undefined,
+	streamScripts: [],
 }));
 
 vi.mock("openai", () => {
@@ -37,8 +44,16 @@ vi.mock("openai", () => {
 					mockState.lastParams = params;
 					mockState.calls.push(params);
 					const createError = mockState.createErrors.shift();
+					const script = mockState.streamScripts.shift();
 					const stream = {
 						async *[Symbol.asyncIterator]() {
+							if (script !== undefined) {
+								for (const step of script) {
+									if (step !== null && "inBandError" in step) throw new Error(step.inBandError);
+									yield step;
+								}
+								return;
+							}
 							const chunks = mockState.chunks ?? [
 								{
 									choices: [{ delta: {}, finish_reason: "stop" }],
@@ -140,8 +155,162 @@ async function captureSimpleParams(
 	return (payload ?? mockState.lastParams) as CapturedParams;
 }
 
+const KIRO_REFUSAL = "400 Kiro supports only automatic tool choice or tool_choice:none";
+const FORCED_TODO = { type: "function", function: { name: "todo" } } as const;
+
+function streamForcedTodo(model: Model<"openai-completions">) {
+	return stream(
+		model,
+		{
+			messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }],
+			tools: [{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) }],
+		},
+		{ apiKey: "test", toolChoice: FORCED_TODO },
+	).result();
+}
+
+describe("openai-completions forced tool_choice refusal memory (senpi#2218)", () => {
+	const kiro: Model<"openai-completions"> = { ...localOpenAICompletionsModel, id: "kiro-opus", name: "Kiro" };
+
+	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
+		mockState.calls.length = 0;
+		mockState.createErrors.length = 0;
+		mockState.chunks = undefined;
+	});
+
+	it("retries a Kiro auto-only refusal once, then stops forcing that model", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, KIRO_REFUSAL));
+
+		const first = await streamForcedTodo(kiro);
+		const second = await streamForcedTodo(kiro);
+
+		expect([first.stopReason, second.stopReason]).toEqual(["stop", "stop"]);
+		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([
+			FORCED_TODO,
+			undefined,
+			undefined,
+		]);
+	});
+
+	it("keeps forcing other models and a model whose retry also failed", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, KIRO_REFUSAL), new HttpStatusError(400, KIRO_REFUSAL));
+
+		const failed = await streamForcedTodo(kiro);
+		const retried = await streamForcedTodo(kiro);
+		const other = await streamForcedTodo({ ...kiro, id: "other-model" });
+
+		expect(failed.stopReason).toBe("error");
+		expect([retried.stopReason, other.stopReason]).toEqual(["stop", "stop"]);
+		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([
+			FORCED_TODO,
+			undefined,
+			FORCED_TODO,
+			FORCED_TODO,
+		]);
+	});
+
+	it("never sends a forced choice when compat.supportsForcedToolChoice is false", async () => {
+		const response = await streamForcedTodo({ ...kiro, compat: { supportsForcedToolChoice: false } });
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls).toHaveLength(1);
+		expect(recordAt(mockState.calls, 0).tool_choice).toBeUndefined();
+	});
+});
+
+// senpi#2648 (reported in oh-my-openagent#9507): a strict-schema gateway refuses the forced tool's
+// schema, naming that tool by its tools index. The first-turn todo force must degrade to auto.
+const STRICT_SCHEMA_REFUSAL =
+	'400 {"code":null,"message":"<provider>: tools.1.custom: For \'object\' type, \'additionalProperties\' must be explicitly set to false","param":null,"type":"invalid_request_error"}';
+
+function streamTodoBehindPing(model: Model<"openai-completions">, toolChoice?: unknown) {
+	return stream(
+		model,
+		{
+			messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }],
+			tools: [
+				{ name: "ping", description: "Ping tool", parameters: Type.Object({ value: Type.String() }) },
+				{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) },
+			],
+		},
+		{ apiKey: "test", ...(toolChoice === undefined ? {} : { toolChoice: toolChoice as typeof FORCED_TODO }) },
+	).result();
+}
+
+describe("openai-completions refusal that names the forced tool (senpi#2648)", () => {
+	const gateway: Model<"openai-completions"> = {
+		...localOpenAICompletionsModel,
+		id: "group/auto-claude",
+		name: "Gateway group",
+	};
+
+	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
+		mockState.calls.length = 0;
+		mockState.createErrors.length = 0;
+		mockState.chunks = undefined;
+	});
+
+	it("retries once without the forced choice when the 400 names the forced tool's index, and the turn succeeds", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, STRICT_SCHEMA_REFUSAL));
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice)).toEqual([
+			FORCED_TODO,
+			undefined,
+		]);
+	});
+
+	it("retries once when the 400 names the forced tool by its quoted name", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(400, "400 Invalid schema for function 'todo': object properties must be closed"),
+		);
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls).toHaveLength(2);
+	});
+
+	it("does not retry a 400 that names a different tool", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(
+				400,
+				"400 tools.0.custom: For 'object' type, 'additionalProperties' must be explicitly set to false",
+			),
+		);
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
+	});
+
+	it("does not retry an unrelated 400 on a forced request", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, "400 messages.0.content: field required"));
+
+		const response = await streamTodoBehindPing(gateway, FORCED_TODO);
+
+		expect(response.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
+	});
+
+	it("does not retry a 400 naming the tool when nothing was forced", async () => {
+		mockState.createErrors.push(new HttpStatusError(400, STRICT_SCHEMA_REFUSAL));
+
+		const response = await streamTodoBehindPing(gateway);
+
+		expect(response.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
+	});
+});
+
 describe("openai-completions tool_choice", () => {
 	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
 		mockState.lastParams = undefined;
 		mockState.calls.length = 0;
 		mockState.createErrors.length = 0;
@@ -230,6 +399,32 @@ describe("openai-completions tool_choice", () => {
 		expect(secondParams.tool_choice).toBeUndefined();
 	});
 
+	it("retries without tool_choice when a gateway's always-thinking model refuses the forced choice", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(
+				400,
+				`400: {"message":"This model always runs with thinking enabled, so tool_choice cannot force tool use. Use tool_choice 'auto' or 'none'.","type":"invalid_request_error","param":"tool_choice"}`,
+			),
+		);
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const tools: Tool[] = [
+			{ name: "todo", description: "Todo tool", parameters: Type.Object({ op: Type.String() }) },
+		];
+
+		const response = await stream(
+			model,
+			{ messages: [{ role: "user", content: "Plan the work", timestamp: Date.now() }], tools },
+			{ apiKey: "test", toolChoice: { type: "function", function: { name: "todo" } } },
+		).result();
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.calls).toHaveLength(2);
+		expect(recordAt(mockState.calls, 0).tool_choice).toEqual({ type: "function", function: { name: "todo" } });
+		expect(recordAt(mockState.calls, 1).tool_choice).toBeUndefined();
+	});
+
 	it("omits strict when compat disables strict mode", async () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
 		const model = {
@@ -273,6 +468,82 @@ describe("openai-completions tool_choice", () => {
 		expect(tool).toBeTruthy();
 		expect(tool?.strict).toBeUndefined();
 		expect("strict" in (tool ?? {})).toBe(false);
+	});
+
+	it("defaults unknown OpenAI-compatible endpoints to non-strict tools", async () => {
+		// Regression test for #9816.
+		const model = {
+			...localOpenAICompletionsModel,
+			id: "local-model",
+			name: "Local Model",
+		} satisfies Model<"openai-completions">;
+		const tool: Tool = {
+			name: "ping",
+			description: "Ping tool",
+			parameters: Type.Object({
+				required: Type.String(),
+				optional: Type.Optional(Type.String()),
+			}),
+			constrainedSampling: { type: "json_schema", strict: "prefer" },
+		};
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Call ping", timestamp: Date.now() }],
+				tools: [tool],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			tools?: Array<{ function?: { strict?: boolean; parameters?: { required?: string[] } } }>;
+		};
+		const functionTool = params.tools?.[0]?.function;
+		expect(functionTool).not.toHaveProperty("strict");
+		expect(functionTool?.parameters?.required).toEqual(["required"]);
+	});
+
+	it("preserves strict tools for capable built-in Chat Completions models", async () => {
+		const model = getModel("groq", "openai/gpt-oss-20b")!;
+		expect(model.compat?.supportsStrictMode).toBe(true);
+		const tool: Tool = {
+			name: "ping",
+			description: "Ping tool",
+			parameters: Type.Object({
+				required: Type.String(),
+				optional: Type.Optional(Type.String()),
+			}),
+			constrainedSampling: { type: "json_schema", strict: "prefer" },
+		};
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Call ping", timestamp: Date.now() }],
+				tools: [tool],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			tools?: Array<{ function?: { strict?: boolean; parameters?: { required?: string[] } } }>;
+		};
+		const functionTool = params.tools?.[0]?.function;
+		expect(functionTool?.strict).toBe(true);
+		expect(functionTool?.parameters?.required).toEqual(["required", "optional"]);
 	});
 
 	it("maps Groq Qwen reasoning levels to default reasoning_effort", async () => {
@@ -372,17 +643,18 @@ describe("openai-completions tool_choice", () => {
 		expect(getModel("zai", "glm-4.7")?.compat?.zaiToolStream).toBe(true);
 		expect(getModel("zai", "glm-5-turbo")?.compat?.zaiToolStream).toBe(true);
 		expect(getModel("zai", "glm-5.2")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-5.3")?.compat?.zaiToolStream).toBe(true);
 	});
 
 	it("stores z.ai effort metadata", () => {
 		for (const provider of ["zai", "zai-coding-cn"] as const) {
-			for (const modelId of ["glm-5.2", "glm-5.2-highspeed"] as const) {
+			for (const modelId of ["glm-5.3", "glm-5.3-highspeed"] as const) {
 				const model = getModel(provider, modelId)!;
 				expect(model.compat?.supportsReasoningEffort).toBe(true);
 				expect(model.thinkingLevelMap).toEqual({
-					off: "none",
+					off: null,
 					minimal: null,
-					low: null,
+					low: "low",
 					medium: null,
 					high: "high",
 					xhigh: null,
@@ -402,6 +674,84 @@ describe("openai-completions tool_choice", () => {
 				max: "max",
 			});
 		}
+	});
+	it("stores z.ai GLM-5.3 catalog and effort metadata", () => {
+		for (const provider of ["zai", "zai-coding-cn"] as const) {
+			const model = getModel(provider, "glm-5.3")!;
+			expect(model).toMatchObject({
+				name: "GLM-5.3",
+				reasoning: true,
+				input: ["text"],
+				contextWindow: 1_000_000,
+				maxTokens: 131_072,
+			});
+			expect(model.compat?.supportsReasoningEffort).toBe(true);
+			expect(model.thinkingLevelMap).toEqual({
+				off: null,
+				minimal: null,
+				low: "low",
+				medium: null,
+				high: "high",
+				xhigh: null,
+				max: "max",
+			});
+		}
+	});
+
+	it("maps z.ai GLM-5.3 thinking levels to reasoning_effort", async () => {
+		const model = getModel("zai", "glm-5.3")!;
+		const cases = [
+			{ reasoning: "low", effort: "low" },
+			{ reasoning: "medium", effort: "high" },
+			{ reasoning: "high", effort: "high" },
+			{ reasoning: "xhigh", effort: "max" },
+			{ reasoning: "max", effort: "max" },
+		] as const;
+
+		for (const testCase of cases) {
+			let payload: unknown;
+
+			await streamSimple(
+				model,
+				{
+					messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+				},
+				{
+					apiKey: "test",
+					reasoning: testCase.reasoning,
+					onPayload: (params: unknown) => {
+						payload = params;
+					},
+				},
+			).result();
+
+			const params = (payload ?? mockState.lastParams) as { thinking?: unknown; reasoning_effort?: string };
+			expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
+			expect(params.reasoning_effort).toBe(testCase.effort);
+		}
+	});
+
+	it("does not send disabled thinking for GLM-5.3 when reasoning is off through streamSimple", async () => {
+		const model = getModel("zai", "glm-5.3")!;
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as { thinking?: { type?: string }; reasoning_effort?: string };
+		expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
+		expect(params.thinking?.type).not.toBe("disabled");
+		expect(params.reasoning_effort).toBeUndefined();
 	});
 
 	it("maps z.ai GLM-5.2 thinking levels to reasoning_effort", async () => {
@@ -1196,10 +1546,10 @@ describe("openai-completions tool_choice", () => {
 		expect(params.messages?.[0]?.role).toBe("system");
 	});
 
-	it("keeps developer messages for OpenAI and Anthropic OpenRouter reasoning model instructions", async () => {
+	it("keeps developer messages for OpenAI and Anthropic OpenRouter batch instructions", async () => {
 		for (const model of [
 			getModel("openrouter", "openai/gpt-5.2-codex"),
-			getModel("openrouter", "anthropic/claude-sonnet-4.5"),
+			getModel("openrouter", "anthropic/claude-fable-5.1:batch"),
 		]) {
 			expect(model).toBeDefined();
 			let payload: unknown;
@@ -1345,7 +1695,7 @@ describe("openai-completions tool_choice", () => {
 			},
 		];
 
-		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.6")!;
+		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.7-code")!;
 		const model = { ...baseModel, api: "openai-completions" } as const;
 		const response = await streamSimple(
 			model,
@@ -1392,17 +1742,17 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("replays OpenCode Go reasoning thinking blocks as reasoning_content", () => {
-		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.6")!;
+		const { compat: _compat, ...baseModel } = getModel("opencode-go", "kimi-k2.7-code")!;
 		const model = { ...baseModel, api: "openai-completions" } as Model<"openai-completions">;
 		const messages = convertMessages(
 			model,
-			{
+			normalizeContext({
 				messages: [
 					{
 						role: "assistant",
 						api: "openai-completions",
 						provider: "opencode-go",
-						model: "kimi-k2.6",
+						model: "kimi-k2.7-code",
 						content: [
 							{ type: "thinking", thinking: "think", thinkingSignature: "reasoning" },
 							{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } },
@@ -1419,7 +1769,7 @@ describe("openai-completions tool_choice", () => {
 						timestamp: Date.now(),
 					},
 				],
-			},
+			}),
 			{
 				...model.compat,
 				supportsStore: false,
@@ -1443,7 +1793,10 @@ describe("openai-completions tool_choice", () => {
 				supportsOpenAIGrammarTools: false,
 				sendSessionAffinityHeaders: false,
 				sessionAffinityFormat: "openai",
+				supportsMaxOutputTokens: true,
 				supportsLongCacheRetention: true,
+				supportsMidConvoSystemMessages: false,
+				supportsMidConvoToolAdditions: false,
 			},
 		);
 
@@ -1451,8 +1804,8 @@ describe("openai-completions tool_choice", () => {
 		expect(messages[0]).not.toHaveProperty("reasoning");
 	});
 
-	it("sends thinking disabled for OpenCode Go Kimi K2.6 when thinking is off", async () => {
-		const model = getModel("opencode-go", "kimi-k2.6")!;
+	it("sends thinking disabled for OpenCode Kimi K2.6 when thinking is off", async () => {
+		const model = getModel("opencode", "kimi-k2.6")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -1473,8 +1826,8 @@ describe("openai-completions tool_choice", () => {
 		expect(params.reasoning_effort).toBeUndefined();
 	});
 
-	it("sends thinking enabled for OpenCode Go Kimi K2.6 when thinking is enabled", async () => {
-		const model = getModel("opencode-go", "kimi-k2.6")!;
+	it("sends thinking enabled for OpenCode Kimi K2.6 when thinking is enabled", async () => {
+		const model = getModel("opencode", "kimi-k2.6")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -1545,7 +1898,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("sends max_tokens for OpenCode completions models", async () => {
-		const cases = [getModel("opencode-go", "kimi-k2.6")!, getModel("opencode", "kimi-k2.6")!] as const;
+		const cases = [getModel("opencode-go", "kimi-k2.7-code")!, getModel("opencode", "kimi-k2.6")!] as const;
 
 		for (const model of cases) {
 			let payload: unknown;
@@ -1585,10 +1938,7 @@ describe("openai-completions tool_choice", () => {
 			name: "Custom Uppercase DeepSeek Model",
 			baseUrl: "https://API.DeepSeek.COM",
 		} satisfies Model<"openai-completions">;
-		const nativeModels = [
-			getModel("deepseek", "deepseek-v4-flash")!,
-			getModel("deepseek", "deepseek-v4-pro")!,
-		] as const;
+		const nativeModels = [getModel("deepseek", "deepseek-flash")!, getModel("deepseek", "deepseek-v4-pro")!] as const;
 		const cases = [...nativeModels, customModel, customUppercaseModel] as const;
 
 		for (const model of nativeModels) {
@@ -1619,7 +1969,11 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("sends max_tokens for Z.AI completions models", async () => {
-		const cases = [getModel("zai", "glm-5-turbo")!, getModel("zai", "glm-5.2")!] as const;
+		const cases = [
+			getModel("zai", "glm-5-turbo")!,
+			getModel("zai", "glm-5.2")!,
+			getModel("zai", "glm-5.3")!,
+		] as const;
 
 		for (const model of cases) {
 			expect(model.compat?.maxTokensField).toBe("max_tokens");
@@ -1904,7 +2258,7 @@ describe("openai-completions tool_choice", () => {
 			thinkingFormat: "ant-ling",
 			supportsLongCacheRetention: false,
 		});
-		expect(model.compat?.supportsStrictMode).toBeUndefined();
+		expect(model.compat?.supportsStrictMode).toBe(true);
 		expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBeUndefined();
 
 		await streamSimple(
@@ -1981,5 +2335,98 @@ describe("openai-completions tool_choice", () => {
 		).result();
 
 		expect((payload ?? mockState.lastParams) as { reasoning?: unknown }).not.toHaveProperty("reasoning");
+	});
+});
+
+describe("openai-completions forced tool_choice refused inside a 200 stream (senpi#2801)", () => {
+	const gateway: Model<"openai-completions"> = { ...localOpenAICompletionsModel, id: "kimi-k3", name: "Kimi K3" };
+	const THINKING_REFUSAL = "tool_choice 'specified' is incompatible with thinking enabled";
+	const keepalive: MockStreamStep = { id: "chatcmpl-gateway-keepalive", choices: [] };
+	const answer = (text: string): MockStreamStep[] => [
+		{ id: "chatcmpl-1", choices: [{ delta: { content: text }, finish_reason: null }] },
+		{
+			id: "chatcmpl-1",
+			choices: [{ delta: {}, finish_reason: "stop" }],
+			usage: {
+				prompt_tokens: 1,
+				completion_tokens: 1,
+				prompt_tokens_details: { cached_tokens: 0 },
+				completion_tokens_details: { reasoning_tokens: 0 },
+			},
+		},
+	];
+	const toolChoices = () => mockState.calls.map((_, index) => recordAt(mockState.calls, index).tool_choice);
+	const text = (message: AssistantMessage) =>
+		message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+
+	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
+		mockState.calls.length = 0;
+		mockState.createErrors.length = 0;
+		mockState.chunks = undefined;
+		mockState.streamScripts.length = 0;
+	});
+
+	it("#given a gateway that answers 200 and then refuses the forced choice in-band #when the forced request streams #then it is retried once without tool_choice and the turn completes", async () => {
+		mockState.streamScripts.push([keepalive, { inBandError: THINKING_REFUSAL }], answer("planned"));
+
+		const result = await streamForcedTodo(gateway);
+
+		expect(result.stopReason).toBe("stop");
+		expect(text(result)).toBe("planned");
+		expect(toolChoices()).toEqual([FORCED_TODO, undefined]);
+	});
+
+	it("#given a thinking-blamed in-band refusal that was retried #when the next forced request goes out #then it still forces, since the refusal depends on thinking", async () => {
+		mockState.streamScripts.push([{ inBandError: THINKING_REFUSAL }], answer("planned"), answer("again"));
+
+		await streamForcedTodo(gateway);
+		const next = await streamForcedTodo(gateway);
+
+		expect(next.stopReason).toBe("stop");
+		expect(toolChoices()).toEqual([FORCED_TODO, undefined, FORCED_TODO]);
+	});
+
+	it("#given the refusal arrives after content has streamed #when the forced request streams #then it is not retried and nothing is sent twice", async () => {
+		mockState.streamScripts.push(
+			[
+				{ id: "chatcmpl-1", choices: [{ delta: { content: "partial" }, finish_reason: null }] },
+				{ inBandError: THINKING_REFUSAL },
+			],
+			answer("must not be used"),
+		);
+
+		const result = await streamForcedTodo(gateway);
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("incompatible with thinking enabled");
+		expect(toolChoices()).toEqual([FORCED_TODO]);
+	});
+
+	it("#given the retry is refused in-band too #when the forced request streams #then the error surfaces once after exactly one retry", async () => {
+		mockState.streamScripts.push(
+			[{ inBandError: THINKING_REFUSAL }],
+			[{ inBandError: THINKING_REFUSAL }],
+			answer("unused"),
+		);
+
+		const result = await streamForcedTodo(gateway);
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage?.match(/incompatible with thinking enabled/g)).toHaveLength(1);
+		expect(toolChoices()).toEqual([FORCED_TODO, undefined]);
+	});
+
+	it("#given a request that forced no tool #when the gateway refuses in-band #then it fails as before with no retry", async () => {
+		mockState.streamScripts.push([{ inBandError: THINKING_REFUSAL }], answer("unused"));
+
+		const result = await stream(
+			gateway,
+			{ messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
+			{ apiKey: "test" },
+		).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(mockState.calls).toHaveLength(1);
 	});
 });

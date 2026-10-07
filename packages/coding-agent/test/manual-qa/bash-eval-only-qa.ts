@@ -1,0 +1,183 @@
+/**
+ * Real-surface QA driver for the default eval-only policy.
+ *
+ * Drives the shipped SDK entrypoint (createAgentSession) against a scratch
+ * project directory with no policy setting, using the faux provider so no
+ * credentials or network model calls are involved.
+ *
+ * Usage: bunx tsx test/manual-qa/bash-eval-only-qa.ts <scratchDir> <outDir>
+ */
+
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
+import { AuthStorage } from "../../src/core/auth-storage.ts";
+import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
+import { createAgentSession, type ExtensionFactory } from "../../src/core/sdk.ts";
+import { SessionManager } from "../../src/core/session-manager.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
+import { createInMemoryModelRegistry } from "../model-runtime-test-utils.ts";
+
+const [scratchDir, outDir] = process.argv.slice(2);
+if (!scratchDir || !outDir) {
+	throw new Error("usage: bash-eval-only-qa.ts <scratchDir> <outDir>");
+}
+
+const lines: string[] = [];
+function log(line: string): void {
+	lines.push(line);
+	process.stdout.write(`${line}\n`);
+}
+
+const toolCallReceipts: Array<{ toolName: string; input: unknown }> = [];
+
+async function main(): Promise<void> {
+	const agentDir = join(scratchDir, "agent-dir");
+	mkdirSync(agentDir, { recursive: true });
+
+	const faux = registerFauxProvider({});
+	const model = faux.getModel();
+	faux.setResponses([]);
+
+	// Faux credentials only: no real provider key and no network model call.
+	const authStorage = AuthStorage.inMemory();
+	await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
+	const modelRegistry = await createInMemoryModelRegistry(authStorage);
+	modelRegistry.registerProvider(model.provider, {
+		baseUrl: model.baseUrl,
+		apiKey: "faux-key",
+		api: faux.api,
+		models: faux.models.map((registeredModel) => ({
+			id: registeredModel.id,
+			name: registeredModel.name,
+			api: registeredModel.api,
+			reasoning: registeredModel.reasoning,
+			input: registeredModel.input,
+			cost: registeredModel.cost,
+			contextWindow: registeredModel.contextWindow,
+			maxTokens: registeredModel.maxTokens,
+			baseUrl: registeredModel.baseUrl,
+		})),
+	});
+
+	// The eval tool stands in for codemode's registration: the policy is only
+	// armed while a tool named "eval" is present in the registry.
+	const extensionFactory: ExtensionFactory = (pi) => {
+		pi.registerTool({
+			name: "eval",
+			label: "Eval",
+			description: "Evaluate code in a persistent kernel",
+			parameters: Type.Object({ code: Type.String() }),
+			execute: async () => ({ content: [{ type: "text", text: "eval" }], details: {} }),
+		});
+		pi.on("tool_call", (event) => {
+			toolCallReceipts.push({ toolName: event.toolName, input: event.input });
+		});
+	};
+
+	const settingsManager = SettingsManager.create(scratchDir, agentDir);
+	const resourceLoader = new DefaultResourceLoader({
+		cwd: scratchDir,
+		agentDir,
+		settingsManager,
+		extensionFactories: [extensionFactory],
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
+	});
+	await resourceLoader.reload();
+
+	const { session } = await createAgentSession({
+		cwd: scratchDir,
+		agentDir,
+		model,
+		settingsManager,
+		resourceLoader,
+		authStorage,
+		modelRegistry,
+		sessionManager: SessionManager.inMemory(scratchDir),
+	});
+
+	try {
+		log("# bash-eval-only QA (default)");
+		log(`scratch: ${scratchDir}`);
+		log("policy: fixed default (armed when eval is registered)");
+		log("");
+
+		// (i) active tool list
+		const activeTools = session.getActiveToolNames();
+		log("## (i) active tool names");
+		log(JSON.stringify(activeTools));
+		log(`bash present: ${activeTools.includes("bash")}`);
+		log(`powershell present: ${activeTools.includes("powershell")}`);
+		log(`eval present: ${activeTools.includes("eval")}`);
+		log(`all registered tools include bash: ${session.getAllTools().some((tool) => tool.name === "bash")}`);
+		log("");
+
+		// (ii) system prompt sentinel
+		const prompt = session.systemPrompt;
+		const sentinel = "tool.bash(";
+		const sentinelIndex = prompt.indexOf(sentinel);
+		log('## (ii) system prompt sentinel "tool.bash("');
+		log(`contains sentinel: ${sentinelIndex >= 0}`);
+		if (sentinelIndex >= 0) {
+			log(
+				`sentinel line: ${prompt
+					.slice(Math.max(0, sentinelIndex - 200), sentinelIndex + 120)
+					.split("\n")
+					.pop()}`,
+			);
+		}
+		log("");
+
+		// (iii) executeTool bash through the full pipeline
+		log('## (iii) executeTool("bash", { command: "echo qa-ok" })');
+		try {
+			const result = await session.executeTool("bash", { command: "echo qa-ok" });
+			const text = result.content
+				.filter((part): part is { type: "text"; text: string } => part.type === "text")
+				.map((part) => part.text)
+				.join("\n");
+			log(`output contains "qa-ok": ${text.includes("qa-ok")}`);
+			log(`output: ${JSON.stringify(text.slice(0, 400))}`);
+		} catch (error) {
+			log(`executeTool threw: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		log(`tool_call receipts: ${JSON.stringify(toolCallReceipts)}`);
+		log(`active tools after execute: ${JSON.stringify(session.getActiveToolNames())}`);
+		log(`bash reactivated: ${session.getActiveToolNames().includes("bash")}`);
+		log("");
+
+		// (iv) redirect hint for a direct/unknown bash call from the model
+		log("## (iv) redirect hint for a direct model bash call");
+		const hints = (session as unknown as { agent: { removedToolHints: Record<string, string> } }).agent
+			.removedToolHints;
+		log(`removedToolHints.bash: ${JSON.stringify(hints.bash)}`);
+		log(`removedToolHints.powershell: ${JSON.stringify(hints.powershell)}`);
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("bash", { command: "echo direct-call" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		await session.prompt("run bash directly");
+		const toolResult = session.messages.find((message) => message.role === "toolResult");
+		const resultText =
+			toolResult && "content" in toolResult
+				? JSON.stringify((toolResult.content as Array<{ text?: string }>)[0]?.text ?? "")
+				: "<no toolResult>";
+		log(`model-issued bash toolResult: ${resultText}`);
+		log("");
+
+		writeFileSync(join(outDir, "tool-call-receipts-default.json"), `${JSON.stringify(toolCallReceipts, null, 2)}\n`);
+		writeFileSync(join(outDir, "system-prompt-default.txt"), prompt);
+		log(`receipts file: ${join(outDir, "tool-call-receipts-default.json")}`);
+		log(`system prompt file: ${join(outDir, "system-prompt-default.txt")}`);
+	} finally {
+		session.dispose();
+		faux.unregister();
+	}
+}
+
+await main();
+writeFileSync(join(outDir, "default.log"), `${lines.join("\n")}\n`);

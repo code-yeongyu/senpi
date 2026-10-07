@@ -49,6 +49,7 @@ const FG_COLORS = {
 	thinkingHigh: "#2b2b2b",
 	thinkingXhigh: "#2c2c2c",
 	thinkingMax: "#2d2d2d",
+	skillMention: "#303030",
 	bashMode: "#2e2e2e",
 } satisfies Record<ThemeColor, string>;
 

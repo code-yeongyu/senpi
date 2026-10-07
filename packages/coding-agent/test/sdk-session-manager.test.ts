@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { goalFilePath } from "../src/core/extensions/builtin/goal/persistence.ts";
+import { goalStoreRef } from "../src/core/extensions/builtin/goal/store-ref.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 
@@ -96,7 +98,8 @@ describe("createAgentSession session manager defaults", () => {
 		});
 
 		expect(session.sessionManager).toBe(sessionManager);
-		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd}`);
+		// senpi#2093: cwd travels in the environment-context message, not the prompt.
+		expect(session.systemPrompt).not.toContain("Current working directory:");
 
 		expect(session.getActiveToolNames()).toContain("write");
 		await session.executeTool("write", { path: "cwd-marker.txt", content: "ok" });
@@ -120,12 +123,14 @@ describe("createAgentSession session manager defaults", () => {
 			"You can inspect PI_* environment variables for current model and session details.",
 		);
 
-		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
+		// Eval-only routing keeps `bash` out of the model-visible tool array, so the tool
+		// is fetched from the registry it is still reachable through.
+		const bashTool = session.getRegisteredTool("bash");
 		expect(bashTool).toBeTruthy();
 		const result = await bashTool!.execute("test", {
-			command: `printf '%s\\n' "$PI_SESSION_ID" "$PI_SESSION_FILE" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"`,
+			command: `printf '%s\\n' "$PI_SESSION_ID" "$PI_SESSION_FILE" "$PI_SESSION_CWD" "$PI_GOAL_STORE_FILE" "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"`,
 		});
-		const output = result.content
+		const output = (result.content as Array<{ type: string; text?: string }>)
 			.filter((item): item is { type: "text"; text: string } => item.type === "text")
 			.map((item) => item.text)
 			.join("");
@@ -133,6 +138,8 @@ describe("createAgentSession session manager defaults", () => {
 		expect(output.trim().split("\n")).toEqual([
 			session.sessionId,
 			session.sessionFile,
+			cwd,
+			goalFilePath(goalStoreRef(session.sessionManager, cwd)),
 			model!.provider,
 			model!.id,
 			session.thinkingLevel,

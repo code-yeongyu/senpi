@@ -65,7 +65,7 @@ function createAssistantMessage(options?: {
 	};
 }
 
-function createToolResultMessage(): ToolResultMessage<unknown> {
+function createToolResultMessage(): ToolResultMessage {
 	return {
 		role: "toolResult",
 		toolCallId: "call-1",

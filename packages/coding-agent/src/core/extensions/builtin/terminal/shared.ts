@@ -26,6 +26,21 @@ export const DEFAULT_MAX_SESSIONS = 32;
 export const MAX_SESSION_OUTPUT_CHARS = 1_000_000;
 /** Grace window used to capture a background command's early output before returning its id. */
 export const BACKGROUND_START_GRACE_MS = 250;
+
+/**
+ * Restore-context environment handed to monitor commands. `ID` and `STATE_DIR` are set on every
+ * spawn of a persistent watch (ID alone for ephemeral ones); `RESTORED` and `DOWNTIME_MS` only on
+ * the re-spawn after a restart, where the downtime is an upper bound, never an exact gap.
+ */
+export const MONITOR_ENV_ID = "SENPI_MONITOR_ID";
+export const MONITOR_ENV_STATE_DIR = "SENPI_MONITOR_STATE_DIR";
+export const MONITOR_ENV_RESTORED = "SENPI_MONITOR_RESTORED";
+export const MONITOR_ENV_DOWNTIME_MS = "SENPI_MONITOR_DOWNTIME_MS";
+/**
+ * How long a re-spawned watch must stay up after a restore before it counts as restored. Long
+ * enough for `git`/`gh` cold starts to fail visibly, short enough that the digest is not held.
+ */
+export const RESTORE_GRACE_MS = 2_000;
 /**
  * After a foreground session has been killed (abort or timeout), how long to keep
  * waiting for its exit to settle before releasing the tool anyway. A surviving
@@ -35,10 +50,42 @@ export const BACKGROUND_START_GRACE_MS = 250;
 export const KILLED_SESSION_EXIT_GRACE_MS = 5000;
 
 /**
+ * Absolute lifetime of a durable monitor, measured from its registration. It is a deadline,
+ * never a sliding window: neither a restore nor a rearm extends it.
+ */
+export const DURABLE_MONITOR_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Per-monitor rolling fire budget: one durable command watch may deliver at most this many
+ * matched line events inside any FIRE_BUDGET_WINDOW_MS window before the registry auto-mutes
+ * it. The session-global wake budget only counts consecutive line-only wakes on an idle
+ * session, so a busy session needs this per-monitor backstop against a runaway watch.
+ */
+export const DEFAULT_DURABLE_MONITOR_FIRE_BUDGET = 200;
+/** Width of the rolling fire-budget window: the budget replenishes after this span elapses. */
+export const FIRE_BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * The ONE summary emitted when the fire budget mutes a watch. Machine-consumed: the monitor
+ * notifier exempts exactly this summary from its completion handling, so the mute must not
+ * clear the session-global wake streak.
+ */
+export const FIRE_BUDGET_AUTO_MUTE_SUMMARY = `auto-muted: fire budget (${DEFAULT_DURABLE_MONITOR_FIRE_BUDGET}/24h) reached; rearm to resume`;
+
+/**
  * Non-interactive environment for foreground one-shot commands (codex-style):
  * cooperative tools (`gh`, `git`, pagers, color libs) skip spinners/colors at
- * the source instead of flooding the captured stream with redraw frames.
- * Background sessions keep the user's real TERM for interactive apps.
+ * the source instead of flooding the captured stream with redraw frames, and
+ * `git` never blocks the captured foreground PTY on interactive input.
+ * - `GIT_EDITOR: "true"`: git spawns `/usr/bin/true` as the editor, which exits 0
+ *   immediately (git treats a zero-exit editor as accepted), so a `git commit`
+ *   without `-m` aborts with "Aborting commit due to empty commit message" and a
+ *   `git rebase -i` accepts the todo list instead of parking the tool inside
+ *   nvim on COMMIT_EDITMSG until the timeout kills it.
+ * - `GIT_TERMINAL_PROMPT: "0"`: git fails fast ("could not read Username",
+ *   exit 128) instead of prompting for credentials on the captured PTY where
+ *   nobody can type (same opt-out `package-manager.ts` already uses for its own
+ *   git calls).
+ * Background sessions keep the user's real TERM and git settings for
+ * interactive apps.
  */
 export const FOREGROUND_ENV_OVERRIDES: Readonly<Record<string, string>> = {
 	NO_COLOR: "1",
@@ -47,6 +94,8 @@ export const FOREGROUND_ENV_OVERRIDES: Readonly<Record<string, string>> = {
 	PAGER: "cat",
 	GIT_PAGER: "cat",
 	GH_PAGER: "cat",
+	GIT_EDITOR: "true",
+	GIT_TERMINAL_PROMPT: "0",
 };
 
 /**

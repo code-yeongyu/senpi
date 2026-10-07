@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../src/compat.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model } from "../src/types.ts";
+import { clearForcedToolChoiceRefusals } from "../src/utils/tool-choice-fallback.ts";
+
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 interface AnthropicToolChoicePayload {
 	tools?: unknown[];
@@ -45,21 +48,19 @@ vi.mock("@anthropic-ai/sdk", () => {
 	}
 
 	class FakeAnthropic {
-		messages = {
-			create: (params: AnthropicToolChoicePayload) => {
-				mockState.createParams = params;
-				mockState.createCalls.push(params);
-				const createError = mockState.createErrors.shift();
-				return {
-					asResponse: async () => {
-						if (createError) {
-							throw createError;
-						}
-						return createSseResponse();
-					},
-				};
-			},
+		private readonly create = (params: AnthropicToolChoicePayload) => {
+			mockState.createParams = params;
+			mockState.createCalls.push(params);
+			const createError = mockState.createErrors.shift();
+			return {
+				asResponse: async () => {
+					if (createError) throw createError;
+					return createSseResponse();
+				},
+			};
 		};
+		beta = { messages: { create: this.create } };
+		messages = { create: this.create };
 	}
 
 	return { default: FakeAnthropic };
@@ -82,6 +83,16 @@ const context: Context = {
 	],
 };
 
+// Models with upstream native tool changes (decisions.md L2d) also declare upstream's stable
+// deferred placeholder; the caller's tools are every declaration except that placeholder.
+const DEFERRED_TOOL_PLACEHOLDER_NAME = "__pi_deferred_placeholder__";
+
+function callerToolNames(payload: AnthropicToolChoicePayload): unknown[] {
+	return (payload.tools ?? [])
+		.map((tool) => (typeof tool === "object" && tool !== null && "name" in tool ? tool.name : tool))
+		.filter((name) => name !== DEFERRED_TOOL_PLACEHOLDER_NAME);
+}
+
 function withPayloadCapture(model: Model<"anthropic-messages">): Model<"anthropic-messages"> {
 	return { ...model, baseUrl: "http://127.0.0.1:9" };
 }
@@ -99,7 +110,7 @@ async function capturePayload(
 	model: Model<"anthropic-messages">,
 	toolChoice: "auto" | "any" | "none" | { type: "tool"; name: string },
 ): Promise<AnthropicToolChoicePayload> {
-	const stream = streamAnthropic(withPayloadCapture(model), context, {
+	const stream = streamAnthropic(withPayloadCapture(model), normalizeContext(context), {
 		apiKey: "fake-key",
 		toolChoice,
 	});
@@ -115,6 +126,7 @@ async function capturePayload(
 
 describe("Anthropic tool_choice compatibility", () => {
 	beforeEach(() => {
+		clearForcedToolChoiceRefusals();
 		mockState.createParams = undefined;
 		mockState.createCalls.length = 0;
 		mockState.createErrors.length = 0;
@@ -123,7 +135,7 @@ describe("Anthropic tool_choice compatibility", () => {
 	it("omits forced any tool_choice for Claude Fable while preserving tools", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"), "any");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
@@ -133,15 +145,49 @@ describe("Anthropic tool_choice compatibility", () => {
 			name: "get_weather",
 		});
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
 	it("keeps auto tool_choice for Claude Fable", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-fable-5"), "auto");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "auto" });
+	});
+
+	it("omits forced any tool_choice for Claude Opus 5.5 while preserving tools", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-5-5"), "any");
+
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
+		expect(payload.tool_choice).toBeUndefined();
+	});
+
+	it("omits forced named tool_choice for a gateway Opus 5.5 row with no compat", async () => {
+		const model: Model<"anthropic-messages"> = {
+			...getModel("anthropic", "claude-opus-5-5"),
+			provider: "custom-gateway",
+			compat: undefined,
+		};
+
+		const payload = await capturePayload(model, { type: "tool", name: "get_weather" });
+
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
+		expect(payload.tool_choice).toBeUndefined();
+	});
+
+	it("keeps auto tool_choice for Claude Opus 5.5", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-5-5"), "auto");
+
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
+		expect(payload.tool_choice).toEqual({ type: "auto" });
+	});
+
+	it("keeps forced named tool_choice for Claude Opus 5", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-5"), "any");
+
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
+		expect(payload.tool_choice).toEqual({ type: "any" });
 	});
 
 	it("keeps forced named tool_choice for Claude Sonnet 4.6", async () => {
@@ -150,7 +196,7 @@ describe("Anthropic tool_choice compatibility", () => {
 			name: "get_weather",
 		});
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toEqual({ type: "tool", name: "get_weather" });
 	});
 
@@ -159,15 +205,68 @@ describe("Anthropic tool_choice compatibility", () => {
 			new HttpStatusError(400, "tool_choice forces tool use is not compatible with this model"),
 		);
 
-		const response = await streamAnthropic(withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")), context, {
-			apiKey: "fake-key",
-			toolChoice: { type: "tool", name: "get_weather" },
-		}).result();
+		const response = await streamAnthropic(
+			withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")),
+			normalizeContext(context),
+			{
+				apiKey: "fake-key",
+				toolChoice: { type: "tool", name: "get_weather" },
+			},
+		).result();
 
 		expect(response.stopReason).toBe("stop");
 		expect(mockState.createCalls).toHaveLength(2);
 		expect(mockState.createCalls[0]?.tool_choice).toEqual({ type: "tool", name: "get_weather" });
 		expect(mockState.createCalls[1]?.tool_choice).toBeUndefined();
+	});
+
+	it("retries without tool_choice when extended thinking rejects the forced choice", async () => {
+		mockState.createErrors.push(
+			new HttpStatusError(400, "Thinking may not be enabled when tool_choice forces tool use."),
+		);
+
+		const response = await streamAnthropic(
+			withPayloadCapture(getModel("anthropic", "claude-sonnet-4-6")),
+			normalizeContext(context),
+			{
+				apiKey: "fake-key",
+				toolChoice: { type: "tool", name: "get_weather" },
+			},
+		).result();
+
+		expect(response.stopReason).toBe("stop");
+		expect(mockState.createCalls).toHaveLength(2);
+		expect(mockState.createCalls[1]?.tool_choice).toBeUndefined();
+	});
+
+	it("remembers an unconditional refusal for the model but not one that blames thinking (senpi#2218)", async () => {
+		const forceWeather = (model: Model<"anthropic-messages">) =>
+			streamAnthropic(withPayloadCapture(model), normalizeContext(context), {
+				apiKey: "fake-key",
+				toolChoice: { type: "tool", name: "get_weather" },
+			}).result();
+		const sonnet = getModel("anthropic", "claude-sonnet-4-6");
+		const opus = getModel("anthropic", "claude-opus-5");
+
+		mockState.createErrors.push(
+			new HttpStatusError(400, "tool_choice forces tool use is not compatible with this model"),
+		);
+		await forceWeather(sonnet);
+		mockState.createErrors.push(
+			new HttpStatusError(400, "Thinking may not be enabled when tool_choice forces tool use."),
+		);
+		await forceWeather(opus);
+		await forceWeather(sonnet);
+		await forceWeather(opus);
+
+		expect(mockState.createCalls.map((call) => call.tool_choice)).toEqual([
+			{ type: "tool", name: "get_weather" },
+			undefined,
+			{ type: "tool", name: "get_weather" },
+			undefined,
+			undefined,
+			{ type: "tool", name: "get_weather" },
+		]);
 	});
 
 	it("omits forced tool_choice when compat.supportsForcedToolChoice is false regardless of model id", async () => {
@@ -181,7 +280,7 @@ describe("Anthropic tool_choice compatibility", () => {
 			name: "get_weather",
 		});
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 
@@ -193,7 +292,7 @@ describe("Anthropic tool_choice compatibility", () => {
 
 		const payload = await capturePayload(model, "auto");
 
-		expect(payload.tools).toHaveLength(1);
+		expect(callerToolNames(payload)).toEqual(["get_weather"]);
 		expect(payload.tool_choice).toBeUndefined();
 	});
 });

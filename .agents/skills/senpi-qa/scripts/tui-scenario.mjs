@@ -41,6 +41,32 @@ const SCENARIOS = {
 			{ name: "pin state", expected: "pinned" },
 		],
 	},
+	// Startup swallows submits but preserves the editor text, so each retry
+	// step just presses Enter again; once the command has run, an empty-editor
+	// Enter is a no-op and the waitFor returns on its first poll.
+	account: {
+		steps: [
+			{ text: "/account openai", key: "Enter", waitFor: "Credential accounts for openai:" },
+			{ key: "Enter", waitFor: "Credential accounts for openai:" },
+			{ key: "Enter", waitFor: "Credential accounts for openai:" },
+			{ key: "Enter", waitFor: "Credential accounts for openai:" },
+			{ key: "Enter", waitFor: "Credential accounts for openai:" },
+		],
+		assertions: [
+			{ name: "default account row", expected: "default | login | available" },
+			{ name: "pinned account row", expected: "work | login | available | pinned" },
+		],
+	},
+	"account-missing-pin": {
+		steps: [
+			{ text: "/account openai pin does-not-exist", key: "Enter", waitFor: "Provider account not found" },
+			{ key: "Enter", waitFor: "Provider account not found" },
+			{ key: "Enter", waitFor: "Provider account not found" },
+			{ key: "Enter", waitFor: "Provider account not found" },
+			{ key: "Enter", waitFor: "Provider account not found" },
+		],
+		assertions: [{ name: "missing pin error", expected: "Provider account not found: does-not-exist" }],
+	},
 	"dollar-invocation": {
 		steps: [{ waitFor: "No models available." }, { text: "$deb", waitFor: "$debugging" }],
 		assertions: [{ name: "visible skill row", expected: "$debugging" }],
@@ -161,6 +187,25 @@ function seedClaudeAccountScenario(box, scenario) {
 	);
 }
 
+function seedAccountScenario(box, scenario) {
+	if (scenario !== "account" && scenario !== "account-missing-pin") return;
+	writeFileSync(
+		join(box.agentDir, "auth.json"),
+		JSON.stringify({
+			openai: {
+				type: "api_key",
+				key: "sandbox-key-default",
+				accounts: [
+					{ name: "default", source: "login", key: "sandbox-key-default" },
+					{ name: "work", source: "login", key: "sandbox-key-work" },
+				],
+				pinned: "work",
+			},
+		}),
+		{ mode: 0o600 },
+	);
+}
+
 function seedDollarInvocationScenario(box, scenario) {
 	if (scenario !== "dollar-invocation") return;
 	const skillDir = join(box.agentDir, "skills", "debugging");
@@ -261,6 +306,7 @@ async function runScenario({ scenario, expected, driver, evidence }) {
 	let result;
 	try {
 		seedClaudeAccountScenario(box, scenario);
+		seedAccountScenario(box, scenario);
 		seedDollarInvocationScenario(box, scenario);
 		process.stdout.write(`driver: ${chosenDriver}\n`);
 		const steps = SCENARIOS[scenario].steps;

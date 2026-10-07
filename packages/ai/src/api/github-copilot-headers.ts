@@ -1,5 +1,9 @@
 import type { Message } from "../types.ts";
 
+// VS Code Copilot Chat drops its Copilot token on 401/403 and fetches a new one; a
+// revoked token otherwise stays in use until its own 24h expiry.
+export const GITHUB_COPILOT_REJECTED_TOKEN_STATUSES: readonly number[] = [401, 403];
+
 // Copilot expects X-Initiator to indicate whether the request is user-initiated
 // or agent-initiated (e.g. follow-up after assistant/tool messages).
 export function inferCopilotInitiator(messages: Message[]): "user" | "agent" {

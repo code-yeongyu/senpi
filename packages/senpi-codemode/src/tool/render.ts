@@ -1,15 +1,18 @@
 // allow: SIZE_OK — one eval render pipeline avoids the runtime/render TDZ that motivated this module boundary.
 import {
 	type AgentToolResult,
-	highlightCode,
 	sanitizeTerminalLabel,
 	type Theme,
 	type ThemeColor,
 	type ToolDefinition,
 	type ToolRenderResultOptions,
 	truncateToVisualLines,
+	visibleWidth,
 } from "@code-yeongyu/senpi";
-import { formatTruncationWarning, stripOutputNotice, type TruncationMeta } from "../output/output-meta.ts";
+import type { TruncationMeta } from "../output/output-meta.ts";
+import { highlightedCode } from "./code-preview.ts";
+import { displayCode } from "./display-code.ts";
+import { normalizeEvalSummary } from "./eval-request.ts";
 import {
 	JSON_TREE_MAX_DEPTH_COLLAPSED,
 	JSON_TREE_MAX_DEPTH_EXPANDED,
@@ -19,19 +22,20 @@ import {
 	JSON_TREE_SCALAR_LEN_EXPANDED,
 	renderJsonTreeLines,
 } from "./json-tree.ts";
+import { knownLanguage, leadsWithHeadline, liveHeadline } from "./live-headline.ts";
 import { formatRuntimeBadge } from "./runtime-label.ts";
 import { codePointPrefix, formatDuration, renderToolCallWidget } from "./tool-widgets.ts";
 import type {
 	EvalCellResult,
 	EvalInputSchema,
-	EvalLanguage,
+	EvalResultDetails,
 	EvalStatusEvent,
 	EvalToolDetails,
 	EvalToolInput,
 	EvalToolRequest,
 } from "./types.ts";
 
-type EvalToolDefinition = ToolDefinition<EvalInputSchema, EvalToolDetails>;
+type EvalToolDefinition = ToolDefinition<EvalInputSchema, EvalResultDetails>;
 type RenderContext = Parameters<NonNullable<EvalToolDefinition["renderCall"]>>[2];
 type ResultRenderContext = Parameters<NonNullable<EvalToolDefinition["renderResult"]>>[3];
 type CollapsibleKind = "code" | "output";
@@ -63,6 +67,7 @@ type RenderBlock =
 	| { readonly kind: "dynamic"; readonly render: (width: number) => readonly string[] };
 
 const CODE_PREVIEW_LINES = 4;
+const SUMMARY_PREVIEW_LINES = 3;
 const OUTPUT_PREVIEW_LINES = 8;
 const STATUS_PREVIEW_COUNT = 3;
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
@@ -70,11 +75,16 @@ const TOOL_CALL_PREVIEW_COUNT = 5;
 const TOOL_CALL_COLLAPSED_VISUAL_LINES = 4;
 const TOOL_CALL_COLLAPSED_ERROR_CODE_POINTS = 512;
 const TOOL_ERROR_OMISSION_MARKER = "[tool error omitted]";
-const LIVE_ELAPSED_TICK_MS = 1_000;
+const LIVE_RENDER_TICK_MS = 100;
+// A live row repaints on every tick, so this many ticks without a render means the row is gone.
+const LIVE_TICKER_MAX_IDLE_TICKS = 600;
 
 class PlainTextComponent implements EvalRenderComponent {
 	#blocks: readonly RenderBlock[] = [];
 	#ticker: ReturnType<typeof setInterval> | undefined;
+	#live = false;
+	#invalidate: (() => void) | undefined;
+	#idleTicks = 0;
 
 	setBlocks(blocks: readonly RenderBlock[]): void {
 		this.#blocks = blocks;
@@ -84,16 +94,19 @@ class PlainTextComponent implements EvalRenderComponent {
 	 * The host only animates tool rows for streaming args, `task`, and results carrying
 	 * `details.progress`; an eval row matches none of them, so nothing repaints it between
 	 * update events. While a cell is non-terminal this drives the repaint itself so the
-	 * header's elapsed time advances, and it emits no tool updates or RPC traffic.
+	 * header's spinner and elapsed time advance, with no tool updates or RPC traffic. Detached
+	 * and terminal cards never arm it, and a ticker whose row stopped rendering (transcript
+	 * rebuild, session switch) stops itself after LIVE_TICKER_MAX_IDLE_TICKS and rearms on
+	 * the next render, so dropped rows cannot accumulate intervals.
 	 */
 	syncLiveTicker(isLive: boolean, invalidate: () => void): void {
+		this.#live = isLive;
+		this.#invalidate = invalidate;
 		if (!isLive) {
 			this.stopLiveTicker();
 			return;
 		}
-		if (this.#ticker !== undefined) return;
-		this.#ticker = setInterval(invalidate, LIVE_ELAPSED_TICK_MS);
-		this.#ticker.unref?.();
+		this.#armTicker();
 	}
 
 	stopLiveTicker(): void {
@@ -102,7 +115,24 @@ class PlainTextComponent implements EvalRenderComponent {
 		this.#ticker = undefined;
 	}
 
+	#armTicker(): void {
+		if (this.#ticker !== undefined || this.#invalidate === undefined) return;
+		this.#ticker = setInterval(() => this.#tick(), LIVE_RENDER_TICK_MS);
+		this.#ticker.unref?.();
+	}
+
+	#tick(): void {
+		this.#idleTicks += 1;
+		if (this.#idleTicks >= LIVE_TICKER_MAX_IDLE_TICKS) {
+			this.stopLiveTicker();
+			return;
+		}
+		this.#invalidate?.();
+	}
+
 	render(width: number): string[] {
+		this.#idleTicks = 0;
+		if (this.#live) this.#armTicker();
 		const lines: string[] = [];
 		for (const block of this.#blocks) {
 			switch (block.kind) {
@@ -154,6 +184,22 @@ function appendLines(target: string[], source: readonly string[]): void {
 
 function renderAllVisualLines(text: string, width: number): string[] {
 	return truncateToVisualLines(text, Number.POSITIVE_INFINITY, width).visualLines.map((line) => line.trimEnd());
+}
+
+// A summary has no length limit, so a collapsed block shows its first lines and marks the cut.
+function summaryVisualLines(summary: string, width: number, expanded: boolean): string[] {
+	const lines = renderAllVisualLines(summary, width);
+	if (expanded || lines.length <= SUMMARY_PREVIEW_LINES) return lines;
+	const kept = renderAllVisualLines(summary, Math.max(1, width - 1)).slice(0, SUMMARY_PREVIEW_LINES);
+	kept[SUMMARY_PREVIEW_LINES - 1] = `${kept[SUMMARY_PREVIEW_LINES - 1] ?? ""}\u2026`;
+	return kept;
+}
+
+function summaryBlock(summary: string, theme: Theme | undefined, expanded: boolean): RenderBlock {
+	return {
+		kind: "dynamic",
+		render: (width) => summaryVisualLines(summary, width, expanded).map((line) => style(theme, "muted", line)),
+	};
 }
 
 function renderTextBlock(block: Extract<RenderBlock, { kind: "text" }>, width: number): string[] {
@@ -224,6 +270,8 @@ type RenderEnvironment = {
 	readonly meta: TruncationMeta | undefined;
 	/** Render-time clock, injected so elapsed time is deterministic under test. */
 	readonly now: number;
+	/** Repaints the row once a background-formatted code preview is ready; absent while args stream. */
+	readonly repaint?: () => void;
 };
 type CellBadges = {
 	readonly reset: boolean;
@@ -243,39 +291,20 @@ function assertNever(value: never): never {
 	throw new TypeError(`Unhandled eval render variant: ${String(value)}`);
 }
 
-function languageForHighlighter(language: EvalLanguage): "python" | "javascript" | "ruby" | "julia" {
-	switch (language) {
-		case "py":
-			return "python";
-		case "js":
-			return "javascript";
-		case "rb":
-			return "ruby";
-		case "jl":
-			return "julia";
-		default:
-			return assertNever(language);
-	}
-}
-
-function highlightedCode(code: string, language: EvalLanguage, theme: Theme | undefined): string {
-	const normalizedCode = code.trim().length > 0 ? code : "...";
-	const lines = highlightCode(normalizedCode, languageForHighlighter(language));
-	return (theme === undefined ? lines.map((line) => line.replace(/\u001b\[[0-9;]*m/gu, "")) : lines).join("\n");
-}
-
 function spinner(frame: number | undefined): string {
 	return SPINNER_FRAMES.at((frame ?? 0) % SPINNER_FRAMES.length) ?? SPINNER_FRAMES[0];
 }
 
 function isLiveCellStatus(status: CellStatus): boolean {
-	return status === "pending" || status === "running" || status === "detached";
+	return status === "pending" || status === "running";
 }
 
 function cellPresentation(status: CellStatus, spinnerFrame: number | undefined): StatusPresentation {
 	switch (status) {
 		case "pending":
 			return { label: "pending", icon: "○", color: "muted" };
+		case "queued":
+			return { label: "queued", icon: "○", color: "muted" };
 		case "running":
 			return { label: "running", icon: spinner(spinnerFrame), color: "warning" };
 		case "detached":
@@ -309,16 +338,40 @@ function cellElapsedMs(cell: EvalCellResult, environment: RenderEnvironment): nu
 }
 
 function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string {
-	const presentation = cellPresentation(cell.status, environment.spinnerFrame);
+	const presentation = cellPresentation(
+		cell.status,
+		environment.spinnerFrame ?? Math.floor((cellElapsedMs(cell, environment) ?? 0) / LIVE_RENDER_TICK_MS),
+	);
 	const runtimeBadge = cell.runtime === undefined ? "" : ` (${formatRuntimeBadge(cell.language, cell.runtime)})`;
-	let header = `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
+	let header = leadsWithHeadline(cell.status)
+		? `eval ${cell.language}${runtimeBadge} ${presentation.label}`
+		: `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
+	if (cell.queuedBehind !== undefined && cell.queuedBehind.length > 0)
+		header += ` · queued behind ${cell.queuedBehind.map(sanitizeTerminalLabel).join(", ")}`;
+	else if (cell.queuedBehind !== undefined && cell.status === "queued")
+		header += ` · waiting for the ${cell.language} kernel to be ready`;
 	const throughputBadge = badges.throughput === undefined ? undefined : formatThroughputBadge(badges.throughput);
 	if (throughputBadge !== undefined) header += ` · ${throughputBadge}`;
 	const elapsedMs = badges.throughput?.wallDurationMs ?? cellElapsedMs(cell, environment);
 	if (elapsedMs !== undefined) header += ` · ${formatDuration(elapsedMs)}`;
 	if (badges.reset) header += " · reset";
 	if (badges.timeout !== undefined) header += ` · timeout ${badges.timeout}s`;
+	if (leadsWithHeadline(cell.status))
+		header = headlined(presentation.icon, cell.summary, cell.code, header, environment);
 	return style(environment.theme, presentation.color, header);
+}
+
+// An in-progress row leads with what the cell is doing (senpi#2802); collapsed, the headline is cut so the whole
+// header stays on one line, and the code moves behind expand.
+function headlined(
+	icon: string,
+	summary: string | undefined,
+	code: string | undefined,
+	rest: string,
+	environment: RenderEnvironment,
+): string {
+	const budget = environment.expanded ? undefined : environment.width - 3 - visibleWidth(`${icon}  · ${rest}`);
+	return `${icon} ${liveHeadline(summary, code, budget)} · ${rest}`;
 }
 
 function previewText(
@@ -580,27 +633,39 @@ function renderAgentProgressEvents(events: readonly EvalStatusEvent[], environme
 }
 
 function renderCell(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string[] {
+	if (leadsWithHeadline(cell.status) && !environment.expanded && cell.output.trim().length === 0) {
+		const statusEvents = (cell.statusEvents ?? []).filter((event) => event.op !== "agent");
+		if (statusEvents.length === 0) {
+			// Nothing to frame yet: the collapsed live row is its headline alone, one line, no empty box.
+			const lines = renderPrefixed(cellHeader(cell, environment, badges), environment, LIVE_LINE_PREFIX);
+			const agentEvents = (cell.statusEvents ?? []).filter((event) => event.op === "agent");
+			if (agentEvents.length > 0) appendLines(lines, renderAgentProgressEvents(agentEvents, environment));
+			return lines;
+		}
+	}
 	const lines = renderPrefixed(cellHeader(cell, environment, badges), environment, {
 		prefix: "╭─ ",
 		continuation: "│  ",
 		color: "borderAccent",
 	});
-	if (cell.summary !== undefined) {
+	const headlined = leadsWithHeadline(cell.status);
+	if (cell.summary !== undefined && !headlined) {
 		appendLines(
 			lines,
-			renderPrefixed(style(environment.theme, "muted", cell.summary), environment, {
-				prefix: "│ ",
-				continuation: "│ ",
-				color: "muted",
-			}),
+			summaryVisualLines(cell.summary, Math.max(1, environment.width - 2), environment.expanded).map(
+				(line) => `${style(environment.theme, "muted", "│ ")}${style(environment.theme, "muted", line)}`,
+			),
 		);
 	}
 	const innerWidth = Math.max(1, environment.width - 2);
-	const codePreview = previewText(
-		highlightedCode(cell.code, cell.language, environment.theme),
-		environment.expanded ? Number.POSITIVE_INFINITY : CODE_PREVIEW_LINES,
-		innerWidth,
-	);
+	const codePreview =
+		headlined && !environment.expanded
+			? { lines: [], skipped: 0 }
+			: previewText(
+					highlightedCode(cell.code, cell.language, environment.theme, environment.repaint),
+					environment.expanded ? Number.POSITIVE_INFINITY : CODE_PREVIEW_LINES,
+					innerWidth,
+				);
 	if (codePreview.skipped > 0) {
 		appendLines(
 			lines,
@@ -614,7 +679,7 @@ function renderCell(cell: EvalCellResult, environment: RenderEnvironment, badges
 	for (const line of codePreview.lines) {
 		appendLines(lines, renderPrefixed(line, environment, { prefix: "│ ", continuation: "│ ", color: "borderMuted" }));
 	}
-	const output = stripOutputNotice(cell.output, environment.meta).trimEnd();
+	const output = cell.output.trimEnd();
 	if (output.length > 0) {
 		appendLines(lines, renderPrefixed("output", environment, { prefix: "├─ ", continuation: "│  ", color: "dim" }));
 		const outputColor: ThemeColor = cell.status === "error" ? "error" : "toolOutput";
@@ -681,7 +746,7 @@ function renderJsonOutputs(values: readonly unknown[], environment: RenderEnviro
 
 function renderDetailedLines(
 	details: EvalToolDetails,
-	result: AgentToolResult<EvalToolDetails>,
+	result: AgentToolResult<EvalResultDetails>,
 	context: DetailedRenderContext,
 ): string[] {
 	const lines: string[] = [];
@@ -726,24 +791,13 @@ function renderDetailedLines(
 				context.environment.width,
 			),
 		);
-	if (details.notice !== undefined)
-		appendLines(
-			lines,
-			renderAllVisualLines(style(context.environment.theme, "dim", details.notice), context.environment.width),
-		);
-	const warning = formatTruncationWarning(details.meta) ?? (details.truncated ? "[eval output truncated]" : null);
-	if (warning !== null)
-		appendLines(
-			lines,
-			renderAllVisualLines(style(context.environment.theme, "warning", warning), context.environment.width),
-		);
 	return lines;
 }
 
-function textOutput(result: AgentToolResult<EvalToolDetails>, showImageFallback: boolean): string {
+function textOutput(result: AgentToolResult<EvalResultDetails>, showImageFallback: boolean): string {
 	const lines: string[] = [];
 	for (const part of result.content) {
-		if (part.type === "text") lines.push(part.text);
+		if (part.type === "text" && part.audience !== "model") lines.push(part.text);
 		else if (showImageFallback && part.type === "image") {
 			lines.push(`[image: ${sanitizeTerminalLabel(part.mimeType)}]`);
 		}
@@ -752,7 +806,7 @@ function textOutput(result: AgentToolResult<EvalToolDetails>, showImageFallback:
 }
 
 function isEvalRunInput(args: EvalToolRequest): args is EvalToolInput {
-	return args.action !== "peek" && args.action !== "stop";
+	return args.action === undefined || args.action === "run";
 }
 
 function toolCallRows(details: EvalToolDetails | undefined): ToolCallRow[] {
@@ -853,6 +907,17 @@ function resultMetadata(
 	return [{ kind: "text", text: style(theme, "muted", metadata.join(" | ")) }];
 }
 
+// The call renderer reads the assistant message's raw arguments, which keep the provider's
+// original summary (senpi#1472 detached preparation from the message), so it normalizes here,
+// idempotently: an already-normalized value is returned unchanged.
+function displaySummary(summary: string | undefined): string | undefined {
+	return normalizeEvalSummary(summary);
+}
+
+function cellIdSuffix(cellId: unknown): string {
+	return typeof cellId === "string" && cellId !== "" ? ` ${sanitizeTerminalLabel(cellId)}` : "";
+}
+
 export function renderEvalCall(
 	args: EvalToolRequest,
 	theme: Theme | undefined,
@@ -866,18 +931,37 @@ export function renderEvalCall(
 		return component;
 	}
 	if (!isEvalRunInput(args)) {
-		component.setBlocks([{ kind: "text", text: style(theme, "toolTitle", `eval ${args.action} ${args.cell_id}`) }]);
+		// While a peek/stop call streams in, `cell_id` can still be missing; the title is the action alone until it arrives.
+		const title = args.action === "list" ? "eval list" : `eval ${args.action}${cellIdSuffix(args.cell_id)}`;
+		component.setBlocks([{ kind: "text", text: style(theme, "toolTitle", title) }]);
 		return component;
 	}
+	// While the model streams the call, `code` usually arrives before `language` and `summary`; a partial call still
+	// renders (the host would otherwise fall back to a raw key=value row).
+	const code = typeof args.code === "string" ? args.code : "";
+	const language = knownLanguage(args.language);
 	if (theme === undefined && context.spinnerFrame === undefined) {
 		const reset = args.reset === true ? " reset" : "";
 		const timeout = args.timeout === undefined ? "" : ` timeout ${args.timeout}s`;
 		component.setBlocks([
-			{ kind: "text", text: style(theme, "toolTitle", `eval ${args.language}${reset}${timeout}`) },
-			...(args.summary === undefined ? [] : [{ kind: "text" as const, text: style(theme, "muted", args.summary) }]),
 			{
 				kind: "text",
-				text: style(theme, "mdCodeBlock", args.code.trim().length > 0 ? args.code : "..."),
+				text: style(theme, "toolTitle", `eval${language === undefined ? "" : ` ${language}`}${reset}${timeout}`),
+			},
+			...(displaySummary(args.summary) === undefined
+				? []
+				: [summaryBlock(displaySummary(args.summary) ?? "", theme, context.expanded)]),
+			{
+				kind: "text",
+				text: style(
+					theme,
+					"mdCodeBlock",
+					code.trim().length === 0
+						? "..."
+						: language === undefined
+							? code
+							: displayCode(code, language, context.argsComplete ? context.invalidate : undefined),
+				),
 				maxVisualLines: context.expanded ? undefined : CODE_PREVIEW_LINES,
 				collapseKind: "code",
 				theme,
@@ -896,12 +980,15 @@ export function renderEvalCall(
 					width,
 					meta: undefined,
 					now: renderNow(context),
+					...(context.argsComplete ? { repaint: context.invalidate } : {}),
 				};
+				const summary = displaySummary(args.summary);
+				if (language === undefined) return streamingCallLines(summary, code, environment);
 				const cell: EvalCellResult = {
 					index: 0,
-					...(args.summary === undefined ? {} : { summary: args.summary }),
-					code: args.code,
-					language: args.language,
+					...(summary === undefined ? {} : { summary }),
+					code,
+					language,
 					output: "",
 					status: context.spinnerFrame === undefined ? "pending" : "running",
 				};
@@ -916,14 +1003,30 @@ export function renderEvalCall(
 	return component;
 }
 
+/** A call whose language has not streamed in yet: the headline row alone, until the full frame can render. */
+function streamingCallLines(summary: string | undefined, code: string, environment: RenderEnvironment): string[] {
+	const icon = environment.spinnerFrame === undefined ? "○" : spinner(environment.spinnerFrame);
+	return renderPrefixed(headlined(icon, summary, code, "eval", environment), environment, LIVE_LINE_PREFIX);
+}
+
+const LIVE_LINE_PREFIX: PrefixStyle = { prefix: "╶─ ", continuation: "   ", color: "borderAccent" };
+
 export function renderEvalResult(
-	result: AgentToolResult<EvalToolDetails>,
+	result: AgentToolResult<EvalResultDetails>,
 	options: ToolRenderResultOptions,
 	theme: Theme | undefined,
 	context: ResultRenderContext,
 ): EvalRenderComponent {
 	const component = componentFor(context);
 	const details = result.details;
+	if (details && "action" in details) {
+		component.syncLiveTicker(false, context.invalidate);
+		component.setBlocks([
+			{ kind: "text", text: style(theme, "toolTitle", "eval list") },
+			{ kind: "text", text: style(theme, "toolOutput", textOutput(result, false)) },
+		]);
+		return component;
+	}
 	const expanded = options.expanded || context.expanded;
 	const imageProtocol = context.imageProtocol ?? null;
 	component.syncLiveTicker(hasLiveCell(details), context.invalidate);
@@ -940,6 +1043,7 @@ export function renderEvalResult(
 							width,
 							meta: details.meta,
 							now: renderNow(context),
+							repaint: context.invalidate,
 						},
 						args: context.args,
 						showImageFallback: context.showImages && imageProtocol === null,
@@ -957,14 +1061,12 @@ export function renderEvalResult(
 	const status = resultStatus(details, options, context.isError);
 	const blocks: RenderBlock[] = [
 		{ kind: "text", text: resultHeader(details, status, theme) },
-		...(details?.summary === undefined
-			? []
-			: [{ kind: "text" as const, text: style(theme, "muted", details.summary) }]),
+		...(details?.summary === undefined ? [] : [summaryBlock(details.summary, theme, expanded)]),
 		...resultMetadata(details, options, theme, status),
 		{ kind: "blank" },
 	];
 	const rawOutput = textOutput(result, context.showImages && imageProtocol === null);
-	const output = stripOutputNotice(rawOutput, details?.meta).trimEnd();
+	const output = rawOutput.trimEnd();
 	const hasRenderedImage =
 		context.showImages && imageProtocol !== null && result.content.some((part) => part.type === "image");
 	if (output.length > 0) {
@@ -1021,10 +1123,6 @@ export function renderEvalResult(
 	const calls = toolCallRows(details);
 	const nestedCalls = nestedToolCallBlock(details, theme, context.cwd, expanded);
 	if (calls.length > 0) blocks.push({ kind: "blank" }, nestedCalls ?? { kind: "toolCalls", calls, expanded, theme });
-	if (details?.notice !== undefined)
-		blocks.push({ kind: "blank" }, { kind: "text", text: style(theme, "dim", details.notice) });
-	const warning = formatTruncationWarning(details?.meta) ?? (details?.truncated ? "[eval output truncated]" : null);
-	if (warning !== null) blocks.push({ kind: "blank" }, { kind: "text", text: style(theme, "warning", warning) });
 	component.setBlocks(blocks);
 	return component;
 }

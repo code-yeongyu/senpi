@@ -8,9 +8,12 @@ import {
 	excludeRoutineOnlySettingsChanges,
 	refreshSettingsContentSnapshots,
 } from "../src/core/extensions/builtin/config-reload/routine-settings.ts";
+import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import {
 	__resetSelfWriteTrackerForTests,
 	__setSelfWriteTrackerClockForTests,
+	DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
+	DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
 	getInMemorySettingsPath,
 	getSettingsPath,
 	InMemorySettingsStorage,
@@ -19,6 +22,36 @@ import {
 } from "../src/core/settings-manager.ts";
 
 describe("SettingsManager", () => {
+	it("isolates changelog seen versions by source and persists them", async () => {
+		const manager = SettingsManager.inMemory({ lastChangelogVersion: "1.0.0" });
+		expect(manager.getChangelogSeen("engine")).toBe("1.0.0");
+		expect(manager.getChangelogSeen("omo")).toBeUndefined();
+		manager.setChangelogSeen("omo", "5.0.0-beta.2");
+		await manager.flush();
+		expect(manager.getChangelogSeen("engine")).toBe("1.0.0");
+		expect(manager.getChangelogSeen("omo")).toBe("5.0.0-beta.2");
+	});
+	it("bridges SENPI terminal capability overrides, with PI fallback", () => {
+		const previous = {
+			SENPI_HYPERLINKS: process.env.SENPI_HYPERLINKS,
+			PI_HYPERLINKS: process.env.PI_HYPERLINKS,
+		};
+		try {
+			process.env.SENPI_HYPERLINKS = "0";
+			process.env.PI_HYPERLINKS = "1";
+			const manager = SettingsManager.inMemory();
+			expect(manager.getTerminalCapabilityOverrides().hyperlinks).toBe(false);
+
+			delete process.env.SENPI_HYPERLINKS;
+			expect(manager.getTerminalCapabilityOverrides().hyperlinks).toBe(true);
+		} finally {
+			if (previous.SENPI_HYPERLINKS === undefined) delete process.env.SENPI_HYPERLINKS;
+			else process.env.SENPI_HYPERLINKS = previous.SENPI_HYPERLINKS;
+			if (previous.PI_HYPERLINKS === undefined) delete process.env.PI_HYPERLINKS;
+			else process.env.PI_HYPERLINKS = previous.PI_HYPERLINKS;
+		}
+	});
+
 	const testDir = join(tmpdir(), `senpi-settings-${process.pid}`);
 	const agentDir = join(testDir, "agent");
 	const projectDir = join(testDir, "project");
@@ -202,6 +235,26 @@ describe("SettingsManager", () => {
 			// In-memory change should win
 			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
 			expect(savedSettings.defaultThinkingLevel).toBe("high");
+		});
+	});
+
+	describe("deviceId", () => {
+		it("creates one global device ID and reuses it in later processes", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ deviceId: "project-device" }),
+			);
+			const first = SettingsManager.create(projectDir, agentDir);
+
+			const deviceId = first.getOrCreateDeviceId();
+			await first.flush();
+
+			expect(deviceId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			expect(first.getOrCreateDeviceId()).toBe(deviceId);
+			expect(SettingsManager.create(projectDir, agentDir).getOrCreateDeviceId()).toBe(deviceId);
+			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "dark", deviceId });
 		});
 	});
 
@@ -428,13 +481,31 @@ describe("SettingsManager", () => {
 			expect(whenManager.getAgentStreamIdleTimeoutMs()).toBe(5_000);
 		});
 
-		it("should default the agent stream start timeout to 90s", () => {
+		it("should default retry.maxRetries to the shipped turn budget", () => {
 			const givenSettingsPath = join(agentDir, "settings.json");
 			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
 
 			const whenManager = SettingsManager.create(projectDir, agentDir);
 
-			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(90_000);
+			expect(whenManager.getRetrySettings().maxRetries).toBe(5);
+		});
+
+		it("should prefer an explicit retry.maxRetries over the default", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(givenSettingsPath, JSON.stringify({ retry: { maxRetries: 2 } }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getRetrySettings().maxRetries).toBe(2);
+		});
+
+		it("should default the agent stream start timeout to 300s", () => {
+			const givenSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(givenSettingsPath, JSON.stringify({ theme: "dark" }));
+
+			const whenManager = SettingsManager.create(projectDir, agentDir);
+
+			expect(whenManager.getAgentStreamStartTimeoutMs()).toBe(300_000);
 		});
 
 		it("should prefer retry.provider.streamStartTimeoutMs for the agent stream start timeout", () => {
@@ -606,6 +677,118 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("retry settings", () => {
+		it("defaults and overrides agent retry delay cap", () => {
+			expect(SettingsManager.inMemory().getRetrySettings()).toEqual({
+				enabled: true,
+				// Derived from the shipped senpi-default retry profile's turn budget, not a
+				// second hard-coded default: the one `retry.maxRetries` key must mean the same
+				// budget on every consumer.
+				maxRetries: 5,
+				baseDelayMs: 2000,
+				maxAgentDelayMs: 60000,
+			});
+			expect(
+				SettingsManager.inMemory({
+					retry: { enabled: true, maxRetries: 10, baseDelayMs: 500, maxAgentDelayMs: 5000 },
+				}).getRetrySettings(),
+			).toEqual({ enabled: true, maxRetries: 10, baseDelayMs: 500, maxAgentDelayMs: 5000 });
+		});
+	});
+
+	describe("httpIdleTimeoutMs", () => {
+		it("should default to 5 minutes", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getHttpIdleTimeoutMs()).toBe(DEFAULT_HTTP_IDLE_TIMEOUT_MS);
+		});
+
+		it("should use merged global and project settings", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 300000 }));
+			writeFileSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: 0 }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getHttpIdleTimeoutMs()).toBe(0);
+		});
+
+		it("should reject invalid timeout values", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: -1 }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(() => manager.getHttpIdleTimeoutMs()).toThrow("Invalid httpIdleTimeoutMs setting");
+		});
+	});
+
+	describe("session_shutdown handler budget", () => {
+		it("defaults to a 2s warning and a 10s hard cap", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getSessionShutdownHandlerWarnMs()).toBe(DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS);
+			expect(manager.getSessionShutdownHandlerTimeoutMs()).toBe(DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS);
+			expect(DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS).toBe(2000);
+			expect(DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS).toBe(10000);
+		});
+
+		it("uses merged global and project settings", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ sessionShutdownHandlerWarnMs: 500, sessionShutdownHandlerTimeoutMs: 5000 }),
+			);
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ sessionShutdownHandlerTimeoutMs: 0 }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getSessionShutdownHandlerWarnMs()).toBe(500);
+			expect(manager.getSessionShutdownHandlerTimeoutMs()).toBe(0);
+		});
+
+		it("persists both thresholds through their setters", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			manager.setSessionShutdownHandlerWarnMs(750);
+			manager.setSessionShutdownHandlerTimeoutMs(4500);
+			await manager.flush();
+
+			expect(manager.getSessionShutdownHandlerWarnMs()).toBe(750);
+			expect(manager.getSessionShutdownHandlerTimeoutMs()).toBe(4500);
+			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(savedSettings.sessionShutdownHandlerWarnMs).toBe(750);
+			expect(savedSettings.sessionShutdownHandlerTimeoutMs).toBe(4500);
+		});
+
+		it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])("rejects %s from a settings file", (invalidValue) => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({
+					sessionShutdownHandlerWarnMs: invalidValue,
+					sessionShutdownHandlerTimeoutMs: invalidValue,
+				}),
+			);
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(() => manager.getSessionShutdownHandlerWarnMs()).toThrow(
+				"Invalid sessionShutdownHandlerWarnMs setting",
+			);
+			expect(() => manager.getSessionShutdownHandlerTimeoutMs()).toThrow(
+				"Invalid sessionShutdownHandlerTimeoutMs setting",
+			);
+		});
+
+		it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])("rejects %s from the setters", (invalidValue) => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(() => manager.setSessionShutdownHandlerWarnMs(invalidValue)).toThrow(
+				"Invalid sessionShutdownHandlerWarnMs setting",
+			);
+			expect(() => manager.setSessionShutdownHandlerTimeoutMs(invalidValue)).toThrow(
+				"Invalid sessionShutdownHandlerTimeoutMs setting",
+			);
+		});
+	});
+
 	describe("externalEditor", () => {
 		const originalVisual = process.env.VISUAL;
 		const originalEditor = process.env.EDITOR;
@@ -684,13 +867,16 @@ describe("SettingsManager", () => {
 		const manager = SettingsManager.create(projectDir, agentDir);
 		expect(manager.getFullscreenExitOutput()).toBe("transcript");
 		expect(manager.getFullscreenScrollbar()).toBe("auto");
+		expect(manager.getFullscreenCopyOnSelect()).toBe(true);
 
 		manager.setFullscreenExitOutput("resume-hint");
 		manager.setFullscreenScrollbar("hidden");
+		manager.setFullscreenCopyOnSelect(false);
 		await manager.flush();
 		const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
 		expect(savedSettings.fullscreenExitOutput).toBe("resume-hint");
 		expect(savedSettings.fullscreenScrollbar).toBe("hidden");
+		expect(savedSettings.fullscreenCopyOnSelect).toBe(false);
 
 		writeFileSync(
 			join(agentDir, "settings.json"),
@@ -699,6 +885,28 @@ describe("SettingsManager", () => {
 		const reloadedManager = SettingsManager.create(projectDir, agentDir);
 		expect(reloadedManager.getFullscreenExitOutput()).toBe("transcript");
 		expect(reloadedManager.getFullscreenScrollbar()).toBe("auto");
+		expect(reloadedManager.getFullscreenCopyOnSelect()).toBe(true);
+	});
+
+	// #9758: wheel scrolling defaults to auto, persists line counts, and ignores invalid values.
+	it("persists fullscreen wheel scroll lines", async () => {
+		const manager = SettingsManager.create(projectDir, agentDir);
+		expect(manager.getFullscreenWheelScrollLines()).toBe("auto");
+
+		manager.setFullscreenWheelScrollLines(3);
+		await manager.flush();
+		expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")).fullscreenWheelScrollLines).toBe(3);
+
+		for (const [value, expected] of [
+			[7.9, 7],
+			[0, 1],
+			[1000, 100],
+			["fast", "auto"],
+			[null, "auto"],
+		] as const) {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ fullscreenWheelScrollLines: value }));
+			expect(SettingsManager.create(projectDir, agentDir).getFullscreenWheelScrollLines()).toBe(expected);
+		}
 	});
 
 	describe("outputPad", () => {
@@ -835,6 +1043,53 @@ describe("SettingsManager", () => {
 		it("preserves an empty tool list", () => {
 			expect(SettingsManager.inMemory({ defaultTools: [] }).getDefaultTools()).toEqual([]);
 			expect(SettingsManager.inMemory().getDefaultTools()).toBeUndefined();
+		});
+
+		it("applies +name and -name to the default selection", () => {
+			expect(SettingsManager.inMemory({ defaultTools: ["+codemode", "-write"] }).getDefaultTools()).toEqual([
+				"read",
+				"bash",
+				"edit",
+				"grep",
+				"codemode",
+			]);
+			expect(SettingsManager.inMemory({ defaultTools: ["read", "+grep", "+read"] }).getDefaultTools()).toEqual([
+				"read",
+				"grep",
+			]);
+		});
+
+		it("layers project modifiers on top of the global selection", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ defaultTools: ["read", "bash", "+codemode"] }),
+			);
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ defaultTools: ["-codemode", "+tool_search"] }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getDefaultTools()).toEqual(["read", "bash", "tool_search"]);
+
+			manager.applyOverrides({ defaultTools: ["+codemode"] });
+			expect(manager.getDefaultTools()).toEqual(["read", "bash", "tool_search", "codemode"]);
+		});
+
+		it("applies project modifiers to the built-in defaults without a global setting", () => {
+			writeFileSync(
+				join(projectDir, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ defaultTools: ["+codemode"] }),
+			);
+
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual([
+				"read",
+				"bash",
+				"edit",
+				"write",
+				"grep",
+				"codemode",
+			]);
 		});
 	});
 

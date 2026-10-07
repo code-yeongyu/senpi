@@ -12,6 +12,7 @@ import {
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToolPath } from "./path-utils.ts";
+import { appendPostMutateNote, runPostMutate } from "./post-mutate.ts";
 import type { ExecutionToolContext } from "./tool-context.ts";
 
 const replaceEditSchema = Type.Object(
@@ -52,9 +53,10 @@ export interface EditToolDetails {
 	firstChangedLine?: number;
 }
 
+/** Works on a copy, so the provider's tool call arguments stay unchanged; arrays are left for validation to reject. */
 function prepareEditArguments(input: unknown): EditToolInput {
-	if (!input || typeof input !== "object") return input as EditToolInput;
-	const args = input as Record<string, unknown>;
+	if (!input || typeof input !== "object" || Array.isArray(input)) return input as EditToolInput;
+	const args: Record<string, unknown> = { ...input };
 	if (typeof args.edits === "string") {
 		try {
 			const parsed: unknown = JSON.parse(args.edits);
@@ -99,42 +101,70 @@ export function createEditTool<TContext extends ExecutionToolContext = Execution
 			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
 		parameters: editSchema,
 		prepareArguments: prepareEditArguments,
-		async execute(_toolCallId, input, signal, _onUpdate, { env }) {
+		async execute(_toolCallId, input, _onUpdate, { env, postMutate }, _invocation, context) {
 			const { path, edits } = validateEditInput(input);
-			const absolutePath = await resolveToolPath(env, path, signal);
-			return withFileMutationQueue(env, absolutePath, async () => {
-				if (signal?.aborted) throw new Error("Operation aborted");
-				const info = await env.fileInfo(absolutePath, signal);
-				if (!info.ok) throw editAccessError(path, info.error);
-				if (info.value.kind !== "file" && info.value.kind !== "symlink") {
-					throw new Error(`Could not edit file: ${path}. Path is not a file.`);
-				}
+			const absolutePath = await resolveToolPath(env, path, context);
+			return withFileMutationQueue(
+				env,
+				absolutePath,
+				async () => {
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
+					const info = await env.fileInfo(absolutePath, context);
+					if (!info.ok) throw editAccessError(path, info.error);
+					if (info.value.kind !== "file" && info.value.kind !== "symlink") {
+						throw new Error(`Could not edit file: ${path}. Path is not a file.`);
+					}
 
-				const readResult = await env.readTextFile(absolutePath, signal);
-				if (!readResult.ok) throw editAccessError(path, readResult.error);
-				if (signal?.aborted) throw new Error("Operation aborted");
+					const readResult = await env.readTextFile(absolutePath, context);
+					if (!readResult.ok) throw editAccessError(path, readResult.error);
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
 
-				const { bom, text: content } = stripBom(readResult.value);
-				const originalEnding = detectLineEnding(content);
-				const normalizedContent = normalizeToLF(content);
-				const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
-				if (signal?.aborted) throw new Error("Operation aborted");
+					const { bom, text: content } = stripBom(readResult.value);
+					const originalEnding = detectLineEnding(content);
+					const normalizedContent = normalizeToLF(content);
+					const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
 
-				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
-				const writeResult = await env.writeFile(absolutePath, finalContent, signal);
-				if (!writeResult.ok) throw editAccessError(path, writeResult.error);
-				if (signal?.aborted) throw new Error("Operation aborted");
+					const finalContent = bom + restoreLineEndings(newContent, originalEnding);
+					const writeResult = await env.writeFile(absolutePath, finalContent, context);
+					if (!writeResult.ok) throw editAccessError(path, writeResult.error);
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
 
-				const diffResult = generateDiffString(baseContent, newContent);
-				return {
-					content: [{ type: "text", text: `Successfully replaced ${edits.length} block(s) in ${path}.` }],
-					details: {
-						diff: diffResult.diff,
-						patch: generateUnifiedPatch(path, baseContent, newContent),
-						firstChangedLine: diffResult.firstChangedLine,
-					},
-				};
-			});
+					const outcome = await runPostMutate(postMutate, {
+						tool: "edit",
+						path: absolutePath,
+						signal: context.abortSignal,
+					});
+					if (context.abortSignal?.aborted) throw new Error("Operation aborted");
+
+					let committedContent = newContent;
+					let rereadNote: string | undefined;
+					if (outcome.fileMayHaveChanged) {
+						const postMutateRead = await env.readTextFile(absolutePath, context);
+						// The edit itself already landed, so an unreadable file is the hook's doing, not a
+						// failed edit. Report it as a note rather than an error that misattributes the failure.
+						if (postMutateRead.ok) committedContent = normalizeToLF(stripBom(postMutateRead.value).text);
+						else
+							rereadNote = `postMutate left the file unreadable: ${postMutateRead.error.code}. Reported diff describes the edit before the hook ran.`;
+					}
+
+					const diffResult = generateDiffString(baseContent, committedContent);
+					const text = appendPostMutateNote(
+						`Successfully replaced ${edits.length} block(s) in ${path}.`,
+						outcome.note,
+						rereadNote,
+					);
+					return {
+						content: [{ type: "text", text }],
+						details: {
+							diff: diffResult.diff,
+							patch: generateUnifiedPatch(path, baseContent, committedContent),
+							firstChangedLine: diffResult.firstChangedLine,
+						},
+					};
+				},
+				context,
+			);
 		},
 	};
 }

@@ -49,7 +49,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | `bench/` | Benchmark baselines and improvement ledger (data only; run via `scripts/run-pr530-benchmarks.mjs`) |
 | `.github/` | CI/release/issue automation plus committed merge and release agent drivers |
 | `.agents/skills/senpi-qa/` | Required real-CLI QA harness; private dependency island outside the workspace |
-| `local-ignore/` | QA evidence archive; gitignored except deliberately tracked historical receipts |
+| `local-ignore/` | QA evidence archive; gitignored and never tracked (the PR body carries the QA summary) |
 
 ## WHERE TO LOOK
 
@@ -84,11 +84,11 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 
 ## COMMANDS
 
-- Install dependencies: `npm install --ignore-scripts`. After an approved dependency change, `npm run refresh-lock` (lockfile + registry metadata + shrinkwrap + install-lock).
-- Full static validation after code changes: `npm run check` (biome, pinned-deps/ts-imports/shrinkwrap/install-lock checks, `check:claude-sdk-platform-lock`, `tsc --noEmit`, browser-smoke). It runs no tests; CI runs the same commands, so keep them in sync. Broad validation: `npm test`.
-- Narrow tests run from the package root using that package's test command. Runners differ: Vitest for `ai`, `coding-agent`, `senpi-codemode`, `server`, `session-backends`, `telemetry`; `node --test --import tsx` for `tui`; `node --test` for `scripts/` (`npm run test:scripts`) and `.agents/skills/senpi-qa/scripts/lib/`.
-- App-server transport QA is its own channel: `npm run qa:app-server` (`packages/coding-agent/scripts/qa-app-server/`), not part of `npm test`. Model catalog data: `npm run hydrate:model-data`, verified by `check:model-data`, from the repository root.
-- Never run `npm run dev` in this repository.
+- Install dependencies: `bun install --ignore-scripts`. After an approved dependency change, `bun run refresh-lock` (lockfile + registry metadata + install-lock).
+- Full static validation after code changes: `bun run check` (biome, pinned-deps/ts-imports/install-lock checks, `check:claude-sdk-platform-lock`, `tsc --noEmit`, browser-smoke). It runs no tests; CI runs the same commands, so keep them in sync. Broad validation: `bun run test` runs `test:scripts`, then `scripts/run-workspaces.mjs` runs every workspace `test` script sequentially in path order with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites the same way.
+- Narrow tests run from the package root using that package's test command (`bun run --cwd packages/<pkg> test -- <args>`), or from the repository root through the runner (`bun run test --workspace packages/<pkg> -- <args>`, which runs the scripts tests first). Runners differ: Vitest for `ai`, `coding-agent`, `senpi-codemode`, `server`, `session-backends`, `telemetry`; `node --test --import tsx` for `tui`; `node --test` for `scripts/` (`bun run test:scripts`) and `.agents/skills/senpi-qa/scripts/lib/`.
+- App-server transport QA is its own channel: `bun run qa:app-server` (`packages/coding-agent/scripts/qa-app-server/`), not part of `bun run test`. Model catalog data: `bun run hydrate:model-data`, verified by `check:model-data`, from the repository root.
+- Never run `bun run dev` in this repository.
 
 ## CONVENTIONS
 
@@ -97,6 +97,7 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Imports are top-level by default. Inline or dynamic imports are forbidden except existing documented lazy/browser-safe boundaries such as `packages/ai/src/api/*.lazy.ts` and credential probes.
 - Do not hardcode TUI keys; add defaults to `packages/tui/src/keybindings.ts` or `packages/coding-agent/src/core/keybindings.ts`.
 - Never hand-edit generated sources: `packages/ai/src/{models,image-models}.generated.ts` and `src/providers/data/*.json` (regenerate via `packages/ai/scripts/generate-models.ts`), `packages/ai/src/api/cursor-agent/gen/agent_pb.ts` (`buf generate` + `scripts/transform-cursor-agent-proto.mjs`), `crates/senpi-pty/index.{js,d.ts}` (napi-rs), `packages/coding-agent/install-lock/*`, and `packages/coding-agent/src/modes/app-server/protocol/generated/`. Builtin extension registration order is authoritative only in `builtin/index.ts` — never quote a registration number from prose.
+- Root `package.json` scripts reach workspaces only through `node scripts/run-workspaces.mjs`; never `npm run --workspaces`, `npm --workspace=<name> run`, `npm --prefix <dir> run`, or `cd <dir> && npm run` (`scripts/root-workspace-scripts.test.mjs` fails the manifest). Those shapes hardcode npm, and under bun the flag-after-name form re-entered the root script forever.
 - Ask before removing intentional functionality; backward compatibility is opt-in, not automatic.
 - Changing fork-specific source behavior means reading the nearest `changes.md` first and updating it in the same verified increment, not in a follow-up. Merges resolve tracker files to `ours`, so a stale entry misleads the next upstream sync.
 - Changelog edits are release/audit work only: follow `.github/agent/commands/cl.md`, never edit released sections, and satisfy the changelog gate (`.github/workflows/changelog-gate.yml`) for both CHANGELOG.md and changes.md — see below.
@@ -112,22 +113,34 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 
 ## QUALITY GATES
 
-- Any runtime change under `packages/{ai,agent,coding-agent,tui,pty,senpi-codemode}` (the release-managed set) plus `crates/senpi-pty` requires scoped tests, `npm run check`, and real CLI QA through `.agents/skills/senpi-qa/`.
-- Save QA receipts under `local-ignore/qa-evidence/<YYYYMMDD>-<slug>/`; no evidence means no commit or push. Evidence, logs, comments, and PR bodies must never contain tokens, credentials, auth headers, cookies, or raw environment dumps.
+- Any runtime change under `packages/{ai,agent,coding-agent,tui,pty,senpi-codemode}` (the release-managed set) plus `crates/senpi-pty` requires scoped tests, `bun run check`, and real CLI QA through `.agents/skills/senpi-qa/`.
+- Save QA receipts under `local-ignore/qa-evidence/<YYYYMMDD>-<slug>/`; no evidence means no commit or push. The receipts stay local: summarize them in the PR body (decisive excerpt plus a `sha256sum` line per file) and never `git add -f` them; `scripts/tracked-harness-artifacts-audit.test.mjs` fails when any path under `.omo/`, `local-ignore/`, `.qa-evidence/` or `qa-evidence/` is tracked. Evidence, logs, comments, and PR bodies must never contain tokens, credentials, auth headers, cookies, or raw environment dumps.
 - Default/unit tests must not spend tokens or require real credentials; coding-agent tests use the faux provider and `packages/coding-agent/test/suite/harness.ts` (the legacy `test/test-harness.ts` must not be extended).
-- Tests added or changed run directly until green. New coding-agent lifecycle tests go in `test/suite/`; issue regressions in `test/suite/regressions/<issue>-<slug>.test.ts`; the flat `test/*.test.ts` root cluster is legacy placement and must not grow.
+- Tests added or changed run directly until green. New coding-agent lifecycle tests go in `test/suite/`; when a regression test fixes a GitHub issue, add a comment with the issue number next to the test; the flat `test/*.test.ts` root cluster is legacy placement and must not grow.
 - Test quarantine is a safety boundary: `test/setup.ts` forces `SENPI_CODING_AGENT_DIR` into a temp dir and always wins over an inherited value. Never reintroduce an `if (!process.env.SENPI_CODING_AGENT_DIR)` short-circuit — that once deleted a real user agent dir.
-- Live/credentialed surfaces are opt-in only: `packages/ai/test/live-api-gates.ts` (`PI_ENABLE_*`), `packages/coding-agent/test/integration/` (`PI_RUN_INTEGRATION=1`), `packages/evals` (`npm run eval -- --provider X --model Y`). `packages/evals/.eval/` artifacts hold prompts and responses — treat as sensitive.
+- Live/credentialed surfaces are opt-in only: `packages/ai/test/live-api-gates.ts` (`PI_ENABLE_*`), `packages/coding-agent/test/integration/` (`PI_RUN_INTEGRATION=1`), `packages/evals` (`bun run eval --provider X --model Y`). `packages/evals/.eval/` artifacts hold prompts and responses — treat as sensitive.
 - Async tests subscribe before triggering, with bounded deadlines or fake timers; fixed sleeps survive only at genuine OS boundaries and must not be copied from legacy tests.
 - Documentation-only changes use focused validators and `git diff --check`, not runtime QA — but `packages/coding-agent/docs/` ships in the tarball and is test-asserted, so doc edits there can fail CI.
+- For manual checks of the interactive TUI in a controlled tmux terminal, load and follow `.senpi/skills/interactive-testing.md`.
+
+## TEST AUTHORING GATE
+Before adding or changing a test, answer all four; a missing answer means do not add it yet:
+1. What observable behavior, invariant, or independent contract does it protect?
+2. What credible regression makes it fail?
+3. Why does existing coverage not already catch that failure? Each contract has one primary test owner at the strongest boundary; extend a table case or shared fixture instead of adding a near-duplicate.
+4. Does it need a production seam (export, flag, wrapper, injection hook) no production caller needs? If yes, test at the real boundary instead.
+Junk patterns (reject unless the retention bar below applies): assertion-free probes; self-comparisons and identity copiers; copied fixtures, inventories, manifests or export lists; exact source, import or string greps; private call-shape tests duplicated at a real boundary; duplicate invocations of one contract; replays of a shared helper through a wrapper; tests that exist to keep a test-only export or wrapper alive; production code whose only callers are tests; expected values produced by the code under test; mocks that implement the asserted behavior; fixture-supplied receipts or postconditions the code under test should produce; assertions against a store nothing writes; capability or flag restatements without a delivery proof; negative controls that pass for an unrelated reason; names that promise more than the input exercises.
+Retention bar: keep a pattern match only when it independently guards a public API, protocol, config, migration, storage, security, platform, default, prompt-byte, generated or cross-language, package, release, or architecture contract, and say which one in the test. Static or slow is never a deletion reason. A retained test that fails on the base is a product bug to fix at its owner, never a test to delete.
+A bug regression test must fail on the pre-fix code for the intended reason; an existing owner test that already fails may serve as that proof.
+Method source: openclaw test-audit skill.
 
 ## DEPENDENCIES AND INFRA
 
 - Treat dependency and lockfile diffs as code: pin direct external dependencies exactly, use `--ignore-scripts` for install/lock refreshes. The pre-commit hook allows workspace-metadata-only refreshes; other lockfile changes require explicit `PI_ALLOW_LOCKFILE_CHANGE=1` approval.
 - Keep shared environment surfaces synchronized: dependency, Node, provider/env, QA-channel, build-command, and forwarded-port changes must update `scripts/devenv-setup.mjs`, `.devcontainer/devcontainer.json`, and related references together, keeping root `package.json` workspaces and `pnpm-workspace.yaml` aligned with any workspace-package move or rename.
-- Regenerate `packages/coding-agent/publish-deps.lock.json` with `node scripts/generate-coding-agent-shrinkwrap.mjs`; never replace it with `npm-shrinkwrap.json`. Regenerate `packages/coding-agent/install-lock/` with `npm run install-lock:coding-agent`.
-- External registry entries in root, publish, and installer locks must preserve both npm tarball `resolved` URLs and `integrity` hashes; incomplete merge results are invalid even when dependency topology still resolves.
-- `@earendil-works/pi-telemetry` is a runtime dependency and must stay in Senpi's owned CalVer alias, publish, and bundle sets. `@earendil-works/pi-storage-sqlite-node` remains private and independently versioned because it is not reachable from the shipped coding-agent runtime.
+- Never publish an `npm-shrinkwrap.json`. Regenerate `packages/coding-agent/install-lock/` with `bun run install-lock:coding-agent`.
+- External registry entries in root and installer locks must preserve both npm tarball `resolved` URLs and `integrity` hashes; incomplete merge results are invalid even when dependency topology still resolves.
+- `@earendil-works/pi-telemetry` is a runtime dependency and must stay in Senpi's owned CalVer alias and publish sets. `@earendil-works/pi-storage-sqlite-node` remains private and independently versioned because it is not reachable from the shipped coding-agent runtime.
 - Dependencies with lifecycle scripts require package/version review and an explicit justified generator allowlist entry; never add one silently to pass the gate.
 
 ## GIT AND DELIVERY
@@ -142,9 +155,24 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Releases use CalVer and lockstep-version the packages in `scripts/release-packages.mjs`; the pipeline runs `.github/agent/` drivers -> `scripts/release.mjs` -> `publish-npm.yml` -> `build-binaries.yml` / `native-prebuilds.yml`.
 - Release only from clean `main` after changelog audit and release smoke tests; `scripts/release.mjs` owns versioning, generated artifacts, checks, commits, tag, and push.
 - Never rerun the release script after its tag is pushed; failed publishing is retried from the existing tag workflow. Publishing is fork-scoped: `scripts/publish.mjs` rewrites private `@earendil-works/pi-*` packages into public `@code-yeongyu/senpi-*` manifests, and upstream names never appear on npm.
+- For release preparation, local release smoke tests, publishing, and recovery, load and follow `.senpi/skills/release.md`; it points at `.github/agent/release-driver.md` and the two-phase `publish-npm.yml` flow.
 
 ## NOTES
 
 - Deep guidance lives in ~60 nested `AGENTS.md` files holding the file-level maps this root omits; read the nearest one before editing. `packages/coding-agent` is by far the largest package (~105k LOC with tests).
 - `packages/ai` tests alias `@earendil-works/pi-telemetry` to telemetry source, so telemetry breakage fails AI tests. Node floors differ: packages require >=22.19.0, root and CI use Node 24.
 - `packages/tui` uses tabs in source and its own `node --test` runner — do not apply coding-agent test habits there. `packages/coding-agent/bin/senpi` is only a symlink to built output; launcher logic lives in `src/cli.ts` / `src/bun-runtime.ts`.
+
+## Review claim labels (merge-gating)
+
+Three PR labels drive the review workflow; automation lives in `.github/workflows/review-claims.yml`:
+
+- `will-review` — a reviewer claims the PR ("I will review this"). Applying it auto-requests the labeler as reviewer and BLOCKS merge via the required `Review claim gate` check.
+- `in-review` — the claimer is actively reviewing. Same merge-blocking + auto-reviewer-request effects.
+- `stale-review` — a claim sat 3+ days without the claimer's review; the sweep removes the claim labels and applies this one. A fresh claim clears it.
+
+Rules:
+- Apply `will-review` when you plan to review a PR; switch to `in-review` when you start.
+- NEVER merge a PR carrying `will-review` or `in-review`; the gate check enforces this.
+- Claim labels are removed automatically ONLY when the claimer (the person who applied the label) submits an approve or request-changes review. Do not remove someone else's claim label by hand.
+- If a PR shows `stale-review`, it needs a (new) reviewer: claim it.

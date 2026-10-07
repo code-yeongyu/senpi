@@ -88,6 +88,25 @@ function awaitBranchResolution(): Promise<void> {
 	});
 }
 
+/**
+ * A reftable HEAD names no branch, so the first `getGitBranch()` answers "detached" and
+ * asks git off the loop. Settle that probe before a test drives anything else.
+ */
+async function primeReftableBranch(provider: FooterDataProvider, expected: string): Promise<void> {
+	let notify: (() => void) | undefined;
+	const probed = new Promise<void>((resolve) => {
+		notify = resolve;
+	});
+	const unsubscribe = provider.onBranchChange(() => notify?.());
+	try {
+		expect(provider.getGitBranch()).toBe("detached");
+		await awaitWithTimeout(probed, "the initial reftable branch probe");
+		expect(provider.getGitBranch()).toBe(expected);
+	} finally {
+		unsubscribe();
+	}
+}
+
 /** Await an exact event with a bounded timeout - no polling. */
 async function awaitWithTimeout(event: Promise<void>, description: string, timeoutMs = 10000): Promise<void> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -151,52 +170,65 @@ describe("FooterDataProvider reftable branch detection", () => {
 		}
 	});
 
-	it("resolves the branch via git when HEAD is .invalid in a reftable repo", () => {
+	it("asks git off the caller and notifies when HEAD is .invalid in a reftable repo", async () => {
+		// Given a reftable repo whose HEAD names no branch
 		const repoDir = createPlainReftableRepo(tempDir);
 		process.chdir(repoDir);
 
 		const provider = new FooterDataProvider(repoDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
-			expect(vi.mocked(spawnSync)).toHaveBeenCalledWith(
+			// When the footer asks for the branch
+			await primeReftableBranch(provider, "main");
+			// Then git answered asynchronously - the caller's thread ran no git at all
+			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();
+			expect(vi.mocked(execFile)).toHaveBeenCalledWith(
 				"git",
 				["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"],
-				expect.objectContaining({
-					cwd: expect.stringMatching(/repo$/),
-					encoding: "utf8",
-					stdio: ["ignore", "pipe", "ignore"],
-				}),
+				expect.objectContaining({ cwd: expect.stringMatching(/repo$/), encoding: "utf8" }),
+				expect.any(Function),
 			);
 		} finally {
 			provider.dispose();
 		}
 	});
 
-	it("resolves the branch via git in a reftable-backed worktree", () => {
+	it("asks git off the caller in a reftable-backed worktree", async () => {
 		const { worktreeDir } = createReftableWorktree(tempDir);
 		process.chdir(worktreeDir);
 
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
+			await primeReftableBranch(provider, "main");
+			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();
 		} finally {
 			provider.dispose();
 		}
 	});
 
-	it("treats an unresolved .invalid reftable HEAD as detached", () => {
+	it("treats an unresolved .invalid reftable HEAD as detached without notifying", async () => {
+		// Given a reftable HEAD that git cannot resolve either
 		const repoDir = createPlainReftableRepo(tempDir);
 		process.chdir(repoDir);
 		resolvedBranch = "";
 
 		const provider = new FooterDataProvider(repoDir);
 		try {
+			const onBranchChange = vi.fn();
+			provider.onBranchChange(onBranchChange);
+			const resolutionDelivered = awaitBranchResolution();
+			// When the footer asks for the branch
 			expect(provider.getGitBranch()).toBe("detached");
+			await awaitWithTimeout(resolutionDelivered, "the unresolved reftable branch probe");
+			// Then it stays detached and nobody is told the branch changed
+			expect(provider.getGitBranch()).toBe("detached");
+			expect(onBranchChange).not.toHaveBeenCalled();
+			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();
 		} finally {
 			provider.dispose();
 		}
 	});
 
+	// Drive debounce behavior explicitly; native fs.watch delivery can race watcher startup.
 	it("does not notify listeners when reftable updates keep the same branch", async () => {
 		vi.useFakeTimers();
 		const { worktreeDir, reftableDir } = createReftableWorktree(tempDir);
@@ -204,8 +236,8 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
-			vi.mocked(spawnSync).mockClear();
+			await primeReftableBranch(provider, "main");
+			vi.mocked(execFile).mockClear();
 			const onBranchChange = vi.fn();
 			provider.onBranchChange(onBranchChange);
 
@@ -233,7 +265,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
+			await primeReftableBranch(provider, "main");
 			vi.mocked(execFile).mockClear();
 
 			const resolutionDelivered = awaitBranchResolution();
@@ -261,7 +293,8 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
+			await primeReftableBranch(provider, "main");
+			vi.mocked(execFile).mockClear();
 			resolvedBranch = "foo";
 			const onBranchChange = vi.fn();
 			const branchChanged = new Promise<void>((resolve) => {

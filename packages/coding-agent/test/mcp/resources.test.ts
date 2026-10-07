@@ -11,6 +11,7 @@ import {
 	subscribeMcpResourceUpdated,
 } from "../../src/core/extensions/builtin/mcp/resources.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	attach,
 	awaitMcpTool,
@@ -68,7 +69,7 @@ describe("mcp resources", () => {
 			{},
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 		expect(textContent(list)).toContain("@mcp:fx/fixture://resource/one");
 
@@ -77,7 +78,7 @@ describe("mcp resources", () => {
 			{ server: "fx", uri: "fixture://resource/one" },
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 		expect(textContent(read)).toBe("resource body for fixture://resource/one");
 	});

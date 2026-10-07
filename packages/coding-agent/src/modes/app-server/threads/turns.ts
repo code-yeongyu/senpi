@@ -35,6 +35,7 @@ import {
 	wireItemToJson,
 } from "./turn-runtime.ts";
 import { emitTurnTerminalNotifications } from "./turn-terminal.ts";
+import { unknownCommandTurnError } from "./unknown-command-refusal.ts";
 
 export {
 	type TurnEngineApi,
@@ -101,7 +102,11 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 						startedAt,
 						status: "running" satisfies LoggedStartStatus,
 					});
+					let refusedBeforeStart = false;
+					let announced = false;
 					const emitInitialNotifications = (): void => {
+						if (refusedBeforeStart) return;
+						announced = true;
 						this.broadcast({
 							method: "thread/status/changed",
 							params: { threadId: params.threadId, status: { type: "active", activeFlags: [] } },
@@ -131,16 +136,11 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 					void entry.session
 						.prompt(parsedInput.text, {
 							source: "rpc",
+							...(params.unknownCommandAsText === true ? { unknownCommandAsText: true } : {}),
 							preflightResult: (success) => {
-								if (success) {
-									if (!didSettle) {
-										didSettle = true;
-										resolve({ turn });
-									}
-									return;
-								}
-								if (!pendingTurn.completed) {
-									this.completeTurn(params.threadId, "failed", "Prompt preflight failed");
+								if (success && !didSettle) {
+									didSettle = true;
+									resolve({ turn });
 								}
 							},
 						})
@@ -148,12 +148,21 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 							if (!didSettle) {
 								didSettle = true;
 								reject(toTurnEngineError(new Error("Prompt preflight failed")));
+								this.completeTurn(params.threadId, "failed", "Prompt preflight failed");
 							}
 						})
 						.catch((error: unknown) => {
+							const refusal = unknownCommandTurnError(error);
+							if (refusal !== undefined && !didSettle && !announced) {
+								didSettle = true;
+								refusedBeforeStart = true;
+								this.discardUnstartedTurn(params.threadId, turnId);
+								reject(refusal);
+								return;
+							}
 							if (!didSettle) {
 								didSettle = true;
-								reject(toTurnEngineError(error));
+								reject(refusal ?? toTurnEngineError(error));
 							}
 							this.completeTurn(
 								params.threadId,
@@ -192,7 +201,7 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 			);
 		}
 		const parsedInput = parseInput(params.input);
-		await entry.session.steer(parsedInput.text);
+		await entry.session.steer(parsedInput.text, { source: "rpc" });
 		this.emitUserMessage(
 			params.threadId,
 			activeTurn.turnId,
@@ -267,6 +276,17 @@ class TurnEngine<Entry extends TurnEngineThreadEntry> {
 			emitTurnTerminalNotifications(threadId, turn, this.emitToThread);
 		};
 		if (pending.deferTerminalNotifications?.(emitTerminalNotifications) !== true) emitTerminalNotifications();
+		pending.resolve();
+	}
+
+	private discardUnstartedTurn(threadId: ThreadId, turnId: string): void {
+		const entry = this.getLoadedThreadOrThrow(threadId);
+		const pending = this.pendingByThreadId.get(threadId);
+		if (pending?.turnId !== turnId) return;
+		this.pendingByThreadId.delete(threadId);
+		this.turnLog.discardTurn(threadId, turnId);
+		entry.activeTurn = null;
+		entry.status = "idle";
 		pending.resolve();
 	}
 

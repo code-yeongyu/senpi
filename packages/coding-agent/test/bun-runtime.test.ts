@@ -14,6 +14,7 @@ function options(overrides: Partial<BunRuntimeOptions> & { readonly files?: read
 		platform: overrides.platform ?? "linux",
 		exists: overrides.exists ?? ((path: string) => files.has(path)),
 		realpath: overrides.realpath ?? ((path: string) => path),
+		bunVersion: overrides.bunVersion ?? (() => undefined),
 	};
 }
 
@@ -222,14 +223,109 @@ describe("resolveBunReexec", () => {
 		expect(result).toEqual({ action: "stay", reason: "bun-not-found" });
 	});
 
-	it("stays for a plain node install outside the bun tree", () => {
+	it("re-execs an npm install under a discovered bun >= 1.4", () => {
+		const probed: string[] = [];
+		const result = resolveBunReexec({
+			scriptRealPath: "/usr/local/lib/node_modules/@code-yeongyu/senpi/dist/cli.js",
+			versions: {},
+			hasInheritedInspectorOption: false,
+			options: options({
+				env: { BUN_INSTALL: "/opt/bun" },
+				files: ["/opt/bun/bin/bun"],
+				bunVersion: (bunPath) => {
+					probed.push(bunPath);
+					return "1.4.2";
+				},
+			}),
+		});
+		expect(result).toEqual({ action: "reexec", bunPath: "/opt/bun/bin/bun" });
+		expect(probed).toEqual(["/opt/bun/bin/bun"]);
+	});
+
+	it("stays on node for an npm install when the discovered bun is older than 1.4", () => {
+		const result = resolveBunReexec({
+			scriptRealPath: "/usr/local/lib/node_modules/@code-yeongyu/senpi/dist/cli.js",
+			versions: {},
+			hasInheritedInspectorOption: false,
+			options: options({ env: { BUN_INSTALL: "/opt/bun" }, files: ["/opt/bun/bin/bun"], bunVersion: () => "1.3.9" }),
+		});
+		expect(result).toEqual({ action: "stay", reason: "bun-too-old" });
+	});
+
+	it("stays on node for an npm install when the bun version cannot be read", () => {
 		const result = resolveBunReexec({
 			scriptRealPath: "/usr/local/lib/node_modules/@code-yeongyu/senpi/dist/cli.js",
 			versions: {},
 			hasInheritedInspectorOption: false,
 			options: options({ env: { BUN_INSTALL: "/opt/bun" }, files: ["/opt/bun/bin/bun"] }),
 		});
+		expect(result).toEqual({ action: "stay", reason: "bun-too-old" });
+	});
+
+	it("stays on node for an npm install on a machine without bun", () => {
+		const result = resolveBunReexec({
+			scriptRealPath: "/usr/local/lib/node_modules/@code-yeongyu/senpi/dist/cli.js",
+			versions: {},
+			hasInheritedInspectorOption: false,
+			options: options({ env: { BUN_INSTALL: "/opt/bun", PATH: "/usr/bin" }, bunVersion: () => "1.4.2" }),
+		});
+		expect(result).toEqual({ action: "stay", reason: "bun-not-found" });
+	});
+
+	it("stays on node for a source checkout even when a current bun exists", () => {
+		const result = resolveBunReexec({
+			scriptRealPath: "/work/senpi/packages/coding-agent/dist/cli.js",
+			versions: {},
+			hasInheritedInspectorOption: false,
+			options: options({ env: { BUN_INSTALL: "/opt/bun" }, files: ["/opt/bun/bin/bun"], bunVersion: () => "1.4.2" }),
+		});
 		expect(result).toEqual({ action: "stay", reason: "not-bun-install" });
+	});
+
+	it("trusts a bun-global install's bun without probing its version", () => {
+		const result = resolveBunReexec({
+			scriptRealPath: bunTreeScript,
+			versions: {},
+			hasInheritedInspectorOption: false,
+			options: options({
+				env: { BUN_INSTALL: "/opt/bun" },
+				files: ["/opt/bun/bin/bun"],
+				bunVersion: () => {
+					throw new Error("a bun-global install must not probe");
+				},
+			}),
+		});
+		expect(result).toEqual({ action: "reexec", bunPath: "/opt/bun/bin/bun" });
+	});
+
+	it("keeps SENPI_RUNTIME=node on node for an npm install with a current bun", () => {
+		const result = resolveBunReexec({
+			scriptRealPath: "/usr/local/lib/node_modules/@code-yeongyu/senpi/dist/cli.js",
+			versions: {},
+			hasInheritedInspectorOption: false,
+			options: options({
+				env: { BUN_INSTALL: "/opt/bun", SENPI_RUNTIME: "node" },
+				files: ["/opt/bun/bin/bun"],
+				bunVersion: () => "1.4.2",
+			}),
+		});
+		expect(result).toEqual({ action: "stay", reason: "runtime-pinned-node" });
+	});
+
+	it("re-execs a win32 npm install under a current bun.exe", () => {
+		const result = resolveBunReexec({
+			scriptRealPath: "C:\\Users\\tester\\AppData\\Roaming\\npm\\node_modules\\@code-yeongyu\\senpi\\dist\\cli.js",
+			versions: {},
+			hasInheritedInspectorOption: false,
+			options: options({
+				platform: "win32",
+				homedir: "C:\\Users\\tester",
+				env: {},
+				files: ["C:\\Users\\tester\\.bun\\bin\\bun.exe"],
+				bunVersion: () => "1.4.0",
+			}),
+		});
+		expect(result).toEqual({ action: "reexec", bunPath: "C:\\Users\\tester\\.bun\\bin\\bun.exe" });
 	});
 
 	it("ignores an unknown SENPI_RUNTIME value and falls through to tree detection", () => {

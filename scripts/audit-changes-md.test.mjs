@@ -14,13 +14,13 @@ import { parseTrackerEntries } from "./changes-md-policy.mjs";
 //     (every path under audit, not a single PR diff)
 //   - trackerDiffs carries the parsed state of every changes.md tracker, not
 //     only trackers touched by a diff; values are arrays of entries
-//   - forkOnly / renames / deletions / upstreamSync keep the fixture shape
+//   - forkOnly / renames / upstreamSync keep the fixture shape
 //     established in check-pr-changes-md.test.mjs
 // The audit reports `uncovered`: the upstream-owned production paths lacking
 // exact canonical coverage in their exact nearest tracker, in inventory order.
 // `pass` must be false whenever `uncovered` is non-empty. Production files not
 // listed in forkOnly are upstream-owned by default. Renamed paths are audited
-// at their new path; deleted paths at their recorded path. Pure in-memory
+// at their new path; a deleted path is an ordinary changed path. Pure in-memory
 // fixtures keep the audit deterministic (no git, fs, or network access).
 
 const CANONICAL_SECTIONS = [
@@ -45,7 +45,6 @@ function trackerPolicy(overrides = {}) {
 		forkOnly: [],
 		trackerDiffs: {},
 		renames: [],
-		deletions: [],
 		upstreamSync: undefined,
 		...overrides,
 	};
@@ -59,7 +58,9 @@ function auditRepository(inventory, policyOverrides = {}) {
 	});
 }
 
-describe("repository-wide changes.md audit", () => {
+// The per-path policy rows (uncovered, nearest tracker, malformed entries, fork-only, upstream sync)
+// live in check-pr-changes-md.test.mjs, which runs the same checkPrChangelog seam.
+describe("changes.md tracker parsing and rename coverage", () => {
 	it("parses root dotfiles and hidden-directory paths from canonical tracker entries", () => {
 		const entries = parseTrackerEntries(
 			`## Root audit (2026-08-17)
@@ -89,96 +90,24 @@ describe("repository-wide changes.md audit", () => {
 		]);
 	});
 
-	it("reports an uncovered production path when its nearest tracker has no covering entry", () => {
-		const result = auditRepository([AI_INDEX, AGENT_LOOP], {
-			trackerDiffs: { "packages/agent/src/changes.md": [trackerEntry([AGENT_LOOP])] },
-		});
-		assert.deepEqual(
-			result.uncovered,
-			[AI_INDEX],
-			"a production path without a covering entry in its nearest changes.md must be reported uncovered",
-		);
-		assert.equal(result.pass, false, "a non-empty uncovered set must fail the audit");
-	});
-
-	it("removes a production path covered exactly by its nearest tracker with all canonical sections", () => {
-		const result = auditRepository([AI_INDEX], {
-			trackerDiffs: { "packages/ai/src/changes.md": [trackerEntry([AI_INDEX])] },
-		});
-		assert.deepEqual(
-			result.uncovered,
-			[],
-			"exact canonical coverage in the nearest tracker must clear the production path",
-		);
-		assert.equal(result.pass, true, "an empty uncovered set must pass the audit");
-	});
-
-	it("keeps docs, tests, generated catalogs, and fork-only paths outside the audit", () => {
-		const result = auditRepository(
-			[
-				AI_INDEX,
-				"packages/ai/README.md",
-				"packages/ai/src/models.generated.ts",
-				"packages/ai/src/api/__tests__/openai.test.ts",
-				FORK_BRANDING,
-			],
-			{ forkOnly: [FORK_BRANDING] },
-		);
-		assert.deepEqual(
-			result.uncovered,
-			[AI_INDEX],
-			"docs, tests, generated catalogs, and fork-only files are never audited production paths",
-		);
-	});
-
-	it("maps multiple production paths to their exact nearest trackers only", () => {
-		const result = auditRepository([AI_INDEX, TUI_MAIN, CRATES_LIB], {
-			trackerDiffs: {
-				"packages/ai/src/changes.md": [trackerEntry([AI_INDEX])],
-				"packages/tui/src/changes.md": [trackerEntry([TUI_MAIN])],
-				"packages/coding-agent/changes.md": [trackerEntry([CRATES_LIB])],
-			},
-		});
-		assert.deepEqual(
-			result.uncovered,
-			[CRATES_LIB],
-			"coverage recorded in a non-nearest changes.md must not clear a production path",
-		);
-	});
-
-	it("keeps malformed coverage that misses a canonical section in uncovered", () => {
-		const result = auditRepository([AI_INDEX], {
-			trackerDiffs: {
-				"packages/ai/src/changes.md": [trackerEntry([AI_INDEX], CANONICAL_SECTIONS.slice(0, 3))],
-			},
-		});
-		assert.deepEqual(
-			result.uncovered,
-			[AI_INDEX],
-			"an entry missing a canonical section is malformed coverage and stays uncovered",
-		);
-	});
-
-	it("represents renamed and deleted upstream production paths in uncovered", () => {
+	it("audits a renamed upstream path at its new destination and never a fork-only path", () => {
 		const renamedTo = "packages/tui/src/panels/panel.ts";
 		const deletedForkFile = "packages/coding-agent/src/fork/experiment.ts";
 		const result = auditRepository([renamedTo, AGENT_LOOP, deletedForkFile], {
 			renames: [{ from: "packages/tui/src/panel.ts", to: renamedTo }],
-			deletions: [AGENT_LOOP, deletedForkFile],
 			forkOnly: [deletedForkFile],
 		});
 		assert.deepEqual(
 			result.uncovered,
 			[renamedTo, AGENT_LOOP],
-			"renamed upstream paths are audited at their new path, deleted upstream paths at their recorded path, and fork-only deletions never",
+			"renamed upstream paths are audited at their new path, other upstream paths at their own path, and fork-only paths never",
 		);
 	});
 
-	it("removes renamed and deleted upstream paths once their nearest tracker covers them", () => {
+	it("clears a renamed upstream path once its nearest tracker covers the new destination", () => {
 		const renamedTo = "packages/tui/src/panels/panel.ts";
 		const result = auditRepository([renamedTo, AGENT_LOOP], {
 			renames: [{ from: "packages/tui/src/panel.ts", to: renamedTo }],
-			deletions: [AGENT_LOOP],
 			trackerDiffs: {
 				"packages/tui/src/changes.md": [trackerEntry([renamedTo])],
 				"packages/agent/src/changes.md": [trackerEntry([AGENT_LOOP])],
@@ -187,29 +116,9 @@ describe("repository-wide changes.md audit", () => {
 		assert.deepEqual(
 			result.uncovered,
 			[],
-			"nearest-tracker coverage must clear renamed and deleted upstream production paths",
+			"nearest-tracker coverage must clear renamed and ordinary upstream production paths",
 		);
 	});
 
-	it("reports only integration repairs for a pin-changing upstream sync", () => {
-		const result = auditRepository([".github/upstream.json", AGENT_LOOP, TUI_MAIN], {
-			upstreamSync: { pinChanged: true, divergentFiles: [AGENT_LOOP] },
-		});
-		assert.deepEqual(
-			result.uncovered,
-			[AGENT_LOOP],
-			"a pin-changing sync audits only production files that diverge from the new pin",
-		);
-	});
 
-	it("reports nothing for a clean pin-changing upstream sync", () => {
-		const result = auditRepository([".github/upstream.json", AGENT_LOOP, TUI_MAIN], {
-			upstreamSync: { pinChanged: true, divergentFiles: [] },
-		});
-		assert.deepEqual(
-			result.uncovered,
-			[],
-			"a clean sync carries upstream's own edits and needs no changes.md entries",
-		);
-	});
 });

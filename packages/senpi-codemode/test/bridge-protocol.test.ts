@@ -58,6 +58,79 @@ describe("bridge protocol JSONL framing", () => {
 		expect(decodeBridgeFrame(encodeBridgeFrame(message))).toEqual({ ok: true, message });
 	});
 
+	it("round-trips init host and foreign kernel-tool names", () => {
+		const withNames: HostToKernelMessage = {
+			type: "init",
+			sessionId: "session-tools",
+			connection: { port: 4317, token: "secret-token" },
+			hostToolNames: ["read", "bash"],
+			foreignLanguageNames: ["py_lookup"],
+		};
+		expect(decodeBridgeFrame(encodeBridgeFrame(withNames))).toEqual({ ok: true, message: withNames });
+	});
+
+	it("round-trips init memory thresholds and result memory reports", () => {
+		const init: HostToKernelMessage = {
+			type: "init",
+			sessionId: "session-memory",
+			connection: { port: 4317, token: "secret-token" },
+			memory: { gcWatermarkBytes: 268_435_456, noticeBytes: 1_073_741_824, ceilingBytes: 0 },
+		};
+		const result: KernelToHostMessage = {
+			type: "result",
+			cellId: "cell-memory",
+			ok: false,
+			error: { message: "boom" },
+			durationMs: 3,
+			memory: {
+				liveBytes: 2_000_000_000,
+				measure: "heap",
+				gcRan: true,
+				globals: [{ name: "rows", bytes: 1_500_000_000, approximate: true }],
+				overCeiling: true,
+			},
+		};
+		for (const message of [init, result]) {
+			expect(decodeBridgeFrame(encodeBridgeFrame(message))).toEqual({ ok: true, message });
+		}
+	});
+
+	it("rejects a result memory report with a negative live size", () => {
+		const frame = JSON.stringify({
+			type: "result",
+			cellId: "cell-memory",
+			ok: true,
+			durationMs: 1,
+			memory: { liveBytes: -1, measure: "heap" },
+		});
+		expect(decodeBridgeFrame(frame)).toMatchObject({ ok: false, error: { code: "invalid_message" } });
+	});
+
+	it("round-trips live kernel-tool name refresh frames", () => {
+		const refresh: HostToKernelMessage = {
+			type: "kernel-tools-names",
+			hostToolNames: ["read", "mcp_attached"],
+			foreignLanguageNames: ["py_lookup"],
+		};
+		expect(decodeBridgeFrame(encodeBridgeFrame(refresh))).toEqual({ ok: true, message: refresh });
+	});
+
+	it("round-trips init session environment overrides", () => {
+		const withSessionEnv: HostToKernelMessage = {
+			type: "init",
+			sessionId: "session-env",
+			connection: { port: 4317, token: "secret-token" },
+			sessionEnv: {
+				PI_SESSION_ID: "session-env",
+				PI_SESSION_FILE: "/tmp/sessions/session-env.jsonl",
+				PI_PROVIDER: "fake",
+				PI_MODEL: "fake-model",
+				PI_REASONING_LEVEL: "high",
+			},
+		};
+		expect(decodeBridgeFrame(encodeBridgeFrame(withSessionEnv))).toEqual({ ok: true, message: withSessionEnv });
+	});
+
 	it("accepts init connection roots while preserving the legacy shape", () => {
 		const withRoots: HostToKernelMessage = {
 			type: "init",
@@ -139,5 +212,54 @@ describe("bridge protocol JSONL framing", () => {
 
 	it("documents the default frame size", () => {
 		expect(BRIDGE_FRAME_MAX_BYTES).toBe(10 * 1024 * 1024);
+	});
+
+	it("round-trips kernel-tool describe and invoke frames", () => {
+		const messages = [
+			{
+				type: "init",
+				sessionId: "session-tools",
+				connection: { port: 4317, token: "secret-token" },
+				kernelGeneration: 4,
+			},
+			{ type: "kernel-tool-describe", requestId: "d1", names: ["lookup"] },
+			{
+				type: "kernel-tool-invoke",
+				requestId: "i1",
+				name: "lookup",
+				kernel_generation: 4,
+				definition_revision: 2,
+				args: { path: "x" },
+				call_id: "child-1",
+			},
+			{
+				type: "kernel-tool-describe-reply",
+				requestId: "d1",
+				ok: true,
+				results: [
+					{
+						name: "lookup",
+						ok: true,
+						descriptor: {
+							name: "lookup",
+							description: "",
+							input_schema: { type: "object" },
+							language: "js",
+							kernel_generation: 4,
+							definition_revision: 2,
+						},
+					},
+				],
+			},
+			{
+				type: "kernel-tool-invoke-reply",
+				requestId: "i1",
+				ok: false,
+				error: { message: "stale", code: "kernel_tool_stale" },
+			},
+		];
+		for (const message of messages) {
+			expect(decodeBridgeFrame(encodeBridgeFrame(message as never))).toEqual({ ok: true, message });
+		}
 	});
 });

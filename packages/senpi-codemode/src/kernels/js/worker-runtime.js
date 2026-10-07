@@ -1,13 +1,29 @@
 // allow: SIZE_OK — private runtime state and installed globals must stay in one worker module.
+import { pathToFileURL } from "node:url";
+import { createCellRequire, createRequire } from "./worker-require.js";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { inspect } from "node:util";
+import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
+import { terminateProcessTrees } from "./process-tree.js";
 import { awaitMaybePromise, indirectEval, wrapUserCode } from "./worker-indirect-eval.js";
+import { installShellCapture } from "./worker-shell-capture.js";
+import { bindKernelBun } from "./worker-webview.js";
+import { createWorkpool } from "./workpool.js";
+import { createHandleHelpers } from "./handles.js";
+import { inKernelToolInvoke } from "./kernel-tools-context.js";
+import { kernelToolError } from "./kernel-tools-errors.js";
+import { createKernelToolRegistry, createToolNamespace } from "./kernel-tools-registry.js";
 
 const PREPARED_CELL_PREFIX = "/*senpi:prepared-cell*/";
+// One stable source URL for the loader/contribution prelude: a per-cell URL makes
+// every cell a distinct eval source string, so the code cache gains one entry
+// per cell for text that is identical until contributions change.
+const PRELUDE_SOURCE_URL = "senpi:kernel-prelude";
+// How long a child gets to honour SIGTERM before SIGKILL. Short, because the
+// cell has already produced its value and the caller is waiting on settle.
+const CHILD_TERMINATION_GRACE_MS = 1_000;
 const INTERNAL_URL = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/iu;
-const BASE64_STRICT_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
-const DECIMAL_CSV_RE = /^\d{1,3}(?:,\d{1,3})*$/u;
 
 export class JsWorkerRuntime {
 	#cwd;
@@ -15,29 +31,113 @@ export class JsWorkerRuntime {
 	#localRoots;
 	#env = new Map();
 	#hooks = null;
+	#pendingDisplays = [];
+	#children = new Set();
+	#childrenStopping;
+	#shellWaits = new Set();
+	#onChildEvent;
+	#onShellWaitChange;
+	#tools;
 
 	constructor(options) {
 		this.#cwd = options.cwd;
 		this.#parallelPoolWidth = options.parallelPoolWidth;
+		this.#onChildEvent = typeof options.onChildEvent === "function" ? options.onChildEvent : null;
+		this.#onShellWaitChange = options.onShellWaitChange;
 		this.#localRoots = { ...(options.localRoots ?? {}) };
 		if (options.artifactsDir && !this.#localRoots.local) this.#localRoots.local = join(options.artifactsDir, "local");
+		this.#tools = createKernelToolRegistry({
+			generation: options.kernelGeneration ?? 1,
+			hostToolNames: options.hostToolNames ?? [],
+			foreignLanguageNames: options.foreignLanguageNames ?? [],
+			disabled: options.kernelToolsDisabled === true,
+		});
 		this.#installGlobals();
 	}
 
+	get kernelTools() {
+		return this.#tools;
+	}
+
+	get shellWaitActive() {
+		return this.#shellWaits.size > 0;
+	}
+
 	async run(code, cellId, hooks) {
+		this.#shellWaits.clear();
 		this.#hooks = hooks;
 		try {
 			let prelude = "";
 			let cellCode = code;
+			let sourceName = cellId;
 			if (code.startsWith(PREPARED_CELL_PREFIX)) {
 				const prepared = JSON.parse(code.slice(PREPARED_CELL_PREFIX.length));
 				if (!isPlainObject(prepared) || typeof prepared.prelude !== "string" || typeof prepared.code !== "string") throw new Error("Invalid prepared JavaScript cell payload");
 				({ prelude, code: cellCode } = prepared);
+				if (typeof prepared.sourceFile === "string") sourceName = prepared.sourceFile;
 			}
-			if (prelude) indirectEval(prelude, `${cellId}:prelude`);
-			return await awaitMaybePromise(indirectEval(wrapUserCode(cellCode), cellId));
+			if (prelude) indirectEval(prelude, PRELUDE_SOURCE_URL);
+			const shadowed = [];
+			const source = bindKernelBun(wrapUserCode(cellCode, shadowed));
+			if (shadowed.length > 0) this.#emitText("stderr", shadowNote(shadowed));
+			const value = await awaitMaybePromise(indirectEval(source, sourceName));
+			await this.#drainPendingDisplays();
+			return value;
 		} finally {
-			this.#hooks = null;
+			// A released run finishing late must not clear the state of the cell running now.
+			if (this.#hooks === hooks) await this.release();
+		}
+	}
+
+	/** Ends the current run's ownership now: its displays, its hooks, and (unless detached) its child processes. */
+	async release() {
+		const hooks = this.#hooks;
+		this.#pendingDisplays = [];
+		// A child still running here has lost its only owner: the cell that
+		// spawned it is over, nothing will await it again, and it would be
+		// reparented to init. Retire it the way timeout and abort cleanup
+		// already do, unless the cell asked for a detached process.
+		await Promise.all([this.#childrenStopping, this.#terminateChildren()]);
+		this.#childrenStopping = undefined;
+		if (this.#hooks === hooks) this.#hooks = null;
+	}
+
+	interrupt() {
+		// The tree snapshot, SIGTERM, and SIGKILL escalation run on their own so
+		// the caller's interrupt latency stays that of the acknowledgement.
+		this.#childrenStopping = this.#terminateChildren();
+	}
+
+	#trackChild(child, spawnOptions) {
+		if (child === null || typeof child !== "object" || typeof child.kill !== "function") return;
+		// `detached: true` is the cell saying it wants the process to outlive it.
+		if (isPlainObject(spawnOptions) && spawnOptions.detached === true) return;
+		this.#children.add(child);
+		const pid = Number.isInteger(child.pid) && child.pid > 0 ? child.pid : null;
+		// The host keeps its own copy of live pids: if this worker is terminated
+		// while blocked, only the host can still retire them.
+		if (pid !== null) this.#onChildEvent?.({ pid, state: "spawned" });
+		const forget = () => {
+			this.#children.delete(child);
+			if (pid !== null) this.#onChildEvent?.({ pid, state: "exited" });
+		};
+		if (child.exited instanceof Promise) child.exited.then(forget, forget);
+	}
+
+	#terminateChildren() {
+		const children = [...this.#children].filter(child => child.exitCode === null && child.signalCode === null);
+		this.#children.clear();
+		if (children.length === 0) return undefined;
+		const roots = children.map(child => child.pid).filter(pid => Number.isInteger(pid) && pid > 0);
+		const settled = Promise.allSettled(children.map(child => (child.exited instanceof Promise ? child.exited : Promise.resolve())));
+		return terminateProcessTrees(roots, { graceMs: CHILD_TERMINATION_GRACE_MS, settled });
+	}
+
+	async #drainPendingDisplays() {
+		while (this.#pendingDisplays.length > 0) {
+			const pending = this.#pendingDisplays;
+			this.#pendingDisplays = [];
+			await Promise.all(pending);
 		}
 	}
 
@@ -52,19 +152,36 @@ export class JsWorkerRuntime {
 		globalThis.output = async (...args) => await this.#output(args);
 		globalThis.tool_schema = async name => await this.#toolSchema(name);
 		globalThis.agent = async (prompt, options, ...rest) => await this.#agent(prompt, options, rest);
+		globalThis.workpool = (agent, name, options) => createWorkpool((toolName, args) => this.#callTool(toolName, args), agent, name, options);
 		globalThis.parallel = async thunks => await this.#parallel(thunks);
 		globalThis.pipeline = async (items, ...stages) => await this.#pipeline(items, stages);
-		globalThis.completion = async (prompt, opts) => await this.#callTool("completion", { prompt, opts });
-		globalThis.tool = new Proxy(
-			{},
-			{
-				get: (_target, prop) => {
-					if (typeof prop !== "string") return undefined;
-					return async args => await this.#callTool(prop, args ?? {});
-				},
+		const handles = createHandleHelpers(async (toolName, args) => await this.#callTool(toolName, args));
+		globalThis.completion = async (prompt, opts) => {
+			const value = await this.#callTool("completion", { prompt, opts });
+			// The host answers a {handle: true} request with a saved reference; the cell gets the control view.
+			return isPlainObject(opts) && opts.handle === true ? handles.handle(value) : value;
+		};
+		globalThis.wait = async (list, options) => await handles.wait(list, options);
+		// The `%bun add` / `%npm add` installer as a call: same environment, receipt, cancellation and codes (senpi row 38).
+		globalThis.packages = Object.freeze({
+			install: async (manager, requirements, options = {}) => {
+				if (!isPlainObject(options)) throw new TypeError("packages.install(): options must be an object, e.g. { timeout: 120 }");
+				return await this.#callTool("__packages_install__", {
+					manager,
+					requirements,
+					...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+				});
 			},
+		});
+		globalThis.handle = value => handles.handle(value);
+		globalThis.tool = createToolNamespace(
+			(fn, metadata) => this.#tools.define(fn, metadata),
+			async (name, args) => await this.#callTool(name, args),
+			{ defined: () => this.#tools.defined(), undefine: (name) => this.#tools.undefine(name) },
 		);
 		globalThis.tools = globalThis.tool;
+		globalThis.require = createCellRequire(() => globalThis.__senpi_module_context__ ?? { cwdUrl: pathToFileURL(`${process.cwd()}/`).href });
+		globalThis.createRequire = createRequire;
 		const originalLog = console.log.bind(console);
 		const originalError = console.error.bind(console);
 		const originalStdoutWrite = process.stdout.write;
@@ -84,11 +201,22 @@ export class JsWorkerRuntime {
 		process.stderr.write = routeWrite(process.stderr, originalStderrWrite, "stderr");
 		console.log = (...values) => this.#emitText("stdout", `${values.map(formatValue).join(" ")}\n`);
 		console.error = (...values) => this.#emitText("stderr", `${values.map(formatValue).join(" ")}\n`);
+		const restoreShellCapture = installShellCapture({
+			isActive: () => this.#hooks !== null,
+			emitText: (stream, data) => this.#emitText(stream, data),
+			onChild: (child, spawnOptions) => this.#trackChild(child, spawnOptions),
+			onShellWait: (promise, waiting) => {
+				if (waiting) this.#shellWaits.add(promise);
+				else this.#shellWaits.delete(promise);
+				this.#onShellWaitChange?.();
+			},
+		});
 		globalThis.__senpi_restore_console__ = () => {
 			console.log = originalLog;
 			console.error = originalError;
 			process.stdout.write = originalStdoutWrite;
 			process.stderr.write = originalStderrWrite;
+			restoreShellCapture();
 		};
 	}
 
@@ -106,22 +234,8 @@ export class JsWorkerRuntime {
 				this.#hooks?.emit({ type: "display", mimeType: "text/markdown", dataBase64: encodeBase64(value.text) });
 				return;
 			}
-			if (value.type === "image" && typeof value.mimeType === "string") {
-				const dataBase64 = imageBase64(value.data);
-				if (dataBase64 !== undefined) {
-					this.#hooks?.emit({ type: "display", mimeType: value.mimeType, dataBase64 });
-					return;
-				}
-				this.#emitText(
-					"stdout",
-					`[display: image dropped — \`data\` must be a base64 string, Uint8Array/Buffer, or ArrayBuffer; got ${describeImageData(value.data)}]\n`,
-				);
-				return;
-			}
-			if (typeof value.mimeType === "string" && typeof value.dataBase64 === "string") {
-				this.#hooks?.emit({ type: "display", mimeType: value.mimeType, dataBase64: value.dataBase64 });
-				return;
-			}
+			const ops = resolveDisplayOps(value);
+			if (ops !== undefined) return this.#applyDisplayOps(ops);
 			try {
 				this.#hooks?.emit({ type: "display", mimeType: "application/json", dataBase64: encodeBase64(JSON.stringify(value)) });
 			} catch (error) {
@@ -131,6 +245,19 @@ export class JsWorkerRuntime {
 			return;
 		}
 		this.#emitText("stdout", `${String(value)}\n`);
+	}
+
+	#applyDisplayOps(ops) {
+		let pending;
+		for (const op of ops) {
+			if (op.kind === "frame") this.#hooks?.emit({ type: "display", mimeType: op.mimeType, dataBase64: op.dataBase64 });
+			else if (op.kind === "text") this.#emitText("stdout", `${op.text}\n`);
+			else {
+				pending = encodeDisplayImage(op.value).then((encoded) => this.#applyDisplayOps(encoded));
+				this.#pendingDisplays.push(pending);
+			}
+		}
+		return pending;
 	}
 
 	#envHelper(key, value) {
@@ -213,6 +340,7 @@ export class JsWorkerRuntime {
 	}
 
 	async #agent(prompt, options, rest) {
+		if (inKernelToolInvoke()) throw kernelToolError("kernel_tool_recursion", "kernel tools may not invoke agent()");
 		const parsed = optionsArg({
 			name: "agent",
 			value: options,
@@ -234,7 +362,9 @@ export class JsWorkerRuntime {
 				: JSON.parse(String(text))
 			: text;
 		if (!handle) return output;
-		const details = isPlainObject(responseRecord.details) ? responseRecord.details : responseRecord;
+		const details = Object.hasOwn(responseRecord, "id")
+			? responseRecord
+			: isPlainObject(responseRecord.details) ? responseRecord.details : responseRecord;
 		const id = details.id;
 		if (id === undefined || id === null) return { text, output: text, handle: null, id: null, agent: null };
 		const node = {
@@ -242,9 +372,13 @@ export class JsWorkerRuntime {
 			output: text,
 			handle: details.handle ?? `agent://${id}`,
 			id,
+			run_epoch: details.run_epoch,
 			agent: details.agent ?? callArgs.agent ?? null,
 		};
 		if (Object.hasOwn(callArgs, "schema")) node.data = output;
+		if (isPlainObject(responseRecord.details) && Object.hasOwn(responseRecord.details, "isolation")) {
+			node.details = { isolation: responseRecord.details.isolation };
+		}
 		for (const key of ["isolated", "patchPath", "branchName", "nestedPatches", "changesApplied", "isolationSummary"]) {
 			if (details[key] !== undefined) node[key] = details[key];
 		}
@@ -316,6 +450,12 @@ export class JsWorkerRuntime {
 	}
 }
 
+function shadowNote(names) {
+	const list = names.map((name) => `\`${name}\``).join(", ");
+	const restore = names.map((name) => `delete ${name}`).join("; ");
+	return `Note: ${list} ${names.length === 1 ? "shadows a kernel or platform global" : "shadow kernel or platform globals"} in your later cells; the kernel and imported libraries keep the original. \`${restore}\` restores ${names.length === 1 ? "it" : "them"}.\n`;
+}
+
 function isPlainObject(value) {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -349,47 +489,6 @@ async function writeData(value) {
 	if (value instanceof ArrayBuffer) return new Uint8Array(value);
 	if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 	throw new TypeError("write() expects string, Blob, ArrayBuffer, or TypedArray data");
-}
-
-function imageBase64(data) {
-	if (typeof data === "string") {
-		if (isStrictBase64(data)) return data;
-		if (!DECIMAL_CSV_RE.test(data)) return undefined;
-		const parts = data.split(",");
-		const bytes = new Uint8Array(parts.length);
-		for (let index = 0; index < parts.length; index += 1) {
-			const byte = Number(parts[index]);
-			if (!Number.isInteger(byte) || byte < 0 || byte > 255) return undefined;
-			bytes[index] = byte;
-		}
-		return Buffer.from(bytes).toString("base64");
-	}
-	if (data instanceof Uint8Array) return Buffer.from(data).toString("base64");
-	if (data instanceof ArrayBuffer) return Buffer.from(data).toString("base64");
-	if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("base64");
-	if (isPlainObject(data) && data.type === "Buffer" && Array.isArray(data.data)) {
-		const bytes = new Uint8Array(data.data.length);
-		for (let index = 0; index < data.data.length; index += 1) {
-			const byte = data.data[index];
-			if (typeof byte !== "number" || !Number.isInteger(byte) || byte < 0 || byte > 255) return undefined;
-			bytes[index] = byte;
-		}
-		return Buffer.from(bytes).toString("base64");
-	}
-	return undefined;
-}
-
-function isStrictBase64(value) {
-	return value.length > 0 && value.length % 4 === 0 && BASE64_STRICT_RE.test(value);
-}
-
-function describeImageData(data) {
-	if (data === null) return "null";
-	if (data instanceof Uint8Array) return "Uint8Array";
-	if (data instanceof ArrayBuffer) return "ArrayBuffer";
-	if (ArrayBuffer.isView(data)) return data.constructor.name;
-	if (typeof data === "string") return `string(${data.length})`;
-	return typeof data;
 }
 
 function chunkToString(chunk, encoding) {

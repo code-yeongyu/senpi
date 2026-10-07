@@ -168,4 +168,48 @@ describe("pi.executeTool hook dispatch", () => {
 			harness.cleanup();
 		}
 	});
+
+	it("reports a returned isError: true to tool_result hooks without discarding details", async () => {
+		const observed: Array<{ isError: boolean; details: unknown }> = [];
+		const harness = await createExecuteToolHarness((pi) => {
+			pi.registerTool({
+				name: "inline_fail_ext",
+				label: "Inline fail",
+				description: "Returns a structured failure without throwing",
+				parameters: Type.Object({}),
+				execute: async () => ({
+					content: [{ type: "text", text: "member 'x' failed to start" }],
+					details: { kind: "runtime_error" },
+					isError: true,
+				}),
+			});
+			pi.registerTool({
+				name: "inline_ok_ext",
+				label: "Inline ok",
+				description: "Returns a success without an isError flag",
+				parameters: Type.Object({}),
+				execute: async () => ({
+					content: [{ type: "text", text: "created" }],
+					details: { kind: "created" },
+				}),
+			});
+			pi.on("tool_result", (event) => {
+				observed.push({ isError: event.isError, details: event.details });
+				return undefined;
+			});
+		});
+
+		try {
+			const failed = await harness.api.executeTool("inline_fail_ext", {});
+			await harness.api.executeTool("inline_ok_ext", {});
+
+			expect(observed).toEqual([
+				{ isError: true, details: { kind: "runtime_error" } },
+				{ isError: false, details: { kind: "created" } },
+			]);
+			expect(failed.details).toEqual({ kind: "runtime_error" });
+		} finally {
+			harness.cleanup();
+		}
+	});
 });

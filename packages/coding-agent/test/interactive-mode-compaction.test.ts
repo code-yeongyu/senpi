@@ -373,6 +373,129 @@ describe("InteractiveMode compaction events", () => {
 		expect(fakeThis.restoreQueuedMessagesToEditor).not.toHaveBeenCalled();
 	});
 
+	test("compaction_end attempts reloadFromDisk and renders gracefully without throwing when session context lacks a leading compaction", async () => {
+		const userMessageEntry = {
+			type: "message" as const,
+			id: "m1",
+			parentId: null,
+			timestamp: "2025-01-01T00:00:00Z",
+			message: { role: "user" as const, content: [{ type: "text" as const, text: "hello" }] },
+		};
+		const compactionEntry = {
+			type: "compaction" as const,
+			id: "c1",
+			parentId: "m1",
+			timestamp: "2025-01-02T00:00:00Z",
+			summary: "summary after reload",
+			firstKeptEntryId: "m1",
+			tokensBefore: 200,
+		};
+		let reloaded = false;
+		const reloadFromDisk = vi.fn(() => {
+			reloaded = true;
+		});
+		const buildContextEntries = vi.fn(() => {
+			return reloaded ? [compactionEntry, userMessageEntry] : [userMessageEntry];
+		});
+		const fakeThis = makeCompactionFakeThis({
+			chatContainer: { clear: vi.fn() },
+			sessionManager: {
+				buildContextEntries,
+				reloadFromDisk,
+			},
+			renderSessionEntries: vi.fn(),
+			addCompactionCostNotice: vi.fn(),
+		});
+
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event: {
+				type: "compaction_end";
+				reason: "manual" | "threshold" | "overflow";
+				result: { tokensBefore: number; summary: string; usage?: Usage } | undefined;
+				aborted: boolean;
+				willRetry: boolean;
+				errorMessage?: string;
+			},
+		) => Promise<void>;
+
+		await expect(
+			handleEvent.call(fakeThis, {
+				type: "compaction_end",
+				reason: "manual",
+				result: {
+					tokensBefore: 200,
+					summary: "summary after reload",
+				},
+				aborted: false,
+				willRetry: false,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(reloadFromDisk).toHaveBeenCalledTimes(1);
+		expect(fakeThis.chatContainer.clear).toHaveBeenCalledTimes(1);
+		expect(fakeThis.renderSessionEntries).toHaveBeenCalledWith([userMessageEntry]);
+		expect(fakeThis.addMessageToChat).toHaveBeenCalledWith(
+			expect.objectContaining({
+				role: "compactionSummary",
+				tokensBefore: 200,
+			}),
+		);
+	});
+
+	test("compaction_end falls back to filtering non-compaction entries when reloadFromDisk does not prepend compaction", async () => {
+		const userMessageEntry = {
+			type: "message" as const,
+			id: "m1",
+			parentId: null,
+			timestamp: "2025-01-01T00:00:00Z",
+			message: { role: "user" as const, content: [{ type: "text" as const, text: "hello" }] },
+		};
+		const fakeThis = makeCompactionFakeThis({
+			chatContainer: { clear: vi.fn() },
+			sessionManager: {
+				buildContextEntries: vi.fn().mockReturnValue([userMessageEntry]),
+				reloadFromDisk: vi.fn(),
+			},
+			renderSessionEntries: vi.fn(),
+			addCompactionCostNotice: vi.fn(),
+		});
+
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event: {
+				type: "compaction_end";
+				reason: "manual" | "threshold" | "overflow";
+				result: { tokensBefore: number; summary: string; usage?: Usage } | undefined;
+				aborted: boolean;
+				willRetry: boolean;
+				errorMessage?: string;
+			},
+		) => Promise<void>;
+
+		await expect(
+			handleEvent.call(fakeThis, {
+				type: "compaction_end",
+				reason: "threshold",
+				result: {
+					tokensBefore: 300,
+					summary: "fallback summary",
+				},
+				aborted: false,
+				willRetry: false,
+			}),
+		).resolves.toBeUndefined();
+
+		expect(fakeThis.chatContainer.clear).toHaveBeenCalledTimes(1);
+		expect(fakeThis.renderSessionEntries).toHaveBeenCalledWith([userMessageEntry]);
+		expect(fakeThis.addMessageToChat).toHaveBeenCalledWith(
+			expect.objectContaining({
+				role: "compactionSummary",
+				tokensBefore: 300,
+			}),
+		);
+	});
+
 	test.each([
 		["truncated generator", "Pre-prompt compaction failed: Compaction stream ended without a complete result"],
 		["timeout", "Pre-prompt compaction failed: Compaction timed out after 120000ms"],
@@ -671,6 +794,55 @@ describe("InteractiveMode compaction events", () => {
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("OpenAI Responses WebSocket compaction");
 		expect(rendered).toContain("2 retained items");
+	});
+
+	test("updates the working state when the same agent run resumes after compaction", async () => {
+		const fakeThis = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			activeStatusIndicator: undefined,
+			workingVisible: true,
+			showWorkingStatusIndicator: vi.fn(),
+			clearStatusIndicator: vi.fn(),
+			settingsManager: { getShowTerminalProgress: () => true },
+			ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
+		};
+		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (
+			this: typeof fakeThis,
+			event: { type: "turn_start" },
+		) => Promise<void>;
+
+		await handleEvent.call(fakeThis, { type: "turn_start" });
+
+		expect(fakeThis.ui.terminal.setProgress).toHaveBeenCalledWith(true);
+		expect(fakeThis.showWorkingStatusIndicator).toHaveBeenCalledTimes(1);
+		expect(fakeThis.clearStatusIndicator).not.toHaveBeenCalled();
+		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(1);
+
+		fakeThis.workingVisible = false;
+		await handleEvent.call(fakeThis, { type: "turn_start" });
+
+		expect(fakeThis.showWorkingStatusIndicator).toHaveBeenCalledTimes(1);
+		expect(fakeThis.clearStatusIndicator).toHaveBeenCalledTimes(1);
+		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(2);
+	});
+
+	// Regression test for #9340.
+	test("routes interactive response aborts through AgentSession", () => {
+		const abort = vi.fn(async () => {});
+		const ui = {
+			clearAllQueues: () => ({ steering: [], followUp: [] }),
+			updatePendingMessagesDisplay: vi.fn(),
+			session: { abort },
+		};
+		const restoreQueuedMessagesToEditor = Reflect.get(InteractiveMode.prototype, "restoreQueuedMessagesToEditor") as (
+			this: typeof ui,
+			options?: { abort?: boolean },
+		) => number;
+
+		restoreQueuedMessagesToEditor.call(ui, { abort: true });
+
+		expect(abort).toHaveBeenCalledOnce();
 	});
 
 	test("preserves steering behavior when flushing into an active agent run", async () => {

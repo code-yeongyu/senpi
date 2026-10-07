@@ -8,6 +8,7 @@ import {
 } from "../../src/core/extensions/builtin/mcp/idle.ts";
 import { getMcpReconnectDebugSnapshot } from "../../src/core/extensions/builtin/mcp/reconnect.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	attach,
 	type CapturingPi,
@@ -132,7 +133,13 @@ describe("MCP idle lifecycle", () => {
 		await attachReady(root, pi, "mcp_fx_tool_1");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
-		const running = tool.execute("tc-slow", { value: "slow" }, undefined, undefined, testContext());
+		const running = tool.execute(
+			"tc-slow",
+			{ value: "slow" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 		await delay(120);
 
 		expect(getMcpService().getConnection("fx")?.state).toBe("connected");
@@ -179,7 +186,13 @@ describe("MCP idle lifecycle", () => {
 		const firstPid = readNumberFile(pidFile);
 
 		await waitFor(() => getMcpService().getConnection("fx")?.state === "idle", 10_000);
-		const result = await tool.execute("tc-after-idle", { value: "after" }, undefined, undefined, testContext());
+		const result = await tool.execute(
+			"tc-after-idle",
+			{ value: "after" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 		const secondPid = readNumberFile(pidFile);
 
 		expect(textContent(result)).toBe("fixture tool_1 value=after mode=alpha");
@@ -283,7 +296,13 @@ describe("MCP idle lifecycle", () => {
 			},
 		);
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
-		const result = await tool.execute("tc-keep-alive", { value: "recovered" }, undefined, undefined, testContext());
+		const result = await tool.execute(
+			"tc-keep-alive",
+			{ value: "recovered" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 
 		expect(readNumberFile(pingCounterFile)).toBeGreaterThanOrEqual(1);
 		expect(textContent(result)).toBe("fixture tool_1 value=recovered mode=alpha");

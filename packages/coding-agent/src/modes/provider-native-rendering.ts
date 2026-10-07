@@ -158,6 +158,41 @@ function formatServerToolUseBody(raw: unknown): string | undefined {
 	return undefined;
 }
 
+/**
+ * Anthropic answers a `tool_search_tool_bm25` / `_regex` server call with either a
+ * `tool_search_tool_search_result` carrying `tool_reference` blocks, or a
+ * `tool_search_tool_result_error` carrying `error_code` / `error_message` (still HTTP 200).
+ */
+function formatToolSearchResultBody(raw: unknown, expanded: boolean): string | undefined {
+	const content = readRecord(isRecord(raw) ? raw : undefined, "content");
+	if (!content) {
+		return undefined;
+	}
+
+	const errorCode = readString(content, "error_code");
+	if (errorCode) {
+		const message = readString(content, "error_message");
+		return message ? `${errorCode}: ${shorten(message, 200)}` : errorCode;
+	}
+
+	const names = unique(
+		readArray(content, "tool_references").flatMap((reference) => {
+			const name = readString(isRecord(reference) ? reference : undefined, "tool_name");
+			return name ? [name] : [];
+		}),
+	);
+	if (names.length === 0) {
+		return "0 tools";
+	}
+
+	const visible = expanded ? names : names.slice(0, 10);
+	const lines = [pluralize(names.length, "tool"), ...visible.map((name) => shorten(name, 100))];
+	if (names.length > visible.length) {
+		lines.push(`… ${names.length - visible.length} more tools`);
+	}
+	return lines.join("\n");
+}
+
 function formatAnthropicWebSearchResultBody(raw: unknown, expanded: boolean): string | undefined {
 	const results = getWebSearchResults(raw);
 	if (!results) {
@@ -241,6 +276,9 @@ function formatSpecializedProviderNativeSummary(
 	if (content.subtype === "web_search_tool_result") {
 		return `${marker} ${provider}web_search results`;
 	}
+	if (content.subtype === "tool_search_tool_result") {
+		return `${marker} ${provider}tool_search results`;
+	}
 	if (content.subtype === "web_search_call") {
 		const raw = isRecord(content.raw) ? content.raw : undefined;
 		const status = readString(raw, "status");
@@ -272,6 +310,9 @@ function formatSpecializedProviderNativeBody(content: ProviderNativeContent, exp
 	}
 	if (content.subtype === "web_search_tool_result") {
 		return formatAnthropicWebSearchResultBody(content.raw, expanded);
+	}
+	if (content.subtype === "tool_search_tool_result") {
+		return formatToolSearchResultBody(content.raw, expanded);
 	}
 	if (content.subtype === "web_search_call") {
 		return formatOpenAiWebSearchCallBody(content.raw, expanded);

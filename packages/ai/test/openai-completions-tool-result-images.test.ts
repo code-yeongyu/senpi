@@ -1,14 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
-import { getModel } from "../src/compat.ts";
-import type {
-	AssistantMessage,
-	Context,
-	Model,
-	OpenAICompletionsCompat,
-	ToolResultMessage,
-	Usage,
-} from "../src/types.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { AssistantMessage, Model, OpenAICompletionsCompat, ToolResultMessage, Usage } from "../src/types.ts";
 
 const emptyUsage: Usage = {
 	input: 0,
@@ -43,14 +36,24 @@ const compat = {
 	toolSchemaFlavor: undefined,
 	toolCallFormat: undefined,
 	supportsOpenAIGrammarTools: false,
+	supportsMidConvoSystemMessages: false,
+	supportsMidConvoToolAdditions: false,
 	cacheControlFormat: "anthropic",
 	sendSessionAffinityHeaders: false,
 	sessionAffinityFormat: "openai",
 	supportsPromptCacheKey: false,
+	supportsMaxOutputTokens: true,
+	supportsForcedToolChoice: true,
 	supportsLongCacheRetention: true,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "toolCallFormat" | "deferredToolsMode" | "toolSchemaFlavor" | "thinkingTokenBudgetField"
+	| "cacheControlFormat"
+	| "toolCallFormat"
+	| "deferredToolsMode"
+	| "toolSchemaFlavor"
+	| "thinkingTokenBudgetField"
+	| "vllmPriority"
+	| "veniceParameters"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];
@@ -85,6 +88,35 @@ function buildEmptyToolResult(toolCallId: string, timestamp: number): ToolResult
 }
 
 describe("openai-completions convertMessages", () => {
+	// Regression test for https://github.com/earendil-works/pi/issues/9797
+	it("omits empty text parts from user messages with images", () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
+		const model: Model<"openai-completions"> = {
+			...baseModel,
+			api: "openai-completions",
+			input: ["text", "image"],
+		};
+		const context = normalizeContext({
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: "" },
+						{ type: "image", data: "ZmFrZQ==", mimeType: "image/png" },
+					],
+					timestamp: Date.now(),
+				},
+			],
+		});
+
+		expect(convertMessages(model, context, compat)).toEqual([
+			{
+				role: "user",
+				content: [{ type: "image_url", image_url: { url: "data:image/png;base64,ZmFrZQ==" } }],
+			},
+		]);
+	});
+
 	it("batches tool-result images after consecutive tool results", () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
 		const model: Model<"openai-completions"> = {
@@ -108,14 +140,14 @@ describe("openai-completions convertMessages", () => {
 			timestamp: now,
 		};
 
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [
 				{ role: "user", content: "Read the images", timestamp: now - 2 },
 				assistantMessage,
 				buildToolResult("tool-1", now + 1),
 				buildToolResult("tool-2", now + 2),
 			],
-		};
+		});
 
 		const messages = convertMessages(model, context, compat as Parameters<typeof convertMessages>[2]);
 		const roles = messages.map((message) => message.role);
@@ -151,13 +183,13 @@ describe("openai-completions convertMessages", () => {
 			timestamp: now,
 		};
 
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [
 				{ role: "user", content: "Run the command", timestamp: now - 1 },
 				assistantMessage,
 				buildEmptyToolResult("tool-1", now + 1),
 			],
-		};
+		});
 
 		const messages = convertMessages(model, context, compat);
 		const toolMessage = messages.find((m) => m.role === "tool") as { role: "tool"; content: string } | undefined;

@@ -47,6 +47,7 @@ describe("rules builtin - before_agent_start delivery", () => {
 
 	const extensionActions: ExtensionActions = {
 		registerLazyToolActivator: () => {},
+		getSettings: () => ({}),
 		sendMessage: () => {},
 		sendUserMessage: () => {},
 		appendEntry: (customType, data) => {

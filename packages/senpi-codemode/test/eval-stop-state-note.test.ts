@@ -63,7 +63,7 @@ describe("eval stop reports true kernel state", () => {
 			{ ...fakeExtensionContext(), mode: "tui" as const },
 		);
 
-		expect(textOf(stopped)).toContain("preserved");
+		expect(textOf(stopped)).toContain("variables from earlier cells are kept");
 	});
 
 	it("says Python state was lost when the kernel had to be killed, never claiming preserved", async () => {
@@ -83,7 +83,7 @@ describe("eval stop reports true kernel state", () => {
 		);
 
 		const text = textOf(stopped);
-		expect(text).not.toContain("preserved");
+		expect(text).not.toContain("variables from earlier cells are kept");
 		expect(text).toMatch(/lost|gone|restart|recreated/i);
 	});
 
@@ -114,7 +114,7 @@ describe("eval stop reports true kernel state", () => {
 		);
 
 		const text = textOf(stopped);
-		expect(text).not.toContain("preserved");
+		expect(text).not.toContain("variables from earlier cells are kept");
 		expect(text).toMatch(/lost|restarted/i);
 	});
 });

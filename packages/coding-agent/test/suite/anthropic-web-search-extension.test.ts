@@ -285,6 +285,7 @@ describe("anthropic-web-search before_agent_start", () => {
 				if (eventName === "session_start") {
 					sessionStartHandler = handler as SessionStartHandler;
 				}
+				return () => {};
 			},
 		} satisfies Pick<ExtensionAPI, "on">;
 
@@ -316,6 +317,7 @@ describe("anthropic-web-search before_agent_start", () => {
 				if (eventName === "before_agent_start") {
 					beforeAgentStartHandler = handler as BeforeAgentStartHandler;
 				}
+				return () => {};
 			},
 		} satisfies Pick<ExtensionAPI, "on">;
 
@@ -342,6 +344,7 @@ describe("anthropic-web-search before_agent_start", () => {
 				if (eventName === "before_agent_start") {
 					beforeAgentStartHandler = handler as BeforeAgentStartHandler;
 				}
+				return () => {};
 			},
 		} satisfies Pick<ExtensionAPI, "on">;
 

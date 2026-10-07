@@ -1,5 +1,105 @@
 # TTSR Fork Tracker
 
+## 2026-10-07 - Code-shaped lines are left out of near-duplicate scoring (senpi#2865)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-near-duplicates.ts`: `foldLine` leaves out an unfenced line shaped like code (indented and not a nested list item, or ending in `{ } [ ] ( ; , >`, the set oh-my-pi uses; `)` is left out because prose often ends in a parenthesis), so a paragraph made only of such lines is never scored. Fenced paragraphs keep their existing exemption.
+
+### Why
+
+Same-shaped code or markup (SVG elements, JSON objects) repeats one skeleton with different literals and scored as near-duplicate paragraphs. TTSR then aborted the stream and retried, discarding the model's valid output. oh-my-pi v18.8.0 drops the same line shapes before its loop heuristics. Trade-off, accepted on review: oh-my-pi applies its rule only to Gemini, DeepSeek and Grok streams, while TTSR applies it to every model, so a narration loop in which EVERY paragraph ends in `,` or `>` or is indented is no longer counted by this detector. Real narration (the incident fixture) carries no such lines and is still caught.
+
+### Why an extension could not handle it
+
+The paragraph scoring is inside the TTSR detector itself.
+
+### Expected merge conflict zones
+
+- `foldLine` and the line state in `collapse-near-duplicates.ts`.
+
+## 2026-09-25 - The handoff Ask exemption needs a closing status label (senpi#2143)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/repetitive-turns.ts`: `HANDOFF_ASK_CLAUSE` drops its end-of-text branch, so an `Ask:` clause is removed only when `For you:`, `You need:` or `Now:` closes it. `test/ttsr/repetitive-turns.test.ts` adds an unlabeled `Ask:` loop that must still fire on its third turn (RED with the old branch).
+
+### Why
+
+The end-of-text branch removed everything after any `Ask:`, so a stuck turn that merely contained the word normalized to nothing and scored 0 against itself, which hid it from `repetitive-turns` and from `collapse-near-duplicates` (same normalizer). #2136 meant to exempt only the restated request inside a handoff block.
+
+### Why an extension could not handle it
+
+This is the detector's own normalizer.
+
+### Expected merge conflict zones
+
+- `HANDOFF_ASK_CLAUSE` in `detectors/repetitive-turns.ts`.
+
+## 2026-09-25 - repetitive-turns ignores the restated Ask of a handoff block (senpi#2135)
+
+### What changed
+
+- `detectors/repetitive-turns.ts` `normalizeTurnText` drops a handoff block's `Ask: ...` clause (up to `For you:` / `You need:` / `Now:`) before comparison. Both the mid-stream lane (`repetitive-turns-lane.ts`) and the cross-turn detector normalize through it, so both stop counting the restated request.
+- `prompts.ts` `REPETITIVE_TURNS_RULE_CONTENT`: `Stop restating the situation. Do not emit another progress recap.` -> `Stop repeating the same status; a report is useful only when something has changed.`
+- `test/ttsr/repetitive-turns.test.ts`: the recorded final-block prefix scores under the threshold against the previous block (0.69 before, RED), and a block that repeats the same For you / Now / Next still scores as a near-duplicate.
+
+### Why
+
+- The handoff contract (senpi#2121) makes every block open by restating the user's request, so block N+1's opening is a near-copy of block N by design. On the released 2026.9.24-3 the lane armed on the final block's prefix, aborted it, and injected "Do not emit another progress recap", after which grok-4.7 closed without the block. The status the model reports (For you / Now / Next) still participates, so a model that re-emits the same status turn after turn is still caught.
+
+### Why an extension could not handle it
+
+- This is the ttsr builtin's own detector and remediation text.
+
+### Expected merge conflict zones
+
+- `normalizeTurnText` in `detectors/repetitive-turns.ts`; `REPETITIVE_TURNS_RULE_CONTENT` in `prompts.ts`. Fork-only files.
+
+## 2026-09-16 - Near-duplicate paragraph frequency
+
+### What changed and why
+
+- Added `detectors/collapse-near-duplicates.ts` (`near-duplicate-paragraphs`), wired last in the collapse chain for text and thinking streams. `paragraph-repeat` compares paragraphs byte for byte, so a model that restates the same step in different words every time never reaches three identical hashes; a captured incident streamed such a loop for 12 minutes with zero tool calls until the user killed the session.
+- The mechanism is a frequency rule, not a pair rule: a paragraph is an echo when its normalized word set reaches 0.5 Jaccard against any of the last 32 eligible paragraphs, and the detector only fires when at least 8 of the last 12 eligible paragraphs are echoes. A couple of similar paragraphs, a callback to an earlier point, or a summary that repeats a sentence never reaches that density.
+- The exact-repeat ring (64 paragraphs) also cannot see a cycle longer than itself. The incident's cycle was 114 paragraphs, so the same loop stayed invisible even where it repeated verbatim; the frequency rule is independent of cycle length.
+- Paragraphs inside fenced code blocks are skipped and never enter the history: repeated code blocks in one message are legitimate.
+- Remediation reuses the existing collapse path: abort, truncate from the first echoed paragraph in the firing window (its anchor is kept), then the collapse nudge.
+- Calibration is measured, not assumed. Replaying the shipped detector over 12,499 real assistant text and thinking parts (28.9 MB) from the local session store fires twice, and both firings are known runaway generations from one 2026-09-03 session; there are no other matches.
+
+### Why an extension-local change is required
+
+- The stream watcher already owns per-message detector state and collapse remediation, so paragraph tracking belongs in the extension-local collapse chain without changing provider or core stream contracts.
+
+### Coverage and expected conflict zones
+
+- `test/ttsr/detector-collapse-near-duplicates.test.ts` replays the sanitized incident fixture (`fixtures/incident-near-duplicate-narration.txt`), pins chunk-boundary independence, and pins the negatives: distinct multi-sentence prose, a minority of echoes in the window, the long healthy prefix, fenced code, and tool-stream exclusion.
+- `test/ttsr/collapse-test-inputs.ts` `buildHealthyPrefix` now composes varied vocabulary. Its previous sentences differed only by a counter, so every paragraph normalized to the same token set - healthy prose for a byte-exact rule, a narration loop for a normalized one.
+- `test/ttsr/detector-collapse-paragraphs.test.ts` `narration()` now emits seven lexically distinct steps instead of one template plus a counter, so the exact-repeat assertions still test exact repetition. The assertions themselves are unchanged.
+- Real-CLI QA ships as `senpi-qa` mock-loop scenario `ttsr-near-duplicate-loop`: fifteen paraphrases of one action, none byte-identical, streamed from the local fake model server. It asserts the abort, the truncated persisted message, the `collapse-repetition` interrupt in the recovery request, and the recovered answer.
+- LOW: `detectors/collapse.ts` (one chain entry) and the two test-input fixtures; no existing detector thresholds are changed.
+
+## 2026-09-03 - Within-message paragraph repetition
+
+### What changed and why
+
+- Added `detectors/collapse-paragraphs.ts` (`paragraph-repeat`) for byte-exact paragraph repetition within one streamed message. The existing four mechanisms could not see a 7-paragraph, ~2,100-character, 14-line cycle: scalar and short-period bounds are too small, line cycles are bounded and reset at blank lines, repetitive turns compare across turns, and loop-guard requires tool calls.
+- Tool-argument streams are excluded on purpose because fixtures can legitimately repeat blocks.
+- Thresholds are 64 characters, 24 word characters, 3 occurrences, and a 64-entry recent-paragraph ring.
+- Remediation reuses the existing collapse path: abort, truncate from the second occurrence, and send the collapse nudge.
+- Known limit: a paragraph ends only at a blank (whitespace-only) line, so narration that separates steps with single newlines is one paragraph to this mechanism; line cycles up to period 4 remain the line-cycle detector's job.
+
+### Why an extension-local change is required
+
+- The stream watcher already owns per-message detector state and collapse remediation, so paragraph tracking belongs in the extension-local collapse chain without changing provider or core stream contracts.
+
+### Coverage and expected conflict zones
+
+- `test/ttsr/detector-collapse-paragraphs.test.ts` covers chunking, eligibility, byte equality, multiline paragraphs, separators, and tool exclusion.
+- `test/ttsr/extension-wiring.test.ts` covers abort, truncation, activation, nudge, retry, and recovery.
+- Real-CLI QA ships as `senpi-qa` mock-loop scenario `ttsr-paragraph-loop` (text stream from the local fake model server; asserts the recovery request keeps one copy of the first paragraph and carries the `collapse-repetition` interrupt).
+- LOW: `detectors/collapse.ts` and the wiring test; no existing detector thresholds or unrelated routing are changed.
+
 ## 2026-08-25 - Cover streamed tool-call arguments
 
 ### What changed and why

@@ -47,6 +47,15 @@ export class RuntimeCredentials implements CredentialStore {
 		return this.overrides.has(providerId);
 	}
 
+	/**
+	 * Reads that found the backing store locked and answered from its cached snapshot.
+	 * Stores that never report contention count as 0.
+	 */
+	busyReadCount(): number {
+		const store = this.store as CredentialStore & { getBusyReadCount?: () => number };
+		return typeof store.getBusyReadCount === "function" ? store.getBusyReadCount() : 0;
+	}
+
 	async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
 		options?.signal?.throwIfAborted();
 		const override = this.overrides.get(providerId);

@@ -106,7 +106,7 @@ describe("eval cell id reuse", () => {
 		expect(textOf(peek)).toContain("is completed");
 	});
 
-	it("still reports the same-language kernel-busy guidance when reusing the id of a detached cell", async () => {
+	it("rejects duplicate active ids even though distinct same-language ids can queue", async () => {
 		vi.useFakeTimers();
 		const manager = new EvalDetachedCellManager();
 		const kernel = new FakeKernel([{ type: "text", stream: "stdout", data: "still computing\n" }]);
@@ -114,7 +114,7 @@ describe("eval cell id reuse", () => {
 
 		await detach(tool, kernel, "eval:0");
 		await expect(run(tool, "eval:0", "js", "again()")).rejects.toThrow(
-			/busy running detached cell eval:0[\s\S]*still computing/u,
+			/previous call is still detached[\s\S]*peek[\s\S]*stop/u,
 		);
 
 		await manager.stop("eval:0");

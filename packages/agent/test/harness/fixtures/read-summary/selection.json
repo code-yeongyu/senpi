@@ -1,0 +1,906 @@
+{
+  "version": 2,
+  "candidate_implementation": "production_folder_segmented_view_and_default_read",
+  "default_read_selection": {
+    "wasm": true,
+    "rawReasons": {
+      "ts": "wasm_candidate_below_threshold",
+      "tsx": "wasm_candidate_below_threshold"
+    },
+    "languages": {
+      "ts": "raw",
+      "js": "wasm",
+      "json": "heuristic",
+      "tsx": "raw",
+      "python": "unsupported",
+      "rust": "unsupported",
+      "go": "unsupported",
+      "markdown": "prose_exempt",
+      "txt": "prose_exempt"
+    },
+    "folder": {
+      "id": "measured-brace",
+      "version": "3"
+    }
+  },
+  "candidate_sources_sha256": {
+    "read-folders/brace-scanner.ts": "1afa697f1918e403d600537571f62cf2d45bdf98540160aa186273b9ea68428c",
+    "read-folders/compose.ts": "2e4eff222126f31c6181079ac19b9bea06be7323a273fd9e0e4b403ffd4544c0",
+    "read-folders/header-protection.ts": "9bd0bea5dfe20011c8d4235563454a2af1064c95537c4ed0a807d070954a9777",
+    "read-folders/lexical-context.ts": "e3816078bc60c25e07ceb029d49ceb9d83d55968e2a1e9fa278ec5a4bf9bcb3f",
+    "read-folders/lexical-spans.ts": "c7ba988487972d9e39427e5faf0120b3bf787cb48ffa32cf8123ce54bdbdbd93",
+    "read-folders/prepare.ts": "3ec2d553ea1877cc04e12e730b7c9a0d7b2d5e4d08a60980a1c8396eb338bfd2",
+    "read-folders/tree-sitter/engine.ts": "b2e06b13e5c42efbd6d7128d0c737f2cbc890693d5a332dac88b15e670195c05",
+    "read-folders/tree-sitter/grammar-assets.ts": "c1390501b5932899c3618a83574e0d35306a77ad3a4a6f0c784b1f8295de2a45",
+    "read-folders/tree-sitter/syntax.ts": "21ec7601f431b635ccad1dce3e089875e2bec12db2f9ac2d8af62d34bda806ef",
+    "read-folders/types.ts": "449f11dd3b2d0e68f1f6aad896a0a73a4c9756fef3f5acce9295bac9a26fbc69",
+    "segmented-read-view.ts": "c0e865ba351a7a9eb29ab999c553729079732886e8bf0f2daa40c4b0d6dcf3bd"
+  },
+  "enumeration": {
+    "programs": 1440,
+    "grammarSha256": "b9641386c9661e9bf8282dd7fe661734806b07c626a452afbe3533c7f513fc02",
+    "emittedRanges": 345,
+    "protectedPrograms": 1432,
+    "counterexamples": [],
+    "sha256": "48140de2438011b420a233f2790c302d186ad633ac5811f57bd3bc7c34f6cb47"
+  },
+  "tree_sha": "33ae7a96d5da456d5021eef42773ff62062ae355",
+  "binary_measurement": "omp-item1 --case compiled-parity (release graph, all shipped targets)",
+  "gate_status": "OQ1_unresolved_defaults_used",
+  "gate_receipt": {
+    "gate": "OQ1",
+    "approved": true,
+    "owner": "code-yeongyu (issue #1685 owner decision)",
+    "source_message": "github.com/code-yeongyu/senpi#1685 — PROCEED with tree-sitter WASM",
+    "approved_at": "2026-09-16T00:00:00.000Z",
+    "decision": {
+      "languages": [
+        "ts",
+        "tsx",
+        "js",
+        "python",
+        "go",
+        "rust",
+        "json",
+        "markdown"
+      ],
+      "wasm_allowed": true,
+      "candidate_dependencies": [
+        "web-tree-sitter@0.27.0",
+        "@vscode/tree-sitter-wasm@0.3.1 (grammar artifacts, vendored)"
+      ],
+      "max_embedded_delta_bytes": 12582912,
+      "plan_sha256": "d29f77b4c663cb6c2031c780bc3f9aba8e95b27ec301d58a3c188abe4e2e3ea1",
+      "raw_fallback_allowed": true
+    },
+    "sha256": "aad6867cfd6edd73a133431d29afb915cbac601199e112f6a43e6a56612ba182"
+  },
+  "reference_mode": "frozen_actual_ReadTool_outputs",
+  "reference_latency_scope": "original baseline observation, not rerun latency",
+  "wasm_enabled": true,
+  "wasm_engine": {
+    "id": "tree-sitter-wasm",
+    "version": "1",
+    "assets": [
+      {
+        "kind": "runtime",
+        "language": null,
+        "file": "web-tree-sitter.wasm",
+        "package": "web-tree-sitter",
+        "version": "0.27.0",
+        "bytes": 209613,
+        "sha256": "c03bccdc3b448a32848f5ae327e209c982bbb0840d43eec8bc2d5759544a1ed3",
+        "declared_sha256": "c03bccdc3b448a32848f5ae327e209c982bbb0840d43eec8bc2d5759544a1ed3"
+      },
+      {
+        "kind": "grammar",
+        "language": "js",
+        "file": "javascript.wasm",
+        "package": "@vscode/tree-sitter-wasm",
+        "version": "0.3.1",
+        "bytes": 411770,
+        "sha256": "5fb488d0cabb4775a594bab85682de5ad6ce83c0d6ac997a9f82dd084d571240",
+        "declared_sha256": "5fb488d0cabb4775a594bab85682de5ad6ce83c0d6ac997a9f82dd084d571240"
+      }
+    ]
+  },
+  "status": "frozen_measurement_with_per_language_raw_fallbacks",
+  "head_sha": "6da8ef1361ef73928df8685e071f2a1826d3b17e",
+  "startedAt": "2026-09-16T19:20:26.419Z",
+  "finishedAt": "2026-09-16T19:20:27.638Z",
+  "corpus_sha256": "7341450565d0c56ac07ef676eb6e43a79cab7a012fefe73612a7e2cab1ba43fa",
+  "annotations_sha256": "c3dc623bd0418fd7b8052e9c8418f84f5d3bff4e08022c309600de286e8f5133",
+  "adversarial_boundaries_sha256": "ee70ae8a6d8e280c5d7d02623a7945455b3b761978caee9bf02b8020865ca4d6",
+  "oracle_mode": "requalified_source_AST_with_protected_intervals",
+  "tokenizer": {
+    "name": "gpt-tokenizer",
+    "version": "4.0.0",
+    "encoding": "o200k_base",
+    "exact": true,
+    "files": {
+      "package.json": "5c1517b19eb0165a04f1eeab33bc0843b5d338cd3b517a26710ee0af5144b7ee",
+      "esm/encoding/o200k_base.js": "149d27f670db182ba335ee48eabd0aa595150279de76c87278a4e0cacc818057",
+      "esm/bpeRanks/o200k_base.js": "d8326a1a7d1288c4bea24c5ddb11a5e3e66113a538fd804adaff610dcac1f891"
+    },
+    "packageSha256": "0a3b13673fbcb666dfd505e4ada6807821c7a83c8f1dc0c4e8edc73f81837014",
+    "lockIntegrity": "sha512-YAWIyzvuVUHEfW7tFfFAxH8qQb+Q3RU9nYOTy7skMNX5qzU6Q8jxTHZLyO56ug1vYvCR7wndzpd3jwD86/mhjQ=="
+  },
+  "max_embedded_delta_bytes": 12582912,
+  "grammar_pins": "grammar-pins.json",
+  "output_bindings_sha256": "2e749beb595e086169bad42b188de68e5515d9d486a28d41695ce9d98c4f4548",
+  "raw_reader_sha256": "6dd041612b4f273966b6bcb26685986328e2701eb49c58f4c23f286db16a9247",
+  "reference_reader_sha256": "270694388f57680524c3df3f6223e845dc8c4d78e2146748d2013c63ae9ba935",
+  "settings": {
+    "read.summarize.enabled": true,
+    "read.summarize.prose": false,
+    "read.summarize.minBodyLines": 4,
+    "read.summarize.minCommentLines": 6,
+    "read.summarize.minTotalLines": 100,
+    "read.summarize.unfoldUntil": 50,
+    "read.summarize.unfoldLimit": 100,
+    "read.defaultLimit": 300,
+    "readLineNumbers": false,
+    "edit.mode": "hashline"
+  },
+  "languages": [
+    {
+      "language": "ts",
+      "engine": "raw",
+      "status": "conclusive",
+      "reason": "wasm_candidate_below_threshold",
+      "medianSaving": 0,
+      "referenceMedianSaving": 0.525369299935774,
+      "candidates": {
+        "heuristic": {
+          "engine": "raw",
+          "status": "conclusive",
+          "reason": "candidate_below_reference_threshold",
+          "medianSaving": 0,
+          "referenceMedianSaving": 0.525369299935774,
+          "engine_name": "heuristic",
+          "invalid_boundaries": [],
+          "files_with_folds": 1,
+          "discovered_folds": 1,
+          "file_outcomes": [
+            {
+              "id": "ts-1",
+              "emitted_folds": 0,
+              "fallback_reason": "unproved_header",
+              "minimum_oracle_skeleton_lines": 252
+            },
+            {
+              "id": "ts-2",
+              "emitted_folds": 0,
+              "fallback_reason": "unproved_header",
+              "minimum_oracle_skeleton_lines": 131
+            },
+            {
+              "id": "ts-3",
+              "emitted_folds": 1,
+              "minimum_oracle_skeleton_lines": 54
+            },
+            {
+              "id": "ts-4",
+              "emitted_folds": 0,
+              "fallback_reason": "unproved_header",
+              "minimum_oracle_skeleton_lines": 143
+            },
+            {
+              "id": "ts-5",
+              "emitted_folds": 0,
+              "fallback_reason": "unproved_header",
+              "minimum_oracle_skeleton_lines": 69
+            }
+          ],
+          "total_saved_tokens": 15
+        },
+        "wasm": {
+          "engine": "raw",
+          "status": "conclusive",
+          "reason": "candidate_below_reference_threshold",
+          "medianSaving": 0,
+          "referenceMedianSaving": 0.525369299935774,
+          "engine_name": "wasm",
+          "invalid_boundaries": [],
+          "files_with_folds": 2,
+          "discovered_folds": 32,
+          "file_outcomes": [
+            {
+              "id": "ts-1",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 252
+            },
+            {
+              "id": "ts-2",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 131
+            },
+            {
+              "id": "ts-3",
+              "emitted_folds": 5,
+              "minimum_oracle_skeleton_lines": 54
+            },
+            {
+              "id": "ts-4",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 143
+            },
+            {
+              "id": "ts-5",
+              "emitted_folds": 7,
+              "minimum_oracle_skeleton_lines": 69
+            }
+          ],
+          "total_saved_tokens": 784
+        }
+      },
+      "measured_files": 5,
+      "default_read_median_saving": 0,
+      "default_read_saved_tokens": 0,
+      "files_with_folds": 1,
+      "discovered_folds": 1,
+      "file_outcomes": [
+        {
+          "id": "ts-1",
+          "emitted_folds": 0,
+          "fallback_reason": "unproved_header",
+          "minimum_oracle_skeleton_lines": 252
+        },
+        {
+          "id": "ts-2",
+          "emitted_folds": 0,
+          "fallback_reason": "unproved_header",
+          "minimum_oracle_skeleton_lines": 131
+        },
+        {
+          "id": "ts-3",
+          "emitted_folds": 1,
+          "minimum_oracle_skeleton_lines": 54
+        },
+        {
+          "id": "ts-4",
+          "emitted_folds": 0,
+          "fallback_reason": "unproved_header",
+          "minimum_oracle_skeleton_lines": 143
+        },
+        {
+          "id": "ts-5",
+          "emitted_folds": 0,
+          "fallback_reason": "unproved_header",
+          "minimum_oracle_skeleton_lines": 69
+        }
+      ],
+      "invalid_boundaries": [],
+      "heuristic_rejection": "candidate_below_reference_threshold",
+      "total_saved_tokens": 15
+    },
+    {
+      "language": "tsx",
+      "engine": "raw",
+      "status": "conclusive",
+      "reason": "wasm_candidate_below_threshold",
+      "medianSaving": 0,
+      "referenceMedianSaving": 0.628198149156233,
+      "candidates": {
+        "heuristic": {
+          "engine": "raw",
+          "status": "conclusive",
+          "reason": "candidate_below_reference_threshold",
+          "medianSaving": 0,
+          "referenceMedianSaving": 0.628198149156233,
+          "engine_name": "heuristic",
+          "invalid_boundaries": [],
+          "files_with_folds": 0,
+          "discovered_folds": 0,
+          "file_outcomes": [
+            {
+              "id": "tsx-1",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 201
+            },
+            {
+              "id": "tsx-2",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 180
+            },
+            {
+              "id": "tsx-3",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 120
+            },
+            {
+              "id": "tsx-4",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 234
+            },
+            {
+              "id": "tsx-5",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 277
+            }
+          ],
+          "total_saved_tokens": 0
+        },
+        "wasm": {
+          "engine": "raw",
+          "status": "conclusive",
+          "reason": "candidate_below_reference_threshold",
+          "medianSaving": 0,
+          "referenceMedianSaving": 0.628198149156233,
+          "engine_name": "wasm",
+          "invalid_boundaries": [],
+          "files_with_folds": 0,
+          "discovered_folds": 24,
+          "file_outcomes": [
+            {
+              "id": "tsx-1",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 201
+            },
+            {
+              "id": "tsx-2",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 180
+            },
+            {
+              "id": "tsx-3",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 120
+            },
+            {
+              "id": "tsx-4",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 234
+            },
+            {
+              "id": "tsx-5",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 277
+            }
+          ],
+          "total_saved_tokens": 0
+        }
+      },
+      "measured_files": 5,
+      "default_read_median_saving": 0,
+      "default_read_saved_tokens": 0,
+      "files_with_folds": 0,
+      "discovered_folds": 0,
+      "file_outcomes": [
+        {
+          "id": "tsx-1",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 201
+        },
+        {
+          "id": "tsx-2",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 180
+        },
+        {
+          "id": "tsx-3",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 120
+        },
+        {
+          "id": "tsx-4",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 234
+        },
+        {
+          "id": "tsx-5",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 277
+        }
+      ],
+      "invalid_boundaries": [],
+      "heuristic_rejection": "candidate_below_reference_threshold",
+      "total_saved_tokens": 0
+    },
+    {
+      "language": "js",
+      "engine": "wasm",
+      "status": "conclusive",
+      "reason": "safe_quality_threshold_met",
+      "medianSaving": 0.41932367149758454,
+      "referenceMedianSaving": 0.39487179487179486,
+      "candidates": {
+        "heuristic": {
+          "engine": "raw",
+          "status": "conclusive",
+          "reason": "candidate_below_reference_threshold",
+          "medianSaving": 0,
+          "referenceMedianSaving": 0.39487179487179486,
+          "engine_name": "heuristic",
+          "invalid_boundaries": [],
+          "files_with_folds": 1,
+          "discovered_folds": 19,
+          "file_outcomes": [
+            {
+              "id": "js-1",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 96
+            },
+            {
+              "id": "js-2",
+              "emitted_folds": 2,
+              "minimum_oracle_skeleton_lines": 50
+            },
+            {
+              "id": "js-3",
+              "emitted_folds": 0,
+              "fallback_reason": "unproved_header",
+              "minimum_oracle_skeleton_lines": 58
+            },
+            {
+              "id": "js-4",
+              "emitted_folds": 0,
+              "fallback_reason": "skeleton_exceeds_budget",
+              "minimum_oracle_skeleton_lines": 69
+            },
+            {
+              "id": "js-5",
+              "emitted_folds": 0,
+              "fallback_reason": "unproved_header",
+              "minimum_oracle_skeleton_lines": 99
+            }
+          ],
+          "total_saved_tokens": 272
+        },
+        "wasm": {
+          "engine": "wasm",
+          "status": "conclusive",
+          "reason": "safe_quality_threshold_met",
+          "medianSaving": 0.41932367149758454,
+          "referenceMedianSaving": 0.39487179487179486,
+          "engine_name": "wasm",
+          "invalid_boundaries": [],
+          "files_with_folds": 5,
+          "discovered_folds": 43,
+          "file_outcomes": [
+            {
+              "id": "js-1",
+              "emitted_folds": 11,
+              "minimum_oracle_skeleton_lines": 96
+            },
+            {
+              "id": "js-2",
+              "emitted_folds": 3,
+              "minimum_oracle_skeleton_lines": 50
+            },
+            {
+              "id": "js-3",
+              "emitted_folds": 3,
+              "minimum_oracle_skeleton_lines": 58
+            },
+            {
+              "id": "js-4",
+              "emitted_folds": 7,
+              "minimum_oracle_skeleton_lines": 69
+            },
+            {
+              "id": "js-5",
+              "emitted_folds": 7,
+              "minimum_oracle_skeleton_lines": 99
+            }
+          ],
+          "total_saved_tokens": 2658
+        }
+      },
+      "measured_files": 5,
+      "default_read_median_saving": 0.41932367149758454,
+      "default_read_saved_tokens": 2658,
+      "files_with_folds": 5,
+      "discovered_folds": 43,
+      "file_outcomes": [
+        {
+          "id": "js-1",
+          "emitted_folds": 11,
+          "minimum_oracle_skeleton_lines": 96
+        },
+        {
+          "id": "js-2",
+          "emitted_folds": 3,
+          "minimum_oracle_skeleton_lines": 50
+        },
+        {
+          "id": "js-3",
+          "emitted_folds": 3,
+          "minimum_oracle_skeleton_lines": 58
+        },
+        {
+          "id": "js-4",
+          "emitted_folds": 7,
+          "minimum_oracle_skeleton_lines": 69
+        },
+        {
+          "id": "js-5",
+          "emitted_folds": 7,
+          "minimum_oracle_skeleton_lines": 99
+        }
+      ],
+      "invalid_boundaries": [],
+      "heuristic_rejection": "candidate_below_reference_threshold",
+      "total_saved_tokens": 2658
+    },
+    {
+      "language": "python",
+      "engine": "raw",
+      "status": "pending_owner",
+      "reason": "wasm_candidate_unevaluated_no_signature_oracle",
+      "medianSaving": 0,
+      "referenceMedianSaving": 0.5317024463305042,
+      "candidates": {
+        "heuristic": {
+          "engine": "raw",
+          "status": "conclusive",
+          "reason": "candidate_below_reference_threshold",
+          "medianSaving": 0,
+          "referenceMedianSaving": 0.5317024463305042,
+          "engine_name": "heuristic",
+          "invalid_boundaries": [],
+          "files_with_folds": 0,
+          "discovered_folds": 0,
+          "file_outcomes": [
+            {
+              "id": "python-1",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 95
+            },
+            {
+              "id": "python-2",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 104
+            },
+            {
+              "id": "python-3",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 129
+            },
+            {
+              "id": "python-4",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 81
+            },
+            {
+              "id": "python-5",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 28
+            }
+          ],
+          "total_saved_tokens": 0
+        },
+        "wasm": {
+          "engine": "raw",
+          "status": "pending_owner",
+          "reason": "wasm_candidate_unevaluated_no_signature_oracle"
+        }
+      },
+      "measured_files": 5,
+      "default_read_median_saving": 0,
+      "default_read_saved_tokens": 0,
+      "files_with_folds": 0,
+      "discovered_folds": 0,
+      "file_outcomes": [
+        {
+          "id": "python-1",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 95
+        },
+        {
+          "id": "python-2",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 104
+        },
+        {
+          "id": "python-3",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 129
+        },
+        {
+          "id": "python-4",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 81
+        },
+        {
+          "id": "python-5",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 28
+        }
+      ],
+      "invalid_boundaries": [],
+      "heuristic_rejection": "candidate_below_reference_threshold",
+      "total_saved_tokens": 0
+    },
+    {
+      "language": "go",
+      "engine": "raw",
+      "status": "pending_owner",
+      "reason": "measurement_blocked_insufficient_corpus (2 tracked Go files, both <100 lines)",
+      "owner_action": "additional source corpus under OQ1",
+      "measured_files": 0,
+      "candidates": {
+        "heuristic": {
+          "engine": "raw",
+          "status": "pending_owner",
+          "reason": "measurement_blocked_insufficient_corpus",
+          "engine_name": "heuristic",
+          "invalid_boundaries": [],
+          "files_with_folds": 0,
+          "discovered_folds": 0,
+          "file_outcomes": [],
+          "total_saved_tokens": 0
+        },
+        "wasm": {
+          "engine": "raw",
+          "status": "pending_owner",
+          "reason": "wasm_candidate_unevaluated_no_signature_oracle"
+        }
+      }
+    },
+    {
+      "language": "rust",
+      "engine": "raw",
+      "status": "pending_owner",
+      "reason": "wasm_candidate_unevaluated_no_signature_oracle",
+      "medianSaving": 0,
+      "referenceMedianSaving": 0.6851385390428212,
+      "candidates": {
+        "heuristic": {
+          "engine": "raw",
+          "status": "conclusive",
+          "reason": "candidate_below_reference_threshold",
+          "medianSaving": 0,
+          "referenceMedianSaving": 0.6851385390428212,
+          "engine_name": "heuristic",
+          "invalid_boundaries": [],
+          "files_with_folds": 0,
+          "discovered_folds": 0,
+          "file_outcomes": [
+            {
+              "id": "rust-1",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 114
+            },
+            {
+              "id": "rust-2",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 169
+            },
+            {
+              "id": "rust-3",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 176
+            },
+            {
+              "id": "rust-4",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 138
+            },
+            {
+              "id": "rust-5",
+              "emitted_folds": 0,
+              "fallback_reason": "unsupported_language",
+              "minimum_oracle_skeleton_lines": 125
+            }
+          ],
+          "total_saved_tokens": 0
+        },
+        "wasm": {
+          "engine": "raw",
+          "status": "pending_owner",
+          "reason": "wasm_candidate_unevaluated_no_signature_oracle"
+        }
+      },
+      "measured_files": 5,
+      "default_read_median_saving": 0,
+      "default_read_saved_tokens": 0,
+      "files_with_folds": 0,
+      "discovered_folds": 0,
+      "file_outcomes": [
+        {
+          "id": "rust-1",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 114
+        },
+        {
+          "id": "rust-2",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 169
+        },
+        {
+          "id": "rust-3",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 176
+        },
+        {
+          "id": "rust-4",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 138
+        },
+        {
+          "id": "rust-5",
+          "emitted_folds": 0,
+          "fallback_reason": "unsupported_language",
+          "minimum_oracle_skeleton_lines": 125
+        }
+      ],
+      "invalid_boundaries": [],
+      "heuristic_rejection": "candidate_below_reference_threshold",
+      "total_saved_tokens": 0
+    },
+    {
+      "language": "json",
+      "engine": "heuristic",
+      "status": "conclusive",
+      "reason": "safe_quality_threshold_met",
+      "medianSaving": 0.8300604229607251,
+      "referenceMedianSaving": 0.8675730110775428,
+      "candidates": {
+        "heuristic": {
+          "engine": "heuristic",
+          "status": "conclusive",
+          "reason": "safe_quality_threshold_met",
+          "medianSaving": 0.8300604229607251,
+          "referenceMedianSaving": 0.8675730110775428,
+          "engine_name": "heuristic",
+          "invalid_boundaries": [],
+          "files_with_folds": 4,
+          "discovered_folds": 387,
+          "file_outcomes": [
+            {
+              "id": "json-1",
+              "emitted_folds": 0,
+              "fallback_reason": "visible_budget_unreachable",
+              "minimum_oracle_skeleton_lines": 3
+            },
+            {
+              "id": "json-2",
+              "emitted_folds": 42,
+              "minimum_oracle_skeleton_lines": 3
+            },
+            {
+              "id": "json-3",
+              "emitted_folds": 23,
+              "minimum_oracle_skeleton_lines": 3
+            },
+            {
+              "id": "json-4",
+              "emitted_folds": 18,
+              "minimum_oracle_skeleton_lines": 3
+            },
+            {
+              "id": "json-5",
+              "emitted_folds": 7,
+              "minimum_oracle_skeleton_lines": 3
+            }
+          ],
+          "total_saved_tokens": 9257
+        },
+        "wasm": {
+          "engine": "raw",
+          "status": "pending_owner",
+          "reason": "wasm_candidate_unevaluated_no_signature_oracle"
+        }
+      },
+      "measured_files": 5,
+      "default_read_median_saving": 0.8300604229607251,
+      "default_read_saved_tokens": 9257,
+      "files_with_folds": 4,
+      "discovered_folds": 387,
+      "file_outcomes": [
+        {
+          "id": "json-1",
+          "emitted_folds": 0,
+          "fallback_reason": "visible_budget_unreachable",
+          "minimum_oracle_skeleton_lines": 3
+        },
+        {
+          "id": "json-2",
+          "emitted_folds": 42,
+          "minimum_oracle_skeleton_lines": 3
+        },
+        {
+          "id": "json-3",
+          "emitted_folds": 23,
+          "minimum_oracle_skeleton_lines": 3
+        },
+        {
+          "id": "json-4",
+          "emitted_folds": 18,
+          "minimum_oracle_skeleton_lines": 3
+        },
+        {
+          "id": "json-5",
+          "emitted_folds": 7,
+          "minimum_oracle_skeleton_lines": 3
+        }
+      ],
+      "invalid_boundaries": [],
+      "heuristic_rejection": "safe_quality_threshold_met",
+      "total_saved_tokens": 9257
+    },
+    {
+      "language": "markdown",
+      "engine": "raw",
+      "status": "prose_exempt",
+      "reason": "markdown_and_txt_remain_raw"
+    }
+  ],
+  "prose_control": [
+    {
+      "id": "markdown-1",
+      "rawTokens": 1483,
+      "ompTokens": 1819,
+      "candidateTokens": 1483
+    },
+    {
+      "id": "markdown-2",
+      "rawTokens": 5465,
+      "ompTokens": 4441,
+      "candidateTokens": 5465
+    },
+    {
+      "id": "markdown-3",
+      "rawTokens": 1797,
+      "ompTokens": 2204,
+      "candidateTokens": 1797
+    },
+    {
+      "id": "markdown-4",
+      "rawTokens": 2003,
+      "ompTokens": 2168,
+      "candidateTokens": 2003
+    },
+    {
+      "id": "markdown-5",
+      "rawTokens": 4797,
+      "ompTokens": 3475,
+      "candidateTokens": 4797
+    },
+    {
+      "id": "boundary-markdown-prose",
+      "rawTokens": 839,
+      "ompTokens": 1111,
+      "candidateTokens": 839
+    }
+  ],
+  "caveat": "Per-language selections come from these numbers under the owner's #1685 WASM approval. Go raw is the lead-authorized per-language shortfall outcome. Python/Rust/Go have no protected-interval source oracle, so no grammar candidate is measured for them. Native/reference runtime is excluded from senpi distribution."
+}

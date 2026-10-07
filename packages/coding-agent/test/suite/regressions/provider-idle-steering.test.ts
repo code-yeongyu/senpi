@@ -76,7 +76,7 @@ describe("provider idle steering", () => {
 			fauxAssistantMessage("steering request recovered"),
 		]);
 
-		let queuedSteering: Promise<void> | undefined;
+		let queuedSteering: Promise<unknown> | undefined;
 		let resolveSteeringResponse: (() => void) | undefined;
 		const steeringResponse = new Promise<void>((resolve) => {
 			resolveSteeringResponse = resolve;
@@ -134,7 +134,7 @@ describe("provider idle steering", () => {
 
 	it("runs queued steering after the timed-out retry budget is exhausted", async () => {
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
+			settings: { retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
 		});
 		harnesses.push(harness);
 		harness.agent.timeoutMs = DEFAULT_PROVIDER_IDLE_TIMEOUT_MS;
@@ -145,7 +145,7 @@ describe("provider idle steering", () => {
 			fauxAssistantMessage("steering request recovered after retry exhaustion"),
 		]);
 
-		let queuedSteering: Promise<void> | undefined;
+		let queuedSteering: Promise<unknown> | undefined;
 		let resolveSteeringResponse: (() => void) | undefined;
 		const steeringResponse = new Promise<void>((resolve) => {
 			resolveSteeringResponse = resolve;
@@ -189,7 +189,7 @@ describe("provider idle steering", () => {
 
 	it("uses the retry continuation's queue ownership when the final error changes class", async () => {
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
+			settings: { retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
 		});
 		harnesses.push(harness);
 		harness.agent.timeoutMs = DEFAULT_PROVIDER_IDLE_TIMEOUT_MS;
@@ -200,7 +200,7 @@ describe("provider idle steering", () => {
 			fauxAssistantMessage("mixed-error steering recovered"),
 		]);
 
-		let queuedSteering: Promise<void> | undefined;
+		let queuedSteering: Promise<unknown> | undefined;
 		let resolveSteeringResponse: (() => void) | undefined;
 		const steeringResponse = new Promise<void>((resolve) => {
 			resolveSteeringResponse = resolve;
@@ -246,7 +246,7 @@ describe("provider idle steering", () => {
 
 	it("keeps late steering parked when a non-deferred retry ends in a provider timeout", async () => {
 		const harness = await createHarness({
-			settings: { retry: { enabled: true, maxRetries: 1, baseDelayMs: 0 } },
+			settings: { retry: { enabled: true, modelFallback: false, maxRetries: 1, baseDelayMs: 0 } },
 		});
 		harnesses.push(harness);
 		const retryRequestStarted = createDeferred();
@@ -280,7 +280,7 @@ describe("provider idle steering", () => {
 		harnesses.push(harness);
 		harness.setResponses([idleTimeoutError(), idleTimeoutError(), fauxAssistantMessage("must not run")]);
 
-		let queuedSteering: Promise<void> | undefined;
+		let queuedSteering: Promise<unknown> | undefined;
 		let abortDuringBackoff: Promise<void> | undefined;
 		harness.session.subscribe((event) => {
 			if (event.type !== "auto_retry_start" || event.attempt !== 2 || queuedSteering !== undefined) return;
@@ -310,7 +310,7 @@ describe("provider idle steering", () => {
 		harness.agent.timeoutMs = DEFAULT_PROVIDER_IDLE_TIMEOUT_MS;
 		harness.agent.streamStartTimeoutMs = DEFAULT_STREAM_START_TIMEOUT_MS;
 		const retryRequestStarted = createDeferred();
-		let queuedInput: Promise<void> | undefined;
+		let queuedInput: Promise<unknown> | undefined;
 		harness.session.subscribe((event) => {
 			if (event.type === "auto_retry_start" && queuedInput === undefined) {
 				queuedInput = harness.session.steer("retain through retry abort");

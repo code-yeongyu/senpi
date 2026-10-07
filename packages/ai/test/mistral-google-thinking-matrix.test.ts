@@ -70,12 +70,13 @@ async function captureGooglePayload<TApi extends "google-generative-ai" | "googl
 }
 
 describe("Mistral thinking-off wire audit", () => {
-	it("explicit runtime off omits reasoning controls for effort models", async () => {
+	it("explicit runtime off sends the disabled effort for effort models", async () => {
 		const payload = await captureMistralPayload(getModel("mistral", "mistral-small-2603"), {
 			reasoning: RUNTIME_OFF,
 		});
 
-		expect(payload.reasoningEffort).toBeUndefined();
+		// Upstream reasoning_effort "none" is the adopted thinking-off wire form (decisions.md L2f).
+		expect(payload.reasoningEffort).toBe("none");
 		expect(payload.promptMode).toBeUndefined();
 	});
 

@@ -1,14 +1,32 @@
 import { join, resolve } from "node:path";
-import { Container, Text, type TUI } from "@earendil-works/pi-tui";
+import {
+	Container,
+	resetCapabilitiesCache,
+	setCapabilities,
+	Text,
+	type TUI,
+	type TuiMouseEvent,
+} from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { beforeAll, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+
+const imageConvertMocks = vi.hoisted(() => ({ convertToPng: vi.fn() }));
+
+vi.mock("../src/utils/image-convert.ts", () => imageConvertMocks);
+
 import { getReadmePath } from "../src/config.ts";
+import { createEventBus } from "../src/core/event-bus.ts";
 import { registerTodoTool, type TODO_PARAMS_SCHEMA } from "../src/core/extensions/builtin/todotools/tools/todo.ts";
+import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
 import type { ExtensionAPI, ToolDefinition } from "../src/core/extensions/types.ts";
+import { tuiRenderCacheTotals } from "../src/core/memory-report/memory-report-registry.ts";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import { renderToolDiff } from "../src/core/tools/diff-render.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
+import type { ReadClassifier } from "../src/core/tools/read-classifiers.ts";
+import { withBuiltInRenderers } from "../src/core/tools/renderers/index.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
+import { keyText } from "../src/modes/interactive/components/keybinding-hints.ts";
 import {
 	TODO_STRIKE_FRAME_INTERVAL_MS,
 	TODO_STRIKE_TOTAL_FRAMES,
@@ -29,6 +47,21 @@ function createBaseToolDefinition(name = "custom_tool"): ToolDefinition {
 			details: {},
 		}),
 	};
+}
+
+async function registerReadClassifierThroughExtension(classifier: ReadClassifier): Promise<() => void> {
+	let api: ExtensionAPI | undefined;
+	await loadExtensionFromFactory(
+		(pi) => {
+			api = pi;
+		},
+		process.cwd(),
+		createEventBus(),
+		createExtensionRuntime(),
+	);
+	if (!api) throw new Error("Expected extension API");
+	expect(api.registerReadClassifier).toBeTypeOf("function");
+	return api.registerReadClassifier(classifier);
 }
 
 function createFakeTui(): TUI {
@@ -71,6 +104,8 @@ function captureTodoTool(): ToolDefinition<typeof TODO_PARAMS_SCHEMA> {
 	registerTodoTool(pi as unknown as ExtensionAPI, {
 		getCurrentPhases: () => [],
 		setCurrentPhases: () => {},
+		getCurrentAsk: () => undefined,
+		setCurrentAsk: () => {},
 		syncWidget: () => {},
 	});
 	if (!capturedTool) throw new Error("Expected todo tool registration");
@@ -118,6 +153,47 @@ const markerTheme = {
 describe("ToolExecutionComponent parity", () => {
 	beforeAll(() => {
 		initTheme("dark");
+	});
+	afterEach(() => {
+		resetCapabilitiesCache();
+		imageConvertMocks.convertToPng.mockReset();
+		vi.useRealTimers();
+	});
+
+	// Issue #8577: ignore conversions that finish after the image was replaced.
+	test("keeps the final tool image when a partial image conversion finishes late", async () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		let finishConversion!: (result: { data: string; mimeType: string }) => void;
+		const conversion = new Promise<{ data: string; mimeType: string }>((resolve) => {
+			finishConversion = resolve;
+		});
+		imageConvertMocks.convertToPng.mockReturnValue(conversion);
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-image-race",
+			{},
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		component.updateResult(
+			{ content: [{ type: "image", data: "partial-jpeg", mimeType: "image/jpeg" }], isError: false },
+			true,
+		);
+		component.updateResult({
+			content: [{ type: "image", data: "final-png", mimeType: "image/png" }],
+			isError: false,
+		});
+		expect(component.render(120).join("\n")).toContain("final-png");
+
+		finishConversion({ data: "converted-partial", mimeType: "image/png" });
+		await conversion;
+
+		const rendered = component.render(120).join("\n");
+		expect(rendered).toContain("final-png");
+		expect(rendered).not.toContain("converted-partial");
 	});
 
 	test("stacks custom call and result renderers like the old implementation", () => {
@@ -183,6 +259,48 @@ describe("ToolExecutionComponent parity", () => {
 		expect(component.render(120)).toEqual([]);
 	});
 
+	test("omits model-only text before custom renderers without mutating stored content (#2041)", () => {
+		const toolDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderResult: (result) =>
+				new Text(
+					result.content
+						.filter((part) => part.type === "text")
+						.map((part) => part.text)
+						.join("\n"),
+					0,
+					0,
+				),
+		};
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"model-only",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const result: Parameters<ToolExecutionComponent["updateResult"]>[0] = {
+			content: [
+				{ type: "text", text: "visible body" },
+				{ type: "text", text: "hidden instruction", audience: "model" },
+			],
+			details: {},
+			isError: false,
+		};
+		component.updateResult(result, false);
+		for (const expanded of [false, true]) {
+			component.setExpanded(expanded);
+			const rendered = stripAnsi(component.render(120).join("\n"));
+			expect(rendered).toContain("visible body");
+			expect(rendered).not.toContain("hidden instruction");
+		}
+		expect(result.content).toHaveLength(2);
+		expect(result.content[1]).toMatchObject({ audience: "model", text: "hidden instruction" });
+		component.dispose();
+	});
+
 	test("advances pending render frames for self-rendered write calls while args stream", () => {
 		vi.useFakeTimers();
 		try {
@@ -233,7 +351,7 @@ describe("ToolExecutionComponent parity", () => {
 			"tool-2",
 			{ path: "README.md", oldText: "before", newText: "after" },
 			{},
-			overrideDefinition,
+			withBuiltInRenderers("edit", overrideDefinition),
 			createFakeTui(),
 			process.cwd(),
 		);
@@ -262,10 +380,7 @@ describe("ToolExecutionComponent parity", () => {
 	test("bash execute emits an initial empty partial update before output arrives", async () => {
 		const updates: Array<{ content: Array<{ type: string; text?: string }>; details?: unknown }> = [];
 		const operations: BashOperations = {
-			exec: async () => {
-				await new Promise((resolve) => setTimeout(resolve, 10));
-				return { exitCode: 0 };
-			},
+			exec: async () => ({ exitCode: 0 }),
 		};
 		const tool = createBashToolDefinition(process.cwd(), { operations, exposeSessionEnvironment: false });
 		const promise = tool.execute(
@@ -332,7 +447,7 @@ describe("ToolExecutionComponent parity", () => {
 		}
 	});
 
-	test("bash renderer does not duplicate final full output truncation details", async () => {
+	test("bash renderer omits final model-only notices and renderer-owned warnings", async () => {
 		const operations: BashOperations = {
 			exec: async (_command, _cwd, { onData }) => {
 				for (let i = 1; i <= 4000; i++) {
@@ -362,11 +477,52 @@ describe("ToolExecutionComponent parity", () => {
 		component.updateResult({ ...result, isError: false }, false);
 
 		const rendered = stripAnsi(component.render(200).join("\n"));
-		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(1);
-		expect(rendered).toMatch(/line-4000[^\n]*\n[^\S\n]*\n \[Full output:/);
-		expect(rendered).not.toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n \[Full output:/);
-		expect(rendered).toContain("Truncated: showing 2000 of 4000 lines");
+		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(0);
+		expect(rendered).toContain("line-4000");
+		expect(rendered).not.toContain("Truncated:");
 		expect(rendered).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
+	});
+
+	// Issue #9628: long shell durations stay readable and the completed label stops ticking. The fork
+	// keeps its whole-second display (<1s, 1m 8s, 1h 2m), so the cases use that format.
+	test.each([
+		{ ms: 0, formatted: "<1s" },
+		{ ms: 4_200, formatted: "4s" },
+		{ ms: 59_900, formatted: "59s" },
+		{ ms: 59_999, formatted: "59s" },
+		{ ms: 60_000, formatted: "1m" },
+		{ ms: 90_900, formatted: "1m 30s" },
+		{ ms: 1_592_200, formatted: "26m 32s" },
+		{ ms: 3_599_999, formatted: "59m 59s" },
+		{ ms: 3_600_000, formatted: "1h" },
+		{ ms: 7_384_900, formatted: "2h 3m" },
+	])("bash renderer formats $ms ms as $formatted while running and after completion", ({ ms, formatted }) => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const component = new ToolExecutionComponent(
+			"bash",
+			"tool-bash-duration",
+			{ command: "long-running-command" },
+			{},
+			createBashToolDefinition(process.cwd(), { exposeSessionEnvironment: false }),
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.markExecutionStarted();
+		component.updateResult({ content: [], isError: false }, true);
+
+		vi.advanceTimersByTime(ms);
+		component.invalidate();
+		const running = stripAnsi(component.render(120).join("\n"));
+
+		component.updateResult({ content: [], isError: false }, false);
+		const completed = stripAnsi(component.render(120).join("\n"));
+
+		vi.advanceTimersByTime(1_000);
+		component.invalidate();
+		expect(stripAnsi(component.render(120).join("\n"))).toBe(completed);
+		expect(running).toContain(`Elapsed ${formatted}`);
+		expect(completed).toContain(`Took ${formatted}`);
 	});
 
 	test("does not duplicate built-in headers when passed the active built-in definition", () => {
@@ -384,6 +540,22 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered.match(/\bread\b/g)?.length ?? 0).toBe(1);
 	});
 
+	// Issue #9996: strict tool schemas make models send null for omitted optional fields.
+	test("renders read calls with null offset and limit as full-file reads", () => {
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-read-null-range",
+			{ path: "src/example.ts", offset: null, limit: null },
+			{},
+			createReadToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		const rendered = stripAnsi(component.render(120).join("\n"));
+		expect(rendered).toContain("read src/example.ts");
+		expect(rendered).not.toContain("src/example.ts:");
+	});
+
 	test("inherits missing built-in result renderer slot from the built-in tool", () => {
 		const overrideDefinition: ToolDefinition = {
 			...createBaseToolDefinition("read"),
@@ -395,7 +567,7 @@ describe("ToolExecutionComponent parity", () => {
 			"tool-4b",
 			{ path: "notes.txt" },
 			{},
-			overrideDefinition,
+			withBuiltInRenderers("read", overrideDefinition),
 			createFakeTui(),
 			process.cwd(),
 		);
@@ -417,7 +589,7 @@ describe("ToolExecutionComponent parity", () => {
 			"tool-4c",
 			{ path: "README.md" },
 			{},
-			overrideDefinition,
+			withBuiltInRenderers("read", overrideDefinition),
 			createFakeTui(),
 			process.cwd(),
 		);
@@ -520,6 +692,33 @@ describe("ToolExecutionComponent parity", () => {
 		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("arg:bar");
+	});
+
+	test("shows arguments in the fallback call header", () => {
+		const longValue = "x".repeat(200);
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-args",
+			{ query: "pi", long: longValue, text: "line one\nline two" },
+			{},
+			createBaseToolDefinition(),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const collapsed = stripAnsi(component.render(300).join("\n"));
+		expect(collapsed).toContain('custom_tool query="pi" long="xxx');
+		expect(collapsed).toContain("...");
+		expect(collapsed).not.toContain(longValue);
+
+		component.setExpanded(true);
+		const expanded = stripAnsi(component.render(300).join("\n"));
+		expect(expanded).toContain("  query: pi");
+		expect(expanded).toContain(longValue);
+		const expandedLines = expanded.split("\n").map((line) => line.trimEnd());
+		const textLine = expandedLines.findIndex((line) => line.endsWith("  text: line one"));
+		expect(textLine).toBeGreaterThan(-1);
+		expect(expandedLines[textLine + 1]).toMatch(/^\s+ {4}line two$/);
 	});
 
 	test("collapses fallback results until expanded", () => {
@@ -666,6 +865,42 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered).toContain(theme.fg("toolOutput", error));
 	});
 
+	test("expands a collapsed tool result when clicked", () => {
+		const component = new ToolExecutionComponent(
+			"read",
+			"tool-click-expand",
+			{ path: "notes.txt" },
+			{},
+			createReadToolDefinition(process.cwd()),
+			createFakeTui(),
+			process.cwd(),
+		);
+		component.updateResult(
+			{ content: [{ type: "text", text: "hidden content" }], details: undefined, isError: false },
+			false,
+		);
+		const width = 120;
+		const lines = component.render(width);
+		const resultRow = lines.findIndex((line) => stripAnsi(line).includes("notes.txt"));
+		expect(resultRow).toBeGreaterThanOrEqual(0);
+		const event: TuiMouseEvent = {
+			type: "click",
+			button: "left",
+			x: 2,
+			y: resultRow,
+			screenX: 2,
+			screenY: resultRow,
+			width,
+			height: lines.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			clickCount: 1,
+		};
+		expect(component.handleMouse(event)?.handled).toBe(true);
+		expect(stripAnsi(component.render(width).join("\n"))).toContain("hidden content");
+	});
+
 	test("collapses ordinary read results until expanded", () => {
 		const component = new ToolExecutionComponent(
 			"read",
@@ -781,6 +1016,132 @@ describe("ToolExecutionComponent parity", () => {
 			expect(collapsed.indexOf(":120-329")).toBeLessThan(collapsed.indexOf("to expand"));
 		});
 	}
+
+	for (const headline of ["Remembered", undefined]) {
+		test(`renders classified memory reads with ${headline ?? "the default headline"}`, async () => {
+			const args = { path: "memory/preference.md", offset: 2, limit: 3 };
+			const classifier = vi.fn(() => ({ kind: "memory" as const, label: "preference", headline }));
+			const unregister = await registerReadClassifierThroughExtension(classifier);
+			try {
+				const component = new ToolExecutionComponent(
+					"read",
+					"tool-memory-read",
+					args,
+					{},
+					createReadToolDefinition(process.cwd()),
+					createFakeTui(),
+					process.cwd(),
+				);
+				component.updateResult(
+					{ content: [{ type: "text", text: "hidden memory" }], details: undefined, isError: false },
+					false,
+				);
+				const collapsed = component.render(120).join("\n");
+				expect(stripAnsi(collapsed)).toContain(
+					`✦ ${headline ?? "Recalled"} preference:2-4 (${keyText("app.tools.expand")} to expand)`,
+				);
+				expect(collapsed).toContain(theme.fg("accent", `\x1b[1m✦ ${headline ?? "Recalled"}\x1b[22m`));
+				expect(collapsed).toContain(theme.fg("customMessageText", "preference"));
+				expect(stripAnsi(collapsed)).not.toContain("hidden memory");
+				expect(classifier).toHaveBeenCalledExactlyOnceWith({
+					absolutePath: resolve(process.cwd(), args.path),
+					cwd: process.cwd(),
+				});
+
+				component.setExpanded(true);
+				const expanded = stripAnsi(component.render(120).join("\n"));
+				expect(expanded).toContain("memory/preference.md:2-4");
+				expect(expanded).toContain("hidden memory");
+				expect(expanded).not.toContain("✦");
+				component.setExpanded(false);
+				expect(component.render(120).join("\n")).toBe(collapsed);
+				expect(classifier).toHaveBeenCalledTimes(1);
+			} finally {
+				unregister();
+			}
+		});
+	}
+
+	test("keeps SKILL.md ahead of registered read classifiers", async () => {
+		const classifier = vi.fn(() => ({ kind: "memory" as const, label: "not a skill" }));
+		const unregister = await registerReadClassifierThroughExtension(classifier);
+		try {
+			const component = new ToolExecutionComponent(
+				"read",
+				"tool-memory-skill-precedence",
+				{ path: join(process.cwd(), "attio", "SKILL.md") },
+				{},
+				createReadToolDefinition(process.cwd()),
+				createFakeTui(),
+				process.cwd(),
+			);
+			expect(stripAnsi(component.render(120).join("\n"))).toContain("[skill] attio");
+			expect(classifier).not.toHaveBeenCalled();
+		} finally {
+			unregister();
+		}
+	});
+
+	for (const path of [getReadmePath(), join(process.cwd(), "AGENTS.md")]) {
+		test(`registered read classifiers take precedence over built-in classification for ${path}`, async () => {
+			const unregister = await registerReadClassifierThroughExtension(() => ({ kind: "memory", label: "claimed" }));
+			try {
+				const component = new ToolExecutionComponent(
+					"read",
+					"tool-memory-builtin-precedence",
+					{ path },
+					{},
+					createReadToolDefinition(process.cwd()),
+					createFakeTui(),
+					process.cwd(),
+				);
+				expect(stripAnsi(component.render(120).join("\n"))).toContain("✦ Recalled claimed");
+			} finally {
+				unregister();
+			}
+		});
+	}
+
+	test("memoizes read classification by raw path in shared renderCall state", async () => {
+		let calls = 0;
+		const classifier = vi.fn(() => ({ kind: "memory" as const, label: "preference", headline: `Recall ${++calls}` }));
+		const unregister = await registerReadClassifierThroughExtension(classifier);
+		try {
+			const args = { path: "memory/preference.md" };
+			const tool = createReadToolDefinition(process.cwd());
+			const context: Parameters<NonNullable<typeof tool.renderCall>>[2] = {
+				args,
+				toolCallId: "tool-stable-memory",
+				invalidate: () => {},
+				lastComponent: undefined,
+				state: {},
+				cwd: process.cwd(),
+				executionStarted: false,
+				argsComplete: true,
+				isPartial: false,
+				expanded: false,
+				showImages: false,
+				isError: false,
+			};
+			const first = tool.renderCall!(args, theme, context).render(120).join("\n");
+			const second = tool.renderCall!(args, theme, { ...context })
+				.render(120)
+				.join("\n");
+			expect(second).toBe(first);
+			expect(stripAnsi(first)).toContain("✦ Recall 1 preference");
+			expect(classifier).toHaveBeenCalledTimes(1);
+
+			const otherArgs = { path: "memory/other.md" };
+			const other = tool.renderCall!(otherArgs, theme, { ...context, args: otherArgs })
+				.render(120)
+				.join("\n");
+			expect(stripAnsi(other)).toContain("✦ Recall 2 preference");
+			expect(tool.renderCall!(args, theme, context).render(120).join("\n")).toBe(first);
+			expect(classifier).toHaveBeenCalledTimes(2);
+		} finally {
+			unregister();
+		}
+	});
 
 	test("animates completed todo tasks through the strike reveal and settles", () => {
 		vi.useFakeTimers();
@@ -1000,5 +1361,76 @@ describe("ToolExecutionComponent parity", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe("tool card render cache totals (#2561)", () => {
+	test("Given rendered tool cards when one is disposed then the memory report totals drop its lines and images", () => {
+		initTheme("dark");
+		const emptyTotals = () => ({
+			components: 0,
+			cachedLines: 0,
+			images: 0,
+			finishedCards: 0,
+			cachedLinesBytes: 0,
+			resultBytes: 0,
+		});
+		const before = tuiRenderCacheTotals() ?? emptyTotals();
+		const text = new ToolExecutionComponent(
+			"custom_tool",
+			"cache-text",
+			{},
+			{},
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const image = new ToolExecutionComponent(
+			"custom_tool",
+			"cache-image",
+			{},
+			{ showImages: false },
+			undefined,
+			createFakeTui(),
+			process.cwd(),
+		);
+		const textResult = { content: [{ type: "text" as const, text: "one\ntwo\nthree" }], isError: false };
+		const imageResult = { content: [{ type: "image" as const, data: "png", mimeType: "image/png" }], isError: false };
+		text.updateResult(textResult);
+		image.updateResult(imageResult);
+		const textLines = text.render(80).length;
+		const imageLines = image.render(80).length;
+
+		// The same estimator the cache publishes: 8 per line slot plus 2 per UTF-16 code unit.
+		const lineBytes = (count: number, sample: readonly string[]) => count * 8 + sample.join("").length * 2;
+		const textBytes = lineBytes(textLines, text.render(80));
+		const imageBytes = lineBytes(imageLines, image.render(80));
+		// The same shape the component serializes at finalize: content JSON, plus details when present.
+		const resultBytes = (result: { content: unknown; details?: unknown }) =>
+			(JSON.stringify(result.content)?.length ?? 0) +
+			(result.details === undefined ? 0 : (JSON.stringify(result.details)?.length ?? 0));
+
+		const rendered = tuiRenderCacheTotals();
+		text.dispose();
+		const afterDispose = tuiRenderCacheTotals();
+
+		expect(rendered).toEqual({
+			components: before.components + 2,
+			cachedLines: before.cachedLines + textLines + imageLines,
+			images: before.images + 1,
+			finishedCards: before.finishedCards + 2,
+			cachedLinesBytes: before.cachedLinesBytes + textBytes + imageBytes,
+			resultBytes: before.resultBytes + resultBytes(textResult) + resultBytes(imageResult),
+		});
+		expect(afterDispose).toEqual({
+			components: before.components + 1,
+			cachedLines: before.cachedLines + imageLines,
+			images: before.images + 1,
+			finishedCards: before.finishedCards + 1,
+			cachedLinesBytes: before.cachedLinesBytes + imageBytes,
+			resultBytes: before.resultBytes + resultBytes(imageResult),
+		});
+		image.dispose();
+		expect(tuiRenderCacheTotals()).toEqual(before);
 	});
 });

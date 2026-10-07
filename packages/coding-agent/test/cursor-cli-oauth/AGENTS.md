@@ -46,6 +46,6 @@ Highest production fan-in: `accounts.ts` (11 test files), `settings.ts` (8), `in
 ## COMMANDS
 
 ```bash
-npm --prefix packages/coding-agent test -- --run test/cursor-cli-oauth/<file>.test.ts
-CI=1 npm --prefix packages/coding-agent test -- --run test/cursor-cli-oauth
+bun run --cwd packages/coding-agent test --run test/cursor-cli-oauth/<file>.test.ts
+CI=1 bun run --cwd packages/coding-agent test --run test/cursor-cli-oauth
 ```

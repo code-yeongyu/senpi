@@ -3,6 +3,8 @@ import { getModel } from "../src/compat.ts";
 import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 type CapturedPayload = Record<string, unknown> & {
 	include?: unknown[];
 	tool_choice?: unknown;
@@ -61,7 +63,7 @@ async function captureFinalPayload(model: Model<"openai-responses">): Promise<Ca
 		return createSseResponse();
 	});
 
-	const stream = streamOpenAIResponses(model, context, {
+	const stream = streamOpenAIResponses(model, normalizeContext(context), {
 		apiKey: "test-key",
 		onPayload: (payload) => ({
 			...(payload as Record<string, unknown>),

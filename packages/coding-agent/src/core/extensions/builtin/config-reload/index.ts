@@ -6,6 +6,7 @@ import { resolvePath } from "../../../../utils/paths.ts";
 import { ModelConfig } from "../../../model-config.ts";
 import { parseSettingsJson, type Settings, SettingsManager, wasSelfWrite } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../types.ts";
+import { type ActiveTarget, groupChangedPaths } from "./change-groups.ts";
 import { isLoadableExtensionEntry, isScannableExtensionDirectory } from "./extension-watch-scope.ts";
 import { excludeGeneratedExtensionShims } from "./generated-shim-filter.ts";
 import { type ConfigReloadLogger, createConfigReloadLogger } from "./log.ts";
@@ -31,6 +32,7 @@ import {
 	refreshSettingsContentSnapshots,
 	updateSettingsContentSnapshot,
 } from "./routine-settings.ts";
+import { bindSessionScopedCallback } from "./session-scoped-callback.ts";
 import {
 	ConfigReloadWatchEngine,
 	createFsWatchEventSource,
@@ -41,7 +43,7 @@ import {
 } from "./watch-engine.ts";
 
 const BUILTIN_REGISTRATION_ID = "builtin";
-const DEFAULT_DEBOUNCE_MS = 200;
+export const DEFAULT_DEBOUNCE_MS = 200;
 const COMPACTION_RECHECK_MS = 250;
 const VETO_RECHECK_MS = 1000;
 const CONFIG_FILE_NAMES = ["settings.jsonc", "settings.json", "models.json", "keybindings.json"] as const;
@@ -85,13 +87,6 @@ type ResolvedConfigReloadSettings = {
 
 type WatchTargetInput = Omit<WatchTarget, "id">;
 
-type ActiveTarget = {
-	readonly registrationId: string;
-	readonly target: WatchTarget;
-	/** Presence targets rebuild the watcher set once this missing path appears. */
-	readonly rearmOnCreation?: string;
-};
-
 type PendingChange = {
 	readonly registrationId: string;
 	readonly paths: Set<string>;
@@ -124,16 +119,6 @@ export class ConfigReloadHandoffRegistry<T> {
 }
 
 const reloadHandoffs = new ConfigReloadHandoffRegistry<ReloadHandoff>();
-
-function bindExternalCallback<TArgs extends unknown[], TResult>(
-	callback: (...args: TArgs) => TResult,
-): (...args: TArgs) => TResult {
-	try {
-		return bindToProviderScope(callback);
-	} catch {
-		return callback;
-	}
-}
 
 export interface ConfigReloadExtensionOptions {
 	readonly agentDir?: string;
@@ -173,6 +158,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	let activeTargets: ActiveTarget[] = [];
 	let currentContext: ExtensionContext | undefined;
 	let started = false;
+	const watcherClosures: Array<Promise<PromiseSettledResult<void>[]>> = [];
 	let reloadInFlight = false;
 	let deferredNoticeShown = false;
 	let unavailableReloadLogged = false;
@@ -181,12 +167,10 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	const vetoDeferral = new ReloadVetoDeferral();
 	let changeChain: Promise<void> = Promise.resolve();
 
-	// The engine goes inert the moment close() is called; its unsubscribe loop can
-	// take seconds per watcher, and session_shutdown is awaited by the reload flow.
+	// Cancel registrations synchronously; session_shutdown joins every disposer.
 	const closeWatchers = (): void => {
-		engine?.close().catch((error: unknown) => {
-			logger.error("watcher_error", { path: "watcher teardown", message: errorMessage(error) });
-		});
+		if (!engine) return;
+		watcherClosures.push(Promise.allSettled([engine.close()]));
 		engine = undefined;
 		activeTargets = [];
 	};
@@ -261,36 +245,43 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	};
 
 	const processChange = async (change: RealChange): Promise<void> => {
-		if (reloadInFlight || !currentContext) return;
+		if (reloadInFlight || !currentContext || !started) return;
+		const changeContext = currentContext;
 		// Suppression state (self-write consumption, routine-diff base) is per path,
 		// so it must be resolved before grouping: a path watched by several
 		// registrations would otherwise be classified once per group and reach the
 		// reload flow through the later group.
-		const watchedPaths = excludeSelfWrites(
-			change.changedPaths,
-			engine,
-			agentDir,
-			currentContext.cwd,
-			logger,
-			settingsContents,
-		);
-		const significantPaths = excludeRoutineOnlySettingsChanges(
-			watchedPaths,
-			settingsContents,
-			agentDir,
-			currentContext.cwd,
-			logger,
-		);
-		const configPaths = excludeGeneratedExtensionShims(significantPaths, agentDir);
-		for (const path of significantPaths) {
-			if (!configPaths.includes(path)) logger.debug("generated_shim_change_suppressed", { path });
+		const suppress = (paths: readonly string[], context: ExtensionContext): string[] => {
+			const watchedPaths = excludeSelfWrites(paths, engine, agentDir, context.cwd, logger, settingsContents);
+			const significantPaths = excludeRoutineOnlySettingsChanges(
+				watchedPaths,
+				settingsContents,
+				agentDir,
+				context.cwd,
+				logger,
+			);
+			const kept = excludeGeneratedExtensionShims(significantPaths, agentDir);
+			for (const path of significantPaths) {
+				if (!kept.includes(path)) logger.debug("generated_shim_change_suppressed", { path });
+			}
+			return kept;
+		};
+		const configPaths = suppress(change.changedPaths, currentContext);
+		// Rebuilding recomputes the targets, so record which created paths were presence containers first.
+		const rearmedContainers = change.created
+			.map((path) => resolve(path))
+			.filter((path) => activeTargets.some((target) => target.rearmOnCreation === path));
+		if (rearmedContainers.length > 0) {
+			const previous = engine?.getBaselineSnapshot() ?? new Map<string, string>();
+			rebuildWatchers(currentContext);
+			const current = engine?.getBaselineSnapshot() ?? new Map<string, string>();
+			// Files discovered by the rearm pass through the same self-write, routine and shim filters.
+			configPaths.push(...suppress(compareSnapshots(previous, current), currentContext));
 		}
-		const groups = groupChangedPaths(configPaths, activeTargets);
-		const rearmDirectoryWatch = change.created.some((path) =>
-			activeTargets.some((target) => target.rearmOnCreation === resolve(path)),
-		);
+		const groups = groupChangedPaths(configPaths, activeTargets, rearmedContainers);
 		for (const [registrationId, paths] of groups) {
 			const errors = await validateChangedPaths(registrationId, paths, registrations, agentDir, currentContext.cwd);
+			if (!started || currentContext !== changeContext) return;
 			if (errors.length > 0) {
 				rejectChange(currentContext, registrationId, paths, errors, logger, pi);
 				continue;
@@ -305,7 +296,6 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			});
 			logger.info("change_detected", { registrationId, paths, deferred });
 		}
-		if (rearmDirectoryWatch) rebuildWatchers(currentContext);
 		await flushPending();
 	};
 
@@ -319,11 +309,18 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	};
 
 	const rebuildWatchers = (ctx: ExtensionContext): void => {
+		if (!started || currentContext !== ctx) return;
 		closeWatchers();
 		clearCompactionRecheck();
 		const settingsManager = SettingsManager.create(ctx.cwd, agentDir, { projectTrusted: ctx.isProjectTrusted() });
 		const settings = resolveConfigReloadSettings(settingsManager);
-		if (!settings.enabled || ctx.mode === "print" || ctx.mode === "json") {
+		// Nonpersistent RPC probes need a configuration snapshot, not live OS watches.
+		if (
+			!settings.enabled ||
+			ctx.mode === "print" ||
+			ctx.mode === "json" ||
+			(ctx.mode === "rpc" && ctx.sessionManager.getSessionFile() === undefined)
+		) {
 			pi.events.emit(CONFIG_WATCH_READY, { enabled: false });
 			return;
 		}
@@ -342,8 +339,8 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			debounceMs: settings.debounceMs,
 			clock: options.clock,
 			hashFile: options.hashFile,
-			onRealChange: bindExternalCallback(enqueueChange),
-			onError: bindExternalCallback((error, path) => {
+			onRealChange: bindSessionScopedCallback(enqueueChange),
+			onError: bindSessionScopedCallback((error, path) => {
 				logger.error("watcher_error", { path, message: errorMessage(error) });
 			}),
 		});
@@ -375,7 +372,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		// instead of re-notifying "Hot-reloading:" plus the veto warning forever.
 		if (ctx.checkReloadVeto) {
 			const veto = await ctx.checkReloadVeto();
-			if (currentContext !== ctx || reloadInFlight || pending.size === 0) return;
+			if (currentContext !== ctx || reloadInFlight || pending.size === 0 || !canRequestReload(ctx)) return;
 			if (veto.cancelled) {
 				const notice = vetoDeferral.defer(veto.reason);
 				if (notice) ctx.ui.notify(notice, "info");
@@ -463,10 +460,12 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
+		if (!started) return;
 		currentContext = ctx;
 		await flushPending();
 	});
 	pi.on("agent_settled", async (_event, ctx) => {
+		if (!started) return;
 		currentContext = ctx;
 		await flushPending();
 	});
@@ -474,7 +473,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		if (currentContext) rebuildWatchers(currentContext);
 		return { trusted: "undecided" };
 	});
-	pi.on("session_shutdown", (event) => {
+	pi.on("session_shutdown", async (event) => {
 		const closingContext = currentContext;
 		started = false;
 		currentContext = undefined;
@@ -485,6 +484,9 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		cleanupEventListeners();
 		pending.clear();
 		if (event.reason !== "reload" && closingContext) reloadHandoffs.delete(handoffKey(closingContext));
+		const results = (await Promise.all(watcherClosures.splice(0))).flat();
+		const errors = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+		if (errors.length > 0) throw new AggregateError(errors, "Config watcher shutdown failed");
 	});
 
 	function canRequestReload(ctx: ExtensionContext): boolean {
@@ -751,39 +753,6 @@ function literalFilterNames(filterGlobs: readonly string[] | undefined): string[
 		.map((filterGlob) => (filterGlob.startsWith("/") ? filterGlob.slice(1) : filterGlob))
 		.filter((filterGlob) => !filterGlob.includes("*") && !filterGlob.includes("/") && !filterGlob.includes("\\\\"));
 	return literalNames.length > 0 ? literalNames : undefined;
-}
-
-function groupChangedPaths(paths: readonly string[], targets: readonly ActiveTarget[]): Map<string, string[]> {
-	const groups = new Map<string, string[]>();
-	for (const path of paths) {
-		let matched = false;
-		for (const activeTarget of targets) {
-			if (!targetMatchesPath(activeTarget.target, path)) continue;
-			const group = groups.get(activeTarget.registrationId) ?? [];
-			if (!group.includes(path)) group.push(path);
-			groups.set(activeTarget.registrationId, group);
-			matched = true;
-		}
-		if (!matched) {
-			const group = groups.get(BUILTIN_REGISTRATION_ID) ?? [];
-			group.push(path);
-			groups.set(BUILTIN_REGISTRATION_ID, group);
-		}
-	}
-	return groups;
-}
-
-function targetMatchesPath(target: WatchTarget, path: string): boolean {
-	const relativePath = relative(resolve(target.path), resolve(path));
-	if (relativePath === ".." || relativePath.startsWith(`..${sep}`)) return false;
-	if (target.kind === "dir" && relativePath.includes(sep)) return false;
-	if (
-		target.allowList &&
-		!target.allowList.some((allowed) => relativePath === allowed || relativePath.startsWith(`${allowed}${sep}`))
-	) {
-		return false;
-	}
-	return target.filter?.(relativePath) ?? true;
 }
 
 function excludeSelfWrites(

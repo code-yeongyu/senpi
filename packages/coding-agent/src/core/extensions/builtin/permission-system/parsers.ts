@@ -1,10 +1,23 @@
+import { dirname, resolve } from "node:path";
+import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
-import { extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
+import {
+	type AlwaysScope,
+	extractExternalPaths,
+	isExternalPath,
+	toParentDirectoryPattern,
+} from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
+import { setApprovedMonitorParent } from "../terminal/monitor-permission.ts";
+import { parseReadPermission } from "./read-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
-export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always">;
+export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always"> & {
+	readonly autoApproveAsk?: true;
+	readonly ruleAliases?: readonly string[];
+};
 
 /** Parser function that extracts permission requests from tool input */
 export type ToolPermissionParser = (
@@ -29,28 +42,6 @@ function getString(input: Record<string, unknown>, ...keys: string[]): string | 
 		}
 	}
 	return undefined;
-}
-
-type AlwaysScope = "file" | "directory";
-
-function toParentDirectoryPattern(inputPath: string, scope: AlwaysScope): string {
-	if (inputPath === "~" || inputPath === "$HOME") {
-		return `${inputPath}/*`;
-	}
-
-	if (scope === "directory") {
-		return inputPath.endsWith("/") || inputPath.endsWith("\\") ? `${inputPath}*` : `${inputPath}/*`;
-	}
-
-	if (inputPath.endsWith("/") || inputPath.endsWith("\\")) {
-		return `${inputPath}*`;
-	}
-
-	const parentPattern = inputPath.replace(/[\\/][^\\/]+$/, "/*");
-	if (parentPattern === "/*") {
-		return inputPath;
-	}
-	return parentPattern;
 }
 
 function parseFilePath(input: Record<string, unknown>): string | undefined {
@@ -78,6 +69,21 @@ function withExternalDirectoryRequests(
 	];
 }
 
+/** The requests a tool's own `permissionParser` derives from this call, or undefined when the tool declares none. */
+export function toolOwnedPermissionRequests(
+	tools: readonly ToolInfo[],
+	toolName: string,
+	input: Record<string, unknown>,
+	cwd: string,
+): PermissionRequest[] | undefined {
+	const parser = tools.find((tool) => tool.name === toolName)?.permissionParser;
+	return parser?.(input, cwd).map((request) => ({
+		permission: request.permission,
+		patterns: [...request.patterns],
+		always: [...request.always],
+	}));
+}
+
 /** Registry for tool-specific permission parsers */
 export class ParserRegistry {
 	private readonly parsers = new Map<string, ToolPermissionParser>();
@@ -85,6 +91,11 @@ export class ParserRegistry {
 	/** Register a parser for a specific tool */
 	register(toolName: string, parser: ToolPermissionParser): void {
 		this.parsers.set(toolName, parser);
+	}
+
+	/** Whether a built-in parser owns this tool */
+	has(toolName: string): boolean {
+		return this.parsers.has(toolName);
 	}
 
 	/** Parse tool input into permission requests */
@@ -138,7 +149,22 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 
 	registry.register("bash", parseBashLikePermission("command"));
 	registry.register("bash_input", parseBashLikePermission("input"));
-	registry.register("monitor", parseBashLikePermission("command"));
+	registry.register("monitor", (toolName, input, cwd) => {
+		const path = getString(input, "path");
+		if (path) {
+			// This runs on the host main thread: the parent identity must be derived without open(2)
+			// (realpath opens directories and blocks forever on a wedged autofs trigger). Registration
+			// performs the authoritative access check and re-derives the parent the same way.
+			setApprovedMonitorParent(input, realpathWithoutOpen(dirname(resolve(cwd, path))));
+			return withExternalDirectoryRequests(
+				[{ permission: "read", patterns: [path], always: [path] }],
+				[path],
+				cwd,
+				"file",
+			);
+		}
+		return parseBashLikePermission("command")(toolName, input, cwd);
+	});
 
 	const editParser: ToolPermissionParser = () => {
 		return [fallbackPermissionRequest("edit")];
@@ -185,25 +211,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	registry.register("apply_patch", parseEditPermission);
 	registry.register("multiedit", parseEditPermission);
 
-	registry.register("read", (_toolName, input, cwd) => {
-		const filePath = parseFilePath(input);
-		if (!filePath) {
-			return [fallbackPermissionRequest("read")];
-		}
-
-		return withExternalDirectoryRequests(
-			[
-				{
-					permission: "read",
-					patterns: [filePath],
-					always: [filePath],
-				},
-			],
-			[filePath],
-			cwd,
-			"file",
-		);
-	});
+	registry.register("read", parseReadPermission);
 
 	registry.register("grep", (_toolName, input, cwd) => {
 		const searchPath = getString(input, "path");

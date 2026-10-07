@@ -1,3 +1,6 @@
+import type { Model } from "./model.ts";
+import type { Api } from "./types.ts";
+
 export type SessionAffinityFormat = "openai" | "openai-nosession" | "openrouter";
 
 export interface OpenAIResponsesCompat {
@@ -5,7 +8,7 @@ export interface OpenAIResponsesCompat {
 	supportsDeveloperRole?: boolean;
 	/** Session-affinity header format. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
-	/** Whether the provider supports `prompt_cache_retention: "24h"`. Default: true. */
+	/** Whether the provider supports long prompt cache retention. This uses `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"` on earlier models. Default: true. */
 	supportsLongCacheRetention?: boolean;
 	/** Whether the provider supports the OpenAI Responses WebSocket transport. */
 	supportsWebSocket?: boolean;
@@ -23,4 +26,30 @@ export interface OpenAIResponsesCompat {
 	supportsToolSearch?: boolean;
 	/** Whether the model accepts `prompt_cache_options`. */
 	supportsExplicitPromptCacheMode?: boolean;
+	/**
+	 * Whether the model accepts `configuration_update` input items, which change reasoning effort
+	 * mid-session while keeping the cached prompt prefix. Unflagged models change the top-level
+	 * `reasoning.effort` instead. Default: false.
+	 */
+	supportsConfigurationUpdate?: boolean;
+	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
+	supportsMaxOutputTokens?: boolean;
+	/**
+	 * Whether the provider accepts a `tool_choice` that forces a tool (`required` or a named function).
+	 * When false the forced choice is dropped before sending. Default: true; a provider that refuses one
+	 * at runtime is remembered for the process after one retry without it.
+	 */
+	supportsForcedToolChoice?: boolean;
+	/**
+	 * Whether the model accepts `tool_choice: { type: "allowed_tools" }`. When set, callers keep every
+	 * declared tool in `tools` and restrict the callable subset through `Context.activeToolNames`, so a
+	 * shrinking tool set does not rewrite the cached prompt prefix. Honored by the `openai-responses`
+	 * adapter. Default: false.
+	 */
+	supportsAllowedTools?: boolean;
+}
+
+/** Whether a model's compat declares `allowed_tools` support (see {@link OpenAIResponsesCompat.supportsAllowedTools}). */
+export function supportsAllowedToolChoice(model: Model<Api>): boolean {
+	return (model.compat as OpenAIResponsesCompat | undefined)?.supportsAllowedTools === true;
 }

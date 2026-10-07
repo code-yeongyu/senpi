@@ -23,7 +23,7 @@ import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
  * assertions are on wire records, not on internal method calls.
  */
 
-const CODEX_PROVIDER = "openai-codex";
+const CODEX_PROVIDER = "chatgpt-subscription";
 const CODEX_API = "openai-codex-responses";
 const BASE_MODEL_ID = "gpt-5.6-sol";
 const ALT_MODEL_ID = "gpt-5.5";
@@ -248,6 +248,37 @@ describe("RPC fast-mode commands and model/tier events", () => {
 	// (iv) set_fast_mode roundtrips, persists, and reports its tier
 	// =====================================================================
 
+	it("mirrors host usage totals needed by the attached interactive footer", async () => {
+		const rpc = await createRpcHarness();
+		rpc.harness.session.sessionManager.appendMessage({
+			role: "assistant",
+			api: "anthropic-messages",
+			provider: CODEX_PROVIDER,
+			model: BASE_MODEL_ID,
+			stopReason: "stop",
+			content: [{ type: "text", text: "usage" }],
+			timestamp: Date.now(),
+			usage: {
+				input: 100,
+				totalTokens: 460,
+				output: 20,
+				cacheRead: 300,
+				cacheWrite: 40,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 1.25 },
+			},
+		});
+
+		const state = (await rpc.send({ type: "get_state" })).data as Record<string, unknown>;
+		expect(state.usageTotals).toEqual({
+			input: 100,
+			output: 20,
+			cacheRead: 300,
+			cacheWrite: 40,
+			cost: 1.25,
+			latestCacheHitRate: (300 / 440) * 100,
+		});
+	});
+
 	it("projects the same state fields for get_state and open_session", async () => {
 		// given: the two surfaces must not drift — `open_session` answers with an RpcSessionState too
 		const rpc = await createRpcHarness();
@@ -355,7 +386,7 @@ describe("RPC fast-mode commands and model/tier events", () => {
 
 		// then: the wire reports the refusal instead of a false success
 		expect(response.success).toBe(false);
-		expect(response.error).toBe("Fast mode is only available for OpenAI Codex models.");
+		expect(response.error).toBe("Fast mode is only available for ChatGPT Subscription models.");
 		expect(readSettings(rpc.harness).modelServiceTiers).toBeUndefined();
 		expect((await rpc.send({ type: "get_state" })).data?.fastMode).toBe(false);
 	});

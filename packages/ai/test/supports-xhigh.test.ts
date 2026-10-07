@@ -1,9 +1,14 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { getModel, getSupportedThinkingLevels, supportsMax, supportsXhigh } from "../src/compat.ts";
+import { clampThinkingLevel, getModel, getSupportedThinkingLevels, supportsMax, supportsXhigh } from "../src/compat.ts";
 import type { Model } from "../src/model.ts";
 import type { Api } from "../src/types.ts";
+import {
+	FIXTURE_MAX_MODEL_ID,
+	FIXTURE_NO_MAX_MODEL_ID,
+	installMaxEffortFixtureCatalog,
+} from "./fixture-model-catalog.ts";
+
+installMaxEffortFixtureCatalog();
 
 /** A custom-provider model with no thinkingLevelMap unless supplied in overrides. */
 function maplessModel<TApi extends Api>(api: TApi, id: string, overrides: Partial<Model<TApi>> = {}): Model<TApi> {
@@ -23,19 +28,6 @@ function maplessModel<TApi extends Api>(api: TApi, id: string, overrides: Partia
 }
 
 describe("getSupportedThinkingLevels", () => {
-	it("delegates extended-tier precedence to the exported capability predicates", () => {
-		const source = readFileSync(fileURLToPath(new URL("../src/models.ts", import.meta.url)), "utf8");
-		const functionSource = source.slice(
-			source.indexOf("export function getSupportedThinkingLevels"),
-			source.indexOf("export function clampThinkingLevel"),
-		);
-
-		expect(functionSource).toContain('if (level === "xhigh") return supportsXhigh(model);');
-		expect(functionSource).toContain('if (level === "max") return supportsMax(model);');
-		expect(functionSource).not.toContain("supportsXhighModelId");
-		expect(functionSource).not.toContain("supportsMaxModel");
-	});
-
 	it("includes max but not xhigh for Anthropic Opus 4.6 on anthropic-messages API", () => {
 		const model = getModel("anthropic", "claude-opus-4-6");
 		expect(model).toBeDefined();
@@ -55,6 +47,39 @@ describe("getSupportedThinkingLevels", () => {
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
+	});
+
+	it("includes Claude Opus 5.5 with its always-on effort levels and official pricing", () => {
+		const model = getModel("anthropic", "claude-opus-5-5");
+		expect(model).toMatchObject({
+			cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+			contextWindow: 1_000_000,
+			maxTokens: 128_000,
+			compat: {
+				forceAdaptiveThinking: true,
+				supportsMidConvoEffort: true,
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+			},
+		});
+		expect(getSupportedThinkingLevels(model)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+	});
+
+	it("includes Claude Sonnet 5.5 with managed effort levels and official pricing", () => {
+		const model = getModel("anthropic", "claude-sonnet-5-5");
+		expect(model).toMatchObject({
+			cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+			contextWindow: 1_000_000,
+			maxTokens: 128_000,
+			compat: {
+				forceAdaptiveThinking: true,
+				supportsMidConvoEffort: true,
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+				supportsTemperature: false,
+			},
+		});
+		expect(getSupportedThinkingLevels(model)).toEqual(["low", "medium", "high", "xhigh", "max"]);
 	});
 
 	it("includes max but not xhigh for Anthropic Sonnet 4.6 on anthropic-messages API", () => {
@@ -88,14 +113,20 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).not.toContain("max");
 	});
 
-	it.each(["gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const)(
-		"includes xhigh for openai-codex %s models",
-		(modelId) => {
-			const model = getModel("openai-codex", modelId);
-			expect(model).toBeDefined();
-			expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
-		},
-	);
+	it.each([
+		"gpt-5.5",
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
+		"gpt-6-astra",
+		"gpt-6-sol",
+		"gpt-6-luna",
+		"gpt-6.1-sol",
+	] as const)("includes xhigh for openai-codex %s models", (modelId) => {
+		const model = getModel("chatgpt-subscription", modelId);
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+	});
 
 	it.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const)(
 		"includes xhigh and max for OpenAI %s models",
@@ -114,6 +145,65 @@ describe("getSupportedThinkingLevels", () => {
 		},
 	);
 
+	// The fork GPT-6 ladder has no minimal effort (gpt-6-family-catalog.test.ts).
+	it.each(["gpt-6-sol", "gpt-6-luna"] as const)(
+		"includes xhigh and max without minimal for OpenAI %s models",
+		(modelId) => {
+			const model = getModel("openai", modelId);
+			expect(model).toBeDefined();
+			expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "medium", "high", "xhigh", "max"]);
+		},
+	);
+
+	// OpenAI and Codex reject reasoning.effort "none" for GPT-6.1 Sol.
+	it("does not support off for GPT-6.1 Sol", () => {
+		const expected = {
+			openai: ["low", "medium", "high", "xhigh", "max"],
+			"azure-openai-responses": ["low", "medium", "high", "xhigh", "max"],
+			"chatgpt-subscription": ["low", "medium", "high", "xhigh", "max"],
+		} as const;
+		for (const [provider, levels] of Object.entries(expected)) {
+			const model = getModel(provider as keyof typeof expected, "gpt-6.1-sol");
+			expect(model).toBeDefined();
+			expect(getSupportedThinkingLevels(model!)).toEqual(levels);
+			expect(model!.thinkingLevelMap?.off).toBeNull();
+		}
+	});
+
+	it.each([
+		// Fork context windows: Sol and 6.1 Sol 400k, Luna the full 922k input cap (gpt-6-family-catalog.test.ts).
+		["gpt-6-sol", { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }, 400000],
+		["gpt-6-luna", { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 }, 922000],
+		["gpt-6.1-sol", { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 }, 400000],
+	] as const)("includes official metadata for OpenAI and Codex %s", (modelId, cost, contextWindow) => {
+		for (const provider of ["openai", "chatgpt-subscription"] as const) {
+			const model = getModel(provider, modelId);
+			expect(model).toMatchObject({
+				input: ["text", "image"],
+				cost: {
+					...cost,
+					tiers: [
+						{
+							inputTokensAbove: 272000,
+							input: cost.input * 2,
+							output: cost.output * 1.5,
+							cacheRead: cost.cacheRead * 2,
+							cacheWrite: cost.cacheWrite * 2,
+						},
+					],
+				},
+				contextWindow,
+				maxTokens: 128000,
+				compat: {
+					supportsAdditionalTools: true,
+					supportsMidConvoSystemMessages: true,
+					supportsOpenAIGrammarTools: true,
+					supportsToolSearch: true,
+				},
+			});
+		}
+	});
+
 	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {
 		const model = getModel("openai", "gpt-5.5-pro");
 		expect(model).toBeDefined();
@@ -126,8 +216,8 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["medium", "high", "xhigh"]);
 	});
 
-	it("includes low/high/max plus off for DeepSeek V4 Flash on the DeepSeek provider", () => {
-		const model = getModel("deepseek", "deepseek-v4-flash");
+	it("includes low/high/max plus off for DeepSeek V4.1 Flash on the DeepSeek provider", () => {
+		const model = getModel("deepseek", "deepseek-flash");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
@@ -138,10 +228,16 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
 
-	it("includes only high plus off for OpenCode Go Kimi K2.6", () => {
-		const model = getModel("opencode-go", "kimi-k2.6");
+	it("preserves low/high/max metadata for DeepSeek V4.1 Flash on OpenRouter", () => {
+		const model = getModel("openrouter", "deepseek/deepseek-v4.1-flash");
 		expect(model).toBeDefined();
-		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "high"]);
+		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
+	});
+
+	it("preserves low/high/max metadata for DeepSeek V4.1 Flash on opencode-go", () => {
+		const model = getModel("opencode-go", "deepseek-v4.1-flash");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["low", "high", "max"]);
 	});
 
 	it("excludes thinking off for Moonshot Kimi K2.7 Code models", () => {
@@ -229,14 +325,38 @@ describe("supportsXhigh tier detection for map-less models", () => {
 		expect(getSupportedThinkingLevels({ ...maplessWithId("gpt-5.6-sol"), api: "openai-responses" })).toContain("max");
 	});
 
-	it("does not infer max for a map-less gpt-5.6-terra model", () => {
-		expect(getSupportedThinkingLevels({ ...maplessWithId("gpt-5.6-terra"), api: "openai-responses" })).not.toContain(
-			"max",
-		);
+	it("does not derive max when an exact-id fixture catalog entry omits it", () => {
+		expect(
+			getSupportedThinkingLevels({ ...maplessWithId(FIXTURE_NO_MAX_MODEL_ID), api: "openai-responses" }),
+		).not.toContain("max");
 	});
 });
 
 describe("supportsMax tier detection for map-less models", () => {
+	it("derives max support for a custom map-less model from injected catalog metadata", () => {
+		const model = maplessModel("openai-completions", FIXTURE_MAX_MODEL_ID);
+
+		expect(supportsMax(model)).toBe(true);
+		expect(clampThinkingLevel(model, "max")).toBe("max");
+		expect(clampThinkingLevel(model, "xhigh")).toBe("max");
+	});
+
+	it("does not grant max to an unknown custom map-less model", () => {
+		const model = maplessModel("openai-completions", "unknown-reasoning-model");
+
+		expect(supportsMax(model)).toBe(false);
+		expect(clampThinkingLevel(model, "max")).toBe("high");
+	});
+
+	it("keeps valid discovered efforts authoritative over a fixture catalog max", () => {
+		const model = maplessModel("openai-completions", FIXTURE_MAX_MODEL_ID, {
+			thinkingLevelMap: { off: null, minimal: null, low: "low", medium: null, high: "high", xhigh: null, max: null },
+		});
+
+		expect(supportsMax(model)).toBe(false);
+		expect(clampThinkingLevel(model, "max")).toBe("high");
+	});
+
 	it.each(["openai-responses", "azure-openai-responses", "openai-codex-responses", "openai-completions"] as const)(
 		"infers max for a map-less gpt-5.6-sol model on %s",
 		(api) => {
@@ -273,12 +393,12 @@ describe("supportsMax tier detection for map-less models", () => {
 		expect(supportsMax(model)).toBe(max);
 	});
 
-	it("does not infer max for a map-less gpt-5.6-sol model on a non-OpenAI-compatible api", () => {
-		expect(supportsMax(maplessModel("anthropic-messages", "gpt-5.6-sol"))).toBe(false);
+	it("does not apply the OpenAI floor to a namespaced Sol variant on a non-OpenAI-compatible api", () => {
+		expect(supportsMax(maplessModel("anthropic-messages", "custom/gpt-5.6-sol-preview-2099"))).toBe(false);
 	});
 
-	it.each(["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6", "gpt-5.5", "upstage/solar-pro-3"])(
-		"does not infer max for a map-less non-Sol %s model",
+	it.each(["custom/gpt-5.6-terra", "custom/gpt-5.6-luna", "gpt-5.6", "gpt-5.5", "upstage/solar-pro-3"])(
+		"does not infer max for an uncataloged map-less %s model",
 		(id) => {
 			expect(supportsMax(maplessModel("openai-responses", id))).toBe(false);
 		},
@@ -317,6 +437,11 @@ describe("supportsMax tier detection for map-less models", () => {
 		expect(supportsMax(model)).toBe(true);
 		expect(getSupportedThinkingLevels(model)).not.toContain("xhigh");
 		expect(getSupportedThinkingLevels(model)).toContain("max");
+	});
+
+	it("keeps the existing GPT and Claude id lists as a floor", () => {
+		expect(supportsMax(maplessModel("openai-responses", "custom/gpt-5.6-sol-preview-2099"))).toBe(true);
+		expect(supportsMax(maplessModel("anthropic-messages", "custom/claude-opus-4-7-preview-2099"))).toBe(true);
 	});
 
 	it.each(["claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-fable-5"])(

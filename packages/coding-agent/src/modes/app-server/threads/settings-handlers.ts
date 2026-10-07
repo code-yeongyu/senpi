@@ -65,7 +65,7 @@ class ThreadSettingsHandlers {
 		const requestedEffort = parseEffort(params, requestedModel, entry);
 		const before = buildThreadSettings(entry);
 		if (requestedModel && !sameModel(requestedModel, entry.session.model)) {
-			await entry.session.setSessionModel(requestedModel);
+			await entry.session.setSessionModel(requestedModel, { source: "app-server" });
 		}
 		if (requestedEffort !== undefined && requestedEffort !== entry.session.thinkingLevel) {
 			entry.session.setSessionThinkingLevel(requestedEffort);

@@ -1,0 +1,56 @@
+{
+  "query": "typescript satisfies operator",
+  "number_of_results": 0,
+  "results": [
+    {
+      "title": "TypeScript: Documentation - TypeScript 4.9",
+      "url": "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+      "content": "We could try to catch that bleu typo by using a type annotation on palette, but we’d lose the information about each property. ... The new satisfies operator lets us validate that the type of an expression matches some type, without changing the resulting type of that expression.",
+      "publishedDate": null,
+      "engine": "brave",
+      "engines": [
+        "brave",
+        "google cse"
+      ],
+      "score": 3.0,
+      "category": "general"
+    },
+    {
+      "title": "What are the differences Between TypeScript’s satisfies operator ...",
+      "url": "https://stackoverflow.com/questions/78636946/what-are-the-differences-between-typescript-s-satisfies-operator-and-type-assert",
+      "content": "2024. 6. 18. ... I'd like to add that satisfies allows TypeScript to infer the \"narrower\" type based on the actual value assigned while explicit type declaration ...",
+      "publishedDate": null,
+      "engine": "brave",
+      "engines": [
+        "brave",
+        "google cse"
+      ],
+      "score": 1.5,
+      "category": "general"
+    },
+    {
+      "title": "TypeScript satisfies Operator: Purpose, Usage, and Examples - Mimo",
+      "url": "https://mimo.org/glossary/typescript/satisfies",
+      "content": "The satisfies operator, introduced in TypeScript 4.9, lets you check that a value conforms to a particular type without changing its inferred structure. This ...",
+      "publishedDate": null,
+      "engine": "brave",
+      "engines": [
+        "brave",
+        "google cse"
+      ],
+      "score": 0.6222222222222222,
+      "category": "general"
+    }
+  ],
+  "answers": [],
+  "suggestions": [
+    "typescript satisfies example",
+    "typescript satisfies generic"
+  ],
+  "unresponsive_engines": [
+    [
+      "duckduckgo",
+      "CAPTCHA"
+    ]
+  ]
+}

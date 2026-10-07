@@ -62,19 +62,19 @@ const bedrockAuth: ApiKeyAuth = {
 			return { auth: { apiKey: credential.key }, env: credential.env, source: "stored credential" };
 		}
 		if (await env("AWS_BEARER_TOKEN_BEDROCK")) return { auth: {}, source: "AWS_BEARER_TOKEN_BEDROCK" };
-		if (credential?.env?.AWS_PROFILE ?? (await env("AWS_PROFILE"))) {
-			return {
-				auth: {},
-				env: credential?.env,
-				source: credential?.env?.AWS_PROFILE ? "stored credential" : "AWS_PROFILE",
-			};
-		}
+		if (credential?.env?.AWS_PROFILE) return { auth: {}, env: credential.env, source: "stored credential" };
+		// Everything below is the shared AWS credential chain, present for any AWS tool, so it is ambient.
+		if (await env("AWS_PROFILE")) return { auth: {}, env: credential?.env, source: "AWS_PROFILE", ambient: true };
 		if ((await env("AWS_ACCESS_KEY_ID")) && (await env("AWS_SECRET_ACCESS_KEY"))) {
-			return { auth: {}, source: "AWS access keys" };
+			return { auth: {}, source: "AWS access keys", ambient: true };
 		}
-		if (await env("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")) return { auth: {}, source: "ECS task role" };
-		if (await env("AWS_CONTAINER_CREDENTIALS_FULL_URI")) return { auth: {}, source: "ECS task role" };
-		if (await env("AWS_WEB_IDENTITY_TOKEN_FILE")) return { auth: {}, source: "web identity token" };
+		if (await env("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")) {
+			return { auth: {}, source: "ECS task role", ambient: true };
+		}
+		if (await env("AWS_CONTAINER_CREDENTIALS_FULL_URI")) return { auth: {}, source: "ECS task role", ambient: true };
+		if (await env("AWS_WEB_IDENTITY_TOKEN_FILE")) {
+			return { auth: {}, source: "web identity token", ambient: true };
+		}
 		return undefined;
 	},
 };

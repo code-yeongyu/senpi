@@ -18,7 +18,8 @@ goal per thread, re-engages the agent via hidden continuation prompts. 34 `.ts` 
   `lifecycle-helpers.ts`, `direct-input-lifecycle.ts`, `agent-end-continuation.ts`,
   `continuation-recovery.ts`, `reload-reengagement.ts`.
 - **Prompt/format**: `prompt.ts` (untrusted-objective + completion audit), `format.ts`,
-  `todo-gate.ts`, `last-assistant-message.ts`, `terminal-provider-error.ts`.
+  `todo-gate.ts`, `todo-owed-backstop.ts` (no-goal turn-end backstop), `last-assistant-message.ts`,
+  `terminal-provider-error.ts`.
 - **UI/tickers**: `ui.ts` (footer segment), `elapsed-ticker.ts`, `wait-ticker.ts`,
   `wait-progress.ts`, `cache-warm.ts`, `cache-warm-renderer.ts`.
 
@@ -41,8 +42,11 @@ clean accepted user turn arms a visible 10-second grace countdown before the Goa
 Mechanically blocked Goals reactivate on accepted input, including admitted steering. A
 `length` stop gets exactly one truncation recovery, then blocks.
 
-Terminal provider errors block only when `AgentEndEvent.willRetry` is false and the abort is
-not system-owned; those blocks are mechanical, so a new user message resumes. A terminal
+A terminal (`willRetry` false, not system-owned) provider error keeps the Goal active and
+queues one guarded `providerRecovery` continuation after `agent_settled`, except a terminal
+401/403 (`terminalProviderAuthFailure`, #2293) or policy rejection (#1520): those block on the
+first hit. The auth block is mechanical (a new user message resumes after the user fixes the
+login); the policy block is not. A terminal
 *system* error preserves the active Goal: schedule the live monitor wait, or queue a guarded
 hidden `systemRecovery` continuation after `agent_settled` (staging preserves late user
 cancellation; canceling releases the single-flight latch for `/goal resume`). Intentional
@@ -63,15 +67,21 @@ a `"user"` mutation. `active`/`complete` never prompt.
   `executePreparedToolCall`). A returned `isError` property is silently ignored.
 - **Persistence**: `GoalFile{version:1, goal}` at `<sessionDir>/extensions/goal/<threadId>.json`,
   falling back to `getAgentDir()/extensions/goal/no-session/<sha256(cwd)[:24]>/` when the
-  session has no file. Writes are atomic, mutations serialize per goal path via promise tails,
+  session has no file. Writes are atomic, mutations serialize per goal path via the in-process promise tail
+  plus a cross-process proper-lockfile lock (`goal-file-lock.ts`, senpi#2499),
   and legacy `pi-goal` stores/status spellings migrate on read. Objectives trim and cap at
   4,000 code points with a truncation marker plus full-text sidecar.
 - **Continuation is opt-in by state**: hidden prompts queue only while the goal is `active`,
-  the agent is idle, and no messages are pending.
+  the agent is idle, and no messages are pending. The todo-owed backstop
+  (`todo-owed-backstop.ts`) is the no-goal mirror: it queues its hidden followUp only when
+  nothing else owns the turn end, at most two per chain of unattended turns (the chain
+  resets on accepted direct input, `session_start`, `session_tree`), never in print/json.
 - **Live footer is ticker-driven**: `refreshGoalUi` drives `GoalElapsedTicker` once per second
   while a goal is `active` with an open accounting window; `GoalWaitTicker` independently
   refreshes the continuation countdown while a monitor or user-grace timer is armed. Both
   require a TUI context and stop on their owning lifecycle cleanup.
 - Inert until a goal exists; `loop` (#31) and later builtins register after it. Tests:
   `test/suite/goal-{store,modules,extension,elapsed-ticker,wait-progress}.test.ts`
-  (faux/mocked `pi`, temp-file store, no real APIs).
+  (faux/mocked `pi`, temp-file store, no real APIs), plus
+  `test/suite/goal-todo-stale-reminder.test.ts` and
+  `test/suite/goal-todo-owed-backstop.test.ts` (harness + faux provider).

@@ -9,7 +9,7 @@ import {
 	resolveBashTimeoutDefaults,
 } from "./timeout.ts";
 
-export type { BashTimeoutDefaults, BashToolInputLike } from "./timeout.ts";
+export type { BashTimeoutDefaults, BashTimeoutPromptOptions, BashToolInputLike } from "./timeout.ts";
 export {
 	applyBashTimeout,
 	BASH_DEFAULT_TIMEOUT_SECONDS,
@@ -42,7 +42,16 @@ export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 		return resolveForegroundWindowSeconds(env);
 	};
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		return { systemPrompt: `${event.systemPrompt}${buildBashTimeoutPrompt(defaults, resolveWindow(ctx))}` };
-	});
+	pi.on(
+		"before_agent_start",
+		async (event, ctx) => {
+			const foregroundWindowSeconds = resolveWindow(ctx);
+			const prompt = buildBashTimeoutPrompt(
+				defaults,
+				foregroundWindowSeconds === undefined ? {} : { foregroundWindowSeconds },
+			);
+			return { systemPrompt: `${event.systemPrompt}${prompt}` };
+		},
+		{ previewSafe: true },
+	);
 }

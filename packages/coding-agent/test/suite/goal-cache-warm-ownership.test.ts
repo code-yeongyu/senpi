@@ -3,7 +3,8 @@ import {
 	GOAL_CACHE_WARMUP_ENTRY_TYPE,
 	type GoalCacheWarmupEntryData,
 } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
-import { GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	type AppendedGoalEntry,
 	cleanAssistantStop,
@@ -27,7 +28,9 @@ describe("goal cache-warm rendering ownership", () => {
 		const { tools, handlers, events, entries } = harness;
 		const ctx = await makeGoalContext(notices, "thread-cache-warm-ownership");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
 		events.emit("terminal_monitor_state", { activeCount: 1 });
 		await events.flush();
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -37,7 +40,7 @@ describe("goal cache-warm rendering ownership", () => {
 		expect(warmupPhases(entries)).toEqual([{ phase: "scheduled", iteration: 1 }]);
 
 		const delivered = waitForSentCount(harness, 1);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await delivered;
 		await vi.advanceTimersByTimeAsync(0);
 		expect(notices).toEqual([]);

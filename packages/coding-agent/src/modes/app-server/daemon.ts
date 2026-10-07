@@ -1,9 +1,8 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { mkdir, open, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import * as properLockfile from "proper-lockfile";
 import { getAgentDir } from "../../config.ts";
+import { acquireOwnershipSafeLock } from "../rpc/ownership-safe-lock.ts";
 import { inspectAppServerListenOccupancy } from "./daemon/occupancy.ts";
 import {
 	cleanupState,
@@ -20,8 +19,9 @@ import {
 	readProcessStartTime,
 	stopValidatedPid,
 	waitForGone,
-	waitForStartTime,
 } from "./daemon/process.ts";
+import { type DaemonExit, type DaemonLaunchIntent, spawnDaemon } from "./daemon/spawn.ts";
+import { resolveAppServerExtensionPaths } from "./extension-paths.ts";
 import type { AppServerDaemonCommandOptions, AppServerListen } from "./index.ts";
 
 export interface DaemonPaths {
@@ -35,21 +35,12 @@ export interface DaemonPaths {
 
 type DaemonOutput = Readonly<Record<string, string | number | undefined>>;
 
-type SpawnedDaemon = {
-	readonly pid: number;
-	readonly exited: Promise<DaemonExit>;
-};
-
-type DaemonExit =
-	| { readonly kind: "error"; readonly error: Error }
-	| { readonly kind: "exit"; readonly code: number | null; readonly signal: NodeJS.Signals | null };
-
 type DaemonReadiness =
 	| { readonly kind: "ready"; readonly version: string }
 	| { readonly kind: "timed-out" }
 	| { readonly kind: "exited"; readonly exit: DaemonExit };
 
-const lockOptions = { stale: 60_000, retries: { retries: 100, minTimeout: 20, maxTimeout: 100 } } as const;
+const lockOptions = { retries: { retries: 100, minTimeout: 20, maxTimeout: 100 } } as const;
 
 export function createDaemonPaths(agentDir = getAgentDir()): DaemonPaths {
 	const dir = join(agentDir, "app-server-daemon");
@@ -65,7 +56,7 @@ export function createDaemonPaths(agentDir = getAgentDir()): DaemonPaths {
 
 export async function withDaemonStateLock<T>(paths: DaemonPaths, task: () => Promise<T>): Promise<T> {
 	await mkdir(paths.dir, { recursive: true });
-	const release = await properLockfile.lock(paths.dir, { ...lockOptions, lockfilePath: paths.lockFile });
+	const release = await acquireOwnershipSafeLock(paths.lockFile, lockOptions);
 	try {
 		return await task();
 	} finally {
@@ -92,22 +83,28 @@ async function runLockedDaemonCommand(
 ): Promise<DaemonOutput> {
 	const settings = await readSettings(paths);
 	const listen = options.verb === "start" ? options.listen : (settings?.listen ?? options.listen);
+	const extensions = resolveAppServerExtensionPaths(options.extensions);
 	switch (options.verb) {
 		case "start":
-			return startDaemon(paths, listen);
+			return startDaemon(paths, { listen, extensions });
 		case "stop":
 			return stopDaemon(paths, listen);
 		case "status":
 			return statusDaemon(paths, listen);
 		case "restart": {
+			// Like the listener, a restart relaunches what was recorded; explicit extensions replace it.
 			const restartListen = settings?.listen ?? options.listen;
 			await stopDaemon(paths, restartListen);
-			return startDaemon(paths, restartListen);
+			return startDaemon(paths, {
+				listen: restartListen,
+				extensions: extensions.length > 0 ? extensions : (settings?.extensions ?? []),
+			});
 		}
 	}
 }
 
-async function startDaemon(paths: DaemonPaths, listen: AppServerListen): Promise<DaemonOutput> {
+async function startDaemon(paths: DaemonPaths, intent: DaemonLaunchIntent): Promise<DaemonOutput> {
+	const { listen } = intent;
 	const occupancy = await inspectAppServerListenOccupancy(paths, listen);
 	if (occupancy.kind === "app-server") {
 		const pidFile = await readPidFile(paths);
@@ -121,7 +118,7 @@ async function startDaemon(paths: DaemonPaths, listen: AppServerListen): Promise
 		if (lateProbe) return runningOutput("already-running", pidFile.pid, listen, lateProbe);
 		throw new Error(`managed daemon pid ${pidFile.pid} did not answer initialize`);
 	}
-	const spawned = await spawnDaemon(paths, listen);
+	const spawned = await spawnDaemon(paths, intent, resolveCliMainPath());
 	const readiness = await waitForDaemonReady(paths, listen, spawned.exited);
 	if (readiness.kind === "ready") {
 		return { status: "started", pid: spawned.pid, listen: listen.url };
@@ -168,42 +165,6 @@ async function statusDaemon(paths: DaemonPaths, listen: AppServerListen): Promis
 	return { status: "not-running" };
 }
 
-async function spawnDaemon(paths: DaemonPaths, listen: AppServerListen): Promise<SpawnedDaemon> {
-	const stderr = await open(paths.stderrLog, "w");
-	try {
-		const daemonExec = process.versions.bun
-			? process.env.npm_node_execpath && !/[/\\]bun(?:$|[/\\])/.test(process.env.npm_node_execpath)
-				? process.env.npm_node_execpath
-				: "/opt/homebrew/bin/node"
-			: process.execPath;
-		const child = spawn(
-			daemonExec,
-			[
-				...(process.versions.bun ? [] : process.execArgv),
-				resolveCliMainPath(),
-				"app-server",
-				"--listen",
-				listen.url,
-			],
-			{
-				detached: true,
-				env: { ...process.env, SENPI_RUNTIME: "node" },
-				stdio: ["ignore", "ignore", stderr.fd],
-			},
-		);
-		const exited = observeDaemonExit(child);
-		child.unref();
-		const pid = child.pid;
-		if (pid === undefined) throw new Error("failed to spawn daemon process");
-		const startTime = await waitForStartTime(pid, 2_000);
-		await writeFile(paths.pidFile, `${JSON.stringify({ pid, processStartTime: startTime })}\n`, { mode: 0o600 });
-		await writeFile(paths.settingsFile, `${JSON.stringify({ listen })}\n`, { mode: 0o600 });
-		return { pid, exited };
-	} finally {
-		await stderr.close();
-	}
-}
-
 async function waitForDaemonReady(
 	paths: DaemonPaths,
 	listen: AppServerListen,
@@ -219,13 +180,6 @@ async function waitForDaemonReady(
 	} finally {
 		controller.abort();
 	}
-}
-
-function observeDaemonExit(child: ChildProcess): Promise<DaemonExit> {
-	return new Promise((resolveExit) => {
-		child.once("error", (error) => resolveExit({ kind: "error", error }));
-		child.once("exit", (code, signal) => resolveExit({ kind: "exit", code, signal }));
-	});
 }
 
 function describeDaemonExit(exit: DaemonExit): string {

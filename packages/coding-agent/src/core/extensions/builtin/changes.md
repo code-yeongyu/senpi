@@ -1,4 +1,879 @@
+## 2026-10-06 — html-render writes its offline policy first in every page (#2846)
+
+**What:** `html-render/bootstrap.ts` starts every written page with a UTF-8 byte order mark, `<!doctype html>` and the policy meta, and drops a page's own leading doctype only when it is printable ASCII. Tests: comment forms `<!-->`, `<!--->`, `--!>` and plain comments ahead of a doctype, and an ISO-2022-JP escape inside a doctype.
+
+**Why:** the old placement skipped comments before a doctype, but browsers end a comment at `<!-->`, `<!--->` and `--!>`, so a page could run a script ahead of the policy and push the meta into `<body>`. Skipping a doctype that holds an ISO-2022-JP escape let a later `<meta charset>` decode the policy as text. The BOM fixes the encoding as UTF-8 for a file opened from disk.
+
+**Must not break:** nothing the page wrote may precede the preamble; mirrors desktop `packages/shared/src/htmlRenderBootstrap.ts`.
+
+## 2026-10-06 — show_html_page hands the page to the host in its details
+
+**What:** `html-render/tool.ts` caps `html` at 512,000 characters (the desktop html_render input limit) and returns the page as written in `details.html`. The model-visible `content` is unchanged and never carries it. Tests: the page is in details and absent from content; a 512,001-character page fails the schema; inlined images past 25 MiB throw the cap error and write nothing.
+
+**Why:** the desktop publishes a completed `show_html_page` call into the thread itself (omo-desktop-app#1724). OmO sessions do not get the desktop's MCP `html_render`, so this is the OmO path to an inline page.
+
+**Must not break:** `details.html` stays out of `content`; the desktop re-applies its own caps and snapshot policy before publishing.
+
+## 2026-10-06 — show_html_page points at nothing unshipped
+
+**What:** the `show_html_page` description and guidelines drop the "load the bundled visualize skill" pointer.
+
+**Why:** that skill ships in a later PR; until then the line points the agent at something that does not exist.
+
+**Must not break:** the PR that ships the visualize skill adds the pointer back in the same change.
+
+## 2026-10-06 — html-render pages are offline snapshots
+
+**What:** `html-render/bootstrap.ts` puts a Content-Security-Policy meta at the start of every page `show_html_page` writes (after a doctype, ahead of everything the page wrote): `default-src 'none'`, inline and data:/blob: scripts, styles, images, fonts and media only, `connect-src`/`frame-src`/`form-action`/`base-uri` `'none'`. Mirrors the desktop's `packages/shared/src/htmlRenderBootstrap.ts` (omo-desktop-app#1724).
+
+**Why:** the tool tells the agent the viewer blocks network access; this makes it true wherever the written file is opened, so a page cannot reach the reader's local network or call home.
+
+**Must not break:** the policy stays the document's first element; a page's own policy can only narrow it.
+
+The `show_html_page` description and guideline now say it plainly ("No network: inline every script, style and image (data: URIs)"), so an agent does not ship a CDN `<script src>` that leaves the page blank, and no longer point at a `preview_html_page` tool that senpi does not register.
+
+## 2026-10-06 - HTML page rendering for standalone senpi (omo-desktop-app#1724)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/`: new builtin extension registering `show_html_page`. `bootstrap.ts` injects the theme bootstrap (theme variables + base stylesheet) at the start of the document head, mirroring the desktop's `packages/shared/src/htmlRender.ts`; `images.ts` inlines absolute-path local images as data URIs only after a magic-byte/SVG-root check (a renamed secret is refused) and enforces the 10 MiB-per-image / 25 MiB-per-page caps, mirroring the desktop's `HtmlRender.ts`; `tool.ts` writes the prepared page to `.senpi/html-pages/` and returns the path with an open-in-desktop hint. Registered as `html-render` in `builtin/index.ts`. A desktop thread reaches the same capability through the desktop's MCP `html_render` instead; this tool is the standalone (TUI/local) path, where there is no inline frame, so the artifact is the file.
+
+### Why
+
+Q's port of upstream t3code #15968: an agent builds a self-contained HTML page and the reader sees it. The desktop thread shows it inline (PR omo-desktop-app#1733); a standalone senpi agent needs the same page-preparation rules so a TUI-written page is the same shape the desktop would store.
+
+### Why an extension could not handle it
+
+This is a builtin extension by design; the prepare logic (bootstrap injection, image byte check, size caps) must mirror the desktop port exactly.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: the import block and `builtinExtensions` array.
+
+## 2026-10-01 - The compaction log no longer writes synchronously (senpi#2508)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: lines are queued per log file and appended in order by one asynchronous writer; rotation is decided per line against the size cap, as before. Whatever is still queued or in flight at process exit is written synchronously then. Logging stays best-effort: `flushCompactionLogs()` resolves once every line logged so far was appended or its write failed (the first failure is reported once on stderr).
+
+### Why
+
+Every log line did a synchronous mkdir, stat, open, write and close on the UI thread; under disk load one write took 486 ms while background events were arriving, which froze typing.
+
+### Why an extension could not handle it
+
+The compaction extension's own logger.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/log.ts`: `writeLine`, `needsRotate`.
+
+## 2026-10-01 - Builtin command argument audit (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/import-repro.ts`: explicitly require arguments.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`, `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-command.ts`, `packages/coding-agent/src/core/extensions/builtin/btw/index.ts`, `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/account-command.ts`, `packages/coding-agent/src/core/extensions/builtin/look-at/commands.ts`, `packages/coding-agent/src/core/extensions/builtin/loop/command-registration.ts`, `packages/coding-agent/src/core/extensions/builtin/model-fallback/index.ts`, `packages/coding-agent/src/core/extensions/builtin/reasoning/index.ts` and `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: explicitly allow bare invocation.
+
+### Why
+
+Account lists, menus, toggles and bare loop invocation must run on the first picker Enter, while account/provider and import-reference input must wait.
+
+### Why an extension could not handle it
+
+These are metadata changes inside the existing builtin command registrations.
+
+### Expected merge conflict zones
+
+Command registration objects in the paths listed above.
+
+## 2026-09-30 - Ultrafast reaches only OpenAI and ChatGPT Subscription (senpi#2410)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the `before_provider_request` hook passes the resolved tier through `serviceTierForProvider`, removes a pre-populated `service_tier` when Ultrafast is disallowed, and emits the advisory for settings and models.json aliases as well as decorators.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the hook added the tier for any model on the Responses APIs, so gateways serving GPT-6 Astra received `service_tier: "ultrafast"`. codex and oh-my-pi never send it there.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: this is the existing service-tier builtin; the change stays inside its request hook.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the import block and the final `addServiceTierToPayload` call in `before_provider_request`.
+
+## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: preserve Ultrafast model pins at session start, model switch, request composition, and /fast on/off.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: Priority memory and the existing Fast toggle must not override a selected Ultrafast tier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: this is implemented within the existing service-tier builtin, using its current host capabilities.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: applyFastMode and session_start/model_select/before_provider_request handlers.
+
+## 2026-09-30 - Unrestorable resumed ask-user calls settle without pending UI (omo#9268)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a dangling ask-user call whose recorded arguments no longer parse into a valid question set is marked resumed and settled as `orphaned-after-restart` immediately (settlement entry plus the framed answer to the model), instead of being turned into a pending request with `questions: []`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: `deliverAnswer` is exported so the resume path delivers that settlement through the same steer/follow-up and notification path as every other outcome.
+
+### Why
+
+- omo#9268: resume converted a parse failure into an empty request and registered it as pending; the widget showed "0 unanswered" and expanding it dereferenced a missing question and crashed the TUI. An unrestorable call cannot be answered after a restart, so it takes the existing orphan settlement instead of entering the UI.
+
+### Why an extension could not handle it
+
+- The ask-user feature is this builtin. Its resume hook owns dangling-call recovery, settlement records, and delivery to the model.
+
+### Expected merge conflict zones
+
+- LOW: `requestFromCall` and `settleUnrestorable` in `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`; the `deliverAnswer` export in `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`.
+
+## 2026-09-30 - Hook trust reads no longer create the project config folder (senpi#2386)
+
+### What changed
+
+- `hooks/trust-storage.ts` `FileHookStateStorage.read()`: when no parseable snapshot exists and the state file's directory does not exist, it returns the empty trust state instead of creating that directory to take the writer lock. With a directory present, the locked re-read that closes the legacy-writer ABA (f9200fc1ab) is unchanged.
+
+### Why
+
+- senpi#2386: every session read the project scope, so every project gained an empty `<cwd>/.omo/` (or `.senpi/`) holding only a transient `hooks-state.json.lock`. With no directory there is no writer to exclude: writers create it before they lock.
+
+### Why an extension could not handle it
+
+- The fix is inside the builtin hooks extension's own storage.
+
+### Expected merge conflict zones
+
+- LOW: `read()` in `hooks/trust-storage.ts` between the snapshot fast path and the lock acquisition.
+
+## 2026-09-24 - Pin the refreshed pi-* extension releases (senpi#2079)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/external-versions.json`: every entry moves to the 2026-09-24 release (bash-timeout 0.1.2, gpt-apply-patch 0.1.3, todowrite 0.2.1, goal 0.3.1, websearch 0.4.0, webfetch 0.1.3, nested-agents-md 0.1.1, rules 0.2.0), and `anthropic-web-search` (pi-anthropic-web-search 0.1.1), `openai-web-search` (pi-openai-web-search 0.1.1) and `anthropic-bash` (pi-anthropic-bash 0.1.1) are recorded for the first time.
+- `packages/coding-agent/scripts/sync-builtin-extensions.mjs`: the three single-file builtins join `MANUAL_PACKAGES`, so a manifest refresh keeps them.
+- The three new entries need no code change. `anthropic-bash` matches upstream except the `ExtensionAPI` import. The web-search copies differ from upstream only where upstream loosens types for its `*` peer range (structural model records, `unknown` compat readers, bracket property access) and prefixes its status/widget keys; senpi reads the typed in-tree `Model` whose `compat` flags are schema-validated booleans, mirroring pi-ai's own `compat ?? endpoint` default, and keeps its unprefixed keys.
+- Per-builtin ports are recorded in `rules/changes.md`, `websearch/changes.md`, `todotools/changes.md` and `goal/changes.md`; the in-sync builtins note it in their own tracker.
+
+### Why
+
+senpi#2079: the manifest is the record of which upstream release each vendored builtin corresponds to, and three vendored builtins were missing from it.
+
+### Why an extension could not handle it
+
+The manifest and sync script describe the builtin snapshots shipped in the binary.
+
+### Expected merge conflict zones
+
+- LOW in `external-versions.json` and `MANUAL_PACKAGES`.
+
+## 2026-09-24 - Stop waits for background work that will wake the session (senpi#2077)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/stop-lifecycle.ts` (new): owns the `Stop` dispatch that used to live in the `agent_end` handler of `hooks/index.ts`. It mirrors live `wake_source_state` counts off `pi.events` (every source except `ask-user`). An `agent_end` with a live source parks the built Stop input instead of dispatching it; a later `agent_start` drops the parked Stop (that turn's own end reports); when the live set drains to zero while the session is idle, a `STOP_DRAIN_GRACE_MS` (2 s, unref) timer dispatches the parked Stop unless a turn started or a message was queued in the meantime. `session_shutdown` drops everything. The Stop reentry tracker moved with it; `hooks/index.ts` calls `registerStopLifecycle` and `resetTurn()` on real user input.
+- `packages/coding-agent/src/core/extensions/builtin/herdr/herdr-state.ts` / `herdr/index.ts`: the reporter subscribes to `wake_source_state` and folds every source into the state. `selectHerdrReport` reports `working` while any source is live and labels each one (`terminal-background-sessions`, `senpi-codemode`, `omo-dag`, `loop-guard-hard-stop` have friendly names; unknown sources render as `<count> <source>`); `terminal-monitors` and `senpi-task` are not relabelled because the monitor snapshot and the child-task count already carry them (the child count is the max of the polled records and the published count), and `ask-user` is left to the blocked state.
+- `packages/coding-agent/test/suite/hooks-stop-background-work.test.ts` (new, real hooks.json + trust + child process): Stop held while a source is live and dispatched once on drain (fake `setTimeout` only around the drain, completion observed through the `entry_appended` stop-state entry); Stop at turn end when only `ask-user` is live; the wake turn's `agent_start` cancels the drain timer and that turn reports exactly one Stop; a wake turn that ends with the work still live keeps Stop held. `hooks-builtin-extension.test.ts` pins the new `agent_start` / `session_shutdown` registrations.
+- `packages/coding-agent/test/suite/herdr-reporter-harness.ts` (extracted from `herdr-reporter.test.ts`, unchanged behavior) and `herdr-reporter-wake-sources.test.ts` (new): working through settlement with a live DAG run and idle on clear; stable multi-source message without double counting; ask-user ignored; malformed and repeated payloads ignored.
+- `packages/coding-agent/test/suite/regressions/settled-idle-with-background-wake-source.test.ts`: pins that `ctx.isIdle()` still reads `true` at `agent_settled` while a wake source is live.
+
+### Why
+
+A user with a Stop-hook notifier, or many herdr panes, was told "the agent stopped" at every turn end, including turns that had just handed the session to a subagent, a DAG run, or a monitor - and on arrival there was nothing to do. `Stop` now means the session actually stopped. The drain timer exists because completion handlers publish their zero count and wake the session in the same tick in either order; without the grace the drain would fire Stop a moment before the wake turn fires it again. `ask-user` is the one source that means the user's turn, so it does not hold Stop, and the herdr reporter already shows it as `blocked`.
+
+Two earlier shapes of this change were dropped: a `Notification` of `kind: "turn-settled"` fired at settlement while work was live added a ping at exactly the moment the user asked for silence and reached every bare `Notification` hook; and reporting `ctx.isIdle()` as false during `agent_settled` while a source was live postponed `config-reload`'s pending-reload flush and the `loop` builtin's deferred tick drain (both gate on `ctx.isIdle()` in their `agent_settled` handlers) for as long as any monitor stayed armed.
+
+### Why an extension could not handle it
+
+The Stop dispatch, its trust resolution and its reentry tracker are inside the hooks builtin, and the herdr reporter is the builtin that owns the pane's lifecycle report. Both already run in-process next to the bus the wake sources publish on; no core API changed.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: the removed `agent_end` block and the `registerStopLifecycle` / `resetTurn` wiring.
+- LOW in `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` (one more subscription in `session_start`) and `herdr-state.ts` (new event variant, `selectHerdrReport` labels).
+- LOW in `packages/coding-agent/CHANGELOG.md` under `## [Unreleased]` -> `### Changed`.
+
+## 2026-09-24 - Recommended ladder reordered, provider lanes ranked per rung (senpi#2074)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: `RECOMMENDED_DEFAULT_MODELS` is now `claude-opus-5-5` medium, `claude-fable-5-1` xhigh, `kimi-k3` max, `gpt-6-astra` xhigh, `gpt-6-sol` medium, `glm-5.3` max. `gpt-5.6-sol` and `glm-5.2` are no longer recommendations (both stay selectable). Each entry carries a third element, the ranked provider lanes (Claude `anthropic-subscription, anthropic, anthropic-api, github-copilot, opencode`; Kimi `kimi-coding, kimi-for-coding, moonshotai, opencode-go`; GPT `chatgpt-subscription, openai, github-copilot, opencode`; GLM `zai-coding-plan, opencode-go`), and `findAvailableRecommendation` picks the highest-ranked provider among the models whose canonical id matches. A shipped rung is served only by its ranked lanes; a `settings.recommendedModels` id outside the table has no ranking and any provider may serve it.
+
+### Why
+
+The product default is Claude first, then Kimi, then GPT, then GLM, and a machine holding both an Anthropic API key and the Claude subscription must land on the subscription lane rather than on whichever provider the registry happened to list first. Gateway aggregators (opengateway, openrouter, vercel-ai-gateway) and other resellers must never be pulled in by the default ladder; restricting a rung to its ranked lanes guarantees that, and tests pin both the gateway and the unranked-reseller case.
+
+### Why an extension could not handle it
+
+The shipped priority list is the binary default every session gets without a `settings.recommendedModels` override.
+
+### Expected merge conflict zones
+
+- MEDIUM in `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts` around `RECOMMENDED_DEFAULT_MODELS` and `findAvailableRecommendation`: the entries are now 3-tuples.
+
+## 2026-09-22 - Claude Opus 5.5 becomes the recommended Opus
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: `RECOMMENDED_DEFAULT_MODELS` carries `["claude-opus-5-5", "max"]` in the slot `["claude-opus-5", "xhigh"]` held (after `claude-fable-5-1`, before `glm-5.2`). Opus 5 stays a selectable model; it is no longer a recommendation.
+
+### Why
+
+Claude Opus 5.5 (2026-09-22) matches or beats Opus 5 at `high` while running at its own `medium`, and the product decision is to run it at `max` wherever Opus 5 ran at `xhigh`. A session that lands on an implicit Anthropic default should therefore pick 5.5 at `max` when it is authenticated.
+
+### Why an extension could not handle it
+
+The shipped priority list is the binary default every session gets without a `settings.recommendedModels` override.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts` around `RECOMMENDED_DEFAULT_MODELS`.
+
+## 2026-09-22 - chatgpt-subscription provider id in the account and tier extensions (senpi#1989)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: account commands resolve and label the provider under the new id.
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: the tier notices read "ChatGPT Subscription".
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`: the login interaction labels the provider by its new name.
+
+### Why
+
+The OpenAI subscription provider id was renamed from `openai-codex` to `chatgpt-subscription` (senpi#1989): the old id named a CLI rather than the thing a user signs in with. These modules resolve or display that provider id at runtime, so they move with it. The wire api id `openai-codex-responses` is deliberately NOT renamed - it names the dialect, not the provider - and neither are file names or module paths.
+
+### Why an extension could not handle it
+
+The provider id is resolved inside the package before any extension loads, and these call sites compare or render it while building requests and UI. An extension cannot rewrite an id the package has already used.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`, against any other account-command change.
+
 # Builtin extensions changes
+
+## 2026-09-21 - Re-export the canonical question types from ask-user schema (#1931)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/schema.ts` re-exports `QuestionRequest` and `QuestionResponse` from `../../types.ts` instead of declaring textually identical local interfaces. `Question` and `QuestionOption` still derive from the imported `QuestionRequest`. Both `TODO(t3-merge)` markers are gone.
+
+### Why
+
+- One declaration of the question contract: the tool, the TUI dialog, the RPC bridge and every RPC client now read the same shape from the public extension API, and a future divergence is a type error rather than two silently different shapes. Type-only; no runtime diff.
+
+### Why an extension could not handle it
+
+- The duplicate lived inside this builtin's own module; only this builtin can stop declaring it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/schema.ts`: the removed interfaces at the top of the file.
+
+## 2026-09-20 - Serve question card renderers without a registration (#1857 I4)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/render.ts` exports `askUserRenderers(toolName)`, the renderer pair for both question tool names, independent of whether the tools are registered.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` gives the first attachment the full idle budget and a re-attachment only what the authoritative timer has left.
+- Registration itself stays inside session-start synchronization: registering at load also activates a directly exposed tool, which would hand a `noTools` session a question tool it never asked for.
+
+### Why
+
+- A question card can stream while the registry holds no ask-user tools - during a reload, or in a session where ask-user is disabled - and would otherwise render as a raw argument dump. Its renderers do not depend on the registration, so the card no longer does either.
+
+### Why an extension could not handle it
+
+- This builtin owns the question tools and their renderers; no other extension can supply them for a card the host is already drawing.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/render.ts`: renderer exports.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: attachment options.
+
+
+## 2026-09-20 - Recover unsettled async questions after restart (#1857 I3)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts` recovers accepted async calls without settlement evidence. It excludes durable terminal entries, delivered answer frames in older sessions, prior recovery records, and live pending registrations.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/format.ts` exports the parser that inverts its answer formatter. Recovery and the answer chip consume the same grammar.
+
+### Why
+
+- An async tool result means acceptance, not completion. Recovery must distinguish unanswered requests from completed ones without replaying legacy answers.
+
+### Why an extension could not handle it
+
+- This builtin owns the session records and recovery dispatch. An outside extension would introduce competing registrations and delivery subscriptions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: terminal-evidence scan and recovery dispatch.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/format.ts`: shared answer-frame parser.
+
+## 2026-09-20 - Report question reattachment failures (#1857 I2)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` turns a missing, throwing, or rejecting reload bridge into one orphaned outcome and one UI notice.
+
+### Why
+
+- Cancelling a failed reattachment silently leaves the model expecting an answer that can no longer arrive.
+
+### Why an extension could not handle it
+
+- The builtin owns the bridge promise and the single framed delivery; outside observers cannot safely settle it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: fail and attach.
+
+## 2026-09-20 - Preserve pending questions across reload (#1857 I1)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts` detaches pending UI bridges on reload and reattaches them on session start.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/registry.ts` retains the reattachment operations and draft options.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` preserves the pending object, deadline, draft, and request ID while replacing the runner used for delivery. Old bridge responses cannot settle the replacement.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts` declares a terminal settlement entry. The lifecycle records async outcomes, including silent cancellations, for restart recovery.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts` leaves delivery to the pending lifecycle and avoids a second delivery subscription for a live request.
+- A request that expires without a bound runner becomes terminal immediately, resolves its completion, leaves the pending registry, and notifies the live UI. Its outcome waits in memory for the next bound runner rather than using a torn-down API.
+
+### Why
+
+- Reload is a UI ownership change, not a dismissal. Recreating a pending question would reset its timeout and duplicate its arrival metadata.
+
+### Why an extension could not handle it
+
+- This is the builtin extension that owns the pending registry and answer delivery; an external extension cannot transfer that ownership.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts`: lifecycle handlers.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/registry.ts`: pending entry interface.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: startQuestion bridge and completion ownership.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts`: settlement entry export.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: single-owner delivery.
+
+## 2026-09-13 - Retain question headers for transcript replay (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts` declares the UI-only `ask-user:question` entry `{ requestId, headers }`. `ask-user/tool.ts` appends it once at fresh registration, after the existing-ID guard. It is ordinary custom-entry metadata, not an LLM message or a new question transport field.
+
+### Why
+
+- Existing timeout and dismissal answer frames omit their headers. Retaining a small display record lets the compact answer chip label those outcomes after restart without changing any model-facing text.
+
+### Why an extension could not handle it
+
+- The builtin owns the canonical request ID/header association at registration; the replay renderer only has persisted entries after the pending state is gone.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts`: event/entry exports; `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: registration. `ask-user/format.ts` is unchanged, and tests prove custom metadata is absent from model context.
+
+## 2026-09-13 - Publish per-request ask-user deadlines (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` adds optional `WakeSourceStateItem.deadlineAtMs`. `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` publishes each authoritative pending deadline and re-emits wake state after async UI progress touches the idle timer.
+
+### Why
+
+- A pending count alone cannot tell the goal monitor which request expires first or that typing extended a deadline.
+
+### Why an extension could not handle it
+
+- The ask-user builtin owns the pending state machine and its progress callback; outside consumers do not have those authoritative deadlines.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: WakeSourceStateItem; `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: emitWake and onProgress. Goal-side handling is tracked in `goal/changes.md`.
+
+## 2026-09-13 - Fresh question arrivals and exactly-once blocked lifetime (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts` declares `ask-user:asked`; `ask-user/tool.ts` emits it and `herdr:blocked` after registration, reuses an existing per-session request ID, and emits the inactive signal from its guarded settlement path in both wait modes.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts` routes recovered disk calls through that same pending lifecycle, including orphaned outcomes, while retaining its original one-message delivery path and persisted recovery marker. Restart UI errors become explicit orphaned responses carrying the error, rather than losing it.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts` maps arrival and settlement bus events into distinct Notification kinds. Existing settlement-hook fixtures still assert every prior settlement payload; they now distinguish arrival commands and await outstanding handlers before teardown. Real arrival-command tests cover both wait modes.
+
+### Why
+
+- Every consumer needs one blocked lifetime per request, independent of whether a TUI, RPC or app-server resolves it. Replaying an existing request must not produce another arrival or a competing pending timer.
+
+### Why an extension could not handle it
+
+- The builtin already owns registration, authoritative timeout and answer delivery. Notification and status consumers cannot safely recreate those lifetimes from UI frames or final tool results.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: startQuestion registration/finish; `ask-user/resume.ts`: recovery dispatch; `ask-user/notify.ts`: event exports; `hooks/index.ts`: Notification subscriptions.
+
+## 2026-09-13 - Expose authoritative ask-user idle deadlines (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/registry.ts` adds the optional `QuestionDialogOptions.getDeadlineAtMs` getter. `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` supplies it from the pending state machine, so TUI countdowns display rather than own the idle timeout.
+
+### Why
+
+- Recreating a widget or expanding a request must not restart a separate competing timeout.
+
+### Why an extension could not handle it
+
+- These files implement the builtin's existing pending-state-to-UI handoff. The additive option keeps QuestionRequest and transport frames unchanged.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/registry.ts`: QuestionDialogOptions; `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: startQuestion options.
+
+## 2026-09-11 - Partial ask-user answers resolve consistently
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/pending.ts` accepts a non-empty
+  partial answer map as `answered` and preserves the unanswered question ids.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/format.ts` renders unanswered
+  question headers for `answered` responses as well as comment-submitted responses.
+
+### Why
+
+- RPC previously kept a partial selection pending while app-server and desktop already allowed it,
+  so the same user action had different outcomes depending on the connected surface.
+
+### Why an extension could not handle it
+
+- The pending state machine and result formatter are the builtin's shared contract used by every
+  transport; an external extension cannot change their terminal resolution semantics.
+
+### Expected merge conflict zones
+
+- LOW in `ask-user/pending.ts` submit resolution and `ask-user/format.ts` status formatting.
+
+## 2026-09-10 - Account display-name commands and generated-ID-only post-login naming (senpi#1495)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/account-display-name.ts`: shared `rename <id> <display name...>` / `clear-name <id>` command handling plus optional naming after a committed-account receipt. Naming is offered only when the receipt reports `origin: "generated"`, so a provider flow that already prompted for the slot ID (Claude) does not produce a second name prompt. Blank or cancelled naming leaves login usable; invalid naming is reported separately from login success.
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: expose the new actions and render safe `displayName (name)` labels while pin/remove remain ID-based. OpenAI add captures the login receipt rather than inspecting credentials or account ordering.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/account-display-name.ts`, `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: multi-account users need readable labels without changing the identifiers responsible for routing and continuity, and must not be asked to name the same account twice in one login.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/account-display-name.ts`, `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts` ARE the extension implementation over shared core storage and receipt APIs; no new core command registry behavior was added.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/account-display-name.ts` is new; command argument hints, list formatting and add/login handling in `packages/coding-agent/src/core/extensions/builtin/account/index.ts` and `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`.
+
+## 2026-09-10 - A settled question aborts its dialog with the resolved status
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: `startQuestion`'s `finish()` now calls `controller.abort(response.status)` instead of a bare `controller.abort()`. The dialog controller is the only channel a still-waiting UI bridge has once the extension-side idle timer (`pending.ts`) settled the question, so the abort now names the terminal status - notably `timed_out`.
+
+### Why
+
+- The RPC bridge maps a bare abort onto `cancel()`, so an idle timeout was broadcast to every connection as `question_resolved{outcome:"cancelled"}` even though the tool result and the framed notice carried the timeout text. Making the extension's timer the authoritative one requires it to hand its outcome to the surface it aborts.
+
+### Why an extension could not handle it
+
+- This IS the builtin: the pending-question state machine and the dialog controller both live in `ask-user/tool.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `finish()` in `ask-user/tool.ts`.
+
+## 2026-09-10 - Async question delivery belongs to the ask-user builtin
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: for `waitForAnswer:false` questions `startQuestion` now attaches a delivery handler to the completion promise (it is still never awaited in `execute`, which keeps returning the acceptance result). When the question settles the new `deliverAnswer` helper sends `formatUserMessage(response, requestId, questions)` through `pi.sendUserMessage` with `deliverAs: "steer"` while a turn runs and `"followUp"` when `ctx.isIdle()` - a follow-up always triggers a turn, which is what wakes the model on the `timed_out` message. A `cancelled` response (dismissed, superseded, aborted, ask-user disabled, session closed) delivers nothing.
+
+### Why
+
+- Only the interactive TUI delivered async answers. The RPC and app-server question bridges ignore `opts.deliver`, so an answer - or the idle-timeout message - given over those surfaces was dropped and never reached the model. Owning delivery in the extension makes it surface-independent: a bridge only has to RESOLVE the question, and no surface can deliver it twice.
+
+### Why an extension could not handle it
+
+- The ask-user feature IS this builtin: the pending-question lifecycle, the framed-message formatter, and the completion promise all live in `ask-user/tool.ts`, and the delivery needs `pi.sendUserMessage` plus `ctx.isIdle()` from the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: `ask-user/tool.ts` - the new `deliverAnswer` helper above `emitWake` and the last statement of `startQuestion`.
+
+## 2026-09-10 - Resume dangling question calls
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts` walks the current branch tail on `session_start` `resume`/`reload` for the newest `ask_user_question`/`request_user_input` tool call without a matching tool result. When `ctx.ui.question` exists it re-presents the original questions with a fresh idle timeout and delivers the answer as a framed user message; otherwise it delivers the `orphaned-after-restart` text once. `pi.appendEntry("ask-user:resumed", { toolCallId })` records the call so a later resume is a no-op.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/extension.ts` invokes the resume hook from the existing `session_start` handler after tool-set sync, without awaiting the UI so later session_start handlers are not blocked.
+
+### Why
+
+- Pending question timers are not persisted. A process restart leaves a dangling tool call in the session JSONL; the model needs the question re-shown or an explicit orphaned result rather than a silent hang.
+
+### Why an extension could not handle it
+
+- The dangling call lives in the session the builtin already owns. Re-presenting it requires the same `ctx.ui.question` bridge and `ask-user:resumed` custom entry as the rest of the ask-user extension.
+
+### Expected merge conflict zones
+
+- LOW: new `resume.ts`. `extension.ts` `session_start` handler body.
+
+## 2026-09-10 - Builtin question tool
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` registers ask-user immediately after gpt-apply-patch.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/{index,extension,family,tool,render,registry}.ts` adds family selection, direct tool definitions, blocking and async execution, cancellation and timeout guards, renderers, and a session-keyed pending registry. UI bridges own async user-message delivery and RPC capability decisions. The builtin registers `--no-ask-user` for CLI validation. Print/json and missing question bridges deactivate the tools; other modes delegate to the supplied bridge regardless of the legacy `hasUI` flag.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` makes material clarification available by default with exactly one model-family variant active. The ask-user modules reuse the canonical schema, formatter, and pending state machine rather than duplicating their contracts.
+
+### Why an extension could not handle it
+
+- The feature is implemented as an extension. `packages/coding-agent/src/core/extensions/builtin/index.ts` must register it to ship by default; UI transports separately implement the existing optional question API.
+
+### Expected merge conflict zones
+
+- LOW: new ask-user modules. `packages/coding-agent/src/core/extensions/builtin/index.ts` import and ordered registry entry; no public extension type changes.
+
+## 2026-09-10 - Extension logins own their abort controller (#1542)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts`: `createExtensionLoginInteraction` no longer captures `ctx.signal` (the active run's abort signal). It creates its own `AbortController`, hands `controller.signal` to `modelRuntime.login` and binds every dialog to it (combined with the per-prompt `AuthPrompt.signal`). The login is cancelled only when the user dismisses one of its own dialogs (the controller aborts with `Error("Login cancelled")`) or when a later login for the same `providerId` supersedes it via a module-level pending-login map. A dialog released by the provider's own `AuthPrompt.signal` (callback server won the race) still rejects with `Login cancelled` without cancelling the login. `ExtensionLoginInteractionOptions` gains optional `providerId`.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: `/gpt-account add` passes `providerId: "openai-codex"`.
+
+### Why
+
+- Issue #1542: a `/gpt-account add` started while a response streamed was bound to that turn's controller, so Esc/steer/timeout on the response killed the browser login and surfaced it as a login failure.
+
+### Why an extension could not handle it
+
+- The interaction is the builtin account commands' own seam into `modelRuntime.login`; the signal it captures is decided here.
+
+### Expected merge conflict zones
+
+- LOW: both files are fork-only.
+
+## 2026-09-08 - Shared monitor telemetry contract
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: state entries gain optional command/filter/persistent/deadlineMs/fireCount/lastFiredAtMs fields, and the new `terminal_monitor_ended` event has a shared payload type and boundary guard.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` is the wire contract for observers rendering monitor details and retaining ended watches. Optional state fields preserve mixed-version consumers.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` defines the shared seam, while the terminal builtin owns the actual registry and event emissions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts` event constants, entry fields, and ended payload guard.
+
+## Account commands relay OAuth login prompts through the extension UI (2026-09-08)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/oauth-login-interaction.ts` (new): `createExtensionLoginInteraction(ctx, { providerLabel, openBrowser? })` builds the `AuthInteraction` an account command hands to `modelRuntime.login`. `select` prompts go to `ctx.ui.select` over the option labels and the chosen label is mapped back to the option id; `text`, `secret` and `manual_code` prompts go to `ctx.ui.input` with the provider's placeholder; every dialog carries the command signal combined with the per-prompt `AuthPrompt.signal`, and a dismissed or aborted dialog rejects with `Login cancelled`. `auth_url` events open the browser when `ctx.mode === "tui"` and always print the URL plus the provider's instructions; `device_code` events print the verification URL together with `Enter code: <userCode>`; `info` events print their links.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: `addAccount` uses the shared interaction instead of relaying every prompt to `ctx.ui.input(prompt.message)`; the factory accepts an optional `GptAccountExtensionDeps` (`openBrowser`) so tests can observe the browser launch.
+
+### Why
+
+- code-yeongyu/senpi#1485: `/gpt-account add` rendered `Select OpenAI Codex login method:` as an empty text input because the provider's `select` prompt was relayed as text, so the two login methods were never shown and an empty Enter reached the provider as `Unknown OpenAI Codex login method:`. The device-code flow printed the verification URL without the user code, and the browser flow told the user "A browser window should open" without opening one. `/login` already routes these prompts correctly (`core/auth-storage.ts` `handleLegacyPrompt`, `modes/rpc/login-prompts.ts`); the account commands now share one relay with the same rules.
+
+### Why an extension could not handle it
+
+- The commands live in the builtin registry and the relay sits between `modelRuntime.login` and the provider flow, a seam no user extension can interpose on.
+
+### Expected merge conflict zones
+
+- LOW: `gpt-account.ts` is fork-only; `oauth-login-interaction.ts` is new.
+
+## Plugin-root containment resolves against the filesystem (2026-09-07)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/safety.ts`: the two calls that build the plugin-root containment decision (`realTarget`, `realRoot`) resolve through `realpathSync.native`.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/plugin-manifest.ts`: the same for `resolveContainedPath`'s `realPath` and its `pluginRoot` comparand.
+- The lexical pre-gates in both files are deliberately unchanged: they are syntactic checks over the declared path and are correct at that job.
+
+### Why
+
+- Node's JS-implemented `realpathSync` collapses a `..` inside a symlink target lexically, before following the symlink that segment sits behind. A hook target that walked back up through a symlinked directory inside the plugin root therefore resolved to a location reported as contained while the kernel opened a file outside the root, and the containment check accepted it. Measured on Linux and macOS: `realpathSync` answered `<root>/escape.mjs` while `readFileSync` on the same path returned the bytes of `<outside>/escape.mjs`. Corrective on Node; `dist/cli.js` is node-shebanged, so those are the default semantics on the CLI path. Behaviour-preserving on Bun, whose `realpathSync` already agrees with the kernel.
+
+### Why an extension could not handle it
+
+- The containment decision runs inside hook-manifest validation, before any extension can observe or veto a hook target, and it is the check that decides whether an extension's hook loads at all.
+
+### Expected merge conflict zones
+
+- LOW: two `realpathSync` lines in each validator; one-line changes with no signature or control-flow edits.
+
+## Preserve explicit fast variants at session start (2026-09-05)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/service-tier.ts`: when session startup receives a compatible `-fast` catalog variant, it still swaps to the base model but preserves the selected thinking level with a session-scoped setter and keeps fast mode enabled. Remembered tier derivation remains unchanged for non-`-fast` starts.
+
+### Why
+
+- Selecting a `-fast` model at startup previously lost both the requested thinking level and the priority service tier when the extension normalized the variant to its base model.
+
+### Why an extension could not handle it
+
+- The startup model normalization and session fast-mode state are owned by this built-in extension's `session_start` handler.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/service-tier.ts` and its focused regression tests.
+
+## Recommend GPT-6 Astra ahead of GPT-5.6 Sol (2026-09-05)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: insert `["gpt-6-astra", "high"]` immediately before `["gpt-5.6-sol", "medium"]` in `RECOMMENDED_DEFAULT_MODELS`. Astra is the new OpenAI flagship recommendation; Sol stays as the fallback. `canonicalModelId` is unchanged, so `gpt-6-astra-fast` still strips to `gpt-6-astra`.
+
+### Why
+
+- Sessions that land on an implicit OpenAI default should prefer GPT-6 Astra at thinking level `high` when `openai-codex/gpt-6-astra` (or a `-fast` variant) is authenticated, instead of stopping at GPT-5.6 Sol/`medium`. `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts` is the shipped priority list for that auto-switch.
+
+### Why an extension could not handle it
+
+- The shipped default lives in `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`. A user extension or `settings.recommendedModels` override can change one machine, not the binary default every session gets without an override.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts` around `RECOMMENDED_DEFAULT_MODELS`. Keep `["gpt-6-astra", "high"]` immediately before `["gpt-5.6-sol", "medium"]`; do not reorder the other entries.
+
+## Hooks trust-state reads fail open when the lock directory is not writable (2026-09-04)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts`: `FileHookStateStorage.read()` still
+  parses the on-disk snapshot lock-free. When that parse is empty or malformed and lock acquisition then fails with
+  `EPERM`, `EACCES`, or `EROFS`, the reader now returns the same fail-open empty state already used for `ELOCKED`.
+  `update()` is unchanged and still throws on permission errors.
+
+### Why
+
+- Sandboxed or read-only children (macOS seatbelt `deny file-write*`, bwrap `--ro-bind`, a read-only HOME) cannot
+  mkdir the `hooks-state.json.lock` directory. That error used to propagate out of the tool_call hook and fail every
+  tool call. A reader that cannot take a lock must not break tool execution; writers must still fail closed.
+
+### Why an extension could not handle it
+
+- The hooks builtin owns this persistence path and calls `storage.read()` on session_start, input, tool_call, and
+  tool_result before any user extension can intercept the failure.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts` around `FileHookStateStorage.read`'s
+  lock-acquisition catch. Keep `EPERM`/`EACCES`/`EROFS` fail-open on read only; writers must still throw.
+
+## Loop-owned exposure for `schedule_wakeup` (2026-09-04)
+
+### What changed
+
+- `loop/tools.ts`: `registerLoopTools` registers `schedule_wakeup` with `exposure: "search"` and
+  `allowLazyActivation: false`, so the tool is absent from the default active list and from the
+  `tool_search` catalog. `SCHEDULE_WAKEUP_DESCRIPTION` keeps the clamp, idle-range, prompt-cache and
+  fallback-heartbeat guidance and drops the monitor/`bash_output`/`kill_bash`/`task` waiting rule;
+  `tick-prompt.ts`'s dynamic rule is that rule's single home.
+- `loop/index.ts`: `syncScheduleWakeupActivation()` derives the wanted state from scheduler state
+  (some `dynamic` entry whose phase is neither `ended` nor `suspended`) and calls `pi.setActiveTools`
+  only when the active list disagrees. It runs at the top of `refreshStatus()` (every command,
+  timer, tool, restore, and settle transition already ends there) and again in `dispatchTick`
+  before `sendUserMessage`, so the tool is active before the tick turn reads its tool list.
+- Tests: `loop-wakeup-tool.test.ts` pins the exposure contract and the trimmed description;
+  `loop-extension.test.ts` pins activation on dynamic start, one entry across the tick lifecycle,
+  retirement on stop, no activation for fixed loops, and re-activation on session restore;
+  `regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts` no longer lists the tool as
+  resident.
+
+### Why
+
+- The tool is meaningful only inside a dynamic loop (every other call is a typed error), yet it
+  shipped 234 o200k tokens of description on every turn of every session. Search exposure with
+  loop-owned activation removes that cost without changing the loop contract: the dynamic tick
+  prompt still names a callable tool.
+- Lazy activation is disabled because a `tool_search` hit outside a loop would only activate a
+  tool that errors; explicit `setActiveTools` from the loop extension is the one legitimate path.
+
+### Why an extension could not handle it
+
+- `loop` is a builtin registered for every session; the activation decision needs the loop
+  scheduler's own state transitions (create, tick, settle, stop, suspend, restore), which only
+  `loop/index.ts` observes. No public event exposes those transitions to a sibling extension.
+
+### Expected merge conflict zones
+
+- LOW: `loop/index.ts` around `refreshStatus`/`dispatchTick` and the `./tools.ts` import;
+  `loop/tools.ts` description + registration object. Upstream has no `/loop` extension, so the
+  zone is fork-only.
+
+## OpenAI Codex OAuth account command (2026-09-03)
+
+### What changed
+
+- `gpt-account.ts` (new): `/gpt-account` is the dedicated OpenAI Codex OAuth account manager, mirroring the
+  `/claude-account` action set. `add` runs an interactive `openai-codex` oauth login through
+  `ctx.modelRegistry.modelRuntime.login` and emits `emitProviderAccountsChanged` so subscribed clients re-read the pool;
+  `remove <name>`, `pin <name>` and `unpin` go through `credential-accounts.ts` (which emits on its own); the
+  no-argument form lists every stored slot as `name | source | available|blocked` with the pin marked. Only names,
+  sources and health are rendered, never key or token material.
+- `index.ts`: registers `{ id: "gpt-account", factory: gptAccountExtension }` immediately after the provider-neutral
+  `account` builtin, so the Codex lane keeps its own command name the way `claude-sdk-oauth` and `cursor-cli-oauth` do.
+
+### Why
+
+- The provider-neutral `/account` command lists, pins, unpins and removes accounts for any provider but has no `add`, so
+  the only way to put a second `openai-codex` account into the pool was `/login openai-codex` - the shared write path
+  that this same pass fixes for LAB-109. Codex users need the add/remove/pin surface that claude-sdk-oauth users already
+  have from `/claude-account`, and keeping it in its own command leaves the Codex-specific login wiring (interactive
+  prompt relay, auth-url notices) out of the provider-neutral command.
+
+### Why an extension could not handle it
+
+- The command has to exist for every session, which means being present in the `builtinExtensions` registry in
+  `index.ts`; a user extension cannot insert itself there. It also drives `modelRuntime.login` and the coding-agent auth
+  storage pool directly, and that login/persist seam is core state with no extension-visible hook between producing a
+  credential and writing it.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the `builtinExtensions` array in `index.ts`, where every new provider lane adds a line.
+  `gpt-account.ts` itself is new and fork-only.
+
+## Shared eval-only routing predicate for prompt surfaces (2026-09-03)
+
+### What changed
+
+- `eval-only-routing.ts` (new): `isEvalOnlyRouting(pi)` returns whether the session registry holds an `eval` tool, which is the session's own condition for withholding `bash`, `powershell`, `workflow` and `monitor` from the model's direct tool list. `terminal/extension.ts` and `bash-timeout/index.ts` both consume it when rendering their system-prompt sections.
+
+### Why
+
+- Two builtins must render the same call form for the same tools, and each re-deriving the condition invites them to drift apart. One predicate keeps both surfaces on the session's actual arming rule, and keeps eval-less child agents (`explore`, `librarian`) on the direct forms they can really call.
+
+### Why an extension could not handle it
+
+- The consumers are builtins whose prompt sections are appended before the agent loop; a user extension cannot rewrite another builtin's section.
+
+### Expected merge conflict zones
+
+- LOW: the module is new and fork-only.
+
+## Hooks trust-state snapshots publish atomically for same-account application state (2026-08-31)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts`: complete trust-state snapshots remain on a
+  lock-free read path. After any malformed or empty read, the reader boundedly acquires the exact writer lock and
+  re-reads while excluding writers. It returns a complete exclusive reread, returns fail-closed empty state when the
+  exclusive reread is still malformed, and also fails closed without surfacing `ELOCKED` when a live writer outlasts
+  the bounded acquisition window.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/trust-state-json.ts`: snapshot JSON parsing now reports
+  completeness separately from the fail-closed empty state, allowing storage to retry only incomplete reads without
+  changing trust parsing behavior.
+- Serialized writers create a same-directory temporary snapshot, apply an ordinary same-account destination's numeric
+  POSIX mode (or `0600` for a new file) with `chmod` after creation so process umask cannot mask it, and atomically
+  publish it with rename. Hooks state is internal application state at `<agentDir>/hooks-state.json` or
+  `<cwd>/.senpi/hooks-state.json`; externally reassigned ownership, supplementary-group ownership, named POSIX/macOS
+  ACLs, and custom Windows DACLs are outside this storage contract.
+- Failed publication removes the temporary snapshot. Operation failures remain unchanged when lock release succeeds,
+  release-only failures propagate unchanged, and simultaneous failures become a flat causal `AggregateError`. Existing
+  publication+cleanup entries precede the release failure.
+
+### Why
+
+- Concurrent session startup only reads hook trust state and must not fail because another process temporarily owns the
+  writer lock. New writers publish by rename, but mixed-version deployments still include legacy writers that truncate
+  the destination under the same lock before rewriting it. Sampling lock absence before and after an incomplete read is
+  ABA-vulnerable: a legacy writer can acquire, truncate, publish, and unlock between both samples. Acquiring the writer
+  lock after an incomplete read establishes a writer-excluding revalidation interval, making that ABA harmless without
+  making complete reads contend. Applying the numeric mode after creation keeps ordinary same-account existing modes
+  and the private new-file mode independent of process umask without claiming preservation of external security
+  metadata.
+- Cleanup and lock-release failures must not mask the operation that caused them. Flattened causal ordering preserves
+  the actionable primary failure while retaining every later cleanup failure.
+- Lock acquisition intentionally inherits proper-lockfile's `stale: 10_000` and `update: stale / 2` defaults. An
+  actively refreshed lease gets ten bounded acquisition attempts and then fails closed on `ELOCKED`; stale recovery is
+  proper-lockfile's inherited crash-recovery behavior. A writer suspended beyond that stale threshold has no stronger
+  guarantee in this contract.
+
+### Why an extension could not handle it
+
+- The hooks builtin is the extension that owns this persistence implementation. Atomic filesystem publication, file
+  modes, writer-lock coordination, and failure propagation occur inside its storage boundary before any hook event can
+  run, so no separate extension hook can intercept or replace them safely.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/hooks/trust-storage.ts` around `FileHookStateStorage.read`
+  and `FileHookStateStorage.update`, and in `trust-state-json.ts` around snapshot completeness parsing. Upstream edits to
+  hook trust persistence should retain lock-free complete reads, writer-excluding bounded revalidation for incomplete
+  reads, fail-closed `ELOCKED` exhaustion, same-directory atomic publication, ordinary same-account numeric-mode
+  retention/default `0600`, the explicit exclusion of custom ownership/ACL/DACL preservation, and flat causal
+  operation/cleanup/release errors.
+
+## service-tier: clear the fast indicator when the session leaves the Codex family (2026-08-28)
+
+### What changed
+
+- `service-tier.ts` `model_select`: when session fast mode is on and the incoming model's `api` is not
+  `openai-codex-responses`, the extension now drops its session flag and calls `pi.setSessionFastMode(false)`.
+  Codex -> Codex switches are untouched, and the per-model `liveMemoryTier`/`liveMemoryKey` re-derivation that already
+  ran on every switch is unchanged.
+
+### Why
+
+- `service_tier` is an OpenAI-family request field, so `before_provider_request` already refused to emit it after a hop
+  to (for example) `anthropic/claude-opus-5`. The session flag, however, still fed `AgentSession.isFastModeActive()`,
+  and through it the RPC `get_state.fastMode`, `effectiveServiceTier`, the `service_tier_changed` event, and the TUI
+  lightning indicator - so the UI kept claiming fast for a model whose requests can never carry the tier. Fast mode
+  stays a session intent across Codex models, and an incoming Codex model's remembered `"auto"` is still honored on the
+  wire by `liveMemoryTier` rather than by clearing the display flag (clearing it there would also clear the session's
+  inherited catalog `priority`, which `fast-mode-persistence.test.ts` pins as observable state).
+- Coverage: `test/suite/regressions/stale-fast-mode-after-model-switch.test.ts` (Codex `/fast on` -> Anthropic
+  `claude-opus-5` on a faux provider clears model/provider identity, `isFastModeActive()`, RPC `fastMode`,
+  `effectiveServiceTier`, the last `service_tier_changed.fastMode`, and leaves the payload untouched; plus a control
+  that a Codex sibling with no remembered preference keeps the indicator on).
+
+### Why an extension could not handle it
+
+- `service-tier` IS the builtin extension that owns the `/fast` session flag; the stale indicator originates in its own
+  `model_select` handler, and only it knows whether the flag came from a session intent.
+
+### Expected merge conflict zones
+
+- LOW in `service-tier.ts` at the end of the `model_select` handler (one guard appended after the live-memory
+  re-derivation); no other production file changes.
 
 ## Repository audit baseline for the builtin extensions tracker (2026-08-17)
 

@@ -1,10 +1,16 @@
 import { Buffer } from "node:buffer";
+import { readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BashOperations } from "../../src/core/tools/bash.ts";
+import { createLocalBashOperations } from "../../src/core/tools/bash.ts";
+import { DEFAULT_MAX_BYTES } from "../../src/core/tools/truncate.ts";
 import { createHarness, type Harness } from "./harness.ts";
+
+const spillFiles = () => readdirSync(tmpdir()).filter((file) => file.startsWith("pi-bash-") && file.endsWith(".log"));
 
 function getEntryTypes(harness: Harness): string[] {
 	return harness.sessionManager.getEntries().map((entry) => entry.type);
@@ -303,6 +309,33 @@ describe("AgentSession bash and persistence characterization", () => {
 		expect(result.output).toContain("hello from custom ops");
 		expect(harness.session.messages[harness.session.messages.length - 1]?.role).toBe("bashExecution");
 	});
+
+	it.each([
+		["stdout", "string", "public async stdout failed"],
+		["stdout", "object", { stream: "stdout", failure: true }],
+		["stdout", "Error", new Error("public async stdout failed")],
+		["stderr", "string", "public async stderr failed"],
+		["stderr", "object", { stream: "stderr", failure: true }],
+		["stderr", "Error", new Error("public async stderr failed")],
+	] as const)(
+		"propagates public executeBash %s async callback %s rejection and cleans spill",
+		async (stream, _shape, callbackError) => {
+			const harness = await createHarness();
+			harnesses.push(harness);
+			const before = spillFiles();
+			const redirect = stream === "stderr" ? " >&2" : "";
+			const execution = harness.session.executeBash(
+				`head -c ${DEFAULT_MAX_BYTES + 1} /dev/zero | tr '\\0' x${redirect}`,
+				async () => {
+					throw callbackError;
+				},
+				{ operations: createLocalBashOperations() },
+			);
+
+			await expect(execution).rejects.toBe(callbackError);
+			expect(spillFiles().filter((file) => !before.includes(file))).toEqual([]);
+		},
+	);
 
 	it("streams bash output to the callback and session events", async () => {
 		const harness = await createHarness();

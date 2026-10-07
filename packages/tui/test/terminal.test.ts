@@ -1,4 +1,8 @@
 import assert from "node:assert";
+import * as fs from "node:fs";
+import * as net from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
 import { mock, describe as nodeDescribe, it as nodeIt } from "node:test";
 import { vi, describe as vitestDescribe, it as vitestIt } from "vitest";
 import { setKittyProtocolActive } from "../src/keys.ts";
@@ -6,7 +10,9 @@ import {
 	keyboardEnhancementEnabled,
 	normalizeAppleTerminalInput,
 	normalizeNativeShiftEnterInput,
+	normalizeWarpWslShiftEnterInput,
 	ProcessTerminal,
+	resolveBurstWindowMs,
 	resolveEscapeTimeoutMs,
 } from "../src/terminal.ts";
 
@@ -80,6 +86,28 @@ function setupTerminalStopHarness(wasRaw: boolean, restoreRawMode: (mode: boolea
 	};
 }
 
+describe("resolveBurstWindowMs", () => {
+	it("uses PI_TUI_BURST_WINDOW_MS when configured, including 0 to never hold", () => {
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "80" }), 80);
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "80", SSH_TTY: "/dev/pts/1" }), 80);
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "0" }), 0);
+	});
+
+	it("waits longer over SSH, where paste chunks arrive further apart", () => {
+		assert.ok(resolveBurstWindowMs({ SSH_TTY: "/dev/pts/1" }) > resolveBurstWindowMs({}));
+		assert.equal(
+			resolveBurstWindowMs({ SSH_CONNECTION: "1 2 3 4" }),
+			resolveBurstWindowMs({ SSH_TTY: "/dev/pts/1" }),
+		);
+	});
+
+	it("ignores invalid PI_TUI_BURST_WINDOW_MS values", () => {
+		for (const value of ["abc", "-5", "Infinity", ""]) {
+			assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: value }), resolveBurstWindowMs({}));
+		}
+	});
+});
+
 describe("resolveEscapeTimeoutMs", () => {
 	it("uses PI_TUI_ESC_TIMEOUT when configured", () => {
 		assert.equal(resolveEscapeTimeoutMs({ PI_TUI_ESC_TIMEOUT: "80" }), 80);
@@ -138,6 +166,201 @@ describe("normalizeAppleTerminalInput", () => {
 	it("leaves non-Return input unchanged", () => {
 		assert.equal(normalizeAppleTerminalInput("\x1b[13;2u", true, true), "\x1b[13;2u");
 		assert.equal(normalizeAppleTerminalInput("a", true, true), "a");
+	});
+});
+
+describe("normalizeWarpWslShiftEnterInput", () => {
+	it("does not check the WSL socket when Warp is not detected", () => {
+		let socketChecks = 0;
+		assert.equal(
+			normalizeWarpWslShiftEnterInput("\n", { WSL_INTEROP: "/run/WSL/321_interop" }, "linux", () => {
+				socketChecks += 1;
+				return true;
+			}),
+			"\n",
+		);
+		assert.equal(socketChecks, 0);
+	});
+
+	it("rejects regular files, directories, and symlinks to non-sockets", () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tui-wsl-"));
+		const regularFile = path.join(tempDir, "regular-file");
+		const directory = path.join(tempDir, "directory");
+		const symlinkToFile = path.join(tempDir, "symlink-to-file");
+		fs.writeFileSync(regularFile, "not a socket");
+		fs.mkdirSync(directory);
+		fs.symlinkSync(regularFile, symlinkToFile);
+		const env = { WARP_SESSION_ID: "session", WSL_INTEROP: "/run/WSL/123_interop" };
+		try {
+			for (const entry of [regularFile, directory, symlinkToFile]) {
+				assert.equal(
+					normalizeWarpWslShiftEnterInput("\n", env, "linux", () => fs.statSync(entry).isSocket()),
+					"\n",
+					entry,
+				);
+			}
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("accepts a symlink to a real socket", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tui-wsl-"));
+		const socketPath = path.join(tempDir, "interop.sock");
+		const socketAlias = path.join(tempDir, "interop-alias");
+		const server = net.createServer();
+		try {
+			await new Promise<void>((resolve, reject) => {
+				server.once("error", reject);
+				server.listen(socketPath, resolve);
+			});
+			fs.symlinkSync(socketPath, socketAlias);
+			assert.equal(
+				normalizeWarpWslShiftEnterInput(
+					"\n",
+					{ WARP_SESSION_ID: "session", WSL_INTEROP: "/run/WSL/123_interop" },
+					"linux",
+					() => fs.statSync(socketAlias).isSocket(),
+				),
+				"\x1b[13;2u",
+			);
+		} finally {
+			server.close();
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("rewrites Warp-on-WSL LF as explicit Shift+Enter", () => {
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					TERM_PROGRAM: "WarpTerminal",
+					WARP_SESSION_ID: "session",
+					WSL_DISTRO_NAME: "Ubuntu",
+					WSL_INTEROP: "/run/WSL/1_interop",
+				},
+				"linux",
+				() => true,
+			),
+			"\x1b[13;2u",
+		);
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					WARP_SESSION_ID: "session",
+					WSL_INTEROP: "/run/WSL/1_interop",
+				},
+				"linux",
+				() => true,
+			),
+			"\x1b[13;2u",
+		);
+	});
+
+	it("rejects spoofed Warp and WSL markers", () => {
+		const validWsl = { WARP_SESSION_ID: "session", WSL_INTEROP: "/run/WSL/123_interop" };
+		assert.equal(
+			normalizeWarpWslShiftEnterInput("\n", { ...validWsl, WARP_SESSION_ID: "" }, "linux", () => true),
+			"\n",
+		);
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{ TERM_PROGRAM: "WarpTerminal", ...validWsl, WARP_SESSION_ID: undefined },
+				"linux",
+				() => true,
+			),
+			"\n",
+		);
+		for (const interop of [
+			"/run/WSL/not-a-real-socket",
+			"/run/WSL/123",
+			"/run/WSL/123_interop-extra",
+			"/tmp/123_interop",
+		]) {
+			assert.equal(
+				normalizeWarpWslShiftEnterInput("\n", { ...validWsl, WSL_INTEROP: interop }, "linux", () => true),
+				"\n",
+				interop,
+			);
+		}
+		assert.equal(
+			normalizeWarpWslShiftEnterInput("\n", validWsl, "linux", () => false),
+			"\n",
+		);
+	});
+
+	it("does not treat empty or non-Linux WSL markers as a target session", () => {
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_DISTRO_NAME: "",
+				},
+				"linux",
+			),
+			"\n",
+		);
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_INTEROP: "/run/WSL/1_interop",
+				},
+				"darwin",
+				() => true,
+			),
+			"\n",
+		);
+		assert.equal(
+			normalizeWarpWslShiftEnterInput(
+				"\n",
+				{
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_INTEROP: "spoofed",
+				},
+				"linux",
+			),
+			"\n",
+		);
+	});
+
+	it("leaves other terminals, remote or multiplexed sessions, and input unchanged", () => {
+		assert.equal(normalizeWarpWslShiftEnterInput("\n", { WSL_DISTRO_NAME: "Ubuntu" }, "linux"), "\n");
+		assert.equal(normalizeWarpWslShiftEnterInput("\n", { TERM_PROGRAM: "WarpTerminal" }, "linux"), "\n");
+		assert.equal(
+			normalizeWarpWslShiftEnterInput("\r", {
+				TERM_PROGRAM: "WarpTerminal",
+				WSL_DISTRO_NAME: "Ubuntu",
+			}),
+			"\r",
+		);
+		for (const key of ["TMUX", "TMUX_PANE", "STY", "ZELLIJ"] as const) {
+			assert.equal(
+				normalizeWarpWslShiftEnterInput("\n", {
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_DISTRO_NAME: "Ubuntu",
+					[key]: "active",
+				}),
+				"\n",
+				key,
+			);
+		}
+		for (const key of ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"] as const) {
+			assert.equal(
+				normalizeWarpWslShiftEnterInput("\n", {
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_DISTRO_NAME: "Ubuntu",
+					[key]: "active",
+				}),
+				"\n",
+				key,
+			);
+		}
 	});
 });
 
@@ -270,6 +493,21 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
+	it("forwards device attributes replies that answer other queries", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("\x1b[?7u");
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), undefined);
+
+			// The TUI's color query uses DA1 as its own sentinel.
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), "\x1b[?62;4;52c");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("forwards normal input while waiting for Kitty response", () => {
 		const harness = setupNegotiation();
 		try {
@@ -277,6 +515,51 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 
 			assert.equal(harness.getInput(), "a");
 			assert.equal(harness.terminal.kittyProtocolActive, false);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("holds a newline that follows text within the burst window by default", () => {
+		const harness = setupNegotiation({
+			PI_TUI_BURST_WINDOW_MS: undefined,
+			SSH_TTY: undefined,
+			SSH_CONNECTION: undefined,
+		});
+		try {
+			harness.send("a");
+			harness.send("b\n");
+			assert.equal(harness.getInput(), "b");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("forwards a newline that follows text at once when PI_TUI_BURST_WINDOW_MS is 0", () => {
+		const harness = setupNegotiation({ PI_TUI_BURST_WINDOW_MS: "0", SSH_TTY: undefined, SSH_CONNECTION: undefined });
+		try {
+			harness.send("a");
+			harness.send("b\n");
+			assert.equal(harness.getInput(), "\n");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("forwards Warp-on-WSL LF unchanged for non-editor consumers", () => {
+		const harness = setupNegotiation({
+			TERM_PROGRAM: "WarpTerminal",
+			WARP_SESSION_ID: undefined,
+			WARP_TERMINAL_SESSION_UUID: undefined,
+			WSL_DISTRO_NAME: "Ubuntu",
+			WSL_INTEROP: undefined,
+		});
+		try {
+			harness.send("\n");
+			assert.equal(harness.getInput(), "\n");
+
+			harness.send("\r");
+			assert.equal(harness.getInput(), "\r");
 		} finally {
 			harness.cleanup();
 		}

@@ -10,6 +10,7 @@
 // pi-ai or core file is modified (verified by the git-diff scope check in the
 // task-29 evidence log).
 
+import { normalizeContext } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, Context, Message, Model } from "@earendil-works/pi-ai/compat";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
@@ -53,7 +54,7 @@ function emptyAssistant(model: Model<Api>): AssistantMessage {
 
 async function drainAnthropicStream(model: Model<"anthropic-messages">, context: Context, sse: string) {
 	const mock = makeMockAnthropicClient(sse);
-	const result = stream(model, context, { client: mock.client as never });
+	const result = stream(model, normalizeContext(context), { client: mock.client as never });
 	const finalMessage = await result.result();
 	const events = result.queue;
 	return { finalMessage, events, mock };
@@ -162,7 +163,7 @@ describe("todo29 spike: OpenAI Responses response-side preservation", () => {
 			systemPrompt: "sys",
 			messages: [userMsg("find docs tools"), priorAssistant, userMsg("now call the tool")],
 		};
-		const input = convertResponsesMessages(model, context, new Set(["openai"]));
+		const input = convertResponsesMessages(model, normalizeContext(context), new Set(["openai"]));
 		const serialised = JSON.stringify(input);
 		// The empty providerNative branch in convertResponsesMessages means the
 		// tool_search_call never re-enters the request. This is the seam the

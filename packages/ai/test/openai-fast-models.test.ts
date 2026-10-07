@@ -29,8 +29,18 @@ const PRIORITY_TIER_MODEL_IDS = [
 	"o4-mini",
 ] as const;
 
-const OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
+const CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
 const GPT_56_SOL_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-sol-fast"] as const;
+const GPT_6_ASTRA_MODEL_IDS = ["gpt-6-astra", "gpt-6-astra-fast"] as const;
+const GPT_6_ASTRA_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+	max: "max",
+} as const;
 
 const NON_PRIORITY_MODEL_IDS = [
 	"gpt-5-pro",
@@ -51,12 +61,26 @@ const NON_PRIORITY_MODEL_IDS = [
 ] as const;
 
 describe("OpenAI -fast priority-tier catalog variants", () => {
-	it("defaults GPT-5.6 Sol variants to a 400k context window", () => {
-		for (const provider of ["openai", "openai-codex"] as const) {
-			for (const id of GPT_56_SOL_MODEL_IDS) {
+	it.each([
+		["GPT-5.6 Sol", GPT_56_SOL_MODEL_IDS, 650_000],
+		["GPT-6 Astra", GPT_6_ASTRA_MODEL_IDS, 600_000],
+	] as const)("defaults %s variants to the flagship context window", (_family, modelIds, contextWindow) => {
+		for (const provider of ["openai", "chatgpt-subscription"] as const) {
+			for (const id of modelIds) {
 				const model = getModel(provider, id);
 				expect(model, `${provider}/${id} should exist`).toBeDefined();
-				expect(model!.contextWindow, `${provider}/${id}`).toBe(400_000);
+				expect(model!.contextWindow, `${provider}/${id}`).toBe(contextWindow);
+			}
+		}
+	});
+
+	it("uses the canonical GPT-6 Astra reasoning ladder across OpenAI-family catalogs", () => {
+		for (const provider of ["openai", "chatgpt-subscription", "azure-openai-responses"] as const) {
+			for (const id of provider === "azure-openai-responses" ? (["gpt-6-astra"] as const) : GPT_6_ASTRA_MODEL_IDS) {
+				const model =
+					provider === "azure-openai-responses" ? getModel(provider, "gpt-6-astra") : getModel(provider, id);
+				expect(model, `${provider}/${id} should exist`).toBeDefined();
+				expect(model!.thinkingLevelMap, `${provider}/${id}`).toEqual(GPT_6_ASTRA_THINKING_LEVEL_MAP);
 			}
 		}
 	});
@@ -105,24 +129,24 @@ describe("OpenAI -fast priority-tier catalog variants", () => {
 	});
 
 	it("ships a -fast variant for openai-codex priority-eligible models", () => {
-		const codexCatalogIds = getModels("openai-codex").map((model) => model.id);
-		for (const id of OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS) {
+		const codexCatalogIds = getModels("chatgpt-subscription").map((model) => model.id);
+		for (const id of CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS) {
 			expect(codexCatalogIds, `codex base model ${id} should exist`).toContain(id);
 			expect(codexCatalogIds, `codex ${id}-fast should exist`).toContain(`${id}-fast`);
 		}
 	});
 
 	it("clones the codex base model with upstreamModelId, priority tier, and base cost rates", () => {
-		for (const id of OPENAI_CODEX_PRIORITY_TIER_MODEL_IDS) {
-			const base = getModel("openai-codex", id);
-			const fast = getModel("openai-codex", `${id}-fast`);
+		for (const id of CHATGPT_SUBSCRIPTION_PRIORITY_TIER_MODEL_IDS) {
+			const base = getModel("chatgpt-subscription", id);
+			const fast = getModel("chatgpt-subscription", `${id}-fast`);
 			expect(base, `${id} should exist`).toBeDefined();
 			expect(fast, `${id}-fast should exist`).toBeDefined();
 			expect(fast!.name).toBe(`${base!.name} Fast`);
 			expect(fast!.upstreamModelId).toBe(id);
 			expect(fast!.serviceTier).toBe("priority");
 			expect(fast!.api).toBe(base!.api);
-			expect(fast!.provider).toBe("openai-codex");
+			expect(fast!.provider).toBe("chatgpt-subscription");
 			expect(fast!.baseUrl).toBe(base!.baseUrl);
 			expect(fast!.reasoning).toBe(base!.reasoning);
 			expect(fast!.input).toEqual(base!.input);

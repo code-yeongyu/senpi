@@ -1,5 +1,5 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.5.10/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
 	"linter": {
 		"enabled": true,
 		"rules": {
@@ -25,6 +25,8 @@
 	},
 	"files": {
 		"includes": [
+			"scripts/model-catalog-protocol.ts",
+			"scripts/model-catalog-protocol.test.ts",
 			"packages/*/src/**/*.ts",
 			"packages/*/test/**/*.ts",
 			"packages/session-backends/*/src/**/*.ts",
@@ -36,8 +38,10 @@
 			"!**/api/cursor-agent/gen",
 			"!**/*.models.ts",
 			"!packages/mom/data/**/*",
-			"!!**/node_modules",
-			"!!**/.codegraph"
+			"!packages/senpi-codemode/src/kernels/sandbox/vendor/**/*",
+			"!packages/senpi-codemode/test/sandbox/vendor/**/*",
+			"!!**/node_modules"
 		]
-	}
+	},
+	"plugins": ["./scripts/biome/model-type-comparison.grit"]
 }

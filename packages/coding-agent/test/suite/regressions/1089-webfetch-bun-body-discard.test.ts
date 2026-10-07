@@ -71,6 +71,31 @@ describe("issue #1089 webfetch redirect body cleanup", () => {
 		expect(cleanupOrder).toEqual(["listen:error", "iterate", "destroy"]);
 	});
 
+	it("handles an already-destroyed body without escaping its cleanup error", async () => {
+		// Given
+		const destroy = vi.fn<(error?: Error) => void>();
+		destroy();
+		const body: RedirectBody = {
+			destroy,
+			on: vi.fn(),
+			dump: vi.fn().mockRejectedValue(new Error("body already destroyed")),
+			[Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
+				return {
+					next: async () => {
+						throw new Error("iteration should not be needed");
+					},
+				};
+			},
+		};
+
+		// When
+		await expect(discardBody(body, 1024)).resolves.toBeUndefined();
+
+		// Then
+		expect(destroy).toHaveBeenCalledTimes(2);
+		expect(destroy).toHaveBeenLastCalledWith();
+	});
+
 	it("uses dump and then destroys when the redirect body supports dump", async () => {
 		// Given
 		const dump = vi.fn<(options?: DumpOptions) => Promise<void>>().mockResolvedValue();

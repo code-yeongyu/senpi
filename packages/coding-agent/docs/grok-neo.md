@@ -64,7 +64,7 @@ Senpi is a rebranded distribution, so its first-time setup is intentionally unav
 
 `--grok-neo` runs **in-process**: the chrome is a presentation strategy inside the ordinary interactive mode, in the same senpi process. There is no separate binary and no daemon — unlike the retired `--neo`, which launched a Go TUI binary talking to senpi over a JSONL RPC daemon.
 
-For the Bun-compiled binary (`npm run build:binary`) this means one process and one deployable directory. `bun build --compile` produces a single `dist/pi` executable, and its runtime assets ship alongside it in `dist/`: theme JSON files, image assets, the photon WASM module, and the pty native addon. Native `.node` addons are **not** embedded by `bun build --compile`; the pty addon is resolved as a sidecar relative to the executable (`dist/native/prebuilds/<platform-arch>/`). So the honest claim is "one process, one deployable directory" — not one file.
+For the Bun-compiled binary (`bun run build:binary`) this means one process and one deployable directory. `bun build --compile` produces a single `dist/pi` executable, and its runtime assets ship alongside it in `dist/`: theme JSON files, image assets, the photon WASM module, and the pty native addon. Native `.node` addons are **not** embedded by `bun build --compile`; the pty addon is resolved as a sidecar relative to the executable (`dist/native/prebuilds/<platform-arch>/`). So the honest claim is "one process, one deployable directory" — not one file.
 
 ## Experimental Status
 

@@ -7,7 +7,6 @@ import type {
 	GetPromptResult,
 	ListPromptsResult,
 	ListResourcesResult,
-	ListToolsResult,
 	ReadResourceResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -15,10 +14,10 @@ import {
 	GetPromptRequestSchema,
 	ListPromptsRequestSchema,
 	ListResourcesRequestSchema,
-	ListToolsRequestSchema,
 	PingRequestSchema,
 	ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { registerListTools } from "./list-tools-gate.ts";
 import type { FixtureOptions } from "./options.ts";
 
 const fixturesDir = dirname(fileURLToPath(import.meta.url));
@@ -56,7 +55,7 @@ export function createFixtureServer(options: FixtureOptions): Server {
 		incrementCounterFile(options.pingCounterFile);
 		return {};
 	});
-	server.setRequestHandler(ListToolsRequestSchema, (): ListToolsResult => ({ tools }));
+	registerListTools(server, options.listToolsGate, tools, options.nullNextCursor);
 	server.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
 		calls++;
 		incrementCounterFile(options.callCounterFile);

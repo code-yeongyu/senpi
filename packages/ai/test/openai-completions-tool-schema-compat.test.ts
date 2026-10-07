@@ -9,6 +9,8 @@ import {
 	normalizeToolParametersForOpenAICompat,
 } from "../src/utils/tool-schema-compat.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 describe("tool-schema-compat", () => {
 	describe("normalizeToolParametersForOpenAICompat", () => {
 		it("removes a sibling type keyword from anyOf nodes", () => {
@@ -243,7 +245,7 @@ describe("tool-schema-compat", () => {
 					messages: [{ role: "user", content: "hello", timestamp: 1 }],
 				};
 
-				const result = await streamOpenAICompletions(model, context, {
+				const result = await streamOpenAICompletions(model, normalizeContext(context), {
 					apiKey: "test-key",
 					onPayload: (payload) => {
 						if (typeof payload !== "object" || payload === null) {
@@ -475,7 +477,9 @@ describe("tool-schema-compat", () => {
 					],
 				};
 
-				const result = await streamOpenAICompletions(model, context, { apiKey: "test-key" }).result();
+				const result = await streamOpenAICompletions(model, normalizeContext(context), {
+					apiKey: "test-key",
+				}).result();
 
 				expect(result.stopReason).toBe("stop");
 				const tools = requestBodies[0]?.tools as Array<{

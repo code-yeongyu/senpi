@@ -1,6 +1,89 @@
 # changes — evals
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extensions eval layout rename
+
+### What changed
+
+- `packages/evals/src/extensions.eval.ts` -> `packages/evals/evals/extensions.eval.ts`. Upstream layout commit `d7296c063b` deleted the old `src/` suite while introducing `evals/extensions.docs.eval.ts`; the fork comparative host eval was ported to the new `evals/` directory.
+
+### Why
+
+The adopted eval layout keeps runner code under `src/` and executable suites under `evals/`. Retaining the old path would duplicate the extension evaluation outside the configured projects.
+
+### Why an extension could not handle it
+
+Eval discovery and project layout are repository test infrastructure.
+
+### Expected merge conflict zones
+
+- MEDIUM: upstream edits to extension eval discovery or `extensions.docs.eval.ts`; keep the fork host eval beside it under `evals/`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): evals
+
+### What changed
+
+- `packages/evals/docker/Dockerfile`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/docker/entrypoint.ts`: Docker runner files target the fork package: `node_modules/@code-yeongyu/senpi` (Dockerfile docs removal, `install-runtime.mjs`, `entrypoint.ts`), no `npm-shrinkwrap.json` requirement (senpi keeps shrinkwrap deleted), internal-dependency doc stripping checked across `@earendil-works` and `@code-yeongyu`; `src/docker.ts` reads the host auth from `SENPI_`/`PI_CODING_AGENT_DIR` or `~/.senpi/agent`.
+- `packages/evals/docker/install-runtime.mjs`: Docker runner files target the fork package: `node_modules/@code-yeongyu/senpi` (Dockerfile docs removal, `install-runtime.mjs`, `entrypoint.ts`), no `npm-shrinkwrap.json` requirement (senpi keeps shrinkwrap deleted), internal-dependency doc stripping checked across `@earendil-works` and `@code-yeongyu`; `src/docker.ts` reads the host auth from `SENPI_`/`PI_CODING_AGENT_DIR` or `~/.senpi/agent`.
+- `packages/evals/evals/configured-runtime.ts`: Upstream evals adopted as-is apart from the package import: `custom-provider`, `documentation-audit`, `extensions`, `models`, `openai-provider`, `tui` (`*.docs.eval.ts`) and `smoke.eval.ts`, plus fixtures `acme-server.ts`, `configured-runtime.ts` and the upstream unit tests (`acme-server`, `comparison`, `configured-runtime`, `harness`, `plan`, `report`).
+- `packages/evals/evals/documentation-audit.eval.ts`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/evals/tui.docs.eval.ts`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/package.json`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/src/docker.ts`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/src/harness.ts`: resolved by L10 against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/evals/vitest.evals.config.ts`: Upstream layout: eval suites flat under `evals/` (`*.docs.eval.ts` = documentation-lift, other `*.eval.ts` = host), runner code in `src/{cli,docker,harness,plan,report}.ts`, image build in `docker/`, one Vitest config `vitest.evals.config.ts` with projects `docs` and `host`. The fork's `vitest-evals` host harness is ported onto the upstream layout: `src/vitest-evals/{artifacts,harness-table,reporter,setup,summary}.ts` + their unit tests `test/vitest-evals/*.test.ts`, registered in `vitest.evals.config.ts` (`reporters` at root; `setupFiles` on the `host` project only, so container docs arms keep upstream's CLI reporters and are untouched). `artifacts.ts` keeps the `declare module "vitest"` `TestArtifactRegistry` augmentation and now shares upstream's `PI_SESSION_SNAPSHOT_ARTIFACT` constant from `src/report.ts` (one constant, one layout). Package imports use the fork package `@code-yeongyu/senpi` everywhere (harness, evals, fixtures, harness test); both `vitest.evals.config.ts` and `vitest.test.config.ts` alias `@code-yeongyu/senpi` and `@earendil-works/pi-coding-agent` to workspace source. `src/pi-harness.ts` (superseded by `src/harness.ts`; fork deltas ported as above), `test/pi-harness.test.ts` (its `resolveModelSelection` and `excludePiDocumentation` assertions are covered by upstream `test/harness.test.ts` for the sectioned prompt), `vitest.config.ts` (superseded by `vitest.evals.config.ts`).
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; packages/evals adopts the upstream eval layout and ports the fork vitest-evals harness (plan D-13).
+
+### Why an extension could not handle it
+
+The eval harness is repository test infrastructure, not a runtime extension point.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-21 - Migrate the eval harness to Vitest 5 (senpi#1895)
+
+### What changed
+
+- `packages/evals/package.json` uses Vitest and V8 coverage 5.0.1, matching the other workspaces.
+- The root manifest overrides vitest-evals 0.17.0's Vitest peer edge to 5.0.1.
+
+### Why
+
+- Bun's hoisted linker resolves Vitest from the harness's root location. Splitting evals onto Vitest 4 while the harness reads Vitest 5 causes incompatible TaskMeta types.
+- The explicit npm override accepts the harness's older declared peer range only with runtime and TypeScript compatibility verification. The Bun install layout stays hoisted.
+
+### Why an extension could not handle it
+
+- The package manager resolves development tools before extensions load.
+
+### Expected merge conflict zones
+
+- The development dependency pins in `packages/evals/package.json`.
+
 Tracker for `packages/evals` divergence from upstream `badlogic/pi-mono`.
+
+## Refresh the evals dependency pins (2026-09-21)
+
+### What changed
+
+- `packages/evals/package.json`: `vitest-evals` 0.16.1 -> 0.17.0 and `@types/node` 26.2.0 -> 26.6.2.
+
+### Why
+
+- The eval harness pins are fork-owned and move to the newest release in the same minor that satisfies `min-release-age=2`.
+
+### Why an extension could not handle it
+
+- Manifest dependency versions are resolved by the package manager before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the dependency version block, on every upstream release bump.
 
 ## Evals manifest re-diverges from upstream dcd4619 (2026-08-25)
 
@@ -121,3 +204,27 @@ Canonical backfill seeded from the pre-backfill audit report under
 - The `createAgentSessionServices` call and the `getSystemPrompt` override block whenever
   upstream reshapes resource-loader options or the pin-era `systemPromptOverride` seam.
 - Dependency name/version lines shared with `packages/evals/package.json`.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/evals/package.json`: stays `@code-yeongyu/senpi-evals 2026.7.25` depending on `@code-yeongyu/senpi ^2026.9.12` and `@earendil-works/pi-ai ^2026.9.12`, with `@types/node 26.2.0`, `typescript 7.0.2`, `vitest-evals 0.16.1`, `vitest 4.1.11`.
+- `packages/evals/src/docs.eval.ts`: `defineTool` imported from `@code-yeongyu/senpi`.
+- `packages/evals/src/models.eval.ts`: `ModelRuntime` imported from `@code-yeongyu/senpi`; the local summary type's `input` is `Model<Api>["input"]` because the fork union includes `video`.
+- `packages/evals/src/providers.eval.ts`: `AgentSession`/`ModelRuntime` imported from `@code-yeongyu/senpi`; same `Model<Api>["input"]` widening.
+- `packages/evals/src/pi-harness.ts`: upstream harness (`SettingsManager.inMemory({ shellCommandPrefix })`, `extensionFactories`) importing from `@code-yeongyu/senpi`, with the `SENPI_*` variables unset ahead of the `PI_*` list in `shellCommandPrefix`.
+- `packages/evals/vitest.test.config.ts`: a `@code-yeongyu/senpi` source alias beside the `@earendil-works/pi-coding-agent` one so unit tests resolve the workspace source.
+
+### Why
+
+- The evals package targets the senpi package name and the fork's `envValue` precedence (SENPI_ before PI_); upstream's new eval files had to be retargeted or they would not resolve.
+
+### Why an extension could not handle it
+
+- Import specifiers, manifest ranges and vitest aliases are resolved before any eval code runs.
+
+### Expected merge conflict zones
+
+- MEDIUM: the import line of every `packages/evals/src/*.eval.ts` upstream adds; `shellCommandPrefix` in `pi-harness.ts`.
+- LOW: `packages/evals/package.json` dependency lines; `vitest.test.config.ts` alias list.

@@ -18,9 +18,9 @@ const emptySchema = Type.Object({});
 const oauthTokens = await Promise.all([
 	resolveApiKey("anthropic"),
 	resolveApiKey("github-copilot"),
-	resolveApiKey("openai-codex"),
+	resolveApiKey("chatgpt-subscription"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, chatgptSubscriptionToken] = oauthTokens;
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
 const qwenTokenPlanCnApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_CN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -550,7 +550,7 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 	});
 
 	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI Provider Unicode Handling", () => {
-		const llm = getModel("together", "moonshotai/Kimi-K2.6");
+		const llm = getModel("together", "moonshotai/Kimi-K3");
 		const options = { reasoningEffort: "high" } satisfies StreamOptionsWithExtras;
 
 		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
@@ -836,30 +836,30 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 	});
 
 	describe("OpenAI Codex Provider Unicode Handling", () => {
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle emoji in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
-				await testEmojiInToolResults(llm, { apiKey: openaiCodexToken });
+				const llm = getModel("chatgpt-subscription", "gpt-5.5");
+				await testEmojiInToolResults(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle real-world LinkedIn comment data with emoji",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
-				await testRealWorldLinkedInData(llm, { apiKey: openaiCodexToken });
+				const llm = getModel("chatgpt-subscription", "gpt-5.5");
+				await testRealWorldLinkedInData(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should handle unpaired high surrogate (0xD83D) in tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
-				await testUnpairedHighSurrogate(llm, { apiKey: openaiCodexToken });
+				const llm = getModel("chatgpt-subscription", "gpt-5.5");
+				await testUnpairedHighSurrogate(llm, { apiKey: chatgptSubscriptionToken });
 			},
 		);
 	});

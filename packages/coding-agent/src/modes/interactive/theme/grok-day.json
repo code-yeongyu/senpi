@@ -23,7 +23,8 @@
 		"thinkingText": "#6c6c6c",
 
 		"selectedBg": "#d0d0e0",
-		"scrollbarThumb": "#d0d0e0",
+		"scrollbarTrack": "borderCard",
+		"scrollbarThumb": "#1f2328",
 		"searchMatchBg": "#d0d0e0",
 		"searchMatchText": "#1f2328",
 		"userMessageBg": "#e8e8e8",

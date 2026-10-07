@@ -1,5 +1,11 @@
-import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth } from "../utils.ts";
+import {
+	type Component,
+	CompositeRevision,
+	dispatchMouseEvent,
+	type TuiMouseDispatchResult,
+	type TuiMouseEvent,
+} from "../tui.ts";
+import { applyBackgroundToLine, flattenLines, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
 	childLines: string[];
@@ -20,6 +26,8 @@ export class Box implements Component {
 
 	// Cache for rendered output
 	private cache?: RenderCache;
+	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
+	private readonly composite = new CompositeRevision();
 
 	constructor(paddingX = 1, paddingY = 1, bgFn?: (text: string) => string) {
 		this.paddingX = paddingX;
@@ -65,11 +73,13 @@ export class Box implements Component {
 
 	setBgFn(bgFn?: (text: string) => string): void {
 		this.bgFn = bgFn;
+		this.composite.bump();
 		// Don't invalidate here - we'll detect bgFn changes by sampling output
 	}
 
 	private invalidateCache(): void {
 		this.cache = undefined;
+		this.composite.bump();
 	}
 
 	private matchCache(width: number, childLines: string[], bgSample: string | undefined): boolean {
@@ -85,9 +95,49 @@ export class Box implements Component {
 
 	invalidate(): void {
 		this.invalidateCache();
+		this.composite.bump();
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
+	}
+
+	/** Padding plus background over the children: exact `Box` instances change only with them (see `Container`). */
+	getRenderRevision(): number | undefined {
+		return Object.getPrototypeOf(this) === Box.prototype ? this.childRenderRevision() : undefined;
+	}
+
+	protected childRenderRevision(): number | undefined {
+		return this.composite.read(this.children);
+	}
+
+	protected bumpRenderRevision(): void {
+		this.composite.bump();
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+		const contentWidth = Math.max(1, event.width - this.paddingX * 2);
+		const contentY = event.y - this.paddingY;
+		const contentX = event.x - this.paddingX;
+		if (contentY < 0 || contentX < 0 || contentX >= contentWidth) return undefined;
+
+		const mouseChildren =
+			this.mouseLayout?.width === contentWidth
+				? this.mouseLayout.children
+				: this.children.map((component) => ({ component, height: component.render(contentWidth).length }));
+		let childY = 0;
+		for (const { component: child, height: childHeight } of mouseChildren) {
+			if (contentY >= childY && contentY < childY + childHeight) {
+				return dispatchMouseEvent(child, {
+					...event,
+					x: contentX,
+					y: contentY - childY,
+					width: contentWidth,
+					height: childHeight,
+				});
+			}
+			childY += childHeight;
+		}
+		return undefined;
 	}
 
 	render(width: number): string[] {
@@ -98,14 +148,19 @@ export class Box implements Component {
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 		const leftPad = " ".repeat(this.paddingX);
 
-		// Render all children
+		// Render all children. Keep the child lines unpadded: children usually return the same string
+		// objects every frame, so the cache check below is a cheap identity comparison per line.
+		// Padding here would create new strings that must be compared character by character.
 		const childLines: string[] = [];
+		const mouseChildren: Array<{ component: Component; height: number }> = [];
 		for (const child of this.children) {
 			const lines = child.render(contentWidth);
+			mouseChildren.push({ component: child, height: lines.length });
 			for (const line of lines) {
-				childLines.push(leftPad + line);
+				childLines.push(line);
 			}
 		}
+		this.mouseLayout = { width: contentWidth, children: mouseChildren };
 
 		if (childLines.length === 0) {
 			return [];
@@ -129,7 +184,7 @@ export class Box implements Component {
 
 		// Content
 		for (const line of childLines) {
-			result.push(this.applyBg(line, width));
+			result.push(this.applyBg(leftPad + line, width));
 		}
 
 		// Bottom padding
@@ -138,6 +193,7 @@ export class Box implements Component {
 		}
 
 		// Update cache
+		flattenLines(result);
 		this.cache = { childLines, width, bgSample, lines: result };
 
 		return result;

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { GoalAlreadyExistsError, GoalNotFoundError } from "./errors.ts";
-import { encodedThreadId, goalFilePath, readGoalFile, writeGoalFile } from "./persistence.ts";
+import { withGoalFileLock } from "./goal-file-lock.ts";
+import { encodedThreadId, goalFilePath, migrateLegacyGoalFile, readGoalFile } from "./persistence.ts";
 import { transitionGoalStatus } from "./transitions.ts";
 import type {
 	Goal,
@@ -15,23 +16,6 @@ import type {
 import { resolveTokenBudget, validateObjective, validateTokenBudget } from "./validation.ts";
 
 export { goalFilePath };
-
-const goalMutationTails = new Map<string, Promise<void>>();
-
-function enqueueGoalMutation<T>(ref: GoalStoreRef, mutation: () => Promise<T>): Promise<T> {
-	const key = goalFilePath(ref);
-	const previous = goalMutationTails.get(key) ?? Promise.resolve();
-	const run = previous.then(mutation);
-	const tail = run.then(
-		() => undefined,
-		() => undefined,
-	);
-	goalMutationTails.set(key, tail);
-	void tail.then(() => {
-		if (goalMutationTails.get(key) === tail) goalMutationTails.delete(key);
-	});
-	return run;
-}
 
 export function goalHistoryFilePath(ref: GoalStoreRef): string {
 	return join(ref.baseDir, `${encodedThreadId(ref)}.history.jsonl`);
@@ -49,19 +33,30 @@ export async function readGoal(ref: GoalStoreRef): Promise<Goal | null> {
 	return readGoalFile(ref);
 }
 
+/** Imports a legacy pi-goal store under the goal lock, so a concurrent mutation cannot overwrite the import. */
+export async function migrateLegacyGoal(ref: GoalStoreRef): Promise<Goal | null> {
+	return withGoalFileLock(ref, () => migrateLegacyGoalFile(ref));
+}
+
 export async function writeGoal(ref: GoalStoreRef, goal: Goal | null): Promise<void> {
-	await enqueueGoalMutation(ref, () => writeGoalFile(ref, goal));
+	await withGoalFileLock(ref, (held) => held.write(goal));
 }
 
 export async function createGoal(ref: GoalStoreRef, objective: string, tokenBudget?: number): Promise<Goal> {
-	return enqueueGoalMutation(ref, async () => {
+	return withGoalFileLock(ref, async (held) => {
 		const validatedObjective = validateObjective(objective, objectiveFullTextFileName(ref));
 		const current = await readGoalFile(ref);
 		if (current !== null && current.status !== "complete") {
 			throw new GoalAlreadyExistsError("cannot create a new goal because this thread already has a goal");
 		}
-		if (validatedObjective.truncated) await writeFullObjectiveText(ref, objective);
-		if (current?.status === "complete") await archiveGoal(ref, current);
+		if (validatedObjective.truncated) {
+			held.assertHeld();
+			await writeFullObjectiveText(ref, objective);
+		}
+		if (current?.status === "complete") {
+			held.assertHeld();
+			await archiveGoal(ref, current);
+		}
 		const now = nowSeconds();
 		const goal: Goal = {
 			id: randomUUID(),
@@ -71,12 +66,13 @@ export async function createGoal(ref: GoalStoreRef, objective: string, tokenBudg
 			tokensUsed: 0,
 			timeUsedSeconds: 0,
 			consecutiveContinuations: 0,
+			unattendedContinuations: 0,
 			createdAt: now,
 			updatedAt: now,
 			lastStartedAt: now,
 			...(tokenBudget === undefined ? {} : { tokenBudget: validateTokenBudget(tokenBudget) }),
 		};
-		await writeGoalFile(ref, goal);
+		await held.write(goal);
 		return goal;
 	});
 }
@@ -86,7 +82,7 @@ export async function updateGoal(
 	update: GoalUpdate,
 	source: GoalUpdateSource = "model",
 ): Promise<Goal> {
-	return enqueueGoalMutation(ref, async () => {
+	return withGoalFileLock(ref, async (held) => {
 		const current = await readGoalFile(ref);
 		if (!current) throw new GoalNotFoundError("cannot update goal: no goal exists");
 
@@ -112,14 +108,18 @@ export async function updateGoal(
 				tokensUsed: 0,
 				timeUsedSeconds: 0,
 				consecutiveContinuations: 0,
+				unattendedContinuations: 0,
 				createdAt: now,
 				updatedAt: now,
 				...(tokenBudget === undefined ? {} : { tokenBudget }),
 			};
 			if (status === "active") next.lastStartedAt = now;
 			if (status === "complete") next.completedAt = now;
-			if (validatedObjective?.truncated) await writeFullObjectiveText(ref, update.objective ?? "");
-			await writeGoalFile(ref, next);
+			if (validatedObjective?.truncated) {
+				held.assertHeld();
+				await writeFullObjectiveText(ref, update.objective ?? "");
+			}
+			await held.write(next);
 			return next;
 		}
 
@@ -132,12 +132,16 @@ export async function updateGoal(
 		);
 		if (next.status !== current.status) {
 			next.consecutiveContinuations = 0;
+			next.unattendedContinuations = 0;
 			delete next.lastContinuationSignature;
 		}
 		if (tokenBudget === undefined) delete next.tokenBudget;
 		else next.tokenBudget = tokenBudget;
-		if (validatedObjective?.truncated) await writeFullObjectiveText(ref, update.objective ?? "");
-		await writeGoalFile(ref, next);
+		if (validatedObjective?.truncated) {
+			held.assertHeld();
+			await writeFullObjectiveText(ref, update.objective ?? "");
+		}
+		await held.write(next);
 		return next;
 	});
 }
@@ -155,9 +159,9 @@ async function writeFullObjectiveText(ref: GoalStoreRef, objective: string): Pro
 }
 
 export async function clearGoal(ref: GoalStoreRef): Promise<boolean> {
-	return enqueueGoalMutation(ref, async () => {
+	return withGoalFileLock(ref, async (held) => {
 		const hadGoal = (await readGoalFile(ref)) !== null;
-		await writeGoalFile(ref, null);
+		await held.write(null);
 		return hadGoal;
 	});
 }
@@ -169,7 +173,7 @@ export async function accountGoalUsage(
 	mode: GoalAccountingMode = "active",
 	expectedGoalId?: string,
 ): Promise<Goal | null> {
-	return enqueueGoalMutation(ref, async () => {
+	return withGoalFileLock(ref, async (held) => {
 		const goal = await readGoalFile(ref);
 		if (!goal || (expectedGoalId !== undefined && goal.id !== expectedGoalId) || !canAccountGoalUsage(goal, mode)) {
 			return goal;
@@ -180,7 +184,7 @@ export async function accountGoalUsage(
 			timeUsedSeconds: goal.timeUsedSeconds + Math.max(0, Math.trunc(elapsedSeconds)),
 			updatedAt: nextUpdatedAt(goal.updatedAt),
 		};
-		await writeGoalFile(ref, next);
+		await held.write(next);
 		return next;
 	});
 }
@@ -189,27 +193,33 @@ export async function recordContinuationDelivered(
 	ref: GoalStoreRef,
 	signature: string,
 	expectedGoalId?: string,
+	options: { countUnattended?: boolean } = {},
 ): Promise<Goal | null> {
-	return enqueueGoalMutation(ref, async () => {
+	return withGoalFileLock(ref, async (held) => {
 		const goal = await readGoalFile(ref);
 		if (!goal || (expectedGoalId !== undefined && goal.id !== expectedGoalId)) return null;
 		const next: Goal = {
 			...goal,
 			consecutiveContinuations: (goal.consecutiveContinuations ?? 0) + 1,
+			unattendedContinuations: (goal.unattendedContinuations ?? 0) + (options.countUnattended === false ? 0 : 1),
 			lastContinuationSignature: signature,
 		};
-		await writeGoalFile(ref, next);
+		await held.write(next);
 		return next;
 	});
 }
 
-export async function resetContinuationStreak(ref: GoalStoreRef): Promise<Goal | null> {
-	return enqueueGoalMutation(ref, async () => {
+export async function resetContinuationStreak(
+	ref: GoalStoreRef,
+	options: { unattended?: boolean } = {},
+): Promise<Goal | null> {
+	return withGoalFileLock(ref, async (held) => {
 		const goal = await readGoalFile(ref);
 		if (!goal) return goal;
 		const next: Goal = { ...goal, consecutiveContinuations: 0 };
+		if (options.unattended === true) next.unattendedContinuations = 0;
 		delete next.lastContinuationSignature;
-		await writeGoalFile(ref, next);
+		await held.write(next);
 		return next;
 	});
 }

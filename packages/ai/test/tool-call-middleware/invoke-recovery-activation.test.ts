@@ -75,8 +75,9 @@ describe("invoke recovery activation", () => {
 			expect(shouldRecoverTextToolCalls(createModel(id))).toBe(false);
 		}
 
+		const { compat: _openAiCompat, ...claudeModel } = createModel("claude");
 		const differentApi: Model<"anthropic-messages"> = {
-			...createModel("claude"),
+			...claudeModel,
 			api: "anthropic-messages",
 			provider: "another-provider",
 		};

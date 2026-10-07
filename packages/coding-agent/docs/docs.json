@@ -61,6 +61,14 @@
 					"path": "terminal-tools.md"
 				},
 				{
+					"title": "Scheduled Prompts",
+					"path": "schedule.md"
+				},
+				{
+					"title": "Web Search",
+					"path": "web-search.md"
+				},
+				{
 					"title": "Skills",
 					"path": "skills.md"
 				},
@@ -87,12 +95,20 @@
 				{
 					"title": "Custom Providers",
 					"path": "custom-provider.md"
+				},
+				{
+					"title": "Virtual Models",
+					"path": "virtual-models.md"
 				}
 			]
 		},
 		{
 			"title": "Reference",
 			"items": [
+				{
+					"title": "Environment Variables",
+					"path": "environment-variables.md"
+				},
 				{
 					"title": "Session Format",
 					"path": "session-format.md"
