@@ -7,12 +7,12 @@ import {
 	resetToolSearchServiceForTests,
 	ToolSearchService,
 } from "../tool-search/service.ts";
+import { mcpCredentialIdentity } from "./auth/catalog-identity.ts";
 import { resolveAuthMode } from "./auth/context.ts";
 import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
 import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
-import { collectAllPages } from "./expose/pagination.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-guard.ts";
@@ -49,7 +49,6 @@ import {
 	McpDeferredAttach,
 	type McpStartupRaceResult,
 	raceMcpStartupConnect,
-	resolveMcpStartupTimeoutMs,
 	shouldRaceMcpStartup,
 } from "./startup-race.ts";
 import { safeTimer } from "./wrap.ts";
@@ -447,7 +446,8 @@ export class McpService {
 
 	getConnection(name: string): ServerConnection | undefined {
 		const key = this.#connectionKeysByName.get(name);
-		return key === undefined ? undefined : this.#connections.get(key)?.connection;
+		const entry = key === undefined ? undefined : this.#connections.get(key);
+		return entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 	}
 
 	async reconnectServer(name: string): Promise<void> {
@@ -514,13 +514,20 @@ export class McpService {
 		const hadConnectionsBeforeSync = this.#connections.size > 0;
 		this.#refreshActiveSetWhenNoTools = Object.keys(config.servers).length > 0 || hadConnectionsBeforeSync;
 		const wanted = new Map<string, ResolvedMcpServer>();
+		const credentialIdentities = new Map<string, string | undefined>();
 		visitSpawnableMcpServers(config, (name, server) => {
 			wanted.set(name, server);
+			if (server.config !== undefined) {
+				credentialIdentities.set(name, mcpCredentialIdentity(server.config, name, options.agentDir, options.env));
+			}
 		});
 		const disposals: Promise<void>[] = [];
 		for (const entry of this.#connections.values()) {
 			const server = wanted.get(entry.name);
-			const key = server?.configHash === undefined ? undefined : `${entry.name}\0${server.configHash}`;
+			const key =
+				server?.configHash === undefined
+					? undefined
+					: `${entry.name}\0${server.configHash}\0${credentialIdentities.get(entry.name) ?? "unknown"}`;
 			if (key === entry.key) continue;
 			this.#connections.delete(entry.key);
 			this.#connectionKeysByName.delete(entry.name);
@@ -531,7 +538,9 @@ export class McpService {
 		const connects: Promise<void>[] = [];
 		for (const [name, server] of wanted) {
 			if (server.config === undefined || server.configHash === undefined) continue;
-			const key = `${name}\0${server.configHash}`;
+			const serverConfig = server.config;
+			const credentialIdentity = credentialIdentities.get(name);
+			const key = `${name}\0${server.configHash}\0${credentialIdentity ?? "unknown"}`;
 			if (this.#connections.has(key)) continue;
 			const entry = createMcpSessionConnection({
 				registry: this.#registry,
@@ -541,13 +550,28 @@ export class McpService {
 				name,
 				configHash: server.configHash,
 				config: server.config,
+				credentialIdentity,
+				credentialsCurrent: () =>
+					mcpCredentialIdentity(serverConfig, name, options.agentDir, options.env) === credentialIdentity,
+				onCredentialsChanged: async () => {
+					if (this.#disposed || this.#config !== config || this.#entryForName(name) !== entry) return;
+					await this.#syncFromConfig(config, options, true, binding);
+					for (const live of this.#liveBindings()) await this.#registerDirectTools(live);
+				},
 				session: options,
 				cwd: this.#sessionContext?.cwd ?? process.cwd(),
 				ui: () => this.getMcpElicitationUi(),
 				artifacts: this.#outputArtifacts,
-				shouldReconnect: (current) => !this.#disposed && this.#entryForName(name) === current,
+				shouldReconnect: (current) =>
+					!this.#disposed &&
+					this.#entryForName(name) === current &&
+					this.#config?.servers[name]?.state === "enabled" &&
+					this.#config.servers[name]?.configHash === current.configHash,
 			});
-			const cachedCatalog = useCache ? getValidCachedServer(cache, name, server.configHash) : undefined;
+			const cachedCatalog =
+				useCache && credentialIdentity !== undefined
+					? getValidCachedServer(cache, name, server.configHash, Date.now(), credentialIdentity)
+					: undefined;
 			entry.cachedCatalog = cachedCatalog;
 			this.#connections.set(key, entry);
 			this.#connectionKeysByName.set(name, key);
@@ -594,7 +618,7 @@ export class McpService {
 						// A later attach does not supersede this catalog: it registers in every live session. Skip it only
 						// once the service is gone or this connection was replaced (#2524 review).
 						shouldRefreshTools: () => !this.#disposed && this.#entryForName(name) === entry,
-						deadlineMs: resolveMcpStartupTimeoutMs(server.config.startupTimeoutMs),
+						deadlineMs: 0,
 						onDeferred: (settled) => this.#deferredAttach.track(settled),
 					}),
 				);
@@ -647,6 +671,16 @@ export class McpService {
 			{
 				refreshActiveSetWhenEmpty: this.#refreshActiveSetWhenNoTools,
 				onRegistered: (entry, identity) => binding.registeredIdentities.set(entry.key, identity),
+				contextRequired: binding.context.mode !== undefined,
+				sessionManager: binding.context.sessionManager,
+				isCurrent: (entry) =>
+					!this.#disposed &&
+					this.#config === config &&
+					this.#bindings.get(binding.pi) === binding &&
+					this.#entryForName(entry.name) === entry,
+				publishCurrent: async () => {
+					if (this.#bindings.get(binding.pi) === binding) await this.#registerDirectTools(binding);
+				},
 			},
 		);
 		const ctx = binding.context;
@@ -693,46 +727,18 @@ export class McpService {
 
 	async #captureWireStatusServer(name: string, server: ResolvedMcpServer | undefined): Promise<McpWireStatusServer> {
 		const entry = this.#entryForName(name);
-		const connection = entry?.connection;
+		const connection = this.getConnection(name);
 		const connected = connection?.state === "connected";
-		const cached = entry?.cachedCatalog;
-		let tools = cached?.tools ?? [];
-		let resources = cached?.resources ?? [];
-		let resourceTemplates: ListedResourceTemplate[] = [];
+		const cached = entry?.credentialsCurrent?.() === false ? undefined : entry?.cachedCatalog;
+		const tools = cached?.tools ?? [];
+		const resources = cached?.resources ?? [];
+		const resourceTemplates = cached?.resourceTemplates ?? [];
 		let serverInfo: McpWireServerInfo | null = null;
 
 		if (connected && connection !== undefined) {
 			const client = connection.client;
 			const version = client.getServerVersion();
 			if (version !== undefined) serverInfo = mapWireServerInfo(version);
-			try {
-				tools = (
-					await collectAllPages<ListedTool>((cursor) => client.listTools(cursor === undefined ? {} : { cursor }))
-				).items;
-			} catch (error: unknown) {
-				if (!(error instanceof Error)) throw error;
-				tools = cached?.tools ?? [];
-			}
-			try {
-				resources = (
-					await collectAllPages<ListedResource>((cursor) =>
-						client.listResources(cursor === undefined ? {} : { cursor }),
-					)
-				).items;
-			} catch (error: unknown) {
-				if (!(error instanceof Error)) throw error;
-				resources = cached?.resources ?? [];
-			}
-			try {
-				resourceTemplates = (
-					await collectAllPages<ListedResourceTemplate>((cursor) =>
-						client.listResourceTemplates(cursor === undefined ? {} : { cursor }),
-					)
-				).items;
-			} catch (error: unknown) {
-				if (!(error instanceof Error)) throw error;
-				resourceTemplates = [];
-			}
 		}
 
 		return {
@@ -744,7 +750,11 @@ export class McpService {
 			authStatus: wireAuthStatus(entry, server),
 			...(connection?.state === undefined && server?.state === undefined
 				? {}
-				: { status: connection?.state ?? server?.state }),
+				: {
+						status: entry?.startupCatalogClaim?.ownsRegistration()
+							? "connecting"
+							: (connection?.state ?? server?.state),
+					}),
 		};
 	}
 
@@ -758,6 +768,9 @@ export class McpService {
 	}
 
 	getMcpInstructions(): string {
+		if ([...this.#connections.values()].some((entry) => entry.credentialsCurrent?.() === false)) {
+			refreshMcpInstructionsForSession(this);
+		}
 		return this.#mcpInstructions;
 	}
 
@@ -812,7 +825,8 @@ export class McpService {
 	}
 
 	getCachedInstructions(name: string): string | undefined {
-		return this.#entryForName(name)?.cachedCatalog?.instructions;
+		const entry = this.#entryForName(name);
+		return entry?.credentialsCurrent?.() === false ? undefined : entry?.cachedCatalog?.instructions;
 	}
 
 	/** Resolved `settings.nativeToolSearch` (auto | true | false | undefined).
