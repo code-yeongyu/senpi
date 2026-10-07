@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Image } from "../src/components/image.ts";
+import { detectTerminalCapabilities } from "../src/terminal-capabilities.ts";
 import {
 	buildKittyPlaceholderRow,
 	cropKittyImageLine,
@@ -46,6 +47,8 @@ const ENV_KEYS = [
 	"WEZTERM_PANE",
 	"ITERM_SESSION_ID",
 	"WT_SESSION",
+	"VSCODE_IPC_HOOK_CLI",
+	"VSCODE_GIT_IPC_HANDLE",
 	"CMUX_WORKSPACE_ID",
 	"WARP_SESSION_ID",
 	"WARP_TERMINAL_SESSION_UUID",
@@ -1142,5 +1145,47 @@ describe("hyperlink", () => {
 		const result = hyperlink("README.md", "file:///home/user/README.md");
 		assert.ok(result.includes("file:///home/user/README.md"));
 		assert.ok(result.includes("README.md"));
+	});
+});
+
+describe("VS Code terminal without TERM_PROGRAM (#2826)", () => {
+	// The VS Code markers a VS Code terminal over WSL actually carried in the report: no TERM_PROGRAM,
+	// no shell integration.
+	const remoteWslVsCode = {
+		TERM: "xterm-256color",
+		VSCODE_IPC_HOOK_CLI: "/run/user/1000/vscode-ipc-1.sock",
+		VSCODE_GIT_IPC_HANDLE: "/run/user/1000/vscode-git-1.sock",
+	};
+
+	it("turns hyperlinks on when VS Code's own environment is present and TERM_PROGRAM is empty", () => {
+		const caps = withEnv(remoteWslVsCode, () => detectCapabilities());
+		assert.strictEqual(caps.hyperlinks, true);
+		assert.strictEqual(detectTerminalCapabilities({ ...remoteWslVsCode }, "linux").hyperlinks, true);
+	});
+
+	it("does not treat the Git extension's handle alone as the VS Code terminal", () => {
+		const gitHandleOnly = { TERM: "xterm-256color", VSCODE_GIT_IPC_HANDLE: "/run/user/1000/vscode-git-1.sock" };
+		assert.strictEqual(withEnv(gitHandleOnly, () => detectCapabilities()).hyperlinks, false);
+	});
+
+	it("keeps hyperlinks off for a plain xterm-256color terminal with no VS Code environment", () => {
+		const caps = withEnv({ TERM: "xterm-256color" }, () => detectCapabilities());
+		assert.strictEqual(caps.hyperlinks, false);
+		assert.strictEqual(detectTerminalCapabilities({ TERM: "xterm-256color" }, "linux").hyperlinks, false);
+	});
+
+	it("lets PI_HYPERLINKS=0 switch them off even in VS Code", () => {
+		const caps = withEnv({ ...remoteWslVsCode, PI_HYPERLINKS: "0" }, () => detectCapabilities());
+		assert.strictEqual(caps.hyperlinks, false);
+	});
+
+	it("still follows the tmux probe inside VS Code instead of forcing links on", () => {
+		const tmuxWithoutHyperlinks = () => "3.4|off|on|1|1|1|xterm-256color|||";
+		const caps = detectTerminalCapabilities(
+			{ ...remoteWslVsCode, TMUX: "/tmp/tmux-1000/default,1234,0" },
+			"linux",
+			tmuxWithoutHyperlinks,
+		);
+		assert.strictEqual(caps.hyperlinks, false);
 	});
 });

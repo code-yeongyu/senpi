@@ -1,3 +1,28 @@
+## 2026-10-07 - The VS Code terminal is recognised when TERM_PROGRAM is missing (senpi#2826)
+
+### What changed
+
+- `packages/tui/src/terminal-capabilities.ts`: new exported `isVsCodeTerminal(env)`. It is true for `TERM_PROGRAM=vscode` or when `VSCODE_IPC_HOOK_CLI` is set, which VS Code sets in every integrated terminal, local or remote. `detectTerminalCapabilities` uses it in place of the `TERM_PROGRAM` check.
+- `packages/tui/src/terminal-image.ts`: `detectCapabilitiesFromEnvironment` uses it as well, so the runtime detector agrees. The tmux and screen checks still run first, and `PI_HYPERLINKS` still overrides.
+- `packages/tui/test/terminal-image.test.ts`, new cases:
+  - a VS Code terminal over WSL with no `TERM_PROGRAM` (the reported environment) gets hyperlinks;
+  - the Git extension's handle alone does not;
+  - a plain `xterm-256color` stays off;
+  - `PI_HYPERLINKS=0` wins;
+  - inside tmux in VS Code the tmux probe still decides.
+
+### Why
+
+In a VS Code terminal connected to WSL, `TERM_PROGRAM` was empty, so detection fell to the default `hyperlinks: false`. senpi printed tool-output paths as plain text, and Ctrl+click opened nothing.
+
+### Why an extension could not handle it
+
+Terminal capabilities are detected inside the TUI package before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/terminal-capabilities.ts` and `packages/tui/src/terminal-image.ts`: the VS Code branch of each detector.
+
 ## 2026-10-07 - Hold the scrollback replay while a reply streams (senpi#2836)
 
 ### What changed

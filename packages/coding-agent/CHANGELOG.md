@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- File paths in tool output are clickable links again in VS Code's integrated terminal when `TERM_PROGRAM` is not set there, for example a VS Code terminal connected to WSL. The terminal is now also recognised by `VSCODE_IPC_HOOK_CLI`, which VS Code sets in every integrated terminal. Inside tmux the tmux check still decides, and `PI_HYPERLINKS=0` still turns links off ([#2826](https://github.com/code-yeongyu/senpi/issues/2826)).
+
 ### Removed
 
 ## [2026.10.10-5] - 2026-10-07

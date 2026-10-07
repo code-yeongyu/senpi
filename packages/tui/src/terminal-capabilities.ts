@@ -19,6 +19,16 @@ export interface DetectedTerminalCapabilities extends TerminalCapabilities {
 	cellDimensions?: { widthPx: number; heightPx: number };
 }
 
+/**
+ * VS Code's integrated terminal normally sets `TERM_PROGRAM=vscode`, but a terminal reached through WSL
+ * (or a shell profile that resets it) can arrive with `TERM_PROGRAM` empty (#2826). `VSCODE_IPC_HOOK_CLI`
+ * (the `code` CLI's handle) is set in every VS Code integrated terminal, local or remote, and nowhere
+ * else, so it identifies the terminal when `TERM_PROGRAM` does not.
+ */
+export function isVsCodeTerminal(env: NodeJS.ProcessEnv = process.env): boolean {
+	return (env.TERM_PROGRAM ?? "").toLowerCase() === "vscode" || Boolean(env.VSCODE_IPC_HOOK_CLI);
+}
+
 export function outerKittyGraphicsMode(clientTermname: string): "placeholder" | null {
 	const term = clientTermname.trim().toLowerCase();
 	return term.includes("kitty") || term.includes("ghostty") || term.includes("warp") ? "placeholder" : null;
@@ -70,7 +80,7 @@ export function detectTerminalCapabilities(
 	if (env.WT_SESSION) {
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
-	if (termProgram === "vscode") {
+	if (isVsCodeTerminal(env)) {
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 	if (env.CMUX_WORKSPACE_ID || terminalEmulator.includes("JetBrains")) {

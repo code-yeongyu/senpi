@@ -5,6 +5,7 @@ import type { TerminalColorMode } from "./colors.ts";
 import {
 	type DetectedTerminalCapabilities,
 	detectTerminalCapabilities,
+	isVsCodeTerminal,
 	type TerminalCapabilities,
 } from "./terminal-capabilities.ts";
 import { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
@@ -113,7 +114,7 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
-	if (termProgram === "alacritty" || termProgram === "vscode" || termProgram === "zed") {
+	if (termProgram === "alacritty" || termProgram === "zed" || isVsCodeTerminal(process.env)) {
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
