@@ -29,6 +29,7 @@ export function sharedMcpKey(options: ServerConnectionOptions, agentDir: string)
 	const { config, env } = options;
 	const bearer = config.bearerTokenEnv;
 	const identity = {
+		credentialIdentity: options.credentialIdentity,
 		agentDir,
 		name: options.serverName,
 		type: config.type,

@@ -42,18 +42,26 @@ describe("mcp token store legacy migration lock", () => {
 		rmSync(agentDir, { force: true, recursive: true });
 	});
 
-	it("lets only one of two concurrent readers claim the same URL-keyed legacy grant", async () => {
+	it.each([
+		["sync", "sync"],
+		["async", "sync"],
+		["async", "async"],
+	])("lets only one of concurrent %s/%s readers claim the URL-keyed legacy grant", async (firstMode, secondMode) => {
 		agentDir = mkdtempSync(join(tmpdir(), "mcp-migrate-lock-"));
 		writeLegacy(agentDir);
 
-		const run = async (serverName: string): Promise<{ serverName: string; refresh: string | null }> => {
-			const { stdout } = await execFileAsync(process.execPath, [workerPath, agentDir, serverName, SERVER_URL], {
-				timeout: 20_000,
-			});
+		const run = async (serverName: string, mode: string): Promise<{ serverName: string; refresh: string | null }> => {
+			const { stdout } = await execFileAsync(
+				process.execPath,
+				[workerPath, agentDir, serverName, SERVER_URL, mode],
+				{
+					timeout: 20_000,
+				},
+			);
 			return JSON.parse(stdout.trim()) as { serverName: string; refresh: string | null };
 		};
 
-		const [work, personal] = await Promise.all([run("work"), run("personal")]);
+		const [work, personal] = await Promise.all([run("work", firstMode), run("personal", secondMode)]);
 
 		const adopted = [work, personal].filter((r) => r.refresh === LEGACY_RT);
 		expect(adopted.length).toBe(1);

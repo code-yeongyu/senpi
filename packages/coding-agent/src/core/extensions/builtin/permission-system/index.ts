@@ -1,9 +1,12 @@
 import { SettingsManager } from "../../../settings-manager.ts";
-import type { ExtensionAPI } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolCallEventResult } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { decideAuto } from "./auto-policy.ts";
 import { PERMISSION_PRESET_NAMES, parsePermissionFlag, parsePermissionPresetFlag } from "./cli.ts";
 import { disabled } from "./config.ts";
+import { forgetDispatchApproval, registerDispatchAuthorizer } from "./dispatch.ts";
+import { prepareMcpDispatchApproval } from "./dispatch-metadata.ts";
+import { createDispatchAuthorizer } from "./dispatch-policy.ts";
 import { createEventEmitter } from "./events.ts";
 import { INTERNAL_PERMISSION_TOOLS } from "./internal-tools.ts";
 import { handleNoUI } from "./non-interactive.ts";
@@ -73,6 +76,8 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let setupError: string | null = null;
 	// The `permission-preset` flag value the rules were last loaded from; absent until session_start.
 	let loadedPresetFlag: { readonly value: boolean | string | undefined } | undefined;
+	let loadedPermissionFlag: boolean | string | undefined;
+	const retireAuthorizers = new WeakMap<object, () => void>();
 
 	const nextRequestID = createRequestIDFactory();
 
@@ -95,6 +100,8 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			setupError = getReason(error);
 			throw error;
 		}
+		retireAuthorizers.get(ctx.sessionManager)?.();
+		retireAuthorizers.set(ctx.sessionManager, registerDispatchAuthorizer(ctx.sessionManager, dispatchAuthorizer));
 		applyToolDenials();
 	});
 
@@ -102,6 +109,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const loadPermissionRules = (cwd: string, sessionApproved: Ruleset = []): void => {
 		const settingsManager = SettingsManager.create(cwd);
 		const permissionFlag = pi.getFlag("permission");
+		loadedPermissionFlag = permissionFlag;
 		const permissionPresetFlag = pi.getFlag("permission-preset");
 		loadedPresetFlag = { value: permissionPresetFlag };
 		cliRuleset = typeof permissionFlag === "string" ? parsePermissionFlag(permissionFlag) : [];
@@ -137,7 +145,13 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	// A host moves a live session to another preset (an attach naming one) by changing the flag;
 	// the rules follow from the next tool call on, and a failed reload refuses calls like session_start.
 	const followPresetFlag = (cwd: string): void => {
-		if (loadedPresetFlag === undefined || loadedPresetFlag.value === pi.getFlag("permission-preset")) return;
+		if (
+			loadedPresetFlag === undefined ||
+			(loadedPresetFlag.value === pi.getFlag("permission-preset") &&
+				loadedPermissionFlag === pi.getFlag("permission"))
+		) {
+			return;
+		}
 		const sessionApproved = service ? service.getApproved().slice(initialApprovedCount) : [];
 		setupError = null;
 		try {
@@ -149,7 +163,20 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		applyToolDenials(true);
 	};
 
-	pi.on("tool_call", async (event, ctx) => {
+	const dispatchAuthorizer = createDispatchAuthorizer(
+		pi,
+		(ctx) => {
+			followPresetFlag(ctx.cwd);
+			return { service, parsers: parserRegistry, preset: activePreset, setupError };
+		},
+		(event, ctx, signal) => authorizeToolCall(event, ctx, signal),
+	);
+
+	const authorizeToolCall = async (
+		event: ToolCallEvent,
+		ctx: ExtensionContext,
+		signal?: AbortSignal,
+	): Promise<ToolCallEventResult | undefined> => {
 		followPresetFlag(ctx.cwd);
 		if (setupError !== null) {
 			return { block: true, reason: `Permission setup failed: ${setupError}` };
@@ -175,6 +202,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 		const sessionID = ctx.sessionManager.getSessionId();
+		const approve = prepareMcpDispatchApproval(pi, event, ctx, dispatchAuthorizer);
 
 		for (const permissionRequest of permissionRequests) {
 			const request: Request = {
@@ -216,7 +244,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			}
 
 			if (ctx.hasUI) {
-				const reply = await showPermissionPrompt(ctx, request);
+				const reply = await showPermissionPrompt(ctx, request, signal);
 				activeService.reply(reply);
 			} else {
 				activeService.reply(
@@ -237,11 +265,16 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			}
 		}
 
+		approve?.();
 		return undefined;
-	});
+	};
+	pi.on("tool_call", authorizeToolCall);
+	pi.on("tool_result", (event) => forgetDispatchApproval(event.input));
 
 	pi.on("session_shutdown", async (event, ctx) => {
 		void event;
+		retireAuthorizers.get(ctx.sessionManager)?.();
+		retireAuthorizers.delete(ctx.sessionManager);
 
 		if (!service) {
 			return;

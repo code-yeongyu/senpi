@@ -171,23 +171,33 @@ describe("MCP startup race", () => {
 		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
 	});
 
-	it("honors a per-server startupTimeoutMs by waiting for a slow cold lazy server to settle", async () => {
+	it("does not put a configured startupTimeoutMs on cold session admission", async () => {
 		const root = makeStartupRoot("configured-startup-timeout");
-		// A generous per-server startupTimeoutMs widens the race window past the
-		// 500ms server start, so attach waits for the connect to settle (tools
-		// registered on return) instead of backgrounding at the 250ms default.
+		const gate = join(root.cwd, "catalog-ready");
 		setConfig(root, {
 			fx: {
-				...stdioServer(["--tools", "1", "--slow-start", "500"]),
+				...stdioServer(["--tools", "1", "--list-tools-gate", gate]),
 				lifecycle: "lazy",
 				connectTimeoutMs: 5000,
-				startupTimeoutMs: 5000,
+				startupTimeoutMs: 20_000,
 			},
 		});
 		const pi = capturingPi();
 
-		const elapsedMs = await timedAttach(root, pi);
-		expect(elapsedMs).toBeGreaterThanOrEqual(400);
+		const signal = AbortSignal.timeout(5000);
+		const attached = attach(root, pi);
+		try {
+			await new Promise<void>((resolve, reject) => {
+				const abort = () => reject(new Error("Admission waited for configured startup timeout"));
+				signal.addEventListener("abort", abort, { once: true });
+				void attached.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+			});
+			expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual([]);
+		} finally {
+			writeFileSync(gate, "ready");
+			await attached;
+			await getMcpService().whenAttachSettled();
+		}
 		expect(withoutMcpUtilityTools(pi.registeredTools)).toEqual(["mcp_fx_tool_1"]);
 		expect(getMcpService().getServerSnapshots()).toMatchObject([
 			{ name: "fx", lifecycleState: "connected", configState: "enabled" },

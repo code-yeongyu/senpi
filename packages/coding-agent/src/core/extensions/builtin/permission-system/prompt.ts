@@ -1,7 +1,11 @@
 import type { ExtensionContext, ExtensionUIDialogOptions } from "../../types.ts";
 import type { Reply, ReplyInput, Request } from "./types.ts";
 
-export async function showPermissionPrompt(ctx: ExtensionContext, request: Request): Promise<ReplyInput> {
+export async function showPermissionPrompt(
+	ctx: ExtensionContext,
+	request: Request,
+	signal?: AbortSignal,
+): Promise<ReplyInput> {
 	const title = `Permission required: ${request.permission}`;
 	const message = formatRequestForDisplay(request);
 
@@ -17,6 +21,7 @@ export async function showPermissionPrompt(ctx: ExtensionContext, request: Reque
 				...(request.tool.parentCallID === undefined ? {} : { parentToolCallId: request.tool.parentCallID }),
 			}
 		: {};
+	if (signal !== undefined) call.signal = signal;
 	const choice = await ctx.ui.select(displayTitle, options, call);
 
 	if (choice === "Deny with feedback") {

@@ -1,21 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import {
-	chmodSync,
-	closeSync,
-	existsSync,
-	mkdirSync,
-	openSync,
-	readFileSync,
-	renameSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../../../../config.ts";
+import { adoptLegacyRecord, type LegacyMigration, readRecordAsync } from "./legacy-migration.ts";
 
 // OAuth credential record of one server, persisted at
 // <agentDir>/mcp-auth/<sha256(serverName \0 serverUrl)>/tokens.json (dir 0700, file 0600).
@@ -113,89 +103,25 @@ export class McpTokenStore<TRecord extends McpStoredAuth = McpStoredAuth> {
 	read(): TRecord | undefined {
 		const record = readJsonFile<TRecord>(this.tokensPath);
 		if (record !== undefined) return record;
-		return this.#adoptLegacyRecord();
+		return adoptLegacyRecord(this.#migration());
 	}
 
-	// The first server that reads a URL-keyed record takes it over; other servers with the same URL sign in again.
-	// Claiming is serialized on a lock shared by every consumer of the legacy URL (keyed on the
-	// legacy hash, not the per-server destination hash), so two processes cannot both read the
-	// URL-keyed record before either removes it and duplicate a rotating grant across identities.
-	#adoptLegacyRecord(): TRecord | undefined {
-		const release = this.#acquireLegacyLockSync();
-		try {
-			// Recheck under the lock: another process may have already claimed the record.
-			const legacyTokens = join(this.legacyDir, TOKENS_FILE);
-			const legacy = readJsonFile<TRecord>(legacyTokens);
-			if (legacy === undefined) return undefined;
-			// Recheck the destination before writing so a delayed migrator cannot
-			// overwrite a newer same-server record another process already refreshed.
-			const existing = readJsonFile<TRecord>(this.tokensPath);
-			if (existing !== undefined) {
-				rmSync(legacyTokens, { force: true });
-				return existing;
-			}
-			this.#writeAtomic(legacy);
-			this.#writeIndex();
-			rmSync(legacyTokens, { force: true });
-			return legacy;
-		} finally {
-			release();
-		}
+	async readAsync(): Promise<TRecord | undefined> {
+		return readRecordAsync(this.#migration());
 	}
 
-	// The lock is a file created with O_EXCL (atomic create-or-fail), keyed on the
-	// legacy hash so every server of the URL contends on the same path. It is only
-	// ever taken by this migration (never nested under the per-server update lock),
-	// and release removes a plain file, so it cannot linger the way a directory can.
-	#acquireLegacyLockSync(): () => void {
-		if (this.#disableLock) return () => undefined;
-		mkdirSync(this.rootDir, { mode: 0o700, recursive: true });
-		const lockFile = this.#legacyLockFile;
-		const stale = this.#lock.stale;
-		const deadline = Date.now() + stale;
-		for (;;) {
-			let fd: number | undefined;
-			try {
-				fd = openSync(lockFile, "wx", 0o600);
-				const file = fd;
-				return () => {
-					try {
-						closeSync(file);
-					} catch {
-						// already closed
-					}
-					rmSync(lockFile, { force: true });
-				};
-			} catch (cause) {
-				if (fd !== undefined) {
-					try {
-						closeSync(fd);
-					} catch {
-						// ignore
-					}
-				}
-				const code = (cause as NodeJS.ErrnoException).code;
-				if (code !== "EEXIST") throw cause;
-				let age = 0;
-				try {
-					age = Date.now() - statSync(lockFile).mtimeMs;
-				} catch {
-					continue; // lock vanished between attempts; retry
-				}
-				if (age >= stale) {
-					rmSync(lockFile, { force: true });
-					continue;
-				}
-				if (Date.now() >= deadline) {
-					throw new LockAcquireError(lockFile, new Error(`legacy migration lock held for ${age}ms`));
-				}
-				// bounded spin; the claim window is tiny (a read + one write + one delete)
-				const until = Date.now() + 20;
-				while (Date.now() < until) {
-					// spin
-				}
-			}
-		}
+	#migration(): LegacyMigration<TRecord> {
+		return {
+			rootDir: this.rootDir,
+			lockPath: this.#legacyLockFile,
+			legacyTokens: join(this.legacyDir, TOKENS_FILE),
+			tokensPath: this.tokensPath,
+			stale: this.#lock.stale,
+			disableLock: this.#disableLock,
+			read: readJsonFile<TRecord>,
+			write: (record) => this.writeUnlocked(record),
+			lockError: (cause) => new LockAcquireError(this.#legacyLockFile, cause),
+		};
 	}
 
 	async update(mutate: (current: TRecord | undefined) => TRecord | undefined): Promise<TRecord | undefined> {

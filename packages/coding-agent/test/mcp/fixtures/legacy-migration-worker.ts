@@ -3,7 +3,7 @@
 // Spawned by token-store-legacy-migration-lock.test.ts as a separate OS process.
 import { McpTokenStore } from "../../../src/core/extensions/builtin/mcp/auth/token-store.ts";
 
-const [agentDir, serverName, serverUrl] = process.argv.slice(2);
+const [agentDir, serverName, serverUrl, mode] = process.argv.slice(2);
 const store = new McpTokenStore({ agentDir, serverName, serverUrl, lock: { retries: 50, stale: 30_000 } });
-const record = store.read();
+const record = mode === "async" ? await store.readAsync() : store.read();
 process.stdout.write(`${JSON.stringify({ serverName, refresh: record?.refreshToken ?? null })}\n`);

@@ -10,6 +10,7 @@ import type { McpCachedServerCatalog } from "../catalog-cache.ts";
 import type { ResolvedMcpConfig } from "../config-schema.ts";
 import type { ServerConnection } from "../connection.ts";
 import type { McpOutputArtifacts } from "../guard/output-guard.ts";
+import type { McpInvocationResolver } from "../invocation.ts";
 import { createMcpLogger, type McpLogger } from "../log.ts";
 import type { McpPromptServer } from "../prompts.ts";
 import { createMcpResourceTools, type McpResourceServer } from "../resources.ts";
@@ -31,8 +32,11 @@ export interface McpDirectRegistrationEntry {
 	readonly cachedCatalog?: McpCachedServerCatalog;
 	readonly ensureFresh?: () => Promise<void>;
 	readonly ensureCachedToolConnected?: () => Promise<void>;
+	readonly invocation?: McpInvocationResolver;
 	/** A startup connect still owns this server's catalog; its refresh registers it. */
 	readonly startupCatalogPending?: boolean;
+	/** Service admission and registry updates never enumerate a remote server. */
+	readonly localCatalogOnly?: boolean;
 	readonly onRegistered?: (identity: string) => void;
 }
 
@@ -55,11 +59,14 @@ export async function registerDirectMcpTools(
 		if (server?.config === undefined) continue;
 		const catalog =
 			entry.cachedCatalog === undefined
-				? entry.connection.state === "connected" && entry.startupCatalogPending !== true
+				? entry.connection.state === "connected" &&
+					entry.startupCatalogPending !== true &&
+					entry.localCatalogOnly !== true
 					? await collectToolCatalog(entry.name, entry.connection, server.config, {
 							agentDir: entry.agentDir,
 							artifacts: entry.artifacts,
 							ensureFresh: entry.ensureFresh,
+							invocation: entry.invocation,
 							outputGuard: config.settings.outputGuard,
 						})
 					: []
@@ -73,6 +80,7 @@ export async function registerDirectMcpTools(
 							agentDir: entry.agentDir,
 							artifacts: entry.artifacts,
 							ensureFresh: entry.ensureFresh,
+							invocation: entry.invocation,
 							outputGuard: config.settings.outputGuard,
 						},
 					);

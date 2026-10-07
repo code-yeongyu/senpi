@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A first message no longer waits for MCP servers to finish connecting or refreshing their catalogs. Matching cached tools are available immediately; each call checks the current tool schema, credentials and permissions before dispatch, and a connecting server without a cached catalog does not block the reply ([#2843](https://github.com/code-yeongyu/senpi/issues/2843)).
+
 ### Removed
 
 ## [2026.10.10-5] - 2026-10-07

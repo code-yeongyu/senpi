@@ -25,6 +25,9 @@ interface SessionConnectionOptions {
 	readonly ui: McpElicitationUiProvider;
 	readonly artifacts: McpOutputArtifacts;
 	readonly shouldReconnect: (entry: McpConnectionEntry) => boolean;
+	readonly credentialIdentity?: string;
+	readonly credentialsCurrent?: () => boolean;
+	readonly onCredentialsChanged?: () => Promise<void>;
 }
 
 export function createMcpSessionConnection(options: SessionConnectionOptions): McpConnectionEntry {
@@ -39,6 +42,8 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 	});
 	for (const warning of detectLiteralBearerWarnings(name, config)) logger.warn(warning);
 	const connectionOptions = {
+		credentialIdentity: options.credentialIdentity,
+		credentialsCurrent: options.credentialsCurrent,
 		authProvider: authPlan.provider,
 		config,
 		env: session.env,
@@ -59,6 +64,10 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 		artifacts: options.artifacts,
 		authPlan,
 		cacheRefreshedAfterConnect: false,
+		isCurrent: () => options.shouldReconnect(entry),
+		credentialIdentity: options.credentialIdentity,
+		credentialsCurrent: options.credentialsCurrent,
+		onCredentialsChanged: options.onCredentialsChanged,
 		key,
 		name,
 		configHash: options.configHash,
