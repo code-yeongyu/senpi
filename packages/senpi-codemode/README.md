@@ -364,6 +364,7 @@ options object and asynchronous helpers are `await`-able.
 | `env(key?, value?)` | Reads all kernel environment values, one value, or sets one value. Includes the session's `PI_*` values (see [Session environment](#session-environment)). |
 | `tool.<name>(args)` | Invokes an active Senpi tool through the normal `pi.executeTool` pipeline and returns `{ text, images?, details?, hasError? }` in every kernel; image blocks arrive as `images[i] = { mimeType, dataBase64 }`. |
 | `tool_schema(name?)` | Returns a tool's parameter schema without calling it; omit `name` to list tool names. |
+| `require(specifier)`, `createRequire(path)` (js) | CommonJS loading inside a cell, resolved like `import`: builtins (with or without `node:`), relative files and JSON from the cell's directory, bare packages from the session's project and then its managed package environment (`%bun add`/`%npm add`). A missing module raises the runtime's own `MODULE_NOT_FOUND` error. Like Node's `require`, it carries `require.resolve` (the same lookup the call uses, so both name the same copy; builtins resolve to the runtime's own id), `require.resolve.paths` and `require.cache` (the runtime's CommonJS cache). |
 | `tool(fn, metadata?)` (js) | Registers a named function as a kernel tool for in-process children. `metadata.name` registers it under that name instead of the function's; arguments are still passed in the function's parameter order. |
 | `tool.defined()` / `tool.undefine(name)` (js) | List the kernel tools this kernel defines (sorted), and remove one (`true` if it existed). A descriptor taken before `undefine` can no longer be invoked. Both names are reserved: a kernel tool can't be registered as `defined` or `undefine` (`reserved_tool_name`), and a host tool with either name is shadowed in the `tool` namespace, so it can't be called from a JavaScript cell. |
 | `@tool` / `@tool(name=, description=, schema=)` (py) | Registers a Python function as a kernel tool for in-process children; the schema is inferred from its type hints (`tool_schema("eval:kernel-tools")` lists the rules). Callbacks run while the kernel is idle or its cell is parked in a host call, never in the middle of a running computation. `tool.defined()` and `tool.undefine(name)` work as in JavaScript. Ruby and Julia kernels answer `tools_unavailable`. |
@@ -465,6 +466,10 @@ free; otherwise it settles `cancelled` with `eval_background_capacity_reached`,
 listing the live cells and a stop-or-wait remedy. Cells that complete inside the
 window return normally. Cancelling a queued cell never interrupts its predecessor.
 Do not re-run a detached or queued cell; each detached cell completes as one notification.
+The notification carries the same text the cell's result would have shown in the
+foreground (the output sink's configured head, its tail, the middle-elision marker and
+the full-output artifact notice), framed by the outcome line and the kernel-state note,
+plus any images the cell displayed.
 
 Queued steering also detaches an eligible interactive foreground call, including
 one paused in a host tool bridge, without cancelling its computation. If the
@@ -505,11 +510,29 @@ Use `eval({ action: "peek", cell_id })` for its state and buffered output, or
 `eval({ action: "stop", cell_id })` to cancel it. Stopping a queued cell removes it
 without interrupting the active cell; kernel state is retained. Python running-cell stop interrupts the
 existing kernel and preserves variables. JavaScript stop is cooperative first:
-the worker rejects the cell's pending bridge `tool.*` calls and kills the
-`Bun.spawn` children it started, and a cell that settles within the 2 s grace
-keeps the worker and every global. Only a cell that stays unsettled (a
-never-resolving promise, an un-abortable `fetch`, a `Bun.$` command) costs the
-worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
+Stop ends the cell and everything it started, not the kernel's variables. The
+worker rejects the cell's pending bridge `tool.*` calls and releases the cell:
+its timers are cleared (the globals and the `node:timers` module alike), its
+pending `Bun.sleep`, `node:timers/promises` waits, `fetch` requests and file
+reads reject with the interruption, and the sockets, servers, file streams,
+`readline` interfaces, WebSockets, WebViews, nested workers and child processes
+it opened are closed or terminated, whether made with a factory or a
+constructor. A resource that will not close is reported on the cell output. The stop result arrives once those children are gone, and the
+worker and every global from earlier cells survive. If the stopped cell's own
+`catch`/`finally` still runs, it cannot print, call tools, start processes,
+schedule timers or open connections. One boundary remains: code that resumes
+because a later cell resolves a promise the stopped cell was awaiting runs
+until it reaches an operation a stopped cell may no longer start (output, tool
+calls, processes, timers, network, files, message channels, workers).
+
+An unhandled promise rejection never crashes the JavaScript kernel; its
+variables are kept, as in the Node REPL and Jupyter. The rejection is reported
+on the cell that is running, or on the next cell, naming the cell that started
+the work when it is known ("from cell <id>, after it was stopped"), with the
+error message and the top of its stack. A burst becomes one report plus
+"... and K more unhandled promise rejections". A fatal error (an uncaught
+exception) still restarts the worker, and the result says variables are lost. Only a cell stopped during a `Bun.$` command costs
+the worker VM. A worker blocked in a synchronous call (`Bun.spawnSync`,
 `child_process.spawnSync`) cannot be stopped at all; after a 3 s termination
 deadline a fresh worker replaces it, the cell output gains a stderr line naming
 the blocked synchronous call, and the blocked call keeps running until it

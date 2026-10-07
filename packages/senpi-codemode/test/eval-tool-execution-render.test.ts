@@ -20,8 +20,9 @@ type ExecResult = Parameters<ToolExecutionComponent["updateResult"]>[0];
 const CODE = "d = {}\nd['favoriteModels'] = ['apitopia/kimi-k3']\nprint(d)";
 const OUTPUT = "{'favoriteModels': ['apitopia/kimi-k3']}";
 
+/** Each eval row starts with one lead-in: `╭─` for a framed row, `╶─` for a one-line live row (senpi#2802). */
 function countBoxes(lines: readonly string[]): number {
-	return lines.filter((line) => line.includes("╭─")).length;
+	return lines.filter((line) => line.includes("╭─") || line.includes("╶─")).length;
 }
 
 function stripAnsi(text: string): string {
@@ -190,7 +191,15 @@ describe("eval summary in transcript frames", () => {
 		expect.soft(plain[headerIndex + 1]?.replace("│", "").trim()).toBe("collect progress");
 	}
 
-	it("Given a running eval with a summary when the frame renders then the header drops the label segment and the summary sits under it", () => {
+	function expectSummaryHeadline(lines: readonly string[], status: string): void {
+		const plain = lines.map(stripAnsi);
+		const headerIndex = plain.findIndex((line) => line.includes("eval py"));
+		expect(headerIndex).toBeGreaterThanOrEqual(0);
+		expect.soft(plain[headerIndex]).toMatch(new RegExp(`[╭╶]─ \\S collect progress · eval py ${status}`, "u"));
+		expect.soft(plain.filter((line) => line.includes("collect progress"))).toHaveLength(1);
+	}
+
+	it("Given a running eval with a summary when the frame renders then the header leads with the summary (senpi#2802)", () => {
 		// Given the real interactive component streaming a running result whose cell carries a summary
 		const component = summaryComponent();
 		component.markExecutionStarted();
@@ -199,8 +208,8 @@ describe("eval summary in transcript frames", () => {
 		// When the running frame renders
 		const lines = component.render(80);
 
-		// Then the header has no label segment and the muted summary line sits directly under it
-		expectSummaryUnderHeader(lines, "running");
+		// Then the header leads with the summary, shown once
+		expectSummaryHeadline(lines, "running");
 		component.stopAnimation();
 	});
 

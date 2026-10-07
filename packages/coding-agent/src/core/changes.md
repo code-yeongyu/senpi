@@ -1,3 +1,41 @@
+## 2026-10-07 - An attach that lands during a rebuild keeps its permission preset (senpi#2842)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildRuntimeForReload()` reads the flag values of the runner that is live at the runner swap (`_buildRuntime({ flagValues: this._extensionRunner.getFlagValues() })`) instead of snapshotting them before its awaits, so a flag set on the live runner while the reload ran carries over to the rebuilt one. It reads the current runner, not the one the reload started with, because an overlapping reload may have installed another runner in the meantime, and an attach then writes that one.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `apply()` sets the replacement session's `permission-preset` flag, prompt surface and browser engine from the runtime's current launch profile as it installs it, so new / switch / fork / import end on the values the last attach named.
+
+### Why
+
+An attach moves a live session's preset through `AgentSessionRuntime.setPermissionPreset`, which writes the runtime's launch profile and the live runner's flag. An attach that landed during a reload was overwritten by the reload's pre-await flag snapshot. One that landed while a replacement's runtime was being created reached only the retired session, because the replacement was built from the profile read before the await. Either way the rebuilt session enforced the looser preset while the host reported the stricter one. Two overlapping reloads lost it too: the reload that finished last installed a runner from the flags of the runner it started with, not of the runner the other reload had installed and the attach had written. The prompt surface and browser engine an attach named during a replacement were lost the same way, because the replacement was created from the same stale launch profile.
+
+### Why an extension could not handle it
+
+The reload's flag carry-over and the replacement install are inside `AgentSession` and `AgentSessionRuntime`; no extension sees the runner swap or the runtime's launch profile.
+
+### Expected merge conflict zones
+
+- `agent-session.ts`: the head of `_rebuildRuntimeForReload()` (the removed `previousFlagValues` snapshot) and its `_buildRuntime({ ... flagValues })` call.
+- `agent-session-runtime.ts`: `apply()`.
+
+## 2026-10-06 - An attach moves the live session to the permission preset it names (senpi#2823)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: new `AgentSessionRuntime.setPermissionPreset(preset)`, beside `setPromptSurface` / `setBrowserEngine`. It stores the preset in the runtime's launch profile, so `new_session` / `switch_session` / `fork` keep it, and sets the live extension runner's `permission-preset` flag. The builtin permission-system extension reloads its rules from that flag at the next tool call (`core/extensions/builtin/permission-system/index.ts`).
+
+### Why
+
+`open_session` on a file another client holds open attaches to the live session (`modes/rpc/session-registry-attach.ts`, `worker-session-registry.ts`). The attach moved the session to a named prompt surface and browser engine, but ignored `permissionPreset`, so a thread switched from full access to ask kept running tools unrestricted.
+
+### Why an extension could not handle it
+
+The launch profile that later replacement sessions are built from is private to `AgentSessionRuntime`, and the RPC host reaches a live session only through the runtime. An extension can read its flag, but nothing outside the runtime can change it for the session that is already running.
+
+### Expected merge conflict zones
+
+- `agent-session-runtime.ts`: the setter block after `setBrowserEngine`.
+
 ## 2026-10-06 - Stale generated global-default extension shims no longer fail every start (senpi#2765)
 
 ### What changed

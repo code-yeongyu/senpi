@@ -17,7 +17,7 @@ import {
 	getCurrentTools,
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CLAUDE_SDK_OAUTH_API_ID } from "../../../src/core/extensions/builtin/anthropic-subscription/api-id.ts";
 import type { SDKMessage } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
 import { forgetBinding } from "../../../src/core/extensions/builtin/anthropic-subscription/session-reattach.ts";
@@ -91,7 +91,10 @@ afterEach(() => {
 	resetScriptedSdk();
 });
 
-async function laneSession(replies: Reply[]) {
+async function laneSession(replies: Reply[], compactionOwner: "sdk" | "senpi" = "sdk") {
+	// #7975 is a regression of the SDK-owned lane (now the `compactionOwner: "sdk"` opt-out); the
+	// default senpi-owned lane is covered below.
+	vi.stubEnv("SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER", compactionOwner);
 	await installSingleAccountLane();
 	let call = 0;
 	installScriptedSdk((sessionId, userUuid) => {
@@ -197,6 +200,36 @@ describe("oh-my-openagent#7975 cold-seed overflow on the anthropic-subscription 
 			accepted: true,
 			rejectionCause: undefined,
 		});
+		expect(lastAssistant(lane.harness)).toMatchObject({ stopReason: "stop" });
+	}, 30_000);
+});
+
+// Default contract (`compactionOwner: "senpi"`): senpi owns the resident lane's compaction, so a turn
+// over the threshold is compacted by senpi and the next turn cold-seeds a fresh SDK session
+// from the compacted branch instead of growing the old SDK transcript.
+describe("anthropic-subscription lane: senpi-owned compaction (compactionOwner: senpi)", () => {
+	it("compacts at the threshold and cold-seeds the next turn into a fresh SDK session", async () => {
+		const sdkSessions: string[] = [];
+		const record =
+			(reply: Reply): Reply =>
+			(sessionId, userUuid) => {
+				sdkSessions.push(sessionId);
+				return reply(sessionId, userUuid);
+			};
+		const lane = await laneSession(
+			[record(answer(EARLIER_WORK, 199_000)), record(answer("continued after compaction"))],
+			"senpi",
+		);
+
+		await lane.harness.session.prompt("first");
+		await lane.harness.session.prompt("second");
+
+		const outcomes = compactionOutcomes(lane.harness);
+		expect(outcomes.some((outcome) => outcome.accepted)).toBe(true);
+		expect(outcomes).not.toContainEqual(expect.objectContaining({ rejectionCause: "external-owner" }));
+		expect(lane.harness.sessionManager.getBranch().some((entry) => entry.type === "compaction")).toBe(true);
+		expect(lane.calls()).toBe(2);
+		expect(sdkSessions[1]).not.toBe(sdkSessions[0]);
 		expect(lastAssistant(lane.harness)).toMatchObject({ stopReason: "stop" });
 	}, 30_000);
 });

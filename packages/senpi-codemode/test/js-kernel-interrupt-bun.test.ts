@@ -53,7 +53,22 @@ const SPAWN_TREE_CELL = [
 	'await child.exited; return "exited"',
 ].join(" ");
 
-function driverSource(cell: string, bounds: JavaScriptInterruptBounds): string {
+// #2788: a loop that keeps spawning short children never settles on its own: each killed child lets the loop
+// spawn the next one. A stop must still keep the worker, and the released loop must not spawn again.
+const SPAWN_LOOP_CELL = [
+	"globalThis.childMarker = 1;",
+	'print("MARK=0");',
+	'for (;;) { await Bun.spawn(["sleep", "0.2"]).exited; }',
+].join(" ");
+
+// #2788: a Bun.sleep polling loop stops ticking on Stop instead of running on in the kept worker.
+const SLEEP_LOOP_CELL = [
+	"globalThis.childMarker = 1; globalThis.ticks = 0;",
+	'print("MARK=0");',
+	"for (;;) { await Bun.sleep(10); globalThis.ticks += 1; }",
+].join(" ");
+
+function driverSource(cell: string, bounds: JavaScriptInterruptBounds, nextCode: string): string {
 	return [
 		'import { writeFile } from "node:fs/promises";',
 		`import { JavaScriptKernel } from ${JSON.stringify(kernelModulePath)};`,
@@ -84,18 +99,22 @@ function driverSource(cell: string, bounds: JavaScriptInterruptBounds): string {
 		"const childAlive = isAlive(pid);",
 		"const grandchildAlive = isAlive(grandchildPid);",
 		'for (const target of [pid, grandchildPid]) { if (isAlive(target)) { try { process.kill(target, "SIGKILL"); } catch {} } }',
-		'const next = await kernel.run({ cellId: "after-interrupt", code: "return globalThis.childMarker", timeoutMs: 60_000 });',
+		`const next = await kernel.run({ cellId: "after-interrupt", code: ${JSON.stringify(nextCode)}, timeoutMs: 60_000 });`,
 		"await kernel.close();",
 		'await writeFile(reportPath, JSON.stringify({ result, stateRetained, childAliveAtStop, childAlive, grandchildAlive, next, note: handle.note }), "utf8");',
 	].join("\n");
 }
 
-async function runInterruptDriver(cell: string, bounds: JavaScriptInterruptBounds): Promise<DriverReport> {
+async function runInterruptDriver(
+	cell: string,
+	bounds: JavaScriptInterruptBounds,
+	nextCode = "return globalThis.childMarker",
+): Promise<DriverReport> {
 	const root = await mkdtemp(join(tmpdir(), "senpi-interrupt-bun-"));
 	try {
 		const driverPath = join(root, "driver.ts");
 		const reportPath = join(root, "report.json");
-		await writeFile(driverPath, driverSource(cell, bounds), "utf8");
+		await writeFile(driverPath, driverSource(cell, bounds, nextCode), "utf8");
 		const run = spawnSync("bun", [driverPath, reportPath], {
 			encoding: "utf8",
 			cwd: root,
@@ -151,6 +170,32 @@ describe.skipIf(!bunAvailable)("JavaScript kernel under Bun interrupts a running
 			expect(report.childAlive).toBe(false);
 			expect(report.next).toMatchObject({ ok: true });
 			expect(report.next).not.toHaveProperty("valueRepr");
+		},
+		TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"Given a cell looping over short Bun.spawn children when interrupted then the worker state survives",
+		async () => {
+			const report = await runInterruptDriver(SPAWN_LOOP_CELL, COOPERATIVE_BOUNDS);
+
+			expect(report.result).toMatchObject({ ok: false, error: { message: expect.stringContaining("kill-child") } });
+			expect(report.stateRetained).toBe(true);
+			expect(report.next).toMatchObject({ ok: true, valueRepr: "1" });
+		},
+		TEST_TIMEOUT_MS,
+	);
+
+	it(
+		"Given a cell polling on Bun.sleep when interrupted then the loop stops and the worker state survives",
+		async () => {
+			const report = await runInterruptDriver(
+				SLEEP_LOOP_CELL,
+				COOPERATIVE_BOUNDS,
+				"const before = globalThis.ticks; await Bun.sleep(200); return [globalThis.childMarker, globalThis.ticks === before]",
+			);
+			expect(report.stateRetained).toBe(true);
+			expect(report.next).toMatchObject({ ok: true, valueRepr: "[1,true]" });
 		},
 		TEST_TIMEOUT_MS,
 	);

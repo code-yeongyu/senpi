@@ -71,6 +71,8 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	let activePreset: PermissionPresetName | null = null;
 	let initialApprovedCount = 0;
 	let setupError: string | null = null;
+	// The `permission-preset` flag value the rules were last loaded from; absent until session_start.
+	let loadedPresetFlag: { readonly value: boolean | string | undefined } | undefined;
 
 	const nextRequestID = createRequestIDFactory();
 
@@ -96,10 +98,12 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		applyToolDenials();
 	});
 
-	const loadPermissionRules = (cwd: string): void => {
+	// `sessionApproved` carries this session's "Always" answers, not yet written to disk, across a reload.
+	const loadPermissionRules = (cwd: string, sessionApproved: Ruleset = []): void => {
 		const settingsManager = SettingsManager.create(cwd);
 		const permissionFlag = pi.getFlag("permission");
 		const permissionPresetFlag = pi.getFlag("permission-preset");
+		loadedPresetFlag = { value: permissionPresetFlag };
 		cliRuleset = typeof permissionFlag === "string" ? parsePermissionFlag(permissionFlag) : [];
 		const cliPreset =
 			typeof permissionPresetFlag === "string" ? parsePermissionPresetFlag(permissionPresetFlag) : undefined;
@@ -115,24 +119,46 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		activePreset = loadedSettings.preset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
-		service = new PermissionService(staticRuleset, approved, createEventEmitter(pi));
+		service = new PermissionService(staticRuleset, [...approved, ...sessionApproved], createEventEmitter(pi));
 		initialApprovedCount = approved.length;
 	};
 
-	const applyToolDenials = (): void => {
+	const applyToolDenials = (onlyWhenNarrowed = false): void => {
 		const allTools = pi.getAllTools().map((tool) => tool.name);
 		const disabledTools = disabled(allTools, staticRuleset);
-		const activeTools = pi
-			.getActiveTools()
-			.filter((toolName) => INTERNAL_PERMISSION_TOOLS.has(toolName) || !disabledTools.has(toolName));
+		const currentTools = pi.getActiveTools();
+		const activeTools = currentTools.filter(
+			(toolName) => INTERNAL_PERMISSION_TOOLS.has(toolName) || !disabledTools.has(toolName),
+		);
+		if (onlyWhenNarrowed && activeTools.length === currentTools.length) return;
 		pi.setActiveTools(activeTools);
 	};
 
+	// A host moves a live session to another preset (an attach naming one) by changing the flag;
+	// the rules follow from the next tool call on, and a failed reload refuses calls like session_start.
+	const followPresetFlag = (cwd: string): void => {
+		if (loadedPresetFlag === undefined || loadedPresetFlag.value === pi.getFlag("permission-preset")) return;
+		const sessionApproved = service ? service.getApproved().slice(initialApprovedCount) : [];
+		setupError = null;
+		try {
+			loadPermissionRules(cwd, sessionApproved);
+		} catch (error) {
+			setupError = getReason(error);
+			return;
+		}
+		applyToolDenials(true);
+	};
+
 	pi.on("tool_call", async (event, ctx) => {
+		followPresetFlag(ctx.cwd);
 		if (setupError !== null) {
 			return { block: true, reason: `Permission setup failed: ${setupError}` };
 		}
-		if (!service || !parserRegistry) {
+		// Pinned for this call: a preset change while it waits on a prompt must not move its reply
+		// to another service or its decision to another preset.
+		const activeService = service;
+		const callPreset = activePreset;
+		if (!activeService || !parserRegistry) {
 			return undefined;
 		}
 
@@ -165,21 +191,21 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			};
 
 			const auto =
-				activePreset === "auto"
+				callPreset === "auto"
 					? await decideAuto(event.toolName, event.input, permissionRequest, ctx.cwd)
 					: undefined;
-			const askResultPromise = service
+			const askResultPromise = activeService
 				.ask(request, {
 					autoApproveAsk: permissionRequest.autoApproveAsk ?? false,
 					approveBlanketAsk: auto?.approveBlanketAsk ?? false,
-					presetBound: activePreset === "auto",
+					presetBound: callPreset === "auto",
 					...(permissionRequest.ruleAliases ? { ruleAliases: permissionRequest.ruleAliases } : {}),
 				})
 				.then(
 					() => ({ ok: true as const }),
 					(error: unknown) => ({ ok: false as const, error }),
 				);
-			const isPending = service.list().some((pendingRequest) => pendingRequest.id === request.id);
+			const isPending = activeService.list().some((pendingRequest) => pendingRequest.id === request.id);
 
 			if (!isPending) {
 				const askResult = await askResultPromise;
@@ -191,16 +217,16 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 
 			if (ctx.hasUI) {
 				const reply = await showPermissionPrompt(ctx, request);
-				service.reply(reply);
+				activeService.reply(reply);
 			} else {
-				service.reply(
+				activeService.reply(
 					handleNoUI(request, {
 						emitEvent: (eventName, data) => {
 							if (eventName !== "permission_asked") {
 								pi.events.emit(eventName, data);
 							}
 						},
-						presetBound: activePreset === "auto",
+						presetBound: callPreset === "auto",
 					}),
 				);
 			}

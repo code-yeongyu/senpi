@@ -1,3 +1,4 @@
+import { onCellRelease } from "./cell-run-context.js";
 import { DELIVER_EVENT, WebViewPortClient, webViewError } from "./worker-webview-client.js";
 
 // Bun constructs "chrome"-backend WebViews only on the process main thread, and this kernel runs in
@@ -90,13 +91,16 @@ function createKernelWebView(NativeWebView, requestPort) {
 		#console;
 		#ready;
 		#closed = false;
+		#forgetRelease;
 		onNavigated = null;
 		onNavigationFailed = null;
 
 		constructor(options = {}) {
 			if (!needsMainThread(options)) {
 				const view = new NativeWebView(options);
-				natives.add(new WeakRef(view));
+				const ref = new WeakRef(view);
+				natives.add(ref);
+				onCellRelease(() => ref.deref()?.close());
 				return view;
 			}
 			super();
@@ -104,6 +108,7 @@ function createKernelWebView(NativeWebView, requestPort) {
 			this.#console = capture;
 			proxied.add(this);
 			live.add(this);
+			this.#forgetRelease = onCellRelease(() => this.close());
 			const viewId = this.#viewId;
 			this.#ready = connect().then(async client => {
 				client.register(viewId, this);
@@ -157,6 +162,7 @@ function createKernelWebView(NativeWebView, requestPort) {
 		close() {
 			if (this.#closed) return;
 			this.#closed = true;
+			this.#forgetRelease?.();
 			live.delete(this);
 			const viewId = this.#viewId;
 			this.#ready.then(

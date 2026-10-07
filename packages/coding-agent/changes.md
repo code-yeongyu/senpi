@@ -1,3 +1,21 @@
+## 2026-10-06 - Deterministic cross-generation close reproduction (#2729)
+
+### What changed
+
+- Added regressions that hold real claim deletion or an in-flight attachment rename, covering close completion, failed-start retry and preservation of successor ownership.
+
+### Why
+
+The reported handoff failure needs a deterministic product reproduction before changing teardown or the existing integration test.
+
+### Why an extension could not handle it
+
+Cross-generation reservation release and close completion belong to the RPC host lifecycle.
+
+### Expected merge conflict zones
+
+The RPC teardown, reservation implementation and this changelog.
+
 ## 2026-10-04 - Claude Agent SDK 0.3.289
 
 ### What changed

@@ -22,7 +22,13 @@ import {
 	type RpcSessionRow,
 	sessionIdentity,
 } from "./session-registry-types.ts";
-import { beginSessionClose, closeMarkedSession, closeSession, type SessionTeardownHost } from "./session-teardown.ts";
+import {
+	beginSessionClose,
+	closeMarkedSession,
+	closeSession,
+	releaseWithinGrace,
+	type SessionTeardownHost,
+} from "./session-teardown.ts";
 
 export {
 	frozenProfile,
@@ -74,9 +80,9 @@ export class RpcSessionRegistry {
 				this.options.onSizeChange?.(this.entries.size);
 				return deleted;
 			},
-			releaseReservation: (key) => {
+			releaseReservation: async (key) => {
+				await this.options.pathReservations?.release(key);
 				this.reservations.delete(key);
-				this.options.pathReservations?.release(key);
 			},
 			markDetached: (key) => this.options.pathReservations?.setAttached(key, false),
 			now: () => this.now(),
@@ -213,10 +219,7 @@ export class RpcSessionRegistry {
 				} finally {
 					this.entries.delete(handle);
 					this.options.onSizeChange?.(this.entries.size);
-					if (sessionPath) {
-						this.reservations.delete(sessionPath);
-						this.options.pathReservations?.release(sessionPath);
-					}
+					if (sessionPath) await releaseWithinGrace(this.teardownHost, handle, sessionPath);
 				}
 			}
 			if (error instanceof RpcSessionRegistryError) throw error;

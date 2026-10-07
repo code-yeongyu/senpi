@@ -44,7 +44,7 @@ export interface SessionPathReservations {
 	/** Records this host as the holder of `sessionPath`, or reports the holder whose claim stands. */
 	claim(sessionPath: string, attached?: boolean): Promise<SessionPathOwner | undefined>;
 	/** Drops this host's claim. A claim made by another generation is never touched. */
-	release(sessionPath: string): void;
+	release(sessionPath: string): Promise<void>;
 	/** Republishes this host's claim with the attachment state that session now has. */
 	setAttached(sessionPath: string, attached: boolean): void;
 }
@@ -102,6 +102,7 @@ export function createSessionPathReservations(options: {
 		() => null,
 	);
 	const held = new Set<string>();
+	const updates = new Map<string, Promise<void>>();
 	const report = (message: string): void => options.onFailure?.(message);
 	const publish = async (sessionPath: string, attached: boolean, stillHeld?: () => boolean): Promise<void> => {
 		const owner: SessionPathOwner = {
@@ -142,17 +143,22 @@ export function createSessionPathReservations(options: {
 			}
 			return undefined;
 		},
-		release(sessionPath: string): void {
+		async release(sessionPath: string): Promise<void> {
 			if (!held.delete(sessionPath)) return;
-			void rm(reservationFile(dir, sessionPath), { force: true }).catch((cause: unknown) => {
+			await updates.get(sessionPath);
+			updates.delete(sessionPath);
+			await rm(reservationFile(dir, sessionPath), { force: true }).catch((cause: unknown) => {
 				report(`session path reservation for ${sessionPath} could not be removed (${errorMessage(cause)})`);
 			});
 		},
 		setAttached(sessionPath: string, attached: boolean): void {
 			if (!held.has(sessionPath)) return;
-			void publish(sessionPath, attached, () => held.has(sessionPath)).catch((cause: unknown) => {
-				report(`session path reservation for ${sessionPath} could not be updated (${errorMessage(cause)})`);
-			});
+			const update = (updates.get(sessionPath) ?? Promise.resolve())
+				.then(() => publish(sessionPath, attached, () => held.has(sessionPath)))
+				.catch((cause: unknown) => {
+					report(`session path reservation for ${sessionPath} could not be updated (${errorMessage(cause)})`);
+				});
+			updates.set(sessionPath, update);
 		},
 	};
 }

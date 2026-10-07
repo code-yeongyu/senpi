@@ -227,7 +227,8 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		for (const name of Object.keys(ambientEnvironment)) {
 			if (name.startsWith("SENPI_")) delete ambientEnvironment[name];
 		}
-		options.env = ambientEnvironment;
+		// Lane-owned variables from buildOptions (the compaction-owner overlay) win over the host.
+		options.env = { ...ambientEnvironment, ...options.env };
 		yield* await createAttemptMessages(input, {
 			accountName: "ambient",
 			accounts: [],
@@ -249,7 +250,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			const options = input.buildOptions(pool.lane);
 			const accounts = pool.accounts.map((account) => ({ ...account }));
 			const prepared = await prepareSlot(pool, slot, signal);
-			options.env = prepared.env;
+			options.env = { ...prepared.env, ...options.env };
 			return createAttemptMessages(input, {
 				accountName: slot.name,
 				accounts,

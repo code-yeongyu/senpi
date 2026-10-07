@@ -31,20 +31,28 @@ function assistantMessageWithDiagnostics(diagnostics: AssistantMessage["diagnost
 }
 
 describe("compaction lane policy — provider scoping", () => {
-	it("treats the claude-sdk-oauth main lane as SDK-native when resume mode is auto", () => {
-		expect(isSdkNativeCompactionLane({ model: { provider: "anthropic-subscription" }, resumeMode: "auto" })).toBe(
-			true,
-		);
+	// senpi owns the resident lane by default; only the explicit `sdk` owner hands it to the SDK.
+	it("keeps senpi compaction on the resident lane when compactionOwner is unset or senpi", () => {
+		const lane = { provider: "anthropic-subscription" };
+		expect(isSdkNativeCompactionLane({ model: lane })).toBe(false);
+		expect(isSdkNativeCompactionLane({ model: lane, resumeMode: "auto" })).toBe(false);
+		expect(isSdkNativeCompactionLane({ model: lane, resumeMode: "auto", compactionOwner: "senpi" })).toBe(false);
 	});
 
-	it("treats the claude-sdk-oauth lane as SDK-native when resume mode is unset (default auto)", () => {
-		expect(isSdkNativeCompactionLane({ model: { provider: "anthropic-subscription" } })).toBe(true);
+	it("treats the resident lane as SDK-native when compactionOwner is sdk", () => {
+		const lane = { provider: "anthropic-subscription" };
+		expect(isSdkNativeCompactionLane({ model: lane, compactionOwner: "sdk" })).toBe(true);
+		expect(isSdkNativeCompactionLane({ model: lane, resumeMode: "auto", compactionOwner: "sdk" })).toBe(true);
 	});
 
 	it("keeps senpi compaction for the claude-sdk-oauth lane when the resumeMode escape hatch is off", () => {
-		expect(isSdkNativeCompactionLane({ model: { provider: "anthropic-subscription" }, resumeMode: "off" })).toBe(
-			false,
-		);
+		expect(
+			isSdkNativeCompactionLane({
+				model: { provider: "anthropic-subscription" },
+				resumeMode: "off",
+				compactionOwner: "sdk",
+			}),
+		).toBe(false);
 	});
 
 	it("never claims other providers", () => {
@@ -58,19 +66,22 @@ describe("compaction lane policy — provider scoping", () => {
 });
 
 describe("compaction lane policy — instance policy", () => {
-	it("resolves resume mode once per cwd and disables senpi compaction for the lane", () => {
-		let loads = 0;
+	// The query options re-read provider settings every turn; the lane policy must read the same
+	// live value, or a mid-session owner change leaves two owners (or none) for one transcript.
+	it("reads the compaction owner on every call so a mid-session change applies to the next check", () => {
+		let owner: "sdk" | "senpi" = "sdk";
 		const policy = createCompactionLanePolicy({
-			loadProviderSettings: () => {
-				loads++;
-				return { resumeMode: "auto" };
-			},
+			loadProviderSettings: () => ({ resumeMode: "auto", compactionOwner: owner }),
 		});
 		const ctx = { cwd: "/repo", model: { provider: "anthropic-subscription" } };
 
 		expect(policy.disablesSenpiCompaction(ctx)).toBe(true);
+		owner = "senpi";
+		expect(policy.disablesSenpiCompaction(ctx)).toBe(false);
+		expect(policy.ownsCompaction(ctx, "threshold")).toBe(true);
+		owner = "sdk";
 		expect(policy.disablesSenpiCompaction(ctx)).toBe(true);
-		expect(loads).toBe(1);
+		expect(policy.ownsCompaction(ctx, "threshold")).toBe(false);
 	});
 
 	it("leaves senpi compaction enabled for other providers without reading provider settings", () => {
@@ -84,6 +95,16 @@ describe("compaction lane policy — instance policy", () => {
 
 		expect(policy.disablesSenpiCompaction({ cwd: "/repo", model: { provider: "anthropic" } })).toBe(false);
 		expect(loads).toBe(0);
+	});
+
+	it("leaves senpi compaction enabled on the resident lane when compactionOwner is senpi", () => {
+		const policy = createCompactionLanePolicy({
+			loadProviderSettings: () => ({ resumeMode: "auto", compactionOwner: "senpi" }),
+		});
+		const ctx = { cwd: "/repo", model: { provider: "anthropic-subscription" } };
+
+		expect(policy.disablesSenpiCompaction(ctx)).toBe(false);
+		expect(policy.ownsCompaction(ctx, "threshold")).toBe(true);
 	});
 
 	it("reports an append-only transcript only for the resident lane", () => {
@@ -102,7 +123,7 @@ describe("compaction lane policy — instance policy", () => {
 		const policy = createCompactionLanePolicy({
 			loadProviderSettings: (cwd) => {
 				seen.push(cwd);
-				return { resumeMode: cwd === "/off" ? "off" : "auto" };
+				return { resumeMode: cwd === "/off" ? "off" : "auto", compactionOwner: "sdk" };
 			},
 		});
 
@@ -129,7 +150,7 @@ describe("compaction lane policy — instance policy", () => {
 
 	it("re-enables senpi compaction on the SDK-native lane when a compaction model override is set", () => {
 		const policy = createCompactionLanePolicy({
-			loadProviderSettings: () => ({ resumeMode: "auto" }),
+			loadProviderSettings: () => ({ resumeMode: "auto", compactionOwner: "sdk" }),
 		});
 		const ctx = {
 			cwd: "/repo",
@@ -143,7 +164,7 @@ describe("compaction lane policy — instance policy", () => {
 
 	it("still stands down on the SDK-native lane when the override resolves to no model", () => {
 		const policy = createCompactionLanePolicy({
-			loadProviderSettings: () => ({ resumeMode: "auto" }),
+			loadProviderSettings: () => ({ resumeMode: "auto", compactionOwner: "sdk" }),
 		});
 
 		expect(

@@ -322,8 +322,8 @@ describe("eval renderer state", () => {
 		expect.soft(callText).toContain("resettable");
 		expect.soft(callText).toContain("reset");
 		expect.soft(callText).toContain("timeout 3s");
-		expect.soft(resultText).toContain("eval py pending ○");
-		expect.soft(resultText).toMatch(/eval py running [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
+		expect.soft(resultText).toMatch(/[╭╶]─ ○ \S.* · eval py pending/u);
+		expect.soft(resultText).toMatch(/[╭╶]─ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \S.* · eval py running/u);
 		expect.soft(resultText).toContain("eval py done ✓ · 1m 1s");
 		expect.soft(resultText).toContain("eval py error ✗ · 1h 2m");
 	});

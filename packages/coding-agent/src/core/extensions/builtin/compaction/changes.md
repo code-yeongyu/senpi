@@ -17,6 +17,26 @@
 
 - `log.ts`: logger options and allowed fields; `index.ts`: lazy logger construction.
 
+## 2026-10-04 - senpi owns compaction on the anthropic-subscription lane by default
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/lane-policy.ts`: `isSdkNativeCompactionLane` is true only for an explicit `compactionOwner: "sdk"` (resolved from `anthropicSubscriptionProvider.compactionOwner` / `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER` through `resolveCompactionOwner`, unset means `"senpi"`). By default `disablesSenpiCompaction` is false on the resident lane, so the speculative, idle, threshold, overflow, hard-limit, degradation and restoration routes run there as on every other provider (the per-turn context reduction stays off, see the append-only entry below). `"sdk"` keeps the SDK-native stand-down exactly as before.
+- `lane-policy.ts`: the per-cwd settings cache is removed. `resumeMode` and the owner are read on every call (the loader is already cached by settings-file revision), the same live value the query options read for the next turn, so a mid-session owner change can never leave senpi and the resident process disagreeing about who compacts.
+- Tests: `test/suite/regressions/2746-anthropic-subscription-single-compaction-owner.test.ts` drives a real session against the scripted SDK: the default turn's resident process carries `autoCompactEnabled: false` and the token-reminder overlay, both owner flips restart the resident process with the new setting, a failed senpi overflow compaction ends the turn with its error and no native compaction, and a native `compact_boundary` under senpi stops the turn. `test/compaction/lane-policy.test.ts` pins the new default and the live read; the SDK-owned alignment and #7975 cases now set `"sdk"` explicitly.
+
+### Why
+
+- Maintainer decision on #2749 (senpi#2746): senpi owns the lane by default. On the resident lane the context otherwise grows to the SDK's native trigger (~967k of a 1M window, observed in real sessions) with every senpi compaction feature off. Since senpi#2440 an accepted compaction always cold-seeds the compacted branch, and the SDK's native auto-compact is pinned off for a senpi-owned session (see `anthropic-subscription/changes.md`, same date), so exactly one side compacts.
+
+### Why an extension could not handle it
+
+- Lane ownership is this builtin's own policy.
+
+### Expected merge conflict zones
+
+- LOW: `isSdkNativeCompactionLane`, `SdkNativeLaneInput` and `createCompactionLanePolicy` in `lane-policy.ts`.
+
 ## 2026-10-04 - The resident anthropic-subscription transcript stays append-only
 
 ### What changed

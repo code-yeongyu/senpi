@@ -870,7 +870,8 @@ session's prompt for the named surface, so one host serves a terminal client and
 uses the host process's `SENPI_PROMPT_SURFACE` (`app` or `chat` selects that surface; unset or any other value is `terminal`),
 which remains the only switch for a single-process `--mode rpc` client. A later `open_session` that attaches to a live
 session with another `promptSurface` rebuilds that session's prompt; an attach without the field keeps the current
-surface, and `new_session` / `switch_session` / `fork` inside the session keep it too. Probe `prompt_surface` in
+surface, and `new_session` / `switch_session` / `fork` inside the session keep it too, also when the attach lands while
+one of them is still building the replacement. Probe `prompt_surface` in
 `get_protocol_info` before sending the field; an older host ignores it. Probe `prompt_surface_chat` before sending
 `chat`: a host without it refuses `chat` with `invalid_launch_profile`, so a gateway falls back to `app`. Any value other
 than `terminal`, `app` or `chat` is refused with `invalid_launch_profile`.
@@ -900,9 +901,10 @@ subprocesses (the bash tool and everything it spawns) and its eval kernels, incl
 variable, even when the host process itself exports one (a daemon never inherits it from the process that ensured it).
 `BSK_HOME` and `BSK_BIN` are per install, not per session: they pass from the host environment to every session
 unchanged. A later `open_session` that attaches to a live session with another `browserEngine` moves that session to
-it, and an attach without the field keeps the current engine; `new_session` / `switch_session` / `fork` keep it too.
-Probe `browser_engine` in `get_protocol_info` before sending the field; the capability is advertised only because the
-value reaches every consumer above. Any other value is refused with `invalid_launch_profile`.
+it, and an attach without the field keeps the current engine; `new_session` / `switch_session` / `fork` keep it too,
+also when the attach lands while one of them is still building the replacement. Probe `browser_engine` in
+`get_protocol_info` before sending the field; the capability is advertised only because the value reaches every
+consumer above. Any other value is refused with `invalid_launch_profile`.
 
 A skill that must tell the client what the browser is doing publishes it as that session's own event: an extension
 registers a tool that calls `pi.rpc.emit(name, data)`, an eval cell reaches it as `tool.<name>(...)`, and the host adds
@@ -1486,6 +1488,14 @@ capability must use `ask`, never `workspace`, for an edit-only approval promise.
 Hosts that support `permissionPreset: "auto"` advertise `permission_preset_auto`;
 clients without it must not send `auto`.
 Explicit permission rules and remembered approvals retain their existing precedence, except under `auto`: there settings and CLI rules can only narrow the preset (the more restrictive decision wins), and an "Always" answer (saved in `.senpi/permissions-approved.jsonl`, from this or an earlier session) still allows its pattern.
+An `open_session` that attaches to a live session with another `permissionPreset` moves that session to it: the next
+tool call is decided under the new preset, in either direction, and `new_session` / `switch_session` / `fork` keep it,
+also when the attach lands while one of them or a `reload` (or two overlapping reloads) is still rebuilding the
+session. An attach that names a preset is applied even when the session was opened or last attached with the same one.
+An attach without the field keeps the current preset. An attach accepts exactly the values `open_session` accepts and
+treats them the same way: an unknown preset name is applied like one given to `open_session`, so the session's next
+tool call is refused with `Permission setup failed: Invalid --permission-preset "<name>". ...` until a later attach
+names a valid preset.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |

@@ -103,6 +103,12 @@ export class SessionWorkerClient {
 		if (result.type !== "result") throw new Error("Invalid worker browser_engine response");
 	}
 
+	/** Moves the worker's live session to another permission preset (a later `open_session.permissionPreset`). */
+	async setPermissionPreset(preset: string): Promise<void> {
+		const result = await this.request({ type: "permission_preset", preset });
+		if (result.type !== "result") throw new Error("Invalid worker permission_preset response");
+	}
+
 	async commit(): Promise<WorkerSnapshot> {
 		const result = await this.request({ type: "commit" });
 		if (result.type !== "ready") throw new Error("Invalid worker commit response");

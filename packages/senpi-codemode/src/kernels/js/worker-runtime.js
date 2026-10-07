@@ -1,4 +1,6 @@
 // allow: SIZE_OK — private runtime state and installed globals must stay in one worker module.
+import { pathToFileURL } from "node:url";
+import { createCellRequire, createRequire } from "./worker-require.js";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { inspect } from "node:util";
@@ -31,6 +33,7 @@ export class JsWorkerRuntime {
 	#hooks = null;
 	#pendingDisplays = [];
 	#children = new Set();
+	#childrenStopping;
 	#shellWaits = new Set();
 	#onChildEvent;
 	#onShellWaitChange;
@@ -74,24 +77,35 @@ export class JsWorkerRuntime {
 				if (typeof prepared.sourceFile === "string") sourceName = prepared.sourceFile;
 			}
 			if (prelude) indirectEval(prelude, PRELUDE_SOURCE_URL);
-			const value = await awaitMaybePromise(indirectEval(bindKernelBun(wrapUserCode(cellCode)), sourceName));
+			const shadowed = [];
+			const source = bindKernelBun(wrapUserCode(cellCode, shadowed));
+			if (shadowed.length > 0) this.#emitText("stderr", shadowNote(shadowed));
+			const value = await awaitMaybePromise(indirectEval(source, sourceName));
 			await this.#drainPendingDisplays();
 			return value;
 		} finally {
-			this.#pendingDisplays = [];
-			// A child still running here has lost its only owner: the cell that
-			// spawned it is over, nothing will await it again, and it would be
-			// reparented to init. Retire it the way timeout and abort cleanup
-			// already do, unless the cell asked for a detached process.
-			await this.#terminateChildren();
-			this.#hooks = null;
+			// A released run finishing late must not clear the state of the cell running now.
+			if (this.#hooks === hooks) await this.release();
 		}
+	}
+
+	/** Ends the current run's ownership now: its displays, its hooks, and (unless detached) its child processes. */
+	async release() {
+		const hooks = this.#hooks;
+		this.#pendingDisplays = [];
+		// A child still running here has lost its only owner: the cell that
+		// spawned it is over, nothing will await it again, and it would be
+		// reparented to init. Retire it the way timeout and abort cleanup
+		// already do, unless the cell asked for a detached process.
+		await Promise.all([this.#childrenStopping, this.#terminateChildren()]);
+		this.#childrenStopping = undefined;
+		if (this.#hooks === hooks) this.#hooks = null;
 	}
 
 	interrupt() {
 		// The tree snapshot, SIGTERM, and SIGKILL escalation run on their own so
 		// the caller's interrupt latency stays that of the acknowledgement.
-		void this.#terminateChildren();
+		this.#childrenStopping = this.#terminateChildren();
 	}
 
 	#trackChild(child, spawnOptions) {
@@ -155,6 +169,8 @@ export class JsWorkerRuntime {
 			{ defined: () => this.#tools.defined(), undefine: (name) => this.#tools.undefine(name) },
 		);
 		globalThis.tools = globalThis.tool;
+		globalThis.require = createCellRequire(() => globalThis.__senpi_module_context__ ?? { cwdUrl: pathToFileURL(`${process.cwd()}/`).href });
+		globalThis.createRequire = createRequire;
 		const originalLog = console.log.bind(console);
 		const originalError = console.error.bind(console);
 		const originalStdoutWrite = process.stdout.write;
@@ -421,6 +437,12 @@ export class JsWorkerRuntime {
 		}
 		return current;
 	}
+}
+
+function shadowNote(names) {
+	const list = names.map((name) => `\`${name}\``).join(", ");
+	const restore = names.map((name) => `delete ${name}`).join("; ");
+	return `Note: ${list} ${names.length === 1 ? "shadows a kernel or platform global" : "shadow kernel or platform globals"} in your later cells; the kernel and imported libraries keep the original. \`${restore}\` restores ${names.length === 1 ? "it" : "them"}.\n`;
 }
 
 function isPlainObject(value) {

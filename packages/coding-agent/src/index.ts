@@ -1,6 +1,6 @@
 // Core session management
 
-export { sanitizeTerminalLabel } from "@earendil-works/pi-tui";
+export { sanitizeTerminalLabel, visibleWidth } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";
 // The shared-daemon command surface: one JSON line, one exit code, for launchers without a shell
 export { runHostCommand } from "./cli/host-command.ts";

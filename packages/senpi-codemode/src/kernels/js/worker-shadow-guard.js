@@ -12,10 +12,6 @@ function protectedGlobals() {
 	return protectedGlobalNames;
 }
 
-export function findShadowedGlobalName(bindings) {
-	const names = protectedGlobals();
-	for (const name of bindings) {
-		if (names.has(name)) return name;
-	}
-	return undefined;
+export function isKernelGlobal(name) {
+	return protectedGlobals().has(name);
 }

@@ -1,15 +1,21 @@
 /**
- * Provider-scoped compaction opt-out for the `anthropic-subscription` main lane.
+ * Provider-scoped compaction ownership for the `anthropic-subscription` main lane.
  *
- * That lane keeps one resident SDK session per senpi session, and the Claude
- * Agent SDK runs its own native auto-compaction over that session's transcript.
- * Running senpi's compaction on top of it would rewrite a history senpi no
- * longer owns, so senpi stands down for the lane: no auto-compaction triggers,
- * no context reduction. Every other provider is untouched.
+ * That lane keeps one resident SDK session per senpi session. By default senpi
+ * owns its compaction (speculative, idle, restoration, degradation recovery): an
+ * accepted compaction invalidates the resident binding and the next turn
+ * cold-seeds the compacted branch (`tainted_compaction` always flattens), while
+ * the SDK's native auto-compact is pinned off so exactly one side compacts.
  *
- * The stand-down is conditional on the lane actually being resident: with the
- * `resumeMode: "off"` escape hatch senpi flattens its own history into every
- * request, so senpi's compaction must stay fully active there.
+ * `compactionOwner: "sdk"` opts out: the Claude Agent SDK runs its own native
+ * auto-compaction over the resident transcript and senpi stands down for the
+ * lane (no auto-compaction triggers, no context reduction). The stand-down lifts
+ * with the `resumeMode: "off"` escape hatch, where senpi flattens its own
+ * history into every request. Every other provider is untouched.
+ *
+ * The owner is read per call, from the same settings snapshot the query options
+ * use for the next turn, so a mid-session change can never leave the two sides
+ * disagreeing about who compacts.
  *
  * This module also owns the shape of the mirrored `compact_boundary` ledger
  * entry, so the SDK's native compactions stay visible in senpi history.
@@ -22,7 +28,10 @@ import type { CompactionReason } from "../../types.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../anthropic-subscription/account-management.ts";
 import { isColdSeedOverflowMessage } from "../anthropic-subscription/cold-seed-budget.ts";
 import type { AnthropicSubscriptionProviderSettings } from "../anthropic-subscription/settings.ts";
-import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "../anthropic-subscription/settings.ts";
+import {
+	loadAnthropicSubscriptionProviderSettingsFromDisk,
+	resolveCompactionOwner,
+} from "../anthropic-subscription/settings.ts";
 
 /** Custom session entry type carrying a mirrored SDK compaction boundary. */
 export const ANTHROPIC_SUBSCRIPTION_COMPACT_ENTRY_TYPE = "claude-sdk-oauth-compact";
@@ -44,6 +53,8 @@ export interface SdkNativeLaneInput {
 	model: LaneModel | undefined;
 	/** Resolved `claudeSdkOauthProvider.resumeMode`; `undefined` means the "auto" default. */
 	resumeMode?: string;
+	/** Resolved `anthropicSubscriptionProvider.compactionOwner`; `undefined` means the "senpi" default. */
+	compactionOwner?: string;
 }
 
 export interface LaneContext {
@@ -108,34 +119,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export function isSdkNativeCompactionLane(input: SdkNativeLaneInput): boolean {
 	if (input.model?.provider !== ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) return false;
-	return input.resumeMode !== "off";
+	return input.compactionOwner === "sdk" && input.resumeMode !== "off";
 }
 
 /**
- * Per-extension-instance policy holding one memoized provider-settings read.
- * Settings are only read when the active model actually belongs to the lane, so
- * other providers never pay for the lookup.
+ * Per-extension-instance lane policy. Settings are only read when the active
+ * model actually belongs to the lane, so other providers never pay for the
+ * lookup; the loader itself is cached by settings-file revision.
  */
 export function createCompactionLanePolicy(
 	options: { loadProviderSettings?: (cwd: string) => AnthropicSubscriptionProviderSettings } = {},
 ): CompactionLanePolicy {
 	const load = options.loadProviderSettings ?? loadAnthropicSubscriptionProviderSettingsFromDisk;
-	let cachedCwd: string | undefined;
-	let cachedResumeMode: string | undefined;
-	// Per-cwd cache is the intended contract (pinned by lane-policy.test.ts):
-	// resumeMode is read once per cwd. A mid-session switch takes effect on
-	// the next cwd or session. Returns false when the settings cannot be read,
-	// so callers fail closed to senpi's full behavior.
-	const resolveResumeMode = (cwd: string): boolean => {
-		if (cachedCwd === cwd) return true;
+	// Read on every call, never memoized here: the query options re-read the same
+	// settings for every turn, and a cached owner would let a mid-session change
+	// leave senpi and the resident process disagreeing about who compacts. Returns
+	// undefined when the settings cannot be read, so callers fail closed to
+	// senpi's full behavior.
+	const readProviderSettings = (cwd: string): AnthropicSubscriptionProviderSettings | undefined => {
 		try {
-			cachedResumeMode = load(cwd).resumeMode;
+			return load(cwd);
 		} catch {
-			cachedCwd = undefined;
-			return false;
+			return undefined;
 		}
-		cachedCwd = cwd;
-		return true;
 	};
 	// Declared as a local so `ownsCompaction` never depends on `this`: the policy object
 	// is routinely destructured at call sites, which would otherwise unbind the receiver.
@@ -145,17 +151,22 @@ export function createCompactionLanePolicy(
 		// for the lane, so the SDK-native stand-down no longer applies. This is
 		// the escape hatch for lanes whose SDK never fires native compaction.
 		if (context.getCompactionSettings?.().model) return false;
-		// A settings read failure must never silently disable senpi compaction:
-		// fail closed by keeping senpi's own compaction fully active.
-		if (!resolveResumeMode(context.cwd)) return false;
-		return isSdkNativeCompactionLane({ model: context.model, resumeMode: cachedResumeMode });
+		// A settings read failure must never silently disable senpi compaction.
+		const providerSettings = readProviderSettings(context.cwd);
+		if (!providerSettings) return false;
+		return isSdkNativeCompactionLane({
+			model: context.model,
+			resumeMode: providerSettings.resumeMode,
+			compactionOwner: resolveCompactionOwner(providerSettings),
+		});
 	};
 	return {
 		disablesSenpiCompaction,
 		hasAppendOnlyTranscript(context: LaneContext): boolean {
 			if (context.model?.provider !== ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) return false;
-			if (!resolveResumeMode(context.cwd)) return false;
-			return cachedResumeMode !== "off";
+			const providerSettings = readProviderSettings(context.cwd);
+			if (!providerSettings) return false;
+			return providerSettings.resumeMode !== "off";
 		},
 		ownsCompaction(context: LaneContext, reason: CompactionReason): boolean {
 			// Manual is senpi-owned everywhere: it is the user's explicit recovery path,

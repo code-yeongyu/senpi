@@ -1,3 +1,5 @@
+import { installCellOwnership } from "./cell-ownership.js";
+import { releaseCell, releasedCellError, runInCell } from "./cell-run-context.js";
 import { kernelToolCallContext } from "./kernel-tools-context.js";
 import { kernelToolError } from "./kernel-tools-errors.js";
 import { createKernelToolPump } from "./kernel-tools-pump.js";
@@ -5,6 +7,7 @@ import { hostDeniedError, hostToolRefusal } from "./kernel-tools-scope.js";
 import { installSessionCwd } from "./worker-cwd.js";
 import { installPackageResolver } from "./worker-package-resolve.js";
 import { createHeapProbe } from "./worker-heap.js";
+import { createRejectionReports } from "./rejection-reports.js";
 import { createWorkerMemory } from "./worker-memory.js";
 import { JsWorkerRuntime } from "./worker-runtime.js";
 import { installKernelWebView } from "./worker-webview.js";
@@ -29,10 +32,17 @@ const SESSION_ENVIRONMENT_KEYS = [
 ];
 
 export function createWorkerCore(transport, options) {
+	const restoreOwnership = installCellOwnership();
 	let runtime = null;
 	let memory = null;
 	let heapProbe = null;
 	let activeCell = null;
+	const rejections = createRejectionReports({
+		activeCell: () => activeCell,
+		emitText: (data) => emit({ type: "text", stream: "stderr", data }),
+	});
+	const reportRejection = (reason) => rejections.report(reason);
+	process.on("unhandledRejection", reportRejection);
 	const pendingTools = new Map();
 	const pendingWebViewPorts = new Map();
 	const nestedInvokes = new Map();
@@ -46,23 +56,38 @@ export function createWorkerCore(transport, options) {
 		transport.send(message);
 	}
 
+	function stopProblem(cell, what, error) {
+		const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+		emit({ type: "text", stream: "stderr", data: `Stopping cell ${cell.cellId}: ${what}: ${detail}\n` });
+	}
+
 	async function runCell(message) {
 		if (!runtime) {
 			emit({ type: "result", cellId: message.cellId, ok: false, error: { message: "JS runtime not initialized" }, durationMs: 0 });
 			return;
 		}
 		const startedAtMs = performance.now();
-		activeCell = { cellId: message.cellId, interruption: null };
+		const release = Promise.withResolvers();
+		const cell = { cellId: message.cellId, interruption: null, released: false, release: release.reject };
+		activeCell = cell;
+		rejections.startCell(cell);
 		try {
-			const value = await runtime.run(message.code, message.cellId, {
-				emit,
-				callTool: async (toolName, args) => await callTool(toolName, args),
-			});
+			const run = runInCell(cell, () =>
+				runtime.run(message.code, message.cellId, {
+					emit: (event) => {
+						if (releasedCellError() === undefined) emit(event);
+					},
+					callTool: async (toolName, args) => await callTool(toolName, args),
+				}),
+			);
+			const value = await Promise.race([run, release.promise]);
+			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} catch (error) {
+			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: false, error: bridgeError(error), durationMs: durationMs(startedAtMs), ...memoryReport() });
 		} finally {
-			activeCell = null;
+			if (activeCell === cell) activeCell = null;
 		}
 	}
 
@@ -71,6 +96,8 @@ export function createWorkerCore(transport, options) {
 	}
 
 	async function callTool(toolName, args) {
+		const released = releasedCellError();
+		if (released !== undefined) throw released;
 		const nested = kernelToolCallContext.getStore();
 		if (!nested && activeCell?.interruption) throw activeCell.interruption;
 		if (nested?.signal.aborted) throw nested.signal.reason;
@@ -105,6 +132,17 @@ export function createWorkerCore(transport, options) {
 		}
 		kernelTools.abortAll(kernelToolError("kernel_tool_stale", interruption.message));
 		runtime.interrupt();
+		// A free event loop with no Bun.$ wait can let the cell go and keep the VM. A Bun.$ wait keeps the
+		// restart (#2453): the shell cannot be cancelled, so only retiring the worker ends it.
+		if (runtime.shellWaitActive) return;
+		const cell = activeCell;
+		for (const error of releaseCell(cell)) stopProblem(cell, "a resource it opened would not close", error);
+		// The result settles after the cell's children are gone, so the next cell never overlaps them. A failed release
+		// is reported as such, never left to surface as an unhandled rejection blamed on the stopped cell.
+		void runtime
+			.release()
+			.catch((error) => stopProblem(cell, "releasing its work failed", error))
+			.finally(() => cell.release(interruption));
 	}
 
 	function acknowledgeInterrupt() {
@@ -186,6 +224,8 @@ export function createWorkerCore(transport, options) {
 	return {
 		dispose() {
 			unsubscribe();
+			restoreOwnership();
+			process.off("unhandledRejection", reportRejection);
 			globalThis.__senpi_restore_console__?.();
 		},
 	};

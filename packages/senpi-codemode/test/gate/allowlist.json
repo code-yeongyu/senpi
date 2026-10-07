@@ -1014,6 +1014,184 @@
 				"legacyContracts/test/eval-detach-terminal-truth.test.ts/detached cell terminal truth Given a queued cell with nothing ahead of it when its result renders then the header says it waits for the kernel"
 			],
 			"reason": "senpi#2790/#2791: a detached cell with nothing ahead of it says it waits for the kernel (detach reply, eval list, TUI header) instead of an empty predecessor list; a stopped or failed detached cell settles with its buffered output or error text, never the live 'running' frame. These contracts fail on main."
+		},
+		"senpi#2793": {
+			"additions": [
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares a platform global name when later cells run then they see the cell's value while the kernel and libraries keep the built-in",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given let, var and destructured declarations of platform global names when later cells run then each persists for the cells",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares a kernel helper name when later cells run then they see the cell's value and the kernel still prints",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a shadowed name when a cell deletes it then later cells see the original global again",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that shadows kernel globals when it runs then its output notes each name once and how to restore it",
+				"legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence Given a cell that declares globalThis when it runs then it is refused and later cells still persist variables"
+			],
+			"reason": "senpi#2793: a top-level declaration of a kernel or platform global name (log, fetch, print, URL...) persists for the user's cells in a per-kernel user scope while globalThis keeps the original; `delete` restores it and the cell gets a note. These contracts fail on main, which refuses such declarations.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects a top-level declaration that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects let and var declarations that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects destructured bindings that would replace a platform global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/kernel-js-persistence.test.ts/JavaScript kernel declaration persistence rejects a declaration that would replace a kernel prelude global",
+					"reason": "senpi#2793 replaces the refusal with a cell-scoped binding: a declaration of a kernel or platform global name now persists for the user's cells while globalThis keeps the original, so the old refusal contract leaves the baseline; its replacement is listed under additions."
+				}
+			]
+		},
+		"senpi#2802": {
+			"additions": [
+				"legacyContracts/test/eval-render-summary.test.ts/eval summary display bounds the summary to the live frame's one-line headline (senpi#2802)",
+				"legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a running eval with a summary when the frame renders then the header leads with the summary (senpi#2802)",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row renders collapsed then the header leads with the summary, language and state, and the code is hidden",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a queued and a detached cell when their rows render then both lead with the summary",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell when its row is expanded then the code is shown once and the summary is not repeated",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell without a summary when its row renders then the headline is its first code line, cut to the width",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a running cell with no output yet when its row renders collapsed then it is one line with no empty frame",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a completed cell when its row renders then it keeps the done header, the summary line and the code preview",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a call still streaming with only code when it renders then it shows a headline row instead of failing",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows lead with the cell's summary (senpi#2802) Given a complete call before its result arrives when it renders then it leads with the summary",
+				"imports/extension/packages/senpi-codemode/src/tool/live-headline.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/tool/live-headline.ts"
+			],
+			"reason": "senpi#2802: in-progress, queued and detached eval rows lead with the cell's summary (else the first code line), then the language, state and elapsed time, with the code behind expand; a call still streaming its arguments renders that headline instead of throwing into the host's raw key=value fallback. Completed rows are unchanged. The new contracts fail on main. live-headline.ts (about 40 lines, no dependencies beyond types.ts) is imported by render.ts, which already loads with the extension.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-render-summary.test.ts/eval summary display bounds the summary inside the live cell frame too",
+					"reason": "senpi#2802: an in-progress eval row now leads with the cell's summary on its header line instead of the summary line plus code below it; the same coverage moves to the renamed contract listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-execution-render.test.ts/eval summary in transcript frames Given a running eval with a summary when the frame renders then the header drops the label segment and the summary sits under it",
+					"reason": "senpi#2802: an in-progress eval row now leads with the cell's summary on its header line instead of the summary line plus code below it; the same coverage moves to the renamed contract listed under additions."
+				}
+			]
+		},
+		"senpi#2789": {
+			"additions": [
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell whose output is a few kilobytes when it completes then the notification carries all of it",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell that returned one long line of JSON when it completes then the notification carries all of it",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell whose result the output sink bounded when it completes then the notification shows exactly the foreground text, marker and artifact notice included",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a large notification when it is built then the outcome line and the kernel-state note frame the output",
+				"legacyContracts/test/detached-cell-notification-budget.test.ts/detached cell notification parity with the foreground result Given a detached cell that displayed an image when it completes then the notification delivers the image",
+				"legacyContracts/test/eval-detach.test.ts/eval detached cells reports a detached kernel crash with the cell's whole result, as the foreground would"
+			],
+			"reason": "senpi#2789: a detached cell's completion notification carries the same text its result would show in the foreground (the output sink's configured head, tail, middle marker and artifact notice) instead of a 512-byte tail, framed by the outcome line and kernel-state note, and delivers the cell's images. All five fail on main: it shows a 512-byte tail, appends a cap marker after the state note, and drops images.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/eval-detach.test.ts/eval detached cells reports detached kernel crashes with the buffered tail and spills oversized notifications to an absolute path",
+					"reason": "senpi#2789: a detached notification now carries the cell's foreground result text unchanged, so there is no separate notification spill file any more; the crash contract is kept as 'reports a detached kernel crash with the cell's whole result, as the foreground would' under additions."
+				}
+			]
+		},
+		"senpi#2792": {
+			"additions": [
+				"helperCensus/js/createRequire",
+				"helperCensus/js/require",
+				"helperCensus/js-bun/createRequire",
+				"helperCensus/js-bun/require",
+				"helperCensus/js-node/createRequire",
+				"helperCensus/js-node/require",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/worker-require.js",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it requires a builtin then it gets the runtime's module, with or without the node: prefix",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a project with a CommonJS package when a cell requires it then the package from the project's node_modules loads",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it requires a relative CommonJS file and a JSON file then both resolve from the session directory",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell when it builds its own require with createRequire then that require resolves from the given path",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a cell that builds its own require from createRequire, the common ESM idiom, when it runs then its require works and later cells keep it",
+				"legacyContracts/test/kernel-js-require.test.ts/require in JavaScript cells Given a module that does not exist when a cell requires it then the runtime's not-found error names it and the kernel keeps its state"
+			],
+			"reason": "senpi#2792: JavaScript cells get require and createRequire (resolved like the cell's import: builtins, relative CommonJS and JSON files, the project's packages, then the managed package environment), installed as kernel helpers from worker-require.js. The require contracts fail on main ('require is not defined')."
+		},
+		"senpi#2788": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-run-context.js",
+				"legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a promise nothing settles when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell awaiting a fetch whose server never answers when stopped then earlier globals survive on the same worker",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it prints or calls a tool then nothing reaches the next cell",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell looping over short Bun.spawn children when interrupted then the worker state survives",
+				"legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that resumes later when it starts a fetch then the request is refused",
+				"legacyContracts/test/js-kernel-interrupt-bun.test.ts/JavaScript kernel under Bun interrupts a running cell Given a cell polling on Bun.sleep when interrupted then the loop stops and the worker state survives",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that left a fetch and a derived chain unawaited then the kernel keeps its state and does not crash",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell with an open socket server and client when stopped then both close and earlier globals survive",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation keeps the child and its globals when a stopped cell left a fetch unawaited (#2788)",
+				"legacyContracts/test/js-process-kernel.test.ts/JavaScriptKernel process isolation stops a polling loop and keeps the child's globals when a cell is stopped twice (#2788)",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/rejection-reports.js",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell whose floating fetch rethrows a new error with a cause then the kernel keeps its state and reports it on the next cell",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a cell that leaves many promises rejecting unhandled when it runs then one report and a count reach its output and the kernel keeps its state",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given an uncaught exception in a timer when it fires then the worker still restarts and says variables are lost",
+				"legacyContracts/test/js-kernel-stop-keeps-state.test.ts/JavaScriptKernel stop on a free event loop Given a stopped cell that started a node:worker_threads Worker then the worker is terminated and earlier globals survive",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/cell-ownership.js",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on global setTimeout when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on global setInterval when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setTimeout when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setImmediate when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers setInterval when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on node:timers/promises when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on a short fs/promises read when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on an fs callback read when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on an fs read stream when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on readline over a file stream when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a polling loop on a MessageChannel round trip when stopped then it stops ticking and earlier globals survive",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a socket the cell constructed directly when stopped then it is destroyed, and sockets Node creates still pass instanceof",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given a resource that will not close when its cell is stopped then the failure is reported and the stop still keeps the state",
+				"legacyContracts/test/js-kernel-stop-ends-loops.test.ts/JavaScriptKernel stop ends a stopped cell's loop Given an http server the cell started when stopped then it served while live and is closed after, and Node's own constructors still work"
+			],
+			"reason": "senpi#2788: Stop on a free event loop releases the cell in the worker and keeps the VM. cell-run-context.js (the per-cell async context and the released-cell guards) joins the first-kernel import census; the new contracts are RED before the fix (stateRetained false) and GREEN after. The JavaScript worker reports unhandled rejections through rejection-reports.js instead of crashing (the lead-approved behavior for #2788). Round 3: the node:timers module timers, fs callback operations and streams, readline, and directly constructed net/tls/http/dgram sockets and servers are owned too (cell-ownership.js); a resource that will not close is reported instead of swallowed. The polling-loop contracts moved to js-kernel-stop-ends-loops.test.ts. Round 4: Node's socket and server types are owned on connect/listen/bind instead of by subclassing (http.Server calls net.Server as a function); a cell's http server serves while live and closes on Stop.",
+			"changes": [
+				{
+					"key": "legacyContracts/test/js-kernel-cooperative-interrupt.test.ts/JavaScriptKernel cooperative interrupt Given a cell parked on a promise nothing settles when interrupted then the worker restarts and the note is truthful",
+					"reason": "senpi#2788: a stop the worker acknowledges no longer costs the VM when the cell only awaits something that never settles; the worker releases the cell and keeps its globals. This contract leaves the baseline; its honest rename is 'Given a cell parked on a promise nothing settles when interrupted then the worker keeps its state'."
+				},
+				{
+					"key": "legacyContracts/test/js-kernel-shell-stop-bun.test.ts/Bun shell Stop reports state loss when Stop interrupts a native late wait",
+					"reason": "senpi#2788: the 'late' case swallowed Stop on a host-tool wait and then started a native shell; the released cell now refuses that shell, so the worker keeps its state instead of restarting. Replaced by 'keeps globals and refuses the shell when a cell swallows Stop and then starts a native shell'. Stopping a running Bun.$ wait still restarts (#2453 Decision A; the shell/text/lines cases are unchanged)."
+				}
+			]
+		},
+		"senpi#2831": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a summary carrying escape and control characters when its live row renders then the row is one line with none of them",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a wide-character summary when its live row renders in a narrow terminal then the row fits the width in screen cells",
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a peek or stop call still streaming without its cell id when it renders then the title has no undefined"
+			],
+			"changes": [],
+			"reason": "senpi#2831 (follow-ups from #2810's review): pins that a live row's summary is sanitized to one clean line, that the collapsed headline is measured and cut in screen cells so a wide-character summary stays on one line, and that a streaming peek/stop without its cell id renders the action alone instead of 'undefined'."
+		},
+		"senpi#2839": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line carries escape and control characters when its live row renders then the row is one clean line (senpi#2839)"
+			],
+			"reason": "senpi#2839: a live eval row sanitizes its code-line headline (the summary-less fallback) before measuring it; the contract fails before the change."
+		},
+		"senpi#2832": {
+			"additions": [
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in worker mode (senpi#2832) Given a project package and a relative file when a cell calls require.resolve then it gets the absolute paths the call itself would load",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in worker mode (senpi#2832) Given a module that does not exist when a cell calls require.resolve then the runtime's not-found error names it",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in worker mode (senpi#2832) Given a cell when it reads require.resolve.paths and require.cache then both exist, and the cache holds a module the cell required",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in process mode (senpi#2832) Given a project package and a relative file when a cell calls require.resolve then it gets the absolute paths the call itself would load",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in process mode (senpi#2832) Given a module that does not exist when a cell calls require.resolve then the runtime's not-found error names it",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require in process mode (senpi#2832) Given a cell when it reads require.resolve.paths and require.cache then both exist, and the cache holds a module the cell required",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a package only the managed environment has when a cell requires and resolves it then both use the managed copy",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a package both the project and the managed environment have when a cell requires and resolves it then both use the project copy",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a project package whose own dependency is missing when a cell requires it then the dependency's error surfaces and the managed copy is never loaded",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given builtins when a cell resolves them then the runtime's own ids come back and their lookup paths are null",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a bare name when a cell reads its lookup paths then the project's come first, then the managed environment's, each once",
+				"legacyContracts/test/kernel-js-require-order.test.ts/the cell's require lookup order (senpi#2832) Given a module a cell required when its cache entry is deleted then the next require loads it again",
+				"legacyContracts/test/kernel-js-require-resolve.test.ts/the cell-global require under Bun, the product's runtime (senpi#2832) Given a Bun builtin when a process-mode cell resolves and requires it then the id is Bun's own and it loads"
+			],
+			"reason": "senpi#2832: the cell-global require carries resolve, resolve.paths and cache like Node's own require; the call and resolve share one lookup (builtins natively, then the project, then the managed package environment). The six contracts fail before the fix ('require.resolve is not a function'). Round 2 (review 5434200346): the call loads exactly what require.resolve names, so the two cannot pick different copies; builtins resolve natively (Bun's bun:sqlite too); the order contracts run against createCellRequire with real project and managed roots."
+		},
+		"senpi#2850": {
+			"additions": [
+				"legacyContracts/test/eval-render-live-headline.test.ts/live eval rows stay one clean line (senpi#2831) Given a cell without a summary whose first code line is only escape and control characters when its live row renders then the headline is the next line with content (senpi#2850)"
+			],
+			"reason": "senpi#2850: a summary-less live row skips a first code line that sanitizes to nothing; the contract fails before the change (the row shows only the ellipsis)."
 		}
 	}
 }

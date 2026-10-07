@@ -212,6 +212,16 @@ export class AgentSessionRuntime {
 	}
 
 	/**
+	 * Moves this session to another permission preset (a later `open_session.permissionPreset`): the
+	 * permission extension enforces it from the next tool call, and later replacements (switch, new,
+	 * fork) keep it.
+	 */
+	setPermissionPreset(preset: string): void {
+		this._launchProfile = Object.freeze({ ...(this._launchProfile ?? { cwd: this.cwd }), permissionPreset: preset });
+		this._session.extensionRunner.setFlagValue("permission-preset", preset);
+	}
+
+	/**
 	 * Gives this process's sessions their fallback policy (`set_retry_fallback`); later replacements
 	 * (switch, new, fork) keep it. Callers set it before the first turn: a chain never changes under a
 	 * retry already in flight.
@@ -334,6 +344,13 @@ export class AgentSessionRuntime {
 	private async apply(result: CreateAgentSessionRuntimeResult, hold?: SessionHold): Promise<void> {
 		this._sessionHold = hold ?? holdActiveSession(result.session.sessionManager, false);
 		this._session = result.session;
+		// The replacement was built from the profile read before its runtime was created; an attach
+		// that moved a setting while it was being built reached only the retired session (senpi#2842).
+		const profile = this._launchProfile;
+		if (profile?.permissionPreset !== undefined)
+			this._session.extensionRunner.setFlagValue("permission-preset", profile.permissionPreset);
+		if (profile?.promptSurface !== undefined) this._session.setPromptSurface(profile.promptSurface);
+		if (profile?.browserEngine !== undefined) this._session.setBrowserEngine(profile.browserEngine);
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;

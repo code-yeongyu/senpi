@@ -1,12 +1,16 @@
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EVAL_NOTIFICATION_CUSTOM_TYPE, EvalNotifier } from "../src/extension/eval-notifier.ts";
+import {
+	EVAL_NOTIFICATION_CUSTOM_TYPE,
+	type EvalNotificationContent,
+	EvalNotifier,
+} from "../src/extension/eval-notifier.ts";
 import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
 import { FakeKernel, fakeExtensionContext } from "./eval/fakes.ts";
 
 interface RecordedMessage {
 	readonly customType: string;
-	readonly content: string;
+	readonly content: EvalNotificationContent;
 	readonly display: boolean;
 	readonly deliverAs?: string;
 	readonly triggerTurn?: boolean;
@@ -42,7 +46,7 @@ describe("EvalNotifier", () => {
 	});
 
 	it("scopes once-per-cell delivery to one session generation", () => {
-		const messages: string[] = [];
+		const messages: EvalNotificationContent[] = [];
 		const notifier = new EvalNotifier({
 			sendMessage: (message) => messages.push(message.content),
 			getContext: () => ({ ...fakeExtensionContext(), mode: "tui", model: fakeModel() }),

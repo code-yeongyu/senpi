@@ -135,6 +135,9 @@ export function configFingerprint(
 			authLane,
 			accountName,
 			permissionMode: options.permissionMode,
+			// The compaction owner (`autoCompactEnabled`) is fixed at spawn: a changed owner must
+			// restart the resident process, or the old owner keeps compacting next to the new one.
+			settings: options.settings,
 			// Bump HOST_TOOL_POLICY_FINGERPRINT in tools.ts when denial copy or hooks change.
 			hostToolPolicy: HOST_TOOL_POLICY_FINGERPRINT,
 			settingSources: options.settingSources,

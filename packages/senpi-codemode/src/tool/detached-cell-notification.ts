@@ -1,61 +1,21 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import type { EvalDetachedCellNotification, EvalDetachedCellSnapshot } from "./detached-cell-manager.ts";
 import { interruptionStateNote, unknownInterruptionStateNote } from "./interrupt-note.ts";
 import type { EvalKernelState, EvalMemoryDetails } from "./types.ts";
 
-const NOTIFICATION_TAIL_BYTES = 512;
-
-export function detachedNotificationSpillPath(artifactsDir: string | undefined, cellId: string): string | undefined {
-	if (artifactsDir === undefined) return undefined;
-	return join(artifactsDir, "local", `detached-eval-${safeCellId(cellId)}.log`);
+/**
+ * A detached cell's completion carries the same text its result would have shown in the foreground: the output sink
+ * already bounded it (the configured head, the tail, the middle marker and the artifact notice), plus its images.
+ */
+export function buildDetachedCellNotification(snapshot: EvalDetachedCellSnapshot): EvalDetachedCellNotification {
+	const images = snapshot.result.content.filter((part) => part.type === "image");
+	return { cellId: snapshot.cellId, content: notificationText(snapshot, textContent(snapshot)), images };
 }
 
-export async function buildDetachedCellNotification(
-	snapshot: EvalDetachedCellSnapshot,
-	spillPath: string | undefined,
-): Promise<EvalDetachedCellNotification> {
-	const body = notificationBody(snapshot);
-	const overflow = Buffer.byteLength(body, "utf8") > NOTIFICATION_TAIL_BYTES;
-	let spillNotice = "";
-	if (overflow && spillPath !== undefined) {
-		try {
-			await mkdir(dirname(spillPath), { recursive: true });
-			await writeFile(spillPath, body, "utf8");
-			// The agent read tool resolves plain paths only, so the notice must carry
-			// the absolute spill path, never the kernel-helper local:// scheme.
-			spillNotice = `\nBuffered output overflowed; full output: ${spillPath}`;
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			spillNotice = `\nBuffered output overflow could not be spilled: ${message}`;
-		}
-	}
-	return {
-		cellId: snapshot.cellId,
-		content: `${overflow ? notificationPreview(snapshot) : body}${overflow ? "\n[…notification tail capped…]" : ""}${spillNotice}`,
-	};
-}
-
-function notificationBody(cell: EvalDetachedCellSnapshot): string {
-	const outcome = outcomeOf(cell);
-	const resultText = textContent(cell);
-	const stateNote = stateNoteOf(cell);
+function notificationText(cell: EvalDetachedCellSnapshot, output: string): string {
 	return [
-		`<system-reminder>Detached eval cell ${cell.cellId} (${cell.language}) ${outcome}.`,
-		resultText.length === 0 ? "(no output)" : resultText,
-		`${stateNote}</system-reminder>`,
-	].join("\n");
-}
-
-function notificationPreview(cell: EvalDetachedCellSnapshot): string {
-	const outcome = outcomeOf(cell);
-	const resultText = textContent(cell);
-	const stateNote = stateNoteOf(cell);
-	return [
-		`<system-reminder>Detached eval cell ${cell.cellId} (${cell.language}) ${outcome}.`,
-		"Buffered output tail:",
-		truncateTailUtf8(resultText, NOTIFICATION_TAIL_BYTES),
-		`${stateNote}</system-reminder>`,
+		`<system-reminder>Detached eval cell ${cell.cellId} (${cell.language}) ${outcomeOf(cell)}.`,
+		output.length === 0 ? "(no output)" : output,
+		`${stateNoteOf(cell)}</system-reminder>`,
 	].join("\n");
 }
 
@@ -100,16 +60,4 @@ export function memoryStateNote(memory: EvalMemoryDetails | undefined): string {
 	if (memory?.recycled === true)
 		return "The kernel was restarted before this cell ran - globals from earlier cells are gone; this cell's variables are available to the next eval cell.";
 	return "Kernel state updated - variables are available to the next eval cell.";
-}
-
-function safeCellId(cellId: string): string {
-	return cellId.replace(/[^a-zA-Z0-9_-]/gu, "_");
-}
-
-function truncateTailUtf8(text: string, maxBytes: number): string {
-	if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
-	const bytes = Buffer.from(text, "utf8");
-	let start = bytes.length - maxBytes;
-	while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++;
-	return bytes.subarray(start).toString("utf8");
 }

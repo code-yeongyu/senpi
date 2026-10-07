@@ -54,6 +54,7 @@ async function closeFixture() {
 			case "command":
 			case "prompt_surface":
 			case "browser_engine":
+			case "permission_preset":
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
 				break;
 			case "close":

@@ -1,7 +1,3 @@
-import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CellExecution } from "../src/tool/cell-execution.ts";
@@ -39,12 +35,9 @@ class NotificationRecorder {
 	}
 }
 
-const directories: string[] = [];
-
-afterEach(async () => {
+afterEach(() => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
-	await Promise.all(directories.splice(0).map(async (path) => await rm(path, { recursive: true, force: true })));
 });
 
 function textOf(result: AgentToolResult<unknown>): string {
@@ -374,30 +367,31 @@ describe("eval detached cells", () => {
 		expect(manager.liveCells("js")).toEqual([]);
 	});
 
-	it("reports detached kernel crashes with the buffered tail and spills oversized notifications to an absolute path", async () => {
+	it("reports a detached kernel crash with the cell's whole result, as the foreground would", async () => {
 		vi.useFakeTimers();
-		const artifactsDir = await mkdtemp(join(tmpdir(), "senpi-codemode-detach-"));
-		directories.push(artifactsDir);
 		const recorder = new NotificationRecorder();
-		const manager = new EvalDetachedCellManager({ artifactsDir, notifier: recorder });
-		const kernel = new FakeKernel([{ type: "text", stream: "stdout", data: `${"x".repeat(3_000)}\nlast tail\n` }]);
+		const manager = new EvalDetachedCellManager({ notifier: recorder });
+		const kernel = new FakeKernel([
+			{
+				type: "text",
+				stream: "stdout",
+				data: `${Array.from({ length: 400 }, (_, i) => `row ${i} ${"x".repeat(40)}`).join("\n")}\nlast tail\n`,
+			},
+		]);
 		const tool = createTool(manager, [["js", kernel]]);
 
 		await detach(tool, kernel, "crashed-detached");
-		expect(manager.liveCells("js")).toMatchObject([{ state: "detached" }]);
 		kernel.completeDeferredRun(errorResult("crashed-detached", "kernel crashed"));
 		await manager.waitForTerminal("crashed-detached");
 		expect(manager.peek("crashed-detached")).toMatchObject({ state: "failed" });
 		await manager.flushNotifications();
 
 		expect(recorder.notices).toHaveLength(1);
-		expect(recorder.notices[0]?.content).toContain("kernel crashed");
-		// Spill notices must carry the absolute spill path — the agent read tool cannot
-		// resolve the local:// scheme (it is a kernel-helper-only scheme).
-		const spillPath = join(artifactsDir, "local", "detached-eval-crashed-detached.log");
-		expect(recorder.notices[0]?.content).toContain(spillPath);
-		expect(recorder.notices[0]?.content).not.toContain("local://");
-		expect(existsSync(spillPath)).toBe(true);
+		const content = recorder.notices[0]?.content ?? "";
+		expect(content).toContain("kernel crashed");
+		expect(content).toContain("row 0 ");
+		expect(content).toContain("last tail");
+		expect(content).not.toContain("local://");
 	});
 });
 

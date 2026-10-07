@@ -10,7 +10,7 @@ import {
 	resolveMaxDetachedCells,
 	resolveRunBudgetSeconds,
 } from "./config/settings.ts";
-import { EvalNotifier } from "./extension/eval-notifier.ts";
+import { type EvalNotificationContent, EvalNotifier } from "./extension/eval-notifier.ts";
 import { EVAL_CELLS_STATUS_KEY } from "./extension/eval-status.ts";
 import { EvalStatusTicker } from "./extension/eval-status-ticker.ts";
 import { hostLine, modelIdFrom } from "./extension/host-facts.ts";
@@ -57,7 +57,7 @@ export interface CodemodeExtensionAPI {
 	getActiveTools(): string[];
 	getAllTools(): readonly EvalSchemaToolInfo[];
 	sendMessage(
-		message: { customType: string; content: string; display: boolean },
+		message: { customType: string; content: EvalNotificationContent; display: boolean },
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): void;
 	/** Optional host event bus; a host without one turns extension event emission into a harmless no-op. */

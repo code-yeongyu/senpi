@@ -7,6 +7,7 @@ import {
 	type ToolDefinition,
 	type ToolRenderResultOptions,
 	truncateToVisualLines,
+	visibleWidth,
 } from "@code-yeongyu/senpi";
 import type { TruncationMeta } from "../output/output-meta.ts";
 import { highlightedCode } from "./code-preview.ts";
@@ -21,6 +22,7 @@ import {
 	JSON_TREE_SCALAR_LEN_EXPANDED,
 	renderJsonTreeLines,
 } from "./json-tree.ts";
+import { knownLanguage, leadsWithHeadline, liveHeadline } from "./live-headline.ts";
 import { formatRuntimeBadge } from "./runtime-label.ts";
 import { codePointPrefix, formatDuration, renderToolCallWidget } from "./tool-widgets.ts";
 import type {
@@ -341,7 +343,9 @@ function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges
 		environment.spinnerFrame ?? Math.floor((cellElapsedMs(cell, environment) ?? 0) / LIVE_RENDER_TICK_MS),
 	);
 	const runtimeBadge = cell.runtime === undefined ? "" : ` (${formatRuntimeBadge(cell.language, cell.runtime)})`;
-	let header = `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
+	let header = leadsWithHeadline(cell.status)
+		? `eval ${cell.language}${runtimeBadge} ${presentation.label}`
+		: `eval ${cell.language}${runtimeBadge} ${presentation.label} ${presentation.icon}`;
 	if (cell.queuedBehind !== undefined && cell.queuedBehind.length > 0)
 		header += ` · queued behind ${cell.queuedBehind.map(sanitizeTerminalLabel).join(", ")}`;
 	else if (cell.queuedBehind !== undefined && cell.status === "queued")
@@ -352,7 +356,22 @@ function cellHeader(cell: EvalCellResult, environment: RenderEnvironment, badges
 	if (elapsedMs !== undefined) header += ` · ${formatDuration(elapsedMs)}`;
 	if (badges.reset) header += " · reset";
 	if (badges.timeout !== undefined) header += ` · timeout ${badges.timeout}s`;
+	if (leadsWithHeadline(cell.status))
+		header = headlined(presentation.icon, cell.summary, cell.code, header, environment);
 	return style(environment.theme, presentation.color, header);
+}
+
+// An in-progress row leads with what the cell is doing (senpi#2802); collapsed, the headline is cut so the whole
+// header stays on one line, and the code moves behind expand.
+function headlined(
+	icon: string,
+	summary: string | undefined,
+	code: string | undefined,
+	rest: string,
+	environment: RenderEnvironment,
+): string {
+	const budget = environment.expanded ? undefined : environment.width - 3 - visibleWidth(`${icon}  · ${rest}`);
+	return `${icon} ${liveHeadline(summary, code, budget)} · ${rest}`;
 }
 
 function previewText(
@@ -614,12 +633,23 @@ function renderAgentProgressEvents(events: readonly EvalStatusEvent[], environme
 }
 
 function renderCell(cell: EvalCellResult, environment: RenderEnvironment, badges: CellBadges): string[] {
+	if (leadsWithHeadline(cell.status) && !environment.expanded && cell.output.trim().length === 0) {
+		const statusEvents = (cell.statusEvents ?? []).filter((event) => event.op !== "agent");
+		if (statusEvents.length === 0) {
+			// Nothing to frame yet: the collapsed live row is its headline alone, one line, no empty box.
+			const lines = renderPrefixed(cellHeader(cell, environment, badges), environment, LIVE_LINE_PREFIX);
+			const agentEvents = (cell.statusEvents ?? []).filter((event) => event.op === "agent");
+			if (agentEvents.length > 0) appendLines(lines, renderAgentProgressEvents(agentEvents, environment));
+			return lines;
+		}
+	}
 	const lines = renderPrefixed(cellHeader(cell, environment, badges), environment, {
 		prefix: "╭─ ",
 		continuation: "│  ",
 		color: "borderAccent",
 	});
-	if (cell.summary !== undefined) {
+	const headlined = leadsWithHeadline(cell.status);
+	if (cell.summary !== undefined && !headlined) {
 		appendLines(
 			lines,
 			summaryVisualLines(cell.summary, Math.max(1, environment.width - 2), environment.expanded).map(
@@ -628,11 +658,14 @@ function renderCell(cell: EvalCellResult, environment: RenderEnvironment, badges
 		);
 	}
 	const innerWidth = Math.max(1, environment.width - 2);
-	const codePreview = previewText(
-		highlightedCode(cell.code, cell.language, environment.theme, environment.repaint),
-		environment.expanded ? Number.POSITIVE_INFINITY : CODE_PREVIEW_LINES,
-		innerWidth,
-	);
+	const codePreview =
+		headlined && !environment.expanded
+			? { lines: [], skipped: 0 }
+			: previewText(
+					highlightedCode(cell.code, cell.language, environment.theme, environment.repaint),
+					environment.expanded ? Number.POSITIVE_INFINITY : CODE_PREVIEW_LINES,
+					innerWidth,
+				);
 	if (codePreview.skipped > 0) {
 		appendLines(
 			lines,
@@ -881,6 +914,10 @@ function displaySummary(summary: string | undefined): string | undefined {
 	return normalizeEvalSummary(summary);
 }
 
+function cellIdSuffix(cellId: unknown): string {
+	return typeof cellId === "string" && cellId !== "" ? ` ${sanitizeTerminalLabel(cellId)}` : "";
+}
+
 export function renderEvalCall(
 	args: EvalToolRequest,
 	theme: Theme | undefined,
@@ -894,15 +931,23 @@ export function renderEvalCall(
 		return component;
 	}
 	if (!isEvalRunInput(args)) {
-		const title = args.action === "list" ? "eval list" : `eval ${args.action} ${args.cell_id}`;
+		// While a peek/stop call streams in, `cell_id` can still be missing; the title is the action alone until it arrives.
+		const title = args.action === "list" ? "eval list" : `eval ${args.action}${cellIdSuffix(args.cell_id)}`;
 		component.setBlocks([{ kind: "text", text: style(theme, "toolTitle", title) }]);
 		return component;
 	}
+	// While the model streams the call, `code` usually arrives before `language` and `summary`; a partial call still
+	// renders (the host would otherwise fall back to a raw key=value row).
+	const code = typeof args.code === "string" ? args.code : "";
+	const language = knownLanguage(args.language);
 	if (theme === undefined && context.spinnerFrame === undefined) {
 		const reset = args.reset === true ? " reset" : "";
 		const timeout = args.timeout === undefined ? "" : ` timeout ${args.timeout}s`;
 		component.setBlocks([
-			{ kind: "text", text: style(theme, "toolTitle", `eval ${args.language}${reset}${timeout}`) },
+			{
+				kind: "text",
+				text: style(theme, "toolTitle", `eval${language === undefined ? "" : ` ${language}`}${reset}${timeout}`),
+			},
 			...(displaySummary(args.summary) === undefined
 				? []
 				: [summaryBlock(displaySummary(args.summary) ?? "", theme, context.expanded)]),
@@ -911,9 +956,11 @@ export function renderEvalCall(
 				text: style(
 					theme,
 					"mdCodeBlock",
-					args.code.trim().length > 0
-						? displayCode(args.code, args.language, context.argsComplete ? context.invalidate : undefined)
-						: "...",
+					code.trim().length === 0
+						? "..."
+						: language === undefined
+							? code
+							: displayCode(code, language, context.argsComplete ? context.invalidate : undefined),
 				),
 				maxVisualLines: context.expanded ? undefined : CODE_PREVIEW_LINES,
 				collapseKind: "code",
@@ -935,11 +982,13 @@ export function renderEvalCall(
 					now: renderNow(context),
 					...(context.argsComplete ? { repaint: context.invalidate } : {}),
 				};
+				const summary = displaySummary(args.summary);
+				if (language === undefined) return streamingCallLines(summary, code, environment);
 				const cell: EvalCellResult = {
 					index: 0,
-					...(displaySummary(args.summary) === undefined ? {} : { summary: displaySummary(args.summary) ?? "" }),
-					code: args.code,
-					language: args.language,
+					...(summary === undefined ? {} : { summary }),
+					code,
+					language,
 					output: "",
 					status: context.spinnerFrame === undefined ? "pending" : "running",
 				};
@@ -953,6 +1002,14 @@ export function renderEvalCall(
 	]);
 	return component;
 }
+
+/** A call whose language has not streamed in yet: the headline row alone, until the full frame can render. */
+function streamingCallLines(summary: string | undefined, code: string, environment: RenderEnvironment): string[] {
+	const icon = environment.spinnerFrame === undefined ? "○" : spinner(environment.spinnerFrame);
+	return renderPrefixed(headlined(icon, summary, code, "eval", environment), environment, LIVE_LINE_PREFIX);
+}
+
+const LIVE_LINE_PREFIX: PrefixStyle = { prefix: "╶─ ", continuation: "   ", color: "borderAccent" };
 
 export function renderEvalResult(
 	result: AgentToolResult<EvalResultDetails>,

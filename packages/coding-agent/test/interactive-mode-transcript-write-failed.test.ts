@@ -13,7 +13,12 @@ function makeFakeThis() {
 		isInitialized: true,
 		footer: { invalidate: vi.fn() },
 		chatContainer: new Container(),
-		ui: { requestRender: vi.fn(), terminal: { setProgress: vi.fn() } },
+		ui: {
+			requestRender: vi.fn(),
+			catchUpScrollback: vi.fn(),
+			setScrollbackReplayHold: vi.fn(),
+			terminal: { setProgress: vi.fn() },
+		},
 		settingsManager: { getShowTerminalProgress: () => false },
 		turnWorkingTip: { resetForNewTurn: vi.fn() },
 		clearPendingTools: vi.fn(),

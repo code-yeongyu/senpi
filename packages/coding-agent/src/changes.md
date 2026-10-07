@@ -1,3 +1,21 @@
+## 2026-10-06 - visibleWidth export for extensions that lay out their own rows (senpi#2831)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: `visibleWidth` is exported from `@earendil-works/pi-tui` beside `sanitizeTerminalLabel`.
+
+### Why
+
+The eval extension's live row cuts its headline to the terminal width. Counting code points let a wide-character summary (Korean, Chinese, Japanese, emoji) wrap a narrow terminal. Measuring in screen cells needs the TUI's own width function, and extensions reach the TUI only through this package.
+
+### Why an extension could not handle it
+
+Extensions import `@code-yeongyu/senpi`, not `@earendil-works/pi-tui`, and a second copy of the width tables in an extension would drift from the renderer's.
+
+### Expected merge conflict zones
+
+- LOW: the `sanitizeTerminalLabel` export line at the top of `src/index.ts`.
+
 ## 2026-10-05 - A single-session rpc process takes its fallback chain over the wire (omo#9582)
 
 ### What changed

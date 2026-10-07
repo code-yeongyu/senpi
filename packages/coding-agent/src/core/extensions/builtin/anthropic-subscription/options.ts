@@ -16,6 +16,7 @@ import {
 	type AnthropicSubscriptionSystemPromptMode,
 	type AnthropicSubscriptionTokenInjection,
 	loadAnthropicSubscriptionProviderSettingsFromDisk,
+	resolveCompactionOwner,
 	resolveSystemPromptMode,
 } from "./settings.ts";
 import { loadOverrideSystemPrompt, resolveCustomSystemPrompt } from "./system-prompt.ts";
@@ -248,6 +249,7 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 	const toolLessRequest = input.streamOptions?.toolChoice === "none";
 	const emptyToolContext = (input.context.tools?.length ?? 0) === 0;
 	const strictMcpConfig = toolLessRequest || (providerSettings.strictMcpConfig ?? !appendSystemPrompt);
+	const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 	const queryOptions: Options = {
 		cwd,
 		model: input.model.id,
@@ -257,9 +259,16 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 		canUseTool,
 		hooks: HOST_TOOL_DENIAL_HOOKS,
 		systemPrompt,
-		settings: { autoCompactEnabled: true },
+		// Exactly one compaction owner: senpi by default, so Claude Code's native auto-compact is off
+		// (senpi's overflow recovery covers the hard limit); `compactionOwner: "sdk"` hands it back.
+		// configFingerprint hashes `settings`, so an owner change restarts the resident process.
+		settings: { autoCompactEnabled: !senpiOwnsCompaction },
 		settingSources: resolveSettingSources(providerSettings, mode, authLane),
 	};
+	// Claude Code's per-turn token-budget reminder changes the prompt every turn and defeats
+	// prompt-cache reuse; senpi's compaction carries its own budget reminder. The auth lane
+	// layers this over the subprocess environment it builds.
+	if (senpiOwnsCompaction) queryOptions.env = { CLAUDE_CODE_TOTAL_TOKENS_REMINDER: "off" };
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;
 	if (toolLessRequest) queryOptions.maxTurns = 1;
 	if (strictMcpConfig) queryOptions.extraArgs = { "strict-mcp-config": null };

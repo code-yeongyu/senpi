@@ -9361,7 +9361,6 @@ export class AgentSession {
 		resetTimings("reload");
 		const oldExtensionRunner = this._extensionRunner;
 		const oldExtensionIdentities = oldExtensionRunner.getExtensionIdentities();
-		const previousFlagValues = oldExtensionRunner.getFlagValues();
 		const previousActiveToolRegistrationIds = new Map<string, string>();
 		// Cover withheld eval-only tools too: the rebuild drops any seeded name missing from this
 		// map, which would strand eval-only tools when the policy disarms during this reload.
@@ -9424,7 +9423,11 @@ export class AgentSession {
 		try {
 			this._buildRuntime({
 				activeToolNames: requestedActiveToolNamesBeforeRebuild,
-				flagValues: previousFlagValues,
+				// Read from the CURRENT runner at the swap, not before the awaits above and not from the
+				// runner this reload started with: a flag set while this reload ran (an attach moving the
+				// session's permission preset) carries over, also when an overlapping reload installed
+				// another runner in the meantime and the attach wrote that one (senpi#2842).
+				flagValues: this._extensionRunner.getFlagValues(),
 				includeAllExtensionTools: true,
 				previousActiveToolRegistrationIds,
 				addedToolNames: addedDefaultTools,

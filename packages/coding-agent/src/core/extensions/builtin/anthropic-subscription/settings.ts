@@ -6,6 +6,15 @@ import type { SettingSource } from "./sdk-boundary.ts";
 export type AnthropicSubscriptionSystemPromptMode = "preset-append" | "full" | "override";
 export type AnthropicSubscriptionResumeMode = "auto" | "off";
 export type AnthropicSubscriptionTokenInjection = "oauth-slots" | "config-dir" | "ambient";
+/** Who compacts a resident lane: senpi's compaction stack (default) or the Claude Agent SDK's native auto-compact. */
+export type AnthropicSubscriptionCompactionOwner = "senpi" | "sdk";
+
+/** The one place the default lives: senpi owns compaction unless `compactionOwner: "sdk"` opts out. */
+export function resolveCompactionOwner(
+	settings: Pick<AnthropicSubscriptionProviderSettings, "compactionOwner">,
+): AnthropicSubscriptionCompactionOwner {
+	return settings.compactionOwner ?? "senpi";
+}
 
 export interface AnthropicSubscriptionProviderSettings {
 	/**
@@ -24,6 +33,7 @@ export interface AnthropicSubscriptionProviderSettings {
 	readonly strictMcpConfig?: boolean;
 	readonly pinnedAccount?: string;
 	readonly tokenInjection?: AnthropicSubscriptionTokenInjection;
+	readonly compactionOwner?: AnthropicSubscriptionCompactionOwner;
 }
 
 export type ResolvedSystemPromptMode = {
@@ -73,6 +83,10 @@ function parseTokenInjection(value: unknown): AnthropicSubscriptionTokenInjectio
 	return value === "oauth-slots" || value === "config-dir" || value === "ambient" ? value : undefined;
 }
 
+function parseCompactionOwner(value: unknown): AnthropicSubscriptionCompactionOwner | undefined {
+	return value === "senpi" || value === "sdk" ? value : undefined;
+}
+
 function parseEnvironmentBoolean(value: string | undefined): boolean | undefined {
 	if (value === undefined) return undefined;
 	switch (value.toLowerCase()) {
@@ -102,6 +116,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 	const strictMcpConfig = typeof value.strictMcpConfig === "boolean" ? value.strictMcpConfig : undefined;
 	const pinnedAccount = parseNonEmptyString(value.pinnedAccount);
 	const tokenInjection = parseTokenInjection(value.tokenInjection);
+	const compactionOwner = parseCompactionOwner(value.compactionOwner);
 	return {
 		...(enabled !== undefined ? { enabled } : {}),
 		...(appendSystemPrompt !== undefined ? { appendSystemPrompt } : {}),
@@ -112,6 +127,7 @@ function parseProviderSettings(value: unknown): AnthropicSubscriptionProviderSet
 		...(strictMcpConfig !== undefined ? { strictMcpConfig } : {}),
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
+		...(compactionOwner !== undefined ? { compactionOwner } : {}),
 	};
 }
 
@@ -123,6 +139,7 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 	const tokenInjection = parseTokenInjection(environment.SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION);
 	const settingSources = parseEnvironmentSettingSources(environment.SENPI_CLAUDE_SDK_OAUTH_SETTING_SOURCES);
 	const pinnedAccount = parseNonEmptyString(environment.SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT);
+	const compactionOwner = parseCompactionOwner(environment.SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER);
 	return {
 		...(enabled !== undefined ? { enabled } : {}),
 		...(systemPromptMode !== undefined ? { systemPromptMode } : {}),
@@ -131,6 +148,7 @@ function parseEnvironmentSettings(environment: Environment): AnthropicSubscripti
 		...(tokenInjection !== undefined ? { tokenInjection } : {}),
 		...(settingSources !== undefined ? { settingSources } : {}),
 		...(pinnedAccount !== undefined ? { pinnedAccount } : {}),
+		...(compactionOwner !== undefined ? { compactionOwner } : {}),
 	};
 }
 

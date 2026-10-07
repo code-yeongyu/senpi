@@ -26,19 +26,19 @@ function cancelledSnapshot(
 
 describe("detached cell notification state note", () => {
 	it("Given a cancelled js cell whose worker survived the interrupt when the notification is built then it reports the retained state", async () => {
-		const notification = await buildDetachedCellNotification(cancelledSnapshot("js", true), undefined);
+		const notification = await buildDetachedCellNotification(cancelledSnapshot("js", true));
 
 		expect(notification.content).toContain(interruptionStateNote("js", true));
 	});
 
 	it("Given a cancelled js cell whose worker was restarted when the notification is built then it reports the lost state", async () => {
-		const notification = await buildDetachedCellNotification(cancelledSnapshot("js", false), undefined);
+		const notification = await buildDetachedCellNotification(cancelledSnapshot("js", false));
 
 		expect(notification.content).toContain(interruptionStateNote("js", false));
 	});
 
 	it("Given a cancelled py cell whose kernel was restarted when the notification is built then it does not claim the variables survived", async () => {
-		const notification = await buildDetachedCellNotification(cancelledSnapshot("py", false), undefined);
+		const notification = await buildDetachedCellNotification(cancelledSnapshot("py", false));
 
 		expect(notification.content).toContain(interruptionStateNote("py", false));
 	});
@@ -46,7 +46,6 @@ describe("detached cell notification state note", () => {
 	it("Given a cancelled js cell whose kernel supplied an interrupt note when the notification is built then the note follows the state", async () => {
 		const notification = await buildDetachedCellNotification(
 			cancelledSnapshot("js", false, "A synchronous call is blocking the old worker.\n"),
-			undefined,
 		);
 
 		expect(notification.content).toContain(
@@ -55,7 +54,7 @@ describe("detached cell notification state note", () => {
 	});
 
 	it("Given a cancelled cell with no interrupt outcome when the notification is built then it says the outcome is unknown", async () => {
-		const notification = await buildDetachedCellNotification(cancelledSnapshot("js", undefined), undefined);
+		const notification = await buildDetachedCellNotification(cancelledSnapshot("js", undefined));
 
 		expect(notification.content).toContain(unknownInterruptionStateNote("js"));
 	});
@@ -80,7 +79,7 @@ describe("detached cell notification state note", () => {
 				},
 			};
 
-			const notification = await buildDetachedCellNotification(snapshot, undefined);
+			const notification = await buildDetachedCellNotification(snapshot);
 
 			expect(notification.content).toContain(says);
 			expect(notification.content).not.toContain(memoryStateNote(undefined));
@@ -106,7 +105,7 @@ describe("detached cell notification state note", () => {
 				},
 			};
 
-			const notification = await buildDetachedCellNotification(snapshot, undefined);
+			const notification = await buildDetachedCellNotification(snapshot);
 
 			expect(notification.content).toContain(memoryStateNote(memory));
 			expect(notification.content).not.toContain(memoryStateNote(undefined));

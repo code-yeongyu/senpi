@@ -34,8 +34,8 @@ export async function attachToOpenSession(
 	// no attach may revoke it for the clients that already rely on it.
 	if (options?.retainOnDisconnect) entry.retainOnDisconnect = true;
 	if (!entry.durableSessionId) throw new RpcSessionRegistryError("session_path_in_use");
-	// The surface follows the client that renders the replies: an attach that names one moves
-	// the live session to it; an attach without one keeps what the session has.
+	// The surface, browser engine and permission preset follow the client: an attach that names one
+	// moves the live session to it; an attach without one keeps what the session has.
 	if (profile.promptSurface !== undefined && profile.promptSurface !== entry.profile.promptSurface) {
 		entry.profile = frozenProfile({ ...entry.profile, promptSurface: profile.promptSurface });
 		entry.runtime?.setPromptSurface(profile.promptSurface);
@@ -43,6 +43,12 @@ export async function attachToOpenSession(
 	if (profile.browserEngine !== undefined && profile.browserEngine !== entry.profile.browserEngine) {
 		entry.profile = frozenProfile({ ...entry.profile, browserEngine: profile.browserEngine });
 		entry.runtime?.setBrowserEngine(profile.browserEngine);
+	}
+	// The preset is applied even when the record already names it: the record is not the live session,
+	// so a resent attach also repairs a session that drifted from it (senpi#2842).
+	if (profile.permissionPreset !== undefined) {
+		entry.profile = frozenProfile({ ...entry.profile, permissionPreset: profile.permissionPreset });
+		entry.runtime?.setPermissionPreset(profile.permissionPreset);
 	}
 	entry.lastCommandAt = now;
 	if (wasParked) {

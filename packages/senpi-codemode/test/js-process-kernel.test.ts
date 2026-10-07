@@ -536,6 +536,68 @@ return "done";`,
 	);
 
 	itProcessMode(
+		"keeps the child and its globals when a stopped cell left a fetch unawaited (#2788)",
+		async () => {
+			const { createServer } = await import("node:http");
+			const requested = Promise.withResolvers<void>();
+			const server = createServer(() => requested.resolve());
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			try {
+				const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
+				const kernel = processKernel();
+				await runJavaScriptCell(kernel, "globalThis.keep = 41; return 1");
+				const pid = kernel.processPid;
+				const run = kernel.run({
+					cellId: "floating-fetch",
+					code: `globalThis.p = fetch(${JSON.stringify(url)}); globalThis.q = p.then((r) => r.status); await new Promise(() => {});`,
+					timeoutMs: 60_000,
+				});
+				await requested.promise;
+				const handle = await kernel.interrupt("user-stop");
+				await expect(run).resolves.toMatchObject({ ok: false });
+				await expect(handle.stateRetained).resolves.toBe(true);
+				const after = await runJavaScriptCell(
+					kernel,
+					"await new Promise((r) => setTimeout(r, 100)); return keep + 1",
+				);
+				expect(after.result).toMatchObject({ ok: true, valueRepr: "42" });
+				expect(kernel.processPid).toBe(pid);
+			} finally {
+				server.closeAllConnections();
+				await new Promise((resolve) => server.close(resolve));
+			}
+		},
+		30_000,
+	);
+
+	itProcessMode(
+		"stops a polling loop and keeps the child's globals when a cell is stopped twice (#2788)",
+		async () => {
+			const kernel = processKernel();
+			const ticked = Promise.withResolvers<void>();
+			const run = kernel.run({
+				cellId: "poll",
+				code: "globalThis.keep = 41; globalThis.ticks = 0; for (;;) { await new Promise((r) => setTimeout(r, 10)); ticks += 1; if (ticks === 3) print('TICKED'); }",
+				timeoutMs: 60_000,
+				onMessage: (message) => {
+					if (message.type === "text" && message.data.includes("TICKED")) ticked.resolve();
+				},
+			});
+			await ticked.promise;
+			const [first, second] = await Promise.all([kernel.interrupt("stop-1"), kernel.interrupt("stop-2")]);
+			await expect(run).resolves.toMatchObject({ ok: false });
+			await expect(first.stateRetained).resolves.toBe(true);
+			await expect(second.stateRetained).resolves.toBe(true);
+			const after = await runJavaScriptCell(
+				kernel,
+				"const before = ticks; await new Promise((r) => setTimeout(r, 150)); return [keep, ticks === before]",
+			);
+			expect(after.result).toMatchObject({ ok: true, valueRepr: "[41,true]" });
+		},
+		30_000,
+	);
+
+	itProcessMode(
 		"settles a cell whose value is undefined, the way worker mode does",
 		async () => {
 			const kernel = processKernel();

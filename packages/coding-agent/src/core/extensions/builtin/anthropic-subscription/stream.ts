@@ -19,13 +19,17 @@ import { dedupeUltraworkBlocks } from "./prompt-directive-dedupe.ts";
 import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
+import { forgetBinding } from "./session-reattach.ts";
 import { residentSessionMessages } from "./session-stream.ts";
-import { loadAnthropicSubscriptionProviderSettingsFromDisk } from "./settings.ts";
+import { loadAnthropicSubscriptionProviderSettingsFromDisk, resolveCompactionOwner } from "./settings.ts";
 import { applyStreamEvent } from "./stream-events.ts";
 import { withAuthGuidance } from "./stream-guidance.ts";
 import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
 import { toolWatch } from "./tool-watch.ts";
 import { resolveSdkTools } from "./tools.ts";
+
+export const NATIVE_COMPACTION_WHILE_SENPI_OWNS =
+	'Claude Code compacted this session natively although senpi owns compaction on this lane (compactionOwner: "senpi"); the turn was stopped so only one side compacts. Run /compact, or set anthropicSubscriptionProvider.compactionOwner to "sdk" to let Claude Code compact.';
 
 export function streamAnthropicSubscription(
 	model: Model<Api>,
@@ -62,6 +66,7 @@ export function streamAnthropicSubscription(
 		let claudeCodeRun: ClaudeCodeRun | undefined;
 		let coldSeedAttempt = false;
 		let coldSeedEstimate: number | undefined;
+		let nativeCompactionStopped = false;
 
 		try {
 			// Resident before the synchronous SDK member below (getSdkBoundary().query)
@@ -73,6 +78,7 @@ export function streamAnthropicSubscription(
 			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
 			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
 			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
+			const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 			const toolLessRequest = options?.toolChoice === "none";
 			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
 			claudeCodeRun = resolveClaudeCodeRun(defaultExecutableDeps());
@@ -185,6 +191,13 @@ export function streamAnthropicSubscription(
 						message.event,
 					);
 				} else if (message.type === "system" && message.subtype === "compact_boundary") {
+					// The query was started with native auto-compact off: a boundary here means Claude
+					// Code compacted anyway. Fail the turn loudly instead of letting a second owner
+					// rewrite the transcript behind senpi's compaction.
+					if (senpiOwnsCompaction) {
+						nativeCompactionStopped = true;
+						throw new Error(NATIVE_COMPACTION_WHILE_SENPI_OWNS);
+					}
 					// Native compactions must reach the ledger: attach the boundary as a
 					// diagnostic so the lane-policy collector can build a ledger entry
 					// instead of the boundary being discarded in the stream.
@@ -231,6 +244,10 @@ export function streamAnthropicSubscription(
 		} catch (error) {
 			// no-excuse-ok: catch
 			// Provider boundary converts every thrown SDK value into the stream error contract.
+			// Unwinding the stopped attempt kept a retry checkpoint on the Claude Code session that
+			// just compacted natively. Drop it, so the next turn rebuilds the resident session from
+			// senpi's own history instead of resuming that rewritten transcript.
+			if (nativeCompactionStopped && options?.sessionId) forgetBinding(options.sessionId);
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			// A failed result still bills its tokens; managed and resident lanes
 			// throw before the result reaches this loop, so account for it here.

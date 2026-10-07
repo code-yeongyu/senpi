@@ -36,7 +36,6 @@ export type {
 } from "./detached-cell-contract.ts";
 
 export class EvalDetachedCellManager {
-	readonly #artifactsDir: string | undefined;
 	readonly #onStatusChange: ((entries: readonly EvalDetachedCellStatusEntry[]) => void) | undefined;
 	readonly #onWakeSourceState: ((state: WakeSourceState) => void) | undefined;
 	readonly #cells = new Map<string, ManagedCell>();
@@ -49,7 +48,6 @@ export class EvalDetachedCellManager {
 	readonly #maxDetachedCells: number;
 
 	constructor(options: EvalDetachedCellManagerOptions = {}) {
-		this.#artifactsDir = options.artifactsDir;
 		this.#onStatusChange = options.onStatusChange;
 		this.#onWakeSourceState = options.onWakeSourceState;
 		this.#notificationQueue = new DetachedNotificationQueue(options.notifier);
@@ -85,7 +83,6 @@ export class EvalDetachedCellManager {
 		const cell = createManagedCell({
 			cellId,
 			input,
-			artifactsDir: this.#artifactsDir,
 			now: this.#now,
 			defaultHardLimitSeconds: this.#hardLimitSeconds,
 			defaultRunBudgetSeconds: this.#runBudgetSeconds,
@@ -239,7 +236,6 @@ export class EvalDetachedCellManager {
 						await cell.interruptOutcome?.promise;
 						return this.#snapshot(cell);
 					},
-					spillPath: cell.spillPath,
 				});
 			}
 		}

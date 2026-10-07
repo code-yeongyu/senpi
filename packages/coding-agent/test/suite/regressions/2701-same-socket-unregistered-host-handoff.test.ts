@@ -69,15 +69,47 @@ describe.skipIf(process.platform === "win32")("an unregistered host on the clien
 
 		const result = await handoffOn(old);
 
-		expect(signals.sentTo(old.pid)).toEqual(["SIGUSR1"]);
 		expect(result).toMatchObject({ action: "handoff", socket: old.socket });
 		const replaced = expectHandoff(result);
 		expect(replaced.pid).not.toBe(old.pid);
 		expect(await waitForPidGone(old.pid, 60_000)).toBe(true);
+		// The proven old host is drained, and by one of two paths only. The handoff sends it one SIGUSR1 after
+		// recounting zero sessions over the held connection - unless the old host already noticed that the
+		// successor took the socket (its supersession poll) and began draining itself, which closes that
+		// connection, so the recount gets no answer and nothing is sent. Either way it drains; it is never
+		// sent anything but a drain, and never more than one.
+		const sent = signals.sentTo(old.pid);
+		expect(sent.filter((signal) => signal !== "SIGUSR1")).toEqual([]);
+		expect(sent.length).toBeLessThanOrEqual(1);
+		if (sent.length === 0) {
+			expect(await readFile(stderrLog(old), "utf8")).toContain("another generation owns the public socket");
+		}
 		expect((await probeHost({ socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(replaced.instanceId);
 		// The upgraded client's next ensure attaches to the successor instead of being turned away.
 		const attached = await ensureOn(old.qa, old.socket);
 		expect(attached).toMatchObject({ reused: true, pid: replaced.pid });
+	}, 240_000);
+
+	it("is drained without a signal when its own supersession check wins the race against the recount (#2854)", async () => {
+		// The order the release runner hit, forced: the successor already owns the socket (this hook runs after
+		// it answered, before the drain gate recounts), and the old host notices that on its own poll and starts
+		// draining, which closes the connection the handoff holds. The recount then gets no answer, so no
+		// SIGUSR1 is sent - and the old host still drains and exits.
+		const old = await startOldHost("u2f", "legacy");
+		const signals = watchSignals();
+
+		const result = await handoffOn(old, undefined, async () => {
+			await vi.waitFor(
+				async () =>
+					expect(await readFile(stderrLog(old), "utf8")).toContain("another generation owns the public socket"),
+				{ timeout: 30_000, interval: 100 },
+			);
+		});
+
+		const replaced = expectHandoff(result);
+		expect(await waitForPidGone(old.pid, 60_000)).toBe(true);
+		expect(signals.sentTo(old.pid)).toEqual([]);
+		expect((await probeHost({ socket: old.socket, timeoutMs: 10_000 }))?.instanceId).toBe(replaced.instanceId);
 	}, 240_000);
 
 	it("is replaced when no record proves any owner and it holds no session, without being signalled", async () => {
@@ -205,7 +237,11 @@ async function startOldHost(label: string, owner: "legacy" | "unprovable"): Prom
 	return { qa, socket, pid: ensured.pid, instanceId, flatRecord };
 }
 
-async function handoffOn(old: OldHost, beforeSpawn?: () => Promise<void>): Promise<HandoffResult> {
+async function handoffOn(
+	old: OldHost,
+	beforeSpawn?: () => Promise<void>,
+	beforeRegistration?: () => Promise<void>,
+): Promise<HandoffResult> {
 	const result = await handoffHost({
 		socket: old.socket,
 		agentDir: old.qa.agentDir,
@@ -215,6 +251,7 @@ async function handoffOn(old: OldHost, beforeSpawn?: () => Promise<void>): Promi
 			launch: supervisorLaunch,
 			readinessTimeoutMs: 60_000,
 			...(beforeSpawn ? { beforeSpawn } : {}),
+			...(beforeRegistration ? { beforeRegistration } : {}),
 		},
 	});
 	if (result.action === "handoff") supervisors.push(result.pid);

@@ -24,7 +24,7 @@ const kernel = new JavaScriptKernel({
 	sessionId: "shell-stop-qa",
 	cwd: process.cwd(),
 	parallelPoolWidth: 1,
-	interruptBounds: { ackMs: 20_000, graceMs: mode === "late" ? 20_000 : 50, terminateDeadlineMs: 20_000 },
+	interruptBounds: { ackMs: 20_000, graceMs: 50, terminateDeadlineMs: 20_000 },
 });
 const manager = new EvalDetachedCellManager();
 const childCode = `const socket = Bun.connect({hostname:"127.0.0.1",port:${address.port},socket:{data(){},open(){},close(){}}}); await socket; await new Promise(()=>{});`;
@@ -47,21 +47,38 @@ try {
 			const next = await kernel.run({ cellId: "after", code: "return globalThis.saved", timeoutMs: 60_000 });
 			console.log(JSON.stringify({ result, retained: await handle.stateRetained, note: handle.note, next }));
 		}
+	} else if (mode === "late") {
+		// #2788: Stop releases the cell while it awaits a host tool, so the shell it would start after swallowing the
+		// interruption is refused instead of running and costing the worker.
+		const shell = `Bun.$\`\${${JSON.stringify(process.execPath)}} -e \${${JSON.stringify(childCode)}}\``;
+		const called = kernel.nextToolCall();
+		const run = kernel.run({
+			cellId: "late-stop",
+			code: `globalThis.saved = 41; try { await tool.ready({}); } catch {} try { await ${shell}; } catch (error) { globalThis.lateShell = String(error.message); }`,
+			timeoutMs: 60_000,
+		});
+		await withTimeout(called, 30_000, "Host-tool readiness event did not arrive");
+		const handle = await kernel.interrupt("stop", "late-stop");
+		const result = await run;
+		const next = await kernel.run({
+			cellId: "after",
+			code: "return { saved: globalThis.saved, lateShell: globalThis.lateShell }",
+			timeoutMs: 60_000,
+		});
+		console.log(JSON.stringify({ result, retained: await handle.stateRetained, next }));
 	} else {
 	const shell = `Bun.$\`\${${JSON.stringify(process.execPath)}} -e \${${JSON.stringify(childCode)}}\``;
 	const expression = mode === "failed" ? "await Bun.$`exit 7`;"
 		: mode === "lines" ? `for await (const line of ${shell}.lines()) { print(line); }`
 		: mode === "text" ? `await ${shell}.text();`
 		: `await ${shell};`;
-	const prefix = mode === "late" ? "try { await tool.ready({}); } catch {} " : "";
-	const code = `globalThis.saved = 41; ${prefix}${expression}`;
+	const code = `globalThis.saved = 41; ${expression}`;
 	const managed = manager.create("shell-stop", { language: "js", code, summary: "Verify shell Stop outcome" });
 	manager.bindKernel(managed, kernel, () => ({
 		content: [],
 		details: { language: "js", durationMs: 0, toolCalls: [], truncated: false },
 	}));
 	if (!manager.detach(managed)) throw new Error("Shell cell did not detach");
-	const called = mode === "late" ? kernel.nextToolCall() : undefined;
 	const run = kernel.run({
 		cellId: "shell-stop",
 		code,
@@ -71,7 +88,7 @@ try {
 	const prematureExit = run.then(() => {
 		throw new QaShellReadinessError("Shell command ended before connection");
 	});
-	await withTimeout(Promise.race([called ?? connected.promise, prematureExit]), 30_000, "Command readiness event did not arrive");
+	await withTimeout(Promise.race([connected.promise, prematureExit]), 30_000, "Command readiness event did not arrive");
 	const stopping = executeEvalControl(manager, { action: "stop", cell_id: "shell-stop" });
 	await withTimeout(Promise.race([connected.promise, prematureExit]), 30_000, "Command readiness event did not arrive");
 	const control = await stopping;

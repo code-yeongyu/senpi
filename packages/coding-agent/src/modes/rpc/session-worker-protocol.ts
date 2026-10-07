@@ -41,6 +41,7 @@ export type HostToSessionWorker =
 	| { type: "command"; request: number; command: object; connection?: string }
 	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
+	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
 	| { type: "close" };
 

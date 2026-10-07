@@ -441,7 +441,11 @@ function reportCrash(error) {
 	}
 }
 process.on("uncaughtException", reportCrash);
-process.on("unhandledRejection", reportCrash);
+// Once the worker core is up it reports unhandled rejections to the cells (the kernel keeps running); before that, one
+// is a startup crash.
+process.on("unhandledRejection", (reason) => {
+	if (process.listenerCount("unhandledRejection") === 1) reportCrash(reason);
+});
 
 const cwd = process.env.SENPI_CODEMODE_PROCESS_CWD ?? process.cwd();
 const poolWidth = Number.parseInt(process.env.SENPI_CODEMODE_PROCESS_POOL_WIDTH ?? "1", 10) || 1;

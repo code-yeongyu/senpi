@@ -49,6 +49,7 @@ function runtime(
 	controls?: { waitForIdle?: () => Promise<void> },
 ) {
 	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+	const flagValues = new Map<string, boolean | string>();
 	return {
 		session: {
 			sessionManager: options.sessionManager,
@@ -61,7 +62,13 @@ function runtime(
 			scopedModels: [],
 			isBashRunning: false,
 			isStreaming: false,
-			extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+			// Records flags like ExtensionRunner: an attach and a runtime replacement set the permission preset here.
+			extensionRunner: {
+				hasHandlers: () => false,
+				emit: async () => {},
+				setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
+				getFlagValues: () => new Map(flagValues),
+			},
 			abort: async () => {},
 			abortBash: () => {},
 			waitForIdle: controls?.waitForIdle ?? (async () => {}),
@@ -393,6 +400,8 @@ describe("RPC session registry", () => {
 		expect(attached.durableSessionId).toBe(first.durableSessionId);
 		expect(attached.attached).toBe(true);
 		expect(registry.list()).toHaveLength(1);
+		const runner = registry.peek(first.sessionId)?.runtime?.session.extensionRunner;
+		expect(runner?.getFlagValues().get("permission-preset")).toBe("default");
 	});
 
 	test("moves path attachment metadata after runtime replacement", async () => {
@@ -543,13 +552,19 @@ describe("RPC session registry", () => {
 		const launchProfile = Object.freeze(profile(dir, join(dir, "profile.jsonl")));
 		const manager = SessionManager.create(dir, dir);
 		const captured: Array<RpcSessionLaunchProfile | undefined> = [];
-		const fakeSession = (sessionManager: SessionManager) =>
-			({
+		const fakeSession = (sessionManager: SessionManager) => {
+			const flagValues = new Map<string, boolean | string>();
+			return {
 				sessionManager,
-				extensionRunner: { hasHandlers: () => false },
+				extensionRunner: {
+					hasHandlers: () => false,
+					setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
+					getFlagValues: () => new Map(flagValues),
+				},
 				abort: async () => {},
 				dispose: () => {},
-			}) as never;
+			} as never;
+		};
 		const factory: CreateAgentSessionRuntimeFactory = async (options) => {
 			captured.push(options.launchProfile as RpcSessionLaunchProfile | undefined);
 			return {
@@ -564,6 +579,7 @@ describe("RPC session registry", () => {
 		await session.newSession();
 		expect(captured).toEqual([launchProfile, launchProfile]);
 		expect(session.launchProfile).toBe(launchProfile);
+		expect(session.session.extensionRunner.getFlagValues().get("permission-preset")).toBe("default");
 		expect(existsSync(manager.getSessionDir())).toBe(true);
 	});
 });
