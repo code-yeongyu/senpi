@@ -157,17 +157,22 @@ export class SharedMcpConnection {
 
 	async #collectCatalog(): Promise<McpCachedServerCatalog> {
 		const generation = this.connection.generation;
+		const ownsCatalog = () =>
+			generation === this.connection.generation &&
+			!this.#disposed &&
+			[...this.leases].some((lease) => lease.options.credentialsCurrent?.() !== false);
 		const catalog = await collectServerCatalogForCache(
 			this.connection,
 			this.#options.config,
 			this.#options.configHash,
+			this.#options.credentialIdentity,
 		);
-		if (generation !== this.connection.generation || this.#disposed) return catalog;
+		if (!ownsCatalog()) return catalog;
 		if (this.#cacheGeneration !== generation) {
 			this.#cacheGeneration = generation;
-			await writeMcpCachedServer(this.#options.agentDir, this.#options.serverName, catalog);
+			await writeMcpCachedServer(this.#options.agentDir, this.#options.serverName, catalog, ownsCatalog);
 		}
-		await ensureMcpResourceSubscriptions(this.connection.client, catalog.resources);
+		if (ownsCatalog()) await ensureMcpResourceSubscriptions(this.connection.client, catalog.resources);
 		return catalog;
 	}
 

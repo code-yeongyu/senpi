@@ -31,6 +31,8 @@ export type ServerConnectionToolsChangedEvent = {
 };
 
 export interface ServerConnectionOptions {
+	readonly credentialIdentity?: string;
+	readonly credentialsCurrent?: () => boolean;
 	readonly serverName: string;
 	readonly config: McpServerConfig;
 	readonly logger: McpLogger;

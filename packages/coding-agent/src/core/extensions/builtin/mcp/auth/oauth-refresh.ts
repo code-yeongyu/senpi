@@ -51,7 +51,7 @@ export class McpRefreshManager {
 	}
 
 	async ensureFresh(): Promise<OAuthTokens | undefined> {
-		const record = this.#provider.store.read();
+		const record = await this.#provider.store.readAsync();
 		if (record?.accessToken === undefined) return undefined;
 		if (!isTokenStale(record, Date.now())) return storedAuthToTokens(record);
 		return this.refresh();

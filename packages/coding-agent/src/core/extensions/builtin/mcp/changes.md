@@ -1,3 +1,34 @@
+## 2026-10-06 - Nonblocking first-turn MCP admission (senpi#2843)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: first-turn and preview prompt assembly no longer wait for deferred remote catalog completion. They retain single-flight session attachment and compose from the known instructions; completed background registration refreshes subsequent turns.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: startup connections are backgrounded immediately, and RPC inventory reads the known catalog instead of issuing remote list requests during admission. Pending startup catalogs report a connecting state.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: background catalog collection also retains resource templates so the local RPC inventory can present them without remote requests.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`: per-server cache updates merge under the existing bounded filesystem-lock pattern before atomic replacement, preserving different servers' concurrent updates rather than only preventing torn JSON.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`, `startup-race.ts`, `service-tools-changed.ts`, and `shared-connection.ts`: delayed writes recheck current ownership after lock acquisition, reads and temporary-file writes; retired owners cannot replace the cache. Shared writes require at least one current lease, and temporary files are cleaned on every exit.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts` and `service.ts`: matching last-known metadata remains eligible regardless of age. Age triggers a nonblocking background refresh for lazy servers; config and credential mismatches still withhold metadata, and invocation checks the fresh catalog.
+- `auth/{token-store,legacy-lock,legacy-migration,oauth-refresh}.ts`: background OAuth preparation acquires the existing legacy migration file lock asynchronously instead of spinning on the session event loop. Synchronous and asynchronous readers share one migration module and the same exclusive grant claim; first-provider delivery proceeds while another process owns that lock. Token persistence remains in the store.
+- `invocation.ts`, `catalog.ts`, `service-register.ts`, and `expose/{register,proxy,tier-b,session}.ts`: direct, promoted, and proxy calls use one current-catalog resolver, raw-schema validation without coercion, session/configuration checks, and a final synchronous permission fence. Removed tools return a structured unavailable result without a remote call; private offered-operation identity follows deferred promotion and each proxy owns its schema identity.
+- `startup-race.ts`, `service-types.ts`, `service-connection.ts`, and `service.ts`: readiness is single-flight per entry and bound to the connection generation. Successful metadata becomes available only after collection, remains in memory when persistence fails, and replaced/disabled entries cannot publish it as current.
+- `expose/call.ts` and `expose/register.ts`: connection readiness and bounded renewal complete before the narrowly classified failed-send retry; each actual retry still resolves current metadata and permission before dispatch. The invocation deadline uses the existing safe timer and output error path.
+- `expose/tier-b.ts`: selected catalog refresh retains previously promoted current tool definitions, including default search promotion, without restoring vanished or remapped operations.
+- `service.ts`: OAuth inventory uses a local credential snapshot without token migration. Revoked credentials retain public re-authentication guidance and `needs_auth` status while obsolete transports, catalog entries, and server metadata remain unavailable.
+- `auth/catalog-identity.ts`, `catalog-cache.ts`, `service.ts`, `service-connection.ts`, `service-types.ts`, `connection-types.ts`, `sharing-policy.ts`, `shared-connection.ts`, `startup-race.ts`, `service-tools-changed.ts`, and `service-register.ts`: opaque credential fingerprints bind cached metadata and connection ownership. Local OAuth snapshots never invoke token migration or refresh. A changed credential withholds prior tools, instructions, and RPC metadata; selected readiness replaces only that owner's connection, and final dispatch rejects obsolete credentials. Token rotation conservatively invalidates cached metadata and Once evidence instead of inferring account continuity.
+
+### Why
+
+- A cold MCP catalog delayed the first provider request even when the message required no MCP tool. A held local catalog response reproduces the admission barrier through the real session and extension harness.
+
+### Why an extension could not handle it
+
+- The wait belongs to the existing MCP builtin's prompt hook and cannot be removed by another extension.
+
+### Expected merge conflict zones
+
+- Single-flight attachment and `before_agent_start` in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
+- Startup synchronization and wire inventory in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`; collection and normalization in `packages/coding-agent/src/core/extensions/builtin/mcp/catalog-cache.ts`.
+
 ## 2026-10-04 - Interactive MCP server manager (senpi#2716)
 
 ### What changed

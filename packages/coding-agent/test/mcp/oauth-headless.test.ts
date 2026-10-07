@@ -24,7 +24,6 @@ import { connectAndRefreshMcpCatalog } from "../../src/core/extensions/builtin/m
 import { ToolSearchService } from "../../src/core/extensions/builtin/tool-search/service.ts";
 import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { capturingPi, registeredTool, testContext, textContent } from "./fixtures/register-call.ts";
-import { waitForCondition } from "./fixtures/service-lifecycle.ts";
 import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -394,7 +393,11 @@ describe("headless oauth flows", () => {
 			pi,
 			{ agentDir: dir },
 		);
-		await waitForCondition(() => service.getConnection("fix")?.state === "needs_auth", 10_000);
+		await service.whenAttachSettled();
+		expect(service.getConnection("fix")).toBeUndefined();
+		expect((await service.refreshWireStatusSnapshot()).servers).toMatchObject([
+			{ name: "fix", status: "needs_auth", authStatus: "notLoggedIn", serverInfo: null, tools: [] },
+		]);
 
 		expect(service.getServerSnapshots()).toMatchObject([
 			{
@@ -422,11 +425,15 @@ describe("headless oauth flows", () => {
 			capturingPi(),
 			{ agentDir: dir },
 		);
-		await waitForCondition(() => service.getConnection("fix")?.state === "connected", 10_000);
+		await service.whenAttachSettled();
 		expect(service.getConnection("fix")?.state).toBe("connected");
 		await poisonRefreshToken(harness);
 
 		await expect(service.reconnectServer("fix")).rejects.toThrow(/\/mcp auth-start fix/);
+		expect(service.getConnection("fix")).toBeUndefined();
+		expect((await service.refreshWireStatusSnapshot()).servers).toMatchObject([
+			{ name: "fix", status: "needs_auth", authStatus: "notLoggedIn", serverInfo: null, tools: [] },
+		]);
 
 		expect(service.getServerSnapshots()).toMatchObject([
 			{

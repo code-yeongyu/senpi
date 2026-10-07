@@ -1,4 +1,5 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fauxAssistantMessage, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
@@ -22,9 +23,7 @@ const originalStartupTimeout = process.env[MCP_STARTUP_TIMEOUT_ENV];
 
 beforeEach(() => {
 	resetMcpServiceForTests();
-	// A zero startup window is the production knob for "never let a connect gate
-	// the first frame": every attach connect is backgrounded immediately, which
-	// is what a loaded CI runner produces by missing the 250ms default race.
+	// The held catalog, not scheduling or startup timing, controls publication.
 	process.env[MCP_STARTUP_TIMEOUT_ENV] = "0";
 });
 
@@ -38,37 +37,40 @@ afterEach(async () => {
 });
 
 describe("MCP deferred attach vs. system prompt assembly", () => {
-	it("carries a deferred server's instructions into the first turn's system prompt", async () => {
+	it("publishes deferred instructions to the next turn without delaying the first", async () => {
 		// Given: a server whose attach connect is deferred past session_start.
 		const root = deferredAttachRoot("instructions");
 
 		// When: the new session builds its first system prompt.
-		const turn = await startSessionAndCaptureTurn(root);
+		const { first, second } = await startSessionAndCaptureTurns(root);
 
 		// Then: that prompt carries the server's current instructions.
-		expect(instructionsFor(turn.systemPrompt, "fx")).toBe("deferred instructions");
+		expect(instructionsFor(first.systemPrompt, "fx")).toBeNull();
+		expect(instructionsFor(second.systemPrompt, "fx")).toBe("deferred instructions");
 	});
 
-	it("registers the deferred server's tools before the first turn's payload", async () => {
+	it("publishes deferred tools to the next payload without inventing first-turn schemas", async () => {
 		// Given: a server whose attach connect is deferred past session_start.
 		const root = deferredAttachRoot("tools");
 
 		// When: the new session sends its first turn.
-		const turn = await startSessionAndCaptureTurn(root);
+		const { first, second } = await startSessionAndCaptureTurns(root);
 
 		// Then: the payload already carries that server's tool catalog.
-		expect(turn.toolNames).toContain("mcp_fx_tool_1");
+		expect(first.toolNames).not.toContain("mcp_fx_tool_1");
+		expect(second.toolNames).toContain("mcp_fx_tool_1");
 	});
 
-	it("leaves the server connected by the time the first turn goes out", async () => {
+	it("reports connecting while the first turn proceeds and connected after catalog publication", async () => {
 		// Given: a server whose attach connect is deferred past session_start.
 		const root = deferredAttachRoot("state");
 
 		// When: the new session sends its first turn.
-		const turn = await startSessionAndCaptureTurn(root);
+		const { first, second } = await startSessionAndCaptureTurns(root);
 
 		// Then: the prompt build observed the attach instead of assuming it.
-		expect(turn.connectionState).toBe("connected");
+		expect(first.connectionState).toBe("connecting");
+		expect(second.connectionState).toBe("connected");
 	});
 });
 
@@ -76,34 +78,73 @@ function deferredAttachRoot(slug: string): TestRoot {
 	const root = makeRoot(`attach-prompt-${slug}`, cleanupTasks);
 	process.env[ENV_AGENT_DIR] = root.agentDir;
 	mkdirSync(root.agentDir, { recursive: true });
-	setConfig(root, { fx: stdioServer(["--tools", "1", "--instructions", "deferred instructions"]) });
+	setConfig(root, {
+		fx: stdioServer([
+			"--tools",
+			"1",
+			"--instructions",
+			"deferred instructions",
+			"--list-tools-gate",
+			join(root.cwd, "catalog-ready"),
+		]),
+	});
 	return root;
 }
 
 /**
  * Drive the production ordering: session_start dispatches the attach and
  * returns without waiting for it, then the first turn builds the system prompt.
- * Nothing here awaits the attach on the prompt's behalf - that is the contract
- * under test.
+ * The first prompt completes with the catalog held. The next prompt observes
+ * explicitly settled publication, not a scheduling delay.
  */
-async function startSessionAndCaptureTurn(root: TestRoot): Promise<CapturedTurn> {
+async function startSessionAndCaptureTurns(root: TestRoot): Promise<{ first: CapturedTurn; second: CapturedTurn }> {
 	process.env[ENV_AGENT_DIR] = root.agentDir;
 	const harness = await createHarness({ extensionFactories: [mcpExtension as ExtensionFactory] });
 	harnesses.push(harness);
 	await harness.getExtensionRunner().emit({ type: "session_start", reason: "startup" });
 	let captured: CapturedTurn = { systemPrompt: "", connectionState: undefined, toolNames: [] };
 	harness.setResponses([
-		(context) => {
+		async (context) => {
+			await getMcpService().refreshWireStatusSnapshot();
 			captured = {
 				systemPrompt: getCurrentSystemPrompt(context.messages),
-				connectionState: getMcpService().getConnection("fx")?.state,
+				connectionState: getMcpService()
+					.getWireStatusSnapshot()
+					.servers.find((server) => server.name === "fx")?.status,
 				toolNames: getCurrentTools(context.messages).map((tool) => tool.name),
 			};
 			return fauxAssistantMessage("done");
 		},
 	]);
-	await harness.session.prompt("capture prompt");
-	return captured;
+	const signal = AbortSignal.timeout(10_000);
+	const prompt = harness.session.prompt("capture first prompt");
+	try {
+		await new Promise<void>((resolve, reject) => {
+			const abort = () => reject(new Error("First prompt waited for catalog publication"));
+			signal.addEventListener("abort", abort, { once: true });
+			void prompt.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+		});
+	} finally {
+		writeFileSync(join(root.cwd, "catalog-ready"), "ready");
+		await prompt;
+	}
+	const first = captured;
+	await getMcpService().whenAttachSettled();
+	await getMcpService().refreshWireStatusSnapshot();
+	harness.setResponses([
+		(context) => {
+			captured = {
+				systemPrompt: getCurrentSystemPrompt(context.messages),
+				connectionState: getMcpService()
+					.getWireStatusSnapshot()
+					.servers.find((server) => server.name === "fx")?.status,
+				toolNames: getCurrentTools(context.messages).map((tool) => tool.name),
+			};
+			return fauxAssistantMessage("done");
+		},
+	]);
+	await harness.session.prompt("capture next prompt");
+	return { first, second: captured };
 }
 
 function instructionsFor(systemPrompt: string, server: string): string | null {
