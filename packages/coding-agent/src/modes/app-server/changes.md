@@ -1,3 +1,23 @@
+## 2026-10-08 - Async questions survive turn completion (#2786)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/runtime.ts` cancels only blocking user-input requests on agent_end. Full runtime disposal still cancels all requests.
+- `packages/coding-agent/src/modes/app-server/server/user-input-bridge.ts` filters cancellation by the canonical waitForAnswer value when requested; asynchronous questions retain replay, response correlation and their existing timeout.
+
+### Why
+
+- Cancelling every question at the end of the asking turn discarded async requests before users could answer and prevented their follow-up delivery.
+
+### Why an extension could not handle it
+
+- The app-server runtime owns the cancellation subscription and the bridge owns the pending protocol requests. The question extension already delivers settled async answers.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/app-server/runtime.ts`: the agent_end subscription.
+- `packages/coding-agent/src/modes/app-server/server/user-input-bridge.ts`: cancelPendingForThread.
+
 ## 2026-10-08 - Daemon launches do not replay a Node eval caller (senpi#2599)
 
 ### What changed

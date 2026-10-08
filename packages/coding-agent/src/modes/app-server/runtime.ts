@@ -220,7 +220,7 @@ async function createBoundAppServerSession(
 	result.session.subscribe((event) => {
 		if (event.type === "agent_end") {
 			approvals.cancelPendingForThread(threadId);
-			userInput.cancelPendingForThread(threadId);
+			userInput.cancelPendingForThread(threadId, { blockingOnly: true });
 		}
 	});
 	return { ...result, initialNotifications, mcpWireStatusAdapter };

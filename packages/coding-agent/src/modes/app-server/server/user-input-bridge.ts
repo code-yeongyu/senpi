@@ -150,10 +150,10 @@ export class UserInputBridge {
 		}
 		return replayed;
 	}
-	cancelPendingForThread(threadId: string): number {
+	cancelPendingForThread(threadId: string, { blockingOnly = false }: { blockingOnly?: boolean } = {}): number {
 		let cancelled = 0;
 		for (const [id, pending] of this.pending) {
-			if (pending.threadId !== threadId) continue;
+			if (pending.threadId !== threadId || (blockingOnly && !pending.canonical.waitForAnswer)) continue;
 			this.finish(id, pending.state.cancel());
 			cancelled++;
 		}

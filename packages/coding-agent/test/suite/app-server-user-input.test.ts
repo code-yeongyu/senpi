@@ -121,6 +121,31 @@ describe("app-server user input", () => {
 		expect(sent[1]).toEqual({ method: "serverRequest/resolved", params: { threadId: "thread-1", requestId: id } });
 		expect(bridge.pendingCount).toBe(0);
 	});
+	it("cancels blocking requests at turn end and retains async requests until full disposal", async () => {
+		vi.useFakeTimers();
+		const { bridge, sent, ask } = setup();
+		const blocking = ask();
+		const asynchronous = ask({ ...params, waitForAnswer: false });
+		expect(bridge.cancelPendingForThread("thread-1", { blockingOnly: true })).toBe(1);
+		await expect(blocking).resolves.toMatchObject({ status: "cancelled" });
+		expect(bridge.pendingCount).toBe(1);
+		expect(bridge.replayPendingForThread("thread-1")).toBe(1);
+		expect(sent.at(-1)).toMatchObject({ method: "item/tool/requestUserInput", params: { waitForAnswer: false } });
+		expect(bridge.cancelPendingForThread("thread-1")).toBe(1);
+		await expect(asynchronous).resolves.toMatchObject({ status: "cancelled" });
+		expect(bridge.pendingCount).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+	it("keeps an async question under its existing idle timeout after turn-end cancellation", async () => {
+		vi.useFakeTimers();
+		const { bridge, ask } = setup();
+		const answer = ask({ ...params, waitForAnswer: false });
+		expect(bridge.cancelPendingForThread("thread-1", { blockingOnly: true })).toBe(0);
+		await vi.advanceTimersByTimeAsync(params.timeoutMs);
+		await expect(answer).resolves.toMatchObject({ status: "timed_out" });
+		expect(bridge.pendingCount).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
 	it("resolves unavailable immediately without subscribers or timers", async () => {
 		vi.useFakeTimers();
 		const { bridge, ask } = setup(0);

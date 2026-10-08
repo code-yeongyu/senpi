@@ -521,7 +521,8 @@ and an optional `comment`. The first responder wins; later responses are rejecte
 
 Draft updates are sent as `item/tool/userInputProgress` client notifications. Each progress frame resets the idle timer.
 The server emits `serverRequest/resolved` when the question resolves (answered, timed_out, cancelled, or
-comment-submitted). Pending requests are replayed to new subscribers and cancelled on `agent_end`.
+comment-submitted). Pending requests are replayed to new subscribers. `agent_end` cancels only blocking questions;
+questions with `waitForAnswer: false` remain answerable until resolution or timeout. Server disposal cancels all requests.
 
 ## Multi-Session Semantics
 
