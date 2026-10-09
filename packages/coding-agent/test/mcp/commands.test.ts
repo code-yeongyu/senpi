@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { createEventBus } from "../../src/core/event-bus.ts";
@@ -23,6 +23,7 @@ import {
 	stdioServer,
 	type TestRoot,
 } from "./fixtures/service-lifecycle.ts";
+import { sharingHttpFixture } from "./fixtures/sharing-http.ts";
 import { stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -301,6 +302,39 @@ describe("/mcp command suite", () => {
 		await command.handler("test fx", createCtx(root, ui));
 
 		expect(lastNotification(ui)?.message).toMatch(/^MCP test fx ok \(\d+ms\): 3 tools$/);
+	});
+
+	// senpi#3001: /mcp test says why the session has no connection.
+	it("says a disabled server is disabled when /mcp test names it", async () => {
+		const root = makeCommandRoot("test-disabled");
+		setConfig(root, { off: { ...stdioServer(["--tools", "1"]), enabled: false } });
+		const { command, extension } = await loadCommand();
+		const ui = createUi();
+		await emitSessionStart(extension, root);
+
+		await command.handler("test off", createCtx(root, ui));
+
+		expect(lastNotification(ui)).toEqual({ message: "MCP server off is disabled", type: "error" });
+	});
+
+	// senpi#3001: /mcp test says why the session has no connection.
+	it("says a server whose own credentials went stale needs auth when /mcp test names it", async () => {
+		const root = makeCommandRoot("test-stale");
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_3001_TOKEN", lifecycle: "eager" },
+		});
+		vi.stubEnv("SENPI_3001_TOKEN", "one");
+		const { command, extension } = await loadCommand();
+		const ui = createUi();
+		await emitSessionStart(extension, root);
+		await awaitMcpConnected(getMcpService(), "fx");
+
+		vi.stubEnv("SENPI_3001_TOKEN", "two");
+		await command.handler("test fx", createCtx(root, ui));
+
+		expect(lastNotification(ui)).toEqual({ message: "MCP server fx needs auth: run /mcp auth fx", type: "error" });
 	});
 
 	it("bounds wedged fixture tests and keeps the command route responsive", async () => {

@@ -170,7 +170,16 @@ async function testServer(
 	if (!ensureKnown(name, ctx, pi, service, notify)) return;
 	const connection = service.getConnection(name, pi);
 	if (connection === undefined) {
-		notify(`MCP server ${name} has no connection for this session`, "error");
+		// The session's own snapshot says why (senpi#3001): a server it does not enable, or its own connection (the one
+		// its snapshot carries an uptime for) whose credentials went stale; else the live one holds another session's.
+		const snapshot = service.getServerSnapshots(pi).find((candidate) => candidate.name === name);
+		const reason =
+			snapshot !== undefined && snapshot.configState !== "enabled"
+				? `is ${snapshot.configState}`
+				: snapshot !== undefined && snapshot.uptimeMs !== null
+					? `needs auth: run /mcp auth ${name}`
+					: "has no connection for this session";
+		notify(`MCP server ${name} ${reason}`, "error");
 		return;
 	}
 	const started = Date.now();
