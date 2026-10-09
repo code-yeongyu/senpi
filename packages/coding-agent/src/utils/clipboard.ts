@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { getNativeClipboard, wrapTmuxPassthrough } from "@earendil-works/pi-tui";
+import { getNativeClipboard, wrapTmuxPassthrough, writeTerminalSequence } from "@earendil-works/pi-tui";
 import { runClipboardCommand } from "./clipboard-command.ts";
 import { isWSL } from "./wsl.ts";
 
@@ -33,7 +33,8 @@ async function emitOsc52(text: string, env: NodeJS.ProcessEnv): Promise<boolean>
 		return false;
 	}
 	const sequence = `\x1b]52;c;${encoded}\x07`;
-	process.stdout.write((await tmuxAllowsPassthrough(env)) ? wrapTmuxPassthrough(sequence) : sequence);
+	// The interactive TUI hides plain stdout writes; this one must reach the terminal.
+	writeTerminalSequence((await tmuxAllowsPassthrough(env)) ? wrapTmuxPassthrough(sequence) : sequence);
 	return true;
 }
 

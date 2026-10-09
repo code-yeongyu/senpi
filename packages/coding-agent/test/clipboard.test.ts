@@ -22,11 +22,16 @@ const mocks = vi.hoisted(() => ({
 	platform: vi.fn<() => NodeJS.Platform>(),
 }));
 vi.mock("@earendil-works/pi-tui", async () => {
-	// The real DCS wrapper produces the asserted passthrough bytes.
-	const actual = await vi.importActual<{ wrapTmuxPassthrough: (sequence: string) => string }>(
-		"@earendil-works/pi-tui",
-	);
-	return { getNativeClipboard: mocks.getNativeClipboard, wrapTmuxPassthrough: actual.wrapTmuxPassthrough };
+	// The real DCS wrapper and terminal writer produce the asserted bytes on stdout.
+	const actual = await vi.importActual<{
+		wrapTmuxPassthrough: (sequence: string) => string;
+		writeTerminalSequence: (data: string) => void;
+	}>("@earendil-works/pi-tui");
+	return {
+		getNativeClipboard: mocks.getNativeClipboard,
+		wrapTmuxPassthrough: actual.wrapTmuxPassthrough,
+		writeTerminalSequence: actual.writeTerminalSequence,
+	};
 });
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: mocks.command }));
 vi.mock("node:os", async () => ({

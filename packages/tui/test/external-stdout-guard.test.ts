@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { ProcessTerminal } from "../src/terminal.ts";
+import { ProcessTerminal, writeTerminalSequence } from "../src/terminal.ts";
 
 interface GuardHarness {
 	terminal: ProcessTerminal;
@@ -198,6 +198,74 @@ describe("ProcessTerminal external stdout guard", () => {
 				true,
 			);
 		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("delivers terminal sequences through the guard without unhiding stray stdout", () => {
+		const harness = setupGuardHarness();
+		try {
+			harness.terminal.start(
+				() => {},
+				() => {},
+			);
+			harness.writes.length = 0;
+
+			writeTerminalSequence("\x1b]52;c;aGk=\x07");
+			process.stdout.write("stray\n");
+
+			assert.deepEqual(harness.writes, ["\x1b]52;c;aGk=\x07"]);
+			assert.deepEqual(harness.hidden, ["stray\n"]);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("routes terminal sequences to whichever stdout is current across stop, restart, and a new terminal", () => {
+		const harness = setupGuardHarness();
+		const capture = () => {
+			const chunks: string[] = [];
+			process.stdout.write = ((chunk: string | Uint8Array) => {
+				chunks.push(String(chunk));
+				return true;
+			}) as typeof process.stdout.write;
+			return chunks;
+		};
+		const next = new ProcessTerminal({ onExternalStdoutWrite: (text) => harness.hidden.push(text) });
+		try {
+			harness.terminal.start(
+				() => {},
+				() => {},
+			);
+			harness.terminal.stop();
+			const afterStop = capture();
+			harness.writes.length = 0;
+			writeTerminalSequence("after stop");
+			assert.deepEqual(afterStop, ["after stop"]);
+			assert.deepEqual(harness.writes, []);
+
+			harness.terminal.start(
+				() => {},
+				() => {},
+			);
+			afterStop.length = 0;
+			writeTerminalSequence("restarted");
+			process.stdout.write("stray\n");
+			assert.deepEqual(afterStop, ["restarted"]);
+			assert.deepEqual(harness.hidden, ["stray\n"]);
+			harness.terminal.stop();
+
+			const replaced = capture();
+			next.start(
+				() => {},
+				() => {},
+			);
+			replaced.length = 0;
+			writeTerminalSequence("new terminal");
+			assert.deepEqual(replaced, ["new terminal"]);
+			assert.equal(afterStop.includes("new terminal"), false);
+		} finally {
+			next.stop();
 			harness.cleanup();
 		}
 	});

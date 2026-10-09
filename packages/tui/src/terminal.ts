@@ -297,6 +297,23 @@ export function resolveBurstWindowMs(env: NodeJS.ProcessEnv = process.env): numb
 	return DEFAULT_BURST_WINDOW_MS;
 }
 
+let guardedTerminalWriter: ((data: string) => void) | undefined;
+
+/**
+ * Write an intentional terminal control sequence (for example an OSC 52 clipboard write) from code
+ * that does not own the active Terminal. While a started ProcessTerminal hides external stdout, the
+ * sequence goes through that terminal's raw writer; otherwise it goes to the current
+ * `process.stdout.write`. Never route ordinary text through this: it would bypass the guard that
+ * keeps stray output from desynchronizing rendering. Assumes one guarded terminal at a time.
+ */
+export function writeTerminalSequence(data: string): void {
+	if (guardedTerminalWriter) {
+		guardedTerminalWriter(data);
+		return;
+	}
+	process.stdout.write(data);
+}
+
 /**
  * Real terminal using process.stdin/stdout
  */
@@ -443,6 +460,7 @@ export class ProcessTerminal implements Terminal {
 		this.originalStdoutWrite = process.stdout.write;
 		const rawWrite = process.stdout.write.bind(process.stdout);
 		this.rawStdoutWrite = rawWrite;
+		guardedTerminalWriter = rawWrite;
 
 		process.stdout.write = ((
 			chunk: string | Uint8Array,
@@ -477,6 +495,7 @@ export class ProcessTerminal implements Terminal {
 			return;
 		}
 		process.stdout.write = this.originalStdoutWrite;
+		if (guardedTerminalWriter === this.rawStdoutWrite) guardedTerminalWriter = undefined;
 		this.originalStdoutWrite = undefined;
 		this.rawStdoutWrite = undefined;
 	}

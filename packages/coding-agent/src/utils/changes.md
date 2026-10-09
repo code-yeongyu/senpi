@@ -1,5 +1,23 @@
 # changes
 
+## 2026-10-09 - Clipboard OSC 52 reaches the terminal while the TUI guards stdout
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard.ts`: `emitOsc52()` writes its (optionally tmux-wrapped) sequence with pi-tui's `writeTerminalSequence` instead of `process.stdout.write`.
+
+### Why
+
+- Interactive senpi's `ProcessTerminal` hides external stdout in the debug log, so `/copy`, selection copy, and the todo copy command reported success while the OSC 52 sequence never reached the terminal (remote, headless, and WSL Windows Terminal sessions had no clipboard).
+
+### Why an extension could not handle it
+
+- Clipboard transport is a shared host utility; extensions cannot change how it writes to the terminal.
+
+### Expected merge conflict zones
+
+- LOW: the write call at the end of `emitOsc52()` and the `@earendil-works/pi-tui` import.
+
 ## 2026-10-09 - tmux clipboard passthrough (senpi#1211)
 
 ### What changed

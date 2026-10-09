@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- `/copy`, fullscreen selection copy, and the todo copy command now deliver their OSC 52 clipboard sequence to the terminal in interactive mode; the TUI's external-stdout guard had been diverting it to the debug log, so remote, headless, and WSL Windows Terminal sessions reported a copy that never reached the clipboard.
+
 - Clipboard copies inside tmux with `allow-passthrough` enabled now wrap the OSC 52 sequence in a tmux DCS passthrough envelope so it reaches the outer terminal (for example across SSH); sessions outside tmux, with passthrough disabled, or where the tmux probe fails keep emitting the raw OSC 52 sequence.
 
 - Polling `senpi host status` no longer restarts a dead owner's two-second host-exit grace. Observe-only reads follow the normal idle policy, while a dropped unclassified peer and activity on an existing connection still reset continuous quiescence ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).

@@ -1,3 +1,22 @@
+## 2026-10-09 - Terminal control sequences bypass the external stdout guard
+
+### What changed
+
+- `packages/tui/src/terminal.ts`: new exported `writeTerminalSequence(data)`. While a started `ProcessTerminal` hides external stdout, it writes through that terminal's raw stdout writer; otherwise it writes to the current `process.stdout.write`. `installExternalStdoutGuard()` publishes the raw writer and `removeExternalStdoutGuard()` clears it only if it is still that terminal's, so stop, restart, and a replacement terminal each route to the stdout that is current. One guarded terminal at a time is assumed, as before.
+- `packages/tui/src/index.ts`: re-exports `writeTerminalSequence`.
+
+### Why
+
+- The guard diverted every external `process.stdout.write` to `onExternalStdoutWrite`, including intentional control sequences from code that does not own the `Terminal`. Senpi's clipboard OSC 52 write (`/copy`, selection copy) landed in the hidden-stdout debug log instead of the terminal.
+
+### Why an extension could not handle it
+
+- The guard and its raw writer are private to `ProcessTerminal`; nothing outside the package can reach the unguarded stdout while it is installed.
+
+### Expected merge conflict zones
+
+- LOW: `installExternalStdoutGuard()` / `removeExternalStdoutGuard()` in `terminal.ts`, the new function above `ProcessTerminal`, and the terminal export block in `index.ts`.
+
 ## 2026-10-07 - Multiplexer focus events and width changes repaint the viewport only (senpi#1704)
 
 ### What changed
