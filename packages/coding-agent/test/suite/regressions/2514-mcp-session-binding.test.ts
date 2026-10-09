@@ -1566,6 +1566,45 @@ describe("senpi#3001: a session sees a shared connection only with its own crede
 		// Then: its block still carries the instructions.
 		expect(service.getMcpInstructions(alphaPi)).toContain(FX_INSTRUCTIONS);
 	});
+
+	it("shows a session without credentials nothing of a peer's connection whose credentials vanished", async () => {
+		// Given: the alpha session declares `fx` with no token; the peer attached last with its own, so the live connection
+		// carries the peer's credentials, which then vanish under it.
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_3001_TOKEN", lifecycle: "eager" },
+		});
+		const service = getMcpService();
+		const attach = (pi: CapturingPi, env: Record<string, string>) =>
+			service.attachSession(
+				{ type: "session_start", reason: "startup" },
+				{ cwd: root.cwd, isProjectTrusted: () => true },
+				pi,
+				{ agentDir: root.agentDir, env },
+			);
+		const alphaPi = capturingPi();
+		await attach(alphaPi, {});
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		const bravoPi = capturingPi();
+		const bravoEnv: Record<string, string> = { SENPI_3001_TOKEN: "bravo-token" };
+		await attach(bravoPi, bravoEnv);
+		await untilFakeRegistered(bravoPi, "mcp_fx_echo");
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		const connection = service.getConnection("fx", bravoPi);
+		if (connection === undefined) throw new Error("fx never connected with the peer's token");
+		delete bravoEnv.SENPI_3001_TOKEN;
+		const listTools = vi.spyOn(connection.client, "listTools");
+
+		// When: the alpha session reads the server's logs and exposure.
+		const logs = service.getLogLines("fx", 20, alphaPi);
+		const exposure = await service.getServerExposureStatus("fx", alphaPi);
+
+		// Then: it gets nothing of that connection, and no request runs over it.
+		expect(logs).toEqual([]);
+		expect(exposure).toEqual({ toolCount: null });
+		expect(listTools).not.toHaveBeenCalled();
+	});
 });
 
 describe("senpi#3001: a status refresh that names no session", () => {

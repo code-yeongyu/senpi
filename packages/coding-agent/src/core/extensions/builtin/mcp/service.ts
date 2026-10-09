@@ -1141,15 +1141,20 @@ function offersConnection(binding: McpSessionBinding, entry: McpConnectionEntry)
  * Whether `owner` declares `entry`'s server with its config hash and resolves, now, the credentials the connection's
  * own agent dir and env resolve. Unlike `offersConnection`, a connection whose credentials went stale (revoked or
  * rotated tokens) still matches its own session, so that session's status reports it as needing auth; a peer's
- * connection with other credentials never matches.
+ * connection with other credentials never matches. Two missing identities match only a connection that spawned with
+ * none, or one sharing the owner's agent dir and env: a peer's connection whose credentials vanished stays the peer's
+ * (senpi#3001).
  */
 function resolvesSameCredentials(owner: McpConfigOwner, entry: McpConnectionEntry): boolean {
 	const server = owner.config.servers[entry.name];
 	if (server?.config === undefined || server.configHash !== entry.configHash) return false;
 	const { agentDir, env } = owner.options;
+	const current = mcpCredentialIdentity(server.config, entry.name, agentDir, env);
+	if (current !== mcpCredentialIdentity(server.config, entry.name, entry.agentDir, entry.env)) return false;
 	return (
-		mcpCredentialIdentity(server.config, entry.name, agentDir, env) ===
-		mcpCredentialIdentity(server.config, entry.name, entry.agentDir, entry.env)
+		current !== undefined ||
+		entry.credentialIdentity === undefined ||
+		(agentDir === entry.agentDir && env === entry.env)
 	);
 }
 
