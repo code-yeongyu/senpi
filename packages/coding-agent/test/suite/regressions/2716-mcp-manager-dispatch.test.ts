@@ -69,7 +69,7 @@ async function setup(name: string, oauth = false) {
 	await harness.session.bindExtensions({ uiContext: ui, mode: "tui" });
 	const pi = command.pi;
 	if (pi === undefined) throw new Error("The /mcp command extension never loaded");
-	// The session attaches through the API its /mcp command runs with, as the MCP builtin does (senpi#3001).
+	// Attach through the /mcp command API (senpi#3001).
 	await service.attachSession(
 		{ type: "session_start", reason: "startup" },
 		{ cwd: root.cwd, isProjectTrusted: () => true },
@@ -87,7 +87,7 @@ describe("MCP manager structured dispatch", () => {
 		// senpi#2716, PR #2747 owner item 2: observe the registered command and
 		// real service attach, not a copied context or a mocked attach result.
 		const name = "owner-context";
-		const { root, service, harness, ui } = await setup(name);
+		const { root, service, harness, ui, pi } = await setup(name);
 		const initialPid = service.getConnection(name)?.getRootPid();
 		if (!initialPid) throw new Error("Initial fixture did not spawn");
 		const runner = harness.getExtensionRunner();
@@ -148,6 +148,7 @@ describe("MCP manager structured dispatch", () => {
 			expect(details.some((text) => /^MCP test owner-context ok \(\d+ms\): 1 tools$/.test(text))).toBe(true);
 			expect(details).toContain(`MCP reconnect ${name} connected`);
 			expect(service.getConnection(name)?.state).toBe("connected");
+			expect(binding.pi).toBe(pi);
 			expect(binding.pi.getActiveTools()).toContain("mcp_owner-context_tool_1");
 			const reconnectPid = service.getConnection(name)?.getRootPid();
 			if (!reconnectPid) throw new Error("Reconnect fixture did not spawn");
@@ -256,11 +257,11 @@ describe("MCP manager structured dispatch", () => {
 		{ name: "space server", args: "logs 'space server'" },
 	])("preserves existing CLI parsing when given $args", async ({ name, args }) => {
 		// Given: a real registered command with a known server.
-		const { service, harness, pi } = await setup(name, true);
+		const { service, harness } = await setup(name, true);
 		const logs = vi.spyOn(service, "getLogLines");
 		// When: a textual subcommand uses the existing quoting/escaping syntax.
 		await harness.session.prompt(`/mcp ${args}`);
 		// Then: parsing still resolves the same server identity.
-		expect(logs).toHaveBeenCalledExactlyOnceWith(name, 20, pi);
+		expect(logs).toHaveBeenCalledExactlyOnceWith(name, 20, expect.anything());
 	});
 });

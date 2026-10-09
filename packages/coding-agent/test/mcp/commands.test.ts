@@ -249,9 +249,7 @@ describe("/mcp command suite", () => {
 		// The session attaches through the API its /mcp command runs with, as the MCP builtin does (senpi#3001).
 		const commandActiveTools: string[] = [];
 		const { command, extension } = await loadCommand(commandActiveTools);
-		for (const handler of extension.handlers.get("session_start") ?? []) {
-			await handler({ type: "session_start", reason: "startup" }, ctxWithDecl);
-		}
+		await emitSessionStart(extension, root, ctxWithDecl);
 		await awaitMcpToolRegistration("fixture");
 		expect(
 			getMcpService()
@@ -279,6 +277,8 @@ describe("/mcp command suite", () => {
 		runner.setUIContext(createUi(), "tui");
 		const ctx = runner.createCommandContext();
 
+		// The seed attach above activated the tool already; only reconnect's own attach may put it back.
+		commandActiveTools.length = 0;
 		await command.handler("reconnect fixture", ctx);
 		await awaitMcpToolRegistration("fixture");
 
@@ -380,9 +380,13 @@ function loadMcpExtension(activeTools: string[] = []): Promise<Extension> {
 	return loadExtensionFromFactory(mcpExtension, process.cwd(), createEventBus(), runtime, "<mcp-command-test>");
 }
 
-async function emitSessionStart(extension: Extension, root: TestRoot): Promise<void> {
+async function emitSessionStart(
+	extension: Extension,
+	root: TestRoot,
+	ctx: object = { cwd: root.cwd, isProjectTrusted: () => true },
+): Promise<void> {
 	const event: SessionStartEvent = { type: "session_start", reason: "startup" };
 	for (const handler of extension.handlers.get("session_start") ?? []) {
-		await handler(event, { cwd: root.cwd, isProjectTrusted: () => true });
+		await handler(event, ctx);
 	}
 }
