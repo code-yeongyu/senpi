@@ -332,11 +332,28 @@ function blockText(blocks: readonly unknown[]): string {
 	return parts.join("\n");
 }
 
-function lastUserPrompt(context: Context): string {
+function userText(message: Extract<Context["messages"][number], { role: "user" }>): string {
+	return typeof message.content === "string" ? message.content : blockText(message.content);
+}
+
+/**
+ * The prompt for this turn: every user-role message after the last non-user message, in order.
+ * A turn can carry more than the request - hidden extension messages such as the first-turn plan
+ * reminder reach providers as user messages after it - and the CLI takes a single prompt, so
+ * sending only the last one dropped the request itself (senpi#2139).
+ */
+export function turnPrompt(context: Context): string {
+	const trailing: string[] = [];
 	for (let index = context.messages.length - 1; index >= 0; index -= 1) {
 		const message = context.messages[index];
-		if (message === undefined || message.role !== "user") continue;
-		return typeof message.content === "string" ? message.content : blockText(message.content);
+		if (message === undefined || message.role !== "user") break;
+		const text = userText(message);
+		if (text.length > 0) trailing.unshift(text);
+	}
+	if (trailing.length > 0) return trailing.join("\n\n");
+	for (let index = context.messages.length - 1; index >= 0; index -= 1) {
+		const message = context.messages[index];
+		if (message?.role === "user") return userText(message);
 	}
 	throw new Error("cursor-cli-oauth needs a user message to prompt the Cursor CLI");
 }
@@ -458,7 +475,7 @@ export function streamCursorCliOauth(
 			if (!isCursorCliOauthLaneEnabled(settings, storedAccounts.length)) throw new Error(DISABLED_MESSAGE);
 			if (storedAccounts.length === 0) throw new Error(NO_ACCOUNTS_MESSAGE);
 
-			const prompt = lastUserPrompt(context);
+			const prompt = turnPrompt(context);
 			const senpiSessionId = options?.affinitySessionId ?? options?.sessionId ?? DEFAULT_CURSOR_AFFINITY_KEY;
 			const spawnModel = resolveCursorCliSpawnModel(model as Model<"cursor-agent">, options?.thinkingSelection);
 			const turnInput: CursorCliSessionTurnInput = {

@@ -77,7 +77,8 @@ const DEFAULT_CLOCK: WatchClock = {
  */
 export class ConfigReloadWatchEngine {
 	readonly #states: TargetState[];
-	readonly #unsubscribes: (() => void)[] = [];
+	readonly #unsubscribes: Array<() => void> = [];
+	#closeCompletion: Promise<void> | undefined;
 	readonly #subscribe: WatchEventSource;
 	readonly #onRealChange: (change: RealChange) => void;
 	readonly #onError: (error: unknown, path: string) => void;
@@ -168,15 +169,14 @@ export class ConfigReloadWatchEngine {
 	}
 
 	/**
-	 * Marks the engine inert synchronously, then drains the unsubscribe loop off
-	 * the caller's stack. A single `fs.watch` unsubscribe can block for seconds on
-	 * a loaded machine, and a reload awaits this call; every dispatch path already
-	 * checks `#closed`, so the still-attached subscriptions are silent while the
-	 * returned promise settles. Await it only to observe teardown completion.
+	 * Marks the engine inert and cancels every subscription synchronously, then
+	 * joins whatever native disposal those unsubscribers return. Repeated close()
+	 * callers share that join. Dispatch already checks `#closed`, so stale events
+	 * cannot start reload work while disposal is outstanding.
 	 */
 	close(): Promise<void> {
 		if (this.#closed) {
-			return Promise.resolve();
+			return this.#closeCompletion ?? Promise.resolve();
 		}
 		this.#closed = true;
 		if (this.#timer) {
@@ -184,18 +184,17 @@ export class ConfigReloadWatchEngine {
 			this.#timer = undefined;
 		}
 		const unsubscribes = this.#unsubscribes.splice(0);
-		return new Promise<void>((settle) => {
-			this.#clock.setTimeout(() => {
-				for (const unsubscribe of unsubscribes) {
-					try {
-						unsubscribe();
-					} catch (error) {
-						this.#reportError(error, "watch subscription");
-					}
+		this.#closeCompletion = Promise.allSettled(unsubscribes.map(async (unsubscribe) => unsubscribe())).then(
+			(results) => {
+				const errors = results
+					.filter((result): result is PromiseRejectedResult => result.status === "rejected")
+					.map((result) => result.reason);
+				if (errors.length > 0) {
+					throw new AggregateError(errors, "Config watcher teardown failed");
 				}
-				settle();
-			}, 0);
-		});
+			},
+		);
+		return this.#closeCompletion;
 	}
 
 	getBaselineSnapshot(): ReadonlyMap<string, string> {

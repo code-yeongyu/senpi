@@ -1,22 +1,15 @@
+import { type LineReplacement, replacementsAroundContext, SourceText } from "./line-endings.ts";
 import { seekSequenceWithFuzz } from "./seek-sequence.ts";
-import { normalizePatchText } from "./text.ts";
 import type { PatchChunk } from "./types.ts";
-
-function splitFileLines(content: string): string[] {
-	const lines = normalizePatchText(content).split("\n");
-	if (lines[lines.length - 1] === "") {
-		lines.pop();
-	}
-	return lines;
-}
 
 export function replaceChunks(
 	content: string,
 	filePath: string,
 	chunks: PatchChunk[],
 ): { content: string; fuzz: number } {
-	const originalLines = splitFileLines(content);
-	const replacements: { start: number; oldLength: number; newLines: string[] }[] = [];
+	const source = SourceText.parse(content);
+	const originalLines = source.texts;
+	const replacements: LineReplacement[] = [];
 	let lineIndex = 0;
 	let fuzz = 0;
 
@@ -47,14 +40,11 @@ export function replaceChunks(
 		if (foundAt === undefined)
 			throw new Error(`Failed to find expected lines in ${filePath}:\n${chunk.oldLines.join("\n")}`);
 		fuzz += foundAt.fuzz;
-		replacements.push({ start: foundAt.index, oldLength: pattern.length, newLines });
+		replacements.push(
+			...replacementsAroundContext(foundAt.index, pattern.length, newLines, chunk.contextLineIndices),
+		);
 		lineIndex = foundAt.index + pattern.length;
 	}
 
-	const nextLines = [...originalLines];
-	for (const replacement of replacements.sort((left, right) => right.start - left.start)) {
-		nextLines.splice(replacement.start, replacement.oldLength, ...replacement.newLines);
-	}
-	nextLines.push("");
-	return { content: nextLines.join("\n"), fuzz };
+	return { content: source.replace(replacements), fuzz };
 }

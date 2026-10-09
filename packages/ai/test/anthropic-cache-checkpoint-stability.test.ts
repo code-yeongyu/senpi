@@ -5,6 +5,8 @@ import { getBuiltinModel as getModel } from "../src/providers/all.ts";
 import { fauxAssistantMessage, fauxToolCall } from "../src/providers/faux.ts";
 import type { Context, Model, ToolResultMessage } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const FIRST_TOOL_USE_ID = "toolu_first";
 const SECOND_TOOL_USE_ID = "toolu_second";
 const THIRD_TOOL_USE_ID = "toolu_third";
@@ -90,7 +92,7 @@ async function captureOAuthCacheMarkers(
 		payload = JSON.parse(String(init?.body));
 		return oauthSseResponse();
 	};
-	const response = streamAnthropic(model, context, {
+	const response = streamAnthropic(model, normalizeContext(context), {
 		apiKey: "sk-ant-oat-test",
 		fetch,
 		...(cacheRetention ? { cacheRetention } : {}),

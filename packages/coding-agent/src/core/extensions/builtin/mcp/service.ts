@@ -1,36 +1,36 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { getAgentDir } from "../../../../config.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import {
 	getToolSearchService,
+	getToolSearchServiceForExtension,
 	resetToolSearchServiceForTests,
-	type ToolSearchService,
+	ToolSearchService,
 } from "../tool-search/service.ts";
-import { detectLiteralBearerWarnings, resolveAuthMode, resolveServerAuth } from "./auth/context.ts";
-import { collectToolCatalog } from "./catalog.ts";
-import { getValidCachedServer, readMcpCatalogCache } from "./catalog-cache.ts";
-import { loadMcpConfig, mergeExtensionMcpServers, resolveSkillMcpServer, visitSpawnableMcpServers } from "./config.ts";
+import { mcpCredentialIdentity } from "./auth/catalog-identity.ts";
+import { resolveAuthMode } from "./auth/context.ts";
+import {
+	cachedCatalogNeedsRefresh,
+	getValidCachedServer,
+	type McpCatalogCacheFile,
+	readMcpCatalogCache,
+} from "./catalog-cache.ts";
+import { loadMcpConfig, mergeExtensionMcpServers, visitSpawnableMcpServers } from "./config.ts";
 import type { McpServerConfig, ResolvedMcpConfig, ResolvedMcpServer } from "./config-schema.ts";
-import { ServerConnection } from "./connection.ts";
-import { collectAllPages } from "./expose/pagination.ts";
-import { mapMcpCatalogNames } from "./expose/register.ts";
+import type { ServerConnection } from "./connection.ts";
 import type { McpSessionRegistration } from "./expose/session.ts";
 import type { McpServerExposureStatus } from "./expose/status.ts";
 import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-guard.ts";
-import { markMcpConnectionNeedsAuth } from "./health.ts";
-import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
+import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
-import {
-	buildMcpTombstoneDefinition,
-	createMcpListChangeCoalescer,
-	diffMcpToolNames,
-	formatMcpListChangedDelta,
-} from "./notifications.ts";
-import { configureMcpReconnect, disposeMcpReconnect, reconnectMcpNow } from "./reconnect.ts";
+import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
+import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
 import { getMcpServiceExposureStatus } from "./service-exposure.ts";
 import { registerMcpServiceDirectTools } from "./service-register.ts";
 import { buildMcpServerSnapshot } from "./service-snapshot.ts";
+import { refreshMcpToolsOnListChanged, subscribeMcpToolsChanged } from "./service-tools-changed.ts";
 import type {
 	McpConnectionEntry,
 	McpDisposeReason,
@@ -47,17 +47,47 @@ import type {
 	McpWireStatusSnapshot,
 	McpWireTool,
 } from "./service-types.ts";
+import { resolveSkillMcpServer } from "./skill-server.ts";
+import type { SkillServerRegistration } from "./skills.ts";
 import {
-	connectAndRefreshMcpCatalog,
+	MCP_ATTACH_SETTLE_TIMEOUT_MS,
+	McpDeferredAttach,
+	type McpStartupRaceResult,
 	raceMcpStartupConnect,
-	resolveMcpStartupTimeoutMs,
 	shouldRaceMcpStartup,
 } from "./startup-race.ts";
+import { safeTimer } from "./wrap.ts";
 
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
 type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm">;
+type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
+
+/**
+ * One live session's binding to the service (#2514): the session's own extension API and
+ * tool-search service, resolved per call, and what was registered there. Connections stay
+ * shared across bindings; only the binding is per session.
+ */
+interface McpSessionBinding {
+	readonly pi: McpToolRegistrar;
+	/** Only for a session whose extension load owns no tool-search service (SDK and test hosts). */
+	readonly fallbackToolSearch: ToolSearchService | undefined;
+	/** True when `fallbackToolSearch` is the process-wide fallback rather than a private one. */
+	readonly holdsProcessFallback: boolean;
+	readonly context: McpSessionContext;
+	/** The config this session resolved at attach: its tools register and are fenced against it alone (senpi#2597). */
+	readonly config: ResolvedMcpConfig;
+	/** This session's trust, env and agent dir: they resolve and spawn the servers it declares (senpi#2986). */
+	readonly options: McpSessionOptions;
+	readonly registeredIdentities: Map<string, string>;
+	registration: McpSessionRegistration | undefined;
+	/** The session id read at attach, while the context is live: a released session's context may already be stale. */
+	readonly sessionId: string | undefined;
+}
+
+/** A session's resolved config with the context and options that declared it; a binding is one. */
+type McpConfigOwner = Pick<McpSessionBinding, "config" | "options" | "context">;
 
 export { registerToolsPreservingActiveSet } from "./active-set.ts";
 
@@ -68,10 +98,7 @@ export class McpService {
 	#sessionContext: McpSessionContext | null = null;
 	#sessionStartCount = 0;
 	#lastSessionStartReason: SessionStartEvent["reason"] | null = null;
-	#toolRefreshGeneration = 0;
 	#config: ResolvedMcpConfig | null = null;
-	#authAgentDir: string | undefined;
-	#authEnv: Record<string, string | undefined> | undefined;
 	#elicitationUiProvider: (() => McpElicitationUi | undefined) | undefined;
 	#mcpInstructions = "";
 	readonly #pendingAuth = new Map<string, import("./auth/oauth-provider.ts").McpOAuthProvider>();
@@ -81,16 +108,33 @@ export class McpService {
 	readonly #wireStatusListeners = new Set<(sessionId: string | undefined, snapshot: McpWireStatusSnapshot) => void>();
 	#wireStatusRefreshQueue: Promise<void> = Promise.resolve();
 	#refreshActiveSetWhenNoTools = false;
-	#tierBRegistration: McpSessionRegistration | undefined;
-	#toolSearchService: ToolSearchService | undefined;
-	#sessionOptions: McpSessionOptions = {};
-	#pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined;
+	readonly #bindings = new Map<object, McpSessionBinding>();
+	// Attaches and release re-syncs queued or running: a release defers its dispose until none is left.
+	#pendingSyncs = 0;
+	// Sessions that quit while their own attach was still queued: that attach starts nothing (#2524 review, senpi#2597).
+	readonly #releasedSessions = new WeakSet<object>();
+	#deferredDisposeReason: McpDisposeReason | undefined;
+	// Releases waiting for the attaches that deferred their dispose: they settle once the last one does.
+	readonly #deferredDisposeWaiters: Array<() => void> = [];
+	readonly #skillServerWarnings = new Set<string>();
 	#attachQueue: Promise<void> = Promise.resolve();
+	readonly #deferredAttach = new McpDeferredAttach();
 	#latestWireStatus: McpWireStatusSnapshot = { servers: [] };
 	readonly #wireStatusBySession = new Map<string, McpWireStatusSnapshot>();
 	readonly #connections = new Map<string, McpConnectionEntry>();
 	readonly #connectionKeysByName = new Map<string, string>();
 	readonly #outputArtifacts = new McpOutputArtifacts();
+
+	readonly #registry: HostMcpRegistry;
+	readonly #shareConnections: boolean;
+	readonly #servesManySessions: boolean;
+
+	/** `servesManySessions` marks the process-wide service every classic session attaches to. */
+	constructor(options: Pick<McpSessionOptions, "mcpRegistry"> & { readonly servesManySessions?: boolean } = {}) {
+		this.#registry = options.mcpRegistry ?? new HostMcpRegistry();
+		this.#shareConnections = options.mcpRegistry !== undefined;
+		this.#servesManySessions = options.servesManySessions === true;
+	}
 
 	async attachSession(
 		event: SessionStartEvent,
@@ -98,51 +142,258 @@ export class McpService {
 		_pi?: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
 		options: McpSessionOptions = {},
 	): Promise<void> {
-		const attach = this.#attachQueue.then(async () => {
+		// Counted from the moment it queues, so a session's release cannot dispose the service
+		// under an attach that has not bound yet.
+		await this.#queueSync(async () => {
+			if (this.#disposed) {
+				throw new Error("The MCP service is disposed; attach the session to a live service instead.");
+			}
+			// A session that quit while this attach was queued is gone: it binds nothing, and adopting its config would
+			// replace the servers its live peers use, with no re-sync to follow. A deferred dispose still runs after it.
+			if (_pi !== undefined && this.#releasedSessions.has(_pi)) return;
 			this.#sessionContext = ctx;
+			this.#skillServerWarnings.clear();
 			this.#sessionStartCount += 1;
 			this.#lastSessionStartReason = event.reason;
+			// Bind the agent dir at attach time: the startup race can background
+			// the catalog cache write past this point, and it must land in the
+			// directory this attach resolved, never wherever the environment
+			// points when the write finally runs.
+			const sessionOptions: McpSessionOptions =
+				options.agentDir === undefined ? { ...options, agentDir: getAgentDir() } : options;
 			const config = loadMcpConfig({
-				agentDir: options.agentDir,
+				agentDir: sessionOptions.agentDir,
 				cwd: ctx.cwd,
-				env: options.env,
-				projectTrusted: options.projectTrusted ?? ctx.isProjectTrusted(),
+				env: sessionOptions.env,
+				projectTrusted: sessionOptions.projectTrusted ?? ctx.isProjectTrusted(),
 			});
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
-			this.#config = config;
-			this.#pi = _pi;
-			if (_pi !== undefined) {
-				const activationRuntime = {
-					getActiveTools: () => _pi.getActiveTools(),
-					setActiveTools: (names: readonly string[]) => _pi.setActiveTools([...names]),
-				};
-				try {
-					this.#toolSearchService = getToolSearchService();
-					this.#toolSearchService.bindActivationRuntime(activationRuntime);
-				} catch {
-					this.#toolSearchService = getToolSearchService({ getAllTools: () => [], ...activationRuntime });
-				}
-			}
-			this.#authAgentDir = options.agentDir;
-			this.#authEnv = options.env;
-			this.#sessionOptions = options;
-			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
-			this.#toolRefreshGeneration = toolRefreshGeneration;
-			await this.#syncFromConfig(config, options, event.reason !== "reload", _pi, toolRefreshGeneration);
-			if (_pi !== undefined) await this.#registerDirectTools(_pi);
+			const owner: McpConfigOwner = { config, options: sessionOptions, context: ctx };
+			const binding = _pi === undefined ? undefined : this.#bind(_pi, owner);
+			const current = this.#effectiveConfig(config);
+			this.#config = current;
+			await this.#syncFromConfig(current, binding ?? owner, event.reason !== "reload", binding);
+			if (binding !== undefined) await this.#registerDirectTools(binding);
 			// Replay promotion markers from the (possibly resumed) session history
 			// BEFORE the first turn: the request tool snapshot is taken before the
 			// per-turn context event fires, so the context-event replay alone lands
 			// one turn late. Doing it here puts restored tools on the very first
 			// wire payload after a --continue/resume.
-			if (_pi !== undefined) this.#rehydrateFromSessionHistory(ctx);
-			if (shouldCaptureWireStatus(ctx)) await this.refreshWireStatusSnapshot(ctx.sessionManager?.getSessionId?.());
+			if (binding !== undefined) this.#rehydrateFromSessionHistory(binding);
+			// An unbound attach (no `pi`) still reports its own config; a session released while this attach ran reports
+			// nothing, so no snapshot outlives its release.
+			if (shouldCaptureWireStatus(ctx)) {
+				await this.#refreshWireStatus(ctx.sessionManager?.getSessionId?.(), () =>
+					binding === undefined ? owner : this.#bindings.get(binding.pi) === binding ? binding : undefined,
+				);
+			}
 		});
-		this.#attachQueue = attach.then(
+	}
+
+	/**
+	 * Run `body` on the attach queue, so it never interleaves with an attach or another sync, and count it as a pending
+	 * sync from the moment it queues: a release that empties the service defers its dispose until it settles instead of
+	 * disposing under it. Every attach, release re-sync, credential re-sync and skill attach runs through here.
+	 */
+	async #queueSync(body: () => Promise<void>): Promise<void> {
+		this.#pendingSyncs += 1;
+		const run = this.#attachQueue.then(body);
+		this.#attachQueue = run.then(
 			() => undefined,
 			() => undefined,
 		);
-		await attach;
+		try {
+			await run;
+		} finally {
+			this.#pendingSyncs -= 1;
+			await this.#disposeIfDeferredAndIdle();
+		}
+	}
+
+	/** A release that found syncs still pending leaves the dispose to the last of them, once no session is bound. */
+	async #disposeIfDeferredAndIdle(): Promise<void> {
+		const reason = this.#deferredDisposeReason;
+		if (reason === undefined || this.#pendingSyncs > 0) return;
+		this.#deferredDisposeReason = undefined;
+		// A session that attached meanwhile keeps the service; otherwise the deferred dispose runs now.
+		if (this.#liveBindings().length === 0) await this.dispose(reason);
+		for (const settle of this.#deferredDisposeWaiters.splice(0)) settle();
+	}
+
+	/**
+	 * The config the shared connections follow: `preferred` (the attaching session's) plus every server another live
+	 * session declares and `preferred` does not, so a peer's attach never tears down a server a live session still
+	 * uses (senpi#2597). A name both declare follows `preferred`, as connections are one per server name.
+	 */
+	#effectiveConfig(preferred: ResolvedMcpConfig): ResolvedMcpConfig {
+		const servers = { ...preferred.servers };
+		for (const binding of this.#liveBindings()) {
+			for (const [name, server] of Object.entries(binding.config.servers)) servers[name] ??= server;
+		}
+		return { ...preferred, servers };
+	}
+
+	#bind(pi: McpToolRegistrar, owner: McpConfigOwner): McpSessionBinding {
+		const activationRuntime = {
+			getActiveTools: () => pi.getActiveTools(),
+			setActiveTools: (names: readonly string[]) => pi.setActiveTools([...names]),
+		};
+		const previous = this.#bindings.get(pi);
+		// A session-owned service serves exactly one session: a new attach takes over its binding.
+		if (!this.#servesManySessions) this.#bindings.clear();
+		let fallbackToolSearch: ToolSearchService | undefined;
+		let holdsProcessFallback = false;
+		const sessionToolSearch = getToolSearchServiceForExtension(pi);
+		if (sessionToolSearch !== undefined) {
+			sessionToolSearch.bindActivationRuntime(activationRuntime);
+		} else if (this.#liveBindings().some((other) => other.pi !== pi && other.holdsProcessFallback)) {
+			// The process-wide fallback already serves another live session; rebinding it would move that
+			// session's activation runtime and catalog hook here, so this session gets its own (#2514).
+			fallbackToolSearch = new ToolSearchService({ getAllTools: () => [], ...activationRuntime });
+		} else {
+			holdsProcessFallback = true;
+			try {
+				fallbackToolSearch = getToolSearchService();
+				fallbackToolSearch.bindActivationRuntime(activationRuntime);
+			} catch {
+				fallbackToolSearch = getToolSearchService({ getAllTools: () => [], ...activationRuntime });
+			}
+		}
+		const binding: McpSessionBinding = {
+			pi,
+			fallbackToolSearch,
+			holdsProcessFallback,
+			...owner,
+			registeredIdentities: previous?.registeredIdentities ?? new Map(),
+			registration: previous?.registration,
+			sessionId: owner.context.sessionManager?.getSessionId?.(),
+		};
+		// Re-inserting keeps the most recent attach last, which is what a caller naming no session gets.
+		this.#bindings.delete(pi);
+		this.#bindings.set(pi, binding);
+		return binding;
+	}
+
+	#toolSearchFor(binding: McpSessionBinding): ToolSearchService | undefined {
+		return getToolSearchServiceForExtension(binding.pi) ?? binding.fallbackToolSearch;
+	}
+
+	#liveBindings(): McpSessionBinding[] {
+		for (const [pi, binding] of this.#bindings) {
+			// A disposed session retires its own tool-search service; its binding goes with it.
+			if (getToolSearchServiceForExtension(binding.pi)?.isDisposed === true) this.#bindings.delete(pi);
+		}
+		return [...this.#bindings.values()];
+	}
+
+	/** The binding of the session that owns `pi`; without one, the most recently attached live session. */
+	#bindingFor(pi: object | undefined): McpSessionBinding | undefined {
+		return pi === undefined ? this.#liveBindings().at(-1) : this.#bindings.get(pi);
+	}
+
+	/**
+	 * Release the binding of the session that owns `pi` (#2514). The shared connections keep
+	 * serving every other live session; once none is left, `disposeReason` disposes the service
+	 * the way that last session's own exit would.
+	 */
+	async releaseSession(pi: object, disposeReason?: McpDisposeReason): Promise<void> {
+		const released = this.#bindings.get(pi);
+		this.#bindings.delete(pi);
+		if (disposeReason !== undefined) this.#releasedSessions.add(pi);
+		const live = this.#liveBindings();
+		// A released session's status snapshot goes with it, unless a live binding still reports under its session id.
+		const releasedId = released?.sessionId;
+		if (releasedId !== undefined && !live.some((binding) => binding.sessionId === releasedId)) {
+			this.#wireStatusBySession.delete(releasedId);
+		}
+		const latest = live.at(-1);
+		if (latest !== undefined) {
+			if (released !== undefined && this.#sessionContext === released.context) this.#sessionContext = latest.context;
+			// Only a session that is gone (quit, or the builtin removed) re-syncs. A reload, new, resume or fork attaches
+			// again next, and that attach drops what no live session declares without restarting the servers it keeps.
+			// A gone session re-syncs even when an earlier release with no reason already dropped its binding: a reload
+			// into a runtime without the builtin shuts the session down first, so its servers would otherwise outlive it.
+			if (disposeReason !== undefined) await this.#resyncToLiveSessions();
+			return;
+		}
+		// A session whose attach is still queued has not bound yet but will use this service.
+		if (disposeReason === undefined) return;
+		if (this.#pendingSyncs === 0) {
+			await this.dispose(disposeReason);
+			return;
+		}
+		// The release settles only once the pending attaches and re-syncs have, so a caller that awaits it
+		// (session shutdown, builtin removal) sees the service disposed, not a dispose scheduled later.
+		this.#deferredDisposeReason = disposeReason;
+		const settled = new Promise<"settled">((settle) => this.#deferredDisposeWaiters.push(() => settle("settled")));
+		const deadlineMs = resolveMcpDeferredDisposeTimeoutMs();
+		let timer: NodeJS.Timeout | undefined;
+		const outcome = await Promise.race([
+			settled,
+			new Promise<"timeout">((expire) => {
+				timer = safeTimer("deferred-dispose", deadlineMs, () => expire("timeout"), {
+					logger: createMcpLogger("service"),
+				});
+			}),
+		]);
+		clearTimeout(timer);
+		if (outcome === "settled" || this.#deferredDisposeReason === undefined) return;
+		// A hung attach must not hold a reload or a quit forever: dispose anyway once the
+		// deadline passes, unless a session bound in the meantime, and say so.
+		this.#deferredDisposeReason = undefined;
+		createMcpLogger("service").warn("MCP attach or re-sync still pending at the dispose deadline; disposing anyway", {
+			timeoutMs: deadlineMs,
+			reason: disposeReason,
+		});
+		if (this.#liveBindings().length === 0) await this.dispose(disposeReason);
+		for (const settle of this.#deferredDisposeWaiters.splice(0)) settle();
+	}
+
+	/**
+	 * After a release, bring the shared connections in line with the sessions still live (senpi#2597): the effective
+	 * config of the most recent live binding, with its options, so a server no live session declares is stopped
+	 * instead of outliving its session. It runs on the attach queue, never interleaved with an attach's own sync; the
+	 * caller awaits it only when no sync of any kind is pending, because a hung attach must not hold a quit. It counts as
+	 * a pending sync like an attach, so a release that empties the service defers its dispose until the re-sync settles
+	 * instead of disposing under it. A credential change passes `fallbackOwner`, the owner of the sync that created the
+	 * connection, and re-syncs the current config instead, so it re-keys that connection and stops nothing; with no live
+	 * session (a connection an unbound attach started), it syncs with `fallbackOwner`'s options.
+	 */
+	async #resyncToLiveSessions(fallbackOwner?: McpConfigOwner): Promise<void> {
+		const awaited = this.#pendingSyncs === 0;
+		const settled = this.#queueSync(async () => {
+			if (this.#disposed) return;
+			const latest = this.#liveBindings().at(-1);
+			// A credential re-sync (with `fallbackOwner`) re-keys the current config and stops nothing: a session released
+			// for a reload still declares its servers in it until its next attach, which keeps them running.
+			const config =
+				fallbackOwner === undefined && latest !== undefined ? this.#effectiveConfig(latest.config) : this.#config;
+			const owner = latest ?? fallbackOwner;
+			if (config === null || owner === undefined) return;
+			// Compared by entry, not key: a connection re-created under its old key retires the offers made against it too.
+			const before = new Set(this.#connections.values());
+			this.#config = config;
+			await this.#syncFromConfig(config, owner, true, latest);
+			const unchanged =
+				this.#connections.size === before.size &&
+				[...this.#connections.values()].every((entry) => before.has(entry));
+			if (this.#disposed || latest === undefined || unchanged) return;
+			// A replaced connection retires the offers made against it; republish them in every live session.
+			for (const live of this.#liveBindings()) {
+				await this.#registerDirectTools(live);
+				if (this.#disposed) return;
+			}
+			if (shouldCaptureWireStatus(latest.context)) {
+				await this.refreshWireStatusSnapshot(latest.context.sessionManager?.getSessionId?.());
+			}
+		});
+		if (awaited) {
+			await settled;
+			return;
+		}
+		settled.catch((error: unknown) => {
+			createMcpLogger("service").error("Failed to re-sync MCP servers", error);
+		});
 	}
 
 	/**
@@ -150,15 +401,16 @@ export class McpService {
 	 * into search mode with no directTools, so their catalogs register with
 	 * ZERO active tools until activateSkillMcpTools reveals them. A name
 	 * collision with a system-configured server keeps the system config and
-	 * returns a warning (system wins).
+	 * returns a warning (system wins). `${VAR}` expansion follows the declaring
+	 * skill's trust (skill-server.ts); each trust warning is returned once per session.
 	 */
-	async attachSkillMcpServers(
-		declared: ReadonlyMap<string, { raw: Parameters<typeof resolveSkillMcpServer>[1]; sourcePath: string }>,
-	): Promise<string[]> {
-		const config = this.#config;
-		const pi = this.#pi;
-		if (config === null || pi === undefined) return [];
+	async attachSkillMcpServers(declared: ReadonlyMap<string, SkillServerRegistration>, pi?: object): Promise<string[]> {
+		const binding = this.#bindingFor(pi);
+		if (this.#config === null || binding === undefined) return [];
+		const config = binding.config;
 		const warnings: string[] = [];
+		// The declaring session's own trust and env, never those of whichever session attached last (senpi#2986).
+		const projectTrusted = binding.options.projectTrusted ?? binding.context.isProjectTrusted();
 		let added = 0;
 		for (const [name, decl] of declared) {
 			const existing = config.servers[name];
@@ -168,37 +420,50 @@ export class McpService {
 				);
 				continue;
 			}
-			const resolved = resolveSkillMcpServer(name, decl.raw, decl.sourcePath);
+			const { server: resolved, warning } = resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
+				env: binding.options.env,
+				skillName: decl.skillName,
+				trusted: decl.scope === "project" || decl.scope === undefined ? projectTrusted : true,
+			});
+			if (warning !== undefined && !this.#skillServerWarnings.has(warning)) {
+				this.#skillServerWarnings.add(warning);
+				warnings.push(warning);
+			}
+			if (resolved === undefined) continue;
 			if (existing !== undefined && existing.configHash === resolved.configHash) continue;
 			config.servers[name] = resolved;
 			added += 1;
 		}
 		if (added > 0) {
-			const toolRefreshGeneration = this.#toolRefreshGeneration + 1;
-			this.#toolRefreshGeneration = toolRefreshGeneration;
-			await this.#syncFromConfig(config, this.#sessionOptions, false, pi, toolRefreshGeneration);
-			await this.#registerDirectTools(pi);
-			if (this.#sessionContext !== null && shouldCaptureWireStatus(this.#sessionContext)) {
-				await this.refreshWireStatusSnapshot(this.#sessionContext.sessionManager?.getSessionId?.());
-			}
+			// Queued and counted like a re-sync: a release re-sync that runs meanwhile is never undone by servers this
+			// sync wanted before it, and a session released or attached again since then starts nothing from this binding.
+			await this.#queueSync(async () => {
+				if (this.#disposed || !this.#liveBindings().includes(binding)) return;
+				this.#config = this.#effectiveConfig(binding.config);
+				await this.#syncFromConfig(this.#config, binding, false, binding);
+				await this.#registerDirectTools(binding);
+				if (shouldCaptureWireStatus(binding.context)) {
+					await this.refreshWireStatusSnapshot(binding.context.sessionManager?.getSessionId?.());
+				}
+			});
 		}
 		return warnings;
 	}
 
 	/** Registered searchable catalog (mapped name + server-side tool name),
 	 * used by the skills loader to compute activation targets. */
-	getTierBSearchable(): ReadonlyArray<{ name: string; toolName: string; server: string }> {
-		return this.#tierBRegistration?.searchable ?? [];
+	getTierBSearchable(pi?: object): ReadonlyArray<{ name: string; toolName: string; server: string }> {
+		return this.#bindingFor(pi)?.registration?.searchable ?? [];
 	}
 
 	/** Connected servers that list prompts (todo 40), for slash registration. */
-	getMcpPromptServers(): readonly import("./prompts.ts").McpPromptServer[] {
-		return this.#tierBRegistration?.promptServers ?? [];
+	getMcpPromptServers(pi?: object): readonly import("./prompts.ts").McpPromptServer[] {
+		return this.#bindingFor(pi)?.registration?.promptServers ?? [];
 	}
 
 	/** Connected servers that list resources (todo 39), for mention expansion. */
-	getMcpResourceServers(): readonly McpResourceServer[] {
-		return this.#tierBRegistration?.resourceServers ?? [];
+	getMcpResourceServers(pi?: object): readonly McpResourceServer[] {
+		return this.#bindingFor(pi)?.registration?.resourceServers ?? [];
 	}
 
 	/** Subscribe to completed catalog registrations. Consumers must inspect the
@@ -209,6 +474,17 @@ export class McpService {
 		return () => this.#registrationListeners.delete(listener);
 	}
 
+	/**
+	 * Await the startup connects the race backgrounded, bounded by `timeoutMs`.
+	 * `attachSession` resolves at the race deadline, so consumers that assemble
+	 * session state from the catalog - the first turn's system prompt - call this
+	 * to OBSERVE the attach. A `"timeout"` result means the turn goes out with
+	 * what has landed so far and the rest arrives on a later turn.
+	 */
+	whenAttachSettled(timeoutMs = MCP_ATTACH_SETTLE_TIMEOUT_MS): Promise<McpStartupRaceResult> {
+		return this.#deferredAttach.wait(timeoutMs);
+	}
+
 	/** Subscribe to live MCP inventory transitions for session-scoped hosts. */
 	onWireStatusChanged(listener: (sessionId: string | undefined, snapshot: McpWireStatusSnapshot) => void): () => void {
 		this.#wireStatusListeners.add(listener);
@@ -217,7 +493,15 @@ export class McpService {
 
 	/** Refresh and return the current session-owned MCP wire inventory. */
 	async refreshWireStatusSnapshot(sessionId?: string): Promise<McpWireStatusSnapshot> {
-		const refresh = this.#wireStatusRefreshQueue.then(() => this.#captureWireStatus(sessionId));
+		return this.#refreshWireStatus(sessionId, () => this.#statusOwner(sessionId));
+	}
+
+	/** `owner` is resolved when the queued capture runs, so it sees the bindings current at that point. */
+	async #refreshWireStatus(
+		sessionId: string | undefined,
+		owner: () => McpConfigOwner | undefined,
+	): Promise<McpWireStatusSnapshot> {
+		const refresh = this.#wireStatusRefreshQueue.then(() => this.#captureWireStatus(sessionId, owner()));
 		this.#wireStatusRefreshQueue = refresh.then(
 			() => undefined,
 			() => undefined,
@@ -228,14 +512,14 @@ export class McpService {
 
 	/** Reveal skill-owned tools (todo 37): activation is effective the next
 	 * turn, exactly like an tool_search promotion. Unknown names are ignored. */
-	activateSkillMcpTools(names: readonly string[]): void {
-		this.#tierBRegistration?.activate(names);
+	activateSkillMcpTools(names: readonly string[], pi?: object): void {
+		this.#bindingFor(pi)?.registration?.activate(names);
 	}
 
-	#rehydrateFromSessionHistory(ctx: McpSessionContext): void {
-		const entries = ctx.sessionManager?.getEntries() ?? [];
+	#rehydrateFromSessionHistory(binding: McpSessionBinding): void {
+		const entries = binding.context.sessionManager?.getEntries() ?? [];
 		if (entries.length === 0) return;
-		this.rehydrateActiveToolsFromHistory(entries);
+		this.#toolSearchFor(binding)?.maybeRehydrateFromHistory(entries);
 	}
 
 	async handleSessionShutdown(event: SessionShutdownEvent): Promise<void> {
@@ -247,6 +531,7 @@ export class McpService {
 		this.#disposed = true;
 		this.#disposeCount += 1;
 		this.#lastDisposeReason = reason;
+		this.#bindings.clear();
 		this.#sessionContext = null;
 		this.#config = null;
 		this.#elicitationUiProvider = undefined;
@@ -258,10 +543,11 @@ export class McpService {
 		this.#wireStatusListeners.clear();
 		this.#wireStatusBySession.clear();
 		this.#latestWireStatus = { servers: [] };
+		this.#deferredAttach.clear();
 		const entries = [...this.#connections.values()];
 		this.#connections.clear();
 		this.#connectionKeysByName.clear();
-		await Promise.all(entries.map((entry) => disposeEntryConnection(entry)));
+		await Promise.all(entries.map((entry) => disposeEntryConnection(entry, this.#registry, this)));
 		await cleanupMcpOutputArtifacts(this.#outputArtifacts);
 	}
 
@@ -275,7 +561,8 @@ export class McpService {
 
 	getConnection(name: string): ServerConnection | undefined {
 		const key = this.#connectionKeysByName.get(name);
-		return key === undefined ? undefined : this.#connections.get(key)?.connection;
+		const entry = key === undefined ? undefined : this.#connections.get(key);
+		return entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 	}
 
 	async reconnectServer(name: string): Promise<void> {
@@ -287,7 +574,9 @@ export class McpService {
 	getServerSnapshots(): McpServerSnapshot[] {
 		const names = new Set<string>(Object.keys(this.#config?.servers ?? {}));
 		for (const entry of this.#connections.values()) names.add(entry.name);
-		return [...names].sort().map((name) => this.#serverSnapshot(name));
+		return [...names]
+			.sort()
+			.map((name) => this.#serverSnapshot(name, this.#config?.servers[name], this.#entryForName(name)));
 	}
 
 	getLogLines(name: string, maxLines: number): string[] {
@@ -332,90 +621,98 @@ export class McpService {
 			: (this.#wireStatusBySession.get(sessionId) ?? { servers: [] });
 	}
 
+	/**
+	 * Bring the connections in line with `config`. Each server spawns with the options and cwd of a session that
+	 * declares it: `owner` (the attaching session) when it does, otherwise the live binding whose config
+	 * `#effectiveConfig` took it from, so one session's trust, env and credentials never decide another's (senpi#2986).
+	 */
 	async #syncFromConfig(
 		config: ResolvedMcpConfig,
-		options: McpSessionOptions,
+		owner: McpConfigOwner,
 		useCache: boolean,
-		pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> | undefined,
-		toolRefreshGeneration: number,
+		binding: McpSessionBinding | undefined,
 	): Promise<void> {
-		const cache = await readMcpCatalogCache(options.agentDir);
 		const hadConnectionsBeforeSync = this.#connections.size > 0;
 		this.#refreshActiveSetWhenNoTools = Object.keys(config.servers).length > 0 || hadConnectionsBeforeSync;
 		const wanted = new Map<string, ResolvedMcpServer>();
+		const credentialIdentities = new Map<string, string | undefined>();
+		const candidates = [owner, ...this.#liveBindings()];
+		const declarers = new Map<string, McpConfigOwner>();
 		visitSpawnableMcpServers(config, (name, server) => {
 			wanted.set(name, server);
+			const declarer = candidates.find((candidate) => declares(candidate.config, name, server.configHash)) ?? owner;
+			declarers.set(name, declarer);
+			if (server.config !== undefined) {
+				const { agentDir, env } = declarer.options;
+				credentialIdentities.set(name, mcpCredentialIdentity(server.config, name, agentDir, env));
+			}
 		});
+		const agentDirs = new Set([owner, ...declarers.values()].map((declarer) => declarer.options.agentDir));
+		const caches = new Map<string | undefined, McpCatalogCacheFile>();
+		for (const agentDir of agentDirs) {
+			caches.set(agentDir, await readMcpCatalogCache(agentDir));
+			// A dispose that landed during an await closed every connection; one created now would never be closed.
+			if (this.#disposed) return;
+		}
 		const disposals: Promise<void>[] = [];
 		for (const entry of this.#connections.values()) {
 			const server = wanted.get(entry.name);
-			const key = server?.configHash === undefined ? undefined : `${entry.name}\0${server.configHash}`;
-			if (key === entry.key) continue;
+			const key =
+				server?.configHash === undefined
+					? undefined
+					: `${entry.name}\0${server.configHash}\0${credentialIdentities.get(entry.name) ?? "unknown"}`;
+			// A connection whose credentials went stale is re-created with its declarer's options, never kept under an
+			// unchanged key: kept, it would refuse every session sharing it until the service is disposed.
+			if (key === entry.key && entry.credentialsCurrent?.() !== false) continue;
 			this.#connections.delete(entry.key);
 			this.#connectionKeysByName.delete(entry.name);
-			disposals.push(disposeEntryConnection(entry));
+			disposals.push(disposeEntryConnection(entry, this.#registry, this));
 		}
 		await Promise.all(disposals);
+		if (this.#disposed) return;
 
 		const connects: Promise<void>[] = [];
 		for (const [name, server] of wanted) {
 			if (server.config === undefined || server.configHash === undefined) continue;
-			const key = `${name}\0${server.configHash}`;
+			const serverConfig = server.config;
+			const declarer = declarers.get(name) ?? owner;
+			const options = declarer.options;
+			const cache = caches.get(options.agentDir);
+			const credentialIdentity = credentialIdentities.get(name);
+			const key = `${name}\0${server.configHash}\0${credentialIdentity ?? "unknown"}`;
 			if (this.#connections.has(key)) continue;
-			const logger = createMcpLogger(name, { logDir: options.logDir });
-			const authPlan = resolveServerAuth({
-				agentDir: options.agentDir,
-				config: server.config,
-				env: options.env,
-				logger,
-				serverName: name,
-			});
-			for (const warning of detectLiteralBearerWarnings(name, server.config)) logger.warn(warning);
-			const connection = new ServerConnection({
-				authProvider: authPlan.provider,
-				config: server.config,
-				env: options.env,
-				elicitationUiProvider: () => this.getMcpElicitationUi(),
-				logger,
-				serverName: name,
-			});
-			const cachedCatalog = useCache ? getValidCachedServer(cache, name, server.configHash) : undefined;
-			const entry: McpConnectionEntry = {
-				agentDir: options.agentDir,
-				artifacts: this.#outputArtifacts,
-				authPlan,
-				cacheRefreshedAfterConnect: false,
-				cachedCatalog,
+			const entry = createMcpSessionConnection({
+				registry: this.#registry,
+				share: this.#shareConnections,
+				owner: this,
 				key,
 				name,
 				configHash: server.configHash,
-				connection,
-				logger,
-				createdAtMs: Date.now(),
-				counters: { callCount: 0, errorCount: 0, totalLatencyMs: 0, reconnectCount: 0 },
-			};
-			configureMcpConnectionLifecycle(connection, server.config, logger);
-			configureMcpReconnect({
-				connection,
-				logger,
-				reconnect: async () => {
-					entry.counters.reconnectCount += 1;
-					entry.cacheRefreshedAfterConnect = false;
-					try {
-						await entry.authPlan?.refresh?.ensureFresh();
-					} catch (error) {
-						const authError = markMcpConnectionNeedsAuth(entry.connection, error);
-						if (authError !== undefined) {
-							entry.logger.warn(authError.message);
-							throw authError;
-						}
-						throw error;
-					}
-					await entry.connection.renew();
-					await connectAndRefreshMcpCatalog(entry, server.config);
+				config: server.config,
+				credentialIdentity,
+				credentialsCurrent: () =>
+					mcpCredentialIdentity(serverConfig, name, options.agentDir, options.env) === credentialIdentity,
+				// Re-key from the current live state, never the config this sync saw: any attach, release or skill attach
+				// may have replaced `#config` since, and an OAuth token refresh still has to reach this connection.
+				onCredentialsChanged: async () => {
+					if (this.#disposed || this.#entryForName(name) !== entry) return;
+					await this.#resyncToLiveSessions(owner);
 				},
-				shouldReconnect: () => !this.#disposed && this.#entryForName(name) === entry,
+				session: options,
+				cwd: declarer.context.cwd,
+				ui: () => this.getMcpElicitationUi(),
+				artifacts: this.#outputArtifacts,
+				shouldReconnect: (current) =>
+					!this.#disposed &&
+					this.#entryForName(name) === current &&
+					this.#config?.servers[name]?.state === "enabled" &&
+					this.#config.servers[name]?.configHash === current.configHash,
 			});
+			const cachedCatalog =
+				useCache && credentialIdentity !== undefined && cache !== undefined
+					? getValidCachedServer(cache, name, server.configHash, credentialIdentity)
+					: undefined;
+			entry.cachedCatalog = cachedCatalog;
 			this.#connections.set(key, entry);
 			this.#connectionKeysByName.set(name, key);
 			this.#wireListChanged(entry);
@@ -423,27 +720,50 @@ export class McpService {
 			// the background past the deadline (eager/keep-alive always; a cold lazy
 			// server that has no cached catalog also races so a slow/wedged server
 			// never gates attachSession -> before_agent_start -> the first turn).
-			// A cached lazy server needs no startup connect: its tools come from the
-			// cache and it connects on demand at tool-call time.
-			if (shouldRaceMcpStartup(server.config.lifecycle) || cachedCatalog === undefined) {
+			// A fresh cached lazy server connects only on demand. An aged matching
+			// catalog remains usable while its background refresh runs.
+			if (
+				shouldRaceMcpStartup(server.config.lifecycle) ||
+				cachedCatalog === undefined ||
+				cachedCatalogNeedsRefresh(cachedCatalog)
+			) {
 				connects.push(
 					raceMcpStartupConnect({
 						entry,
-						pi,
-						registerDirectTools: async (targetPi) => {
-							await this.#registerDirectTools(targetPi);
-							// A raced attach ran its history replay before this catalog
-							// existed; replay now so restored tools still land on the
-							// first turn's payload (idempotent: already-active names skip).
-							if (this.#sessionContext !== null) this.#rehydrateFromSessionHistory(this.#sessionContext);
+						pi: binding?.pi,
+						registerDirectTools: async () => {
+							// The catalog is shared, so it lands in every live session, not only the one that
+							// started the connect (#2514). One session's failure must not starve the others:
+							// each registers on its own, and the failures are reported together afterwards.
+							const failures: unknown[] = [];
+							for (const live of this.#liveBindings()) {
+								try {
+									await this.#registerDirectTools(live);
+									// A raced attach ran its history replay before this catalog
+									// existed; replay now so restored tools still land on the
+									// first turn's payload (idempotent: already-active names skip).
+									this.#rehydrateFromSessionHistory(live);
+								} catch (error) {
+									failures.push(error);
+								}
+							}
 							// The session instructions block was likewise captured at attach
 							// time, before this server connected; rebuild it so the first
 							// turn carries this server's instructions after a raced connect.
 							refreshMcpInstructionsForSession(this);
+							if (failures.length > 0) {
+								throw new AggregateError(
+									failures,
+									`MCP ${name} catalog failed to register in ${failures.length} session(s)`,
+								);
+							}
 						},
 						serverConfig: server.config,
-						shouldRefreshTools: () => !this.#disposed && this.#toolRefreshGeneration === toolRefreshGeneration,
-						deadlineMs: resolveMcpStartupTimeoutMs(server.config.startupTimeoutMs),
+						// A later attach does not supersede this catalog: it registers in every live session. Skip it only
+						// once the service is gone or this connection was replaced (#2524 review).
+						shouldRefreshTools: () => !this.#disposed && this.#entryForName(name) === entry,
+						deadlineMs: 0,
+						onDeferred: (settled) => this.#deferredAttach.track(settled),
 					}),
 				);
 			}
@@ -453,12 +773,11 @@ export class McpService {
 
 	#wireListChanged(entry: McpConnectionEntry): void {
 		const sink = { logger: { error: (message: string, data?: unknown) => entry.logger.error(message, data) } };
-		const coalescer = createMcpListChangeCoalescer({
-			onRefresh: () => this.#handleServerToolsChanged(entry),
-			scope: `mcp.list_changed.${entry.name}`,
+		entry.disposeListChanged = subscribeMcpToolsChanged(
+			entry,
+			(connectOnly) => this.#handleServerToolsChanged(entry, connectOnly),
 			sink,
-		});
-		const unsubscribe = entry.connection.onToolsChanged(() => coalescer.notify());
+		);
 		const unsubscribeState = entry.connection.onStateChange(() => {
 			const ctx = this.#sessionContext;
 			if (ctx?.mode !== "rpc") return;
@@ -466,82 +785,108 @@ export class McpService {
 				entry.logger.error("Failed to refresh MCP control inventory", error);
 			});
 		});
-		entry.disposeListChanged = () => {
-			unsubscribe();
-			coalescer.dispose();
-		};
 		entry.disposeWireStatus = unsubscribeState;
 	}
 
-	// Re-list a server on a coalesced list_changed and re-register: added tools
-	// enter INACTIVE (registerToolsPreservingActiveSet keeps the active set), and
-	// removed tools are tombstoned so a stale call fails cleanly.
-	async #handleServerToolsChanged(entry: McpConnectionEntry): Promise<void> {
-		const pi = this.#pi;
+	async #handleServerToolsChanged(entry: McpConnectionEntry, connectOnly: boolean): Promise<void> {
 		const config = this.#config;
-		if (pi === undefined || config === null) return;
-		const server = config.servers[entry.name];
-		if (server?.config === undefined || entry.connection.state !== "connected") return;
-		const catalog = await collectToolCatalog(entry.name, entry.connection, server.config, {
-			agentDir: entry.agentDir,
-			outputGuard: config.settings.outputGuard,
-		});
-		const newNames = mapMcpCatalogNames(catalog).map(({ name }) => name);
-		const diff = diffMcpToolNames(entry.knownToolNames ?? newNames, newNames);
-		// Tombstone removed tools BEFORE re-registration so the subsequent
-		// setActiveTools (which excludes them) leaves the tombstones inactive.
-		for (const removed of diff.removed) pi.registerTool(buildMcpTombstoneDefinition(removed, entry.name));
-		await this.#registerDirectTools(pi);
-		entry.knownToolNames = newNames;
-		entry.lastListChangedDelta = formatMcpListChangedDelta(diff);
+		if (config === null || this.#liveBindings().length === 0) return;
+		// Resolved when the refresh registers, not when it starts: a session that attaches while the
+		// refresh is still listing tools must receive the refreshed catalog too.
+		const targets = () =>
+			this.#liveBindings()
+				.filter((binding) => offersConnection(binding, entry))
+				.map((binding) => ({
+					pi: binding.pi,
+					registeredIdentity: () => binding.registeredIdentities.get(entry.key),
+					register: () => this.#registerDirectTools(binding),
+				}));
+		await refreshMcpToolsOnListChanged(entry, targets, config, connectOnly);
 	}
 
-	async #registerDirectTools(
-		pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
-	): Promise<void> {
-		const config = this.#config;
-		if (config === null) return;
-		const toolSearchService = this.#toolSearchService;
+	async #registerDirectTools(binding: McpSessionBinding): Promise<void> {
+		if (this.#disposed) return;
+		const config = binding.config;
+		const toolSearchService = this.#toolSearchFor(binding);
 		if (toolSearchService === undefined) return;
-		this.#tierBRegistration = await registerMcpServiceDirectTools(
-			pi,
+		binding.registration = await registerMcpServiceDirectTools(
+			binding.pi,
 			config,
-			this.#connections.values(),
+			// Only the connections this session's own config declares and its own credentials match; a peer's config or
+			// credentials never decide its tools.
+			[...this.#connections.values()].filter((entry) => offersConnection(binding, entry)),
 			toolSearchService,
 			{
 				refreshActiveSetWhenEmpty: this.#refreshActiveSetWhenNoTools,
+				onRegistered: (entry, identity) => binding.registeredIdentities.set(entry.key, identity),
+				contextRequired: binding.context.mode !== undefined,
+				sessionManager: binding.context.sessionManager,
+				// A new attach of this session replaces its binding (and with it its config); a peer's attach does not.
+				isCurrent: (entry) =>
+					!this.#disposed &&
+					this.#bindings.get(binding.pi) === binding &&
+					this.#entryForName(entry.name) === entry,
+				publishCurrent: async () => {
+					if (this.#bindings.get(binding.pi) === binding) await this.#registerDirectTools(binding);
+				},
 			},
 		);
-		const ctx = this.#sessionContext;
-		if (ctx?.mode === "rpc") {
+		const ctx = binding.context;
+		if (ctx.mode === "rpc") {
 			await this.refreshWireStatusSnapshot(ctx.sessionManager?.getSessionId?.());
 		}
 		for (const listener of this.#registrationListeners) listener();
 	}
 
 	/** Route compatibility callers through the shared ownership-aware scanner. */
-	rehydrateActiveToolsFromHistory(messages: readonly unknown[]): string[] {
-		return this.#toolSearchService?.maybeRehydrateFromHistory(messages) ?? [];
+	rehydrateActiveToolsFromHistory(messages: readonly unknown[], pi?: object): string[] {
+		return this.maybeRehydrateFromHistory(messages, pi);
 	}
 
 	/** Shared service memoization keeps this scan once-per-catalog-generation. */
-	maybeRehydrateFromHistory(messages: readonly unknown[]): string[] {
-		return this.#toolSearchService?.maybeRehydrateFromHistory(messages) ?? [];
+	maybeRehydrateFromHistory(messages: readonly unknown[], pi?: object): string[] {
+		const binding = this.#bindingFor(pi);
+		return (
+			(binding === undefined ? undefined : this.#toolSearchFor(binding)?.maybeRehydrateFromHistory(messages)) ?? []
+		);
 	}
 
-	#serverSnapshot(name: string): McpServerSnapshot {
-		const connection = this.getConnection(name);
+	#serverSnapshot(
+		name: string,
+		server: ResolvedMcpServer | undefined,
+		entry: McpConnectionEntry | undefined,
+	): McpServerSnapshot {
+		const config = server?.config;
+		const connection = entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 		connection?.refreshCapturedDiagnostics();
-		return buildMcpServerSnapshot(name, this.#config?.servers[name], connection, this.#entryForName(name));
+		const snapshot = buildMcpServerSnapshot(name, server, connection, entry);
+		if (
+			config !== undefined &&
+			entry?.connection.state === "needs_auth" &&
+			mcpCredentialIdentity(config, name, entry.agentDir, entry.env) === undefined
+		) {
+			return { ...snapshot, lifecycleState: "needs_auth", lastError: entry.connection.lastError?.message ?? null };
+		}
+		return snapshot;
 	}
 
-	async #captureWireStatus(sessionId: string | undefined): Promise<void> {
-		const config = this.#config;
-		if (config === null) return;
+	/**
+	 * The config a session's status reports: its own binding's, found by session id (senpi#2597). The merged config
+	 * decides only which connections live; a session's status lists only the servers it declares. Without a session
+	 * id, the most recently attached live session's.
+	 */
+	#statusOwner(sessionId: string | undefined): McpConfigOwner | undefined {
+		const live = this.#liveBindings();
+		if (sessionId === undefined) return live.at(-1);
+		return live.findLast((binding) => binding.context.sessionManager?.getSessionId?.() === sessionId);
+	}
+
+	async #captureWireStatus(sessionId: string | undefined, owner: McpConfigOwner | undefined): Promise<void> {
+		if (this.#config === null || owner === undefined) return;
 		const servers = await Promise.all(
-			Object.keys(config.servers)
+			Object.keys(owner.config.servers)
 				.sort()
-				.map((name) => this.#captureWireStatusServer(name, config.servers[name])),
+				.map((name) => this.#captureWireStatusServer(name, owner)),
 		);
 		const snapshot: McpWireStatusSnapshot = { servers };
 		const previous = this.getWireStatusSnapshot(sessionId);
@@ -551,48 +896,24 @@ export class McpService {
 		for (const listener of this.#wireStatusListeners) listener(sessionId, snapshot);
 	}
 
-	async #captureWireStatusServer(name: string, server: ResolvedMcpServer | undefined): Promise<McpWireStatusServer> {
-		const entry = this.#entryForName(name);
-		const connection = entry?.connection;
+	/** Only a connection resolving `owner`'s own credentials counts: a peer's catalog and login never show in its status. */
+	async #captureWireStatusServer(name: string, owner: McpConfigOwner): Promise<McpWireStatusServer> {
+		const server = owner.config.servers[name];
+		const shared = this.#entryForName(name);
+		const entry = shared !== undefined && resolvesSameCredentials(owner, shared) ? shared : undefined;
+		const connection = entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 		const connected = connection?.state === "connected";
-		const cached = entry?.cachedCatalog;
-		let tools = cached?.tools ?? [];
-		let resources = cached?.resources ?? [];
-		let resourceTemplates: ListedResourceTemplate[] = [];
+		const needsAuth = !connected && this.#serverSnapshot(name, server, entry).lifecycleState === "needs_auth";
+		const cached = entry?.credentialsCurrent?.() === false ? undefined : entry?.cachedCatalog;
+		const tools = cached?.tools ?? [];
+		const resources = cached?.resources ?? [];
+		const resourceTemplates = cached?.resourceTemplates ?? [];
 		let serverInfo: McpWireServerInfo | null = null;
 
 		if (connected && connection !== undefined) {
 			const client = connection.client;
 			const version = client.getServerVersion();
 			if (version !== undefined) serverInfo = mapWireServerInfo(version);
-			try {
-				tools = (
-					await collectAllPages<ListedTool>((cursor) => client.listTools(cursor === undefined ? {} : { cursor }))
-				).items;
-			} catch (error: unknown) {
-				if (!(error instanceof Error)) throw error;
-				tools = cached?.tools ?? [];
-			}
-			try {
-				resources = (
-					await collectAllPages<ListedResource>((cursor) =>
-						client.listResources(cursor === undefined ? {} : { cursor }),
-					)
-				).items;
-			} catch (error: unknown) {
-				if (!(error instanceof Error)) throw error;
-				resources = cached?.resources ?? [];
-			}
-			try {
-				resourceTemplates = (
-					await collectAllPages<ListedResourceTemplate>((cursor) =>
-						client.listResourceTemplates(cursor === undefined ? {} : { cursor }),
-					)
-				).items;
-			} catch (error: unknown) {
-				if (!(error instanceof Error)) throw error;
-				resourceTemplates = [];
-			}
 		}
 
 		return {
@@ -601,10 +922,20 @@ export class McpService {
 			tools: tools.map(mapWireTool),
 			resources: resources.map(mapWireResource),
 			resourceTemplates: resourceTemplates.map(mapWireResourceTemplate),
-			authStatus: wireAuthStatus(entry, server),
+			authStatus: wireAuthStatus(
+				entry,
+				server,
+				entry === undefined ? owner.options : { agentDir: entry.agentDir, env: entry.env },
+			),
 			...(connection?.state === undefined && server?.state === undefined
 				? {}
-				: { status: connection?.state ?? server?.state }),
+				: {
+						status: needsAuth
+							? "needs_auth"
+							: entry?.startupCatalogClaim?.ownsRegistration()
+								? "connecting"
+								: (connection?.state ?? server?.state),
+					}),
 		};
 	}
 
@@ -613,11 +944,25 @@ export class McpService {
 		return key === undefined ? undefined : this.#connections.get(key);
 	}
 
+	/**
+	 * The agent dir and env a server's credentials resolve with: those its connection spawned with, else those of a
+	 * live session that declares it, never the last attach's (senpi#2986).
+	 */
+	#credentialOptions(name: string): Pick<McpSessionOptions, "agentDir" | "env"> | undefined {
+		const entry = this.#entryForName(name);
+		if (entry !== undefined) return { agentDir: entry.agentDir, env: entry.env };
+		const configHash = this.#config?.servers[name]?.configHash;
+		return this.#liveBindings().find((binding) => declares(binding.config, name, configHash))?.options;
+	}
+
 	setMcpInstructions(instructions: string): void {
 		this.#mcpInstructions = instructions;
 	}
 
 	getMcpInstructions(): string {
+		if ([...this.#connections.values()].some((entry) => entry.credentialsCurrent?.() === false)) {
+			refreshMcpInstructionsForSession(this);
+		}
 		return this.#mcpInstructions;
 	}
 
@@ -658,16 +1003,23 @@ export class McpService {
 		| undefined {
 		const server = this.#config?.servers[name];
 		if (server?.config === undefined) return undefined;
+		const credentials = this.#credentialOptions(name);
 		return {
 			config: server.config,
-			agentDir: this.#authAgentDir,
-			env: this.#authEnv,
+			agentDir: credentials?.agentDir,
+			env: credentials?.env,
 			callbackUrl: this.#config?.settings.oauthCallbackUrl,
 		};
 	}
 
+	/** Live auth status without fetching catalogs or exposing credentials. */
+	getServerAuthStatus(name: string): McpWireAuthStatus {
+		return wireAuthStatus(this.#entryForName(name), this.#config?.servers[name], this.#credentialOptions(name));
+	}
+
 	getCachedInstructions(name: string): string | undefined {
-		return this.#entryForName(name)?.cachedCatalog?.instructions;
+		const entry = this.#entryForName(name);
+		return entry?.credentialsCurrent?.() === false ? undefined : entry?.cachedCatalog?.instructions;
 	}
 
 	/** Resolved `settings.nativeToolSearch` (auto | true | false | undefined).
@@ -677,9 +1029,45 @@ export class McpService {
 	}
 }
 
+/**
+ * Whether `binding` may use `entry`: its own config declares the server with the connection's config hash, and its
+ * own agent dir and env resolve the credential identity the connection spawned with (senpi#2986). An undefined
+ * identity (no bearer token, no stored OAuth tokens) matches only another undefined one, as in the connection key,
+ * so a connection holding no credentials is shared and one holding credentials never reaches a session without them.
+ */
+function offersConnection(binding: McpSessionBinding, entry: McpConnectionEntry): boolean {
+	const server = binding.config.servers[entry.name];
+	if (server?.config === undefined || server.configHash !== entry.configHash) return false;
+	const { agentDir, env } = binding.options;
+	return mcpCredentialIdentity(server.config, entry.name, agentDir, env) === entry.credentialIdentity;
+}
+
+/**
+ * Whether `owner` declares `entry`'s server with its config hash and resolves, now, the credentials the connection's
+ * own agent dir and env resolve. Unlike `offersConnection`, a connection whose credentials went stale (revoked or
+ * rotated tokens) still matches its own session, so that session's status reports it as needing auth; a peer's
+ * connection with other credentials never matches.
+ */
+function resolvesSameCredentials(owner: McpConfigOwner, entry: McpConnectionEntry): boolean {
+	const server = owner.config.servers[entry.name];
+	if (server?.config === undefined || server.configHash !== entry.configHash) return false;
+	const { agentDir, env } = owner.options;
+	return (
+		mcpCredentialIdentity(server.config, entry.name, agentDir, env) ===
+		mcpCredentialIdentity(server.config, entry.name, entry.agentDir, entry.env)
+	);
+}
+
+/** Whether `config` declares `name` as the same server, by config hash. */
+function declares(config: ResolvedMcpConfig, name: string, configHash: string | undefined): boolean {
+	const server = config.servers[name];
+	return server !== undefined && server.configHash === configHash;
+}
+
 function wireAuthStatus(
 	entry: McpConnectionEntry | undefined,
 	server: ResolvedMcpServer | undefined,
+	credentials: Pick<McpSessionOptions, "agentDir" | "env"> | undefined,
 ): McpWireAuthStatus {
 	const mode = entry?.authPlan?.mode ?? (server?.config === undefined ? "none" : resolveAuthMode(server.config));
 	switch (mode) {
@@ -688,7 +1076,10 @@ function wireAuthStatus(
 		case "bearer":
 			return entry?.connection.state === "needs_auth" ? "notLoggedIn" : "bearerToken";
 		case "oauth":
-			return entry?.authPlan?.provider?.tokens() === undefined ? "notLoggedIn" : "oAuth";
+			return server?.config === undefined ||
+				mcpCredentialIdentity(server.config, server.name, credentials?.agentDir, credentials?.env) === undefined
+				? "notLoggedIn"
+				: "oAuth";
 		default:
 			return assertNever(mode);
 	}
@@ -774,7 +1165,7 @@ let service: McpService | null = null;
 
 export function getMcpService(): McpService {
 	if (service === null || service.isDisposed()) {
-		service = new McpService();
+		service = new McpService({ servesManySessions: true });
 	}
 	return service;
 }
@@ -783,15 +1174,20 @@ export function shouldDisposeMcpService(reason: SessionShutdownEvent["reason"]):
 	return reason === "quit" || reason === "reload";
 }
 
-async function disposeEntryConnection(entry: McpConnectionEntry): Promise<void> {
-	entry.disposeListChanged?.();
-	entry.disposeWireStatus?.();
-	disposeMcpReconnect(entry.connection);
-	disposeMcpConnectionLifecycle(entry.connection);
-	await entry.connection.dispose();
-}
-
 export function resetMcpServiceForTests(): void {
 	service = null;
 	resetToolSearchServiceForTests();
+}
+
+export const MCP_DEFERRED_DISPOSE_TIMEOUT_ENV = "SENPI_MCP_DEFERRED_DISPOSE_TIMEOUT_MS";
+const MCP_DEFERRED_DISPOSE_TIMEOUT_MS = 15_000;
+
+/** How long a release waits for pending attaches before it disposes anyway. */
+function resolveMcpDeferredDisposeTimeoutMs(): number {
+	const raw = process.env[MCP_DEFERRED_DISPOSE_TIMEOUT_ENV]?.trim();
+	if (raw !== undefined && raw.length > 0) {
+		const value = Number(raw);
+		if (Number.isFinite(value) && value >= 0) return value;
+	}
+	return MCP_DEFERRED_DISPOSE_TIMEOUT_MS;
 }

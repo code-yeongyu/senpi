@@ -139,6 +139,70 @@ describe("session summary exactness", () => {
 		expect(info?.allMessagesText).toBe("reordered-one spaced-two plain-three");
 	});
 
+	it("summarizes CRLF and unterminated files exactly like their LF originals", async () => {
+		// Given: one transcript written with LF endings, CRLF endings, and no final newline.
+		const base = Date.parse(HEADER_TIMESTAMP);
+		const lines = [
+			headerLine(projectDir),
+			JSON.stringify({ type: "session_info", id: "info-1", timestamp: HEADER_TIMESTAMP, name: "crlf-name" }),
+			messageLine(1, "crlf-one", "user", base + 1),
+			"",
+			messageLine(2, "crlf-two", "assistant", base + 2),
+		];
+		const variants = [`${lines.join("\n")}\n`, `${lines.join("\r\n")}\r\n`, lines.join("\n"), lines.join("\r\n")];
+
+		// When: each variant is summarized from a cold cache.
+		const rows = [];
+		for (const content of variants) {
+			clearSessionSummaryCache();
+			writeFileSync(file, content);
+			const info = await buildSessionInfo(file);
+			rows.push(info && { ...info, path: "" });
+		}
+
+		// Then: every variant yields the LF row.
+		expect(rows[0]).toMatchObject({ name: "crlf-name", messageCount: 2, allMessagesText: "crlf-one crlf-two" });
+		for (const row of rows.slice(1)) expect(row).toEqual(rows[0]);
+	});
+
+	it("keeps records whose strings contain raw U+2028 and U+2029, like the session loader", async () => {
+		// Given: message records with unescaped line and paragraph separators, which JSON allows (senpi#2087).
+		const base = Date.parse(HEADER_TIMESTAMP);
+		const separated = "before\u2028middle\u2029after";
+		const lines = [
+			headerLine(projectDir),
+			messageLine(1, separated, "user", base + 1),
+			messageLine(2, "plain", "assistant", base + 2),
+		];
+		writeFileSync(file, `${lines.join("\n")}\n`);
+
+		// When: the picker row is built.
+		const info = await buildSessionInfo(file);
+
+		// Then: both records count, exactly as loadEntriesFromFile reads them.
+		expect(info?.messageCount).toBe(2);
+		expect(info?.firstMessage).toBe(separated);
+		expect(info?.allMessagesText).toBe(`${separated} plain`);
+	});
+
+	it("keeps a multi-megabyte record whose multibyte characters straddle read chunks", async () => {
+		// Given: a single message record far larger than one read chunk, made of 3-byte characters.
+		const huge = `start-${"한글".repeat(700_000)}-end`;
+		const base = Date.parse(HEADER_TIMESTAMP);
+		writeFileSync(
+			file,
+			`${[headerLine(projectDir), messageLine(1, huge, "user", base + 1), messageLine(2, "after", "assistant", base + 2)].join("\n")}\n`,
+		);
+
+		// When: the picker row is built.
+		const info = await buildSessionInfo(file);
+
+		// Then: the record decodes intact and the following record still counts.
+		expect(info?.firstMessage).toBe(huge);
+		expect(info?.messageCount).toBe(2);
+		expect(info?.allMessagesText).toBe(`${huge} after`);
+	});
+
 	it("keeps intact records when the final JSONL record is truncated", async () => {
 		// Given: valid records followed by a truncated trailing record.
 		const base = Date.parse(HEADER_TIMESTAMP);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/google-shared.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function makeClaudeViaGoogleModel(): Model<"google-generative-ai"> {
 	// Claude models behind Google APIs require explicit tool call IDs.
@@ -65,7 +66,7 @@ describe("google-shared tool call id normalization", () => {
 			],
 		};
 
-		const contents = convertMessages(model, context);
+		const contents = convertMessages(model, normalizeContext(context));
 
 		const callIds =
 			contents

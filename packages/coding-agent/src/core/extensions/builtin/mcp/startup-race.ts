@@ -5,11 +5,19 @@ import type { ServerConnection } from "./connection.ts";
 import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { createMcpLogger } from "./log.ts";
 import { ensureMcpResourceSubscriptions } from "./resources.ts";
-import type { McpConnectionEntry } from "./service-types.ts";
+import type { McpConnectionEntry, McpStartupCatalogClaim } from "./service-types.ts";
+import { SharedMcpLease } from "./shared-lease.ts";
 import { safeTimer } from "./wrap.ts";
 
 export const MCP_STARTUP_RACE_MS = 250;
 export const MCP_STARTUP_TIMEOUT_ENV = "SENPI_MCP_STARTUP_TIMEOUT_MS";
+/**
+ * How long a consumer that must OBSERVE the attach waits for the connects this
+ * race backgrounded. Each connect is itself bounded by the server's
+ * `connectTimeoutMs` (15s default), so this is the earlier point at which the
+ * user's turn stops waiting and the server's catalog lands on a later turn.
+ */
+export const MCP_ATTACH_SETTLE_TIMEOUT_MS = 5_000;
 
 /**
  * Resolve the startup-race window (ms) a server's attach connect is bounded by.
@@ -39,23 +47,91 @@ interface RaceMcpStartupConnectOptions {
 	// Bounded startup window (ms) before the connect is backgrounded; defaults to
 	// MCP_STARTUP_RACE_MS when omitted.
 	readonly deadlineMs?: number;
+	// Called with the full connect continuation when the race backgrounds it, so
+	// consumers that must observe the attach can await the exact completion.
+	readonly onDeferred: (settled: Promise<void>) => void;
+}
+
+/**
+ * Completion signal for the connects `raceMcpStartupConnect` backgrounds.
+ * session_start deliberately returns before a slow connect finishes; anything
+ * that assembles session state from the catalog - the first turn's system
+ * prompt build - awaits this instead of assuming the attach already landed.
+ */
+export class McpDeferredAttach {
+	readonly #pending = new Set<Promise<void>>();
+
+	track(settled: Promise<void>): void {
+		// A failed connect still SETTLES the attach, which is what the barrier
+		// asks about; this is also the one place that failure is finally handled,
+		// so it is logged here rather than surfacing as an unhandled rejection.
+		const tracked = settled.then(
+			() => undefined,
+			(error: unknown) => {
+				createMcpLogger("startup").warn("Deferred MCP attach failed", {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			},
+		);
+		this.#pending.add(tracked);
+		void tracked.then(() => this.#pending.delete(tracked));
+	}
+
+	async wait(timeoutMs: number): Promise<McpStartupRaceResult> {
+		const pending = [...this.#pending];
+		if (pending.length === 0) return "settled";
+		return await waitForMcpStartupRace(
+			Promise.all(pending).then(() => undefined),
+			timeoutMs,
+		);
+	}
+
+	clear(): void {
+		this.#pending.clear();
+	}
 }
 
 export async function raceMcpStartupConnect(options: RaceMcpStartupConnectOptions): Promise<void> {
-	const connect = ignoreStartupNeedsAuth(
-		options.entry,
-		connectAndRefreshMcpCatalog(options.entry, options.serverConfig),
+	const { entry, pi } = options;
+	const claim: McpStartupCatalogClaim = {
+		cachedCatalog: entry.cachedCatalog,
+		ownsRegistration: () => pi !== undefined && options.shouldRefreshTools(),
+		settled: () => connect,
+	};
+	entry.startupCatalogClaim = claim;
+	const releaseClaim = (): void => {
+		if (entry.startupCatalogClaim === claim) entry.startupCatalogClaim = undefined;
+	};
+	const connect = ignoreStartupNeedsAuth(entry, connectAndRefreshMcpCatalog(entry, options.serverConfig)).finally(
+		releaseClaim,
 	);
 	const result = await waitForMcpStartupRace(connect, options.deadlineMs);
 	if (result === "settled" || options.pi === undefined) return;
-	void connect.then(() => refreshMcpToolsAfterStartupRace(options));
+	options.onDeferred(connect.then(() => refreshMcpToolsAfterStartupRace(options)));
 }
 
-export async function connectAndRefreshMcpCatalog(
+const catalogRefreshes = new WeakMap<McpConnectionEntry, Promise<void>>();
+
+export function connectAndRefreshMcpCatalog(
 	entry: McpConnectionEntry,
 	serverConfig: ResolvedMcpServer["config"],
 ): Promise<void> {
-	if (serverConfig === undefined) return;
+	const pending = catalogRefreshes.get(entry);
+	if (pending !== undefined) return pending;
+	const refresh = refreshConnectedMcpCatalog(entry, serverConfig);
+	catalogRefreshes.set(entry, refresh);
+	const finish = (): void => {
+		if (catalogRefreshes.get(entry) === refresh) catalogRefreshes.delete(entry);
+	};
+	void refresh.then(finish, finish);
+	return refresh;
+}
+
+async function refreshConnectedMcpCatalog(
+	entry: McpConnectionEntry,
+	serverConfig: ResolvedMcpServer["config"],
+): Promise<void> {
+	if (serverConfig === undefined || entry.isCurrent?.() === false) return;
 	try {
 		await entry.authPlan?.refresh?.ensureFresh();
 	} catch (error) {
@@ -66,17 +142,48 @@ export async function connectAndRefreshMcpCatalog(
 		}
 		throw error;
 	}
+	if (entry.credentialsCurrent?.() === false) {
+		await entry.onCredentialsChanged?.();
+		return;
+	}
 	await connectMcpServer(entry.connection, entry.logger);
-	if (entry.connection.state !== "connected") return;
-	if (entry.cacheRefreshedAfterConnect) return;
-	entry.cacheRefreshedAfterConnect = true;
-	try {
-		const catalog = await collectServerCatalogForCache(entry.connection, serverConfig, entry.configHash);
+	if (entry.connection.state !== "connected" || entry.isCurrent?.() === false) return;
+	const generation = entry.connection.generation;
+	const ownsCatalog = (): boolean =>
+		entry.isCurrent?.() !== false &&
+		entry.credentialsCurrent?.() !== false &&
+		entry.connection.state === "connected" &&
+		entry.connection.generation === generation;
+	if (entry.connection instanceof SharedMcpLease) {
+		const catalog = await entry.connection.catalog();
+		if (!ownsCatalog()) {
+			if (entry.credentialsCurrent?.() === false) await entry.onCredentialsChanged?.();
+			return;
+		}
 		entry.cachedCatalog = catalog;
-		await writeMcpCachedServer(entry.agentDir, entry.name, catalog);
+		entry.catalogGeneration = generation;
+		entry.cacheRefreshedAfterConnect = true;
+		return;
+	}
+	if (entry.cacheRefreshedAfterConnect && entry.catalogGeneration === generation) return;
+	try {
+		const catalog = await collectServerCatalogForCache(
+			entry.connection,
+			serverConfig,
+			entry.configHash,
+			entry.credentialIdentity,
+		);
+		if (!ownsCatalog()) {
+			if (entry.credentialsCurrent?.() === false) await entry.onCredentialsChanged?.();
+			return;
+		}
+		entry.cachedCatalog = catalog;
+		entry.catalogGeneration = generation;
+		entry.cacheRefreshedAfterConnect = true;
+		await writeMcpCachedServer(entry.agentDir, entry.name, catalog, ownsCatalog);
 		// Per-resource subscriptions (todo 39): only when the server declares
 		// resources.subscribe; best-effort, failures are non-fatal.
-		await ensureMcpResourceSubscriptions(entry.connection.client, catalog.resources ?? []);
+		if (ownsCatalog()) await ensureMcpResourceSubscriptions(entry.connection.client, catalog.resources ?? []);
 	} catch (error) {
 		entry.logger.warn("Failed to refresh MCP catalog cache", {
 			error: error instanceof Error ? error.message : String(error),

@@ -1,5 +1,217 @@
 # changes
 
+## 2026-10-09 - Windows tree kills no longer use taskkill /T (senpi#2999 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `killWindowsProcessTree()` builds its `taskkill` arguments with `windowsTreeKillArgs()` from `@earendil-works/pi-agent-core/node`.
+  - It reads one bounded synchronous process listing (`listWindowsProcessRowsSync`) and kills the root plus its genuine descendants, pid by pid, with no `/T`.
+  - A process counts as a descendant only when it was created at or after the parent it names.
+  - A protected OS image or an ancestor of this process in the tree shrinks the kill to the root alone, or to nothing when the root is one of them.
+  - Without a listing it falls back to `/T` on the root.
+  - It stays synchronous, and keeps the absolute-path launcher candidates and the direct-pid fallback.
+
+### Why
+
+- `taskkill /T` adopts every process whose recorded `ParentProcessId` equals the root's pid. Windows never rewrites that field when a parent exits, and it reuses pids, so after a wraparound an older, unrelated process that names a long-dead parent can be killed with the tree.
+- #2353 showed the same pid-reuse adoption take down a CI runner through the WebView cleanup's own walk; #2991 fixed that walk. This applies the same rule to the remaining tree kills.
+
+### Why an extension could not handle it
+
+- The kill path is the core bash tool's and the shutdown registry's synchronous teardown, which runs before any extension can intervene.
+
+### Expected merge conflict zones
+
+- LOW: the body of `killWindowsProcessTree()` and `taskkillHandledTree()` in `shell.ts` (its argument list changed), plus the new import. Upstream still spawns `taskkill /F /T /PID <pid>`; keep the computed argument list.
+
+## 2026-10-08 - Script children inherit runtime options, not caller entry modes (senpi#2599)
+
+### What changed
+
+- `packages/coding-agent/src/utils/runtime-exec-argv.ts`: shares the existing Node/Bun entry-mode filter outside RPC without changing its filtering contract.
+
+### Why
+
+An eval or print flag belongs to the embedding caller. Passing it before a child script entry replays the caller instead of starting that child; loader and runtime flags still have to reach the child.
+
+### Why an extension could not handle it
+
+Native process launchers construct their command before a child can load an extension.
+
+### Expected merge conflict zones
+
+- LOW: the shared runtime argument filter and its direct launch-site imports.
+
+## 2026-10-01 - Agent shells get a real `bun` inside a compiled executable (omo#9362)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: `getShellEnv()` returns its environment through `withBundledBunCommands()`. In a `bun build --compile` executable, that appends a directory to `PATH` holding `bun`/`bunx` scripts (`bun.cmd`/`bunx.cmd` on Windows), which run this executable with `BUN_BE_BUN=1`. Outside a compiled executable the environment is unchanged.
+- `packages/coding-agent/src/utils/bundled-bun.ts` (fork-only): detects a compiled executable from `Bun.main` (`/$bunfs/`, `<drive>:\~BUN\`), writes the scripts under `<agentDir>/bundled-bun/<execPath hash>/` with a `tmpdir()` fallback, and appends that directory to `PATH`.
+
+### Why
+
+- Bun Shell runs `bun` as `process.execPath` when `PATH` has no Bun. In a compiled engine that is the engine itself, so an eval cell's `bun test` booted a second agent and returned its reply as exit-0 output, while the bash tool's `/bin/sh` reported `bun: command not found`. The child cannot tell it was meant to be Bun, so the parent has to provide a real `bun`. Appending keeps a user's own Bun first, and `BUN_BE_BUN` is scoped to that one command, so engine self-spawns keep running the engine.
+
+### Why an extension could not handle it
+
+- `getShellEnv()` is the environment the built-in bash tool and terminal spawn with, before any extension can intervene; the eval extension reuses the same helper through the public `withBundledBunCommands` export.
+
+### Expected merge conflict zones
+
+- LOW: the `return` of `getShellEnv()` in `shell.ts` and its new import; upstream has no compiled-executable handling there.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tools and shell utilities
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts`: `utils/paths.ts`: `isLocalPath` treats `builtin:` as non-local. `utils/paths.ts`: `getFileContentRevision`.
+- `packages/coding-agent/src/utils/shell.ts`: `utils/shell.ts`: `sanitizeBinaryOutput` body is upstream's single-regex strip. `utils/shell.ts`: SYNC kill path kept (`killWindowsProcessTree`, `killProcessTree`, `killTrackedDetachedChildren`; landmine L32) plus the existing spawn-error (ENOENT/EACCES) guard; the `hasUnsafeDisplayCharacter` fast path stays in front of the upstream regex.
+- `packages/coding-agent/src/utils/syntax-highlight.ts`: `utils/syntax-highlight.ts`: `json` joins the eager highlight.js languages. `utils/syntax-highlight.ts`: extensionless highlight.js specifiers.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; tools and shell utils adopt upstream bash/read fixes and keep fork output shapes and hooks (plan D-15).
+
+### Why an extension could not handle it
+
+Built-in tool execution and shell handling are core tool implementations that extensions call, not replace.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-17 - Detect managed tools by stat, not by spawn (senpi#1781)
+
+### What changed
+
+- `packages/coding-agent/src/utils/tools-manager.ts`: `commandExists` walks `PATH` and accepts a regular file carrying an exec bit, with a `PATHEXT` candidate list on Windows, instead of running `spawnSync(cmd, ["--version"])`.
+
+### Why
+
+- The probe sat on the interactive startup path through `ensureTool`, costing a process spawn per candidate. The new `tui` timing namespace measured that seam at a median of 11 ms with a 30 ms worst case on a loaded host; stat-ing the same directories answers the same question in about 1 ms and removes the spawn's load sensitivity.
+
+### Why an extension could not handle it
+
+- Managed-tool resolution is host infrastructure consumed by the bash and grep tools before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `commandExists` and its new `executableCandidates` helper in `tools-manager.ts`.
+
+## 2026-09-15 - Track detached children by process group until the last descendant exits (senpi#1697)
+
+### What changed
+
+- `packages/coding-agent/src/utils/shell.ts`: the detached-child shutdown registry now stores `{ pid, pgid, leaderExited }` entries keyed by pid instead of bare pids. `trackDetachedChildPid()`/`untrackDetachedChildPid()` keep their signatures and route through that model; new `noteDetachedChildExited()` releases an entry on the leader's exit only when `process.kill(-pgid, 0)` reports the group empty (win32 keeps untrack-on-exit, having no such group); new `pruneTrackedDetachedChildren()` drops drained groups; new `listTrackedDetachedChildren()` exposes frozen copies for diagnostics and tests.
+- `packages/coding-agent/src/utils/shell.ts`: `killTrackedDetachedChildren()` prunes first, then SIGKILLs each tracked group (`kill(-pgid)`) and only falls back to `kill(pid)` while the leader is still known to be alive — it no longer reuses `killProcessTree()`'s unconditional direct-pid fallback. It stays synchronous, because shutdown paths call it and then `process.exit()` in the same tick.
+
+### Why
+
+- Detached shells are spawned into their own process group, and background descendants (`sleep 30 &`, `nohup server &`) keep running in that group after the shell exits. Releasing ownership at the leader's exit left those descendants running past shutdown, and re-killing a long-lived tracked pid directly risked signalling an unrelated process after pid reuse ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+
+### Why an extension could not handle it
+
+- The registry is a leaf utility shared by the bash tool, hook command runner, and every shutdown path (print, interactive, rpc, multi-session host); extensions run inside the process this registry cleans up after and cannot observe group membership on its behalf.
+
+### Expected merge conflict zones
+
+- MEDIUM: the tracked-children block in `packages/coding-agent/src/utils/shell.ts` (upstream carries a plain `Set<number>` with `killProcessTree` per pid); keep the group model and re-apply upstream edits inside it.
+
+## 2026-09-11 - Parse versioned changelog entries for branded sources (senpi#1583)
+
+### What changed
+
+- `packages/coding-agent/src/utils/changelog.ts`: parses dated version headers and fenced examples safely, compares SemVer and CalVer entries, preserves prerelease suffixes, bounds notifications to the active source version, and de-duplicates repeated versions.
+
+### Why
+
+- Changelog notifications must understand Senpi's CalVer revisions and branded prerelease labels without showing entries from another source or future release.
+
+### Why an extension could not handle it
+
+- Parsing and ordering happen inside the host's changelog utility before interactive extensions receive control.
+
+### Expected merge conflict zones
+
+- LOW: changelog header parsing and version comparison helpers.
+
+## 2026-09-11 - Add content revisions for file-backed caches
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts` adds a SHA-256 file-content revision helper for auth and provider-settings caches.
+
+### Why
+
+- A content change must invalidate a cache even when the filesystem reports unchanged mtime and size.
+
+### Why an extension could not handle it
+
+- The revision primitive is shared by core auth storage and provider settings loaders.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/utils/paths.ts` file-revision helpers.
+
+## Canonical identity resolves through the native realpath (2026-09-07)
+
+### What changed
+
+- `paths.ts`: `canonicalizePath` resolves through `realpathSync.native` instead of `realpathSync`. Its contract is unchanged - it still swallows to the raw input on throw, so the callers that use it for identity comparison keep the convenience behaviour they depend on.
+- `paths.ts`: `canonicalizePathStrict` is new. It resolves the same way but does not swallow, so a caller that cannot act on an unconfirmed path gets an error instead of its own input handed back. The convenience form keeps every existing caller.
+
+### Why
+
+- Node's JS-implemented `realpathSync` collapses a `..` inside a symlink target lexically, before following the symlink that segment sits behind, so it can answer a path that differs from the one the kernel opens. Two spellings that name one file could therefore compare unequal, and a path that escapes through a symlinked parent could compare as though it did not. `realpathSync.native` (libuv) agrees with the kernel on both platforms measured.
+
+### Why an extension could not handle it
+
+- `canonicalizePath` is the identity primitive the loader and trust plumbing call before any extension is constructed, so nothing downstream can correct an answer it has already returned.
+
+### Expected merge conflict zones
+
+- LOW: the single `realpathSync` call inside `canonicalizePath`; no signature or control-flow change.
+
+## Open-free resolution follows realpath(3) for `.` and `..` (2026-09-07)
+
+### What changed
+
+- `paths.ts`: the walker applies `.` and `..` against the already-resolved prefix and no longer normalizes either the requested path or a link target before traversal. `realpathWithoutOpenStrict` is new: it keeps the missing-descendant tolerance but throws on EACCES, EIO, ELOOP and hop exhaustion instead of returning a guess.
+
+### Why
+
+- Collapsing `..` lexically diverges from realpath(3) whenever the `..` sits in a link target behind another symlink: for `entry -> "jump/../secret"` with `jump -> outside/subdir` the lexical answer is allowed/secret while the I/O reaches outside/secret. A containment policy fed the lexical answer approves one directory while the read leaves it, and an identity key built from it treats one file as two.
+- The tolerant contract is right for the classifier and the monitor parent, where a blocked main thread is worse than an approximate answer, and wrong for a policy or identity decision, which needs to fail closed. Hence two functions rather than one.
+
+### Why an extension could not handle it
+
+- The resolver is host infrastructure shared by the permission classifier, the terminal monitor registry and the core file tools.
+
+### Expected merge conflict zones
+
+- `paths.ts` resolver body and its exports.
+- `test/canonical-path-identity.test.ts`, `test/bounded-realpath.test.ts` (new).
+
+## Open-free path resolution and watch-target helpers (2026-09-07)
+
+### What changed
+
+- `paths.ts` gains `realpathWithoutOpen(path)`: realpath(3) semantics with one `lstatSync`/`readlinkSync` per component (`MAX_SYMLINK_HOPS` 40), components from the first missing or unreadable one kept verbatim, never throws. It is the walker `permission-system/external-dir.ts` introduced on 2026-09-06, moved here so the permission parser and `terminal/monitor-registry.ts` share one implementation.
+- `fs-watch.ts` gains `canonicalWatchPath(path)` (the win32-only `realpathSync.native` lookup `watchWithErrorHandler` already performed, now reusable) and `probeDirectoryOpenable(directory)` (`opendir` + one `read` + `close` on the async pool, so a caller can bound the open that a synchronous `fs.watch` would otherwise perform on its own thread).
+
+### Why
+
+- Bun's `fs.realpath*` opens every directory it resolves; on a wedged autofs trigger that open never returns and freezes the host main thread. Paths that a model merely mentions must be resolved without `open(2)`; `canonicalizePath` stays realpath-based for startup/config paths that senpi owns.
+
+### Why an extension could not handle it
+
+- Both consumers are in-tree: the permission `tool_call` hook (`permission-system/parsers.ts`) and the file-monitor registry (`terminal/monitor-registry.ts`) run on the host itself, and they must derive the same identity string from the same walker. An extension cannot replace the resolution the host performs before its own hook fires.
+
+### Expected merge conflict zones
+
+- `paths.ts` import block and the new exported function; `fs-watch.ts` (upstream has no such helpers).
+
 ## Keep synchronous Windows process-tree kill; never throw on missing taskkill (2026-09-03)
 
 ### What changed
@@ -471,3 +683,21 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: new `duration.ts` utility and its fork-tracker entry.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/coding-agent/src/utils/tools-manager.ts`: the offline gate reads `envValue("OFFLINE")` (SENPI_ then PI_ prefix) instead of `process.env.PI_OFFLINE`, and the download stream is typed as `NodeReadableStream<Uint8Array>` instead of `as any`; upstream's musl fd/rg and version lookup changes were adopted.
+
+### Why
+
+- Every environment switch in the fork honors the brand prefix, and the fork lints with `--error-on-warnings`.
+
+### Why an extension could not handle it
+
+- Tool download runs during startup before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: `isOffline()` and the `pipeline(Readable.fromWeb(...))` call.

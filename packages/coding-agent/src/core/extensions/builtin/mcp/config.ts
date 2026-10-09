@@ -16,6 +16,7 @@ import {
 	type ResolvedMcpServer,
 	validateConfig,
 } from "./config-schema.ts";
+import { inheritMcpSharingScope } from "./sharing-policy.ts";
 import { MCP_STARTUP_RACE_MS } from "./startup-race.ts";
 
 export class McpConfigValidationError extends Error {
@@ -168,6 +169,7 @@ function addTrustedServers(
 ): void {
 	for (const [name, server] of Object.entries(servers)) {
 		const config = normalizeServer(server);
+		inheritMcpSharingScope(server, config);
 		result.servers[name] = {
 			config,
 			configHash: hashConfig(config),
@@ -260,30 +262,7 @@ export function mergeExtensionMcpServers(
 	}
 }
 
-/**
- * Resolve a skill-declared MCP server (mcp.json sidecar or SKILL.md
- * frontmatter). Exposure is forced to search with no directTools so the
- * catalog registers with ZERO active tools until the owning skill loads
- * (0 pre-load payload tokens); lifecycle stays lazy.
- */
-export function resolveSkillMcpServer(
-	name: string,
-	raw: NonNullable<RawConfig["mcpServers"]>[string],
-	sourcePath: string,
-): ResolvedMcpServer {
-	const config = { ...normalizeServer(raw), directTools: [], exposure: "search" as const };
-	return {
-		config,
-		configHash: hashConfig(config),
-		name,
-		source: "skill",
-		sourcePath,
-		state: config.enabled ? "enabled" : "disabled",
-		transport: config.type,
-	};
-}
-
-function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): McpServerConfig {
+export function normalizeServer(server: NonNullable<RawConfig["mcpServers"]>[string]): McpServerConfig {
 	const type = server.type ?? (server.url ? "http" : "stdio");
 	return {
 		args: server.args ?? [],
@@ -304,10 +283,15 @@ function interpolateConfig(
 	config: RawConfig | undefined,
 	env: Record<string, string | undefined>,
 ): RawConfig | undefined {
-	return interpolateValue(config, "mcp", env) as RawConfig | undefined;
+	const resolved = interpolateValue(config, "mcp", env) as RawConfig | undefined;
+	for (const [name, raw] of Object.entries(config?.mcpServers ?? {})) {
+		const server = resolved?.mcpServers?.[name];
+		if (server !== undefined) inheritMcpSharingScope(raw, server);
+	}
+	return resolved;
 }
 
-function interpolateValue(value: unknown, path: string, env: Record<string, string | undefined>): unknown {
+export function interpolateValue(value: unknown, path: string, env: Record<string, string | undefined>): unknown {
 	if (typeof value === "string") return interpolateString(value, path, env);
 	if (Array.isArray(value)) return value.map((item, index) => interpolateValue(item, `${path}.${index}`, env));
 	if (typeof value === "object" && value !== null) {
@@ -333,7 +317,7 @@ function interpolateString(value: string, path: string, env: Record<string, stri
 	);
 }
 
-function hashConfig(config: McpServerConfig): string {
+export function hashConfig(config: McpServerConfig): string {
 	// startupTimeoutMs is a client-side startup-race policy, not a connection or
 	// catalog-shape input. Excluding it from the identity hash keeps the catalog
 	// cache valid across upgrades (configs written before the field existed hash

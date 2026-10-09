@@ -33,9 +33,15 @@ export function createFileOps(): FileOperations {
 }
 
 /**
- * Extract file operations from tool calls in an assistant message.
+ * Extract file operations from tool calls in an assistant message, or from the nested calls
+ * recorded on a tool result.
  */
 export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOperations): void {
+	if (message.role === "toolResult") {
+		// Calls made from codemode scripts are recorded on the script's result.
+		for (const call of message.nestedCalls?.calls ?? []) addFileOp(call.name, call.arguments, fileOps);
+		return;
+	}
 	if (message.role !== "assistant") return;
 	if (!("content" in message) || !Array.isArray(message.content)) return;
 
@@ -43,31 +49,28 @@ export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOp
 		if (typeof block !== "object" || block === null) continue;
 		if (!("type" in block) || block.type !== "toolCall") continue;
 		if (!("arguments" in block) || !("name" in block)) continue;
+		addFileOp(block.name, block.arguments as Record<string, unknown> | undefined, fileOps);
+	}
+}
 
-		const args = block.arguments as Record<string, unknown> | undefined;
-		if (!args) continue;
-
-		switch (block.name) {
-			case "read":
-				if (typeof args.path !== "string") continue;
-				fileOps.read.add(args.path);
-				break;
-			case "write":
-				if (typeof args.path !== "string") continue;
-				fileOps.written.add(args.path);
-				break;
-			case "edit":
-				if (typeof args.path !== "string") continue;
-				fileOps.edited.add(args.path);
-				break;
-			case "apply_patch": {
-				if (typeof args.input !== "string") continue;
-				for (const patchedPath of extractPatchedPaths(args.input)) {
-					fileOps.edited.add(patchedPath);
-				}
-				break;
+function addFileOp(toolName: string, args: Record<string, unknown> | undefined, fileOps: FileOperations): void {
+	if (!args) return;
+	switch (toolName) {
+		case "read":
+			if (typeof args.path === "string") fileOps.read.add(args.path);
+			break;
+		case "write":
+			if (typeof args.path === "string") fileOps.written.add(args.path);
+			break;
+		case "edit":
+			if (typeof args.path === "string") fileOps.edited.add(args.path);
+			break;
+		case "apply_patch":
+			if (typeof args.input !== "string") return;
+			for (const patchedPath of extractPatchedPaths(args.input)) {
+				fileOps.edited.add(patchedPath);
 			}
-		}
+			break;
 	}
 }
 

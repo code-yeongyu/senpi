@@ -80,8 +80,6 @@ describe("eval renderer", () => {
 			"",
 			"- tool.search: ok",
 			"- tool.write: error (denied)",
-			"",
-			"[eval output truncated]",
 		]);
 	});
 
@@ -169,7 +167,14 @@ describe("eval renderer", () => {
 
 	it("Given legacy stored details carrying title and no summary when rendered then no label line and no crash", () => {
 		// Given a pre-summary stored payload: title survived in old sessions, summary never existed.
-		// The cast simulates legacy data rehydrated into the current details shape.
+		// The shape simulates legacy data rehydrated into the current details shape.
+		type LegacyStoredCell = EvalToolDetails["cells"] extends ReadonlyArray<infer C> | undefined
+			? C & { readonly title?: string }
+			: never;
+		type LegacyStoredDetails = Omit<EvalToolDetails, "cells"> & {
+			readonly title?: string;
+			readonly cells?: readonly LegacyStoredCell[];
+		};
 		const legacyCellDetails = {
 			language: "py",
 			title: "legacy label",
@@ -187,14 +192,14 @@ describe("eval renderer", () => {
 					durationMs: 3,
 				},
 			],
-		} as unknown as EvalToolDetails;
+		} satisfies LegacyStoredDetails;
 		const legacyFallbackDetails = {
 			language: "py",
 			title: "legacy label",
 			durationMs: 3,
 			toolCalls: [],
 			truncated: false,
-		} as unknown as EvalToolDetails;
+		} satisfies LegacyStoredDetails;
 
 		// When the cell frame and the fallback frame (no cells) render collapsed and expanded
 		const renders = [
@@ -303,7 +308,7 @@ describe("eval renderer", () => {
 		);
 
 		// Then only the pre-result render draws a frame; the post-result call lane is empty
-		expect.soft(renderLines(withoutResult).some((line) => line.includes("╭─"))).toBe(true);
+		expect.soft(renderLines(withoutResult).some((line) => line.includes("╭─") || line.includes("╶─"))).toBe(true);
 		expect.soft(renderLines(withResult)).toEqual([]);
 	});
 
@@ -325,7 +330,7 @@ describe("eval renderer", () => {
 		expect.soft(renderLines(yielded)).toEqual([]);
 	});
 
-	it("Given completed cell details when rendered then framed status agent and JSON output are visible", () => {
+	it("Given completed cell details when rendered expanded then framed status agent and JSON output are visible (senpi#2933)", () => {
 		// Given
 		const givenResult = evalResult(
 			{
@@ -354,9 +359,14 @@ describe("eval renderer", () => {
 			"",
 		);
 
-		// When
+		// When: the collapsed row is one line, so the framed detail renders through expand
 		const lines = renderLines(
-			renderEvalResult(givenResult, { expanded: false, isPartial: false }, undefined, resultContext()),
+			renderEvalResult(
+				givenResult,
+				{ expanded: true, isPartial: false },
+				undefined,
+				resultContext({ expanded: true }),
+			),
 		);
 		const text = lines.join("\n");
 

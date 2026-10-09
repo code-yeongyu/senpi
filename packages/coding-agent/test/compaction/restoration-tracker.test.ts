@@ -131,6 +131,7 @@ function createAcceptedCompactEvent(): SessionCompactEvent {
 function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 	return {
 		type: "before_agent_start",
+		trigger: "prompt",
 		prompt: "continue",
 		systemPrompt: "base prompt",
 		systemPromptOptions: {} as BeforeAgentStartEvent["systemPromptOptions"],

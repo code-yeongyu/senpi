@@ -5,7 +5,7 @@ import serviceTierExtension, {
 } from "../../src/core/extensions/builtin/service-tier.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
-const CODEX_PROVIDER = "openai-codex";
+const CODEX_PROVIDER = "chatgpt-subscription";
 const CODEX_POOL_PROVIDER = "codex-pool";
 const CODEX_API = "openai-codex-responses";
 const BASE_MODEL_ID = "gpt-5.6-sol";
@@ -212,7 +212,7 @@ describe("service-tier builtin extension", () => {
 
 		// then
 		expect(harness.session.model).toBe(initialModel);
-		expect(notify).toHaveBeenCalledWith("Fast mode is only available for OpenAI Codex models.", "warning");
+		expect(notify).toHaveBeenCalledWith("Fast mode is only available for ChatGPT Subscription models.", "warning");
 	});
 
 	it("toggles a session-level priority tier for the built-in Codex provider", async () => {

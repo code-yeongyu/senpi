@@ -37,6 +37,10 @@ class FakeRuntime {
 		return "";
 	}
 
+	identity(): undefined {
+		return undefined;
+	}
+
 	onOutput(listener: (chunk: string) => void): () => void {
 		this.#listeners.add(listener);
 		return () => this.#listeners.delete(listener);
@@ -283,8 +287,8 @@ describe("durable monitor rolling fire budget", () => {
 		const digest = await restoreTerminalState({
 			manifest: writer.store,
 			handlers: {
-				"restartable-command": async (monitor) => {
-					const result = await handler(monitor);
+				"restartable-command": async (monitor, context) => {
+					const result = await handler(monitor, context);
 					if (result.outcome === "restored" || result.outcome === "muted") {
 						writer.adoptRestored(monitor);
 						registry.adoptFireWindow(monitor.monitorId, monitor.fireWindow);
@@ -298,8 +302,11 @@ describe("durable monitor rolling fire budget", () => {
 		restoredRuntime.feed(lines(60));
 
 		// 150 burned before the restart + 50 after: the mute lands on the 50th post-restore
-		// line, not on a fresh 200 within this generation.
-		expect(lineCount(events)).toBe(50);
+		// line, not on a fresh 200 within this generation. The one injected restore notice is
+		// delivered first and never spends the budget.
+		const notices = events.filter((event) => event.type === "line" && event.line.startsWith("restored after"));
+		expect(notices).toHaveLength(1);
+		expect(lineCount(events) - notices.length).toBe(50);
 		expect(budgetSummaries(events)).toHaveLength(1);
 		const muted = entryOf(registry.snapshot(), "bash_restored");
 		expect(muted.paused).toBe(true);

@@ -13,8 +13,19 @@ type Source = DetectorContext["source"];
 
 const context: DetectorContext = { source: "text", streamKey: "text:0", generation: 1 };
 
+const CYCLE_STEPS = [
+	"defining the shared context block with rules and tool guidance for every lane that follows",
+	"drafting the research prompt that each scoped lane receives before it starts collecting",
+	"choosing where every report path lands so later waves can merge them without collisions",
+	"sizing the parallel batch against the machines that are currently reachable and idle",
+	"writing the fallback branch that reruns a dropped shard somewhere else automatically",
+	"recording the evidence layout so a reviewer can replay any single claim on its own",
+	"checking the teardown list against the resources this run actually created and bound",
+];
+
 function narration(i: number): string {
-	return `Now I'm writing step ${i} of the plan: defining the shared context block with rules and tool guidance, then each research lane with its own scoped prompt and report path. The implementation keeps every result precise and useful.`;
+	const step = CYCLE_STEPS[i % CYCLE_STEPS.length] ?? "";
+	return `Now I'm working on the plan: ${step}. The implementation keeps every result precise and useful.`;
 }
 
 function loop(cycle: number, cycles: number, separator = "\n\n"): string {
@@ -72,7 +83,7 @@ describe("paragraph repetition detector", () => {
 	});
 
 	it("compares paragraphs byte-exactly", () => {
-		const variant = narration(0).replace("scoped prompt", "scoped brief");
+		const variant = narration(0).replace("precise and useful", "precise and complete");
 		expect(direct(`${narration(0)}\n\n${narration(0)}\n\n${variant}\n\n`)).toBeNull();
 		expect(direct(`${narration(0)}\n\n${narration(0)}\n\n${narration(0)}\n\n`)?.detail.occurrences).toBe(3);
 	});

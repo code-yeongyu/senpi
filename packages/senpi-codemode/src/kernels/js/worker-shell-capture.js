@@ -1,16 +1,40 @@
+import { assertCellLive } from "./cell-run-context.js";
+import { groupSignalNotice, noticeChildProcessGroupSignals, shellCommandText, signalsProcessGroup } from "./group-signal-notice.js";
+
 const SHELL_CONFIG_METHODS = ["env", "cwd", "nothrow", "throws"];
 const SHELL_READ_METHODS = ["text", "json", "lines", "arrayBuffer", "bytes", "blob"];
+// `true | ( … )` hands every command in the template an empty pipe as stdin. The worker thread shares
+// the host process's fd 0 (the TUI's terminal), which Bun.$ would otherwise inherit, so a stdin
+// reader would wait on the user's keyboard forever. The newline before `)` keeps a trailing comment
+// from swallowing the closing paren; the Bun shell has no other stdin control (no `$.stdin`, no
+// redirect on a subshell).
+const STDIN_ISOLATION_HEAD = "true | (\n";
+const STDIN_ISOLATION_TAIL = "\n)";
 
 export function installShellCapture(options) {
 	const bun = globalThis.Bun;
 	if (!isBunRuntime(bun)) return () => {};
 	const originalShell = bun.$;
 	const originalSpawn = bun.spawn;
+	const originalSpawnSync = typeof bun.spawnSync === "function" ? bun.spawnSync : null;
+	const deletedKeys = globalThis.__senpi_session_env_deletions__;
+	const pinEnv =
+		globalThis.__senpi_session_env_applied__ === true || (Array.isArray(deletedKeys) && deletedKeys.length > 0);
+	if (pinEnv && typeof originalShell.env === "function") {
+		// Bun.spawn without an explicit env inherits the OS environ, not the worker's process.env,
+		// and deleting from process.env does not unsetenv under Bun. Pinning the worker's
+		// environment view mirrors the bash tool, which always spawns with an explicit env.
+		originalShell.env({ ...process.env });
+	}
 	bun.$ = capturedShell(originalShell, options);
-	bun.spawn = capturedSpawn(originalSpawn, options);
+	bun.spawn = capturedSpawn(originalSpawn, options, pinEnv);
+	if (originalSpawnSync !== null) bun.spawnSync = capturedSpawnSync(originalSpawnSync, pinEnv);
+	const restoreChildProcessNotice = noticeChildProcessGroupSignals(options.emitText, options.isActive);
 	return () => {
+		restoreChildProcessNotice();
 		bun.$ = originalShell;
 		bun.spawn = originalSpawn;
+		if (originalSpawnSync !== null) bun.spawnSync = originalSpawnSync;
 	};
 }
 
@@ -20,8 +44,11 @@ function isBunRuntime(bun) {
 
 function capturedShell(originalShell, options) {
 	const shell = (strings, ...expressions) => {
-		const promise = originalShell(strings, ...expressions);
-		return options.isActive() ? captureShellPromise(promise, options.emitText) : promise;
+		assertCellLive();
+		if (!options.isActive()) return originalShell(strings, ...expressions);
+		if (signalsProcessGroup(shellCommandText(strings, expressions))) options.emitText("stderr", groupSignalNotice("Bun.$"));
+		const promise = originalShell(isolateStdin(strings), ...expressions);
+		return captureShellPromise(promise, options);
 	};
 	for (const key of Object.keys(originalShell)) shell[key] = originalShell[key];
 	for (const method of SHELL_CONFIG_METHODS) {
@@ -33,13 +60,32 @@ function capturedShell(originalShell, options) {
 	return shell;
 }
 
-function captureShellPromise(promise, emitText) {
+function isolateStdin(strings) {
+	if (!Array.isArray(strings) || !Array.isArray(strings.raw)) return strings;
+	const cooked = [...strings];
+	const raw = [...strings.raw];
+	const last = cooked.length - 1;
+	cooked[0] = `${STDIN_ISOLATION_HEAD}${cooked[0]}`;
+	raw[0] = `${STDIN_ISOLATION_HEAD}${raw[0]}`;
+	cooked[last] = `${cooked[last]}${STDIN_ISOLATION_TAIL}`;
+	raw[last] = `${raw[last]}${STDIN_ISOLATION_TAIL}`;
+	return Object.freeze(Object.assign(cooked, { raw: Object.freeze(raw) }));
+}
+
+function captureShellPromise(promise, options) {
 	const prototype = Object.getPrototypeOf(promise);
+	let waiting = false;
+	let settled = false;
+	const finish = () => {
+		settled = true;
+		if (waiting) options.onShellWait?.(promise, false);
+		waiting = false;
+	};
 	let echo = true;
 	const echoOnce = (output) => {
 		if (!echo) return;
 		echo = false;
-		emitShellOutput(output, emitText);
+		emitShellOutput(output, options.emitText);
 	};
 	prototype.quiet.call(promise);
 	promise.quiet = function quiet() {
@@ -54,13 +100,19 @@ function captureShellPromise(promise, emitText) {
 		};
 	}
 	promise.then = function then(onFulfilled, onRejected) {
+		if (!waiting && !settled) {
+			waiting = true;
+			options.onShellWait?.(promise, true);
+		}
 		return prototype.then.call(
 			this,
 			(output) => {
+				finish();
 				echoOnce(output);
 				return onFulfilled ? onFulfilled(output) : output;
 			},
 			(error) => {
+				finish();
 				echoOnce(error);
 				if (onRejected) return onRejected(error);
 				throw error;
@@ -83,17 +135,49 @@ function outputText(value) {
 	return typeof value === "string" ? value : "";
 }
 
-function capturedSpawn(originalSpawn, options) {
+// Bun.spawnSync inherits the OS environ the same way Bun.spawn does, so a cell calling it
+// without an explicit env must get the worker's view pinned too (measured on Bun 1.4.0).
+function capturedSpawnSync(originalSpawnSync, pinEnv) {
 	return (...args) => {
-		if (!options.isActive()) return originalSpawn(...args);
+		assertCellLive();
+		if (!pinEnv) return originalSpawnSync(...args);
 		const [first, second] = args;
 		if (Array.isArray(first)) {
 			const spawnOptions = second === undefined ? {} : second;
-			if (!needsStderrCapture(spawnOptions)) return originalSpawn(...args);
-			return drainStderr(originalSpawn(first, { ...spawnOptions, stderr: "pipe" }), options.emitText);
+			if (spawnOptions === null || typeof spawnOptions !== "object" || spawnOptions.env !== undefined)
+				return originalSpawnSync(...args);
+			return originalSpawnSync(first, { ...spawnOptions, env: { ...process.env } });
 		}
-		if (!needsStderrCapture(first)) return originalSpawn(...args);
-		return drainStderr(originalSpawn({ ...first, stderr: "pipe" }), options.emitText);
+		if (first !== null && typeof first === "object" && first.env === undefined)
+			return originalSpawnSync({ ...first, env: { ...process.env } });
+		return originalSpawnSync(...args);
+	};
+}
+
+function capturedSpawn(originalSpawn, options, pinEnv) {
+	return (...args) => {
+		assertCellLive();
+		if (!options.isActive()) return originalSpawn(...args);
+		const [first, second] = args;
+		let child;
+		if (Array.isArray(first)) {
+			const spawnOptions = second === undefined ? {} : second;
+			const effective = pinEnv && spawnOptions.env === undefined ? { ...spawnOptions, env: { ...process.env } } : spawnOptions;
+			child = needsStderrCapture(effective)
+				? drainStderr(originalSpawn(first, { ...effective, stderr: "pipe" }), options.emitText)
+				: effective === spawnOptions
+					? originalSpawn(...args)
+					: originalSpawn(first, effective);
+		} else {
+			const effective = pinEnv && first !== null && typeof first === "object" && first.env === undefined ? { ...first, env: { ...process.env } } : first;
+			child = needsStderrCapture(effective)
+				? drainStderr(originalSpawn({ ...effective, stderr: "pipe" }), options.emitText)
+				: effective === first
+					? originalSpawn(...args)
+					: originalSpawn(effective);
+		}
+		options.onChild?.(child, Array.isArray(first) ? second : first);
+		return child;
 	};
 }
 

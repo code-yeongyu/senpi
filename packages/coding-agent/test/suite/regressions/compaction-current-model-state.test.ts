@@ -208,6 +208,7 @@ describe("Regression: compaction state during model fallback", () => {
 									emitModelSelect: boolean;
 									modelSelectSource: "fallback";
 									invalidateCompaction: boolean;
+									origin: { source: "fallback" };
 								},
 							) => Promise<unknown>;
 							await switchActiveModel.call(harness.session, smallerModel, {
@@ -217,6 +218,7 @@ describe("Regression: compaction state during model fallback", () => {
 								emitModelSelect: true,
 								modelSelectSource: "fallback",
 								invalidateCompaction: true,
+								origin: { source: "fallback" },
 							});
 							switchedToSmallerModel = true;
 						});

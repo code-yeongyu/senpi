@@ -4,6 +4,8 @@ import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import { convertResponsesMessages } from "../src/providers/openai-responses-shared.ts";
 import type { AssistantMessage, Context, ProviderNativeContent } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const VALID_IMAGE_BASE64 = "iVBORw0KGgo=";
 const MAX_NATIVE_IMAGE_BASE64_CHARS = 24 * 1024 * 1024;
 
@@ -38,7 +40,7 @@ async function streamFixture(events: unknown[]): Promise<AssistantMessage> {
 		messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
 	};
 	vi.spyOn(globalThis, "fetch").mockResolvedValue(createSseResponse(events));
-	return streamOpenAIResponses(model, context, { apiKey: "test-key" }).result();
+	return streamOpenAIResponses(model, normalizeContext(context), { apiKey: "test-key" }).result();
 }
 
 function providerNativeBlocks(message: AssistantMessage): ProviderNativeContent[] {
@@ -257,10 +259,10 @@ describe("OpenAI Responses provider-native content blocks", () => {
 
 		const replay = convertResponsesMessages(
 			model,
-			{
+			normalizeContext({
 				messages: [{ role: "user", content: "hello", timestamp: Date.now() }, assistantMessage],
-			},
-			new Set(["openai", "openai-codex", "opencode"]),
+			}),
+			new Set(["openai", "chatgpt-subscription", "opencode"]),
 		);
 
 		const assistantReplayItems = replay.filter((item) => item.type === "message");

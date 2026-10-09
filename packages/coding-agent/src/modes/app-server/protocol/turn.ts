@@ -55,6 +55,8 @@ export type TurnStartParams = TurnCommonParams & {
 	readonly outputSchema?: JsonValue | null;
 	readonly collaborationMode?: CollaborationMode | null;
 	readonly multiAgentMode?: MultiAgentMode | null;
+	/** Senpi extension: send input that looks like an unknown `/command` as text instead of refusing it. */
+	readonly unknownCommandAsText?: boolean;
 };
 export type TurnStartResponse = { readonly turn: Turn };
 export type TurnSteerParams = TurnCommonParams & { readonly expectedTurnId: string };

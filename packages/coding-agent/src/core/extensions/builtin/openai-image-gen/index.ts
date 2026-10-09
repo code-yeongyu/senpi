@@ -68,6 +68,17 @@ export default function openaiImageGenExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	async function freshKind(model: NativeImageGenTarget, ctx: ExtensionContext): Promise<ImageGenMode> {
+		await ensureFresh(model, ctx);
+		return state.kind;
+	}
+
+	/** The arbitration for `model` without committing it or the bypass it arms (a preview, senpi#2115). */
+	async function peekKind(model: NativeImageGenTarget, ctx: ExtensionContext): Promise<ImageGenMode> {
+		if (nativeImageGenModelKey(model) === state.modelKey) return state.kind;
+		return (await resolveState(model, ctx)).kind;
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		await refresh(ctx.model, ctx);
 	});
@@ -82,11 +93,15 @@ export default function openaiImageGenExtension(pi: ExtensionAPI): void {
 		return applyImageGenerationTools(event.payload, state.kind);
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		await ensureFresh(ctx.model, ctx);
-		if (state.kind !== "native") return undefined;
-		return { systemPrompt: `${event.systemPrompt}\n${OPENAI_IMAGE_GEN_SECTION}` };
-	});
+	pi.on(
+		"before_agent_start",
+		async (event, ctx) => {
+			const kind = event.preview === true ? await peekKind(ctx.model, ctx) : await freshKind(ctx.model, ctx);
+			if (kind !== "native") return undefined;
+			return { systemPrompt: `${event.systemPrompt}\n${OPENAI_IMAGE_GEN_SECTION}` };
+		},
+		{ previewSafe: true },
+	);
 
 	// Runs for every assistant message regardless of arbitration state: whichever
 	// path produced the bytes, they must never reach session history.

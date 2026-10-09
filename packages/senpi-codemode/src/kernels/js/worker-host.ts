@@ -1,7 +1,16 @@
+import type { EventEmitter } from "node:events";
 import { Worker } from "node:worker_threads";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
+import { describeExit } from "../shared/kernel-death.ts";
 import type { WorkerLike } from "./inline-worker.ts";
 import type { JavaScriptKernelMode } from "./kernel-contract.ts";
+
+declare global {
+	// Inert outside the gate. Bun does not refresh named builtin constructor exports.
+	var __senpiCodemodeGateObserveResource:
+		| ((kind: "processes" | "workers" | "handles", resource: EventEmitter, closeEvent: "exit" | "close") => void)
+		| undefined;
+}
 
 export class WorkerStartupCancelledError extends Error {
 	readonly name = "WorkerStartupCancelledError";
@@ -14,10 +23,16 @@ export class WorkerStartupCancelledError extends Error {
 export class JavaScriptWorkerExitedError extends Error {
 	readonly name = "JavaScriptWorkerExitedError";
 	readonly exitCode: number;
+	readonly exitSignal: string | null;
 
-	constructor(exitCode: number) {
-		super(`JavaScript worker exited with code ${exitCode}`);
+	constructor(exitCode: number, exitSignal: string | null = null) {
+		super(
+			exitSignal === null
+				? `JavaScript worker exited with code ${exitCode}`
+				: `JavaScript worker exited with ${describeExit(null, exitSignal)} (code ${exitCode})`,
+		);
 		this.exitCode = exitCode;
+		this.exitSignal = exitSignal;
 	}
 }
 
@@ -27,12 +42,9 @@ export function spawnNodeWorker(
 	parallelPoolWidth: number,
 	mode: JavaScriptKernelMode = "worker",
 ): WorkerLike {
-	return wrapNodeWorker(
-		new Worker(url, {
-			workerData: { cwd, parallelPoolWidth },
-		}),
-		mode,
-	);
+	const worker = new Worker(url, { workerData: { cwd, parallelPoolWidth } });
+	globalThis.__senpiCodemodeGateObserveResource?.("workers", worker, "exit");
+	return wrapNodeWorker(worker, mode);
 }
 
 export function waitForReady(worker: WorkerLike, signal: AbortSignal): Promise<void> {
@@ -85,10 +97,20 @@ export function bridgeError(error: Error): {
 	return { message: error.message, name: error.name, stack: error.stack };
 }
 
+/** The result a cell settles with when its worker crashed under it. */
+export function crashedResult(
+	cellId: string,
+	error: Error,
+	durationMs: number,
+): Extract<KernelToHostMessage, { type: "result" }> {
+	return { type: "result", cellId, ok: false, error: bridgeError(error), durationMs };
+}
+
 function wrapNodeWorker(worker: Worker, mode: JavaScriptKernelMode): WorkerLike {
 	return {
 		mode,
-		postMessage: (message) => worker.postMessage(message),
+		postMessage: (message, transfer) =>
+			worker.postMessage(message, transfer === undefined ? undefined : [...transfer]),
 		onMessage(handler) {
 			const listener = (message: KernelToHostMessage): void => handler(message);
 			worker.on("message", listener);

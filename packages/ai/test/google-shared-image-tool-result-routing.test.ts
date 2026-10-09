@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/google-shared.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function makeModel<TApi extends "google-generative-ai">(
 	api: TApi,
@@ -76,20 +77,24 @@ function makeContext(model: { api: string; provider: string; id: string }): Cont
 }
 
 describe("google-shared image tool result routing", () => {
-	it("keeps separate synthetic image turn for Gemini 2.x Google API models", () => {
+	// #2114: the synthetic image parts join the single tool-result user turn instead of opening adjacent user turns.
+	it("keeps synthetic image parts inside the single tool-result turn for Gemini 2.x Google API models", () => {
 		const model = makeModel("google-generative-ai", "google", "gemini-2.5-flash");
-		const contents = convertMessages(model, makeContext(model));
+		const contents = convertMessages(model, normalizeContext(makeContext(model)));
 
-		expect(contents).toHaveLength(5);
-		expect(contents[2].parts?.every((part) => part.functionResponse)).toBe(true);
-		expect(contents[3].parts?.[0]?.text).toBe("Tool result image:");
-		expect(contents[3].parts?.[1]?.inlineData).toBeTruthy();
-		expect(contents[4].parts?.[0]?.functionResponse).toBeTruthy();
+		expect(contents.map((content) => content.role)).toEqual(["user", "model", "user"]);
+		const parts = contents[2].parts ?? [];
+		expect(parts).toHaveLength(5);
+		expect(parts[0]?.functionResponse).toBeTruthy();
+		expect(parts[1]?.functionResponse).toBeTruthy();
+		expect(parts[2]?.text).toBe("Tool result image:");
+		expect(parts[3]?.inlineData).toBeTruthy();
+		expect(parts[4]?.functionResponse).toBeTruthy();
 	});
 
 	it("nests image tool results for Gemini 3 Google API models", () => {
 		const model = makeModel("google-generative-ai", "google", "gemini-3-pro-preview");
-		const contents = convertMessages(model, makeContext(model));
+		const contents = convertMessages(model, normalizeContext(makeContext(model)));
 
 		expect(contents).toHaveLength(3);
 		const toolResultTurn = contents[2];

@@ -1,13 +1,17 @@
-import type { Context, Model, ProviderHeaders, StreamOptions } from "../types.ts";
+import type { Context, Model, ProviderHeaders, SimpleStreamOptions, Usage } from "../types.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { isAnthropicApiBaseUrl } from "../utils/prompt-cache-ttl.ts";
 import type { AnthropicOptions } from "./anthropic-messages.ts";
+import { isOpenAIResponsesPromptCacheModel } from "./openai-responses-prompt-cache.ts";
+import { getPromptCacheWarmer } from "./prompt-cache-warmers.ts";
 
 export interface WarmPromptCacheUsage {
 	readonly input: number;
 	readonly output: number;
 	readonly cacheRead: number;
 	readonly cacheWrite: number;
+	/** Priced cost of the warm request, when the provider path computes it. */
+	readonly cost?: Usage["cost"];
 }
 
 export type WarmPromptCacheResult =
@@ -15,8 +19,21 @@ export type WarmPromptCacheResult =
 	| { readonly supported: true; readonly usage: WarmPromptCacheUsage; readonly usageRaw: unknown };
 
 export type WarmPromptCacheOptions = Pick<
-	StreamOptions,
-	"apiKey" | "cacheRetention" | "env" | "fetch" | "headers" | "onPayload" | "sessionId" | "signal" | "timeoutMs"
+	SimpleStreamOptions,
+	| "apiKey"
+	| "cacheRetention"
+	| "env"
+	| "extraBody"
+	| "fetch"
+	| "headers"
+	| "onPayload"
+	| "reasoning"
+	| "serviceTier"
+	| "sessionId"
+	| "signal"
+	| "thinkingBudgets"
+	| "thinkingSelection"
+	| "timeoutMs"
 >;
 
 export async function warmPromptCache(
@@ -24,6 +41,24 @@ export async function warmPromptCache(
 	context: Context,
 	options: WarmPromptCacheOptions = {},
 ): Promise<WarmPromptCacheResult> {
+	if (isOpenAIResponsesPromptCacheModel(model)) {
+		if ((options.cacheRetention ?? model.cacheRetention) === "none") return { supported: false };
+		// Registered by openai-responses.lazy.ts, so the root barrel never reaches the OpenAI SDK.
+		const warmer = getPromptCacheWarmer(model.api);
+		if (warmer === undefined) return { supported: false };
+		const { usage, usageRaw } = await warmer(model, context, options);
+		return {
+			supported: true,
+			usage: {
+				input: usage.input,
+				output: usage.output,
+				cacheRead: usage.cacheRead,
+				cacheWrite: usage.cacheWrite,
+				cost: usage.cost,
+			},
+			usageRaw,
+		};
+	}
 	if (model.api !== "anthropic-messages" || !isAnthropicApiBaseUrl(model.baseUrl)) {
 		return { supported: false };
 	}

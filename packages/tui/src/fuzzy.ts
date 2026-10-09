@@ -58,33 +58,34 @@ function scoreMatch(queryLower: string, textLower: string): FuzzyMatch {
 	let lastMatchIndex = -1;
 	let consecutiveMatches = 0;
 
-	for (let i = 0; i < textLower.length && queryIndex < queryLower.length; i++) {
-		if (textLower[i] === queryLower[queryIndex]) {
-			const isWordBoundary = i === 0 || isWordBoundaryPrefix(textLower[i - 1]!);
+	while (queryIndex < queryLower.length) {
+		const i = textLower.indexOf(queryLower[queryIndex]!, lastMatchIndex + 1);
+		if (i === -1) break;
 
-			// Reward consecutive matches
-			if (lastMatchIndex === i - 1) {
-				consecutiveMatches++;
-				score -= consecutiveMatches * 5;
-			} else {
-				consecutiveMatches = 0;
-				// Penalize gaps
-				if (lastMatchIndex >= 0) {
-					score += (i - lastMatchIndex - 1) * 2;
-				}
+		const isWordBoundary = i === 0 || isWordBoundaryPrefix(textLower[i - 1]!);
+
+		// Reward consecutive matches
+		if (lastMatchIndex === i - 1) {
+			consecutiveMatches++;
+			score -= consecutiveMatches * 5;
+		} else {
+			consecutiveMatches = 0;
+			// Penalize gaps
+			if (lastMatchIndex >= 0) {
+				score += (i - lastMatchIndex - 1) * 2;
 			}
-
-			// Reward word boundary matches
-			if (isWordBoundary) {
-				score -= 10;
-			}
-
-			// Slight penalty for later matches
-			score += i * 0.1;
-
-			lastMatchIndex = i;
-			queryIndex++;
 		}
+
+		// Reward word boundary matches
+		if (isWordBoundary) {
+			score -= 10;
+		}
+
+		// Slight penalty for later matches
+		score += i * 0.1;
+
+		lastMatchIndex = i;
+		queryIndex++;
 	}
 
 	if (queryIndex < queryLower.length) {
@@ -147,9 +148,14 @@ function buildAlphanumericSwapQueries(queryLower: string): string[] {
 }
 
 export function fuzzyMatch(query: string, text: string): FuzzyMatch {
-	const queryLower = query.toLowerCase();
-	const textLower = text.toLowerCase();
+	return fuzzyMatchLower(query.toLowerCase(), text.toLowerCase());
+}
 
+/**
+ * {@link fuzzyMatch} for inputs the caller has already lower-cased, so a caller matching many
+ * queries against the same large text can lower-case that text once.
+ */
+export function fuzzyMatchLower(queryLower: string, textLower: string): FuzzyMatch {
 	const direct = scoreMatch(queryLower, textLower);
 	if (direct.matches) {
 		return direct;

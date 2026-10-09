@@ -10,41 +10,49 @@
  *
  * Flow (matches AGENTS.md "Releasing"):
  *   1. Pre-flight: branch must be `main`; working tree must be clean (--dry-run warns
- *      and continues so the preview is usable during development). Then restore a
- *      CI-parity dependency tree (`npm ci`) if a prior publish/local-release left a
- *      stale bundled workspace overlay in `packages/coding-agent/node_modules`.
+ *      and continues so the preview is usable during development).
  *   2. Resolve version: `--version` override or `computeNextVersion()` from calver.mjs.
- *   3. Write `version` into all release workspace package.json files directly (TAB indent,
+ *   3. Test evidence (senpi#2943): regenerate the AI model catalog and check the bundled
+ *      provider defaults against it. If the catalog changed, commit it alone and push it to
+ *      `main`, so CI tests exactly the tree the release ships. Then wait for that commit's
+ *      green "Check and test" run, the fan-in of every CI shard and required job. A red run
+ *      stops the release; a run superseded by a newer `main` push moves the release onto
+ *      that commit. The suite is never re-run here unless `--force-tests` asks for it.
+ *   4. Write `version` into all release workspace package.json files directly (TAB indent,
  *      trailing newline). `npm version` is intentionally NOT used; the `-N` suffix on
  *      same-day re-releases looks like a prerelease tag to npm.
- *   4. Run `scripts/sync-versions.js` to propagate the new version to source
- *      inter-package deps, then refresh `package-lock.json`.
- *   5. Regenerate AI model artifacts and `packages/coding-agent/publish-deps.lock.json`.
+ *   5. Run `scripts/sync-versions.js` to propagate the new version to source
+ *      inter-package deps, then refresh `package-lock.json` and
+ *      `packages/coding-agent/install-lock/`.
  *   6. For each `packages/*\/CHANGELOG.md`, replace `## [Unreleased]` with
  *      `## [<version>] - <YYYY-MM-DD>`, remembering its subsection structure
  *      (`### Added`, `### Fixed`, ...) for re-insertion in step 8.
- *   7. Run `npm run check`, then `npm run build`, then `npm test` — mirroring
- *      the CI "check → build → test" order so cross-package test imports
- *      resolve against freshly built `dist/` instead of a stale prior build.
+ *   7. Run `npm run check`, then `npm run build` (and `CI=1 npm test` only with
+ *      `--force-tests`).
  *   8. Commit the release, tag it, re-insert a fresh `## [Unreleased]` block,
  *      commit the next-cycle changelog update, then push `main` and the new tag.
  *      GitHub Actions builds binaries and publishes from the pushed tag.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync } from "node:fs";
-import { join } from "node:path";
 import { computeNextVersion } from "./calver.mjs";
 import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import {
-	runGenerateImageModels,
+	runClaudeCodeModelSupportReport,
 	runGenerateModels,
+	runProviderDefaultsCheck,
 	runInstallLock,
 	runPackageLockRefresh,
-	runShrinkwrap,
 } from "./release-artifacts.mjs";
 import { reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
-import { decideTestGate } from "./release-test-gate.mjs";
+import {
+	awaitCiEvidence,
+	catalogChangedSinceHead,
+	discardTimestampOnlyCatalogChange,
+	planCiEvidence,
+	REGENERATED_CATALOG_PATHS,
+	REQUIRED_CHECK_NAME,
+} from "./release-test-gate.mjs";
 import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
@@ -62,8 +70,8 @@ function printUsage() {
 		"  --dry-run       Preview every shell command and file write; modify nothing.",
 		"                  Read-only git/npm reads (status, branch, tag --list,",
 		"                  npm view) still execute so the plan is accurate.",
-		"  --force-tests   Run the CI=1 npm test gate even when HEAD already",
-		"                  carries a green \"Check and test\" CI run.",
+		"  --force-tests   Run the CI=1 npm test suite in this job instead of",
+		"                  reusing the release commit's green \"Check and test\" CI run.",
 		"  --help, -h      Show this help and exit.",
 		"",
 		"Default flow: compute next version via scripts/calver.mjs, then release.",
@@ -122,8 +130,7 @@ function runCommand(bin, args, extraEnv) {
 		execFileSync(bin, args, extraEnv ? { stdio: "inherit", env: { ...process.env, ...extraEnv } } : { stdio: "inherit" });
 	} catch (err) {
 		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
-		process.stderr.write(`[release] error: ${bin} ${args.join(" ")} failed: ${message}\n`);
-		process.exit(1);
+		throw new Error(`${bin} ${args.join(" ")} failed: ${message}`, { cause: err });
 	}
 }
 
@@ -221,34 +228,6 @@ function gitPush(refspec, dryRun) {
 	runCommand("git", ["push", "origin", refspec]);
 }
 
-// `scripts/prepare-senpi-bundled-workspaces.mjs` (run by `npm run publish` and
-// the local-release smoke test) copies the built internal packages —
-// `@earendil-works/pi-tui`, `pi-ai`, `pi-agent-core`, `pi-pty` — into
-// `packages/coding-agent/node_modules` as REAL directories, shadowing the
-// workspace symlinks so the published tarball can bundle them. Left behind,
-// those copies go stale and win module resolution over the freshly built
-// workspace, so the release test gate's spawned-CLI tests (which resolve
-// `@earendil-works/pi-*` from coding-agent's own node_modules) load an old
-// build and fail — e.g. `SyntaxError: ... does not provide an export named
-// 'sanitizeTerminalLabel'`. CI never hits this because it starts from a clean
-// `npm ci`. Detect the stale overlay and restore the CI-parity dependency tree
-// before building and testing. Cheap when clean: only reinstalls when the
-// bundled overlay is actually present.
-function ensureCleanWorkspaceDeps(dryRun) {
-	const overlayMarker = join("packages", "coding-agent", "node_modules", "@earendil-works", "pi-tui");
-	const hasBundledOverlay = existsSync(overlayMarker) && !lstatSync(overlayMarker).isSymbolicLink();
-	if (!hasBundledOverlay) {
-		log("workspace dependency tree is clean (no bundled overlay)");
-		return;
-	}
-	if (dryRun) {
-		dryRunLog("npm ci (stale bundled workspace overlay detected)");
-		return;
-	}
-	log("npm ci (restoring CI-parity deps: stale bundled workspace overlay detected)");
-	runCommand("npm", ["ci"]);
-}
-
 function runCheck(dryRun) {
 	if (dryRun) {
 		dryRunLog("npm run check");
@@ -289,37 +268,107 @@ function lookupCiCheckRuns(sha) {
 			: Array.isArray(pages.check_runs)
 				? pages.check_runs
 				: [];
-		return runs.map((run) => ({
-			name: run.name,
-			status: run.status,
-			conclusion: run.conclusion,
-			head_sha: run.head_sha,
-		}));
+		return runs.map((run) => {
+			const checkRun = {
+				id: run.id,
+				name: run.name,
+				status: run.status,
+				conclusion: run.conclusion,
+				head_sha: run.head_sha,
+			};
+			// A newer push cancels the workflow run, but the `always()` fan-in still reports `failure`: read the
+			// workflow run's own outcome so the gate can tell a cancellation from a red CI.
+			if (run.name === REQUIRED_CHECK_NAME && run.conclusion === "failure" && run.check_suite?.id) {
+				Object.assign(checkRun, lookupWorkflowRun(run.check_suite.id));
+			}
+			return checkRun;
+		});
 	} catch {
 		return null;
 	}
 }
 
-function runTests(dryRun, forceTests) {
+function lookupWorkflowRun(checkSuiteId) {
+	const raw = execFileSync("gh", ["api", `repos/{owner}/{repo}/actions/runs?check_suite_id=${checkSuiteId}&per_page=1`], {
+		encoding: "utf-8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	const workflowRun = JSON.parse(raw).workflow_runs?.[0];
+	return workflowRun ? { workflowStatus: workflowRun.status, workflowConclusion: workflowRun.conclusion } : {};
+}
+
+const CI_EVIDENCE_TIMEOUT_MS = 40 * 60_000;
+const CI_EVIDENCE_POLL_MS = 30_000;
+
+function sleepSync(ms) {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function remoteMain() {
+	runCommand("git", ["fetch", "origin", "main"]);
+	const tip = captureCommand("git", ["rev-parse", "origin/main"]).trim();
+	return {
+		tip,
+		contains: (sha) => {
+			try {
+				runCommand("git", ["merge-base", "--is-ancestor", sha, tip]);
+				return true;
+			} catch {
+				return false;
+			}
+		},
+	};
+}
+
+/**
+ * The release's test evidence is CI's sharded run, never a second serial run of the suite here (senpi#2943).
+ * A regenerated model catalog is committed and pushed to main on its own first, so CI tests exactly the tree the
+ * release ships (the gap behind senpi#2645); then the release waits for that commit's green "Check and test".
+ */
+function secureCiEvidence(version, dryRun, forceTests) {
+	runGenerateModels(dryRun, runCommand, log, dryRunLog);
+	runProviderDefaultsCheck(dryRun, runCommand, log, dryRunLog);
 	if (dryRun) {
+		dryRunLog(`if the catalog changed: git commit ${REGENERATED_CATALOG_PATHS.join(" ")} and git push origin main`);
 		const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
-		const checkRuns = lookupCiCheckRuns(sha);
-		const decision = decideTestGate({ forceTests, dryRun: true, sha, checkRuns });
-		dryRunLog(`test gate decision (preview): ${decision.reason}`);
-		dryRunLog("CI=1 npm test");
+		const plan = planCiEvidence({ sha, checkRuns: lookupCiCheckRuns(sha) });
+		dryRunLog(`test gate (preview, HEAD): ${plan.reason}`);
+		dryRunLog(forceTests ? "CI=1 npm test (--force-tests)" : 'wait for the release commit\'s green "Check and test"');
 		return;
 	}
-	const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
-	const decision = decideTestGate({ forceTests, dryRun: false, sha, checkRuns: lookupCiCheckRuns(sha) });
-	log(`test gate: ${decision.reason}`);
-	if (decision.skip) {
+	if (discardTimestampOnlyCatalogChange(process.cwd())) {
+		log("the regeneration changed only the catalog manifest's generatedAt stamp; keeping HEAD's catalog");
+	}
+	if (catalogChangedSinceHead(process.cwd())) {
+		log("the regeneration changed the model catalog; committing it to main so CI tests the tree this release ships");
+		runCommand("git", ["add", "--", ...REGENERATED_CATALOG_PATHS]);
+		gitCommit(`chore(ai): regenerate the model catalog for v${version}`, false);
+		syncRemoteMainBeforePush(false, runCommand, log, dryRunLog);
+		gitPush("main", false);
+	}
+	if (forceTests) {
+		log("test gate: --force-tests given; the suite runs in this job after the build");
 		return;
 	}
-	// Run the gate with CI=1 so packages reproduce their CI test behavior — notably
-	// the coding-agent vitest suite serializes its subprocess-heavy tests to a single
-	// fork (see packages/coding-agent/vitest.config.ts). Without it the parallel forks
-	// contend with the release build for CPU and flake app-server/daemon spawn timeouts
-	// and perf-bound tests locally, while passing on CI. App code never branches on CI.
+	awaitCiEvidence(
+		{ timeoutMs: CI_EVIDENCE_TIMEOUT_MS, pollMs: CI_EVIDENCE_POLL_MS },
+		{
+			lookupCheckRuns: lookupCiCheckRuns,
+			sleep: sleepSync,
+			now: Date.now,
+			headSha: () => captureCommand("git", ["rev-parse", "HEAD"]).trim(),
+			remoteMain,
+			fastForwardTo: (sha) => runCommand("git", ["merge", "--ff-only", sha]),
+			log,
+		},
+	);
+}
+
+function runForcedTests(dryRun, forceTests) {
+	if (!forceTests || dryRun) return;
+	// Run with CI=1 so packages reproduce their CI test behavior — notably the coding-agent vitest suite serializes
+	// its subprocess-heavy tests to a single fork (see packages/coding-agent/vitest.config.ts). App code never
+	// branches on CI.
 	log("CI=1 npm test");
 	runCommand("npm", ["test"], { CI: "1" });
 }
@@ -332,7 +381,6 @@ function main() {
 	}
 
 	preflight(args.dryRun);
-	ensureCleanWorkspaceDeps(args.dryRun);
 
 	const version = resolveVersion(args);
 	const date = todayISO();
@@ -342,18 +390,17 @@ function main() {
 		dryRunLog("preview mode; no files, commits, tags, or npm state will be modified");
 	}
 
+	secureCiEvidence(version, args.dryRun, args.forceTests);
 	applyWorkspaceVersions(version, args.dryRun, log, dryRunLog);
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
-	runGenerateModels(args.dryRun, runCommand, log, dryRunLog);
-	runGenerateImageModels(args.dryRun, runCommand, log, dryRunLog);
-	runShrinkwrap(args.dryRun, runCommand, log, dryRunLog);
+	runClaudeCodeModelSupportReport(args.dryRun, runCommand, log, dryRunLog);
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);
 	runClean(args.dryRun);
 	runBuild(args.dryRun);
-	runTests(args.dryRun, args.forceTests);
+	runForcedTests(args.dryRun, args.forceTests);
 
 	stageChangedFiles(args.dryRun);
 	gitCommit(`release: v${version}`, args.dryRun);
@@ -374,4 +421,9 @@ function main() {
 	}
 }
 
-main();
+try {
+	main();
+} catch (err) {
+	process.stderr.write(`[release] error: ${err instanceof Error ? err.message : String(err)}\n`);
+	process.exitCode = 1;
+}

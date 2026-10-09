@@ -83,6 +83,109 @@ describe("goal continuation compaction stall regression", () => {
 		}
 	});
 
+	// senpi#2778: failed feedback must release queued work through normal admission.
+	it("resumes a queued goal continuation when stale extension feedback settles", async () => {
+		let ctxRef: ExtensionContext | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", (_event, ctx) => {
+						ctxRef = ctx;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		seedConversation(harness);
+		if (!ctxRef) throw new Error("extension context was not captured");
+
+		const signal = ctxRef.beginCompaction?.({ reason: "extension" });
+		harness.setResponses([fauxAssistantMessage("goal resumed after stale summary")]);
+		await harness.session.sendCustomMessage(
+			{ customType: "goal-continuation", content: "Continue the goal.", display: false },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+		expect(harness.faux.state.callCount).toBe(0);
+
+		ctxRef.endCompaction?.({ reason: "extension", signal, errorMessage: "Compaction did not apply: stale" });
+		ctxRef.endCompaction?.({ reason: "extension", signal, errorMessage: "duplicate stale completion" });
+		await harness.session.waitForSettledSessionWork();
+
+		expect(harness.eventsOfType("continuation_error")).toEqual([]);
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(false);
+		expect(harness.sessionManager.getBranch().some((entry) => entry.type === "compaction")).toBe(false);
+	});
+
+	it("retains queued goal work without running it after cancelled extension feedback", async () => {
+		let ctxRef: ExtensionContext | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", (_event, ctx) => {
+						ctxRef = ctx;
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		seedConversation(harness);
+		if (!ctxRef) throw new Error("extension context was not captured");
+
+		const signal = ctxRef.beginCompaction?.({ reason: "extension" });
+		harness.setResponses([fauxAssistantMessage("must not run after cancellation")]);
+		await harness.session.sendCustomMessage(
+			{ customType: "goal-continuation", content: "Continue the goal.", display: false },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		ctxRef.endCompaction?.({ reason: "extension", signal, aborted: true });
+		await harness.session.waitForSettledSessionWork();
+
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+	});
+
+	it("keeps queued goal work when fresh admission still requires a rejected compaction", async () => {
+		let ctxRef: ExtensionContext | undefined;
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 1_000 }],
+			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 1_000 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", (_event, ctx) => {
+						ctxRef = ctx;
+					});
+					pi.on("session_before_compact", () => ({
+						cancel: true,
+						rejectionCause: "cancelled-by-extension",
+						reason: "required compaction remains unavailable",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		seedConversation(harness);
+		if (!ctxRef) throw new Error("extension context was not captured");
+
+		const signal = ctxRef.beginCompaction?.({ reason: "extension" });
+		harness.setResponses([fauxAssistantMessage("must not bypass hard context admission")]);
+		await harness.session.sendCustomMessage(
+			{ customType: "goal-continuation", content: "Continue the goal.", display: false },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		ctxRef.endCompaction?.({ reason: "extension", signal, errorMessage: "Compaction did not apply: stale" });
+		await harness.session.waitForSettledSessionWork();
+
+		expect(harness.faux.state.callCount).toBe(0);
+		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
+		expect(harness.eventsOfType("continuation_error")).toHaveLength(1);
+		expect(harness.sessionManager.getBranch().some((entry) => entry.type === "compaction")).toBe(false);
+	});
+
 	it("resumes a custom triggerTurn message queued during extension feedback compaction", async () => {
 		let ctxRef: ExtensionContext | undefined;
 		const harness = await createHarness({

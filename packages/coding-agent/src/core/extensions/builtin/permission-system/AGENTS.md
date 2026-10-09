@@ -7,6 +7,7 @@ Builtin extension #3. Full port of opencode's permission flow. Loads preset/rule
 ```
 permission-system/
 ├── index.ts            # Extension entry — wires session_start / tool_call / session_shutdown + UI prompt
+├── internal-tools.ts   # Engine-owned bookkeeping tool classification
 ├── service.ts          # Permission service core (ask/reply/list)
 ├── evaluate.ts         # Rule evaluator with wildcard matching
 ├── wildcard.ts         # Wildcard matcher

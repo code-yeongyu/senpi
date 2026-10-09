@@ -3,8 +3,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME } from "../config.ts";
-import { canonicalizePath, resolvePath } from "../utils/paths.ts";
+import { canonicalizePath, canonicalizePathStrict, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { bundledBuiltinExtensions } from "./bundled-resources.ts";
 
 export type ProjectTrustDecision = boolean | null;
 
@@ -29,6 +30,7 @@ type TrustFile = Record<string, boolean | null | undefined>;
 
 const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 	"settings.json",
+	"mcp.json",
 	"extensions",
 	"skills",
 	"prompts",
@@ -37,8 +39,65 @@ const TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = [
 	"APPEND_SYSTEM.md",
 ] as const;
 
+const LEGACY_PROJECT_CONFIG_DIR_NAME = ".pi";
+
+/**
+ * A project codemode file that sets any setting naming an executable (the codemode package's
+ * `executable-settings.json` list, today `languages.pyInterpreter`) makes the session run that executable at start,
+ * so it asks for a trust decision. A file the check cannot read is treated like a project `mcp.json`, whose mere
+ * presence asks; so is any file when the list itself cannot be read.
+ */
+function projectCodemodeNamesExecutable(configDir: string): boolean {
+	const path = join(configDir, "codemode.json");
+	if (!existsSync(path)) return false;
+	const executableSettings = codemodeExecutableSettings();
+	if (executableSettings === undefined) return true;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stripBom(readFileSync(path, "utf8")));
+	} catch {
+		return true;
+	}
+	return executableSettings.some((settingPath) => valueAtPath(parsed, settingPath) !== undefined);
+}
+
+function codemodeExecutableSettings(): readonly string[] | undefined {
+	const codemode = bundledBuiltinExtensions.find((extension) => extension.id === "codemode");
+	try {
+		const packageJson = codemode?.resolvePackage();
+		if (packageJson === undefined) return undefined;
+		const list: unknown = JSON.parse(
+			readFileSync(join(dirname(packageJson), "src", "config", "executable-settings.json"), "utf8"),
+		);
+		if (typeof list !== "object" || list === null) return undefined;
+		const paths: unknown = Reflect.get(list, "projectExecutableSettings");
+		return Array.isArray(paths) && paths.every((entry) => typeof entry === "string") ? paths : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function valueAtPath(value: unknown, path: string): unknown {
+	let current: unknown = value;
+	for (const key of path.split(".")) {
+		if (typeof current !== "object" || current === null) return undefined;
+		current = Reflect.get(current, key);
+	}
+	return current;
+}
+
 function normalizeCwd(cwd: string): string {
-	return canonicalizePath(resolvePath(cwd));
+	const resolved = resolvePath(cwd);
+	try {
+		return canonicalizePathStrict(resolved);
+	} catch {
+		// A workspace path the filesystem will not confirm must not be keyed by its raw
+		// spelling: that is how a decision recorded for one directory leaks to another
+		// that merely writes the same way. Returning the resolved-but-unconfirmed path
+		// keeps the lookup total, and because no stored key can match a location the
+		// kernel does not agree on, the effect is "ask again" rather than "inherit".
+		return resolved;
+	}
 }
 
 function findNearestTrustEntry(data: TrustFile, cwd: string): ProjectTrustStoreEntry | null {
@@ -177,7 +236,8 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
 
 /**
  * Returns true when cwd has project-local resources that must be gated by
- * project trust: trust-requiring entries under cwd/.pi, or .agents/skills in
+ * project trust: trust-requiring entries under the project config dir or the
+ * legacy cwd/.pi dir (whose resources are also discovered), or .agents/skills in
  * cwd or one of its ancestors. Returns false when no such project resources
  * exist. The user/global ~/.agents/skills directory is always treated as a
  * trusted user resource and is ignored here, even when cwd is $HOME.
@@ -187,10 +247,15 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
 	let currentDir = canonicalizePath(resolvePath(cwd));
 
-	const configDir = join(currentDir, CONFIG_DIR_NAME);
-	if (TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry)))) {
+	const configDirs = [join(currentDir, CONFIG_DIR_NAME), join(currentDir, LEGACY_PROJECT_CONFIG_DIR_NAME)];
+	if (
+		configDirs.some((configDir) =>
+			TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES.some((entry) => existsSync(join(configDir, entry))),
+		)
+	) {
 		return true;
 	}
+	if (projectCodemodeNamesExecutable(join(currentDir, CONFIG_DIR_NAME))) return true;
 
 	while (true) {
 		const agentsSkillsDir = join(currentDir, ".agents", "skills");

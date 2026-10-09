@@ -20,6 +20,33 @@ export {
 	CombinedAutocompleteProvider,
 	type SlashCommand,
 } from "./autocomplete.ts";
+// Colors and styling
+export {
+	backgroundAnsi,
+	type Color,
+	type ColorMixSpace,
+	colorToHex,
+	colorToOkhsl,
+	colorToOklch,
+	colorToRgb,
+	foregroundAnsi,
+	type IndexedColor,
+	indexedColor,
+	mixColors,
+	type OkhslChannels,
+	type OklchChannels,
+	type OklchColorValue,
+	okhslColor,
+	oklchColor,
+	parseColor,
+	type RgbColorValue,
+	rgbColor,
+	styleText,
+	styleTextWithAnsi,
+	type TerminalColorMode,
+	type TextAttributes,
+	type TextStyle,
+} from "./colors.ts";
 // Components
 export { Box } from "./components/box.ts";
 export { CancellableLoader } from "./components/cancellable-loader.ts";
@@ -41,6 +68,7 @@ export {
 	type MarkdownTheme,
 	resetMarkdownHighlightCallCount,
 } from "./components/markdown.ts";
+export { MouseRegion, type MouseRegionHandler } from "./components/mouse-region.ts";
 export {
 	ScrollView,
 	type ScrollViewOptions,
@@ -68,9 +96,9 @@ export {
 	VStack,
 } from "./components/v-stack.ts";
 // Editor component interface (for custom editors)
-export type { EditorComponent } from "./editor-component.ts";
+export type { EditorComponent, EditorSubmitDetails } from "./editor-component.ts";
 // Fuzzy matching
-export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
+export { type FuzzyMatch, fuzzyFilter, fuzzyMatch, fuzzyMatchLower } from "./fuzzy.ts";
 // Atomic image markers (ids only - never image bytes)
 export {
 	type EditorImageState,
@@ -109,17 +137,38 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.ts";
+export {
+	decodeMouseButton,
+	isMouseSequence,
+	MOUSE_TRACKING,
+	MouseClickSynthesizer,
+	parseSgrMouseEvent,
+	parseWheelEvent,
+	type SgrMouseEvent,
+	toTuiMouseEvent,
+	type WheelEvent,
+} from "./mouse-input.ts";
+// Native platform integration
+export { getNativeClipboard, type NativeClipboard } from "./native-platform.ts";
+export { oklabToOkhslLightness } from "./oklab.ts";
 export { type EditorPasteState, expandPasteMarkers } from "./paste-markers.ts";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.ts";
 // Terminal interface and implementations
-export { ProcessTerminal, type ProcessTerminalOptions, type Terminal } from "./terminal.ts";
+export {
+	type CursorPosition,
+	isAppleTerminalSession,
+	isWarpWslSession,
+	ProcessTerminal,
+	type ProcessTerminalOptions,
+	type Terminal,
+} from "./terminal.ts";
 // Terminal colors
 export {
-	parseOsc11BackgroundColor,
 	parseTerminalColorSchemeReport,
 	type RgbColor,
 	type TerminalColorScheme,
+	type TerminalColors,
 } from "./terminal-colors.ts";
 // Terminal image support
 export function calculateImageRows(
@@ -144,6 +193,7 @@ export {
 	getImageDimensions,
 	getJpegDimensions,
 	getPngDimensions,
+	getTerminalColorMode,
 	getWebpDimensions,
 	hyperlink,
 	type ImageDimensions,
@@ -164,22 +214,41 @@ export {
 export { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
 export {
 	type Component,
+	CompositeRevision,
 	Container,
 	CURSOR_MARKER,
+	claimFrameRow,
 	compositeTuiLine,
+	currentRenderRevision,
+	dispatchMouseEvent,
 	type Focusable,
+	type FrameLineBytesTotals,
+	frameLineBytesTotals,
+	frameMode,
+	frameScrollbackRows,
 	isFocusable,
 	isViewportTUI,
+	joinLineArrays,
+	mainScreenHistoryLines,
+	nextRenderRevision,
 	type OverlayAnchor,
+	type OverlayBounds,
 	type OverlayHandle,
 	type OverlayMargin,
 	type OverlayOptions,
 	type OverlayUnfocusOptions,
+	renderAtFrameRow,
+	resetMainScreenHistoryLines,
 	type SizeValue,
 	TUI,
 	type TuiInputListener,
 	type TuiInputListenerResult,
 	type TuiMode,
+	type TuiMouseButton,
+	type TuiMouseDispatchResult,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	type TuiMouseEventType,
 	type TuiStopOptions,
 	type ViewportTUI,
 } from "./tui.ts";
@@ -196,3 +265,4 @@ export {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "./utils.ts";
+export type { WheelScrollLines } from "./wheel-scroll.ts";

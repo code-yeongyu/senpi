@@ -2,12 +2,23 @@ import { rmSync } from "node:fs";
 import { symlink } from "node:fs/promises";
 import { applyPatch } from "diff";
 import { describe, expect, it } from "vitest";
+import { BACKGROUND_CONTEXT, withAbortSignal } from "../../src/harness/context.ts";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { createEditTool } from "../../src/harness/tools/edit.ts";
 import type { PostMutateContext, PostMutateResult } from "../../src/harness/tools/tool-context.ts";
 import { createWriteTool } from "../../src/harness/tools/write.ts";
 import { getOrThrow } from "../../src/harness/types.ts";
 import { createTempDir } from "./session-test-utils.ts";
+
+const noUpdate = () => {};
+
+const invocation = {
+	invocationId: "post-mutate-result",
+	operationId: "post-mutate-operation",
+	turnId: "post-mutate-turn",
+	getMemo: async () => undefined,
+	setMemo: async () => {},
+};
 
 function textOutput(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content.flatMap((part) => (part.type === "text" ? [part.text ?? ""] : [])).join("\n");
@@ -32,8 +43,7 @@ describe("AgentHarness tools postMutate", () => {
 		const result = await createWriteTool().execute(
 			"write-post-mutate",
 			{ path: "nested/file.txt", content: "hello" },
-			undefined,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async (input) => {
@@ -41,10 +51,12 @@ describe("AgentHarness tools postMutate", () => {
 					return { changed: false, note: "formatted with biome" };
 				},
 			},
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
 		expect(calls).toHaveLength(1);
-		expect(calls[0]?.path).toBe(getOrThrow(await env.absolutePath("nested/file.txt")));
+		expect(calls[0]?.path).toBe(getOrThrow(await env.absolutePath("nested/file.txt", BACKGROUND_CONTEXT)));
 		expect(calls[0]?.tool).toBe("write");
 		// Upstream sync: write success text is `Successfully wrote to <path>` (fork details kept).
 		expect(textOutput(result)).toBe("Successfully wrote to nested/file.txt\nformatted with biome");
@@ -56,15 +68,16 @@ describe("AgentHarness tools postMutate", () => {
 		await createWriteTool().execute(
 			"write-post-mutate-read",
 			{ path: "file.txt", content: "written-bytes" },
-			undefined,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async (input) => {
-					observed = getOrThrow(await env.readTextFile(input.path));
+					observed = getOrThrow(await env.readTextFile(input.path, BACKGROUND_CONTEXT));
 					return { changed: false };
 				},
 			},
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
 		expect(observed).toBe("written-bytes");
@@ -72,15 +85,14 @@ describe("AgentHarness tools postMutate", () => {
 
 	it("hands the hook the path the tool wrote, not the canonical target, when editing through a symlink", async () => {
 		const env = createEnv();
-		getOrThrow(await env.writeFile("target.txt", "alpha\nbeta\n"));
+		getOrThrow(await env.writeFile("target.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));
 		await symlink("target.txt", `${env.cwd}/link.txt`);
 		const seen: string[] = [];
 
 		await createEditTool().execute(
 			"edit-post-mutate-symlink",
 			{ path: "link.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] },
-			undefined,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async (input) => {
@@ -88,33 +100,36 @@ describe("AgentHarness tools postMutate", () => {
 					return { changed: false };
 				},
 			},
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
-		expect(seen).toEqual([getOrThrow(await env.absolutePath("link.txt"))]);
-		expect(getOrThrow(await env.readTextFile("target.txt"))).toBe("ALPHA\nbeta\n");
+		expect(seen).toEqual([getOrThrow(await env.absolutePath("link.txt", BACKGROUND_CONTEXT))]);
+		expect(getOrThrow(await env.readTextFile("target.txt", BACKGROUND_CONTEXT))).toBe("ALPHA\nbeta\n");
 	});
 
 	it("recomputes edit diff metadata against the post-mutate file contents", async () => {
 		const env = createEnv();
 		const original = "alpha\nbeta\ngamma\n";
-		getOrThrow(await env.writeFile("edit.txt", original));
+		getOrThrow(await env.writeFile("edit.txt", original, BACKGROUND_CONTEXT));
 
 		const result = await createEditTool().execute(
 			"edit-post-mutate",
 			{ path: "edit.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] },
-			undefined,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async (input) => {
-					const current = getOrThrow(await env.readTextFile(input.path));
-					getOrThrow(await env.writeFile(input.path, current.replace("gamma", "GAMMA")));
+					const current = getOrThrow(await env.readTextFile(input.path, BACKGROUND_CONTEXT));
+					getOrThrow(await env.writeFile(input.path, current.replace("gamma", "GAMMA"), BACKGROUND_CONTEXT));
 					return { changed: true, note: "auto-formatted edit.txt" };
 				},
 			},
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
-		const onDisk = getOrThrow(await env.readTextFile("edit.txt"));
+		const onDisk = getOrThrow(await env.readTextFile("edit.txt", BACKGROUND_CONTEXT));
 		expect(onDisk).toBe("ALPHA\nbeta\nGAMMA\n");
 		expect(result.details?.diff).toContain("GAMMA");
 		expect(applyPatch(original, result.details?.patch ?? "")).toBe(onDisk);
@@ -124,14 +139,15 @@ describe("AgentHarness tools postMutate", () => {
 	it("keeps edit diff metadata unchanged when postMutate reports no change", async () => {
 		const env = createEnv();
 		const original = "alpha\nbeta\n";
-		getOrThrow(await env.writeFile("edit.txt", original));
+		getOrThrow(await env.writeFile("edit.txt", original, BACKGROUND_CONTEXT));
 
 		const result = await createEditTool().execute(
 			"edit-post-mutate-unchanged",
 			{ path: "edit.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] },
-			undefined,
-			undefined,
+			noUpdate,
 			{ env, postMutate: async () => ({ changed: false }) },
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
 		expect(applyPatch(original, result.details?.patch ?? "")).toBe("ALPHA\nbeta\n");
@@ -144,10 +160,10 @@ describe("AgentHarness tools postMutate", () => {
 		const firstHookEntered = deferred();
 		const releaseFirstHook = deferred();
 		const tool = createWriteTool();
-		const context = {
+		const toolContext = {
 			env,
 			postMutate: async (input: PostMutateContext): Promise<PostMutateResult> => {
-				const content = getOrThrow(await env.readTextFile(input.path));
+				const content = getOrThrow(await env.readTextFile(input.path, BACKGROUND_CONTEXT));
 				events.push(`hook-start:${content}`);
 				if (content === "first") {
 					firstHookEntered.resolve();
@@ -158,14 +174,28 @@ describe("AgentHarness tools postMutate", () => {
 			},
 		};
 
-		const first = tool.execute("write-a", { path: "file.txt", content: "first" }, undefined, undefined, context);
+		const first = tool.execute(
+			"write-a",
+			{ path: "file.txt", content: "first" },
+			noUpdate,
+			toolContext,
+			invocation,
+			BACKGROUND_CONTEXT,
+		);
 		await firstHookEntered.promise;
-		const second = tool.execute("write-b", { path: "file.txt", content: "second" }, undefined, undefined, context);
+		const second = tool.execute(
+			"write-b",
+			{ path: "file.txt", content: "second" },
+			noUpdate,
+			toolContext,
+			invocation,
+			BACKGROUND_CONTEXT,
+		);
 		releaseFirstHook.resolve();
 		await Promise.all([first, second]);
 
 		expect(events).toEqual(["hook-start:first", "hook-end:first", "hook-start:second", "hook-end:second"]);
-		expect(getOrThrow(await env.readTextFile("file.txt"))).toBe("second");
+		expect(getOrThrow(await env.readTextFile("file.txt", BACKGROUND_CONTEXT))).toBe("second");
 	});
 
 	it("surfaces a throwing postMutate as a warning note without losing the landed write", async () => {
@@ -173,39 +203,41 @@ describe("AgentHarness tools postMutate", () => {
 		const result = await createWriteTool().execute(
 			"write-post-mutate-throws",
 			{ path: "file.txt", content: "payload" },
-			undefined,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async () => {
 					throw new Error("formatter exploded");
 				},
 			},
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
-		expect(getOrThrow(await env.readTextFile("file.txt"))).toBe("payload");
+		expect(getOrThrow(await env.readTextFile("file.txt", BACKGROUND_CONTEXT))).toBe("payload");
 		// Upstream sync: write success text is `Successfully wrote to <path>` (fork details kept).
 		expect(textOutput(result)).toBe("Successfully wrote to file.txt\npostMutate hook failed: formatter exploded");
 	});
 
 	it("surfaces a throwing postMutate as a warning note without losing the landed edit", async () => {
 		const env = createEnv();
-		getOrThrow(await env.writeFile("edit.txt", "alpha\nbeta\n"));
+		getOrThrow(await env.writeFile("edit.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));
 
 		const result = await createEditTool().execute(
 			"edit-post-mutate-throws",
 			{ path: "edit.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] },
-			undefined,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async () => {
 					throw new Error("formatter exploded");
 				},
 			},
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
-		expect(getOrThrow(await env.readTextFile("edit.txt"))).toBe("ALPHA\nbeta\n");
+		expect(getOrThrow(await env.readTextFile("edit.txt", BACKGROUND_CONTEXT))).toBe("ALPHA\nbeta\n");
 		expect(textOutput(result)).toBe(
 			"Successfully replaced 1 block(s) in edit.txt.\npostMutate hook failed: formatter exploded",
 		);
@@ -215,24 +247,25 @@ describe("AgentHarness tools postMutate", () => {
 	it("reports the on-disk bytes when postMutate rewrites the file and then throws", async () => {
 		const env = createEnv();
 		const original = "alpha\nbeta\ngamma\n";
-		getOrThrow(await env.writeFile("edit.txt", original));
+		getOrThrow(await env.writeFile("edit.txt", original, BACKGROUND_CONTEXT));
 
 		const result = await createEditTool().execute(
 			"edit-post-mutate-partial",
 			{ path: "edit.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] },
-			undefined,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async (input) => {
-					const current = getOrThrow(await env.readTextFile(input.path));
-					getOrThrow(await env.writeFile(input.path, current.replace("gamma", "GAMMA")));
+					const current = getOrThrow(await env.readTextFile(input.path, BACKGROUND_CONTEXT));
+					getOrThrow(await env.writeFile(input.path, current.replace("gamma", "GAMMA"), BACKGROUND_CONTEXT));
 					throw new Error("formatter exploded after writing");
 				},
 			},
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
-		const onDisk = getOrThrow(await env.readTextFile("edit.txt"));
+		const onDisk = getOrThrow(await env.readTextFile("edit.txt", BACKGROUND_CONTEXT));
 		expect(onDisk).toBe("ALPHA\nbeta\nGAMMA\n");
 		expect(applyPatch(original, result.details?.patch ?? "")).toBe(onDisk);
 		expect(textOutput(result)).toBe(
@@ -242,13 +275,12 @@ describe("AgentHarness tools postMutate", () => {
 
 	it("keeps the landed edit result when the post-mutate re-read fails", async () => {
 		const env = createEnv();
-		getOrThrow(await env.writeFile("edit.txt", "alpha\nbeta\n"));
+		getOrThrow(await env.writeFile("edit.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));
 
 		const result = await createEditTool().execute(
 			"edit-post-mutate-reread-fails",
 			{ path: "edit.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] },
-			undefined,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async (input) => {
@@ -256,6 +288,8 @@ describe("AgentHarness tools postMutate", () => {
 					return { changed: true, note: "replaced the file with nothing" };
 				},
 			},
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
 		expect(textOutput(result)).toBe(
@@ -272,8 +306,7 @@ describe("AgentHarness tools postMutate", () => {
 		const pending = createWriteTool().execute(
 			"write-post-mutate-abort",
 			{ path: "file.txt", content: "payload" },
-			controller.signal,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async (input) => {
@@ -282,11 +315,13 @@ describe("AgentHarness tools postMutate", () => {
 					return { changed: false };
 				},
 			},
+			invocation,
+			withAbortSignal(controller.signal, BACKGROUND_CONTEXT),
 		);
 
 		await expect(pending).rejects.toThrow("Operation aborted");
 		expect(receivedSignal).toBe(controller.signal);
-		expect(getOrThrow(await env.readTextFile("file.txt"))).toBe("payload");
+		expect(getOrThrow(await env.readTextFile("file.txt", BACKGROUND_CONTEXT))).toBe("payload");
 	});
 
 	it("skips postMutate entirely when the signal is already aborted before the hook runs", async () => {
@@ -297,8 +332,7 @@ describe("AgentHarness tools postMutate", () => {
 		const pending = createEditTool().execute(
 			"edit-post-mutate-pre-abort",
 			{ path: "missing.txt", edits: [{ oldText: "a", newText: "b" }] },
-			controller.signal,
-			undefined,
+			noUpdate,
 			{
 				env,
 				postMutate: async () => {
@@ -306,6 +340,8 @@ describe("AgentHarness tools postMutate", () => {
 					return { changed: false };
 				},
 			},
+			invocation,
+			withAbortSignal(controller.signal, BACKGROUND_CONTEXT),
 		);
 		controller.abort();
 
@@ -318,17 +354,19 @@ describe("AgentHarness tools postMutate", () => {
 		const writeResult = await createWriteTool().execute(
 			"write-no-hook",
 			{ path: "file.txt", content: "hello" },
-			undefined,
-			undefined,
+			noUpdate,
 			{ env },
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
-		getOrThrow(await env.writeFile("edit.txt", "alpha\nbeta\n"));
+		getOrThrow(await env.writeFile("edit.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));
 		const editResult = await createEditTool().execute(
 			"edit-no-hook",
 			{ path: "edit.txt", edits: [{ oldText: "alpha", newText: "ALPHA" }] },
-			undefined,
-			undefined,
+			noUpdate,
 			{ env },
+			invocation,
+			BACKGROUND_CONTEXT,
 		);
 
 		// Upstream sync: write success text is `Successfully wrote to <path>` (fork details kept).

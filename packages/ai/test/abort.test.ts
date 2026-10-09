@@ -10,7 +10,7 @@ import { BASETEN_LIVE_TEST_FLAG, getLiveEnvApiKey, QWEN_TOKEN_PLAN_LIVE_TEST_FLA
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
-const [openaiCodexToken] = await Promise.all([resolveApiKey("openai-codex")]);
+const [chatgptSubscriptionToken] = await Promise.all([resolveApiKey("chatgpt-subscription")]);
 const anthropicOAuthToken = getLiveEnvApiKey("ANTHROPIC_OAUTH_TOKEN", "PI_ENABLE_ANTHROPIC_OAUTH_LIVE");
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -183,7 +183,7 @@ describe("AI Providers Abort Tests", () => {
 	});
 
 	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI Provider Abort", () => {
-		const llm = getModel("together", "moonshotai/Kimi-K2.6");
+		const llm = getModel("together", "moonshotai/Kimi-K3");
 
 		it("should abort mid-stream", { retry: 3 }, async () => {
 			await testAbortSignal(llm, { reasoningEffort: "high" });
@@ -350,14 +350,14 @@ describe("AI Providers Abort Tests", () => {
 	});
 
 	describe("OpenAI Codex Provider Abort", () => {
-		it.skipIf(!openaiCodexToken)("should abort mid-stream", { retry: 3 }, async () => {
-			const llm = getModel("openai-codex", "gpt-5.5");
-			await testAbortSignal(llm, { apiKey: openaiCodexToken });
+		it.skipIf(!chatgptSubscriptionToken)("should abort mid-stream", { retry: 3 }, async () => {
+			const llm = getModel("chatgpt-subscription", "gpt-5.5");
+			await testAbortSignal(llm, { apiKey: chatgptSubscriptionToken });
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle immediate abort", { retry: 3 }, async () => {
-			const llm = getModel("openai-codex", "gpt-5.5");
-			await testImmediateAbort(llm, { apiKey: openaiCodexToken });
+		it.skipIf(!chatgptSubscriptionToken)("should handle immediate abort", { retry: 3 }, async () => {
+			const llm = getModel("chatgpt-subscription", "gpt-5.5");
+			await testImmediateAbort(llm, { apiKey: chatgptSubscriptionToken });
 		});
 	});
 

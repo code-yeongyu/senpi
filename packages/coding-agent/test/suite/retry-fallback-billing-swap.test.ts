@@ -1,4 +1,5 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { SENPI_DEFAULT_RETRY_PROFILE } from "@earendil-works/pi-ai/utils/retry-profile/profiles";
 import { afterEach, describe, expect, it } from "vitest";
 import { isBillingErrorMessage } from "../../src/core/retry-fallback/billing.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -16,18 +17,24 @@ const creditBalanceError =
 const creditsRequiredError =
 	'429 event: error\ndata: {"type":"error","error":{"type":"rate_limit_error","message":"Usage credits are required for this model.","details":{"error_code":"credits_required","model":"claude-fable-5"}},"request_id":"req_011CdW2nFxprAx6KQ9JhnAvq"}';
 const terminalNonBillingError = "Error: provider rejected the request permanently";
+// Verbatim provider error observed on a dead OpenAI account (senpi#1969): hard
+// account-quota exhaustion arrives as a 429 usage_limit_reached.
+const usageLimitExhaustedError =
+	'OpenAI API error (429): {"type":"usage_limit_reached","message":"The usage limit has been reached"}';
 
 const billingError = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: creditBalanceError });
 const creditsRequiredBillingError = () =>
 	fauxAssistantMessage("", { stopReason: "error", errorMessage: creditsRequiredError });
+const usageLimitBillingError = () =>
+	fauxAssistantMessage("", { stopReason: "error", errorMessage: usageLimitExhaustedError });
 const hardError = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: terminalNonBillingError });
 
-function createChainHarness(now: () => number): Promise<Harness> {
+function createChainHarness(now: () => number, maxRetries = 0): Promise<Harness> {
 	return createHarness({
 		models: [{ id: "faux-1" }, { id: "faux-2" }],
 		fallbackNow: now,
 		settings: {
-			retry: { enabled: true, maxRetries: 0, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+			retry: { enabled: true, maxRetries, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
 		},
 	});
 }
@@ -89,6 +96,57 @@ describe("retry fallback billing swap", () => {
 		expect(harness.session.model?.id).toBe("faux-2");
 	});
 
+	it("switches to the fallback on the first usage_limit_reached failure and pins it as billing", async () => {
+		let now = 0;
+		// 5 mirrors the senpi-default turn budget: the switch must happen on the
+		// FIRST failure without spending any of that same-model budget.
+		const harness = await createChainHarness(() => now, 5);
+		harnesses.push(harness);
+		harness.setResponses([
+			usageLimitBillingError(),
+			fauxAssistantMessage("fallback answer"),
+			fauxAssistantMessage("still fallback"),
+		]);
+
+		await harness.session.prompt("first");
+
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2"]);
+		expect(harness.eventsOfType("retry_fallback_applied").map((event) => event.reason)).toEqual(["billing"]);
+
+		// Far past every cooldown: the billing-class switch must hold the fallback for
+		// the rest of the session instead of reverting into the quota-dead primary.
+		now += 31 * 60_000;
+		await harness.session.prompt("second");
+
+		expect(harness.eventsOfType("retry_fallback_reverted")).toEqual([]);
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-2"]);
+	});
+
+	it("fails on the first attempt when no fallback is configured, keeping the error turn", async () => {
+		const harness = await createHarness({
+			settings: { retry: { enabled: true, maxRetries: 5, baseDelayMs: 1 } },
+		});
+		harnesses.push(harness);
+		harness.setResponses([usageLimitBillingError()]);
+
+		await harness.session.prompt("hello");
+
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
+		// The terminal failure keeps its assistant message shape: stopReason "error"
+		// is what kept the turn eligible for a fallback chain in the first place.
+		expect(harness.session.state.messages.at(-1)).toMatchObject({
+			stopReason: "error",
+			errorMessage: usageLimitExhaustedError,
+		});
+	});
+
+	it("keeps the senpi-default fallback policy for terminal verdicts at immediate-if-eligible", () => {
+		expect(SENPI_DEFAULT_RETRY_PROFILE.fallback.terminal).toBe("immediate-if-eligible");
+	});
+
 	it("keeps a non-billing hard error temporary and revertable", async () => {
 		let now = 0;
 		const harness = await createChainHarness(() => now);
@@ -125,6 +183,17 @@ describe("isBillingErrorMessage", () => {
 		["purchase credits", "Please purchase credits to continue using this API", true],
 		["anthropic credits_required 429", creditsRequiredError, true],
 		["credits_required error code only", '429 {"error_code":"credits_required"}', true],
+		["openai usage_limit_reached 429", usageLimitExhaustedError, true],
+		[
+			"openai usage_not_included",
+			'429 {"error":{"type":"usage_not_included","message":"This model is not included in your current plan"}}',
+			true,
+		],
+		[
+			"usage-limit approach warning is a throttle, not billing",
+			"OpenAI API error (429): You are approaching your usage limit",
+			false,
+		],
 		["generic credits wording stays non-billing", "earn bonus credits with referrals", false],
 		["overloaded", "overloaded_error", false],
 		["rate limit", "429 rate_limit_exceeded - retry after 30 seconds", false],

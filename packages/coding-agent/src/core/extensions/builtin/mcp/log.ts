@@ -1,17 +1,8 @@
 import { createHash } from "node:crypto";
-import {
-	chmodSync,
-	closeSync,
-	existsSync,
-	mkdirSync,
-	openSync,
-	renameSync,
-	rmSync,
-	statSync,
-	writeSync,
-} from "node:fs";
+import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "../../../../config.ts";
+import { LOG_SINK_RETRY_MS, rotateLogIfNeeded } from "../../../log-file-rotation.ts";
 
 export type McpLogLevel = "debug" | "info" | "notice" | "warning" | "error" | "critical" | "alert" | "emergency";
 export type McpLogChannel = "client" | "server" | "stderr" | "file";
@@ -114,7 +105,7 @@ class FileMcpLogger implements McpLogger {
 	readonly #server: string;
 	readonly #maxFileBytes: number;
 	readonly #ring: string[] = [];
-	#fileSinkDisabled = false;
+	#fileSinkRetryAt = 0;
 
 	constructor(server: string, options: McpLoggerOptions) {
 		this.#server = server;
@@ -176,33 +167,21 @@ class FileMcpLogger implements McpLogger {
 	}
 
 	#writeFile(line: string): void {
-		if (this.#fileSinkDisabled) return;
+		if (Date.now() < this.#fileSinkRetryAt) return;
 		try {
 			mkdirSync(dirname(this.filePath), { recursive: true, mode: 0o700 });
 			const bytes = Buffer.byteLength(`${line}\n`);
-			this.#rotateIfNeeded(bytes);
+			if (this.#maxFileBytes > 0) rotateLogIfNeeded(this.filePath, bytes, this.#maxFileBytes);
 			const fd = openSync(this.filePath, "a", 0o600);
 			try {
 				writeSync(fd, `${line}\n`);
+				fchmodSync(fd, 0o600);
 			} finally {
 				closeSync(fd);
 			}
-			chmodSync(this.filePath, 0o600);
 		} catch {
-			this.#fileSinkDisabled = true;
+			this.#fileSinkRetryAt = Date.now() + LOG_SINK_RETRY_MS;
 			this.#pushRing(this.#formatLine("warning", "file sink disabled after write failure", undefined, "file"));
-		}
-	}
-
-	#rotateIfNeeded(incomingBytes: number): void {
-		if (this.#maxFileBytes <= 0 || !existsSync(this.filePath)) return;
-		if (statSync(this.filePath).size + incomingBytes <= this.#maxFileBytes) return;
-		try {
-			rmSync(`${this.filePath}.1`, { force: true });
-			renameSync(this.filePath, `${this.filePath}.1`);
-			chmodSync(`${this.filePath}.1`, 0o600);
-		} catch {
-			throw new Error("log rotation failed");
 		}
 	}
 }

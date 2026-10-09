@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCheckpointedFileRestoreHandler } from "../../src/core/extensions/builtin/terminal/durable-file.ts";
 import { TerminalManager } from "../../src/core/extensions/builtin/terminal/manager.ts";
 import { type MonitorEvent, MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
@@ -180,7 +180,14 @@ describe("checkpointed-file durability class", () => {
 		await writeFile(path, "landed");
 		const digest = await lane.restore();
 
-		expect(digest).toEqual({ restored: 1, lost: 0, expired: 0, muted: 0, attachedElsewhere: 0, storeError: false });
+		expect(digest).toMatchObject({
+			restored: 1,
+			lost: 0,
+			expired: 0,
+			muted: 0,
+			attachedElsewhere: 0,
+			storeError: false,
+		});
 		expect(lane.lines()).toEqual([`changed while detached: created ${path}`]);
 	});
 
@@ -252,7 +259,14 @@ describe("checkpointed-file durability class", () => {
 		lane.restart();
 		const digest = await lane.restore();
 
-		expect(digest).toEqual({ restored: 1, lost: 0, expired: 0, muted: 0, attachedElsewhere: 0, storeError: false });
+		expect(digest).toMatchObject({
+			restored: 1,
+			lost: 0,
+			expired: 0,
+			muted: 0,
+			attachedElsewhere: 0,
+			storeError: false,
+		});
 		expect(lane.events).toEqual([]);
 	});
 
@@ -265,7 +279,14 @@ describe("checkpointed-file durability class", () => {
 		await rm(path);
 		const digest = await lane.restore();
 
-		expect(digest).toEqual({ restored: 0, lost: 1, expired: 0, muted: 0, attachedElsewhere: 0, storeError: false });
+		expect(digest).toMatchObject({
+			restored: 0,
+			lost: 1,
+			expired: 0,
+			muted: 0,
+			attachedElsewhere: 0,
+			storeError: false,
+		});
 		// Nothing was re-registered, so no watch was left behind and no event was manufactured.
 		expect(lane.registry.snapshot()).toEqual([]);
 		expect(lane.events).toEqual([]);
@@ -293,7 +314,7 @@ describe("checkpointed-file durability class", () => {
 			writer: lane.writer,
 		});
 
-		const result = await handler(saved as ManifestMonitor);
+		const result = await handler(saved as ManifestMonitor, { downtimeMs: 0 });
 
 		expect(result.outcome).toBe("lost");
 		expect(result.reason).toContain("gone");
@@ -317,9 +338,125 @@ describe("checkpointed-file durability class", () => {
 		await writeFile(path, "two");
 		const digest = await lane.restore();
 
-		expect(digest).toEqual({ restored: 0, lost: 1, expired: 0, muted: 0, attachedElsewhere: 0, storeError: false });
+		expect(digest).toMatchObject({
+			restored: 0,
+			lost: 1,
+			expired: 0,
+			muted: 0,
+			attachedElsewhere: 0,
+			storeError: false,
+		});
 		expect(lane.registry.snapshot()).toEqual([]);
 		expect(lane.events).toEqual([]);
+	});
+
+	it("emitLine injects exactly one line into a live command watch and refuses an unknown id", async () => {
+		const started = await lane.tool().monitor.execute("emit-line-command", {
+			description: "command watch",
+			command: "sleep 30",
+		});
+		expect(started.isError, firstText(started)).toBeFalsy();
+		const bashId = String(started.details?.bash_id ?? "");
+		expect(bashId).toMatch(/^bash_\d+$/);
+
+		expect(lane.registry.emitLine(bashId, "restore notice")).toBe(true);
+		expect(lane.events.filter((event) => event.type === "line")).toEqual([
+			{ type: "line", id: bashId, description: "command watch", line: "restore notice" },
+		]);
+		// The file-only entry point keeps refusing a command id.
+		expect(lane.registry.emitFileLine(bashId, "restore notice")).toBe(false);
+		expect(lane.registry.emitLine("bash_does_not_exist", "restore notice")).toBe(false);
+		expect(lane.lines()).toEqual(["restore notice"]);
+
+		const killed = await lane.tool().kill.execute("emit-line-kill", { bash_id: bashId });
+		expect(killed.isError, firstText(killed)).toBeFalsy();
+	});
+
+	describe("live deadline", () => {
+		const MINUTE_MS = 60_000;
+
+		beforeEach(() => {
+			// Timers only: registration and the checkpoint probe still hit the real filesystem.
+			vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		function timedOut(): MonitorEvent[] {
+			return lane.events.filter((event) => event.type === "summary" && event.summary === "watcher timed_out");
+		}
+
+		it("never times out a persistent file watch created through the tool (SF-1)", async () => {
+			const path = join(root, "standing.txt");
+			await writeFile(path, "one");
+			const created = await createPersistentWatch(path);
+
+			vi.advanceTimersByTime(61 * MINUTE_MS);
+
+			expect(timedOut()).toEqual([]);
+			expect(lane.registry.snapshot()).toEqual([
+				expect.objectContaining({ monitorId: created.details?.monitor_id, persistent: true, deadlineMs: null }),
+			]);
+		});
+
+		it("still times out an ephemeral file watch at the 5-minute default", async () => {
+			const path = join(root, "one-shot.txt");
+			await writeFile(path, "one");
+			const created = await lane.tool().monitor.execute("ephemeral-deadline", {
+				description: "one-shot artifact",
+				path,
+				event: "modify",
+			} as MonitorInput);
+			expect(created.isError, firstText(created)).toBeFalsy();
+
+			vi.advanceTimersByTime(5 * MINUTE_MS - 1);
+			expect(timedOut()).toEqual([]);
+			expect(lane.registry.snapshot()).toHaveLength(1);
+
+			vi.advanceTimersByTime(1);
+			expect(timedOut()).toHaveLength(1);
+			expect(lane.registry.snapshot()).toEqual([]);
+		});
+
+		it("restores an ephemeral file watch with only its remaining time", async () => {
+			const path = join(root, "remaining.txt");
+			await writeFile(path, "one");
+			// A persistent create is the only path that records a checkpoint; the entry is then
+			// re-shaped into the ephemeral one a restart hands the handler with time left.
+			await createPersistentWatch(path);
+			const saved = (await lane.writer.store.read())?.monitors[0];
+			if (saved === undefined) throw new Error("no manifest entry was persisted");
+			const restartedAt = 1_000_000;
+			const ephemeral: ManifestMonitor = {
+				...saved,
+				durabilityClass: "ephemeral",
+				persistent: false,
+				expiresAt: null,
+				deadlineMs: restartedAt + 30_000,
+			};
+
+			const registry = lane.restart();
+			const handler = createCheckpointedFileRestoreHandler({ registry, now: () => restartedAt });
+			const result = await handler(ephemeral, { downtimeMs: 0, remainingMs: 30_000 });
+
+			expect(result).toEqual({ outcome: "restored" });
+			expect(registry.snapshot()).toEqual([
+				expect.objectContaining({
+					monitorId: saved.monitorId,
+					persistent: false,
+					deadlineMs: restartedAt + 30_000,
+				}),
+			]);
+
+			vi.advanceTimersByTime(30_000 - 1);
+			expect(timedOut()).toEqual([]);
+
+			vi.advanceTimersByTime(1);
+			expect(timedOut()).toHaveLength(1);
+			expect(registry.snapshot()).toEqual([]);
+		});
 	});
 
 	it("keeps the mon_ id across the restore and stops the restored watch with kill_bash", async () => {

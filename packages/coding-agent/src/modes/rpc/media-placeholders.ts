@@ -44,12 +44,30 @@ const MEDIA_BEARING_RESPONSE_COMMANDS = new Set([
 	"open_session",
 ]);
 
+/** Why a host could not keep a tool image on disk for the client to read. */
+export type MediaUnavailableReason = "image_too_large" | "session_limit" | "storage_error";
+
+/** Where a persisted image lives (absolute), or why there is no file. */
+export type PersistedMedia = { readonly path: string } | { readonly unavailableReason: MediaUnavailableReason };
+
+/**
+ * Writes one image's bytes to the session's media directory and reports the outcome. Returns
+ * `undefined` for a session that has nowhere durable to keep them: its placeholder carries neither field.
+ */
+export type MediaPersister = (
+	ref: { readonly toolCallId: string; readonly contentIndex: number },
+	block: { readonly data: string; readonly mimeType?: string },
+) => PersistedMedia | undefined;
+
 /** The block a capable client receives in place of inline image bytes. */
 export interface ImageRefBlock {
 	readonly type: "image_ref";
 	readonly mimeType: string;
 	readonly byteLength: number;
 	readonly ref: { readonly toolCallId: string; readonly contentIndex: number };
+	/** Absolute path of the stored bytes; written before this placeholder was emitted. */
+	readonly path?: string;
+	readonly unavailableReason?: MediaUnavailableReason;
 }
 
 /**
@@ -72,28 +90,35 @@ function isInlineImage(value: unknown): value is { type: "image"; data: string; 
 }
 
 /** Replace inline images in one tool-result content array; same reference when none. */
-function omitContentImages(content: readonly unknown[], toolCallId: string): readonly unknown[] {
+function omitContentImages(
+	content: readonly unknown[],
+	toolCallId: string,
+	persist: MediaPersister | undefined,
+): readonly unknown[] {
 	let replaced: unknown[] | undefined;
 	for (let index = 0; index < content.length; index++) {
 		const block = content[index];
 		if (!isInlineImage(block)) continue;
 		replaced ??= [...content];
+		const ref = { toolCallId, contentIndex: index };
+		// The bytes reach disk before the placeholder that names them leaves this function.
 		replaced[index] = {
 			type: "image_ref",
 			mimeType: typeof block.mimeType === "string" ? block.mimeType : "application/octet-stream",
 			byteLength: base64ByteLength(block.data),
-			ref: { toolCallId, contentIndex: index },
+			ref,
+			...persist?.(ref, block),
 		} satisfies ImageRefBlock;
 	}
 	return replaced ?? content;
 }
 
 /** A toolResult message whose content array carries images, rebuilt without them. */
-function omitToolResultImages(message: RpcRecord): RpcRecord {
+function omitToolResultImages(message: RpcRecord, persist: MediaPersister | undefined): RpcRecord {
 	const content = message.content;
 	const toolCallId = typeof message.toolCallId === "string" ? message.toolCallId : "";
 	if (!Array.isArray(content)) return message;
-	const omitted = omitContentImages(content, toolCallId);
+	const omitted = omitContentImages(content, toolCallId, persist);
 	return omitted === content ? message : { ...message, content: omitted };
 }
 
@@ -102,11 +127,11 @@ function omitToolResultImages(message: RpcRecord): RpcRecord {
  * scrubbed, wherever it sits (message arrays, `turn_end.toolResults`, session entries,
  * tree nodes, `state.entries`). Unchanged sub-trees are returned by reference.
  */
-function walk(value: unknown): unknown {
+function walk(value: unknown, persist: MediaPersister | undefined): unknown {
 	if (Array.isArray(value)) {
 		let replaced: unknown[] | undefined;
 		for (let index = 0; index < value.length; index++) {
-			const next = walk(value[index]);
+			const next = walk(value[index], persist);
 			if (next === value[index]) continue;
 			replaced ??= [...value];
 			replaced[index] = next;
@@ -115,12 +140,12 @@ function walk(value: unknown): unknown {
 	}
 	if (!isPlainObject(value)) return value;
 
-	const scrubbed = value.role === "toolResult" ? omitToolResultImages(value) : value;
+	const scrubbed = value.role === "toolResult" ? omitToolResultImages(value, persist) : value;
 	let replaced: RpcRecord | undefined = scrubbed === value ? undefined : { ...scrubbed };
 	for (const [key, child] of Object.entries(scrubbed)) {
 		if (key === "content" && scrubbed !== value) continue;
 		if (!isPlainObject(child) && !Array.isArray(child)) continue;
-		const next = walk(child);
+		const next = walk(child, persist);
 		if (next === child) continue;
 		replaced ??= { ...scrubbed };
 		replaced[key] = next;
@@ -129,11 +154,11 @@ function walk(value: unknown): unknown {
 }
 
 /** `tool_execution_end.result.content` is not a toolResult message; scrub it explicitly. */
-function omitToolExecutionEndImages(record: RpcRecord): RpcRecord {
+function omitToolExecutionEndImages(record: RpcRecord, persist: MediaPersister | undefined): RpcRecord {
 	const result = record.result;
 	if (!isPlainObject(result) || !Array.isArray(result.content)) return record;
 	const toolCallId = typeof record.toolCallId === "string" ? record.toolCallId : "";
-	const omitted = omitContentImages(result.content, toolCallId);
+	const omitted = omitContentImages(result.content, toolCallId, persist);
 	return omitted === result.content ? record : { ...record, result: { ...result, content: omitted } };
 }
 
@@ -152,10 +177,10 @@ function carriesMedia(record: RpcRecord): boolean {
  * Returns the SAME reference when nothing changed, so the caller can skip the second
  * serialization entirely.
  */
-export function omitInlineMedia<T extends object>(record: T): T {
+export function omitInlineMedia<T extends object>(record: T, persist?: MediaPersister): T {
 	const typed = record as unknown as RpcRecord;
 	if (!carriesMedia(typed)) return record;
-	const scrubbed = typed.type === "tool_execution_end" ? omitToolExecutionEndImages(typed) : typed;
-	const walked = walk(scrubbed);
+	const scrubbed = typed.type === "tool_execution_end" ? omitToolExecutionEndImages(typed, persist) : typed;
+	const walked = walk(scrubbed, persist);
 	return (walked === typed ? record : walked) as T;
 }

@@ -2,12 +2,22 @@ import { join } from "node:path";
 import type {
 	Api,
 	AssistantMessage,
+	AssistantMessageEventStream,
+	AuthOperationOptions,
 	AuthResult,
+	ClassifierApi,
+	ClassifierContext,
+	ClassifierModel,
+	ClassifierResult,
 	Context,
 	Model,
 	ModelsApiStreamOptions,
+	ModelsClassifierOptions,
 	ModelsRefreshOptions,
 	ModelsRefreshResult,
+	ModelsSimpleStreamOptions,
+	ModelType,
+	ModelTypeMap,
 	Provider,
 	ProviderHeaders,
 } from "@earendil-works/pi-ai";
@@ -17,6 +27,7 @@ import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelRuntime as DefaultModelRuntime } from "./model-runtime.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
+import type { VirtualModelDefinition } from "./virtual-models.ts";
 
 export type { ProviderConfigInput } from "./provider-composer.ts";
 export type ResolvedRequestAuth =
@@ -27,8 +38,9 @@ export type ResolvedRequestAuth =
 			extraBody?: Record<string, unknown>;
 			baseUrl?: string;
 			upstreamModelId?: string;
-			serviceTier?: "auto" | "flex" | "priority";
+			serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 			env?: Record<string, string>;
+			ambient?: true;
 	  }
 	| { ok: false; error: string };
 export { clearApiKeyCache } from "./provider-composer.ts";
@@ -81,6 +93,7 @@ export class ModelRegistry {
 		if (this.runtime.hasAvailabilitySnapshot()) {
 			return [...this.runtime.getAvailableSnapshot()];
 		}
+		this.retryBusyCredentialRead();
 		return this.runtime.getProviders().flatMap((provider) => {
 			if (!this.authStorage.hasAuth(provider.id) && !this.runtime.getProviderAuthStatus(provider.id).configured) {
 				return [];
@@ -94,27 +107,47 @@ export class ModelRegistry {
 		return this.runtime.getModel(provider, modelId);
 	}
 
+	/** Find a model of a non-chat type, e.g. `findOfType("classifier", "typesafe", "jev-latest")`. */
+	findOfType<TType extends ModelType>(
+		type: TType,
+		provider: string,
+		modelId: string,
+	): ModelTypeMap[TType] | undefined {
+		return this.runtime.getModelOfType(type, provider, modelId);
+	}
+
 	hasConfiguredAuth(model: Model<Api>): boolean {
+		this.retryBusyCredentialRead();
 		return this.authStorage.hasAuth(model.provider) || this.runtime.getProviderAuthStatus(model.provider).configured;
+	}
+
+	/**
+	 * The live auth check reads the in-memory credentials. When the last read found the store
+	 * locked they were never loaded, so re-read now (bounded by the sync lock budget) instead
+	 * of answering from the empty fallback for the rest of the process.
+	 */
+	private retryBusyCredentialRead(): void {
+		if (this.authStorage.isCredentialStoreBusy()) this.authStorage.reload();
 	}
 
 	getUpstreamModelId(model: Model<Api>): string | undefined {
 		return this.runtime.getCompatibilityRequestConfig(model).upstreamModelId;
 	}
 
-	getServiceTier(model: Model<Api>): "auto" | "flex" | "priority" | undefined {
+	getServiceTier(model: Model<Api>): "auto" | "flex" | "priority" | "ultrafast" | undefined {
 		return this.runtime.getCompatibilityRequestConfig(model).serviceTier;
 	}
 
 	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
 		try {
 			const resolution = await this.runtime.getAuth(model);
-			const compatibility = this.runtime.getCompatibilityRequestConfig(model, resolution?.env);
+			const compatibility = this.runtime.getCompatibilityRequestConfig(model);
 			if (!resolution) {
 				if (compatibility.authHeader) {
 					return { ok: false, error: `No API key found for "${model.provider}"` };
 				}
-				return { ok: true, headers: compatibility.headers, extraBody: compatibility.extraBody };
+				const headers = await this.runtime.getCompatibilityRequestHeaders(model);
+				return { ok: true, headers, extraBody: compatibility.extraBody };
 			}
 			return {
 				ok: true,
@@ -125,6 +158,7 @@ export class ModelRegistry {
 				upstreamModelId: compatibility.upstreamModelId,
 				serviceTier: compatibility.serviceTier,
 				env: resolution.env,
+				...(resolution.ambient ? { ambient: true } : {}),
 			};
 		} catch (error) {
 			const cause = error instanceof Error ? error.cause : undefined;
@@ -148,12 +182,57 @@ export class ModelRegistry {
 		return this.runtime.getProvider(provider);
 	}
 
+	/** Stream through the configured provider with request-time authentication. */
+	stream<TApi extends Api>(
+		model: Model<TApi>,
+		context: Context,
+		options?: ModelsApiStreamOptions<TApi>,
+	): AssistantMessageEventStream {
+		return this.runtime.stream(model, context, options);
+	}
+
+	/** Stream with provider-neutral options and request-time authentication. */
+	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
+		return this.runtime.streamSimple(model, context, options);
+	}
+
 	complete<TApi extends Api>(
 		model: Model<TApi>,
 		context: Context,
 		options?: ModelsApiStreamOptions<TApi>,
 	): Promise<AssistantMessage> {
 		return this.runtime.complete(model, context, options);
+	}
+
+	/** Every known model of a type (chat, image, classifier), optionally for one provider. */
+	getModelsOfType<TType extends ModelType>(type: TType, provider?: string): readonly ModelTypeMap[TType][] {
+		return this.runtime.getModelsOfType(type, provider);
+	}
+
+	/** Models of a type whose provider has working credentials. */
+	getAvailableOfType<TType extends ModelType>(
+		type: TType,
+		provider?: string,
+		options?: AuthOperationOptions,
+	): Promise<readonly ModelTypeMap[TType][]> {
+		return this.runtime.getAvailableOfType(type, provider, options);
+	}
+
+	getModelOfType<TType extends ModelType>(
+		type: TType,
+		provider: string,
+		modelId: string,
+	): ModelTypeMap[TType] | undefined {
+		return this.runtime.getModelOfType(type, provider, modelId);
+	}
+
+	/** Classify structured state with request-time authentication. Never rejects. */
+	classify(
+		model: ClassifierModel<ClassifierApi>,
+		context: ClassifierContext,
+		options?: ModelsClassifierOptions,
+	): Promise<ClassifierResult> {
+		return this.runtime.classify(model, context, options);
 	}
 
 	getProviderDisplayName(provider: string): string {
@@ -194,6 +273,14 @@ export class ModelRegistry {
 
 	unregisterProvider(providerName: string): void {
 		this.runtime.unregisterProvider(providerName);
+	}
+
+	registerVirtualModel(definition: VirtualModelDefinition): void {
+		this.runtime.registerVirtualModel(definition);
+	}
+
+	unregisterVirtualModel(providerName: string, id: string): void {
+		this.runtime.unregisterVirtualModel(providerName, id);
 	}
 
 	getRegisteredProviderConfig(providerName: string): ProviderConfigInput | undefined {

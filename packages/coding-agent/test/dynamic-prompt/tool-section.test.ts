@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { buildDynamicSystemPrompt } from "../../src/core/dynamic-prompt/build.ts";
 import { buildToolSection } from "../../src/core/dynamic-prompt/tool-section.ts";
 import type { AvailableTool } from "../../src/core/dynamic-prompt/types.ts";
 
@@ -47,6 +48,37 @@ describe("buildToolSection", () => {
 
 		expect(result).toContain("read");
 		expect(result).not.toContain("secret_tool");
+	});
+
+	test("keeps withheld grep callable guidance without advertising grep or bash", () => {
+		const options = {
+			cwd: "/workspace",
+			selectedTools: ["read", "eval"],
+			toolSnippets: { read: "Read files", eval: "Evaluate code", grep: "Search contents", bash: "Run commands" },
+			promptGuidelines: [],
+			contextFiles: [],
+			skills: [],
+		};
+		const section = buildToolSection({
+			tools: [
+				{ name: "read", category: "other" },
+				{ name: "eval", category: "other" },
+			],
+			toolSnippets: options.toolSnippets,
+		});
+		const advertisedNames = [...section.matchAll(/^- (\w+):/gm)].map((match) => match[1]);
+		expect(advertisedNames).toEqual(["read", "eval"]);
+		const call = section.match(/tool\.grep\(\{\s*([^}]+)\s*\}\)/);
+		expect(call?.[1].split(",").map((parameter) => parameter.trim())).toEqual(["pattern", "path"]);
+		expect(buildDynamicSystemPrompt(options)).toContain(section);
+	});
+
+	test.each([true, false])("omits eval-only grep calls when grep is directly selected=%s", (selected) => {
+		const section = buildToolSection({
+			tools: selected ? [{ name: "grep", category: "search" }] : [],
+			toolSnippets: selected ? { grep: "Search contents" } : {},
+		});
+		expect(section).not.toMatch(/tool\.grep\(/);
 	});
 
 	test("returns minimal output for empty tools", () => {

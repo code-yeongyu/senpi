@@ -1,12 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import { parseGoalCommand } from "../../src/core/extensions/builtin/goal/command.ts";
-import {
-	evaluateGoalContinuation,
-	type GoalContinuationInput,
-	shouldQueueGoalContinuationAfterAgentEnd,
-	shouldQueueGoalContinuationWhenIdle,
-} from "../../src/core/extensions/builtin/goal/continuation.ts";
+import { didAgentEndCleanly } from "../../src/core/extensions/builtin/goal/continuation.ts";
 import {
 	formatGoalElapsedSeconds,
 	formatGoalForTool,
@@ -17,7 +12,6 @@ import { isResumeOfStoppedGoal } from "../../src/core/extensions/builtin/goal/li
 import {
 	buildContinuationPrompt,
 	buildGoalStallNotice,
-	buildMonitorStallNotice,
 	buildTruncationRecoveryPrompt,
 } from "../../src/core/extensions/builtin/goal/prompt.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
@@ -132,78 +126,15 @@ describe("goal command parsing", () => {
 	});
 });
 
-describe("goal continuation gating", () => {
-	it("queues only for active idle goals with no pending messages", () => {
-		const active = makeGoal({ status: "active" });
-		expect(shouldQueueGoalContinuationWhenIdle(active, true, false)).toBe(true);
-		expect(shouldQueueGoalContinuationWhenIdle(active, false, false)).toBe(false);
-		expect(shouldQueueGoalContinuationWhenIdle(active, true, true)).toBe(false);
-		expect(shouldQueueGoalContinuationWhenIdle(makeGoal({ status: "paused" }), true, false)).toBe(false);
-		expect(
-			shouldQueueGoalContinuationWhenIdle(
-				makeGoal({ status: "blocked", blockedReason: "Waiting", blockedAt: 1 }),
-				true,
-				false,
-			),
-		).toBe(false);
-		expect(shouldQueueGoalContinuationWhenIdle(null, true, false)).toBe(false);
-	});
-
-	it("queues after agent end for active goals with no pending messages", () => {
-		const cleanMessages = [assistantMessageWithStopReason("stop")];
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, cleanMessages)).toBe(true);
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), true, cleanMessages)).toBe(false);
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "complete" }), false, cleanMessages)).toBe(
-			false,
-		);
-		expect(
-			shouldQueueGoalContinuationAfterAgentEnd(
-				makeGoal({ status: "blocked", blockedReason: "Waiting", blockedAt: 1 }),
-				false,
-				cleanMessages,
-			),
-		).toBe(false);
-		expect(shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [])).toBe(false);
-		expect(
-			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
-				assistantMessageWithStopReason("aborted"),
-			]),
-		).toBe(false);
-		expect(
-			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
-				assistantMessageWithStopReason("error"),
-			]),
-		).toBe(false);
-		expect(
-			shouldQueueGoalContinuationAfterAgentEnd(makeGoal({ status: "active" }), false, [
-				assistantMessageWithStopReason("toolUse"),
-				abortedToolResultMessage(),
-			]),
-		).toBe(false);
-	});
-
-	it("applies the persisted cap on every continuation path", () => {
-		const input = {
-			goal: makeGoal({ consecutiveContinuations: 8 }),
-			isIdle: true,
-			hasPendingMessages: false,
-			lastStopReason: "stop",
-			consecutiveContinuations: 8,
-			lastContinuationSignature: undefined,
-			currentSignature: undefined,
-			consecutiveLengthRecoveries: 0,
-			recentNormalizedOutputHashes: [],
-			toollessContinuationStreak: 0,
-			continuationPending: false,
-		} satisfies Omit<GoalContinuationInput, "path">;
-
-		expect(evaluateGoalContinuation({ ...input, path: "immediate" })).toEqual({ kind: "deny", reason: "cap" });
-		expect(evaluateGoalContinuation({ ...input, path: "sessionStart" })).toEqual({ kind: "deny", reason: "cap" });
-		expect(evaluateGoalContinuation({ ...input, path: "userGrace" })).toEqual({ kind: "deny", reason: "cap" });
-		expect(evaluateGoalContinuation({ ...input, path: "monitorDelayed" })).toEqual({
-			kind: "deny",
-			reason: "cap",
-		});
+// Production gates continuations through evaluateGoalContinuation (goal-continuation-verdict.test.ts owns
+// status, pending and idle) and didAgentEndCleanly, whose message-shape rows live here.
+describe("goal continuation clean-end detection", () => {
+	it("treats only a final clean assistant stop as a clean agent end", () => {
+		expect(didAgentEndCleanly([assistantMessageWithStopReason("stop")])).toBe(true);
+		expect(didAgentEndCleanly([])).toBe(false);
+		expect(didAgentEndCleanly([assistantMessageWithStopReason("aborted")])).toBe(false);
+		expect(didAgentEndCleanly([assistantMessageWithStopReason("error")])).toBe(false);
+		expect(didAgentEndCleanly([assistantMessageWithStopReason("toolUse"), abortedToolResultMessage()])).toBe(false);
 	});
 });
 
@@ -252,6 +183,42 @@ describe("goal continuation prompt (budget-free)", () => {
 	});
 });
 
+describe("goal continuation prompt per receiving model", () => {
+	const goal = makeGoal({ objective: "Fix <bug> & ship", tokensUsed: 5, timeUsedSeconds: 12 });
+
+	it("drops the completion audit and usage lines for a GPT-6 Astra receiver while keeping the goal contract", () => {
+		for (const modelId of ["gpt-6-astra", "openai/gpt-6-astra-fast", "chatgpt-subscription/gpt-6-astra"]) {
+			const prompt = buildContinuationPrompt(goal, { modelId });
+			expect(prompt).toContain("<untrusted_objective>");
+			expect(prompt).toContain("Fix &lt;bug&gt; &amp; ship");
+			expect(prompt).not.toContain("Completion audit");
+			expect(prompt).not.toContain("No-progress check");
+			expect(prompt).not.toContain("Usage so far:");
+			expect(prompt).not.toContain("uncertainty");
+			expect(prompt).toContain('update_goal with status "complete"');
+			expect(prompt).toContain("three goal turns");
+			expect(prompt).toContain("question tool (request_user_input / ask_user_question)");
+			expect(prompt).toContain("let it wake the goal");
+			expect(prompt.length).toBeLessThan(buildContinuationPrompt(goal).length / 2);
+		}
+	});
+
+	it("renders every other receiver, and an unknown one, exactly as the unpinned prompt", () => {
+		const unpinned = buildContinuationPrompt(goal);
+		for (const modelId of [
+			"gpt-6-sol",
+			"openai/gpt-6.1-sol",
+			"gpt-6-luna",
+			"claude-opus-5-5",
+			"kimi-k3",
+			"gpt-6-astra-preview",
+			undefined,
+		]) {
+			expect(buildContinuationPrompt(goal, { modelId })).toBe(unpinned);
+		}
+	});
+});
+
 describe("goal truncation recovery prompt", () => {
 	it("stays short and re-injects no objective text or audit blocks", () => {
 		const prompt = buildTruncationRecoveryPrompt();
@@ -284,12 +251,6 @@ describe("goal stall notice", () => {
 		expect(notice).toContain("peek");
 		expect(notice).toContain("stop");
 		expect(notice).toContain("4");
-	});
-
-	it("keeps buildMonitorStallNotice as a legacy wrapper over the generalized notice", () => {
-		const legacy = buildMonitorStallNotice(5);
-		expect(legacy).toContain("<goal_stall_check>");
-		expect(legacy).toBe(buildGoalStallNotice(5, { liveSources: ["terminal-monitors"] }));
 	});
 });
 

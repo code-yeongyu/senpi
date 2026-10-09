@@ -1,0 +1,154 @@
+import type { Context } from "@earendil-works/pi-ai";
+import { describe, expect, it } from "vitest";
+import type { Options } from "../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
+import { decideNativeContinuity } from "../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
+import { configFingerprint } from "../src/core/extensions/builtin/anthropic-subscription/session-sync.ts";
+import { HOST_TOOL_POLICY_FINGERPRINT } from "../src/core/extensions/builtin/anthropic-subscription/tools.ts";
+
+const STABLE_PROMPT_BODY = [
+	"You are senpi, a coding agent.",
+	"",
+	"## Available Tools",
+	"- read: Read file contents",
+].join("\n");
+
+// senpi#2093: the generated prompt carries no date or cwd, so it is hashed verbatim.
+function promptWith(suffix = ""): string {
+	return `${STABLE_PROMPT_BODY}${suffix}`;
+}
+
+function options(overrides: Partial<Options> = {}): Options {
+	return {
+		cwd: "/repo",
+		model: "claude-opus-4-5",
+		tools: ["Read", "Bash"],
+		permissionMode: "dontAsk",
+		includePartialMessages: true,
+		systemPrompt: promptWith(),
+		settingSources: [],
+		...overrides,
+	} as Options;
+}
+
+function context(): Context {
+	return {
+		systemPrompt: promptWith(),
+		messages: [],
+		tools: [{ name: "read", description: "Read file contents", parameters: { type: "object", properties: {} } }],
+	} as unknown as Context;
+}
+
+describe("claude-sdk-oauth config fingerprint stability", () => {
+	it("is identical for two independently rebuilt but equivalent turns", () => {
+		const first = configFingerprint(options(), context(), "oauth-slots", "primary");
+		const second = configFingerprint(options(), context(), "oauth-slots", "primary");
+
+		expect(second.systemPromptHash).toBe(first.systemPromptHash);
+		expect(second.toolsetHash).toBe(first.toolsetHash);
+	});
+
+	it("hashes the prompt verbatim: a date line inside it is not normalized away", () => {
+		const before = configFingerprint(
+			options({ systemPrompt: promptWith("\n\nCurrent date: 2026-07-31") }),
+			context(),
+			"oauth-slots",
+			"primary",
+		);
+		const after = configFingerprint(
+			options({ systemPrompt: promptWith("\n\nCurrent date: 2026-08-01") }),
+			context(),
+			"oauth-slots",
+			"primary",
+		);
+
+		expect(after.systemPromptHash).not.toBe(before.systemPromptHash);
+	});
+
+	it("stays fail-closed when the working directory changes", () => {
+		const before = configFingerprint(options(), context(), "oauth-slots", "primary");
+		const after = configFingerprint(options({ cwd: "/elsewhere" }), context(), "oauth-slots", "primary");
+
+		expect(after.systemPromptHash).toBe(before.systemPromptHash);
+		expect(after.toolsetHash).not.toBe(before.toolsetHash);
+	});
+
+	it("stays fail-closed when a semantic prompt instruction changes", () => {
+		const before = configFingerprint(options(), context(), "oauth-slots", "primary");
+		const after = configFingerprint(
+			options({ systemPrompt: promptWith("\nAlways respond in Korean.") }),
+			context(),
+			"oauth-slots",
+			"primary",
+		);
+
+		expect(after.systemPromptHash).not.toBe(before.systemPromptHash);
+	});
+
+	it("stays fail-closed when a tool description changes", () => {
+		const changed = {
+			systemPrompt: promptWith(),
+			messages: [],
+			tools: [
+				{ name: "read", description: "Read files differently", parameters: { type: "object", properties: {} } },
+			],
+		} as unknown as Context;
+
+		const before = configFingerprint(options(), context(), "oauth-slots", "primary");
+		const after = configFingerprint(options(), changed, "oauth-slots", "primary");
+
+		expect(after.toolsetHash).not.toBe(before.toolsetHash);
+	});
+
+	it("fingerprints the host tool policy by version instead of function source", () => {
+		const policyProbe = configFingerprint(options(), context(), "oauth-slots", "primary");
+		const withDifferentCallbackIdentity = configFingerprint(
+			options({ canUseTool: async () => ({ behavior: "deny", message: "no" }) } as Partial<Options>),
+			context(),
+			"oauth-slots",
+			"primary",
+		);
+
+		expect(HOST_TOOL_POLICY_FINGERPRINT).toBe("host-tool-denial-v3");
+		expect(withDifferentCallbackIdentity.toolsetHash).toBe(policyProbe.toolsetHash);
+	});
+
+	it("reattaches a restart binding persisted under an older host-tool policy version", () => {
+		// A restart has no live query: resume builds a fresh query carrying the
+		// CURRENT hooks and options, so the pre-bump denial text is never resumed.
+		// Flattening here was the #7884 full-resend; continuity must survive the bump.
+		const current = configFingerprint(options(), context(), "oauth-slots", "primary");
+		const decision = decideNativeContinuity({
+			entry: undefined,
+			binding: {
+				sdkSessionId: "sdk-v1",
+				sentCount: 1,
+				sentHashes: ["h1"],
+				sentPrefixHash: undefined,
+				lastAssistantUuid: "a1",
+				accountName: "primary",
+				modelId: "claude-opus-4-5",
+				systemPromptHash: current.systemPromptHash,
+				toolsetHash: "toolset-hash-from-host-tool-denial-v1",
+			},
+			currentHashes: ["h1"],
+			accountName: "primary",
+			modelId: "claude-opus-4-5",
+			fingerprint: current,
+			transcriptAvailable: true,
+			crossAccountResumeSupported: true,
+		});
+		expect(decision).toEqual({ kind: "reattach", sdkSessionId: "sdk-v1", from: 1, reason: "toolset_changed" });
+	});
+
+	it("stays fail-closed when the resolved Claude executable changes", () => {
+		const before = configFingerprint(options(), context(), "oauth-slots", "primary");
+		const after = configFingerprint(
+			options({ pathToClaudeCodeExecutable: "/other/claude" }),
+			context(),
+			"oauth-slots",
+			"primary",
+		);
+
+		expect(after.toolsetHash).not.toBe(before.toolsetHash);
+	});
+});

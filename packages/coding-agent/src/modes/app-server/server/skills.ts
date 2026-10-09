@@ -157,6 +157,7 @@ export function mapSkillScope(scope: Skill["sourceInfo"]["scope"]): SkillScope {
 		case "project":
 			return "repo";
 		case "temporary":
+		case "system":
 			return "system";
 		default:
 			return assertNever(scope);

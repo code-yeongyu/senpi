@@ -1319,57 +1319,15 @@ describe("permission integration", () => {
 		});
 
 		describe("non-interactive handler", () => {
-			it("should allow when CLI override allows", () => {
-				// given
-				const request = createRequest({ id: "req-noui", patterns: ["ls"] });
-				const cliOverride: Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }];
-				const staticRuleset: Ruleset = [{ permission: "bash", pattern: "*", action: "deny" }];
-				const events: Array<{ event: string; data: unknown }> = [];
-
-				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, (event, data) =>
-					events.push({ event, data }),
-				);
-
-				// then
-				expect(result).toBeUndefined();
-				expect(events).toHaveLength(2);
-				expect(events[0]?.event).toBe("permission_asked");
-				expect(events[1]?.event).toBe("permission_replied");
-				expect((events[1]?.data as { reply: string } | undefined)?.reply).toBe("allow");
-			});
-
-			it("should reject when CLI override denies", () => {
-				// given
-				const request = createRequest({ id: "req-noui-2", patterns: ["ls"] });
-				const cliOverride: Ruleset = [{ permission: "bash", pattern: "*", action: "deny" }];
-				const staticRuleset: Ruleset = [];
-				const events: Array<{ event: string; data: unknown }> = [];
-
-				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, (event, data) =>
-					events.push({ event, data }),
-				);
-
-				// then
-				expect(result).toEqual({
-					requestID: "req-noui-2",
-					reply: "reject",
-					message: "Permission denied by CLI flag: bash",
-				});
-			});
-
 			it("should auto-reject when no rules match in no-UI mode", () => {
 				// given
 				const request = createRequest({ id: "req-noui-3", patterns: ["ls", "pwd"] });
-				const cliOverride: Ruleset = [];
-				const staticRuleset: Ruleset = [];
 				const events: Array<{ event: string; data: unknown }> = [];
 
 				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, (event, data) =>
-					events.push({ event, data }),
-				);
+				const result = handleNoUI(request, {
+					emitEvent: (event, data) => events.push({ event, data }),
+				});
 
 				// then
 				expect(result).toEqual({

@@ -1,6 +1,7 @@
 import { FixedRing, type ScalarEntry, ScalarScanner } from "../stream-utils.ts";
 import type { DetectorContext, DetectorMatch, StreamDetector } from "../types.ts";
 import { createLineCycleState, type LineCycleState, updateLineCycles } from "./collapse-lines.ts";
+import { createNearDuplicateState, type NearDuplicateState, updateNearDuplicates } from "./collapse-near-duplicates.ts";
 import {
 	createParagraphRepeatState,
 	type ParagraphRepeatState,
@@ -26,6 +27,7 @@ export interface CollapseState {
 	readonly periods: ShortPeriodState;
 	readonly lines: LineCycleState;
 	readonly paragraphs: ParagraphRepeatState;
+	readonly nearDuplicates: NearDuplicateState;
 	latched: DetectorMatch | null;
 }
 
@@ -38,6 +40,7 @@ export function createCollapseState(): CollapseState {
 		periods: createShortPeriodState(),
 		lines: createLineCycleState(),
 		paragraphs: createParagraphRepeatState(),
+		nearDuplicates: createNearDuplicateState(),
 		latched: null,
 	};
 }
@@ -52,7 +55,8 @@ function checkDelta(state: CollapseState, delta: string, context: DetectorContex
 			updateWhitespaceFlood(state.whitespace, entry) ??
 			updateShortPeriods(state.periods, entry, state.tailRing) ??
 			updateLineCycles(state.lines, entry) ??
-			(watchParagraphs ? updateParagraphRepeats(state.paragraphs, entry) : null);
+			(watchParagraphs ? updateParagraphRepeats(state.paragraphs, entry) : null) ??
+			(watchParagraphs ? updateNearDuplicates(state.nearDuplicates, entry) : null);
 		if (match !== null) {
 			state.latched = match;
 			return match;

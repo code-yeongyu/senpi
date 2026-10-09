@@ -52,6 +52,9 @@ const FG_COLORS = {
 	thinkingMax: "#2d2d2d",
 	bashMode: "#2e2e2e",
 	searchMatchText: "#2f2f2f",
+	skillMention: "#303030",
+	scrollbarTrack: "#3a3a3a",
+	scrollbarThumb: "#3b3b3b",
 } satisfies Record<ThemeColor, string>;
 
 const BG_COLORS = {
@@ -122,9 +125,17 @@ describe("nested tool-call widgets", () => {
 	});
 
 	it("widget: grep renders the real call shape", () => {
-		const output = plain(render({ name: "grep", ok: true, args: { pattern: "needle", path: "src" } }));
+		const output = plain(
+			render({
+				name: "grep",
+				ok: true,
+				args: { pattern: "needle", path: "src" },
+				details: { matchCount: 4, fileCount: 2, engine: "native" },
+			}),
+		);
 
 		expect(output).toContain("/needle/");
+		expect(output).toContain("matches=4 files=2 (native)");
 		expect(output).not.toContain("tool.grep(");
 	});
 

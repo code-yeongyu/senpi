@@ -3,7 +3,8 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Tool, validateToolArguments } from "@earendil-works/pi-ai";
+import { runToolCall } from "@earendil-works/pi-agent-core";
+import { type AssistantMessage, type JsonObject, type Tool, validateToolArguments } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { describe, expect, it } from "vitest";
 import {
@@ -17,8 +18,10 @@ import type {
 	AgentToolResult,
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	ToolDefinition,
 } from "../../src/core/extensions/types.ts";
+import { wrapToolDefinition } from "../../src/core/tools/tool-definition-wrapper.ts";
 
 type TodoParams = Static<typeof TODO_PARAMS_SCHEMA>;
 type RegisteredTodoTool = ToolDefinition<typeof TODO_PARAMS_SCHEMA, TodoToolDetails, unknown>;
@@ -118,6 +121,8 @@ function captureTodoTool(initialPhases: readonly TodoPhase[]) {
 		setCurrentPhases: (phases) => {
 			currentPhases = clonePhases(phases);
 		},
+		getCurrentAsk: () => undefined,
+		setCurrentAsk: () => {},
 		syncWidget: () => {},
 	});
 	if (!capturedTool) throw new Error("Expected todo tool to be registered");
@@ -126,7 +131,9 @@ function captureTodoTool(initialPhases: readonly TodoPhase[]) {
 		tool: capturedTool,
 		getCurrentPhases: () => clonePhases(currentPhases),
 		getAppendCalls: () => appendCalls,
-		context: { sessionManager: { getSessionFile: () => undefined } } as unknown as ExtensionContext,
+		context: {
+			sessionManager: { getSessionFile: () => undefined, getBranch: () => [] },
+		} as unknown as ExtensionContext,
 	};
 }
 
@@ -136,7 +143,13 @@ async function executeTodo(
 	context: ExtensionContext,
 ): Promise<AgentToolResult<TodoToolDetails>> {
 	if (!tool.execute) throw new Error("Expected todo execute");
-	return tool.execute("todo-arg-correction", rawArgs as TodoParams, undefined, undefined, context);
+	return tool.execute(
+		"todo-arg-correction",
+		rawArgs as TodoParams,
+		undefined,
+		undefined,
+		context as ExtensionToolContext,
+	);
 }
 
 async function executeError(
@@ -268,7 +281,7 @@ describe("todo argument correction fixture replay", () => {
 					type: "toolCall",
 					id: fixture.id,
 					name: "todo",
-					arguments: fixture.raw_args,
+					arguments: fixture.raw_args as JsonObject,
 				}),
 			).toThrow("op: must be equal to constant");
 			expect(captured.getCurrentPhases()).toEqual([]);
@@ -291,5 +304,27 @@ describe("todo argument correction fixture replay", () => {
 		);
 		expect(captured.getCurrentPhases()).toEqual(initialPhases);
 		expect(captured.getAppendCalls()).toBe(0);
+	});
+});
+
+// senpi#2648: the todo schema is deliberately left open. Kimi K3 sends the op-named alias
+// `{ op: "append", append: [...] }` (fx12), which execute() corrects into an append; a closed schema
+// (`additionalProperties: false`) would reject it at validation, before that correction runs.
+// This replays fx12 through the agent loop's own prepare -> validate -> execute path.
+describe("todo op-named alias through the agent loop's tool-call path (fx12)", () => {
+	it("validates and appends the aliased items, as the session's tool path runs it", async () => {
+		const fixture = fixtures.find((candidate) => candidate.id === "fx12");
+		if (!fixture?.starting_state) throw new Error("Expected fx12 with a starting state");
+		const harness = captureTodoTool(fixture.starting_state);
+		const tool = wrapToolDefinition(harness.tool, () => harness.context as ExtensionToolContext);
+		const assistantMessage = { role: "assistant", content: [], timestamp: 0 } as unknown as AssistantMessage;
+
+		const outcome = await runToolCall(
+			{ type: "toolCall", id: "fx12", name: "todo", arguments: fixture.raw_args as JsonObject },
+			{ tools: [tool], assistantMessage, context: { messages: [] } },
+		);
+
+		expect(outcome.isError).toBe(false);
+		expect(harness.getCurrentPhases()).toEqual(expectedAliasedAppendState(fixture.starting_state, fixture.raw_args));
 	});
 });

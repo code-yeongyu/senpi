@@ -134,6 +134,22 @@ describe("AgentSession high_reasoning_warning event", () => {
 		expect(warningEvents(events).length).toBe(0);
 	});
 
+	it("stays quiet for GPT-6 Astra at high and warns once it is raised to xhigh", async () => {
+		const { session, events } = await createSession();
+		session.agent.state.model = sensitiveModel("gpt-6-astra", "chatgpt-subscription");
+		session.setThinkingLevel("high");
+		expect(warningEvents(events)).toEqual([]);
+		session.setThinkingLevel("xhigh");
+		expect(warningEvents(events).map((e) => [e.modelId, e.thinkingLevel])).toEqual([["gpt-6-astra", "xhigh"]]);
+	});
+
+	it("warns for GPT-6 Astra selected straight at max", async () => {
+		const { session, events } = await createSession();
+		session.agent.state.model = sensitiveModel("gpt-6-astra", "chatgpt-subscription");
+		session.setThinkingLevel("max");
+		expect(warningEvents(events).map((e) => [e.modelId, e.thinkingLevel])).toEqual([["gpt-6-astra", "max"]]);
+	});
+
 	it("does not emit when a non-sensitive model is raised to xhigh", async () => {
 		const { session, events } = await createSession(plainModel());
 		session.setThinkingLevel("xhigh");

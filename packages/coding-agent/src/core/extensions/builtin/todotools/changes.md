@@ -1,5 +1,273 @@
 # todotools Fork Tracker
 
+## 2026-10-01 - The first-turn opener asks for the phases the request needs (senpi#2505)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts` `FIRST_TURN_REMINDER`: "a phased list covering the whole request end to end, with only the phases this request needs - a question needs none past answering it" replaces the enumerated "investigation, implementation, verification (diagnostics, tests, build, manual check), and the final report". The gate, the forced `tool_choice` and the tests are unchanged.
+
+### Why
+
+- The enumeration made every first request, including a yes/no status question, plan a verification phase; GPT-6 Astra then had to reason the planned "run diagnostics, tests and build" item away ("no code change, so tests and build are not run") after spending the turn around it. The decomposition mandate itself stays in `TASK_MANAGEMENT_SECTION`.
+
+### Why an extension could not handle it
+
+- This is the todotools builtin's own reminder text.
+
+### Expected merge conflict zones
+
+- `first-turn.ts` `FIRST_TURN_REMINDER`.
+
+## 2026-10-01 - The first gateway delivery gets the first-turn opener (senpi#2424)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts`: `shouldArmFirstTurn` treats `trigger: "delivery"` like `"prompt"` and counts earlier `session_control_delivery` entries with full admission provenance as requests, using the same shared predicate as the host. Question/exclamation, print/json and ask-user-answer exclusions apply equally to both paths; answer-frame deliveries do not consume the opener.
+- `test/suite/regressions/2424-delivery-first-turn.test.ts`: covers the delivery gate table, gateway-only first/later deliveries with forced `todo` choice, both prompt/delivery orders, hidden extension turns, and typed or delivered answer frames through the real `AgentSession`.
+
+### Why
+
+- A gateway-only session's admitted delivery is its work request. Skipping it gave that request no opener and incorrectly saved the opener for a later local prompt.
+
+### Why an extension could not handle it
+
+- This is the todotools builtin's first-request policy; it consumes the host's new delivery trigger and persisted delivery entries.
+
+### Expected merge conflict zones
+
+- Fork-only files. `first-turn.ts` gate and request-entry classifier.
+
+## 2026-09-30 - The first-turn opener never arms on an ask-user answer frame (senpi#2419)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts` `shouldArmFirstTurn`: returns `false` when the prompt parses as an ask-user answer frame (`parseAskUserAnswerFrame` from `../ask-user/format.ts`, the parser `todo-ask.ts` already uses), and the "no user request on the branch" check skips user messages that are answer frames.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-ask.ts`: `firstTextBlock` is exported so the gate reads a user message's text the same way Ask capture does.
+- `test/suite/regressions/2419-first-turn-answer-frame.test.ts`: gate rows for an answer frame (LF and CRLF), for a work request after an earlier answer, and for a text-less (image-only) user message still counting as a request; a faux-`pi` case where an answer frame gets no reminder and no forced `todo` tool_choice; a real-session case (an extension-triggered bootstrap, then an answer, then a work request) where only the work request arms. The faux `pi` scaffolding is shared with `test/suite/todo-first-turn.test.ts` through `test/suite/todo-first-turn-harness.ts`.
+
+### Why
+
+- When every earlier turn was an extension or custom message (an onboarding bootstrap, a control-endpoint delivery), the answer to an async question was the branch's first user message, so the opener armed on it. Under `force` the model got a named `todo` tool_choice instead of acting on the answer, and the user's real first request after it then got no opener.
+
+### Why an extension could not handle it
+
+- The gate is this builtin's own logic; no core file changed.
+
+### Expected merge conflict zones
+
+- Fork-only files. `shouldArmFirstTurn` and its doc comment; the `firstTextBlock` export in `todo-ask.ts`.
+
+## 2026-09-30 - No handoff cue on the chat surface (senpi#2398)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the handoff moment is skipped when the session's prompt surface (`ctx.getSystemPromptOptions().surface`, else `resolvePromptSurface(process.env)`) is `chat`, so no "Handoff due ... write the Ask / For you / Now / Next block" line is appended. Terminal and app keep the cue.
+- `test/suite/todo-handoff-cue.test.ts`: the four-call harness run asserts the cues on `terminal` and `app` and no cue on `chat`.
+
+### Why
+
+- The chat surface's prompt has no handoff block; a cue asking for one would bring it back right before the reply.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- Fork-only file. The cue call in `tools/todo.ts` `execute`.
+
+## 2026-09-29 - The all-closed handoff cue stops handing the model an English `none` to copy (senpi#2366)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: `HANDOFF_CUES["all-closed"]` says `the Ask / For you / Now / Next block, with Now and Next saying no task remains` instead of `the Ask / For you / Now: none / Next: none block`.
+
+### Why
+
+- The cue lands right before the final message, and a Korean-rule run on `claude-opus-5-5` copied its literal `Now: none. Next: none.` into an otherwise Korean handoff. The shared handoff rule (`dynamic-prompt/handoff.ts` `HANDOFF_LANGUAGE_RULE`) keeps the labels fixed and puts the slot contents in the user's language; the cue now describes the slot contents instead of dictating English ones. Same length.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- None (fork-only file).
+
+## 2026-09-28 - The first-turn opener stops forcing a model that refused a forced choice (senpi#2218)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts`: `supportsNamedToolChoice` returns false for a model the provider adapters remembered as refusing a forced `tool_choice` (`hasRefusedForcedToolChoice` from `@earendil-works/pi-ai/utils/tool-choice-fallback`) and for `openai-completions` / `openai-responses` models whose compat sets `supportsForcedToolChoice: false`, so those first turns send only the reminder.
+
+### Why
+
+- Kiro behind an OpenAI-compatible proxy refuses every forced `tool_choice`, and the opener forced `todo` on every OpenAI-wire model unconditionally, so each session's first request failed (senpi#2218). The adapter now retries the refused request once; the opener must not keep forcing a model already known to refuse.
+
+### Why an extension could not handle it
+
+- This is the todotools extension itself; no core file changed.
+
+### Expected merge conflict zones
+
+- None (fork-only file).
+
+## 2026-09-25 - The state barrel stops re-exporting unused Ask helpers (senpi#2143)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/state.ts` re-exports only `captureListAsk` from `todo-ask.ts`; `ASK_TEXT_LIMIT` and `truncateAskText` had no importer through the barrel.
+
+### Why
+
+Dead re-exports widen the barrel other builtins import.
+
+### Why an extension could not handle it
+
+This is the todotools barrel itself.
+
+### Expected merge conflict zones
+
+- The `./todo-ask.ts` re-export line in `state.ts`.
+
+## 2026-09-25 - The first-turn opener arms on the user's first request, never on an extension-triggered turn (senpi#2137)
+
+### What changed
+
+- `first-turn.ts` `shouldArmFirstTurn`: `FirstTurnGateInput` gains `trigger` and loses `phases`; the gate refuses any `trigger !== "prompt"` and no longer refuses an existing list (before the first user message a list can only come from an extension-triggered turn). `index.ts` passes `event.trigger`.
+- `test/suite/todo-first-turn.test.ts`: the gate table covers an extension-triggered turn; a real-session case triggers a hidden turn that inits its own list before the user speaks, and the user's first request still gets the reminder (RED with the trigger clause removed).
+
+### Why
+
+- On first launch omo's onboarding bootstrap triggers a turn before the user says anything. The opener armed on it (`Ask: (no user request captured)`), the model planned the onboarding, and the user's real multi-step request then failed the empty-list clause and got no opener.
+
+### Why an extension could not handle it
+
+- The gate is this builtin's own logic; it needed the host's `trigger` field (`extensions/changes.md`).
+
+### Expected merge conflict zones
+
+- `shouldArmFirstTurn` and its input type; the `before_agent_start` handler in `index.ts`.
+
+## 2026-09-25 - The all-closed cue names where other reports go (senpi#2133)
+
+### What changed
+
+- `todo-format.ts` `HANDOFF_CUES["all-closed"]`: `... the final message is the Ask / For you / Now: none / Next: none block.` -> `... Your final message is the Ask / For you / Now: none / Next: none block; any other report an instruction asks for (a self-review, a checklist, a summary) goes inside For you.` The list-created and phase-closed cues are unchanged.
+
+### Why
+
+- On the released 2026.9.24-3, grok-4.7 closed a finished task with a project rule's self-review instead of the handoff block when that rule was active (a rule injected on `.ts` writes asks for an out-loud review "before declaring done"). Two instructions claimed the final message and the cue did not say where the other one goes (category B). Naming the slot keeps both: measured 3/3 grok-4.7 runs ending in the block with that rule active, one of them carrying the self-review inside For you (was 4 of 10 runs without the block).
+
+### Why an extension could not handle it
+
+- The cue is the todo builtin's own result text.
+
+### Expected merge conflict zones
+
+- `HANDOFF_CUES` in `todo-format.ts`. Fork-only file.
+
+## 2026-09-25 - Todo results cue the handoff block at handoff moments (senpi#2121 real-surface QA)
+
+### What changed
+
+- `todo-format.ts`: `handoffMomentOf(before, after, createsList)` returns `"list-created"` (a list-creating call produced tasks), `"all-closed"` (the call closed the last open task of the list), `"phase-closed"` (the call closed the last open task of a phase), or `undefined`; `HANDOFF_CUES` holds one line per moment and `formatHandoffCue` appends it after a blank line. `state.ts` re-exports the three. `tools/todo.ts` appends the cue to every successful, non-`view` result; thrown errors and `view` carry none.
+- `test/suite/todo-handoff-cue.test.ts`: the moment predicate over literal phase states, and one harness run (init, a mid-phase `done`, a phase-closing `done`, the list-closing `done`) asserting each result ends with its moment's shipped cue and the mid-phase result carries none. RED with the cue call disabled.
+
+### Why
+
+- Real runs on grok-4.7 and claude-fable-5-1 with the `## Handoff` contract in the system prompt wrote the block at the final message only about half the time and almost never at the plan or a phase change: the rule sat thousands of tokens away from the moment it governs. The todo result is the one text the model reads immediately after each of those transitions, so the cue lands where the decision is made (the gajae-code reporting mechanism, tool results that carry the reporting ask). Measured on 12 runs (6 per model) after the cue: the final message carried the block in 11/12 (5/8 before); after `phase-closed`, 7/16 with the "before your next tool call" wording (5/18 with the earlier "open your next text" wording, which the models satisfied by writing no text). Fable 5.1 remains weakest mid-task (its guide documents fewer between-tool updates; they arrive as progress-update thinking blocks this harness does not request) - tracked separately.
+
+### Why an extension could not handle it
+
+- This is the todo builtin's own result text; another extension cannot append to a tool result it does not own.
+
+### Expected merge conflict zones
+
+- `tools/todo.ts` result assembly and its `todo-format.ts` import list; `todo-format.ts` exports. Fork-only files.
+
+## 2026-09-25 - First-turn plan opener and the single decomposition mandate (senpi#2121)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/first-turn.ts` (new): `shouldArmFirstTurn` (pure gate: not a preview; `todo.firstTurnPlan` is not `off`; the prompt is non-blank and, after trailing quotes/parens/whitespace are stripped, does not end in `?` or `!`; the branch holds no user message; no todo task exists; `todo` is an active tool; the mode is not `print`/`json`), `supportsNamedToolChoice` (Anthropic through the resolved `getAnthropicCompat`, so the Fable / Mythos / Opus 5.5 forced-choice default applies; OpenAI Responses and Chat Completions always), `namedToolChoicePayload` (per-wire shapes), `withForcedTodoChoice`, and `FIRST_TURN_REMINDER`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: `before_agent_start` (still preview-safe) returns the hidden `senpi.todo-first-turn` custom message when armed and sets an in-memory `pendingForce`. `before_provider_request` injects the named `todo` tool_choice while `pendingForce` is set and the setting is `force`, only when the payload declares `todo`, carries no `tool_choice`, and (Anthropic) has no `enabled`/`adaptive` thinking; the model is re-resolved from the request. The first assistant `message_end`, `agent_end`, `session_abort`, `session_start`, `session_tree`, and `session_shutdown` clear it. The session log records `todo_first_turn` with `mode: "forced" | "reminder-only"`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/prompt.ts`: `TASK_MANAGEMENT_SECTION` states the decomposition mandate ("A request with three or more distinct steps gets a phased todo before the first edit - ..."); `TODO_TOOL_DESCRIPTION` rewords the solo-call rule to "NEVER end a turn with a todo call as its only tool call - ..." and drops "Solo todo turns waste a round trip.", and its "Task requires 3+ distinct steps" bullet is deleted so the mandate has one home.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the matching prompt guideline uses the same end-a-turn framing.
+- `packages/coding-agent/test/suite/fixtures/task-management-section.txt` regenerated; `packages/coding-agent/test/suite/todo-first-turn.test.ts` (new).
+
+Word counts (`wc -w` of the rendered string; category A delete/correct, B reframe, C new context):
+
+| Surface | Before | After | Delta | Category |
+|---|---|---|---|---|
+| `TASK_MANAGEMENT_SECTION` | 70 | 90 | +20 | C: the mandated decomposition sentence replaces the when-to-use sentence (16 -> 36 words, two of them `-`) |
+| `TODO_TOOL_DESCRIPTION` | 398 | 388 | -10 | B: solo-call rule reframed, "Solo todo turns waste a round trip." deleted; A: "Task requires 3+ distinct steps" deleted as the mandate's duplicate |
+| Both (shipped together every turn) | 468 | 478 | +10 | |
+
+The section alone exceeds the plan's +12 budget because the replacement sentence is fixed text and the rest of the section (the "Mark each item done" sentence and `## Evidence`) is kept verbatim; the file-level growth is offset in the tool description.
+
+### Why
+
+Models skipped the plan on the first request and reported progress without a list to anchor it. A hidden first-turn reminder plus a forced `todo` call on providers that accept one makes the opening call a phased init, and the decomposition rule now lives in exactly one place (`TASK_MANAGEMENT_SECTION`) instead of a when-to-create bullet in the tool description.
+
+### Why an extension could not handle it
+
+The prompt strings, the before-agent-start section, and the todo tool's state are owned by this builtin; a separate extension would add a second copy of the rule beside the one shipped here.
+
+### Expected merge conflict zones
+
+- MEDIUM: `index.ts` `before_agent_start` / `before_provider_request` / lifecycle handlers.
+- LOW: `prompt.ts` string bodies and the golden fixture (regenerate rather than merge); `first-turn.ts` is fork-only.
+
+## 2026-09-25 - Ask/Now/Next header on every todo result (senpi#2121)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-ask.ts` (new): `captureListAsk` anchors a list-creating call (`init`, or `append` into an empty list) to the branch's first user message when no `senpi.todo-state` entry exists yet, else to the newest user message; ask-user answer frames are skipped, and a newer `compaction.todo-restore-request` re-emits its snapshot's ask. Text is `sanitizeTodoText` of the first text block, cut at 200 code points with `… (+N chars)`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-types.ts`: `TodoAsk`, `TodoState`, optional `ask` on `TodoStateEntry` (schema stays `v2`) and `TodoToolDetails`, `TODO_RESTORE_REQUEST_TYPE`.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-storage.ts`: `getLatestTodoStateFromBranchEntries` returns `{ phases, ask }`; `getLatestPhasesFromBranchEntries` delegates to it; `isTodoAsk` guard.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-format.ts`: `describeAskNowNext` and `formatAskNowNextHeader`; `formatSummary` prepends `Ask:` / `Now:` / `Next:` and a blank line to every summary, thrown errors included.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: `execute` captures or carries the ask into the state entry and `details.ask`; `renderResult` draws a dim `Ask:` line above the phases when an ask exists.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/index.ts`: in-memory `currentState = { phases, ask }` resynced on `session_start` / `session_tree`; the native mirror carries the ask.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/commands.ts`: `/todo` prints the same header; user edits carry the ask.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/state.ts`: re-exports the new helpers.
+- `packages/coding-agent/src/core/extensions/builtin/todotools/AGENTS.md` (new): directory guide.
+- Tests: `test/suite/todo-ask-now-next.test.ts`; accessor fakes in the existing todo tests gain `getCurrentAsk` / `setCurrentAsk`.
+
+### Why
+
+A todo result named the list but not what it was for, so a model reporting progress had to reconstruct the original request from memory. The header gives every result, and the later turn-end backstop, one mechanical source for the user's ask and the current and next task labels.
+
+### Why an extension could not handle it
+
+The state entry, the tool result text, and the renderer are owned by this builtin; an outside extension cannot add fields to its persisted state or its results.
+
+### Expected merge conflict zones
+
+- MEDIUM: `tools/todo.ts` `execute` and `renderResult`; `todo-format.ts` `formatSummary`.
+- LOW: `todo-storage.ts` branch reader, `index.ts` state holder, `commands.ts` `commit` / `showCurrent`.
+
+## 2026-09-24 - Sound todo type guards from pi-todotools 0.2.1 (senpi#2079)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/todotools/todo-storage.ts`: `isTodoItem` accepts only the four canonical statuses and `isTodoPhase` checks its tasks with `isTodoItem`, instead of both delegating to the migrating parsers. The legacy `cancelled` -> `abandoned` migration stays on the persisted-state parse path (`getLatestPhasesFromBranchEntries`).
+- `packages/coding-agent/src/core/extensions/builtin/todotools/tools/todo.ts`: the read-only `view` path builds its empty error list without a type assertion (type-only).
+- `packages/coding-agent/test/suite/todo-type-guards.test.ts` pins that a `cancelled` item fails the guards while the parse path still migrates it.
+- The rest of pi-todotools 0.2.1 (Pi TUI `invalidate` peer compatibility, toolchain refresh) has no counterpart in this diverged port.
+
+### Why
+
+The guards delegated to `parseTodoItem`, which accepts `cancelled` and returns a migrated copy, but the guard then narrowed the original value. A `cancelled` item passed `isTodoItem` while its `status` was not a `TodoStatus`, so `isTodoPhaseArray` in the goal todo gate could accept unmigrated data.
+
+### Why an extension could not handle it
+
+The guards are exported by this builtin and used by the goal todo gate; a caller cannot fix a guard that lies about its narrowing.
+
+### Expected merge conflict zones
+
+- LOW in `todo-storage.ts` `isTodoItem` / `isTodoPhase`.
+
 ## 2026-09-04 - Task_Management stops re-sending the tool description
 
 ### What changed

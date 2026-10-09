@@ -3,6 +3,8 @@ import { getModel } from "../src/compat.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 interface AnthropicToolPayload {
 	tools?: Array<{ name: string; input_schema: { properties?: Record<string, unknown>; required?: string[] } }>;
 }
@@ -71,7 +73,9 @@ const rootUnionContext: Context = {
 };
 
 async function capturePayload(model: Model<"anthropic-messages">, context: Context): Promise<AnthropicToolPayload> {
-	await streamAnthropic({ ...model, baseUrl: "http://127.0.0.1:9" }, context, { apiKey: "fake-key" }).result();
+	await streamAnthropic({ ...model, baseUrl: "http://127.0.0.1:9" }, normalizeContext(context), {
+		apiKey: "fake-key",
+	}).result();
 	if (!mockState.createParams) throw new Error("Expected payload to be captured");
 	return mockState.createParams;
 }

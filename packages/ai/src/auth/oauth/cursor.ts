@@ -11,6 +11,7 @@
  * session JWT.
  */
 
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { generatePKCE } from "./pkce.ts";
 
@@ -229,13 +230,16 @@ async function refreshCursorCredential(credential: OAuthCredential, signal: Abor
 			signal,
 		});
 	} catch (error) {
-		if (signal.aborted) throw new Error("Cursor token refresh cancelled");
+		if (signal.aborted) throw new Error("Cursor token refresh cancelled", { cause: signal.reason });
 		throw error;
 	}
 
 	const body = await readJsonBody(response);
 	if (!response.ok) {
-		throw new Error(`Cursor token refresh failed (${describeFailure(response.status, body)})`);
+		throw new OAuthTokenEndpointError(
+			`Cursor token refresh failed (${describeFailure(response.status, body)})`,
+			response.status,
+		);
 	}
 
 	const access = requiredString(body ?? {}, "accessToken");

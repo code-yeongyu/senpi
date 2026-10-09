@@ -1,6 +1,9 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GOAL_CONTINUATION_TIMER_STATE_EVENT } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
+import {
+	GOAL_CONTINUATION_TIMER_STATE_EVENT,
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+} from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { writeGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
@@ -98,7 +101,7 @@ describe("goal wait countdown versus externally started turns", () => {
 		expect(timerStates(harness).filter((state) => state.armed)).toHaveLength(1);
 
 		const delivered = waitForSentCount(harness, 1);
-		await vi.advanceTimersByTimeAsync(300_000);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await delivered;
 		expect(harness.sent).toHaveLength(1);
 	});

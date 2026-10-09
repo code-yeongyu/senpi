@@ -56,12 +56,12 @@ describe("acquireTerminalLease / releaseTerminalLease", () => {
 			now: () => startedAtMs,
 		});
 
-		expect(result).toEqual({
+		expect(result).toMatchObject({
 			acquired: true,
 			path: leasePath,
 			pid: process.pid,
 		});
-		expect(JSON.parse(await readFile(leasePath, "utf8"))).toEqual({
+		expect(JSON.parse(await readFile(leasePath, "utf8"))).toMatchObject({
 			pid: process.pid,
 			startedAtMs,
 		});
@@ -83,13 +83,14 @@ describe("acquireTerminalLease / releaseTerminalLease", () => {
 			encodedSessionId: "sess-b",
 			pid: process.pid + 1,
 			now: () => startedAtMs + 1,
+			readProcessStartMs: async () => undefined,
 		});
 
-		expect(second).toEqual({
+		expect(second).toMatchObject({
 			acquired: false,
 			holder: { pid: process.pid, startedAtMs },
 		});
-		expect(JSON.parse(await readFile(join(dir, "sess-b.lease"), "utf8"))).toEqual({
+		expect(JSON.parse(await readFile(join(dir, "sess-b.lease"), "utf8"))).toMatchObject({
 			pid: process.pid,
 			startedAtMs,
 		});
@@ -109,14 +110,14 @@ describe("acquireTerminalLease / releaseTerminalLease", () => {
 			now: () => 99,
 		});
 
-		expect(result).toEqual({ acquired: true, path: leasePath, pid: process.pid });
-		expect(JSON.parse(await readFile(leasePath, "utf8"))).toEqual({
+		expect(result).toMatchObject({ acquired: true, path: leasePath, pid: process.pid });
+		expect(JSON.parse(await readFile(leasePath, "utf8"))).toMatchObject({
 			pid: process.pid,
 			startedAtMs: 99,
 		});
 	});
 
-	it("does not reclaim a live holder whose startedAtMs is 11 minutes old", async () => {
+	it("does not reclaim a live holder whose start time is confirmed, however old the lease is", async () => {
 		const dir = await tempDir();
 		const startedAtMs = Date.now() - 11 * 60 * 1000;
 		const leasePath = join(dir, "sess-d.lease");
@@ -127,6 +128,7 @@ describe("acquireTerminalLease / releaseTerminalLease", () => {
 			encodedSessionId: "sess-d",
 			pid: process.pid + 1,
 			now: () => Date.now(),
+			readProcessStartMs: async () => startedAtMs,
 		});
 
 		expect(result).toEqual({
@@ -151,6 +153,7 @@ describe("acquireTerminalLease / releaseTerminalLease", () => {
 			encodedSessionId: "sess-e",
 			pid: process.pid,
 			isProcessAlive: epermProbe(),
+			readProcessStartMs: async () => undefined,
 		});
 
 		expect(result).toEqual({
@@ -172,7 +175,7 @@ describe("acquireTerminalLease / releaseTerminalLease", () => {
 			pid: process.pid,
 			now: () => 50,
 		});
-		expect(acquired).toEqual({ acquired: true, path: leasePath, pid: process.pid });
+		expect(acquired).toMatchObject({ acquired: true, path: leasePath, pid: process.pid });
 		await releaseTerminalLease({ path: leasePath, pid: process.pid });
 		expect(existsSync(leasePath)).toBe(false);
 
@@ -182,7 +185,7 @@ describe("acquireTerminalLease / releaseTerminalLease", () => {
 			pid: process.pid,
 			now: () => 51,
 		});
-		expect(overwritten).toEqual({ acquired: true, path: leasePath, pid: process.pid });
+		expect(overwritten).toMatchObject({ acquired: true, path: leasePath, pid: process.pid });
 		const foreign = { pid: process.pid + 7, startedAtMs: 77 };
 		await writeFile(leasePath, JSON.stringify(foreign), "utf8");
 		await releaseTerminalLease({ path: leasePath, pid: process.pid });
@@ -201,8 +204,8 @@ describe("acquireTerminalLease / releaseTerminalLease", () => {
 			now: () => 123,
 		});
 
-		expect(result).toEqual({ acquired: true, path: leasePath, pid: process.pid });
-		expect(JSON.parse(await readFile(leasePath, "utf8"))).toEqual({
+		expect(result).toMatchObject({ acquired: true, path: leasePath, pid: process.pid });
+		expect(JSON.parse(await readFile(leasePath, "utf8"))).toMatchObject({
 			pid: process.pid,
 			startedAtMs: 123,
 		});

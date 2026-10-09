@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -76,7 +76,7 @@ function getLatestTodoResult(harness: Harness) {
 
 function responsesForTodo(params: Record<string, unknown>, finalText = "done") {
 	return [
-		fauxAssistantMessage([fauxToolCall("todo", params)], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxToolCall("todo", params as JsonObject)], { stopReason: "toolUse" }),
 		fauxAssistantMessage(finalText),
 	];
 }
@@ -101,6 +101,8 @@ async function captureTodoTool(): Promise<ToolDefinition<typeof TODO_PARAMS_SCHE
 	registerTodoTool(mockPi, {
 		getCurrentPhases: () => [],
 		setCurrentPhases: () => {},
+		getCurrentAsk: () => undefined,
+		setCurrentAsk: () => {},
 		syncWidget: () => {},
 	});
 	if (!capturedTool) throw new Error("Expected todo tool to be registered");
@@ -150,6 +152,7 @@ describe("todo extension", () => {
 		expect(stateEntry?.type === "custom" ? stateEntry.data : undefined).toEqual({
 			schema: "v2",
 			phases: phasesFromResult(result),
+			ask: { entryId: expect.any(String), text: "initialize the plan", capturedAt: expect.any(Number) },
 		});
 
 		// When a flat init is applied afterwards
@@ -445,6 +448,8 @@ describe("todo extension", () => {
 			setCurrentPhases: (phases) => {
 				setCalls.push(phases);
 			},
+			getCurrentAsk: () => undefined,
+			setCurrentAsk: () => {},
 			syncWidget: () => {},
 		});
 		if (!capturedTool?.execute) throw new Error("Expected todo tool with execute");

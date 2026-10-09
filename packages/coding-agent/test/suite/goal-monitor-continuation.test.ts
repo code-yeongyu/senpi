@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GOAL_USER_GRACE_DELAY_MS } from "../../src/core/extensions/builtin/goal/continuation.ts";
 import { admitAndQueueGoalContinuation } from "../../src/core/extensions/builtin/goal/lifecycle-helpers.ts";
 import {
-	GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS,
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
 	MonitorAwareGoalContinuation,
 } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import {
@@ -17,7 +17,8 @@ import {
 } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
 import { GOAL_WAIT_STATUS_KEY } from "../../src/core/extensions/builtin/goal/wait-ticker.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
+import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
+import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
@@ -127,7 +128,9 @@ describe("goal continuation while a monitor is active", () => {
 		const notices: string[] = [];
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-mechanical-recovery");
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 		await updateGoal(goalStoreRef(ctx), { status: "blocked", reason: "continuation cap reached" }, "model");
 
 		await runGoalHandlers(
@@ -188,7 +191,9 @@ describe("goal continuation while a monitor is active", () => {
 		const notices: string[] = [];
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, `thread-mechanical-${disposition}`);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 		await updateGoal(goalStoreRef(ctx), { status: "blocked", reason: "continuation cap reached" }, "model");
 
 		await runGoalHandlers(
@@ -214,7 +219,9 @@ describe("goal continuation while a monitor is active", () => {
 		const notices: string[] = [];
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-input-goal-replacement");
-		await tools.get("create_goal")?.execute("create", { objective: "Original goal" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Original goal" }, undefined, undefined, ctx as ExtensionToolContext);
 		await runGoalHandlers(
 			handlers,
 			"input",
@@ -249,7 +256,9 @@ describe("goal continuation while a monitor is active", () => {
 		const notices: string[] = [];
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-steer-inert");
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 		await markCurrentGoalStale(ctx);
 
 		await runGoalHandlers(
@@ -272,7 +281,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-follow-up-pause");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 		await markCurrentGoalStale(ctx);
 		const before = await readGoal(goalStoreRef(ctx));
 		if (before === null) throw new Error("Expected persisted goal");
@@ -318,7 +329,9 @@ describe("goal continuation while a monitor is active", () => {
 			cacheSafeWaitSeconds: 270,
 		});
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 		events.emit("terminal_monitor_state", { activeCount: 1 });
 		await events.flush();
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -339,12 +352,108 @@ describe("goal continuation while a monitor is active", () => {
 			ctx,
 		);
 
-		await vi.advanceTimersByTimeAsync(139_999);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS - 130_000 - 1);
 		expect(sent).toHaveLength(0);
 		const delivered = waitForSentCount(harness, 1);
 		await vi.advanceTimersByTimeAsync(1);
 		await delivered;
 		expect(sent).toHaveLength(1);
+	});
+
+	it("keeps an opt-in long backstop off the prompt-cache safe-wait cadence while a wake source is live", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const { tools, handlers, sent, events } = harness;
+		const ctx = await makeGoalContext(notices, "thread-backstop-not-cache-wait", {
+			pendingMessages: false,
+			cacheSafeWaitSeconds: 270,
+			goalBackstopMaxSeconds: 3570,
+		});
+		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
+		events.emit("terminal_monitor_state", { activeCount: 1 });
+		await events.flush();
+		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(handlers, "agent_end", { type: "agent_end", messages: [cleanAssistantStop()] }, ctx);
+
+		expect(events.emitted).toContainEqual({
+			channel: "goal_continuation_scheduled",
+			data: expect.objectContaining({ delayMs: 3_570_000 }),
+		});
+		// No periodic main-model turn on the cache-safe interval.
+		await vi.advanceTimersByTimeAsync(270_000 * 4);
+		expect(sent).toHaveLength(0);
+
+		// The configured backstop still fires once as a stall safety net.
+		const delivered = waitForSentCount(harness, 1);
+		await vi.advanceTimersByTimeAsync(3_570_000 - 270_000 * 4);
+		await delivered;
+		expect(sent).toHaveLength(1);
+	});
+
+	it("queues exactly one continuation when the final wake source drains", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const { tools, handlers, sent, events } = harness;
+		const ctx = await makeGoalContext(notices, "thread-drain-single-fire", {
+			pendingMessages: false,
+			cacheSafeWaitSeconds: 270,
+			goalBackstopMaxSeconds: 3570,
+		});
+		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
+		events.emit("terminal_monitor_state", { activeCount: 1 });
+		await events.flush();
+		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(handlers, "agent_end", { type: "agent_end", messages: [cleanAssistantStop()] }, ctx);
+
+		const delivered = waitForSentCount(harness, 1);
+		events.emit("terminal_monitor_state", { activeCount: 0 });
+		await events.flush();
+		await vi.advanceTimersByTimeAsync(1_000);
+		await delivered;
+
+		expect(sent).toHaveLength(1);
+		// The drain fire is the only continuation: the backstop left no armed timer.
+		await vi.advanceTimersByTimeAsync(3_570_000 * 2);
+		expect(sent).toHaveLength(1);
+		const timerStates = events.emitted
+			.filter((event) => event.channel === "goal_continuation_timer_state")
+			.map((event) => (event.data as { armed: boolean }).armed);
+		expect(timerStates.at(-1)).toBe(false);
+	});
+
+	it("queues no continuation while a turn is awaiting a tool result", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const { tools, handlers, sent, events } = harness;
+		const ctx = await makeGoalContext(notices, "thread-awaiting-tool-result");
+		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
+		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+
+		// The question tool is still executing, so no agent_end arrives. A blocking
+		// question registers no wake source at all; an async one registers this one
+		// mid-turn. Neither may arm a continuation while the turn is still running.
+		events.emit(WAKE_SOURCE_STATE_EVENT, {
+			source: "ask-user",
+			activeCount: 1,
+			items: [{ id: "call-1", description: "Pick a database" }],
+		});
+		await events.flush();
+		await vi.advanceTimersByTimeAsync(1_800_000 + GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS * 2);
+
+		expect(sent).toHaveLength(0);
+		expect(events.emitted.filter((event) => event.channel === "goal_continuation_scheduled")).toHaveLength(0);
 	});
 
 	it("honors the configured goal backstop ceiling", async () => {
@@ -354,11 +463,13 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent, events } = harness;
 		const ctx = await makeGoalContext(notices, "thread-goal-backstop-ceiling", {
 			pendingMessages: false,
-			cacheSafeWaitSeconds: 3570,
+			cacheSafeWaitSeconds: 270,
 			goalBackstopMaxSeconds: 900,
 		});
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 		events.emit("terminal_monitor_state", { activeCount: 1 });
 		await events.flush();
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -383,7 +494,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent, events } = harness;
 		const ctx = await makeGoalContext(notices, "thread-overlapping-input-holds");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 		events.emit("terminal_monitor_state", { activeCount: 1 });
 		await events.flush();
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -403,7 +516,7 @@ describe("goal continuation while a monitor is active", () => {
 			{ type: "input_disposition", inputId: "first", disposition: "handled" },
 			ctx,
 		);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		expect(sent).toHaveLength(0);
 		const restoredDelivery = waitForSentCount(harness, 1);
 		await runGoalHandlers(
@@ -412,7 +525,7 @@ describe("goal continuation while a monitor is active", () => {
 			{ type: "input_disposition", inputId: "second", disposition: "rejected" },
 			ctx,
 		);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await restoredDelivery;
 		expect(sent).toHaveLength(1);
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active" });
@@ -425,7 +538,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent, events } = harness;
 		const ctx = await makeGoalContext(notices, "thread-input-read-failure");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 		events.emit("terminal_monitor_state", { activeCount: 1 });
 		await events.flush();
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -453,19 +568,21 @@ describe("goal continuation while a monitor is active", () => {
 			{ type: "input_disposition", inputId: "read-failure", disposition: "rejected" },
 			ctx,
 		);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await restoredDelivery;
 		expect(sent).toHaveLength(1);
 	});
 
-	it("waits four minutes before continuing and persists the schedule", async () => {
+	it("waits the stall backstop before continuing and persists the schedule", async () => {
 		vi.useFakeTimers();
 		const notices: string[] = [];
 		const harness = createGoalHarness();
 		const { tools, handlers, sent, events } = harness;
 		const ctx = await makeGoalContext(notices, "thread-monitor-cadence");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
 		events.emit("terminal_monitor_state", { activeCount: 1 });
 		await events.flush();
 
@@ -476,16 +593,50 @@ describe("goal continuation while a monitor is active", () => {
 		expect(notices).toEqual([]);
 		expect(events.emitted).toContainEqual({
 			channel: "goal_continuation_scheduled",
-			data: expect.objectContaining({ delayMs: 240_000 }),
+			data: expect.objectContaining({ delayMs: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS }),
 		});
 
-		await vi.advanceTimersByTimeAsync(239_999);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS - 1);
 		expect(sent).toHaveLength(0);
 		const delayedDeliveryRecorded = waitForSentCount(harness, 1);
 		await vi.advanceTimersByTimeAsync(1);
 		await delayedDeliveryRecorded;
 		expect(sent).toHaveLength(1);
 		expect(sent[0]?.message.customType).toBe("goal-continuation");
+	});
+
+	it("re-checks on every default backstop while a wake source never delivers", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const { tools, handlers, sent, events } = harness;
+		const ctx = await makeGoalContext(notices, "thread-monitor-never-delivers", {
+			pendingMessages: false,
+			cacheSafeWaitSeconds: 270,
+		});
+		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
+		// A monitor whose filter never matches stays live for the whole test.
+		events.emit("terminal_monitor_state", { activeCount: 1 });
+		await events.flush();
+
+		for (let turn = 1; turn <= 2; turn++) {
+			await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+			await runGoalHandlers(handlers, "agent_end", { type: "agent_end", messages: [cleanAssistantStop()] }, ctx);
+			await vi.advanceTimersByTimeAsync(270_000 - 1);
+			expect(sent).toHaveLength(turn - 1);
+			const delivered = waitForSentCount(harness, turn);
+			await vi.advanceTimersByTimeAsync(1);
+			await delivered;
+			expect(sent).toHaveLength(turn);
+		}
+
+		const scheduledDelays = events.emitted
+			.filter((event) => event.channel === "goal_continuation_scheduled")
+			.map((event) => (event.data as { delayMs: number }).delayMs);
+		expect(scheduledDelays).toEqual([270_000, 270_000]);
 	});
 
 	it("continues immediately after a clean continuation turn when no monitor is active", async () => {
@@ -495,7 +646,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent } = harness;
 		const ctx = await makeGoalContext(notices, "thread-no-monitor");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
 		const deliveryRecorded = waitForSentCount(harness, 1);
@@ -523,7 +676,9 @@ describe("goal continuation while a monitor is active", () => {
 			status,
 		});
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		const countdownStarted = waitForGoalStatus(
 			status,
@@ -563,7 +718,9 @@ describe("goal continuation while a monitor is active", () => {
 			status,
 		});
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		const countdownStarted = waitForGoalStatus(
 			status,
@@ -615,7 +772,7 @@ describe("goal continuation while a monitor is active", () => {
 				messages: [cleanAssistantStopWithText("unchanged monitor output")],
 			});
 			const delayedDeliveryRecorded = waitForSentCount(harness, turn);
-			await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
+			await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 			await delayedDeliveryRecorded;
 		}
 
@@ -629,7 +786,7 @@ describe("goal continuation while a monitor is active", () => {
 			messages: [cleanAssistantStopWithText("unchanged monitor output")],
 		});
 		const resumedDeliveryRecorded = waitForSentCount(harness, 3);
-		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS);
+		await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 		await resumedDeliveryRecorded;
 
 		expect(sent).toHaveLength(3);
@@ -671,7 +828,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-length-minimal");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
 		await runGoalHandlers(
@@ -693,7 +852,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent, events } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-length-exhausted");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
 		await runGoalHandlers(
@@ -726,7 +887,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-length-reset");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
 		await runGoalHandlers(
@@ -775,7 +938,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent, events } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-immediate-tool-progress");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		for (let turn = 1; turn <= 9; turn++) {
 			await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -805,7 +970,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent, events } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-immediate-distinct-progress");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		for (let turn = 1; turn <= 9; turn++) {
 			await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -835,7 +1002,9 @@ describe("goal continuation while a monitor is active", () => {
 		const { tools, handlers, sent, events } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-stale-real-cycles");
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-		await tools.get("create_goal")?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
 		await runGoalHandlers(
@@ -863,7 +1032,9 @@ describe("goal continuation while a monitor is active", () => {
 		const notices: string[] = [];
 		const { tools, handlers, sent, events } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-session-start-cap");
-		await tools.get("create_goal")?.execute("create", { objective: "Resume work" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Resume work" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
 		expect(sent).toHaveLength(1);
@@ -893,7 +1064,9 @@ describe("goal continuation while a monitor is active", () => {
 		const notices: string[] = [];
 		const { tools, handlers, sent } = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "thread-single-flight");
-		await tools.get("create_goal")?.execute("create", { objective: "Resume once" }, undefined, undefined, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Resume once" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "startup" }, ctx);
 		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "resume" }, ctx);
@@ -908,7 +1081,13 @@ describe("goal continuation while a monitor is active", () => {
 		const ctx = await makeGoalContext(notices, "thread-unsigned-continuation");
 		await tools
 			.get("create_goal")
-			?.execute("create", { objective: "Continue without a signature" }, undefined, undefined, ctx);
+			?.execute(
+				"create",
+				{ objective: "Continue without a signature" },
+				undefined,
+				undefined,
+				ctx as ExtensionToolContext,
+			);
 		const goal = await readGoal(goalStoreRef(ctx));
 		if (goal === null) throw new Error("Expected persisted goal");
 
@@ -929,10 +1108,12 @@ describe("goal continuation while a monitor is active", () => {
 						hasPendingMessages: false,
 						path: "immediate",
 						lastStopReason: "stop",
+						lastTurnWasMalformedToolUse: false,
 						consecutiveContinuations: goal.consecutiveContinuations ?? 0,
 						lastContinuationSignature: goal.lastContinuationSignature,
 						currentSignature: undefined,
 						consecutiveLengthRecoveries: 0,
+						lastTurnStuckOnContextOverflow: false,
 						recentNormalizedOutputHashes: [],
 						toollessContinuationStreak: 0,
 						continuationPending: false,

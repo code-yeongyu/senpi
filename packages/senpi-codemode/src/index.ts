@@ -1,23 +1,35 @@
-import * as os from "node:os";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "./bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "./bridges/schema-bridge.ts";
 import { type CompletionRequest, type CompletionResult, createCompletionHandler } from "./completion/handler.ts";
-import { defaultCodemodeSettings, resolveForegroundWindowSeconds, resolveHardLimitSeconds } from "./config/settings.ts";
-import { EvalNotifier } from "./extension/eval-notifier.ts";
+import { resolveRetainedImagesBytes, resolveRetainedResultsBytes } from "./config/memory-settings.ts";
+import {
+	defaultCodemodeSettings,
+	resolveForegroundWindowSeconds,
+	resolveHardLimitSeconds,
+	resolveMaxDetachedCells,
+	resolveRunBudgetSeconds,
+} from "./config/settings.ts";
+import { type EvalNotificationContent, EvalNotifier } from "./extension/eval-notifier.ts";
 import { EVAL_CELLS_STATUS_KEY } from "./extension/eval-status.ts";
 import { EvalStatusTicker } from "./extension/eval-status-ticker.ts";
+import { hostLine, modelIdFrom } from "./extension/host-facts.ts";
+import { activeKernelPreludes, kernelPreludeDocsKey, promptKernelPreludes } from "./extension/kernel-preludes.ts";
+import { registerRemovedToolHints } from "./extension/removed-tool-hints.ts";
 import {
 	createExecuteTool,
 	createRuntime,
 	enabledLanguagesFrom,
 	type SessionRuntime,
 } from "./extension/runtime-factory.ts";
-import { jsRuntimeInfo, jsRuntimeLabel } from "./extension/runtime-info.ts";
+import { jsRuntimeInfo } from "./extension/runtime-info.ts";
 import type { CodemodeSessionManager, CreateCodemodeSessionManagerOptions } from "./extension/session-manager.ts";
 import { SessionManagerProxy } from "./extension/session-manager-proxy.ts";
 import { activeBunSkillPath, registerBunSkillContribution } from "./extension/skill-contribution.ts";
+import { StartRecovery, withStartRecovery } from "./extension/start-recovery.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "./extension/wake-source-state.ts";
+import { HandleRegistry } from "./handles/handle-registry.ts";
+import type { KernelToolsCapability } from "./kernels/js/kernel-tools-types.ts";
 import { EvalDetachedCellManager, type EvalDetachedCellStatusEntry } from "./tool/detached-cell-manager.ts";
 import {
 	EVAL_EXECUTION_EVENT,
@@ -27,26 +39,25 @@ import {
 import { createEvalTool } from "./tool/eval-tool.ts";
 import { renderEvalCall, renderEvalResult } from "./tool/render.ts";
 
-const SESSION_LIFECYCLE_EVENTS = [
-	"session_start",
-	"session_shutdown",
-	"session_before_switch",
-	"session_before_fork",
-] as const;
+// session_before_switch / session_before_fork are veto points another extension can cancel, so they never
+// tear the runtime down; a switch or fork that goes ahead emits session_shutdown before the old session ends.
+const SESSION_LIFECYCLE_EVENTS = ["session_start", "session_shutdown"] as const;
 
 type SessionLifecycleEvent = (typeof SESSION_LIFECYCLE_EVENTS)[number];
 
-type CodemodeEvent = SessionLifecycleEvent | "model_select";
+type CodemodeEvent = SessionLifecycleEvent | "model_select" | "turn_start";
 
 export interface CodemodeExtensionAPI {
 	registerTool(tool: ReturnType<typeof createEvalTool>): void;
 	registerRemovedToolHint(name: string, hint: string): void;
 	on(event: CodemodeEvent | "resources_discover", handler: (event: unknown, ctx: ExtensionContext) => unknown): void;
 	executeTool: AgentExecuteTool;
+	/** Present only while a live JavaScript eval owns the host-tool context. */
+	kernelTools?: KernelToolsCapability;
 	getActiveTools(): string[];
 	getAllTools(): readonly EvalSchemaToolInfo[];
 	sendMessage(
-		message: { customType: string; content: string; display: boolean },
+		message: { customType: string; content: EvalNotificationContent; display: boolean },
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): void;
 	/** Optional host event bus; a host without one turns extension event emission into a harmless no-op. */
@@ -82,6 +93,8 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 	let activeModelId: string | undefined;
 	let activeContext: ExtensionContext | undefined;
 	let activeCells: EvalDetachedCellManager | undefined;
+	let activeHandles: HandleRegistry | undefined;
+	let promptPreludeDocs = "";
 	const notifier = new EvalNotifier({
 		sendMessage: (message, notifyOptions) => pi.sendMessage(message, notifyOptions),
 		getContext: () => activeContext,
@@ -105,12 +118,17 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		statusTicker.sync(entries);
 	};
 	const emitWakeSourceState = (state: WakeSourceState): void => {
+		// Same dual publication as the settle payload below: the in-process bus
+		// feeds the TUI footer, the rpc channel feeds out-of-process consumers.
+		pi.rpc?.emit(WAKE_SOURCE_STATE_EVENT, state);
 		pi.events?.emit(WAKE_SOURCE_STATE_EVENT, state);
 	};
+	const recovery = new StartRecovery(async (event, ctx) => await startSession(event, ctx));
 	const registerEvalForRuntime = (
 		runtime: SessionRuntime,
 		modelId: string | undefined,
 		cellManager: EvalDetachedCellManager,
+		handles: HandleRegistry,
 	): void => {
 		const onCellSettled = (payload: EvalExecutionEventPayload): void => {
 			if (activeCells !== cellManager) return;
@@ -122,105 +140,136 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		// reaches this before the runtime is bound). An unreadable registry means "do not teach
 		// a tool we cannot confirm"; session_start / model_select re-register once it is live.
 		const monitor = monitorIsRegistered(pi);
+		const preludes = promptKernelPreludes(pi);
+		promptPreludeDocs = kernelPreludeDocsKey(preludes);
 		pi.registerTool(
-			createEvalTool({
-				enabledLanguages: runtime.enabledLanguages,
-				kernelManager: manager,
-				cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
-				foregroundWindowSeconds: resolveForegroundWindowSeconds(runtime.settings),
-				executeTool: runtime.executeTool,
-				listTools: () => pi.getAllTools(),
-				complete,
-				settings: runtime.settings,
-				artifactsDir: runtime.artifactsDir,
-				cellManager,
-				executionTracker: manager,
-				onCellSettled,
-				renderers,
-				monitor,
-				spawns: runtime.spawns,
-				spawnDefaultAgent: runtime.settings.taskTools.task,
-				hostLine: hostLine(),
-				runtimes: runtime.runtimes,
-				...(bunSkillPath === undefined ? {} : { bunSkillPath }),
-				...(modelId === undefined ? {} : { modelId }),
-			}),
+			withStartRecovery(
+				recovery,
+				createEvalTool({
+					enabledLanguages: runtime.enabledLanguages,
+					kernelManager: manager,
+					cellTimeoutSeconds: runtime.settings.cellTimeoutSeconds,
+					foregroundWindowSeconds: resolveForegroundWindowSeconds(runtime.settings),
+					runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
+					hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
+					executeTool: runtime.executeTool,
+					listTools: () => pi.getAllTools(),
+					complete,
+					settings: runtime.settings,
+					artifactsDir: runtime.artifactsDir,
+					...(runtime.pythonEnvironments === undefined ? {} : { pythonEnvironments: runtime.pythonEnvironments }),
+					jsEnvironments: runtime.jsEnvironments,
+					cellManager,
+					handles,
+					executionTracker: manager,
+					onCellSettled,
+					renderers,
+					monitor,
+					spawns: runtime.spawns,
+					spawnDefaultAgent: runtime.settings.taskTools.task,
+					hostLine: hostLine(),
+					runtimes: runtime.runtimes,
+					kernelPreludes: () => activeKernelPreludes(pi),
+					promptKernelPreludes: preludes,
+					...(bunSkillPath === undefined ? {} : { bunSkillPath }),
+					...(modelId === undefined ? {} : { modelId }),
+				}),
+			),
 		);
 	};
 	const dropRuntime = async (): Promise<void> => {
 		const cells = activeCells;
+		const handles = activeHandles;
 		activeRuntime = undefined;
 		activeModelId = undefined;
 		activeCells = undefined;
+		activeHandles = undefined;
 		statusTicker.stop();
+		// Fail every saved handle closed before the kernels go: a late wait() must never reach a successor generation.
+		handles?.dispose();
 		await cells?.dispose();
 		activeContext = undefined;
 		await manager.dispose();
 	};
 	pi.registerTool(
-		createEvalTool({
-			enabledLanguages: { py: true, js: true, rb: true, jl: true },
-			kernelManager: manager,
-			cellTimeoutSeconds: defaultCodemodeSettings.cellTimeoutSeconds,
-			foregroundWindowSeconds: resolveForegroundWindowSeconds(defaultCodemodeSettings),
-			executeTool: createExecuteTool(pi),
-			listTools: () => pi.getAllTools(),
-			complete,
-			settings: defaultCodemodeSettings,
-			cellManager: new EvalDetachedCellManager({
-				notifier,
+		withStartRecovery(
+			recovery,
+			createEvalTool({
+				enabledLanguages: { py: true, js: true, rb: true, jl: true },
+				kernelManager: manager,
+				cellTimeoutSeconds: defaultCodemodeSettings.cellTimeoutSeconds,
+				foregroundWindowSeconds: resolveForegroundWindowSeconds(defaultCodemodeSettings),
+				runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
 				hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
-				onStatusChange: showDetachedCells,
-				onWakeSourceState: emitWakeSourceState,
-				...(options.now === undefined ? {} : { now: options.now }),
+				executeTool: createExecuteTool(pi),
+				listTools: () => pi.getAllTools(),
+				complete,
+				settings: defaultCodemodeSettings,
+				cellManager: new EvalDetachedCellManager({
+					notifier,
+					maxDetachedCells: resolveMaxDetachedCells(defaultCodemodeSettings),
+					retainedResultsBytes: resolveRetainedResultsBytes(defaultCodemodeSettings),
+					hardLimitSeconds: resolveHardLimitSeconds(defaultCodemodeSettings),
+					runBudgetSeconds: resolveRunBudgetSeconds(defaultCodemodeSettings),
+					onStatusChange: showDetachedCells,
+					onWakeSourceState: emitWakeSourceState,
+					...(options.now === undefined ? {} : { now: options.now }),
+				}),
+				executionTracker: manager,
+				renderers,
+				// The baseline tool is registered before extensions such as monitor load.
+				monitor: false,
+				hostLine: hostLine(),
+				runtimes: { js: jsRuntimeInfo() },
+				...(bunSkillPath === undefined ? {} : { bunSkillPath }),
 			}),
-			executionTracker: manager,
-			renderers,
-			// The baseline tool is registered before extensions such as monitor load.
-			monitor: false,
-			hostLine: hostLine(),
-			runtimes: { js: jsRuntimeInfo() },
-			...(bunSkillPath === undefined ? {} : { bunSkillPath }),
-		}),
+		),
 	);
-	pi.registerRemovedToolHint(
-		"exec",
-		'exec was removed; use eval({ language: "js", code }) instead. Long eval cells detach on timeout and notify when complete.',
-	);
-	pi.registerRemovedToolHint(
-		"wait",
-		'wait was removed; detached eval cells notify when complete. Use eval({ action: "peek"|"stop", cell_id }) to inspect or stop one.',
-	);
+	registerRemovedToolHints(pi);
 	registerBunSkillContribution(pi);
 
-	pi.on("session_start", async (event, ctx) => {
+	const startSession = async (event: unknown, ctx: ExtensionContext): Promise<void> => {
 		const previousCells = activeCells;
+		const previousHandles = activeHandles;
 		activeCells = undefined;
+		activeHandles = undefined;
+		previousHandles?.dispose();
 		await previousCells?.dispose();
 		const generation = manager.beginReplacement();
-		const runtime = await createRuntime(pi, ctx, event, complete, options);
+		const handles = new HandleRegistry({ ownerSessionId: ctx.sessionManager.getSessionId() });
+		const runtime = await createRuntime(pi, ctx, event, complete, options, handles);
 		const replaced = await manager.replace(generation, runtime.manager);
-		if (!replaced) return;
+		if (!replaced) {
+			handles.dispose();
+			return;
+		}
 		notifier.reset();
 		activeContext = ctx;
 		const cellManager = new EvalDetachedCellManager({
 			artifactsDir: runtime.artifactsDir,
 			notifier,
+			maxDetachedCells: resolveMaxDetachedCells(runtime.settings),
+			retainedResultsBytes: resolveRetainedResultsBytes(runtime.settings),
+			retainedImagesBytes: resolveRetainedImagesBytes(runtime.settings),
 			hardLimitSeconds: resolveHardLimitSeconds(runtime.settings),
+			runBudgetSeconds: resolveRunBudgetSeconds(runtime.settings),
 			onStatusChange: showDetachedCells,
 			onWakeSourceState: emitWakeSourceState,
 			...(options.now === undefined ? {} : { now: options.now }),
 		});
 		activeCells = cellManager;
+		activeHandles = handles;
 		// The goal builtin clears its per-session counts at session_start; re-publish our snapshot.
 		cellManager.publishWakeSourceState();
 		activeRuntime = runtime;
 		activeModelId = ctx.model?.id;
-		registerEvalForRuntime(runtime, activeModelId, cellManager);
+		registerEvalForRuntime(runtime, activeModelId, cellManager, handles);
+	};
+	pi.on("session_start", async (event, ctx) => await recovery.runStart(event, ctx));
+	pi.on("session_shutdown", async () => {
+		recovery.sessionEnded();
+		await dropRuntime();
 	});
-	pi.on("session_shutdown", async () => dropRuntime());
-	pi.on("session_before_switch", async () => dropRuntime());
-	pi.on("session_before_fork", async () => dropRuntime());
 	pi.on("model_select", async (event, ctx) => {
 		activeContext = ctx;
 		const runtime = activeRuntime;
@@ -229,23 +278,33 @@ export default function senpiCodemode(pi: CodemodeExtensionAPI, options: SenpiCo
 		if (modelId === undefined || modelId === activeModelId) return;
 		activeModelId = modelId;
 		const cellManager = activeCells;
-		if (cellManager === undefined) return;
-		registerEvalForRuntime(runtime, modelId, cellManager);
+		const handles = activeHandles;
+		if (cellManager === undefined || handles === undefined) return;
+		registerEvalForRuntime(runtime, modelId, cellManager, handles);
+	});
+	// Tool activation has no event of its own; the next turn re-documents a changed contribution set.
+	pi.on("turn_start", async () => {
+		const runtime = activeRuntime;
+		const cellManager = activeCells;
+		const handles = activeHandles;
+		if (runtime === undefined || cellManager === undefined || handles === undefined) return;
+		if (kernelPreludeDocsKey(promptKernelPreludes(pi)) === promptPreludeDocs) return;
+		registerEvalForRuntime(runtime, activeModelId, cellManager, handles);
 	});
 }
 
-function hostLine(): string {
-	const cpu = os.cpus()[0]?.model?.trim();
-	return [`${os.platform()} ${os.arch()}`, cpu, `${os.availableParallelism()} cores`, jsRuntimeLabel()]
-		.filter((part): part is string => !!part)
-		.join(" \u00b7 ");
-}
-
-function modelIdFrom(event: unknown): string | undefined {
-	if (typeof event !== "object" || event === null || !("model" in event)) return undefined;
-	const model = event.model;
-	if (typeof model !== "object" || model === null || !("id" in model)) return undefined;
-	return typeof model.id === "string" ? model.id : undefined;
-}
-
+export {
+	KERNEL_TOOLS_CAPABILITIES,
+	KERNEL_TOOLS_UNSUPPORTED,
+	type KernelToolDescriptor,
+	type KernelToolHostDenial,
+	type KernelToolHostDenialReason,
+	type KernelToolsCapabilities,
+	type KernelToolsCapability,
+	type KernelToolsDescribeResult,
+	type KernelToolsHostScope,
+	type KernelToolsInvokeOptions,
+	type KernelToolsInvokeRequest,
+	type KernelToolsInvokeScope,
+} from "./kernels/js/kernel-tools-types.ts";
 export { enabledLanguagesFrom };

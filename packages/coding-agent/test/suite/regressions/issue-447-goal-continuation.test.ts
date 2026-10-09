@@ -4,7 +4,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GOAL_USER_GRACE_DELAY_MS } from "../../../src/core/extensions/builtin/goal/continuation.ts";
 import { readGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
-import type { ExtensionContext } from "../../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 import {
 	cleanAssistantStop,
@@ -52,7 +52,7 @@ async function createActiveGoal(
 ): Promise<void> {
 	const createGoal = harness.tools.get("create_goal");
 	if (createGoal === undefined) throw new Error("Goal tool was not registered");
-	await createGoal.execute("issue-447-create", { objective }, undefined, undefined, ctx);
+	await createGoal.execute("issue-447-create", { objective }, undefined, undefined, ctx as ExtensionToolContext);
 }
 
 async function runContinuationTurn(

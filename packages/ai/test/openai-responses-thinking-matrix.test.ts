@@ -15,6 +15,8 @@ import {
 import { getModel } from "../src/compat.ts";
 import { supportsXhigh } from "../src/models.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 interface ReasoningPayload {
 	reasoning?: { effort?: string; summary?: string };
 	reasoning_effort?: string;
@@ -44,7 +46,7 @@ async function capturePayload(
 describe("OpenAI Responses thinking matrix", () => {
 	it("preserves OpenAI's explicit gpt-5.6 max effort mapping", async () => {
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleOpenAIResponses(getModel("openai", "gpt-5.6-sol"), context, {
+			streamSimpleOpenAIResponses(getModel("openai", "gpt-5.6-sol"), normalizeContext(context), {
 				apiKey: "test-key",
 				reasoning: "max",
 				onPayload,
@@ -61,7 +63,7 @@ describe("OpenAI Responses thinking matrix", () => {
 			thinkingLevelMap: undefined,
 		};
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleOpenAIResponses(model, context, {
+			streamSimpleOpenAIResponses(model, normalizeContext(context), {
 				apiKey: "test-key",
 				reasoning: "max",
 				onPayload,
@@ -78,7 +80,11 @@ describe("OpenAI Responses thinking matrix", () => {
 			thinkingLevelMap: undefined,
 		};
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleAzureOpenAIResponses(model, context, { apiKey: "test-key", reasoning: "max", onPayload }),
+			streamSimpleAzureOpenAIResponses(model, normalizeContext(context), {
+				apiKey: "test-key",
+				reasoning: "max",
+				onPayload,
+			}),
 		);
 
 		expect(payload).toMatchObject({ reasoning: { effort: "max" } });
@@ -86,11 +92,11 @@ describe("OpenAI Responses thinking matrix", () => {
 
 	it("preserves max effort for a map-less gpt-5.6-sol model on Codex Responses", async () => {
 		const model = {
-			...getModel("openai-codex", "gpt-5.6-sol"),
+			...getModel("chatgpt-subscription", "gpt-5.6-sol"),
 			thinkingLevelMap: undefined,
 		};
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleOpenAICodexResponses(model, context, {
+			streamSimpleOpenAICodexResponses(model, normalizeContext(context), {
 				apiKey: "test-key",
 				transport: "sse",
 				reasoning: "max",
@@ -109,7 +115,11 @@ describe("OpenAI Responses thinking matrix", () => {
 			thinkingLevelMap: undefined,
 		};
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleOpenAICompletions(model, context, { apiKey: "test-key", reasoning: "max", onPayload }),
+			streamSimpleOpenAICompletions(model, normalizeContext(context), {
+				apiKey: "test-key",
+				reasoning: "max",
+				onPayload,
+			}),
 		);
 
 		expect(payload.reasoning_effort).toBe("max");
@@ -121,7 +131,7 @@ describe("OpenAI Responses thinking matrix", () => {
 			baseUrl: "http://127.0.0.1:9",
 		};
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleAzureOpenAIResponses(model, context, {
+			streamSimpleAzureOpenAIResponses(model, normalizeContext(context), {
 				apiKey: "test-key",
 				reasoning: "max",
 				onPayload,
@@ -133,7 +143,7 @@ describe("OpenAI Responses thinking matrix", () => {
 
 	it("sends Codex's none sentinel when the agent represents thinking off as omitted reasoning", async () => {
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleOpenAICodexResponses(getModel("openai-codex", "gpt-5.6-sol"), context, {
+			streamSimpleOpenAICodexResponses(getModel("chatgpt-subscription", "gpt-5.6-sol"), normalizeContext(context), {
 				apiKey: "test-key",
 				transport: "sse",
 				onPayload,
@@ -152,7 +162,7 @@ describe("OpenAI Responses thinking matrix", () => {
 		"normalizes Codex %s summary on the explicit-effort path",
 		async (_, reasoningSummary, expectedSummary) => {
 			const payload = await capturePayload((onPayload) =>
-				streamOpenAICodexResponses(getModel("openai-codex", "gpt-5.6-sol"), context, {
+				streamOpenAICodexResponses(getModel("chatgpt-subscription", "gpt-5.6-sol"), normalizeContext(context), {
 					apiKey: "test-key",
 					transport: "sse",
 					reasoningEffort: "low",
@@ -177,7 +187,7 @@ describe("OpenAI Responses thinking matrix", () => {
 		"normalizes Codex %s summary on the thinking-off fallback",
 		async (_, reasoningSummary, expectedSummary) => {
 			const payload = await capturePayload((onPayload) =>
-				streamOpenAICodexResponses(getModel("openai-codex", "gpt-5.6-sol"), context, {
+				streamOpenAICodexResponses(getModel("chatgpt-subscription", "gpt-5.6-sol"), normalizeContext(context), {
 					apiKey: "test-key",
 					transport: "sse",
 					reasoningSummary,
@@ -194,11 +204,11 @@ describe("OpenAI Responses thinking matrix", () => {
 
 	it("omits Codex reasoning when the catalog says thinking cannot be disabled", async () => {
 		const model = {
-			...getModel("openai-codex", "gpt-5.6-sol"),
+			...getModel("chatgpt-subscription", "gpt-5.6-sol"),
 			thinkingLevelMap: { off: null },
 		};
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleOpenAICodexResponses(model, context, {
+			streamSimpleOpenAICodexResponses(model, normalizeContext(context), {
 				apiKey: "test-key",
 				transport: "sse",
 				onPayload,
@@ -214,7 +224,7 @@ describe("OpenAI Responses thinking matrix", () => {
 			baseUrl: "http://127.0.0.1:9",
 		};
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleAzureOpenAIResponses(model, context, {
+			streamSimpleAzureOpenAIResponses(model, normalizeContext(context), {
 				apiKey: "test-key",
 				onPayload,
 			}),
@@ -225,7 +235,7 @@ describe("OpenAI Responses thinking matrix", () => {
 
 	it("omits xAI reasoning when the catalog says thinking cannot be disabled", async () => {
 		const payload = await capturePayload((onPayload) =>
-			streamSimpleOpenAIResponses(getModel("xai", "grok-4.5"), context, {
+			streamSimpleOpenAIResponses(getModel("xai", "grok-4.5"), normalizeContext(context), {
 				apiKey: "test-key",
 				onPayload,
 			}),
@@ -236,7 +246,7 @@ describe("OpenAI Responses thinking matrix", () => {
 
 	it("does not send an unavailable explicit OpenAI effort", async () => {
 		const payload = await capturePayload((onPayload) =>
-			streamOpenAIResponses(getModel("openai", "gpt-5.1"), context, {
+			streamOpenAIResponses(getModel("openai", "gpt-5.1"), normalizeContext(context), {
 				apiKey: "test-key",
 				reasoningEffort: "minimal",
 				onPayload,
@@ -248,7 +258,7 @@ describe("OpenAI Responses thinking matrix", () => {
 
 	it("does not send an unavailable summary-default OpenAI effort", async () => {
 		const payload = await capturePayload((onPayload) =>
-			streamOpenAIResponses(getModel("openai", "gpt-5-pro"), context, {
+			streamOpenAIResponses(getModel("openai", "gpt-5-pro"), normalizeContext(context), {
 				apiKey: "test-key",
 				reasoningSummary: "auto",
 				onPayload,
@@ -264,7 +274,7 @@ describe("OpenAI Responses thinking matrix", () => {
 			baseUrl: "http://127.0.0.1:9",
 		};
 		const payload = await capturePayload((onPayload) =>
-			streamAzureOpenAIResponses(model, context, {
+			streamAzureOpenAIResponses(model, normalizeContext(context), {
 				apiKey: "test-key",
 				reasoningEffort: "minimal",
 				onPayload,
@@ -276,11 +286,11 @@ describe("OpenAI Responses thinking matrix", () => {
 
 	it("does not send Codex's none sentinel when the catalog forbids thinking off", async () => {
 		const model = {
-			...getModel("openai-codex", "gpt-5.6-sol"),
+			...getModel("chatgpt-subscription", "gpt-5.6-sol"),
 			thinkingLevelMap: { off: null },
 		};
 		const payload = await capturePayload((onPayload) =>
-			streamOpenAICodexResponses(model, context, {
+			streamOpenAICodexResponses(model, normalizeContext(context), {
 				apiKey: "test-key",
 				transport: "sse",
 				reasoningEffort: "none",

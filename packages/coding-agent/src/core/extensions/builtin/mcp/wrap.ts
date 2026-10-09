@@ -1,5 +1,8 @@
-export { Client } from "@modelcontextprotocol/sdk/client/index.js";
-export { Server } from "@modelcontextprotocol/sdk/server/index.js";
+// Type-only re-exports: a value re-export would put the whole MCP SDK back into
+// the CLI's startup import graph (see sdk.lazy.ts). Callers that need the
+// classes themselves load them through that boundary.
+export type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+export type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 export type { CallToolResult, ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 
 import type { EventEmitter } from "node:events";

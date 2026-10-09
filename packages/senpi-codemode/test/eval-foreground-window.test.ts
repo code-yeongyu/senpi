@@ -8,11 +8,9 @@ import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext } from "./eval/fakes.ts";
 
-type TextContent = Extract<AgentToolResult<unknown>["content"][number], { type: "text" }>;
-
 function textOf(resultValue: AgentToolResult<unknown>): string {
 	const texts: string[] = [];
-	for (const part of resultValue.content as readonly TextContent[]) {
+	for (const part of resultValue.content) {
 		if (part.type === "text") texts.push(part.text);
 	}
 	return texts.join("\n");
@@ -22,11 +20,16 @@ function interactiveContext() {
 	return { ...fakeExtensionContext(), mode: "tui" as const };
 }
 
-function createTool(manager: EvalDetachedCellManager, kernel: FakeKernel, foregroundWindowSeconds: number) {
+function createTool(
+	manager: EvalDetachedCellManager,
+	kernel: FakeKernel,
+	foregroundWindowSeconds: number,
+	cellTimeoutSeconds = 1,
+) {
 	return createEvalTool({
 		enabledLanguages: { js: true, py: false, rb: false, jl: false },
 		kernelManager: new FakeManager([["js", kernel]]),
-		cellTimeoutSeconds: 1,
+		cellTimeoutSeconds,
 		foregroundWindowSeconds,
 		executeTool: vi.fn(),
 		cellManager: manager,
@@ -53,7 +56,7 @@ describe("eval foreground window", () => {
 		vi.useRealTimers();
 	});
 
-	it("detaches an explicit long timeout at the foreground window instead of blocking for it", async () => {
+	it("detaches at the idle budget even when a long timeout declares a long run", async () => {
 		vi.useFakeTimers();
 		const manager = new EvalDetachedCellManager();
 		const kernel = new FakeKernel([]);
@@ -70,29 +73,29 @@ describe("eval foreground window", () => {
 		await started;
 		const settlement = trackSettlement(execution);
 
-		await vi.advanceTimersByTimeAsync(4_999);
+		await vi.advanceTimersByTimeAsync(999);
 		expect(settlement.settled).toBe(false);
 
 		await vi.advanceTimersByTimeAsync(1);
 		expect(settlement.settled).toBe(true);
 		const detached = await execution;
-		expect(textOf(detached)).toContain("detached and is still running");
+		expect(textOf(detached)).toContain("detached and is running in the js kernel");
 		expect(kernel.interrupts).toEqual([]);
-		expect(manager.busyFor("js")).toMatchObject({ cellId: "fw-long-cell", state: "detached" });
+		expect(manager.liveCells("js")).toMatchObject([{ cellId: "fw-long-cell", state: "detached" }]);
 		await manager.stop("fw-long-cell");
 		await manager.flushNotifications();
 	});
 
-	it("still detaches at the explicit timeout when it is shorter than the window", async () => {
+	it("caps the idle detach budget at the foreground window", async () => {
 		vi.useFakeTimers();
 		const manager = new EvalDetachedCellManager();
 		const kernel = new FakeKernel([]);
-		const tool = createTool(manager, kernel, 5);
+		const tool = createTool(manager, kernel, 3, 10);
 
 		const started = kernel.deferNextRun();
 		const execution = tool.execute(
 			"fw-short-cell",
-			{ language: "js", code: "await forever", summary: "medium work", timeout: 3 },
+			{ language: "js", code: "await forever", summary: "medium work" },
 			undefined,
 			undefined,
 			interactiveContext(),
@@ -106,8 +109,8 @@ describe("eval foreground window", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		expect(settlement.settled).toBe(true);
 		const detached = await execution;
-		expect(textOf(detached)).toContain("detached and is still running");
-		expect(manager.busyFor("js")).toMatchObject({ cellId: "fw-short-cell", state: "detached" });
+		expect(textOf(detached)).toContain("detached and is running in the js kernel");
+		expect(manager.liveCells("js")).toMatchObject([{ cellId: "fw-short-cell", state: "detached" }]);
 		await manager.stop("fw-short-cell");
 		await manager.flushNotifications();
 	});
@@ -136,12 +139,12 @@ describe("eval foreground window", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		expect(settlement.settled).toBe(true);
 		const detached = await execution;
-		expect(textOf(detached)).toContain("detached and is still running");
+		expect(textOf(detached)).toContain("detached and is running in the js kernel");
 		await manager.stop("fw-bridge-cell");
 		await manager.flushNotifications();
 	});
 
-	it("keeps an explicit on_timeout:error deadline unclamped by the foreground window", async () => {
+	it("keeps an explicit on_timeout:error run budget unclamped by the foreground window", async () => {
 		vi.useFakeTimers();
 		const kernel = new FakeKernel([]);
 		const tool = createTool(new EvalDetachedCellManager(), kernel, 2);
@@ -166,7 +169,7 @@ describe("eval foreground window", () => {
 			(error: unknown) => ({ status: "rejected" as const, error }),
 		);
 		expect(outcome).toMatchObject({ status: "rejected", error: { name: "TimeoutError" } });
-		expect(kernel.interrupts).toEqual(["Cell timed out after 3000ms"]);
+		expect(kernel.interrupts).toEqual([expect.stringContaining("3s run budget")]);
 	});
 
 	it("keeps the default detach at cellTimeoutSeconds when no explicit timeout is given", async () => {
@@ -192,7 +195,7 @@ describe("eval foreground window", () => {
 		await vi.advanceTimersByTimeAsync(1);
 		expect(settlement.settled).toBe(true);
 		const detached = await execution;
-		expect(textOf(detached)).toContain("detached and is still running");
+		expect(textOf(detached)).toContain("detached and is running in the js kernel");
 		await manager.stop("fw-default-cell");
 		await manager.flushNotifications();
 	});

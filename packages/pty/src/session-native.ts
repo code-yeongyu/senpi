@@ -48,6 +48,8 @@ function normalizeTerminalSessionHandle(value: unknown): TerminalSessionHandle {
 	}
 
 	const requiredHandle = {
+		pid: optionalNumber(value.pid),
+		processGroupId: optionalNumber(value.processGroupId),
 		write(data: string | Uint8Array) {
 			return normalizeUnknownOperationResult(write.call(value, data));
 		},
@@ -76,6 +78,10 @@ function normalizeTerminalSessionHandle(value: unknown): TerminalSessionHandle {
 	}
 	if (isNativeWait(wait)) return { ...requiredHandle, wait: async () => wait.call(value) };
 	throw new Error("Native PTY session handle is missing waitExit() or wait()");
+}
+
+function optionalNumber(value: unknown): number | undefined {
+	return typeof value === "number" ? value : undefined;
 }
 
 function normalizeUnsubscribe(value: unknown): () => void {

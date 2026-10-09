@@ -42,12 +42,14 @@ describe("non-recursive watch main-thread stall", () => {
 		worker.emit("message", { kind: "event", id: 1, eventType: "change", filename: "ext.ts" });
 
 		expect(createRecursiveWorker).toHaveBeenCalledTimes(1);
-		expect(worker.postMessage).toHaveBeenCalledWith({
-			kind: "watch",
-			id: 1,
-			path: "/agent/extensions",
-			recursive: false,
-		});
+		expect(worker.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "watch",
+				id: 1,
+				path: "/agent/extensions",
+				recursive: false,
+			}),
+		);
 		expect(mocks.fsWatch).not.toHaveBeenCalled();
 		expect(listener).toHaveBeenCalledWith("change", "ext.ts");
 
@@ -72,12 +74,14 @@ describe("non-recursive watch main-thread stall", () => {
 		// The dead worker is dropped and live subscriptions land on a fresh one.
 		expect(onError).toHaveBeenCalledWith(expect.any(Error), "/agent/extensions");
 		expect(createRecursiveWorker).toHaveBeenCalledTimes(2);
-		expect(workers[1]?.postMessage).toHaveBeenCalledWith({
-			kind: "watch",
-			id: 1,
-			path: "/agent/extensions",
-			recursive: false,
-		});
+		expect(workers[1]?.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "watch",
+				id: 1,
+				path: "/agent/extensions",
+				recursive: false,
+			}),
+		);
 
 		// Events from the replacement worker still reach the original listener.
 		workers[1]?.emit("message", { kind: "event", id: 1, eventType: "change", filename: "ext.ts" });

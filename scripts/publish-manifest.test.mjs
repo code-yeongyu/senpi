@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { describe, it } from "node:test";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
+import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
-const publisherSource = readFileSync(new URL("./publish.mjs", import.meta.url), "utf8");
+const repoRoot = new URL("..", import.meta.url);
 
 describe("publish manifest rewrite", () => {
-	it("passes repository-relative package directories directly", () => {
-		assert.match(publisherSource, /directory: pkg\.directory/);
-		assert.doesNotMatch(publisherSource, /repoRoot|rootDir/);
+	it("gives the publisher repository-relative package directories", () => {
+		const packages = getPublicWorkspacePackages();
+		assert.ok(packages.length > 0);
+		for (const { name, directory } of packages) {
+			assert.ok(!isAbsolute(directory) && !directory.startsWith(".."), `${name}: ${directory} must be repository-relative`);
+			assert.ok(existsSync(new URL(`${directory}/package.json`, repoRoot)), `${name}: ${directory} must hold its manifest`);
+		}
 	});
 
 	it("targets the Senpi fork for OIDC provenance", () => {

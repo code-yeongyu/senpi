@@ -224,6 +224,24 @@ describe("reasoning builtin extension (/reasoning + /efforts)", () => {
 		expect(lastNotify(notify)).toEqual(["Reasoning: on (low).", "info"]);
 	});
 
+	// senpi#2196: an endpoint-advertised model default outranks the global last-used level.
+	it("prefers the model's non-off default over the global default when the model has no memory", async () => {
+		// given
+		const { harness, notify, model } = await createReasoningHarness({
+			thinkingLevelMap: GRADED_FULL_MAP,
+			settings: { defaultThinkingLevel: "high" },
+		});
+		model.defaultThinkingLevel = "low";
+		harness.session.setSessionThinkingLevel("off");
+
+		// when
+		await harness.session.prompt("/reasoning on");
+
+		// then
+		expect(harness.session.thinkingLevel).toBe("low");
+		expect(lastNotify(notify)).toEqual(["Reasoning: on (low).", "info"]);
+	});
+
 	it("falls back to medium when neither memory nor a non-off default exists", async () => {
 		// given
 		const { harness, notify } = await createReasoningHarness({

@@ -79,7 +79,7 @@ export {
 	type WriteToolOptions,
 } from "./write.ts";
 
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { type AgentTool, selectedReadFolder } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
@@ -104,15 +104,6 @@ export const allToolNames: Set<ToolName> = new Set([
 	"ls",
 ]);
 
-// TEMPORARY: tools listed here are built and stay resolvable through getRegisteredTool, but are
-// withheld from the MODEL-facing surface - they are dropped from the prompt-bearing tool
-// definitions and from the active tool names, so the model can neither see nor call them.
-// Programmatic callers that resolve a tool by name (notably the Cursor exec bridge, which drives
-// its own native read/bash/grep/ls frames regardless of what the request advertised) keep working.
-// `grep` is withheld while search routing is evaluated; restoring it is deleting the entry from
-// this set. Keep this set empty in the steady state.
-export const temporarilyDisabledToolNames: ReadonlySet<string> = new Set<ToolName>(["grep"]);
-
 export interface ToolsOptions {
 	read?: ReadToolOptions;
 	bash?: BashToolOptions;
@@ -126,7 +117,7 @@ export interface ToolsOptions {
 
 export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): Record<ToolName, ToolDef> {
 	return {
-		read: createReadToolDefinition(cwd, options?.read),
+		read: createReadToolDefinition(cwd, { folder: selectedReadFolder, ...options?.read }),
 		bash: createBashToolDefinition(cwd, options?.bash),
 		powershell: createPowerShellToolDefinition(cwd, options?.powershell),
 		edit: createEditToolDefinition(cwd, options?.edit),
@@ -139,7 +130,7 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 
 export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 	return [
-		createReadTool(cwd, options?.read),
+		createReadTool(cwd, { folder: selectedReadFolder, ...options?.read }),
 		createBashTool(cwd, options?.bash),
 		createEditTool(cwd, options?.edit),
 		createWriteTool(cwd, options?.write),
@@ -148,7 +139,7 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
 	return [
-		createReadTool(cwd, options?.read),
+		createReadTool(cwd, { folder: selectedReadFolder, ...options?.read }),
 		createGrepTool(cwd, options?.grep),
 		createFindTool(cwd, options?.find),
 		createLsTool(cwd, options?.ls),

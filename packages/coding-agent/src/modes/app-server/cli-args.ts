@@ -15,12 +15,15 @@ export interface AppServerModeOptions {
 	readonly listen: AppServerListen;
 	readonly wsAuth?: AppServerWsAuth;
 	readonly jsonLogs: boolean;
+	/** Extension sources loaded into every thread session, like the global `--extension` flag. */
+	readonly extensions: readonly string[];
 }
 
 export interface AppServerDaemonCommandOptions {
 	readonly kind: "daemon";
 	readonly verb: AppServerDaemonVerb;
 	readonly listen: AppServerListen;
+	readonly extensions: readonly string[];
 }
 
 export interface AppServerUsageError {
@@ -36,8 +39,8 @@ export const APP_SERVER_LISTEN_USAGE =
 export function formatAppServerUsage(): string {
 	const listenForms = "stdio://|unix://|unix:///abs/path|ws://IP:PORT";
 	return [
-		`Usage: ${APP_NAME} app-server [--listen <${listenForms}>] [--ws-auth <token-file|off>] [--json-logs]`,
-		`       ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <${listenForms}>]`,
+		`Usage: ${APP_NAME} app-server [--listen <${listenForms}>] [--ws-auth <token-file|off>] [--json-logs] [--extension <path>]...`,
+		`       ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <${listenForms}>] [--extension <path>]...`,
 	].join("\n");
 }
 
@@ -108,13 +111,25 @@ function parseWsAuth(value: string): AppServerWsAuth {
 	return value === "off" ? { kind: "off" } : { kind: "token-file", path: value };
 }
 
+const EXTENSION_USAGE = "--extension requires <path>.";
+
 function parseServerArgs(args: readonly string[]): AppServerModeOptions | AppServerUsageError {
 	let listen: AppServerListen = { kind: "stdio", url: "stdio://" };
 	let wsAuth: AppServerWsAuth | undefined;
 	let jsonLogs = false;
+	const extensions: string[] = [];
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
+		if (arg === "--extension") {
+			const value = args[index + 1];
+			if (value === undefined) {
+				return { kind: "usage-error", message: EXTENSION_USAGE };
+			}
+			extensions.push(value);
+			index++;
+			continue;
+		}
 		if (arg === "--listen") {
 			const value = args[index + 1];
 			if (value === undefined) {
@@ -144,7 +159,7 @@ function parseServerArgs(args: readonly string[]): AppServerModeOptions | AppSer
 		return { kind: "usage-error", message: `Unexpected app-server argument: ${arg}` };
 	}
 
-	return { kind: "server", listen, wsAuth, jsonLogs };
+	return { kind: "server", listen, wsAuth, jsonLogs, extensions };
 }
 
 function parseDaemonArgs(args: readonly string[]): AppServerDaemonCommandOptions | AppServerUsageError {
@@ -154,8 +169,18 @@ function parseDaemonArgs(args: readonly string[]): AppServerDaemonCommandOptions
 	}
 
 	let listen: AppServerListen = { kind: "ws", url: "ws://127.0.0.1:18800", host: "127.0.0.1", port: 18800 };
+	const extensions: string[] = [];
 	for (let index = 1; index < args.length; index++) {
 		const arg = args[index];
+		if (arg === "--extension") {
+			const value = args[index + 1];
+			if (value === undefined) {
+				return { kind: "usage-error", message: EXTENSION_USAGE };
+			}
+			extensions.push(value);
+			index++;
+			continue;
+		}
 		if (arg === "--listen") {
 			const value = args[index + 1];
 			if (value === undefined) {
@@ -172,7 +197,7 @@ function parseDaemonArgs(args: readonly string[]): AppServerDaemonCommandOptions
 		return { kind: "usage-error", message: `Unexpected app-server daemon argument: ${arg}` };
 	}
 
-	return { kind: "daemon", verb, listen };
+	return { kind: "daemon", verb, listen, extensions };
 }
 
 export function parseAppServerCliArgs(args: readonly string[]): AppServerCliArgs {

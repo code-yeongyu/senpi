@@ -7,7 +7,7 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 - [Subscriptions](#subscriptions)
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
-- [Cloud Providers](#cloud-providers)
+- [Provider Specific Config](#provider-specific-config)
 - [Ollama Cloud](#ollama-cloud)
 - [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
@@ -21,13 +21,15 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - GitHub Copilot
 - xAI (Grok/X subscription)
+- Meta (Muse subscription)
 - OpenRouter (OAuth-minted API key billed from OpenRouter credits)
+- Kimi Code (kimi.com / kimi.ai subscriptions)
 - Radius
 - Cursor (Pro/Ultra/Teams) — authentication only for now, see below
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
 
-### OpenAI Codex
+### ChatGPT Subscription
 
 - Requires ChatGPT Plus or Pro subscription
 - Officially endorsed by OpenAI: [Codex for OSS](https://developers.openai.com/community/codex-for-oss)
@@ -36,19 +38,23 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.js
 
 Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party harness usage draws from [extra usage](https://claude.ai/settings/usage) and is billed per token, not against Claude plan limits.
 
-### Claude SDK OAuth
+- Run `/login anthropic` to open the browser flow. The login listens on loopback port 53692 when it is free and on an ephemeral port otherwise, so a second session on the same machine (another TUI, an RPC host, an abandoned login) can log in at the same time; the auth URL always names the port that is actually listening.
+- If the browser lands on a page saying the login belongs to a different session or an earlier attempt, that page's address was sent to another login's listener: paste the full address from the address bar into the session whose prompt is still waiting, or run the login again from that session.
+- A login that receives neither the browser callback nor a pasted redirect URL for 10 minutes fails with a timeout and releases its port; run `/login anthropic` again.
 
-The `claude-sdk-oauth` provider routes LLM calls through the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) - it spawns the real Claude Code engine - while senpi executes every tool itself. Subscription usage flows through Anthropic's official Claude Code surface.
+### Anthropic Subscription
 
-- Run `/login claude-sdk-oauth` to sign in with your Claude Pro/Max subscription (PKCE, same OAuth client as the Claude Code CLI). An existing Anthropic OAuth credential is offered as an import.
-- Multiple accounts: each `/login claude-sdk-oauth` adds another named account. `CLAUDE_CODE_OAUTH_TOKEN` (and `_2`..`_N`) are honored as read-only env accounts. `/claude-account` lists, adds, removes, and pins accounts; `--claude-account <name>` pins one for the session; `claudeSdkOauthProvider.pinnedAccount` pins one in settings.
+The `anthropic-subscription` provider routes LLM calls through the official [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) - it spawns the real Claude Code engine - while senpi executes every tool itself. Subscription usage flows through Anthropic's official Claude Code surface.
+
+- Run `/login anthropic-subscription` to sign in with your Claude Pro/Max subscription (PKCE, same OAuth client as the Claude Code CLI). An existing Anthropic OAuth credential is offered as an import.
+- Multiple accounts: each `/login anthropic-subscription` adds another named account. `CLAUDE_CODE_OAUTH_TOKEN` (and `_2`..`_N`) are honored as read-only env accounts. `/claude-account` lists, adds, removes, and pins accounts; `--claude-account <name>` pins one for the session; `anthropicSubscriptionProvider.pinnedAccount` pins one in settings.
 - Session affinity: one senpi session sticks to one account (rendezvous hashing), which keeps Anthropic's prompt cache warm - accounts never rotate mid-session except on automatic failover. Rate limits and auth errors block the account (with cooldown) and retry on the next account, before any visible output; once output has started, the error surfaces instead of replaying.
 - Default lane: **ambient** - with no `tokenInjection` setting the provider inherits the environment like the upstream extension (Claude Code CLI login or `ANTHROPIC_API_KEY`). Managed lanes (`oauth-slots`, `config-dir`) are opt-in via one settings line until the live subscription spike proves a managed default.
-- Ambient lane is explicit opt-in: a Claude Code CLI login on the host is not consent to spend that subscription, so the ambient lane is gated by `claudeSdkOauthProvider.enabled` (default `false`, env override `SENPI_CLAUDE_SDK_OAUTH_ENABLED`). Before this gate existed, a logged-in Claude Code CLI made the provider available with no senpi-side action. An explicit senpi-side login is itself an opt-in: stored OAuth accounts in `auth.json` and `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts keep the provider available with the flag unset. Only the host-CLI-derived ambient lane requires the flag.
-- Settings (`claudeSdkOauthProvider`):
+- Ambient lane is explicit opt-in: a Claude Code CLI login on the host is not consent to spend that subscription, so the ambient lane is gated by `anthropicSubscriptionProvider.enabled` (default `false`, env override `SENPI_CLAUDE_SDK_OAUTH_ENABLED`). Before this gate existed, a logged-in Claude Code CLI made the provider available with no senpi-side action. An explicit senpi-side login is itself an opt-in: stored OAuth accounts in `auth.json` and `CLAUDE_CODE_OAUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN_<n>` env accounts keep the provider available with the flag unset. Only the host-CLI-derived ambient lane requires the flag.
+- Settings (`anthropicSubscriptionProvider`):
   - `systemPromptMode` — controls how the system prompt is delivered. **`full`** (default) sends senpi's composed system prompt verbatim; the lane no longer rebuilds from the SDK `claude_code` preset, so all prompt regions (project rules, response-language instructions, etc.) reach the model. **`preset-append`** is the previous behaviour (deprecated, kept for one release; emits a one-time warning). **`override`** loads the system prompt from a file (`systemPromptFile`). The legacy `appendSystemPrompt` key still works: `false` → `preset-append`, `true`/unset → `full`; setting both keys makes `systemPromptMode` win and warns.
   - In `full` and `override` modes, `settingSources` defaults to `[]` on every lane because senpi's prompt already carries project context — loading the SDK's own CLAUDE.md would double-inject it. The CLI always prepends its own `"You are a Claude agent, built on Anthropic's Claude Agent SDK."` block, which senpi cannot suppress; `full` means the prompt is delivered intact, not that it is the only system-prompt text.
-  - `settingSources` (filesystem settings load only in the ambient lane, so they cannot override your selected account), `strictMcpConfig`, `pinnedAccount`, `tokenInjection` (`oauth-slots` | `config-dir` | `ambient`), `resumeMode` (`auto` default | `off` restores per-turn sessions), `systemPromptFile`, `enabled` (default `false`; gates the ambient lane only).
+  - `settingSources` (filesystem settings load only in the ambient lane, so they cannot override your selected account), `strictMcpConfig`, `pinnedAccount`, `tokenInjection` (`oauth-slots` | `config-dir` | `ambient`), `resumeMode` (`auto` default | `off` restores per-turn sessions), `compactionOwner` (`senpi` default | `sdk` hands compaction to Claude Code's native auto-compact), `systemPromptFile`, `enabled` (default `false`; gates the ambient lane only).
 - **Environment overrides** (precedence: `env > project settings > global settings > default`; no new CLI flags):
 
   | Variable | Purpose |
@@ -60,9 +66,10 @@ The `claude-sdk-oauth` provider routes LLM calls through the official [Claude Ag
   | `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION` | `oauth-slots` \| `config-dir` \| `ambient` |
   | `SENPI_CLAUDE_SDK_OAUTH_SETTING_SOURCES` | Overrides `settingSources` |
   | `SENPI_CLAUDE_SDK_OAUTH_PINNED_ACCOUNT` | Overrides `pinnedAccount` |
+  | `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER` | Overrides `compactionOwner` (`senpi` \| `sdk`) |
 
   Every `SENPI_*` variable is stripped from the Claude Code subprocess environment on all three lanes; other inherited variables are preserved.
-- **Native compaction.** This lane pins the SDK's session-scoped `autoCompactEnabled: true`, overriding the user's global Claude Code preference because native compaction is part of the lane contract. It does not set `autoCompactWindow`. With `resumeMode: "auto"`, the resident Claude Code session owns compaction; `resumeMode: "off"` restores per-turn sessions and returns compaction ownership to senpi.
+- **Compaction.** senpi owns compaction on this lane by default: speculative and idle compaction, restoration, degradation recovery and per-model thresholds apply, the summary is written by the session's own model unless `compaction.model` is set, and an accepted compaction cold-seeds a fresh resident session from the compacted branch. So that only one side compacts, the lane pins the SDK's session-scoped `autoCompactEnabled: false` (overriding the user's global Claude Code preference) and sets `CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off` for the Claude Code subprocess, whose per-turn token reminder otherwise defeats prompt-cache reuse; at the hard limit Claude Code rejects the turn and senpi's overflow recovery compacts and retries it. If that compaction fails, the turn ends with the error instead of Claude Code compacting natively. Set `compactionOwner: "sdk"` (or `SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER=sdk`) to let the resident Claude Code session compact instead: the lane pins `autoCompactEnabled: true`, does not set `autoCompactWindow`, and senpi stands down its automatic compaction (manual `/compact` stays senpi's). The owner is fixed into the resident Claude Code process when it starts, so changing it mid-session restarts that process on the next turn. Under either owner senpi never rewrites a message the resident session already received, so its per-turn context reduction stays off on this lane. `resumeMode: "off"` restores per-turn sessions, where senpi always owns compaction.
 - **Session reuse.** By default one long-lived SDK query spans the entire senpi session instead of a fresh one per turn, so conversations continue with only the new delta sent. An accepted senpi compaction rewrites the transcript and forks to a fresh resident session; a rejected compaction leaves continuity unchanged. Reuse also fails closed on branch/fork navigation, account failover, an aborted turn, or any configuration change. Idle sessions retire after 30 minutes (max 32 resident); a session with an in-flight turn is never evicted. After a senpi process restart the lane always starts fresh. Set `resumeMode: "off"` (or `SENPI_CLAUDE_SDK_OAUTH_RESUME=off`) to restore the old per-turn behaviour. Accepted values are `"auto"` (default) and `"off"`; any other value is silently ignored.
 - Account state is exposed to desktop/automation clients: RPC `get_provider_accounts`, `account_pin`, `account_remove` and the `auth_accounts_changed` / `account_failover` events, mirrored through the app-server protocol. Token material is never included.
 
@@ -87,21 +94,21 @@ ls -lt ~/.claude/projects/*/ | head
 
 ### Diagnosing Claude OAuth token consumption
 
-If your Claude Pro/Max subscription usage through `claude-sdk-oauth` feels unexpectedly high, check these in order:
+If your Claude Pro/Max subscription usage through `anthropic-subscription` feels unexpectedly high, check these in order:
 
 1. **Upgrade to v2026.8.3 or later.** Resume-first session continuity (#634-637) landed on 2026-08-03. On older builds, every turn after a divergence (compaction, abort, model switch, restart, failover) re-sends the entire conversation, which is the dominant token-burn mechanism.
 2. **Check which lane you are on.** The `ambient` lane (default) inherits the environment. `oauth-slots` and `config-dir` are managed lanes set via `SENPI_CLAUDE_SDK_OAUTH_TOKEN_INJECTION`. The `config-dir` lane keeps each account's credentials in its own `CLAUDE_CONFIG_DIR`; no official SDK API moves a transcript across roots, so account failover on that lane always flattens (re-sends the full history) — this is a declared residual, not a bug.
-3. **Read the continuity observations.** Tail the session log and filter for `flatten` — each `flatten` line means the lane re-sent the whole conversation and lost prompt-cache hits. A healthy conversation shows one `bootstrap` followed by `delta` lines. Common flatten reasons: `transcript_missing`, `registry_miss`, `resume_initialization_failed`, `cross_root_unsupported` (config-dir only).
+3. **Read the continuity observations.** Tail the session log and filter for `flatten` — each `flatten` line means the lane re-sent the whole conversation and lost prompt-cache hits. A healthy conversation shows one `bootstrap` followed by `delta` lines. Common flatten reasons: `transcript_missing`, `registry_miss`, `resume_initialization_failed`, `cross_root_unsupported` (config-dir only). A `failed` line is a turn whose every attempt failed (quota, auth, query error); it re-sent nothing, and the retry resumes the session. Every line carries `sessionId`, so filter by it when several sessions share the log.
 4. **Prompt-cache retention.** Effective cache TTL depends on which lane you are on:
 
    | Lane | Effective TTL | Who controls it | How to override |
    | --- | --- | --- | --- |
-   | Claude SDK OAuth (subscription, `claude-sdk-oauth`) | 5 minutes | The Claude SDK owns `cache_control`; senpi cannot add breakpoints. senpi reports 300s for this lane so cache-aware budgets (tool waits, goal timing) size themselves correctly. | Not overridable |
+   | Anthropic Subscription (subscription, `anthropic-subscription`) | 1 hour on a Claude subscription; 5 minutes when `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` or a Bedrock/Vertex/Foundry switch is set | Claude Code owns `cache_control` and picks the TTL; senpi cannot add breakpoints. senpi reports the same TTL so cache-aware budgets (tool waits, goal timing) size themselves correctly. A subscription past its usage limits drops to 5 minutes, which senpi cannot observe. | `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` or `1h` (also read by Claude Code) |
    | Direct Anthropic API (`api.anthropic.com`, API key or OAuth token) | 5 minutes | senpi follows Anthropic's default cache retention. Opting into 1h retention makes cache writes cost 2x base input vs 1.25x for 5m ([Anthropic prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching)). | Set `PI_CACHE_RETENTION=long` or `cacheRetention: "long"` |
    | Anthropic-compatible providers (kimi-coding, fireworks, gateways) | 5 minutes | The 1h TTL is gated on the native `api.anthropic.com` base URL, so these lanes stay short. | `cacheRetention` |
 
    Override precedence: `cacheRetention` in `models.json` / the model catalog wins over everything. `PI_CACHE_RETENTION=long` selects long; any other set value forces short; unset falls back to the lane default above.
-5. **Goal-monitor timing.** The goal monitor's continuation backstop is derived from the model's cache-safe wait (TTL minus `promptCache.safetyBufferSeconds`, default 30), capped by `promptCache.goalBackstopMaxSeconds` (default 3570), instead of a fixed 4 minutes. The default 5m lanes wake every ~4m30s; a supported lane explicitly configured for 1h retention can wait up to 59m30s. Cache-warm notices show which warm iteration you are on.
+5. **Goal-monitor timing.** While at least one wake source is live, the goal monitor arms one periodic backstop of `promptCache.goalBackstopMaxSeconds` (default 270, so 4m30s: the 5-minute Anthropic prompt-cache TTL minus the 30s safety buffer; hard-capped at 1h). The normal resumption is event-driven: a monitor event or a finished background job starts a turn, and when the last wake source drains, exactly one continuation is queued about a second later. The backstop is the floor underneath that: a wake source can be misconfigured (a filter that never matches, a stream that never ends), so the goal re-checks at least once per backstop interval instead of waiting an hour on a source that will never deliver. Each backstop firing is a full main-model turn that re-sends the accumulated context; at the default it lands inside the prompt-cache TTL, so the cache stays warm. Raise `goalBackstopMaxSeconds` (up to 3600) to trade that re-check frequency for cost on a wait you trust, and use `promptCache.keepAlive` (opt-in, off by default) to keep the cache warm across such a long backstop. Cache-warm notices show which warm iteration you are on.
 6. **Wake sources that hold the goal backstop.** Anything that can wake a parked session publishes a `wake_source_state` event (`{source, activeCount}`): terminal monitors (`terminal-monitors`), background bash sessions including auto-detached and killed ones (`terminal-background-sessions`), detached `eval` cells (`senpi-codemode`), and omo-senpi background task children plus owned team members (`senpi-task`). The goal extension sums every source, so a goal waits inside the prompt-cache TTL while ANY of them is on duty instead of continuing immediately. The legacy `terminal_monitor_state` event is still emitted for external consumers and is folded onto the same `terminal-monitors` count.
 7. **Directive-block deduplication.** As of v2026.8.4, the flatten serialization collapses repeated `<ultrawork-mode>` directive blocks to a single copy, preventing the issue-#494 scenario where duplicated ~17KB directive blocks consumed up to 73% of the re-sent prompt. The continuity observation reports how many were collapsed and the payload size.
 
@@ -114,6 +121,11 @@ If your Claude Pro/Max subscription usage through `claude-sdk-oauth` feels unexp
 
 - Run `/login xai`, then select **Use a subscription**
 - `XAI_API_KEY` remains available through **Use an API key**
+
+### Meta (Muse subscription)
+
+- Run `/login meta`, then select **Sign in with Meta** to use Muse Spark models with your Muse subscription; the Model API key is refreshed automatically
+- `META_API_KEY` remains available through **Use an API key**
 
 ### OpenRouter
 
@@ -131,6 +143,13 @@ Upstreams that require explicit cache breakpoints get `cache_control` blocks thr
 #### Moonshot / Kimi prompt caching
 
 senpi sends `prompt_cache_key` (set to the session id) on Moonshot requests. Kimi documents the field as required for the Kimi Code Plan and recommended for any multi-turn agent ([Kimi context caching](https://platform.kimi.ai/docs/guide/use-context-caching-feature-of-kimi-api)). Kimi reports cache hits as a flat `usage.cached_tokens` field, which senpi parses as cache-read tokens.
+
+### Kimi Code
+
+- Run `/login kimi-coding`, then select **Sign in with Kimi Code** and pick the service that hosts your account: **Mainland China (kimi.com)** or **Outside mainland China (kimi.ai)**
+- The region is stored with the credential; token refresh and model requests follow it (`auth.kimi.ai` + `api.kimi.ai/coding` for international accounts), so a `.ai` login keeps working after restarts and env changes
+- **Use an API key** asks the same region question and routes `KIMI_API_KEY` requests by it; `KIMI_CODE_REGION=global` (or `mainland-cn`) answers it for headless setups
+- `KIMI_CODE_OAUTH_HOST` / `KIMI_OAUTH_HOST` still override the auth host for new logins and for credentials saved before regions existed; a host other than the two official ones is kept verbatim and needs a `models.json` `baseUrl` for inference
 
 ### Radius
 
@@ -211,6 +230,35 @@ The provider streams through Ollama's OpenAI-compatible `/v1/chat/completions` e
 Existing local Ollama configurations remain supported. When an `ollama` provider in `models.json` includes
 an explicit `models` catalog, that catalog takes precedence and Senpi does not run Ollama Cloud discovery.
 
+## B.AI
+
+Use `/login bai` to store an API key, or export `BAI_API_KEY`. B.AI model availability is credential-scoped,
+so refresh the catalog after login:
+
+```bash
+export BAI_API_KEY=...
+senpi update --models
+senpi --provider bai --model gpt-5.6-sol
+```
+
+Senpi discovers available IDs from `https://api.b.ai/v1/models` and enriches classified chat models with
+B.AI's documented context, output, input modality, reasoning-level, and standard pricing metadata. Because that
+list is credential-scoped, a model you are not entitled to never appears.
+
+B.AI serves one API key over three protocols and documents several models on more than one of them, so the
+endpoint is a client choice rather than a per-model property. Senpi pins one protocol per model: GPT and
+DeepSeek use OpenAI Responses (the two families B.AI names for that endpoint), Claude uses Anthropic Messages,
+and the remaining chat families use OpenAI Chat Completions.
+
+B.AI rejects a function tool whose root parameters schema declares no `type`. On the Responses endpoint Senpi
+merges such a union root into a single object schema so the tool keeps its parameters; the Chat Completions and
+Messages paths already do the same normalization for every provider. Image-only IDs such as `gpt-image-2` remain
+on B.AI's image API and are not listed as chat models.
+
+The catalog records B.AI's standard reference prices in USD per 1M tokens. They exclude temporary promotions,
+top-up bonuses, DeepSeek idle-period rates, and account benefits, so B.AI's final billing record remains
+authoritative.
+
 ## API Keys
 
 ### Environment Variables or Auth File
@@ -228,6 +276,7 @@ senpi
 | Ant Ling | `ANT_LING_API_KEY` | `ant-ling` |
 | Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
+| B.AI | `BAI_API_KEY` | `bai` |
 | Ollama Cloud | `OLLAMA_API_KEY` | `ollama` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
@@ -236,9 +285,12 @@ senpi
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
+| Venice AI | `VENICE_API_KEY` | `venice` |
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`) | `cloudflare-ai-gateway` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
+| Meta | `META_API_KEY` | `meta` |
+| TypeSafe ([classifier models](models.md#classifier-models)) | `TYPESAFE_API_KEY` | `typesafe` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
 | OpenGateway | `OPENGATEWAY_API_KEY` | `opengateway` |
@@ -251,7 +303,7 @@ senpi
 | Fireworks | `FIREWORKS_API_KEY` | `fireworks` |
 | Together AI | `TOGETHER_API_KEY` | `together` |
 | Baseten | `BASETEN_API_KEY` | `baseten` |
-| Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
+| Kimi For Coding | `KIMI_API_KEY` (+ `KIMI_CODE_REGION`) | `kimi-coding` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
 | Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan` |
@@ -263,11 +315,13 @@ senpi
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | `xiaomi-token-plan-sgp` |
 | Alibaba Token Plan (ap-southeast-1) | `ALIBABA_TOKEN_PLAN_API_KEY` | `alibaba-token-plan` |
 
+With no key or token set, Anthropic uses workload identity federation when `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE` are set: the Anthropic SDK exchanges the identity token for a short-lived access token and refreshes it itself (re-reading the identity token file, so keep that file fresh for long sessions). `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID` are passed through when set.
+
 #### OpenGateway
 
 OpenGateway is an OpenAI-compatible multi-provider gateway serving OpenAI, Anthropic, Google, xAI, Moonshot, DeepSeek, ZAI, MiniMax, and Qwen models through one API key. Issue a key at <https://opengateway.ai/api-keys>, then `/login` and select **OpenGateway**, or export `OPENGATEWAY_API_KEY`. The data plane is `https://apis.opengateway.ai`; model ids use the gateway's `owner/model` format (for example `moonshotai/kimi-k3`, `anthropic/claude-fable-5`).
 
-Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts).
+Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/env-api-keys.ts).
 
 #### Auth File
 
@@ -396,7 +450,7 @@ The `key` field supports command execution, environment interpolation, and liter
 
 OAuth credentials are also stored here after `/login` and managed automatically.
 
-## Cloud Providers
+## Provider Specific Config
 
 ### Azure OpenAI
 

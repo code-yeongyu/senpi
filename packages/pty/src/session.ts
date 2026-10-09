@@ -11,6 +11,7 @@ import {
 } from "./session-exit.ts";
 import { getNativeSessionFactory } from "./session-native.ts";
 import { defaultCommand, normalizeRawTailBytes, toNativeOptions, toPipeFallbackOptions } from "./session-options.ts";
+import { RawOutputTail } from "./session-raw-tail.ts";
 import type {
 	CreateNativeTerminalSession,
 	TerminalSessionBackend,
@@ -22,22 +23,16 @@ import type {
 	TerminalSessionOperationResult,
 	TerminalSessionOptions,
 	TerminalSessionSignal,
+	TerminalSessionTerminateOptions,
 } from "./session-types.ts";
 
-export type {
-	CreateNativeTerminalSession,
-	TerminalSessionBackend,
-	TerminalSessionDataHandler,
-	TerminalSessionDependencies,
-	TerminalSessionExit,
-	TerminalSessionExitError,
-	TerminalSessionExitState,
-	TerminalSessionHandle,
-	TerminalSessionNativeOptions,
-	TerminalSessionOperationResult,
-	TerminalSessionOptions,
-	TerminalSessionSignal,
-} from "./session-types.ts";
+export type * from "./session-types.ts";
+
+/** Default wait for a graceful exit before `terminate()` escalates to SIGKILL. */
+const DEFAULT_TERMINATE_GRACE_MS = 5000;
+/** Default wait for the exit after SIGKILL before `terminate()` reports failure. */
+const DEFAULT_FORCED_GRACE_MS = 1000;
+const FORCE_SIGNAL: TerminalSessionSignal = "SIGKILL";
 
 export class TerminalSession {
 	readonly options: TerminalSessionOptions;
@@ -46,16 +41,17 @@ export class TerminalSession {
 	private readonly env: Readonly<Record<string, string | undefined>>;
 	private readonly runtimeVersions: import("./session-bun.ts").BunRuntimeVersions;
 	private readonly bunRuntime: import("./session-bun.ts").BunRuntime | undefined;
-	private readonly rawTailLimit: number;
+	private readonly rawOutput: RawOutputTail;
 	private readonly dataHandlers = new Set<TerminalSessionDataHandler>();
 	private readonly exitHandlers = new Set<() => void>();
 	private backendHandle: TerminalSessionHandle | null = null;
 	private backendValue: TerminalSessionBackend | null = null;
 	private exitPromise: Promise<TerminalSessionExit> | null = null;
 	private settledExit: TerminalSessionExit | null = null;
-	private rawTailBuffer = Buffer.alloc(0);
-	private rawByteCount = 0;
-	private killRequested = false;
+	// Last signal actually handed to the backend. Tracking the signal (instead of a
+	// boolean) keeps repeated kills idempotent while still letting an escalation
+	// (e.g. SIGKILL after an ignored SIGTERM) reach the process.
+	private lastSignal: TerminalSessionSignal | null = null;
 	private unsubscribeBackendData: (() => void) | null = null;
 
 	constructor(options: TerminalSessionOptions = {}, dependencies: TerminalSessionDependencies = {}) {
@@ -70,7 +66,7 @@ export class TerminalSession {
 		this.runtimeVersions =
 			dependencies.runtimeVersions ?? (process.versions as import("./session-bun.ts").BunRuntimeVersions);
 		this.bunRuntime = dependencies.bunRuntime;
-		this.rawTailLimit = normalizeRawTailBytes(options.rawTailBytes);
+		this.rawOutput = new RawOutputTail(normalizeRawTailBytes(options.rawTailBytes));
 	}
 
 	get native(): NativePtyLoadResult {
@@ -84,6 +80,14 @@ export class TerminalSession {
 
 	get backend(): TerminalSessionBackend | null {
 		return this.backendValue;
+	}
+
+	get pid(): number | undefined {
+		return this.backendHandle?.pid;
+	}
+
+	get processGroupId(): number | undefined {
+		return this.backendHandle?.processGroupId;
 	}
 
 	get command(): string {
@@ -107,11 +111,11 @@ export class TerminalSession {
 	}
 
 	get rawTail(): Buffer {
-		return Buffer.from(this.rawTailBuffer);
+		return this.rawOutput.bytes;
 	}
 
 	get rawOutputBytes(): number {
-		return this.rawByteCount;
+		return this.rawOutput.totalBytes;
 	}
 
 	get exitState(): TerminalSessionExitState {
@@ -184,7 +188,14 @@ export class TerminalSession {
 
 	kill(signal: TerminalSessionSignal = "SIGTERM"): TerminalSessionOperationResult {
 		const handle = this.backendHandle;
-		if (this.killRequested || this.settledExit !== null) {
+		if (this.settledExit !== null) {
+			return {
+				ok: true,
+				idempotent: true,
+				note: "Terminal session has already exited.",
+			};
+		}
+		if (this.lastSignal === signal) {
 			return {
 				ok: true,
 				idempotent: true,
@@ -193,14 +204,33 @@ export class TerminalSession {
 		}
 		if (handle === null) return notStartedOperation("kill");
 
-		this.killRequested = true;
+		const previousSignal = this.lastSignal;
+		this.lastSignal = signal;
 		const result = normalizeOperationResult(handle.kill(signal), `Sent ${signal} to terminal session.`);
-		if (!result.ok) this.killRequested = false;
+		if (!result.ok) this.lastSignal = previousSignal;
 		return result;
 	}
 
 	stop(): TerminalSessionOperationResult {
 		return this.kill();
+	}
+
+	/**
+	 * Stop the session for real: signal (SIGTERM by default), wait `graceMs` for
+	 * the exit, then escalate to SIGKILL and wait `forcedGraceMs`. Resolves with
+	 * the settled exit, or `null` when the process outlived both waits (or was
+	 * never started).
+	 */
+	async terminate(options: TerminalSessionTerminateOptions = {}): Promise<TerminalSessionExit | null> {
+		if (this.settledExit !== null) return this.settledExit;
+		if (this.backendHandle === null) return null;
+
+		this.kill(options.signal ?? "SIGTERM");
+		const graceful = await this.waitExitWithin(normalizeGraceMs(options.graceMs, DEFAULT_TERMINATE_GRACE_MS));
+		if (graceful !== null) return graceful;
+
+		this.kill(FORCE_SIGNAL);
+		return await this.waitExitWithin(normalizeGraceMs(options.forcedGraceMs, DEFAULT_FORCED_GRACE_MS));
 	}
 
 	async waitExit(): Promise<TerminalSessionExit> {
@@ -216,7 +246,28 @@ export class TerminalSession {
 		const wait = handle.waitExit ?? handle.wait;
 		if (!wait) throw new Error("Terminal session backend does not expose waitExit or wait");
 		const exit = await wait.call(handle);
-		return normalizeTerminalExit(exit, backend, this.killRequested);
+		return normalizeTerminalExit(exit, backend, this.lastSignal !== null);
+	}
+
+	/** Await the settled exit for at most `graceMs`; `null` means it did not settle in time. */
+	private async waitExitWithin(graceMs: number): Promise<TerminalSessionExit | null> {
+		if (this.settledExit !== null) return this.settledExit;
+		const exitPromise = this.exitPromise;
+		if (exitPromise === null || graceMs <= 0) return this.settledExit;
+
+		let graceTimer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			return await Promise.race([
+				// Attaching the catch here also keeps a late backend rejection from
+				// surfacing as an unhandled rejection once the grace timer wins.
+				exitPromise.catch(() => null),
+				new Promise<null>((resolve) => {
+					graceTimer = setTimeout(() => resolve(null), graceMs);
+				}),
+			]);
+		} finally {
+			if (graceTimer !== undefined) clearTimeout(graceTimer);
+		}
 	}
 
 	private settleExit(exit: TerminalSessionExit): TerminalSessionExit {
@@ -231,20 +282,14 @@ export class TerminalSession {
 
 	private emitData(chunk: Buffer | Uint8Array | string): void {
 		const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-		this.appendRawTail(buffer);
+		this.rawOutput.append(buffer);
 		for (const handler of this.dataHandlers) handler(buffer);
 	}
+}
 
-	private appendRawTail(chunk: Buffer): void {
-		this.rawByteCount += chunk.byteLength;
-		if (this.rawTailLimit === 0) {
-			this.rawTailBuffer = Buffer.alloc(0);
-			return;
-		}
-		const next = Buffer.concat([this.rawTailBuffer, chunk]);
-		this.rawTailBuffer =
-			next.byteLength <= this.rawTailLimit ? next : next.subarray(next.byteLength - this.rawTailLimit);
-	}
+function normalizeGraceMs(value: number | undefined, fallback: number): number {
+	if (value === undefined || !Number.isFinite(value) || value < 0) return fallback;
+	return value;
 }
 
 export function createTerminalSession(

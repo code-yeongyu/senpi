@@ -30,6 +30,9 @@ const slotStateSchema = z.strictObject({
 	lastSuccessAt: z.number().int().positive().optional(),
 	credentialRevision: z.string().regex(HEX_256_BIT).optional(),
 	lease: leaseSchema.optional(),
+	// Rate limits that bind one model family on this slot, not the slot (senpi#2555).
+	// Absent in files written before; `blockedUntil` keeps meaning "account blocked".
+	modelBlocks: z.record(z.string().min(1), z.strictObject({ blockedUntil: z.number().int().positive() })).optional(),
 });
 
 export type CredentialSlotState = Readonly<z.infer<typeof slotStateSchema>>;
@@ -159,6 +162,25 @@ export class CredentialSlotRepository {
 	async envCredentialRevision(envVarName: string, envValue: string): Promise<string> {
 		const key = await this.installationKey();
 		return createHmac("sha256", key).update(`${envVarName}\0${envValue}`).digest("hex");
+	}
+
+	/**
+	 * The stored-lane twin of the env revision rule: binds a slot's health to
+	 * the material that earned it, so a re-login or token refresh replacing the
+	 * material retires the block. HMAC over the installation key, never raw
+	 * material (omo#7084).
+	 */
+	async storedCredentialRevision(
+		providerId: string,
+		slotName: string,
+		material: { key?: string; access?: string; refresh?: string },
+	): Promise<string> {
+		const key = await this.installationKey();
+		return createHmac("sha256", key)
+			.update(
+				`${providerId}\0${slotName}\0${material.key ?? ""}\0${material.access ?? ""}\0${material.refresh ?? ""}`,
+			)
+			.digest("hex");
 	}
 
 	async listSlots(providerId: string, laneId: string): Promise<Record<string, CredentialSlotState>> {

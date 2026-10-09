@@ -16,11 +16,12 @@ import type { JsonValue, McpServerInfo, McpServerStatus, Resource, ResourceTempl
 export type { McpWireStatusServer, McpWireStatusSnapshot } from "../../../core/extensions/builtin/mcp/service-types.ts";
 
 /**
- * Session-owned MCP inventory. The snapshot is captured at attach time and is
+ * Session-owned MCP inventory. The snapshot is pushed in by the owner and is
  * never read from the module-global MCP service during a request.
  */
 export class McpWireStatusAdapter {
 	#servers: readonly McpServerStatus[];
+	#unsubscribe: (() => void) | undefined;
 
 	constructor(snapshot: McpWireStatusSnapshot) {
 		this.#servers = mapSnapshot(snapshot);
@@ -32,6 +33,22 @@ export class McpWireStatusAdapter {
 
 	update(snapshot: McpWireStatusSnapshot): void {
 		this.#servers = mapSnapshot(snapshot);
+	}
+
+	/**
+	 * Adopt a live subscription that pushes later snapshots in. MCP attach no longer
+	 * completes inside `session_start`, so the inventory captured when the thread binds
+	 * is empty whenever a server takes any time to boot, and without this it stayed empty
+	 * for the life of the thread.
+	 */
+	bindLiveUpdates(unsubscribe: () => void): void {
+		this.#unsubscribe?.();
+		this.#unsubscribe = unsubscribe;
+	}
+
+	dispose(): void {
+		this.#unsubscribe?.();
+		this.#unsubscribe = undefined;
 	}
 }
 
@@ -78,6 +95,7 @@ export class McpWireStatusRegistry {
 	}
 
 	removeThread(threadId: string): void {
+		this.#threads.get(threadId)?.dispose();
 		this.#threads.delete(threadId);
 	}
 

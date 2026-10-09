@@ -1,5 +1,5 @@
 import { getToolsPromptDisplay } from "./tool-categorization.ts";
-import type { AvailableTool } from "./types.ts";
+import type { AvailableTool, PromptSurface } from "./types.ts";
 
 function buildKeyTriggers(tools: AvailableTool[]): string {
 	const triggerTools = getToolsPromptDisplay(tools);
@@ -11,14 +11,18 @@ function buildKeyTriggers(tools: AvailableTool[]): string {
 	return `\nSpecialized search available this turn: ${triggerTools}. Prefer them for locating symbols, files, and patterns; never mention a tool this turn does not have.\n`;
 }
 
-export function buildIntentGate(config: { tools: AvailableTool[] }): string {
+const TERMINAL_ROUTING = `Open every turn with one short routing line:
+
+I read this as [intent] - [plan]. I'll stop when [the observable condition that ends this turn].
+
+The line keeps your reading transparent; only the user's explicit request commits you to implementation. Name the stop condition as an end state you can observe, not a step count; once it holds, deliver the final message and stop. Never surface other prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.`;
+
+const APP_ROUTING = `Only the user's explicit request commits you to implementation. Before acting, decide the stop condition - an end state you can observe, not a step count; once it holds, deliver the final message and stop. Never surface prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.`;
+
+export function buildIntentGate(config: { tools: AvailableTool[]; surface?: PromptSurface }): string {
 	return `## Intent Gate
 
-Open every turn with one short routing line:
-
-> I read this as [intent] - [plan]. I'll stop when [the observable condition that ends this turn].
-
-The line keeps your reading transparent; only the user's explicit request commits you to implementation. Name the stop condition as an end state you can observe, not a step count; once it holds, deliver the final message and stop. Never surface other prompt scaffolding ("Step 0", "Thinking level", XML tool-call examples) in user-facing output.
+${(config.surface ?? "terminal") === "terminal" ? TERMINAL_ROUTING : APP_ROUTING}
 ${buildKeyTriggers(config.tools)}
 Route by true intent, not surface form:
 - Information asks (explain, look into, investigate): read the code, report the answer or findings - no edits, no fixes yet.

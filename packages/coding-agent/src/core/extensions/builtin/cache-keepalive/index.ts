@@ -13,7 +13,7 @@ import { convertToLlm, filterContextExcludedMessages } from "../../../messages.t
 import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { EntryRenderer, ExtensionAPI, ExtensionContext, ExtensionFactory } from "../../types.ts";
 import { formatWarmTokenCount } from "../goal/cache-warm.ts";
-import { GOAL_CONTINUATION_TIMER_STATE_EVENT } from "../goal/monitor-continuation.ts";
+import { createSessionPrewarm } from "./session-prewarm.ts";
 
 export const CACHE_KEEPALIVE_ENTRY_TYPE = "cache-keepalive";
 export const CACHE_WARM_PING_EVENT = "cache_warm_ping";
@@ -58,16 +58,20 @@ export const renderCacheKeepAliveEntry: EntryRenderer<CacheKeepAliveEntryData> =
 });
 
 export function createCacheKeepAliveExtension(
-	dependencies: { readonly warmPromptCache?: WarmPromptCacheFn } = {},
+	dependencies: {
+		readonly warmPromptCache?: WarmPromptCacheFn;
+		readonly isPromptCachePrewarmModel?: (model: Model<any>) => boolean;
+	} = {},
 ): ExtensionFactory {
 	const warm = dependencies.warmPromptCache ?? warmPromptCache;
 	return (pi: ExtensionAPI) => {
+		const prewarm = createSessionPrewarm(pi, { warm, isPrewarmModel: dependencies.isPromptCachePrewarmModel });
 		let ctx: ExtensionContext | undefined;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let inFlight = false;
 		let generation = 0;
 		let active = false;
-		let goalTimerArmed = false;
+		let parked = false;
 		let attempts = 0;
 		let cumulativeEstimatedUsd = 0;
 		let lastCompletedAtMs: number | undefined;
@@ -76,15 +80,15 @@ export function createCacheKeepAliveExtension(
 
 		pi.registerEntryRenderer(CACHE_KEEPALIVE_ENTRY_TYPE, renderCacheKeepAliveEntry);
 
-		const unsubscribeGoalTimer = pi.events?.on(GOAL_CONTINUATION_TIMER_STATE_EVENT, (data) => {
-			if (!isGoalTimerState(data)) return;
-			goalTimerArmed = data.armed;
-			if (data.armed) stop("goal-timer-armed");
-		});
-
+		// No goal-timer coupling: an armed goal continuation timer issues no
+		// provider request until it fires, and `promptCache.goalBackstopMaxSeconds`
+		// may place that past the TTL, so it cannot be relied on to refresh the
+		// prompt cache on this loop's behalf.
 		function append(data: CacheKeepAliveEntryData): void {
 			pi.appendEntry(CACHE_KEEPALIVE_ENTRY_TYPE, data);
 		}
+
+		let armOnSettle = false;
 
 		function stop(reason: string, forceEntry = false): void {
 			const shouldAppend = active || inFlight || timer !== undefined || forceEntry;
@@ -103,7 +107,7 @@ export function createCacheKeepAliveExtension(
 		}
 
 		function arm(): void {
-			if (timer !== undefined || inFlight) return;
+			if (parked || timer !== undefined || inFlight) return;
 			const current = ctx;
 			const settings = current?.getPromptCacheKeepAliveSettings?.();
 			if (!settings?.enabled || current?.model === undefined || lastCompletedAtMs === undefined) return;
@@ -114,10 +118,6 @@ export function createCacheKeepAliveExtension(
 			}
 			if (current.hasPendingMessages()) {
 				stop("pending-messages");
-				return;
-			}
-			if (goalTimerArmed) {
-				stop("goal-timer-armed");
 				return;
 			}
 			const safeWaitSeconds = current.getPromptCacheSafeWaitSeconds?.();
@@ -155,7 +155,6 @@ export function createCacheKeepAliveExtension(
 				!isWarmSupportedModel(current.model) ||
 				!current.isIdle() ||
 				current.hasPendingMessages() ||
-				goalTimerArmed ||
 				attempts >= Math.max(0, settings.maxRequestsPerSession) ||
 				cumulativeEstimatedUsd + projectedPingCost(current.model, lastUsage) >
 					Math.max(0, settings.maxCostUsdPerSession)
@@ -175,11 +174,15 @@ export function createCacheKeepAliveExtension(
 					return;
 				}
 				const preparedMessages = preparation?.messages ?? lastMessages;
+				const prefix = await current.getPromptCachePrefixRequest?.();
 				const activeToolNames = new Set(pi.getActiveTools());
-				const tools: Tool[] = pi
-					.getAllTools()
-					.filter((tool) => activeToolNames.has(tool.name))
-					.map(({ name, description, parameters }) => ({ name, description, parameters }));
+				const tools: Tool[] =
+					prefix?.status === "ready"
+						? (prefix.request.context.tools ?? [])
+						: pi
+								.getAllTools()
+								.filter((tool) => activeToolNames.has(tool.name))
+								.map(({ name, description, parameters }) => ({ name, description, parameters }));
 				const auth = await current.modelRegistry.getApiKeyAndHeaders(current.model);
 				if (pingGeneration !== generation) {
 					inFlight = false;
@@ -247,18 +250,28 @@ export function createCacheKeepAliveExtension(
 			lastUsage = usage;
 			lastCompletedAtMs = lastAssistantTimestamp(lastMessages);
 			arm();
+			prewarm.start(nextCtx);
 		});
 
 		pi.on("agent_end", (event, nextCtx) => {
 			ctx = nextCtx;
 			const usage = lastAssistantUsage(event.messages);
 			if (usage?.stopReason === "error") {
+				armOnSettle = false;
 				stop("provider-error");
 				return;
 			}
 			lastMessages = [...event.messages];
 			lastUsage = usage;
 			lastCompletedAtMs = Date.now();
+			armOnSettle = true;
+			arm();
+		});
+
+		pi.on("agent_settled", (_event, nextCtx) => {
+			ctx = nextCtx;
+			if (!armOnSettle) return;
+			armOnSettle = false;
 			arm();
 		});
 
@@ -267,11 +280,20 @@ export function createCacheKeepAliveExtension(
 			stop("model-changed");
 			arm();
 		});
+		pi.on("session_parked", () => {
+			parked = true;
+			stop("session-parked");
+		});
+		pi.on("session_resumed", (_event, nextCtx) => {
+			parked = false;
+			ctx = nextCtx;
+			arm();
+		});
 		pi.on("agent_start", () => stop("agent-busy"));
 		pi.on("input", () => stop("user-input"));
 		pi.on("session_shutdown", () => {
 			stop("session-dispose");
-			unsubscribeGoalTimer?.();
+			prewarm.cancel();
 			ctx = undefined;
 		});
 	};
@@ -328,15 +350,6 @@ function finiteTokens(value: number): number {
 
 function formatUsd(value: number): string {
 	return `$${value.toFixed(3)}`;
-}
-
-function isGoalTimerState(value: unknown): value is { armed: boolean; kind: string } {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		typeof (value as { armed?: unknown }).armed === "boolean" &&
-		typeof (value as { kind?: unknown }).kind === "string"
-	);
 }
 
 export default createCacheKeepAliveExtension();

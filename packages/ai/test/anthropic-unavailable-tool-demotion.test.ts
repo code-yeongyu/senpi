@@ -6,6 +6,8 @@ import { streamAnthropic } from "../src/providers/anthropic.ts";
 import { fauxAssistantMessage, fauxToolCall } from "../src/providers/faux.ts";
 import type { Context, Tool, ToolResultMessage, UserMessage } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 function createSseResponse(): Response {
 	const events = [
 		[
@@ -55,7 +57,7 @@ async function captureText(context: Context): Promise<string[]> {
 			},
 		},
 	} as Anthropic;
-	const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), context, {
+	const stream = streamAnthropic(getModel("anthropic", "claude-haiku-4-5"), normalizeContext(context), {
 		apiKey: "fake-key",
 		client,
 	});

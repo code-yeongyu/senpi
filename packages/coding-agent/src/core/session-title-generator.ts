@@ -1,4 +1,5 @@
 import type { StreamFn } from "@earendil-works/pi-agent-core";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import type {
 	Api,
 	AssistantMessage,
@@ -6,8 +7,10 @@ import type {
 	Model,
 	SimpleStreamOptions,
 	TextContent,
+	ThinkingLevel,
 } from "@earendil-works/pi-ai/compat";
 import { completeSimple, type RetryPolicy, retryAssistantCall } from "@earendil-works/pi-ai/compat";
+import { initialTitleReasoning, mandatoryReasoningRetryLevel } from "./session-title-reasoning.ts";
 
 interface SessionTitleAuth {
 	readonly apiKey?: string;
@@ -52,6 +55,11 @@ const LOW_SIGNAL_PROMPTS = new Set([
 	"nope",
 ]);
 
+const TITLE_MAX_TOKENS = 64;
+// Reasoning tokens count against the completion budget, so a title that must reason needs room
+// for the thinking and the `<title>` answer.
+const REASONING_TITLE_MAX_TOKENS = 1024;
+
 const MAX_TITLE_RETRIES = 1;
 const MAX_TITLE_RETRY_DELAY_MS = 2000;
 
@@ -88,21 +96,36 @@ export async function generateSessionTitle(options: GenerateSessionTitleOptions)
 	// Titles are cosmetic background work: honor the caller's retry policy so a
 	// single transient provider error (e.g. a 529 overloaded stream) does not
 	// surface as a scary runtime error. Mirrors completeSummarization().
-	const response = await retryAssistantCall(
+	const reasoning = initialTitleReasoning(options.model);
+	let response = await requestTitle(options, reasoning);
+	const retryReasoning =
+		response.stopReason === "error"
+			? mandatoryReasoningRetryLevel(options.model, reasoning, response.errorMessage)
+			: undefined;
+	if (retryReasoning !== undefined) {
+		response = await requestTitle(options, retryReasoning);
+	}
+	if (response.stopReason === "error") {
+		throw new Error(humanizeProviderError(response.errorMessage ?? "Session title generation failed"));
+	}
+	return parseSessionTitle(response);
+}
+
+function requestTitle(
+	options: GenerateSessionTitleOptions,
+	reasoning: ThinkingLevel | undefined,
+): Promise<AssistantMessage> {
+	return retryAssistantCall(
 		() =>
 			completeTitle(
 				options.model,
 				buildTitleContext(options.firstPrompt),
-				buildTitleOptions(options),
+				buildTitleOptions(options, reasoning),
 				options.streamFn,
 			),
 		options.retry,
 		options.signal,
 	);
-	if (response.stopReason === "error") {
-		throw new Error(humanizeProviderError(response.errorMessage ?? "Session title generation failed"));
-	}
-	return parseSessionTitle(response);
 }
 
 function buildTitleContext(firstPrompt: string): Context {
@@ -118,13 +141,19 @@ function buildTitleContext(firstPrompt: string): Context {
 	};
 }
 
-function buildTitleOptions(options: GenerateSessionTitleOptions): SimpleStreamOptions {
+function buildTitleOptions(
+	options: GenerateSessionTitleOptions,
+	reasoning: ThinkingLevel | undefined,
+): SimpleStreamOptions {
 	const titleOptions: SimpleStreamOptions = {
 		...options.baseOptions,
 		sessionId: options.sessionId,
 		cacheRetention: options.model.cacheRetention === "none" ? "none" : "short",
-		maxTokens: 64,
+		maxTokens: reasoning === undefined ? TITLE_MAX_TOKENS : REASONING_TITLE_MAX_TOKENS,
 	};
+	if (reasoning !== undefined) {
+		titleOptions.reasoning = reasoning;
+	}
 	if (options.auth.apiKey !== undefined) {
 		titleOptions.apiKey = options.auth.apiKey;
 	}
@@ -152,7 +181,7 @@ async function completeTitle(
 	if (streamFn === undefined) {
 		return completeSimple(model, context, options);
 	}
-	const stream = await streamFn(model, context, options);
+	const stream = await streamFn(model, normalizeContext(context), options);
 	return stream.result();
 }
 

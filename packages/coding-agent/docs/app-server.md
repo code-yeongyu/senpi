@@ -35,6 +35,9 @@ senpi app-server --listen stdio://
 `unix:///abs/path` in the `--listen` grammar for local-control socket addresses, but this document does not cover
 daemon lifecycle or control-socket management.
 
+Load extensions into every thread with repeated `--extension <path>`, the same sources the global flag accepts.
+`senpi app-server daemon start` passes them to the daemon and records them, so `restart` keeps them.
+
 ## Protocol Overview
 
 App Server mode speaks JSON-RPC-shaped messages without a `jsonrpc` field. A request has `id`, `method`, and optional
@@ -49,6 +52,12 @@ invented implementation.
 All server notifications use the current Codex envelope and include `emittedAtMs`. Clients must tolerate notifications
 before, between, and after correlated responses, except where a method explicitly guarantees response-before-notification
 ordering below.
+
+## Provider account display names
+
+`account/providerAccounts/read` returns secret-free account descriptors with `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Clients should render `displayName (name)` when present and the ID alone otherwise. Pins, removal, and comparisons must continue using immutable `name`, not the display label. Rename/clear operations are available through Senpi's account slash commands; no new app-server mutation method is introduced.
+
+`displayName` is stored NFC-normalized with internal whitespace collapsed and is at most 32 terminal columns wide, so a client can render it inline without measuring; it is unique per provider under a fold of case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes.
 
 ## Protocol Provenance
 
@@ -346,6 +355,11 @@ Response:
 {"id":12,"error":{"code":-32600,"message":"Thread not found: missing-thread"}}
 ```
 
+Input whose first token looks like a command that nothing handles (`/foo bar`; `/tmp/a.txt` is a path) is refused
+before any turn starts: no `turn/started` or user item is emitted, and the request fails with code `-32602` and
+`data: {"errorCode": "unknown_command", "command", "suggestions", "reason"}` (the same fields as RPC `prompt`).
+To send such text as a message, repeat the request with the senpi extension field `"unknownCommandAsText": true`.
+
 ### turn/steer
 
 Queue steering text for an active turn. The live no-token example documents the current error response when the thread
@@ -494,6 +508,20 @@ Command approval decisions are `accept`, `acceptForSession`, `decline`, and `can
 for matching command approvals in the same thread. If no subscriber is attached, the approval is declined with a
 no-subscriber reason. When a turn ends, pending approvals for that thread are cancelled and `serverRequest/resolved` is
 emitted.
+
+### User Input Requests
+
+When the question tool runs, the server sends `item/tool/requestUserInput` to subscribers of the thread. Fields include
+`threadId`, `turnId`, `itemId`, `questions` (each with `id`, `header`, `question`, `options`, `multiSelect`),
+`waitForAnswer`, and `timeoutMs`. `autoResolutionMs` is always `null` (deprecated). Additive fields `multiSelect`,
+`waitForAnswer`, and `timeoutMs` extend the generated `ToolRequestUserInputParams` shape.
+
+Respond with `item/tool/requestUserInput/answered` carrying `answers` (a map of question id to `{ answers: string[] }`)
+and an optional `comment`. The first responder wins; later responses are rejected.
+
+Draft updates are sent as `item/tool/userInputProgress` client notifications. Each progress frame resets the idle timer.
+The server emits `serverRequest/resolved` when the question resolves (answered, timed_out, cancelled, or
+comment-submitted). Pending requests are replayed to new subscribers and cancelled on `agent_end`.
 
 ## Multi-Session Semantics
 

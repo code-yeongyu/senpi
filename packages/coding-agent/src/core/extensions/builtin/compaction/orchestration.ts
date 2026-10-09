@@ -1,6 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { copyContextProvenance } from "@earendil-works/pi-ai";
+import { markTransientMessage } from "../../../compaction/estimate-cache-key.ts";
 import { type CompactionPreparation, estimateTokens } from "../../../compaction/index.ts";
+import { inheritSessionContextEntryId } from "../../../session-manager.ts";
 import type { BeforeAgentStartEventResult } from "../../types.ts";
 import { type IdleCompactionDecision, shouldWarmAtIdle } from "./idle.ts";
 import * as policy from "./policy.ts";
@@ -51,10 +53,13 @@ export function injectTokenBudgetReminder(messages: AgentMessage[], reminder?: s
 			typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
 		const firstPart = content[0];
 		if (firstPart?.type === "text" && firstPart.text === reminder) return messages;
-		const reminded = copyContextProvenance(message, {
-			...message,
-			content: [{ type: "text" as const, text: reminder }, ...content],
-		});
+		const reminded = copyContextProvenance(
+			message,
+			inheritSessionContextEntryId(
+				{ ...message, content: [{ type: "text" as const, text: reminder }, ...content] },
+				message,
+			),
+		);
 		return messages.map((candidate, candidateIndex) => (candidateIndex === index ? reminded : candidate));
 	}
 	return messages;
@@ -104,11 +109,15 @@ export function admitContextToolResults(
 		if (message.role !== "toolResult") return message;
 		if (typeof message.content === "string") {
 			const admitted = admitContextToolResult(message.content, contextWindow);
-			return admitted.admitted ? { ...message, content: [{ type: "text", text: admitted.text }] } : message;
+			return admitted.admitted
+				? inheritSessionContextEntryId({ ...message, content: [{ type: "text", text: admitted.text }] }, message)
+				: message;
 		}
 
 		const textTokens = message.content.map((part) =>
-			part.type === "text" ? estimateTokens({ role: "user", content: part.text, timestamp: 0 }) : 0,
+			part.type === "text"
+				? estimateTokens(markTransientMessage({ role: "user", content: part.text, timestamp: 0 }))
+				: 0,
 		);
 		const totalTextTokens = textTokens.reduce((total, tokens) => total + tokens, 0);
 		const capTokens = resolveToolResultAdmissionCapTokens(contextWindow);
@@ -128,11 +137,13 @@ export function admitContextToolResults(
 			const budget = Math.floor((remainingBudget * partTokens) / Math.max(1, remainingOversizedTokens));
 			const admitted = admitToolResultWithinBudget(part.text, budget);
 			remainingOversizedTokens -= partTokens;
-			remainingBudget -= estimateTokens({ role: "user", content: admitted.text, timestamp: 0 });
+			remainingBudget -= estimateTokens(
+				markTransientMessage({ role: "user", content: admitted.text, timestamp: 0 }),
+			);
 			if (!admitted.projected) return part;
 			projected = true;
 			return { ...part, text: admitted.text };
 		});
-		return projected ? { ...message, content } : message;
+		return projected ? inheritSessionContextEntryId({ ...message, content }, message) : message;
 	});
 }

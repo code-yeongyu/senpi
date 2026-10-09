@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { fuzzyFilter, fuzzyMatch } from "../src/fuzzy.ts";
+import { fuzzyFilter, fuzzyMatch, fuzzyMatchLower } from "../src/fuzzy.ts";
 
 describe("fuzzyMatch", () => {
 	it("empty query matches everything with score 0", () => {
@@ -62,6 +62,20 @@ describe("fuzzyMatch", () => {
 	it("matches adjacent swapped alpha numeric characters", () => {
 		const result = fuzzyMatch("gpt5a", "gpt-a5");
 		assert.strictEqual(result.matches, true);
+	});
+
+	it("fuzzyMatchLower scores pre-lowered inputs exactly like fuzzyMatch", () => {
+		const pairs: [string, string][] = [
+			["ABC", "xAbC"],
+			["Resume", "Senpi RESUME faster"],
+			["Codex52", "GPT-5.2-Codex"],
+			["gpt5A", "GPT-A5"],
+			["Test", "test"],
+			["zzz", "ABC"],
+		];
+		for (const [query, text] of pairs) {
+			assert.deepStrictEqual(fuzzyMatchLower(query.toLowerCase(), text.toLowerCase()), fuzzyMatch(query, text));
+		}
 	});
 });
 

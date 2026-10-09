@@ -74,10 +74,11 @@ describe("credential rotation composes below the model fallback chain", () => {
 		expect(result.error).toBeInstanceOf(CredentialFailoverError);
 	});
 
-	test("the runner emits the exact marker the session layer already suppresses on", () => {
+	test("the re-exported marker stays byte-identical to the one the Claude SDK lane stamps", () => {
 		// agent-session.ts consumes this string on message.errorMessage; the
-		// engine constant must stay byte-identical for the Claude path to remain
-		// suppressed by the same mechanism.
+		// constant must stay byte-identical for the Claude path to remain
+		// suppressed by the same mechanism. The generic runner itself never
+		// stamps it (senpi#1628).
 		expect(TURN_RETRY_SUPPRESSION_PREFIX).toBe("senpi:no-turn-retry:");
 	});
 });

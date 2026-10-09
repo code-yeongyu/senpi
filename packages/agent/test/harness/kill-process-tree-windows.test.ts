@@ -78,7 +78,7 @@ describe("killWindowsProcessTree", () => {
 		}) as typeof process.kill;
 
 		try {
-			killWindowsProcessTree(4242, UNRESOLVABLE_TASKKILL);
+			killWindowsProcessTree(4242, UNRESOLVABLE_TASKKILL, () => undefined);
 		} finally {
 			process.kill = realKill;
 		}

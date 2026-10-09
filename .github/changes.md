@@ -1,4 +1,633 @@
+## 2026-10-09 - The changelog gate audits the whole tree against the upstream pin (senpi#3006)
+
+### What changed
+
+- `.github/workflows/changelog-gate.yml`: a new step, "Audit changes.md coverage against the upstream pin", runs `node scripts/audit-changes-md.mjs` after the per-PR gate in the same job. The job already checks out the PR head with `fetch-depth: 0`, so the pinned upstream commit is present; the audit exits 1 when any upstream-owned production path is uncovered by its exact nearest changes.md tracker.
+
+### Why
+
+The per-PR gate (`scripts/check-pr-changelog.mjs`) sees only the PR's own diff, so it cannot catch a newly added nearest changes.md tracker that shadows coverage a parent tracker already provided — the senpi#2895 shape that left 43 paths uncovered (senpi#3006). The repository-wide audit sees exactly that state; running it on every pull request keeps the next shadowing tracker from merging.
+
+### Why an extension could not handle it
+
+CI job composition is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the changelog-gate steps list, if upstream ever grows an equivalent job.
+
+## 2026-10-08 - Every main commit gets its own CI run, never cancelled or replaced by a later merge (senpi#2960)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the concurrency group is `ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}` (was `ci-${{ github.ref }}`), and `cancel-in-progress` is `${{ github.event_name == 'pull_request' }}` (was `true`). A pull request keeps one group per ref, so a newer push or restack still cancels the run it supersedes. Each `main` push gets a group of its own, so its run starts at once and is never cancelled, queued or replaced by a later merge. `scripts/ci-concurrency.test.mjs` evaluates the group and the cancel flag for two `main` commits and two pushes to one pull request.
+
+### Why
+
+Since senpi#2945 the release's test evidence is the release commit's green "Check and test" run. With one group for `main`, a merge during a release cancelled that run, or, with cancel-in-progress off, left it waiting behind the previous run and let a later merge replace it before it started. Either way the release lost its evidence and timed out; two merges in one window made the release miss its 40-minute window twice.
+
+### Why an extension could not handle it
+
+The CI concurrency policy is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- The `concurrency:` block at the top of `ci.yml`.
+
+## 2026-10-05 - The process-mode kernel suite runs on Linux and macOS (codemode plan node 17)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a new job, `process-kernel` (`Eval kernel process isolation (ubuntu-latest)` and `(macos-latest)`), runs `test/js-process-kernel.test.ts` with the JSON reporter on both platforms. A following step fails unless the suite ran (at least 30 passed, none failed, and on macOS only the Linux-only subreaper case skipped) and no `process-entry.js` child was left behind with ppid 1.
+
+### Why
+
+- Process mode could not start on Linux at all (a spawn's stdout is a socket there, and the entry reopened it by path), and no CI run caught it: the suite never ran on macOS, and the PR that added it was stacked, so it got no test workflow (#2759). A platform where the kernel child cannot start must fail a check instead of shipping.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the job list in `ci.yml`, where the new job sits before `python-kernel-windows`.
+
+## 2026-10-05 - CI runs on pull requests to any branch (senpi#2759)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `pull_request` trigger no longer filters on `branches: [main]`, so a pull request stacked on another feature branch runs the same CI as one that targets `main`. The existing concurrency group (`ci-${{ github.ref }}`, which is `refs/pull/<n>/merge` for a pull request) with `cancel-in-progress` keeps one run per pull request.
+
+### Why
+
+- A stacked pull request ran no test workflow, so its code could look reviewed while it had never run in CI. The process-mode kernel in #2706 could not start on Linux and nothing caught it.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `on:` block at the top of `ci.yml`.
+
+## 2026-10-04 - The Windows Python job checks that environment installs stay inside the revision (codemode plan node 14)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`python-kernel-windows`): a new step runs the environment tests for pip's config file and staged revisions with the JSON reporter, and fails unless the pip-config test actually ran and passed.
+
+### Why
+
+- pip skips every config file only when `PIP_CONFIG_FILE` equals Python's `os.devnull`, which is `nul` on Windows. A string check on another OS can't prove that, and a skipped test must not count as a pass.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `python-kernel-windows` job's step list.
+
+## 2026-10-04 - The Windows Python job runs the kernel-tool suites (codemode plan node 11)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`python-kernel-windows`): a new step runs `test/py-kernel-tools.test.ts`, `test/kernel-tools-registry.test.ts` and `test/kernel-tools-reentrancy.test.ts` with the JSON reporter, and the next step fails unless they all ran: no failures, no skips, and at least 15 Python kernel-tool cases passed.
+
+### Why
+
+- Python kernel tools serve callbacks on threads beside a runner whose interrupt is SIGTERM-only on Windows; the plan requires those suites to run on Windows, and a skipped suite must not count as a pass.
+
+### Why an extension could not handle it
+
+- This is CI configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `python-kernel-windows` job's step list.
+
+## 2026-10-03 - codemode-gate checks out full history to review baseline changes (senpi#2452)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `codemode-gate` job's checkout step sets `fetch-depth: 0`.
+
+### Why
+
+- The eval gate now reads `packages/senpi-codemode/test/gate/baseline.json` at the pull request's merge base and requires every baseline cell the PR edits or removes to be listed with a reason. A shallow checkout cannot resolve the merge base, and the gate fails closed when it cannot, so the job needs full history.
+
+### Why an extension could not handle it
+
+- Checkout depth is CI workflow configuration evaluated before any Senpi runtime or extension loader exists.
+
+### Expected merge conflict zones
+
+- LOW: the `codemode-gate` job's checkout step in `.github/workflows/ci.yml`.
+
+## 2026-10-03 - The release body includes every published package's notes (senpi#2585)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `release-notes.mjs extract` step passes `--published`, so `RELEASE_NOTES.md` holds the section of every published package (the workspace packages in `scripts/registry-packages.mjs`), coding-agent first, each under its published name (`scripts/changes.md` records the extractor change). A newly published package is included without editing the workflow.
+
+### Why
+
+- The step named no changelog, so the extractor's coding-agent default was the whole release body and the other packages' notes and contributor credits were dropped.
+
+### Why an extension could not handle it
+
+- The release body is produced by the tag workflow, outside any runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `release-notes.mjs extract` command in the `build-binaries.yml` release-assets step.
+
+## 2026-10-02 - The WebView job runs the readiness regression and prints the readiness log (senpi#2353)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`webview-kernel`): the Vitest step adds `test/js-kernel-webview-readiness.test.ts` (a Chrome launch whose CDP attach never completes fails fast or is relaunched, with no Chrome left), sets `SENPI_WEBVIEW_READINESS_LOG`, runs it under a 9-minute watchdog inside the step (the suite's partial verbose output, the live Chrome/Bun process list and the readiness log are printed before the step fails) plus a 12-minute step timeout, with the `verbose` and `hanging-process` reporters; a new always-run step prints the readiness log, one line per Chrome launch with its attach time or the stalled phase.
+
+### Why
+
+- The intermittent Windows WebView failure was silent about where a launch stuck, and a hung suite ran into the job timeout, whose cancellation discards the job log; the job now fails the step instead, keeps its log, shows the readiness of every launch on every OS, and runs the regression for the stalled attach where a real Chrome is available.
+
+### Why an extension could not handle it
+
+- Which suites the WebView runners execute, and what they print, belong to the workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `webview-kernel` Vitest file list and its step list.
+
+## 2026-10-01 - Session gateway Windows parity suites run, by name, in `rpc-windows` (senpi#2328)
+
+### What changed
+
+- `.github/workflows/ci.yml` (`rpc-windows`): every vitest step runs with `--reporter=verbose`, and two steps are added: `test/suite/rpc-endpoint-registry.test.ts` (endpoint.json `registry_version`/`endpoint_kind` read back on Windows paths) and `test/suite/interactive-session-control-win32.test.ts` (an interactive TUI on win32 starts, its endpoint request answers `unsupported_platform`, and nothing is registered). The socket-transport and win32 TUI steps also write a JSON report, and a final step fails the job unless both files executed with every test passed, so the win32-only named-pipe wrong-secret case and the TUI suite cannot pass by being skipped.
+
+### Why
+
+- The session gateway is POSIX-only, so its Windows contract is refusal plus registry compatibility. Those suites never ran on Windows, and the default dot reporter printed only per-file counts, so a Windows-only case could not be shown to have run rather than been counted.
+
+### Why an extension could not handle it
+
+- Which suites the Windows runner executes, and how it reports them, belong to the workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `rpc-windows` step list.
+
+## 2026-10-01 - Windows Python bootstrap is a required CI gate (senpi#2452)
+
+### What changed
+
+- `.github/workflows/ci.yml` adds the `python-kernel-windows` job with slow/hung startup regressions and a compiled Python host exercising cold and warm cells on `windows-latest`. The `Check and test` fan-in requires that job and includes its result in the workflow summary.
+
+### Why
+
+- A healthy cold packaged interpreter can exceed the previous five-second readiness deadline. Linux-only runtime coverage cannot detect Windows bootstrap and sidecar failures.
+
+### Why an extension could not handle it
+
+- Required Windows runner coverage and the repository's CI fan-in belong to the workflow.
+
+### Expected merge conflict zones
+
+- LOW: the Python bootstrap job near `webview-kernel` and the `Check and test` needs list.
+
+## 2026-10-01 - CI fails when the build rewrites a committed dist file (senpi#2484)
+
+### What changed
+
+- `.github/workflows/ci.yml` (Static checks): after `npm run build`, `git diff --exit-code` over every tracked `packages/*/dist/*` file.
+
+### Why
+
+- `packages/ai/dist/cli.js` and `packages/coding-agent/dist/cli.js` are committed bin stubs that the build overwrites. The upstream sync changed `packages/ai/src/cli.ts` without refreshing its stub, and the publish workflow's release step then aborted on the dirty tree. The new step reports that drift on the PR instead.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the Static checks job steps after `Build workspace package entries`.
+
+## 2026-09-30 - Drop the duplicate Rust manual PTY QA step (senpi#2447)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: the "Rust manual PTY QA" step is removed.
+
+### Why
+
+- The preceding `cargo test -p senpi-pty --locked` step already runs `crates/senpi-pty/tests/manual_qa.rs`, because it is an integration test of the crate, so CI ran it twice.
+- The file stays as the manual QA harness `crates/senpi-pty/AGENTS.md` names.
+
+### Why an extension could not handle it
+
+- Repository scripts, CI and native crate test code.
+
+### Expected merge conflict zones
+
+- LOW: the senpi-pty steps of `native-prebuilds.yml`.
+
 # changes
+
+## 2026-09-30 - Nightly Check job installs Bun for check:bun-lock (senpi#752)
+
+### What changed
+
+- `.github/workflows/releasability.yml`: the `Check (main, no autofix)` job gains the `Setup Bun` step (bun 1.4.2, the SHA-pinned `oven-sh/setup-bun` ci.yml uses) between `Install dependencies` and `Check`.
+
+### Why
+
+- `npm run check` runs `check:bun-lock` since senpi#2352, which needs bun to regenerate `bun.lock`; ci.yml's `Static checks` installs Bun, the nightly job did not, so it failed with `bun is required to regenerate bun.lock: spawnSync bun ENOENT` on every run from 2026-09-30.
+
+## 2026-09-30 - Node bundle CI step runs the Bun provider-coverage and compiled provider-probe files (senpi#2447)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Node bundle isolation and RPC smoke` step also runs `scripts/bun-bundle-provider-coverage.test.ts` and `scripts/compiled-provider-probe.test.ts`.
+
+### Why
+
+- Both files carry real provider-reachability and compiled-binary auth assertions, but no job, package script or doc ran them: they are Bun `.ts` files outside the `scripts/*.test.mjs` glob behind `npm run test:scripts`. The coverage file needs the canvas rebuild that this job already does before the step.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the steps between `Install dependencies` and `Check` in `releasability.yml`.
+
+- LOW: the `Node bundle isolation and RPC smoke` step in `ci.yml`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: `.github/workflows/publish-model-catalog.yml`: adopted the `scripts/model-catalog-protocol.ts` path trigger.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Codemode behavior regression gate (senpi#2452)
+
+### What changed
+
+- `.github/workflows/ci.yml`: add the `codemode-gate` job with all five required runtime legs, a frozen behavior baseline, package contracts, harness typechecking, and a JSON report artifact. Its build wrapper records input hashes, including the source file set, so a deleted source cannot be measured against stale workspace output.
+
+### Why
+
+- Codemode changes need exact checks for legacy prompt, schema, helper, lifecycle, and import behavior without relying on wall-clock timings. The import census is scoped through measured parent edges and the loader's virtual module tables; host-only imports do not turn the codemode job red.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the new `codemode-gate` job in `ci.yml`.
+
+## 2026-09-29 - Model catalog publish runs only in the upstream repository (senpi#1522)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: the `publish` job runs only when `github.repository` is `badlogic/pi-mono`, and a new `Check R2 credentials` step skips the R2 upload with a notice when the access key or secret is empty. The `generate` job still builds and validates the catalog in every repository.
+
+### Why
+
+- The upload targets the upstream pi-artifacts R2 bucket, and this fork has no credentials for it, so every scheduled run inside the publication window failed at `aws s3 cp` with `Unable to locate credentials`.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `publish` job `if:` line and the steps before `Publish model catalog to R2` in `publish-model-catalog.yml`.
+
+## 2026-09-29 - Node bundle CI step runs the reinstall regression file (senpi#2358)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Node bundle isolation and RPC smoke` step also runs `scripts/node-bundle-reinstall.test.ts`, which replaces the installed package with a different build under a running RPC session and requires the next prompt to succeed under Node and Bun.
+
+### Why
+
+- A session started before a global reinstall died at its next lazy chunk import; the test keeps the runtime snapshot that prevents it from regressing.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Node bundle isolation and RPC smoke` step in `ci.yml`.
+
+## 2026-09-29 - Static checks install Bun for the bun.lock drift gate (senpi#2352)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Static checks` job sets up Bun 1.4.2 before `npm run check`, which now runs `check:bun-lock`.
+
+### Why
+
+- `check:bun-lock` resolves bun.lock with Bun in an isolated island and fails when a fresh `bun install` would rewrite it; the job had no Bun.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Static checks` job steps in `ci.yml`.
+
+## 2026-09-29 - Node bundle CI step runs the Cursor exec regression file (senpi#2334)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Node bundle isolation and RPC smoke` step also runs `scripts/node-bundle-cursor-exec.test.ts`, which drives the built CLI under Node and Bun with an exec-channel provider and checks the tool call runs once.
+
+### Why
+
+- The double execution only exists in the built bundle, where `chunks/cursor-agent.js` carries its own module copies; source-level tests cannot see it.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Node bundle isolation and RPC smoke` step in `ci.yml`.
+
+## 2026-09-28 - WebView CI step runs the orphaned-launch regression file (senpi#2272)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `webview-kernel` job's vitest command also lists `test/js-kernel-webview-launch.test.ts`, the real-Chrome regression for a launch whose kernel is released mid-launch.
+
+### Why
+
+- The test lives in its own file so it runs in a process no earlier test has stopped or killed Chrome in: inside the resilience file it wedged GitHub's macOS runners (bisected in #2272; root cause tracked in #2290). The executed-suites check still requires at least 10 passed tests.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `Run eval kernel WebView suites (Bun)` step in `ci.yml`.
+
+## 2026-09-28 - Windows CI job for durable scheduled prompts (senpi#2216)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `schedule-windows` job builds the workspace entries and runs `test/suite/schedule-runner.test.ts`, `schedule-extension.test.ts` and `schedule-cli.test.ts` on windows-latest, and is added to the `Check and test` fan-in and its summary.
+
+### Why
+
+- The coding-agent test job is Linux-only and the POSIX CLI suite is skipped on Windows, so rename claims, runner leases, ungated delivery locks, `taskkill` timeouts and `cmd.exe` `--exec` hooks had no coverage on the platform where they behave differently (the quoted `--exec` bug was found by this job).
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the job list before `rpc-windows` and the `check-and-test` `needs` list and summary in `ci.yml`.
+
+## 2026-09-28 - Cross-OS CI job for eval-kernel Bun.WebView (senpi#2248)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `webview-kernel` job runs the Bun-only `senpi-codemode` WebView suites (`js-kernel-webview*.test.ts`) under `bunx --bun vitest` on ubuntu-latest, windows-latest and macos-latest, fails when the JSON report shows they were skipped instead of executed (one Windows skip allowed: the `SIGSTOP` case), and is added to the `Check and test` fan-in.
+
+### Why
+
+- Chrome-backed WebViews from eval cells go through the main-thread service; only a Bun run with a real Chrome on each OS proves it, and Windows (the reported platform) has no other coverage.
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the job list before `test-workspaces` and the `check-and-test` `needs` list and summary in `ci.yml`.
+
+## 2026-09-28 - Native prebuilds no longer build the desktop engine (senpi#2128)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: the desktop engine build, staging assertion, `file_senpi_desktop_engine` manifest line, desktop crate tests, desktop lifecycle probe, Windows interactive-desktop smoke, and the `crates/senpi-desktop-*` / `packages/desktop-*` path filters are removed; the Rust cache key is `native-<target>`. The PTY and grep prebuilds are unchanged.
+
+### Why
+
+- The engine and its CI live in omo (`desktop-engine.yml`, code-yeongyu/oh-my-openagent#8893).
+
+### Why an extension could not handle it
+
+- CI workflow.
+
+### Expected merge conflict zones
+
+- LOW: the build and stage steps of `native-prebuilds.yml`.
+
+## 2026-09-24 - Build and verify the senpi-desktop-engine binary in the native matrix (senpi#2128)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: every row builds the `senpi-desktop-engine` binary (`cargo zigbuild` on the Linux rows, `cargo build --target` elsewhere) and stages it next to the `.node` files; the Stage step asserts exactly one `senpi-desktop-engine*` file and records `file_senpi_desktop_engine=` in `manifest.txt`; the non-cross rows run the desktop crate tests and a lifecycle probe (`scripts/ci/probe-desktop-engine.mjs`: `--selftest`, `capabilities` reports `fake` / `unavailable`); the win32-x64 row runs `scripts/ci/windows-interactive-desktop-smoke.ps1` (SendInput click + UI Automation read on a WinForms window). Path filters add `crates/senpi-desktop-*/**`, `packages/desktop-*/**`, and `scripts/ci/**`; `Swatinem/rust-cache` keyed per target; `timeout-minutes` 45 -> 75.
+
+### Why
+
+- The desktop engine ships as a per-platform binary; packaging must be exercised on all six targets before any native backend exists, and the Windows desktop QA job needs proof that the hosted runner has an interactive desktop.
+
+### Why an extension could not handle it
+
+- CI workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: fork-only workflow; the path filters, the build/stage steps, and `manifest.txt` fields of `native-prebuilds.yml`.
+
+## 2026-09-23 - Windows Claude Code executable job and SDK currency gate (senpi#2053)
+
+### What changed
+
+- `.github/workflows/ci.yml`: new `claude-executable-windows` job (windows-latest, Node 24 + Bun 1.4.2) runs the Claude executable path-lookup tests and the real-file npm `claude.cmd` shim test under Node and Bun, then fails if the shim test was skipped instead of passing; it is part of the `Check and test` fan-in.
+- `.github/workflows/releasability.yml`: `model-catalog-regen` runs `scripts/check-claude-code-model-support.mjs --strict` after regeneration; new nightly `claude-sdk-currency` job runs it `--sdk-currency` and reports through `report-failure`.
+
+### Why
+
+- The Windows shim resolution only exists on a real Windows host, and no existing Windows job ran the Claude executable tests (oh-my-openagent#8700). A pinned Claude Agent SDK behind the newest release is how new Claude models shipped unusable twice; the nightly gate turns that into a tracked issue without redding PR bases.
+
+### Why an extension could not handle it
+
+- CI workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the job list and the `Check and test` needs/summary in `ci.yml`; the `report-failure` needs/env/results in `releasability.yml`.
+
+## 2026-09-17 - Run the `senpi host` named-pipe cell on the Windows RPC job (senpi#1782)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-windows` job gains one step, `bunx vitest run test/suite/host-cli-win32.test.ts`, after the socket-transport step. It is the win32 cell of the `senpi host` contract: a second `ensure` reuses the daemon on the named pipe, and `handoff` refuses with `upgrade_unsupported`.
+
+### Why
+
+- Both properties are platform-specific and cannot be observed on POSIX: the endpoint is a pipe derived from the socket path, and a named pipe can be neither renamed nor drained, so the handoff must refuse rather than attempt one. The POSIX suites skip on win32 by construction, so without this step nothing would run that cell.
+
+### Why an extension could not handle it
+
+- CI job definition; it selects which suites run on which runner.
+
+### Expected merge conflict zones
+
+- LOW: the step list of the `rpc-windows` job.
+
+## 2026-09-14 - Exercise Node worker bundles on Linux
+
+### What changed
+
+- `.github/workflows/ci.yml` runs Node bundle SDK isolation and real CLI/shared-session smoke tests serially after workspace build in the Ubuntu Node 24 job.
+
+### Why
+
+- `.github/workflows/ci.yml` previously never invoked the standalone Node bundle builder, leaving unsupported runtime imports and worker startup failures undetected (Refs #1656).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` defines test execution before any runtime extensions load.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: workspace build and script-test steps.
+
+## 2026-09-14 - Run the grep contract suite against the native engine on linux
+
+### What changed
+
+- `.github/workflows/ci.yml`: added the `grep-native-contract` job (ubuntu-latest). It reads the toolchain channel from `rust-toolchain.toml`, caches cargo state with `Swatinem/rust-cache`, builds `senpi-grep` with `cargo build --release --locked` plus a `napi build --platform --release` addon, resolves the generated `senpi_grep.*.node` by glob, and runs `test/grep` twice in the same job - once with `SENPI_GREP_ENGINE=native` against that addon and once with `SENPI_GREP_ENGINE=rg`. The native leg writes a vitest JSON report that is asserted to contain the native contract file with every case passed and none skipped. The job joins the `check-and-test` fan-in gate and its summary; the three coding-agent shards and the Windows jobs are unchanged.
+
+### Why
+
+- `.github/workflows/ci.yml`: the shards only ever exercise the ripgrep fallback, so the native engine could regress undetected. Building the addon inside CI and running the shared contract suite under both engines is the only gate that proves engine parity on a clean machine (Refs #1678).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection, the Rust toolchain, native addon builds and job-level required-status wiring are CI configuration evaluated long before any Senpi runtime or extension loader exists.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `jobs` map and the `check-and-test` `needs` list in `.github/workflows/ci.yml` whenever upstream restructures CI.
+
+## 2026-09-14 - Enforce freshly staged release entry graphs
+
+### What changed
+
+- `.github/workflows/ci.yml` runs the codemode graph followed by the existing exclusions graph in the required workspaces/scripts job, before script suites invalidate generated output. It rebuilds the trusted canvas native binding after the lifecycle-disabled install; the codemode suite rebuilds workspace entries and compile assets itself.
+
+### Why
+
+- `.github/workflows/ci.yml` must execute the real contribution tests instead of leaving the root Bun `.ts` tests outside its Node `.mjs` glob. Native release prerequisites must be present for the graph build (Refs #1656).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` establishes build prerequisites and validation order before runtime extensions load.
+
+### Expected merge conflict zones
+
+- The `Fresh release entry graphs (codemode and exclusions)` step in `.github/workflows/ci.yml`.
+
+## 2026-09-13 - Verify split workers with the release compiler
+
+### What changed
+
+- `.github/workflows/session-worker-compile.yml` pins Bun 1.4.2, runs the parsed-argv contracts and both relocation strategies, and watches release scripts, package metadata, Bun/RPC sources and dependency locks. Ubuntu, macOS and Windows remain mandatory matrix legs.
+
+### Why
+
+- `.github/workflows/session-worker-compile.yml` must exercise the compiler version and graph inputs used by standalone releases, including the Windows embedded-worker path contract (Refs #1656).
+
+### Why an extension could not handle it
+
+- `.github/workflows/session-worker-compile.yml` configures CI before any runtime extension exists.
+
+### Expected merge conflict zones
+
+- The path filters, Bun setup and test steps in `.github/workflows/session-worker-compile.yml`.
+
+## Provision Bun for native extension importer tests (2026-09-13)
+
+### What changed
+
+- `.github/workflows/ci.yml` installs pinned Bun 1.4.2 before each coding-agent test shard while retaining Node as the Vitest runtime. A Windows job also executes native importer regressions and the relocated compiled extension suite, and participates in the required fan-in gate.
+
+### Why
+
+- `.github/workflows/ci.yml` must provide the real Bun subprocess used by native extension importer tests; Node-only runners fail with `spawnSync bun ENOENT` (Refs #1656). General Windows test jobs do not prove compiled extension loading, so this surface has an explicit Windows gate.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml` provisions test dependencies before runtime extensions load.
+
+### Expected merge conflict zones
+
+- The coding-agent shard setup, compiled extension Windows job and required fan-in dependencies in `.github/workflows/ci.yml`.
+
+## Pin Bun CI and release builds to 1.4.2 (2026-09-08)
+
+### What changed
+
+- Updated `.github/workflows/ci.yml`, `.github/workflows/build-binaries.yml`, and `.github/workflows/publish-npm.yml` to pin stable Bun 1.4.2, together with the workflow assertion and current CI guidance.
+
+### Why
+
+- Keep the build and test toolchain on the current stable release with published cross-compilation assets.
+
+### Why an extension could not handle it
+
+- GitHub Actions selects the toolchain before runtime extensions load.
+
+### Expected merge conflict zones
+
+- LOW: Bun setup steps in the three workflows and their version assertion.
+
+## test-workspaces proves the bun path of the root scripts (2026-09-07)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `test-workspaces` job installs bun 1.4.0 through the same pinned `oven-sh/setup-bun` action as `rpc-windows`, runs `bun run test:scripts` next to `npm run test:scripts`, and runs the "all but coding-agent" workspace suites through `node scripts/run-workspaces.mjs --if-present --workspace ... test` instead of npm's own `--workspace` flags.
+
+### Why
+
+- `scripts/run-workspaces.test.mjs` drives the workspace runner with whichever package manager launched the test process, so the bun step is the CI proof that root `bun run <script>` fans out through bun while the npm step keeps proving npm. Routing the real workspace suites through the runner exercises the code path root `npm run test` and `bun run test` take.
+
+### Why an extension could not handle it
+
+- CI workflow wiring is repository build plumbing evaluated on GitHub's runners; no runtime extension surface can add a step to a GitHub Actions workflow.
+
+### Expected merge conflict zones
+
+- LOW: the `test-workspaces` step list in `.github/workflows/ci.yml` whenever upstream reshapes its test job.
 
 ## Windows RPC named-pipe suites gain a real Windows CI job (2026-09-01)
 

@@ -151,7 +151,7 @@ describe("terminal manifest writer", () => {
 		}
 	});
 
-	it("settles a monitor with exactly one write and removes its manifest entry", async () => {
+	it("settles the last monitor with no further write: the now-empty manifest is removed", async () => {
 		const { writer } = await makeFixture();
 		const writeSpy = vi.spyOn(writer.store, "write");
 		await writer.recordRegister({
@@ -161,8 +161,8 @@ describe("terminal manifest writer", () => {
 		expect(writeSpy).toHaveBeenCalledTimes(1);
 		expect((await writer.store.read())?.monitors).toHaveLength(1);
 		await writer.observeMonitorState([]);
-		expect(writeSpy).toHaveBeenCalledTimes(2);
-		expect((await writer.store.read())?.monitors).toHaveLength(0);
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+		expect(await writer.store.read()).toBeNull();
 	});
 
 	it("fails closed on a corrupt manifest: typed read error and storeError digest without handler calls", async () => {
@@ -181,7 +181,14 @@ describe("terminal manifest writer", () => {
 			manifest: writer.store,
 			handlers: countingHandler(seen),
 		});
-		expect(digest).toEqual({ restored: 0, lost: 0, expired: 0, muted: 0, attachedElsewhere: 0, storeError: true });
+		expect(digest).toMatchObject({
+			restored: 0,
+			lost: 0,
+			expired: 0,
+			muted: 0,
+			attachedElsewhere: 0,
+			storeError: true,
+		});
 		expect(seen).toEqual([]);
 	});
 
@@ -231,7 +238,14 @@ describe("terminal manifest writer", () => {
 			updatedAt: 2,
 		});
 		const digest = await restoreTerminalState({ manifest: writer.store, handlers: stubRestoreHandlers });
-		expect(digest).toEqual({ restored: 0, lost: 4, expired: 0, muted: 0, attachedElsewhere: 0, storeError: false });
+		expect(digest).toMatchObject({
+			restored: 0,
+			lost: 4,
+			expired: 0,
+			muted: 0,
+			attachedElsewhere: 0,
+			storeError: false,
+		});
 	});
 
 	it("expires monitors whose expiresAt has passed without calling their handler", async () => {
@@ -260,11 +274,18 @@ describe("terminal manifest writer", () => {
 			handlers: countingHandler(seen),
 			now: () => now,
 		});
-		expect(digest).toEqual({ restored: 0, lost: 0, expired: 1, muted: 0, attachedElsewhere: 0, storeError: false });
+		expect(digest).toMatchObject({
+			restored: 0,
+			lost: 0,
+			expired: 1,
+			muted: 0,
+			attachedElsewhere: 0,
+			storeError: false,
+		});
 		expect(seen).toEqual([]);
 	});
 
-	it("records background start and exit as one write each", async () => {
+	it("records a background start with one write and removes the manifest when the last one exits", async () => {
 		const { writer } = await makeFixture();
 		const writeSpy = vi.spyOn(writer.store, "write");
 		await writer.recordBackgroundStart("bg-1", "echo done", 123);
@@ -273,8 +294,8 @@ describe("terminal manifest writer", () => {
 			{ id: "bg-1", command: "echo done", startedAtMs: 123 },
 		]);
 		await writer.recordBackgroundExit("bg-1");
-		expect(writeSpy).toHaveBeenCalledTimes(2);
-		expect((await writer.store.read())?.backgroundSessions).toEqual([]);
+		expect(writeSpy).toHaveBeenCalledTimes(1);
+		expect(await writer.store.read()).toBeNull();
 	});
 
 	it("re-adopts a restored entry without a write, keeps every persisted field, clears suspended, and counts it as durable", async () => {
@@ -395,11 +416,14 @@ describe("terminal manifest spec capture through the monitor tool", () => {
 		const harness = makeHarness(fixture);
 		try {
 			const writeSpy = vi.spyOn(fixture.writer.store, "write");
+			const isLast = (event: MonitorEvent) => event.type === "line" && event.line === "500";
+			// Arm before the create: a fast command can finish all 500 lines while the create awaits its manifest write.
+			const last = harness.sink.waitFor(isLast, "500th monitor line");
 			await harness.tool.execute("manifest-lines", {
 				description: "chatty watch",
 				command: "seq 1 500; sleep 30",
 			});
-			await harness.sink.waitFor((event) => event.type === "line" && event.line === "500", "500th monitor line");
+			await last;
 			await fixture.writer.flush();
 			expect(writeSpy).toHaveBeenCalledTimes(1);
 		} finally {

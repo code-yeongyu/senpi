@@ -10,6 +10,7 @@ import {
 	formatAppServerUsage,
 	parseAppServerCliArgs,
 } from "./cli-args.ts";
+import { resolveAppServerExtensionPaths } from "./extension-paths.ts";
 import { type AppServerRuntime, createAppServerRuntime } from "./runtime.ts";
 import { type StdioTransport, startStdioTransport } from "./transports/stdio.ts";
 import { startAppServerUnixSocketListener, type UnixSocketListenerHandle } from "./transports/unix-socket.ts";
@@ -61,7 +62,9 @@ export async function runAppServerMode(options: AppServerModeOptions): Promise<v
 	process.on("SIGINT", handleSignal);
 	process.on("SIGTERM", handleSignal);
 
-	const runtime = createAppServerRuntime(requestShutdown);
+	const runtime = createAppServerRuntime(requestShutdown, {
+		extensionPaths: resolveAppServerExtensionPaths(options.extensions),
+	});
 	let stdio: StdioTransport | undefined;
 	let unix: UnixSocketListenerHandle | undefined;
 	let websocket: WebSocketListenerHandle | undefined;

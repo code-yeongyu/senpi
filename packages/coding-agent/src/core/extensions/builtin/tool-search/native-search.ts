@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { resolveRootObjectSchema } from "@earendil-works/pi-ai/utils/tool-schema-compat";
 import type { ToolSearchDocument } from "./engine/document.ts";
 import { type AnthropicToolSearchTarget, supportsAnthropicNativeToolSearch } from "./native-support.ts";
 
@@ -83,12 +84,23 @@ function injectInactiveCatalogTools(tools: readonly unknown[], config: Anthropic
 		injected.push({
 			name: doc.name,
 			description: definition.description ?? doc.description ?? doc.label,
-			input_schema: definition.parameters,
+			input_schema: anthropicInputSchema(definition.parameters),
 			defer_loading: true,
 		});
 		residentNames.add(doc.name);
 	}
 	return injected;
+}
+
+/**
+ * Anthropic requires `input_schema.type: "object"`. Resident tools get that shape in the provider's
+ * `convertTools`; injected catalog tools bypass it, so a root union (`anyOf` with no top-level
+ * `type`) would reject the whole request. Plain object schemas pass through unchanged.
+ */
+function anthropicInputSchema(parameters: unknown): unknown {
+	if (!isRecord(parameters) || parameters.type === "object") return parameters;
+	const resolved = resolveRootObjectSchema(parameters);
+	return resolved.type === "object" ? resolved : { ...resolved, type: "object" };
 }
 
 function maybeDefer(tool: unknown, config: AnthropicNativeInjectionConfig): unknown {

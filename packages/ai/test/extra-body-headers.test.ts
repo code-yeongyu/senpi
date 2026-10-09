@@ -118,15 +118,3 @@ describe("Anthropic-compatible provider thinking controls", () => {
 		expect(payload.thinking).toEqual({ type: "disabled" });
 	});
 });
-
-describe("extra headers via options.headers", () => {
-	it("accepts custom headers through SimpleStreamOptions without throwing", async () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const s = streamSimple({ ...model!, baseUrl: "http://127.0.0.1:9" }, makeContext(), {
-			apiKey: "fake",
-			headers: { "x-custom-header": "custom-value" },
-		});
-		await s.result();
-		expect(true).toBe(true);
-	});
-});

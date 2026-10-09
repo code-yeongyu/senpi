@@ -1,7 +1,13 @@
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import {
+	listWindowsProcessRowsSync,
+	type WindowsProcessRow,
+	windowsTreeKillArgs,
+} from "@earendil-works/pi-agent-core/node";
 import { spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
+import { withBundledBunCommands } from "./bundled-bun.ts";
 
 /** Family of a resolved shell executable, used to pick invocation arguments. */
 export type ShellKind = "bash" | "sh" | "cmd" | "powershell";
@@ -195,54 +201,25 @@ export function getShellEnv(): NodeJS.ProcessEnv {
 	const hasBinDir = pathEntries.includes(binDir);
 	const updatedPath = hasBinDir ? currentPath : [binDir, currentPath].filter(Boolean).join(delimiter);
 
-	return {
+	return withBundledBunCommands({
 		...process.env,
 		[pathKey]: updatedPath,
-	};
+	});
 }
 
 /**
  * Sanitize binary output for display/storage.
  * Removes characters that crash string-width or cause display issues:
  * - Control characters (except tab, newline, carriage return)
- * - Lone surrogates
- * - Unicode Format characters (crash string-width due to a bug)
- * - Characters with undefined code points
+ * - Unicode interlinear annotation characters U+FFF9..U+FFFB (crash string-width due to a bug)
  */
 export function sanitizeBinaryOutput(str: string): string {
-	// Use Array.from to properly iterate over code points (not code units)
-	// This handles surrogate pairs correctly and catches edge cases where
-	// codePointAt() might return undefined
+	// Fork fast path: most output has nothing to remove, so skip the scan-and-copy entirely.
 	if (!hasUnsafeDisplayCharacter(str)) {
 		return str;
 	}
-
-	return Array.from(str)
-		.filter((char) => {
-			// Filter out characters that cause string-width to crash
-			// This includes:
-			// - Unicode format characters
-			// - Lone surrogates (already filtered by Array.from)
-			// - Control chars except \t \n \r
-			// - Characters with undefined code points
-
-			const code = char.codePointAt(0);
-
-			// Skip if code point is undefined (edge case with invalid strings)
-			if (code === undefined) return false;
-
-			// Allow tab, newline, carriage return
-			if (code === 0x09 || code === 0x0a || code === 0x0d) return true;
-
-			// Filter out control characters (0x00-0x1F, except 0x09, 0x0a, 0x0x0d)
-			if (code <= 0x1f) return false;
-
-			// Filter out Unicode format characters
-			if (code >= 0xfff9 && code <= 0xfffb) return false;
-
-			return true;
-		})
-		.join("");
+	// All removed characters are single UTF-16 code units, so surrogate pairs are never split.
+	return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\uFFF9-\uFFFB]/g, "");
 }
 
 function hasUnsafeDisplayCharacter(str: string): boolean {
@@ -255,25 +232,124 @@ function hasUnsafeDisplayCharacter(str: string): boolean {
 	return false;
 }
 
+/** A detached child we own until its whole process group is gone. */
+export interface TrackedDetachedChild {
+	/** Pid of the process we spawned; on unix it is also its own process-group leader. */
+	readonly pid: number;
+	/** Process group shutdown must kill. Equal to `pid`, because we spawn detached. */
+	readonly pgid: number;
+	/** The leader exited but its group still has members, so `pid` must not be signalled. */
+	readonly leaderExited: boolean;
+}
+
+interface TrackedDetachedChildState {
+	readonly pid: number;
+	readonly pgid: number;
+	leaderExited: boolean;
+}
+
 /**
  * Detached child processes must be tracked so they can be killed on parent
  * shutdown signals (SIGHUP/SIGTERM).
+ *
+ * What is tracked on unix is the process GROUP, not the bare pid: every tracked child is
+ * spawned `detached`, so it leads its own group, and a command like `sleep 30 &` or
+ * `nohup server &` keeps running in that group long after the shell that started it exited.
+ * Dropping the entry on the leader's exit orphaned those descendants past shutdown
+ * ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
  */
-const trackedDetachedChildPids = new Set<number>();
+const trackedDetachedChildren = new Map<number, TrackedDetachedChildState>();
 
 export function trackDetachedChildPid(pid: number): void {
-	trackedDetachedChildPids.add(pid);
+	trackedDetachedChildren.set(pid, { pid, pgid: pid, leaderExited: false });
 }
 
 export function untrackDetachedChildPid(pid: number): void {
-	trackedDetachedChildPids.delete(pid);
+	trackedDetachedChildren.delete(pid);
+}
+
+/** Read-only snapshot of the tracked groups (diagnostics and tests; never module state). */
+export function listTrackedDetachedChildren(): readonly TrackedDetachedChild[] {
+	return Array.from(trackedDetachedChildren.values(), (entry) => Object.freeze({ ...entry }));
+}
+
+/**
+ * Record that a tracked child exited. Ownership is released only when its process group
+ * is empty; while descendants survive there, shutdown must still be able to kill them.
+ * Windows has no such group, so the entry is dropped on exit as before.
+ */
+export function noteDetachedChildExited(pid: number): void {
+	const entry = trackedDetachedChildren.get(pid);
+	if (entry === undefined) return;
+	if (process.platform === "win32" || !processGroupIsAlive(entry.pgid)) {
+		trackedDetachedChildren.delete(pid);
+		return;
+	}
+	entry.leaderExited = true;
+}
+
+/** Drop tracked groups that have no members left, so a long session cannot accumulate entries. */
+export function pruneTrackedDetachedChildren(): void {
+	if (process.platform === "win32") return;
+	for (const [pid, entry] of trackedDetachedChildren) {
+		if (trackedDetachedChildIsGone(entry)) trackedDetachedChildren.delete(pid);
+	}
+}
+
+function signalTargetExists(target: number): boolean {
+	try {
+		process.kill(target, 0);
+		return true;
+	} catch (error) {
+		// EPERM means the target exists but is not ours to signal; only ESRCH proves it is gone.
+		return (error as NodeJS.ErrnoException).code !== "ESRCH";
+	}
+}
+
+function processGroupIsAlive(pgid: number): boolean {
+	return signalTargetExists(-pgid);
+}
+
+function trackedDetachedChildIsGone(entry: TrackedDetachedChildState): boolean {
+	if (processGroupIsAlive(entry.pgid)) return false;
+	// A leader that already exited must not be probed by pid: that number can have been
+	// recycled onto an unrelated process. An empty group is proof enough.
+	return entry.leaderExited || !signalTargetExists(entry.pid);
 }
 
 export function killTrackedDetachedChildren(): void {
-	for (const pid of trackedDetachedChildPids) {
-		killProcessTree(pid);
+	pruneTrackedDetachedChildren();
+	if (trackedDetachedChildren.size === 0) return;
+	// One listing for the whole batch: each tree kill would otherwise list every process again.
+	const rows = process.platform === "win32" ? listWindowsProcesses() : undefined;
+	for (const entry of trackedDetachedChildren.values()) {
+		if (process.platform === "win32") killWindowsProcessTree(entry.pid, undefined, () => rows);
+		else killTrackedDetachedGroup(entry);
 	}
-	trackedDetachedChildPids.clear();
+	trackedDetachedChildren.clear();
+}
+
+/**
+ * Kill a tracked group on unix.
+ *
+ * The direct-pid fallback of `killProcessTree()` is deliberately not reused here: a tracked
+ * entry can outlive its leader by minutes, and signalling that stale pid could hit whatever
+ * unrelated process the kernel has since given the number to. Only a leader still known to
+ * be alive may be signalled directly.
+ */
+function killTrackedDetachedGroup(entry: TrackedDetachedChildState): void {
+	try {
+		process.kill(-entry.pgid, "SIGKILL");
+		return;
+	} catch {
+		// The group is already empty, or this child never led one.
+	}
+	if (entry.leaderExited) return;
+	try {
+		process.kill(entry.pid, "SIGKILL");
+	} catch {
+		// Process already dead.
+	}
 }
 
 /**
@@ -314,9 +390,14 @@ function killProcessDirectly(pid: number): void {
 /** Upper bound on how long a shutdown may block waiting for `taskkill` to finish. */
 const TASKKILL_TIMEOUT_MS = 5_000;
 
-function taskkillHandledTree(pid: number, taskkillPath: string): boolean {
+function listWindowsProcesses(): readonly WindowsProcessRow[] | undefined {
+	return listWindowsProcessRowsSync(TASKKILL_TIMEOUT_MS);
+}
+
+function taskkillHandledTree(taskkillPath: string, killArgs: readonly string[]): boolean {
+	if (killArgs.length === 0) return true;
 	try {
-		const result = spawnSync(taskkillPath, ["/F", "/T", "/PID", String(pid)], {
+		const result = spawnSync(taskkillPath, [...killArgs], {
 			stdio: "ignore",
 			windowsHide: true,
 			timeout: TASKKILL_TIMEOUT_MS,
@@ -330,7 +411,10 @@ function taskkillHandledTree(pid: number, taskkillPath: string): boolean {
 }
 
 /**
- * Kill a process and all its children on Windows via `taskkill /T`.
+ * Kill a process and its descendants on Windows: one process listing (bounded by `TASKKILL_TIMEOUT_MS`)
+ * decides the tree, a process counting as a child only when it started at or after the parent it names,
+ * and `taskkill /F` ends each pid by name. `/T` would also adopt an unrelated older process through a
+ * recycled parent pid (senpi#2999); it is used only when no listing can be read.
  *
  * Synchronous on purpose. Shutdown paths call `killTrackedDetachedChildren()` and then
  * `process.exit()` in the same tick (`emergencyTerminalExit()`), so neither an
@@ -345,9 +429,14 @@ function taskkillHandledTree(pid: number, taskkillPath: string): boolean {
  * Nothing in-process can walk a Windows process tree without an external tool, so this
  * still beats leaving the whole tree running.
  */
-export function killWindowsProcessTree(pid: number, taskkillPaths = windowsTaskkillCandidates()): void {
+export function killWindowsProcessTree(
+	pid: number,
+	taskkillPaths = windowsTaskkillCandidates(),
+	listProcesses: () => readonly WindowsProcessRow[] | undefined = listWindowsProcesses,
+): void {
+	const killArgs = windowsTreeKillArgs(pid, listProcesses());
 	for (const taskkillPath of taskkillPaths) {
-		if (taskkillHandledTree(pid, taskkillPath)) return;
+		if (taskkillHandledTree(taskkillPath, killArgs)) return;
 	}
 	killProcessDirectly(pid);
 }

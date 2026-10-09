@@ -35,16 +35,20 @@ manual \`&\` backgrounding — use the built-in session tools:
     events while you keep working; command exit always delivers a summary. One-shot gate: wait
     inside the command and print one sentinel (\`until <cond>; do sleep 1; done;
     printf 'READY\\n'\`). Stream: \`tail -n 0 -F | grep --line-buffered\`. Filter noise at the
-    source and stop with \`kill_bash\`.
+    source and stop with \`kill_bash\`. Persistent command watches are re-run after a restart with
+    \`SENPI_MONITOR_RESTORED=1\`; keep any baseline in \`$SENPI_MONITOR_STATE_DIR\` so a move during
+    downtime (at most \`$SENPI_MONITOR_DOWNTIME_MS\` ms) is still reported:
+    \`b="$SENPI_MONITOR_STATE_DIR/base"; p=$(cat "$b" 2>/dev/null || git rev-parse origin/main | tee "$b"); while sleep 30; do git fetch -q || true; n=$(git rev-parse origin/main); [ "$n" != "$p" ] && { echo "MOVED $p..$n"; p=$n; echo "$p" > "$b"; }; done\`.
+    A watch whose command exits is not restarted, so keep failures inside the loop non-fatal.
   - \`${monitor}({ description, path, event?, persistent? })\` natively watches one regular file and
     fires once — prefer it over a shell poll loop. \`"create"\` (the default) fires only when the file
     appears after registration, so watch an already-existing file with \`"modify"\`; registration needs
     the parent directory to exist already, so poll with a \`command\` when the run creates that
     directory too. This branch takes no \`filter\`.
   A standing watch is marked \`persistent: true\`: it has no deadline, survives a session restart
-  (the command is re-run once, the file rescanned and any change missed while detached reported),
-  expires 7 days after creation, is capped at 5 per session, and is accounted for in one
-  restart-report line on session start.
+  (the file is rescanned and any change missed while detached reported), expires 7 days after
+  creation, has no per-session cap unless the \`terminal.maxDurableMonitors\` setting sets one,
+  and is accounted for in one restart-report line on session start.
   Identical updates are deduped; repeated monitor-only wakes pause the noisy monitor(s) that
   caused them, not all monitors. Completion still wakes the session, and
   \`${monitor}({ action: "rearm", bash_id })\` resumes one while \`${monitor}({ action: "rearm" })\`

@@ -1,20 +1,31 @@
 import { dirname, join } from "node:path";
-import type { Credential } from "@earendil-works/pi-ai";
-import { listSlots, type PooledCredential, pinSlot, removeSlot } from "@earendil-works/pi-ai/auth/pool/slots";
+import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
+import {
+	accountDisplayName,
+	listSlots,
+	type PooledCredential,
+	pinSlot,
+	removeSlot,
+	renameSlotDisplayName,
+} from "@earendil-works/pi-ai/auth/pool/slots";
 import type { AuthStorage } from "./auth-storage.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
+import { type ModelBlocks, pruneModelBlocks } from "./credential-pool/model-scope.ts";
 import { CredentialSlotRepository, type CredentialSlotState, slotHealth } from "./credential-pool/state-store.ts";
-import { emitProviderAccountsChanged } from "./extensions/builtin/claude-sdk-oauth/account-events.ts";
-import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/claude-sdk-oauth/accounts.ts";
+import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
+import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscription/accounts.ts";
 
 export type CredentialAccountSource = "login" | "import" | "env";
 
 /** Account metadata safe to surface: names and health only, never key material. */
 export type CredentialAccountSummary = {
 	readonly name: string;
+	readonly displayName?: string;
 	readonly source: CredentialAccountSource;
 	readonly blocked: boolean;
 	readonly pinned: boolean;
+	/** Usage limits binding one model (family) while the account serves the rest (senpi#2555). */
+	readonly blockedModels?: readonly { readonly model: string; readonly until: number }[];
 };
 
 const ACCOUNT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -64,6 +75,30 @@ function slotBlocked(slot: object, sidecar: CredentialSlotState | undefined, now
 	return blockedUntil !== undefined && blockedUntil > now;
 }
 
+function storedModelBlocks(slot: object): ModelBlocks | undefined {
+	const found = Object.entries(slot).find(([candidate]) => candidate === "modelBlocks")?.[1];
+	if (found === null || typeof found !== "object") return undefined;
+	const entries = Object.entries(found).flatMap(([model, block]) => {
+		const until = block !== null && typeof block === "object" ? numberField(block, "blockedUntil") : undefined;
+		return until === undefined ? [] : [[model, { blockedUntil: until }] as const];
+	});
+	return entries.length === 0 ? undefined : Object.fromEntries(entries);
+}
+
+/** Live model blocks from every source, the latest expiry winning per model. */
+function blockedModels(
+	now: number,
+	...sources: (ModelBlocks | undefined)[]
+): Pick<CredentialAccountSummary, "blockedModels"> {
+	const until = new Map<string, number>();
+	for (const blocks of sources) {
+		for (const [model, block] of Object.entries(pruneModelBlocks(blocks, now) ?? {})) {
+			until.set(model, Math.max(until.get(model) ?? 0, block.blockedUntil));
+		}
+	}
+	return until.size === 0 ? {} : { blockedModels: [...until].map(([model, at]) => ({ model, until: at })) };
+}
+
 /**
  * Lists a provider's credential accounts for ANY provider, not just one lane.
  * Stored slots own the listing when a credential exists; env slots are listed
@@ -94,21 +129,34 @@ export async function summarizeCredentialAccounts(
 
 	if (credential) {
 		const state = await repository.listSlots(provider, "stored");
+		// Read boundary (senpi#1989): a caller may still pass the legacy provider
+		// id (an older session, a stored account payload), so compare normalized.
 		const storedAccounts =
-			provider === "claude-sdk-oauth"
+			normalizeProviderId(provider) === "anthropic-subscription"
 				? Array.isArray(credential.accounts)
 					? listSlots(credential)
 					: []
 				: listSlots(credential);
 		for (const slot of storedAccounts) {
+			const displayName = accountDisplayName(slot.displayName);
+			const persisted = state[slot.name];
+			const revision = await repository.storedCredentialRevision(provider, slot.name, {
+				key: slot.key,
+				access: slot.access,
+				refresh: slot.refresh,
+			});
+			// A block belongs to the material that earned it; a re-login starts clean.
+			const applicable = persisted?.credentialRevision === revision ? persisted : undefined;
 			summaries.push({
 				name: slot.name,
+				...(displayName === undefined ? {} : { displayName }),
 				source: slot.source ?? "login",
-				blocked: slotBlocked(slot, state[slot.name], now),
+				blocked: slotBlocked(slot, applicable, now),
 				pinned: pinned === slot.name,
+				...blockedModels(now, applicable?.modelBlocks, storedModelBlocks(slot)),
 			});
 		}
-		if (provider !== "claude-sdk-oauth") return summaries;
+		if (normalizeProviderId(provider) !== "anthropic-subscription") return summaries;
 	}
 
 	const state = await repository.listSlots(provider, "env");
@@ -122,9 +170,34 @@ export async function summarizeCredentialAccounts(
 			source: "env",
 			blocked: slotHealth(applicable, now) === "blocked",
 			pinned: pinned === slot.name,
+			...blockedModels(now, applicable?.modelBlocks),
 		});
 	}
 	return summaries;
+}
+
+/** Atomically rename/clear stored metadata without changing identity, health or environment state. */
+export async function renameCredentialAccount(
+	storage: AuthStorage,
+	provider: string,
+	name: string,
+	displayName: string | null,
+): Promise<void> {
+	await storage.modify(provider, async (current) => {
+		if (!current) throw new Error(`No stored credential for provider: ${provider}`);
+		// Provider-managed OAuth sentinels without an accounts array are not legacy flat accounts.
+		// Key this on the credential shape, not one provider id, so sibling managed lanes cannot be promoted.
+		if (
+			current.type === "oauth" &&
+			!Array.isArray((current as { accounts?: unknown }).accounts) &&
+			current.access === current.refresh &&
+			current.access.endsWith("-managed")
+		) {
+			throw new Error(`Stored provider account not found: ${name}`);
+		}
+		return renameSlotDisplayName(current, name, displayName);
+	});
+	emitProviderAccountsChanged(provider);
 }
 
 /** Pins one slot, or clears the pin when `name` is null. */
@@ -145,7 +218,7 @@ export async function pinCredentialAccount(
 	}
 	await storage.modify(provider, async (current) => {
 		if (current === undefined) {
-			if (provider !== "claude-sdk-oauth" || name === null) {
+			if (normalizeProviderId(provider) !== "anthropic-subscription" || name === null) {
 				throw new Error(`No stored credential for provider: ${provider}`);
 			}
 			return pinSlot({ type: "oauth", ...SENTINEL_OAUTH_FIELDS, accounts: [] }, name);

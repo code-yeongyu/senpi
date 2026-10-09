@@ -1,41 +1,54 @@
-import type { AgentToolResult, ToolDefinition } from "@code-yeongyu/senpi";
+import type { AgentToolResult } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
 import registerApplyPatchExtension from "../../coding-agent/src/core/extensions/builtin/gpt-apply-patch/extension.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
-type ExtensionHandler = (event: unknown, context: unknown) => unknown;
 type LazyToolActivator = (toolName: string) => boolean;
 
 const PATCH_SENTINEL = "extension apply_patch reached";
 
 function createApplyPatchEvalHarness(model: { readonly api: string; readonly id: string }) {
-	const handlers = new Map<string, ExtensionHandler>();
-	const registeredTools = new Map<string, ToolDefinition>();
+	type ApplyPatchExtensionApi = Parameters<typeof registerApplyPatchExtension>[0];
+	type ApplyPatchToolDefinition = Parameters<ApplyPatchExtensionApi["registerTool"]>[0];
+	type ModelSelectHandler = (
+		event: { model: { readonly api: string; readonly id: string } },
+		context: unknown,
+	) => unknown;
+	const handlers = new Map<string, unknown>();
+	function isModelSelectHandler(value: unknown): value is ModelSelectHandler {
+		return typeof value === "function";
+	}
+	const registeredTools = new Map<string, ApplyPatchToolDefinition>();
 	let activeToolNames: string[] = [];
 	let lazyToolActivator: LazyToolActivator | undefined;
-
-	registerApplyPatchExtension({
-		registerTool(tool: ToolDefinition) {
+	const api: ApplyPatchExtensionApi = {
+		registerTool(tool: ApplyPatchToolDefinition) {
 			registeredTools.set(tool.name, tool);
 		},
 		registerLazyToolActivator(activate: LazyToolActivator) {
 			lazyToolActivator = activate;
 		},
 		getActiveTools: () => [...activeToolNames],
-		getAllTools: () => [...registeredTools.values()],
+		getAllTools: () => {
+			throw new Error("getAllTools is not used by this test");
+		},
 		setActiveTools(toolNames: string[]) {
 			activeToolNames = [...toolNames];
 		},
-		on(event: string, handler: ExtensionHandler) {
+		on(event, handler) {
 			handlers.set(event, handler);
+			return () => {
+				handlers.delete(event);
+			};
 		},
-	} as never);
+	};
+	registerApplyPatchExtension(api);
 
 	const selectModel = async () => {
-		const handler = handlers.get("model_select");
-		if (!handler) throw new Error("apply_patch extension did not register model_select");
-		await handler({ model }, { model });
+		const stored = handlers.get("model_select");
+		if (!isModelSelectHandler(stored)) throw new Error("apply_patch extension did not register model_select");
+		await stored({ model }, { model });
 	};
 	const executeTool = async (toolName: string): Promise<AgentToolResult<unknown>> => {
 		if (!registeredTools.has(toolName)) throw new Error(`Unknown tool ${toolName}`);

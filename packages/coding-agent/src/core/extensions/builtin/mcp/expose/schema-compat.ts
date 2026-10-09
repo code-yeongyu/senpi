@@ -1,10 +1,10 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { type TSchema, Type } from "typebox";
-import { buildMcpToolName, buildMcpToolNames, type McpToolNameEntry } from "./naming.ts";
+import { buildMcpToolNames, type McpToolNameEntry } from "./naming.ts";
 import { collectAllPages, type McpListPage, type McpPaginationResult } from "./pagination.ts";
 
 export type { McpListPage, McpPaginationResult, McpToolNameEntry };
-export { buildMcpToolName, buildMcpToolNames, collectAllPages };
+export { buildMcpToolNames, collectAllPages };
 
 interface SchemaConversionResult {
 	schema: TSchema;

@@ -96,13 +96,13 @@ describe("buildEvalPrompt", () => {
 		}
 	});
 
-	it("documents detachment, busy-kernel discipline, and the detached-cell controls", () => {
+	it("documents detachment, queued-cell discipline, and the detached-cell controls", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
 		expect(prompt).toContain("outlives the foreground window detaches");
-		expect(prompt).toContain('eval({ action: "peek", cell_id })');
-		expect(prompt).toContain('eval({ action: "stop", cell_id })');
-		expect(prompt).toContain("Do not re-run a detached cell");
+		expect(prompt).toContain('eval({ action: "peek" | "stop", cell_id })');
+		expect(prompt).toContain('eval({ action: "list" })');
+		expect(prompt).toContain("Do not re-run a detached or queued cell");
 	});
 
 	it("teaches output() as an immediate status or transcript read", () => {
@@ -116,10 +116,10 @@ describe("buildEvalPrompt", () => {
 		// When: its prompt metadata is built.
 		const guidelines = buildEvalPrompt({ py: true, js: true, rb: true, jl: true }, { spawns: true }).promptGuidelines;
 
-		// Then: the system-prompt guidance carries the maximum-emphasis batching contract.
+		// Then: the system-prompt guidance carries the batching decision rule.
 		expect(guidelines).toEqual([
-			"**EVAL FIRST.** Any step needing MORE THAN ONE tool call MUST be ONE eval cell: run independent calls in parallel, wrap risky calls in try/except, and return distilled facts — NEVER a chain of single tool calls.",
-			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language.",
+			"Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
+			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.",
 		]);
 	});
 
@@ -215,20 +215,20 @@ describe("buildEvalPrompt", () => {
 
 		// Then: each carries only its own dialect marker.
 		expect(claude).toContain("<eval_first_batching>");
-		expect(claude).toContain("your default execution surface");
-		expect(claude).not.toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
+		expect(claude).not.toContain("<gpt_eval_dialect>");
 		expect(gpt).toContain("<gpt_eval_dialect>");
-		expect(gpt).toContain("detach on timeout");
+		expect(gpt).toContain("detach on their own");
 		expect(gpt).not.toContain("<eval_first_batching>");
 		const gptWithMonitor = buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).description;
-		expect(gptWithMonitor.indexOf("tool.monitor(")).toBeLessThan(gptWithMonitor.indexOf("detach on timeout"));
+		expect(gptWithMonitor.indexOf("tool.monitor(")).toBeLessThan(gptWithMonitor.indexOf("detach on their own"));
 		expect(gptWithMonitor).toContain("no cell sits on the wait");
-		expect(gpt).not.toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
 		const kimiInstruction = kimi.slice(0, kimi.indexOf("<prelude>"));
-		expect(kimiInstruction).toContain("EVAL IS YOUR SUPERPOWER");
-		expect(kimiInstruction).not.toContain("NEVER kills the batch");
+		expect(kimiInstruction).not.toMatch(/\b[A-Z]{5,}\b/);
 		expect(kimiInstruction).not.toContain("<eval_first_batching>");
-		expect(fallback).toContain("EVAL IS YOUR PRIMARY EXECUTION SURFACE");
+		expect(kimiInstruction).not.toContain("<gpt_eval_dialect>");
+		const fallbackInstruction = fallback.slice(0, fallback.indexOf("<prelude>"));
+		expect(fallbackInstruction).not.toMatch(/\bNEVER\b/);
+		expect(fallbackInstruction).not.toContain("<eval_first_batching>");
 		expect(fallback).toContain("parallel(thunks)");
 	});
 
@@ -240,16 +240,16 @@ describe("buildEvalPrompt", () => {
 
 		// When/Then: the first guideline is the family-tuned batching contract.
 		expect(guideline("claude-opus-4-8")).toBe(
-			"Prefer eval for any step needing more than one tool call: one cell that runs independent calls in parallel, handles per-call failures in code, and returns distilled facts.",
+			"Prefer eval for a step's independent calls: one cell runs them together and keeps every failure in its result.",
 		);
 		expect(guideline("gpt-5.6")).toBe(
-			"Use eval to compose tool work in one cell; long cells detach on timeout and notify on completion, so do not poll.",
+			"Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on their own and notify on completion, so do not poll.",
 		);
 		expect(buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).promptGuidelines[0]).toBe(
 			"Use eval to compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so no cell sits on it and nothing polls.",
 		);
 		expect(guideline("kimi-k2.6")).toBe(
-			"**EVAL IS YOUR SUPERPOWER — DEFAULT TO IT.** Execute EVERY multi-call step as ONE eval cell: run ALL independent calls simultaneously via parallel(thunks), handle failures per item in code, and return ONLY distilled facts.",
+			"Put a step's independent calls into one eval cell with parallel(thunks) and keep every failed item in the result.",
 		);
 	});
 
@@ -268,7 +268,7 @@ describe("buildEvalPrompt", () => {
 		expect(withoutHost).not.toContain("Host:");
 	});
 
-	it("describes the Bun kernel and names the bun-1-4 skill as MUST READ only while it is active", () => {
+	it("describes the Bun kernel and points at the bun-1-4 skill only while it is active", () => {
 		// Given: the same kernel set under a bun kernel with the skill, a bun kernel without it, and a node kernel.
 		const enabled = { py: true, js: true, rb: false, jl: false };
 		const bunSkillPath = "/opt/senpi/skill/bun-1-4/SKILL.md";
@@ -293,12 +293,15 @@ describe("buildEvalPrompt", () => {
 
 		// Then: only the bun kernel with an active skill carries the pointer; node keeps its wording.
 		expect(bunWithSkill).toContain("JS runs in-process on Bun 1.4.0");
-		expect(bunWithSkill).toContain(`MUST READ the bun-1-4 skill at ${bunSkillPath} before your first js cell`);
+		expect(bunWithSkill).toContain(
+			`Before a cell that installs a package, spawns a server or PTY, or starts a long run, read the bun-1-4 skill at ${bunSkillPath}`,
+		);
+		expect(bunWithSkill).not.toContain("before your first js cell");
 		expect(bunWithSkill).not.toContain("Node.js worker");
 		expect(bunWithoutSkill).toContain("JS runs in-process on Bun 1.3.9");
-		expect(bunWithoutSkill).not.toContain("MUST READ");
+		expect(bunWithoutSkill).not.toContain("bun-1-4 skill");
 		expect(node).toContain("Node.js worker");
-		expect(node).not.toContain("MUST READ");
+		expect(node).not.toContain("bun-1-4 skill");
 		expect(node).not.toContain(bunSkillPath);
 		expect(jsDisabled).not.toContain("Bun");
 		expect(jsDisabled).not.toContain(bunSkillPath);

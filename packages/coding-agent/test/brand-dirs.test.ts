@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -96,6 +96,63 @@ describe("copy-forward migration", () => {
 
 		expect(second.migrated).toBe(false);
 		expect(existsSync(join(brandDir, "models.json"))).toBe(false);
+	});
+
+	// code-yeongyu/oh-my-openagent#9727: the OmO desktop app owns `~/.omo/desktop*` (omo-desktop-app#1829).
+	test("never creates or copies into the OmO desktop's reserved entries", () => {
+		const legacy = seedLegacyAgentDir();
+		mkdirSync(join(legacy, "desktop"), { recursive: true });
+		mkdirSync(join(legacy, "desktop.init-abc"), { recursive: true });
+		writeFileSync(join(legacy, "desktop", "x"), "engine");
+		writeFileSync(join(legacy, "desktop.init-abc", "y"), "engine");
+		const brandDir = join(root, ".omo");
+		mkdirSync(join(brandDir, "desktop"), { recursive: true });
+		writeFileSync(join(brandDir, "desktop", "app.db"), "desktop-owned");
+
+		const result = migrateEngineStateToBrandDir(legacy, brandDir);
+
+		expect(result.migrated).toBe(true);
+		expect(readFileSync(join(brandDir, "settings.json"), "utf-8")).toBe('{"theme":"dark"}');
+		expect(result.copied).not.toContain("desktop");
+		expect(result.copied).not.toContain("desktop.init-abc");
+		expect(existsSync(join(brandDir, "desktop.init-abc"))).toBe(false);
+		expect(readdirSync(join(brandDir, "desktop"))).toEqual(["app.db"]);
+		expect(readFileSync(join(brandDir, "desktop", "app.db"), "utf-8")).toBe("desktop-owned");
+	});
+
+	// #2898 review L6: on darwin and win32 `~/.omo/Desktop` is the desktop's own folder.
+	test.runIf(process.platform === "darwin" || process.platform === "win32")(
+		"skips the reserved entries in any case where the volume folds case",
+		() => {
+			const legacy = seedLegacyAgentDir();
+			mkdirSync(join(legacy, "Desktop"), { recursive: true });
+			mkdirSync(join(legacy, "DESKTOP.init-abc"), { recursive: true });
+			const brandDir = join(root, ".omo");
+
+			const result = migrateEngineStateToBrandDir(legacy, brandDir);
+
+			expect(result.copied).not.toContain("Desktop");
+			expect(result.copied).not.toContain("DESKTOP.init-abc");
+			expect(existsSync(join(brandDir, "desktop"))).toBe(false);
+		},
+	);
+
+	test.runIf(process.platform === "linux")("copies a differently cased entry where names are case-sensitive", () => {
+		const legacy = seedLegacyAgentDir();
+		mkdirSync(join(legacy, "Desktop"), { recursive: true });
+
+		expect(migrateEngineStateToBrandDir(legacy, join(root, ".omo")).copied).toContain("Desktop");
+	});
+
+	test("leaves a missing desktop home uncreated", () => {
+		const legacy = seedLegacyAgentDir();
+		mkdirSync(join(legacy, "desktop"), { recursive: true });
+		writeFileSync(join(legacy, "desktop", "x"), "engine");
+		const brandDir = join(root, ".omo");
+
+		migrateEngineStateToBrandDir(legacy, brandDir);
+
+		expect(existsSync(join(brandDir, "desktop"))).toBe(false);
 	});
 
 	test("does nothing when there is no engine state to copy", () => {

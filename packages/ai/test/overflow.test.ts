@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "../src/types.ts";
-import { isContextOverflow, isCursorQuotaResourceExhausted, isRecoverableLength } from "../src/utils/overflow.ts";
+import {
+	isContextOverflow,
+	isCursorPayloadResourceExhausted,
+	isCursorQuotaResourceExhausted,
+	isCursorZeroTokenResourceExhausted,
+	isRecoverableLength,
+} from "../src/utils/overflow.ts";
 
-function createErrorMessage(errorMessage: string): AssistantMessage {
+function createErrorMessage(errorMessage: string, provider = "ollama"): AssistantMessage {
 	return {
 		role: "assistant",
 		content: [],
 		api: "openai-completions",
-		provider: "ollama",
+		provider,
 		model: "qwen3.5:35b",
 		usage: {
 			input: 0,
@@ -37,9 +43,28 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 1000000)).toBe(true);
 	});
 
+	it("detects the anthropic-subscription cold-seed budget refusal before the re-send is dispatched", () => {
+		const message = createErrorMessage(
+			"The conversation is too long to resend (about 1119185 tokens, limit 1000000). Compacting it and retrying.",
+		);
+		expect(isContextOverflow(message, 1000000)).toBe(true);
+	});
+
 	it("detects explicit Ollama prompt-too-long errors", () => {
 		const message = createErrorMessage("400 `prompt too long; exceeded max context length by 100918 tokens`");
 		expect(isContextOverflow(message, 32768)).toBe(true);
+	});
+
+	it("detects z.ai prompt-too-long errors", () => {
+		// Regression for #9805.
+		const message = createErrorMessage('400 {"code":"1261","message":"Prompt too long"}', "zai");
+		expect(isContextOverflow(message, 1048576)).toBe(true);
+	});
+
+	it("detects z.ai CN endpoint prompt-exceeds-max-length errors", () => {
+		// Regression for #10208.
+		const message = createErrorMessage('400 {"code":"1261","message":"Prompt exceeds max length"}', "zai");
+		expect(isContextOverflow(message, 1048576)).toBe(true);
 	});
 
 	it("detects Together AI context length errors", () => {
@@ -61,6 +86,21 @@ describe("isContextOverflow", () => {
 			"Error: 400 Input length (265330) exceeds model's maximum context length (262144).",
 		);
 		expect(isContextOverflow(message, 262144)).toBe(true);
+	});
+
+	it("detects OpenAI exceeds the model's context window wording", () => {
+		const message = createErrorMessage("Your input exceeds the model's context window");
+		expect(isContextOverflow(message)).toBe(true);
+	});
+
+	it("detects OpenAI exceeds this model's context window wording", () => {
+		const message = createErrorMessage("Your input exceeds this model's context window");
+		expect(isContextOverflow(message)).toBe(true);
+	});
+
+	it("detects OpenAI exceeds the context window wording", () => {
+		const message = createErrorMessage("Your input exceeds the context window of this model");
+		expect(isContextOverflow(message)).toBe(true);
 	});
 
 	it("detects OpenRouter Poolside maximum allowed input length errors", () => {
@@ -158,23 +198,35 @@ describe("isContextOverflow", () => {
 	});
 
 	it("identifies Cursor usage-pool exhaustion below half the context window", () => {
-		const message = createErrorMessage("Connect error resource_exhausted: Error");
+		const message = createErrorMessage("Connect error resource_exhausted: Error", "cursor");
 		message.usage.totalTokens = 178_626;
 		expect(isContextOverflow(message, 1_048_576)).toBe(false);
 		expect(isCursorQuotaResourceExhausted(message, 1_048_576)).toBe(true);
 	});
 
 	it("does not identify Cursor context overflow as usage-pool exhaustion", () => {
-		const message = createErrorMessage("Connect error resource_exhausted: Error");
+		const message = createErrorMessage("Connect error resource_exhausted: Error", "cursor");
 		message.usage.totalTokens = 600_000;
 		expect(isCursorQuotaResourceExhausted(message, 1_048_576)).toBe(false);
 	});
 
 	it("does not identify zero-token or non-resource-exhausted errors as usage-pool exhaustion", () => {
-		const zeroToken = createErrorMessage("Connect error resource_exhausted: Error");
-		const nonResourceExhausted = createErrorMessage("Connect error unavailable");
+		const zeroToken = createErrorMessage("Connect error resource_exhausted: Error", "cursor");
+		const nonResourceExhausted = createErrorMessage("Connect error unavailable", "cursor");
 		expect(isCursorQuotaResourceExhausted(zeroToken, 1_048_576)).toBe(false);
 		expect(isCursorQuotaResourceExhausted(nonResourceExhausted, 1_048_576)).toBe(false);
+	});
+
+	it("does not read another provider's resource_exhausted limit as a Cursor overflow, re-mint or usage-pool signature (senpi#2660)", () => {
+		const devinLimit =
+			"Devin stream error resource_exhausted: Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in 9 minutes (at 16:56 UTC).";
+		const zeroToken = createErrorMessage(devinLimit, "devin");
+		const tokenBearing = createErrorMessage(devinLimit, "devin");
+		tokenBearing.usage.totalTokens = 178_626;
+		expect(isCursorZeroTokenResourceExhausted(zeroToken)).toBe(false);
+		expect(isCursorPayloadResourceExhausted(zeroToken, 0)).toBe(false);
+		expect(isCursorQuotaResourceExhausted(tokenBearing, 1_048_576)).toBe(false);
+		expect(isCursorZeroTokenResourceExhausted(createErrorMessage(devinLimit, "cursor"))).toBe(true);
 	});
 
 	it("keeps zero-token resource_exhausted errors out of overflow detection", () => {
@@ -185,6 +237,14 @@ describe("isContextOverflow", () => {
 	it("does not treat generic non-overflow Ollama errors as overflow", () => {
 		const message = createErrorMessage("500 `model runner crashed unexpectedly`");
 		expect(isContextOverflow(message, 32768)).toBe(false);
+	});
+
+	it("only treats bodyless 400 and 413 errors as overflow for Cerebras", () => {
+		// Regression for #9482.
+		for (const errorMessage of ["400 status code (no body)", "413 status code (no body)"]) {
+			expect(isContextOverflow(createErrorMessage(errorMessage, "cerebras"), 131072)).toBe(true);
+			expect(isContextOverflow(createErrorMessage(errorMessage, "opencode-go"), 1000000)).toBe(false);
+		}
 	});
 
 	it("does not treat Bedrock throttling 'Too many tokens' as overflow", () => {
@@ -206,6 +266,51 @@ describe("isContextOverflow", () => {
 
 	it("does not treat HTTP 429 style errors as overflow", () => {
 		const message = createErrorMessage("Too many requests. Please slow down.");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat tokens-per-minute rate limits as overflow", () => {
+		const message = createErrorMessage("Too many tokens per minute for this model. Retry in 20s");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat exceeds-the-limit tokens-per-minute messages as overflow", () => {
+		const message = createErrorMessage("This request exceeds the limit of 30000 tokens per minute");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat TPM quota wording as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("TPM limit exceeded: too many tokens");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat RPM quota wording as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("RPM limit exceeded: too many tokens");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat quota exceeded as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("Quota exceeded: too many tokens in the last minute");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat retry-after token quota wording as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("Too many tokens. Retry after 10 seconds");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat HTTP 429 prefixes as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("429 Too many tokens");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat status code 429 as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("Request failed with status code 429: too many tokens");
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
+	it("does not treat overloaded errors as overflow even with overflow-looking phrasing", () => {
+		const message = createErrorMessage("The model is overloaded. Too many tokens.");
 		expect(isContextOverflow(message, 200000)).toBe(false);
 	});
 

@@ -2,11 +2,13 @@ import type {
 	BetaTextBlockParam,
 	MessageCreateParamsStreaming,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages.js";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnthropicOptions } from "../src/api/anthropic-messages.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model, UserMessage } from "../src/types.ts";
+import { CLAUDE_CODE_VERSION_PIN_ENV, installClaudeCodeVersionStore } from "../src/utils/claude-code-version.ts";
 import { getPiUserAgent } from "../src/utils/pi-user-agent.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const model: Model<"anthropic-messages"> = {
 	id: "claude-sonnet-4-5",
@@ -65,7 +67,7 @@ async function capture(
 		}
 		return sseResponse();
 	};
-	const result = await streamAnthropic(requestModel, context, {
+	const result = await streamAnthropic(requestModel, normalizeContext(context), {
 		apiKey: "sk-ant-oat01-offline-fixture",
 		cacheRetention: "none",
 		maxRetries: 0,
@@ -96,6 +98,16 @@ function billingFields(body: MessageCreateParamsStreaming): Record<string, strin
 }
 
 describe("Anthropic native OAuth request fingerprint", () => {
+	// The billing block signs with the advertised version; pin it so the goldens stay fixed.
+	beforeEach(() => {
+		installClaudeCodeVersionStore(null);
+		vi.stubEnv(CLAUDE_CODE_VERSION_PIN_ENV, "2.1.251");
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	// Golden SHA-256 prefixes from the local patch's salt, UTF-8 input and 2.1.251 version.
 	const cases: { name: string; content: UserMessage["content"]; suffix: string; cch: string }[] = [
 		{ name: "string", content: "First user fingerprint input.", suffix: "050", cch: "e1cb1" },

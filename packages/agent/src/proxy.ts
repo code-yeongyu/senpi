@@ -7,13 +7,13 @@
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
-	type Context,
 	EventStream,
 	type Model,
 	parseStreamingJson,
 	type SimpleStreamOptions,
 	type StopReason,
 	type ToolCall,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 
 // Create stream class matching ProxyMessageEventStream
@@ -127,7 +127,11 @@ function buildProxyRequestOptions(options: ProxyStreamOptions): ProxySerializabl
 	};
 }
 
-export function streamProxy(model: Model<any>, context: Context, options: ProxyStreamOptions): ProxyMessageEventStream {
+export function streamProxy(
+	model: Model<any>,
+	context: TranscriptContext,
+	options: ProxyStreamOptions,
+): ProxyMessageEventStream {
 	const stream = new ProxyMessageEventStream();
 
 	(async () => {

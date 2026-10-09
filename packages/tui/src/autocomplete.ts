@@ -2,10 +2,19 @@ import { spawn } from "child_process";
 import { readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
-import { getDollarInvocationContext, getDollarInvocationSuggestions } from "./dollar-invocation-autocomplete.ts";
-import { getSlashCommandSuggestions } from "./slash-command-autocomplete.ts";
+import {
+	findDollarSkillMentions,
+	getDollarInvocationContext,
+	getDollarInvocationSuggestions,
+	knownSkillNames,
+} from "./dollar-invocation-autocomplete.ts";
+import { getSlashCommandSuggestions, isSlashNamespaceItem } from "./slash-command-autocomplete.ts";
+import { autocompleteBoundaryRegex, autocompleteSeparatorRegex } from "./utils.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
+const tokenStartRegex = new RegExp(`${autocompleteBoundaryRegex.source}$`, "u");
+// Opening wrappers that may precede a path in prose, mapped to their closing counterpart.
+const PATH_WRAPPERS: Record<string, string> = { "(": ")", "[": "]", "{": "}", "<": ">", "`": "`" };
 
 function toDisplayPath(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -44,12 +53,29 @@ function buildFdPathQuery(query: string): string {
 }
 
 function findLastDelimiter(text: string): number {
-	for (let i = text.length - 1; i >= 0; i -= 1) {
-		if (PATH_DELIMITERS.has(text[i] ?? "")) {
-			return i;
+	let lastDelimiter = -1;
+	let index = 0;
+	for (const character of text) {
+		index += character.length;
+		if (PATH_DELIMITERS.has(character) || autocompleteSeparatorRegex.test(character)) {
+			lastDelimiter = index - 1;
 		}
 	}
-	return -1;
+	return lastDelimiter;
+}
+
+// Strip opening wrappers before a path, e.g. "(~/Dev" -> "~/Dev" or "`src/ma" -> "src/ma".
+// Keep a wrapper if the token also contains its closer, e.g. "app/[slug]/pa" or "(group)/pa".
+function stripLeadingWrappers(token: string): string {
+	let result = token;
+	while (result.length > 0) {
+		const closer = PATH_WRAPPERS[result[0]!];
+		if (!closer || result.includes(closer, 1)) {
+			break;
+		}
+		result = result.slice(1);
+	}
+	return result;
 }
 
 function findUnclosedQuoteStart(text: string): number | null {
@@ -69,7 +95,11 @@ function findUnclosedQuoteStart(text: string): number | null {
 }
 
 function isTokenStart(text: string, index: number): boolean {
-	return index === 0 || PATH_DELIMITERS.has(text[index - 1] ?? "");
+	let start = index;
+	while (start > 0 && PATH_WRAPPERS[text[start - 1]!]) {
+		start -= 1;
+	}
+	return PATH_DELIMITERS.has(text[start - 1] ?? "") || tokenStartRegex.test(text.slice(0, start));
 }
 
 function extractQuotedPrefix(text: string): string | null {
@@ -109,7 +139,7 @@ function buildCompletionValue(
 	path: string,
 	options: { isDirectory: boolean; isAtPrefix: boolean; isQuotedPrefix: boolean },
 ): string {
-	const needsQuotes = options.isQuotedPrefix || path.includes(" ");
+	const needsQuotes = options.isQuotedPrefix || autocompleteSeparatorRegex.test(path);
 	const prefix = options.isAtPrefix ? "@" : "";
 
 	if (!needsQuotes) {
@@ -226,6 +256,11 @@ export interface AutocompleteItem {
 	value: string;
 	label: string;
 	description?: string;
+	/**
+	 * The command requires arguments: confirming the row completes `/name ` and waits for
+	 * arguments instead of submitting.
+	 */
+	awaitsArguments?: boolean;
 }
 
 type Awaitable<T> = T | Promise<T>;
@@ -234,6 +269,8 @@ export interface SlashCommand {
 	name: string;
 	description?: string;
 	argumentHint?: string;
+	/** Whether picker Enter must wait for arguments. Omitted means: wait only when `argumentHint` is set. */
+	requiresArguments?: boolean;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): Awaitable<AutocompleteItem[] | null>;
@@ -242,6 +279,12 @@ export interface SlashCommand {
 export interface AutocompleteSuggestions {
 	items: AutocompleteItem[];
 	prefix: string; // What we're matching against (e.g., "/" or "src/")
+}
+
+/** Line-local character range, `end` exclusive. */
+export interface MentionRange {
+	readonly start: number;
+	readonly end: number;
 }
 
 export interface AutocompleteProvider {
@@ -273,6 +316,12 @@ export interface AutocompleteProvider {
 
 	// Check if file completion should trigger for explicit Tab completion
 	shouldTriggerFileCompletion?(lines: string[], cursorLine: number, cursorCol: number): boolean;
+
+	/**
+	 * Ranges on one logical line that resolve to a known mention (for example
+	 * a `$skill` token). The editor styles them through `EditorTheme.mention`.
+	 */
+	getMentionRanges?(line: string): readonly MentionRange[];
 }
 
 // Combined provider that handles both slash commands and file paths
@@ -285,6 +334,10 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		this.commands = commands;
 		this.basePath = basePath;
 		this.fdPath = fdPath;
+	}
+
+	getMentionRanges(line: string): readonly MentionRange[] {
+		return findDollarSkillMentions(line, knownSkillNames(this.commands)).map(({ start, end }) => ({ start, end }));
 	}
 
 	async getSuggestions(
@@ -325,18 +378,19 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		if (!options.force && textBeforeCursor.startsWith("/")) {
-			const spaceIndex = textBeforeCursor.indexOf(" ");
+		const commandText = textBeforeCursor.trimStart();
+		if (!options.force && commandText.startsWith("/")) {
+			const spaceIndex = commandText.indexOf(" ");
 
 			if (spaceIndex === -1) {
-				const prefix = textBeforeCursor.slice(1);
+				const prefix = commandText.slice(1);
 				const filtered = getSlashCommandSuggestions(this.commands, prefix);
 
 				if (filtered.length === 0) return null;
 
 				return {
 					items: filtered,
-					prefix: textBeforeCursor,
+					prefix: commandText,
 				};
 			}
 
@@ -360,8 +414,8 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				};
 			}
 
-			const commandName = textBeforeCursor.slice(1, spaceIndex);
-			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
+			const commandName = commandText.slice(1, spaceIndex);
+			const argumentText = commandText.slice(spaceIndex + 1);
 
 			const command = this.commands.find((cmd) => {
 				const name = "name" in cmd ? cmd.name : cmd.value;
@@ -431,15 +485,17 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			(beforePrefix.trim() === "" ||
 				(prefix.startsWith("/skill:") && this.isLeadingKnownSkillCommandRun(beforePrefix)));
 		if (isSlashCommand) {
-			// This is a command name completion
-			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
+			// This is a command name completion. A namespace (`skill:`) gets no trailing space so the
+			// editor can list that namespace's commands right after it.
+			const separator = isSlashNamespaceItem(item.value) ? "" : " ";
+			const newLine = `${beforePrefix}/${item.value}${separator}${adjustedAfterCursor}`;
 			const newLines = [...lines];
 			newLines[cursorLine] = newLine;
 
 			return {
 				lines: newLines,
 				cursorLine,
-				cursorCol: beforePrefix.length + item.value.length + 2, // +2 for "/" and space
+				cursorCol: beforePrefix.length + 1 + item.value.length + separator.length,
 			};
 		}
 
@@ -521,10 +577,10 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		const lastDelimiterIndex = findLastDelimiter(text);
-		const tokenStart = lastDelimiterIndex === -1 ? 0 : lastDelimiterIndex + 1;
+		const token = stripLeadingWrappers(lastDelimiterIndex === -1 ? text : text.slice(lastDelimiterIndex + 1));
 
-		if (text[tokenStart] === "@") {
-			return text.slice(tokenStart);
+		if (token.startsWith("@")) {
+			return token;
 		}
 
 		return null;
@@ -538,7 +594,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		}
 
 		const lastDelimiterIndex = findLastDelimiter(text);
-		const pathPrefix = lastDelimiterIndex === -1 ? text : text.slice(lastDelimiterIndex + 1);
+		const pathPrefix = stripLeadingWrappers(lastDelimiterIndex === -1 ? text : text.slice(lastDelimiterIndex + 1));
 
 		// For forced extraction (Tab key), always return something
 		if (forceExtract) {
@@ -551,9 +607,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			return pathPrefix;
 		}
 
-		// Return empty string only after a space (not for completely empty text)
+		// Return an empty prefix after whitespace or CJK punctuation, but not for empty text.
 		// Empty text should not trigger file suggestions - that's for forced Tab completion
-		if (pathPrefix === "" && text.endsWith(" ")) {
+		if (pathPrefix === "" && text !== "" && tokenStartRegex.test(text)) {
 			return pathPrefix;
 		}
 
@@ -732,8 +788,8 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 			// Sort directories first, then alphabetically
 			suggestions.sort((a, b) => {
-				const aIsDir = a.value.endsWith("/");
-				const bIsDir = b.value.endsWith("/");
+				const aIsDir = a.label.endsWith("/");
+				const bIsDir = b.label.endsWith("/");
 				if (aIsDir && !bIsDir) return -1;
 				if (!aIsDir && bIsDir) return 1;
 				return a.label.localeCompare(b.label);

@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { normalizeProviderId } from "@earendil-works/pi-ai";
 import type { TLocalizedValidationError } from "typebox/error";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
@@ -13,6 +14,7 @@ import {
 	type ModelsJsonModelOverride as SchemaModelsJsonModelOverride,
 	validateModelsConfig,
 } from "./model-config-schema.ts";
+import { migrateModelsJsonProviderIds } from "./models-json-migration.ts";
 
 export type ModelsJsonModel = SchemaModelsJsonModel & { samplingParams?: Record<string, unknown> };
 export type ModelsJsonModelOverride = SchemaModelsJsonModelOverride & { samplingParams?: Record<string, unknown> };
@@ -317,7 +319,6 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	supportsOpenAIGrammarTools: Type.Optional(Type.Boolean()),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
 	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
-	deferredToolsMode: Type.Optional(Type.Literal("kimi")),
 	sessionAffinityFormat: Type.Optional(
 		Type.Union([Type.Literal("openai"), Type.Literal("openai-nosession"), Type.Literal("openrouter")]),
 	),
@@ -333,29 +334,8 @@ const OpenAIResponsesCompatSchema = Type.Object({
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 	supportsStrictMode: Type.Optional(Type.Boolean()),
 	supportsOpenAIGrammarTools: Type.Optional(Type.Boolean()),
-	supportsAdditionalTools: Type.Optional(Type.Boolean()),
-	supportsToolSearch: Type.Optional(Type.Boolean()),
 	supportsMaxOutputTokens: Type.Optional(Type.Boolean()),
 });
-
-const AnthropicMessagesCompatSchema = Type.Object({
-	supportsEagerToolInputStreaming: Type.Optional(Type.Boolean()),
-	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
-	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
-	supportsCacheControlOnTools: Type.Optional(Type.Boolean()),
-	supportsTemperature: Type.Optional(Type.Boolean()),
-	forceAdaptiveThinking: Type.Optional(Type.Boolean()),
-	allowEmptySignature: Type.Optional(Type.Boolean()),
-	supportsStrictTools: Type.Optional(Type.Boolean()),
-	supportsMidConvoEffort: Type.Optional(Type.Boolean()),
-	supportsToolReferences: Type.Optional(Type.Boolean()),
-});
-
-const ProviderCompatSchema = Type.Union([
-	OpenAICompletionsCompatSchema,
-	OpenAIResponsesCompatSchema,
-	AnthropicMessagesCompatSchema,
-]);
 
 const ModelCostRatesSchema = {
 	input: Type.Number(),
@@ -371,6 +351,54 @@ const ModelCostSchema = Type.Object({
 	...ModelCostRatesSchema,
 	tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
 });
+const ModelPromptCacheSchema = Type.Object({
+	short: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+	long: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
+});
+const ImageResizeSchema = Type.Object({
+	maxWidth: Type.Optional(Type.Integer({ minimum: 1 })),
+	maxHeight: Type.Optional(Type.Integer({ minimum: 1 })),
+	maxBytes: Type.Optional(Type.Integer({ minimum: 1 })),
+	jpegQuality: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+});
+const ModelInputLimitsSchema = Type.Object({
+	maxRequestBytes: Type.Optional(Type.Integer({ minimum: 1 })),
+	images: Type.Optional(
+		Type.Object({
+			resize: Type.Optional(ImageResizeSchema),
+			maxPerMessage: Type.Optional(Type.Integer({ minimum: 1 })),
+			maxPerRequest: Type.Optional(Type.Integer({ minimum: 1 })),
+		}),
+	),
+});
+
+const AnthropicMessagesCompatSchema = Type.Object({
+	supportsEagerToolInputStreaming: Type.Optional(Type.Boolean()),
+	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
+	sendSessionAffinityHeaders: Type.Optional(Type.Boolean()),
+	supportsCacheControlOnTools: Type.Optional(Type.Boolean()),
+	supportsTemperature: Type.Optional(Type.Boolean()),
+	forceAdaptiveThinking: Type.Optional(Type.Boolean()),
+	allowEmptySignature: Type.Optional(Type.Boolean()),
+	supportsStrictTools: Type.Optional(Type.Boolean()),
+	supportsMidConvoEffort: Type.Optional(Type.Boolean()),
+	allowedFallbackModels: Type.Optional(
+		Type.Array(
+			Type.Object({
+				provider: Type.String({ minLength: 1 }),
+				model: Type.String({ minLength: 1 }),
+				cost: ModelCostSchema,
+			}),
+			{ maxItems: 3 },
+		),
+	),
+});
+
+const ProviderCompatSchema = Type.Union([
+	OpenAICompletionsCompatSchema,
+	OpenAIResponsesCompatSchema,
+	AnthropicMessagesCompatSchema,
+]);
 
 const ModelDefinitionSchema = Type.Object({
 	id: Type.String({ minLength: 1 }),
@@ -380,7 +408,9 @@ const ModelDefinitionSchema = Type.Object({
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	inputLimits: Type.Optional(ModelInputLimitsSchema),
 	cost: Type.Optional(ModelCostSchema),
+	promptCache: Type.Optional(ModelPromptCacheSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
 	samplingParams: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
@@ -393,6 +423,7 @@ const ModelOverrideSchema = Type.Object({
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	inputLimits: Type.Optional(ModelInputLimitsSchema),
 	cost: Type.Optional(
 		Type.Object({
 			input: Type.Optional(Type.Number()),
@@ -402,6 +433,7 @@ const ModelOverrideSchema = Type.Object({
 			tiers: Type.Optional(Type.Array(ModelCostTierSchema)),
 		}),
 	),
+	promptCache: Type.Optional(ModelPromptCacheSchema),
 	contextWindow: Type.Optional(Type.Number()),
 	maxTokens: Type.Optional(Type.Number()),
 	samplingParams: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
@@ -456,15 +488,18 @@ export class ModelConfig {
 	private readonly providers: ReadonlyMap<string, ModelsJsonProvider>;
 	private readonly disabledProviders: ReadonlySet<string>;
 	private readonly error: string | undefined;
+	private readonly warnings: readonly string[];
 
 	private constructor(
 		providers: ReadonlyMap<string, ModelsJsonProvider>,
 		disabledProviders: ReadonlySet<string> = new Set(),
 		error?: string,
+		warnings: readonly string[] = [],
 	) {
 		this.providers = providers;
 		this.disabledProviders = disabledProviders;
 		this.error = error;
+		this.warnings = warnings;
 	}
 
 	private static parse(content: string, path: string): ModelConfig {
@@ -495,16 +530,19 @@ export class ModelConfig {
 						{ compat?: Record<string, unknown>; samplingParams?: Record<string, unknown> }
 					>;
 				};
-				for (const model of [...(record.models ?? []), ...Object.values(record.modelOverrides ?? {})]) {
+				// Shape errors are the validator's to report; only well-shaped entries are normalized here.
+				const modelEntries = [
+					...(Array.isArray(record.models) ? record.models : []),
+					...(typeof record.modelOverrides === "object" && record.modelOverrides !== null
+						? Object.values(record.modelOverrides)
+						: []),
+				].filter((model) => typeof model === "object" && model !== null);
+				for (const model of modelEntries) {
 					delete model.samplingParams;
 				}
-				const compatEntries = [
-					record.compat,
-					...(record.models ?? []).map((model) => model.compat),
-					...Object.values(record.modelOverrides ?? {}).map((model) => model.compat),
-				];
+				const compatEntries = [record.compat, ...modelEntries.map((model) => model.compat)];
 				for (const compat of compatEntries) {
-					if (!compat) continue;
+					if (typeof compat !== "object" || compat === null) continue;
 					if (compat.thinkingFormat === "baseten") compat.thinkingFormat = "together";
 					delete compat.chatTemplateArgs;
 				}
@@ -522,10 +560,32 @@ export class ModelConfig {
 
 		const config = parsed as ModelsJson;
 		const providers = new Map<string, ModelsJsonProvider>();
+		// Read boundary (senpi#1989): a models.json written before the rename keys
+		// its overlay by the legacy provider id. Normalize the key so the overlay
+		// still attaches; `parseAndMigrate` then rewrites the file once (senpi#2044).
 		for (const [providerId, provider] of Object.entries(config.providers)) {
-			providers.set(providerId, deepFreeze(structuredClone(provider)));
+			const canonical = normalizeProviderId(providerId);
+			// An explicit canonical entry wins over a legacy one that normalizes onto it.
+			if (canonical !== providerId && providers.has(canonical)) continue;
+			providers.set(canonical, deepFreeze(structuredClone(provider)));
 		}
-		return new ModelConfig(providers, new Set(config.disabledProviders ?? []));
+		const disabled = new Set((config.disabledProviders ?? []).map((id) => normalizeProviderId(id)));
+		return new ModelConfig(providers, disabled);
+	}
+
+	/** The error models.json `content` would load with, or undefined when it is valid (senpi#2196). */
+	static validationError(content: string, path: string): string | undefined {
+		return ModelConfig.parse(content, path).getError();
+	}
+
+	private static parseAndMigrate(content: string, path: string): ModelConfig {
+		const config = ModelConfig.parse(content, path);
+		if (config.error !== undefined) return config;
+		const migration = migrateModelsJsonProviderIds(path, content);
+		if (migration.kind !== "failed") return config;
+		return new ModelConfig(config.providers, config.disabledProviders, undefined, [
+			`models.json uses renamed provider ids (${migration.renamed.join(", ")}) and could not be updated automatically: ${migration.reason}. They still work, but update the file to the new ids.`,
+		]);
 	}
 
 	static async load(modelsJsonPath: string | undefined): Promise<ModelConfig> {
@@ -542,14 +602,14 @@ export class ModelConfig {
 				`Failed to load models.json: ${error instanceof Error ? error.message : error}\n\nFile: ${path}`,
 			);
 		}
-		return ModelConfig.parse(content, path);
+		return ModelConfig.parseAndMigrate(content, path);
 	}
 
 	static loadSync(modelsJsonPath: string | undefined): ModelConfig {
 		if (!modelsJsonPath) return new ModelConfig(new Map());
 		const path = normalizePath(modelsJsonPath);
 		try {
-			return ModelConfig.parse(readFileSync(path, "utf-8"), path);
+			return ModelConfig.parseAndMigrate(readFileSync(path, "utf-8"), path);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT") return new ModelConfig(new Map());
 			return new ModelConfig(
@@ -574,5 +634,10 @@ export class ModelConfig {
 
 	getError(): string | undefined {
 		return this.error;
+	}
+
+	/** Non-fatal notices raised while reading models.json (e.g. renamed provider ids). */
+	getWarnings(): readonly string[] {
+		return this.warnings;
 	}
 }

@@ -1,3 +1,4 @@
+import { isStaleExtensionContextError } from "../goal/stale-context.ts";
 import type { MonitorSnapshotEntry } from "./monitor-registry.ts";
 import { formatMonitorStatus } from "./monitor-status.ts";
 
@@ -17,8 +18,9 @@ export interface MonitorStatusTickerOptions {
  * Drives a once-per-second footer refresh while monitors are active so the
  * "◉ watching … (Ns)" elapsed label advances live instead of freezing between
  * registry transitions. Mirrors the goal builtin's GoalElapsedTicker: the
- * interval is unref'd so it never keeps the process alive, and ticks that
- * produce the already-rendered label are skipped.
+ * interval is unref'd so it never keeps the process alive, ticks that
+ * produce the already-rendered label are skipped, and a render that hits a
+ * retired extension context retires the ticker until the next sync.
  */
 export class MonitorStatusTicker {
 	private readonly render: MonitorStatusRender;
@@ -44,7 +46,7 @@ export class MonitorStatusTicker {
 	sync(snapshot: readonly MonitorSnapshotEntry[]): void {
 		this.snapshot = snapshot;
 		this.hasRendered = false;
-		this.tick();
+		if (!this.tick()) return;
 		if (snapshot.length === 0) {
 			this.stopInterval();
 			return;
@@ -70,11 +72,25 @@ export class MonitorStatusTicker {
 		}
 	}
 
-	private tick(): void {
+	/** Returns false when the render hit a retired context and the ticker retired. */
+	private tick(): boolean {
 		const status = formatMonitorStatus(this.snapshot, this.now());
-		if (this.hasRendered && status === this.lastRenderedStatus) return;
+		if (this.hasRendered && status === this.lastRenderedStatus) return true;
 		this.hasRendered = true;
 		this.lastRenderedStatus = status;
-		this.render(status);
+		try {
+			this.render(status);
+		} catch (error) {
+			// The render reads the extension's captured ctx; after a session replacement
+			// or reload that throws from inside the interval callback, where nothing
+			// catches it and the process exits. Retire instead: stop() renders nothing,
+			// and the next sync() (with a live ctx) re-arms the ticker.
+			if (isStaleExtensionContextError(error)) {
+				this.stop();
+				return false;
+			}
+			throw error;
+		}
+		return true;
 	}
 }

@@ -49,7 +49,7 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 		settingsCapture.callbacks = undefined;
 	});
 
-	it("keeps direct UI model selection on the global-setting model setter", async () => {
+	it("applies a direct UI model selection to the session only, and to the default only when asked (#2870)", async () => {
 		// Given: both model-setting APIs are observable on the active session.
 		const setModel = vi.fn(async () => undefined);
 		const setSessionModel = vi.fn(async () => undefined);
@@ -66,12 +66,19 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 		const selectModelFromUi = Reflect.get(InteractiveMode.prototype, "selectModelFromUi");
 		if (typeof selectModelFromUi !== "function") throw new Error("InteractiveMode.selectModelFromUi is missing");
 
-		// When: the interactive model selector applies a model.
-		await selectModelFromUi.call(fakeThis, model);
+		// When: the interactive model selector applies a model, then a select-as-default applies another.
+		await selectModelFromUi.call(fakeThis, model, undefined, {
+			origin: { source: "picker", actor: "model-selector" },
+			persistDefault: false,
+		});
+		await selectModelFromUi.call(fakeThis, model, undefined, {
+			origin: { source: "picker", actor: "model-selector" },
+			persistDefault: true,
+		});
 
-		// Then: established interactive behavior still updates global defaults.
-		expect(setModel).toHaveBeenCalledExactlyOnceWith(model);
-		expect(setSessionModel).not.toHaveBeenCalled();
+		// Then: a plain pick stays in the session; only the explicit one reaches the global setter.
+		expect(setSessionModel).toHaveBeenCalledExactlyOnceWith(model, { source: "picker", actor: "model-selector" });
+		expect(setModel).toHaveBeenCalledExactlyOnceWith(model, { source: "picker", actor: "model-selector" });
 	});
 
 	it("keeps the settings UI thinking selector on the global-setting setter", async () => {
@@ -119,7 +126,7 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 
 	it("keeps post-auth default model selection on the global-setting setter", async () => {
 		// Given: authentication completes while the session still has the unknown placeholder model.
-		const defaultModel = { provider: "openai", id: "gpt-5.6-sol" };
+		const defaultModel = { provider: "openai", id: "gpt-6.1-sol" };
 		const setModel = vi.fn(async () => undefined);
 		const setSessionModel = vi.fn(async () => undefined);
 		const fakeThis = {
@@ -154,8 +161,8 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 			api: "unknown",
 		});
 
-		// Then: this existing caller retains its global-default side effect.
-		expect(setModel).toHaveBeenCalledExactlyOnceWith(defaultModel);
+		// Then: this existing caller retains its global-default side effect, attributed to the login.
+		expect(setModel).toHaveBeenCalledExactlyOnceWith(defaultModel, { source: "provider-login" });
 		expect(setSessionModel).not.toHaveBeenCalled();
 	});
 });
@@ -182,6 +189,7 @@ function createSettingsManagerStub() {
 		getAutocompleteMaxVisible: () => 10,
 		getQuietStartup: () => false,
 		getClearOnShrink: () => false,
+		getTerminalMouse: () => "whilePending",
 		getShowTerminalProgress: () => false,
 		getTuiMode: () => "regular",
 		getFullscreenExitOutput: () => "transcript",

@@ -9,6 +9,12 @@ export interface IdpOptions {
 	cimd: boolean;
 	oidcOnly: boolean;
 	expireAccessSec: number;
+	/** Send `null` / `""` for optional token and registration fields, as some servers do. */
+	nullOptionalFields: boolean;
+	/** RFC 9207 `iss` on the authorization response: omitted, this issuer, or another issuer. */
+	iss: "omit" | "match" | "mismatch";
+	/** Advertise `authorization_response_iss_parameter_supported` in the server metadata. */
+	issSupported: boolean;
 }
 
 export interface HttpReply {
@@ -92,6 +98,7 @@ export class IdpState {
 		};
 		if (!this.options.noS256) base.code_challenge_methods_supported = ["S256"];
 		if (this.options.cimd) base.client_id_metadata_document_supported = true;
+		if (this.options.issSupported) base.authorization_response_iss_parameter_supported = true;
 		if (kind === "oidc") {
 			base.jwks_uri = `${this.baseUrl}/jwks`;
 			base.subject_types_supported = ["public"];
@@ -117,7 +124,12 @@ export class IdpState {
 		const clientId = `dcr-${randomBytes(6).toString("hex")}`;
 		return {
 			status: 201,
-			body: { ...body, client_id: clientId, client_id_issued_at: Math.floor(Date.now() / 1000) },
+			body: {
+				...body,
+				client_id: clientId,
+				client_id_issued_at: Math.floor(Date.now() / 1000),
+				...(this.options.nullOptionalFields ? { client_secret: null, client_secret_expires_at: null } : {}),
+			},
 		};
 	}
 
@@ -139,6 +151,8 @@ export class IdpState {
 		const url = new URL(redirectUri);
 		url.searchParams.set("code", code);
 		if (state !== null) url.searchParams.set("state", state);
+		if (this.options.iss === "match") url.searchParams.set("iss", this.baseUrl);
+		if (this.options.iss === "mismatch") url.searchParams.set("iss", "https://attacker.example");
 		return { status: 302, redirect: url.toString() };
 	}
 
@@ -219,6 +233,16 @@ export class IdpState {
 		keepRefresh?: string,
 	): Record<string, unknown> {
 		const access = this.#mintAccessToken();
+		if (this.options.nullOptionalFields) {
+			return {
+				access_token: access,
+				token_type: "Bearer",
+				refresh_token: null,
+				id_token: null,
+				expires_in: null,
+				scope: "",
+			};
+		}
 		let refresh = keepRefresh;
 		if (refresh === undefined) {
 			refresh = `${SENTINEL}_RT_${randomBytes(9).toString("hex")}`;
@@ -257,5 +281,16 @@ export function parseIdpOptions(argv: string[]): IdpOptions {
 		cimd: argv.includes("--cimd"),
 		oidcOnly: argv.includes("--oidc-only"),
 		expireAccessSec: Number.isFinite(expireAccessSec) ? expireAccessSec : 3600,
+		nullOptionalFields: argv.includes("--null-optional-fields"),
+		iss: parseIssMode(argv),
+		issSupported: argv.includes("--iss-supported"),
 	};
+}
+
+function parseIssMode(argv: string[]): IdpOptions["iss"] {
+	const index = argv.indexOf("--iss");
+	if (index < 0) return "omit";
+	const mode = argv[index + 1];
+	if (mode === "match" || mode === "mismatch") return mode;
+	throw new Error(`--iss must be match or mismatch, got ${String(mode)}`);
 }

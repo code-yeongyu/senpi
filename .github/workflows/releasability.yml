@@ -33,20 +33,16 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # `npm run check` leads with `biome check --write`, which would silently
-      # fix format drift (#697) instead of failing on it. Run biome read-only,
-      # then the remaining check sub-scripts verbatim from the check script.
-      - name: Biome check (read-only)
-        run: npx biome check --error-on-warnings .
+      # `npm run check` includes check:bun-lock, which needs bun (senpi#2352); same pin as ci.yml's Static checks.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
 
-      - name: Remaining check sub-scripts
-        run: >
-          npm run check:pinned-deps
-          && npm run check:ts-imports
-          && npm run check:shrinkwrap
-          && npm run check:install-lock:coding-agent
-          && npx tsc --noEmit
-          && node scripts/check-browser-smoke.mjs
+      # `npm run check` is read-only (#1443): its biome invocation reports format
+      # drift instead of silently rewriting it, so the gate can fail here.
+      - name: Check
+        run: npm run check
 
       - name: Workflow summary
         if: always()
@@ -60,7 +56,9 @@ jobs:
   model-catalog-regen:
     name: Model catalog regeneration
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Regen, the static checks, a workspace build and the ai + coding-agent suites run in one job so
+    # every step sees the same regenerated catalog (a second regen could differ).
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,6 +68,12 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+
+      # check:bun-lock resolves bun.lock in an isolated island (same as ci.yml's check job).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.2'
 
       - name: Install system dependencies
         run: |
@@ -86,14 +90,45 @@ jobs:
       - name: Regenerate model catalog
         run: npm --prefix packages/ai run generate-models
 
-      # #698: regeneration removed a model and the drift only surfaced at
-      # release time. Fail the moment the committed catalog goes stale.
-      - name: Fail on generated drift
-        run: git diff --exit-code packages/ai/src/models.generated.ts
+      # #698: regeneration removed a model and the drift only surfaced at release time. Drift is
+      # recorded here but fails the job only in the last step, so the checks below still report
+      # what the drift breaks (senpi#2584: a drift step that stopped the job hid every later check).
+      - name: Record generated drift
+        id: drift
+        continue-on-error: true
+        run: git diff --exit-code --stat packages/ai/src/models.generated.ts packages/ai/src/providers/data
 
-      # A removed model breaks typecheck where code/tests still reference it.
-      - name: Typecheck against regenerated catalog
-        run: npx tsc --noEmit
+      # omo#8700: a regenerated Claude id the pinned Claude Code predates 400s on
+      # anthropic-subscription until @anthropic-ai/claude-agent-sdk is bumped.
+      - name: Catalog Claude ids known to the pinned Claude Code
+        run: node scripts/check-claude-code-model-support.mjs --strict
+
+      # The release's own order on the regenerated catalog (scripts/release.mjs): check, build,
+      # then the test gate. A removed model breaks typecheck or a test where code still names it.
+      - name: Static checks against regenerated catalog
+        run: npm run check
+
+      - name: Build workspace against regenerated catalog
+        run: npm run build
+
+      - name: Test ai against regenerated catalog
+        working-directory: packages/ai
+        env:
+          CI: '1'
+        run: npx vitest run
+
+      - name: Test coding-agent against regenerated catalog
+        working-directory: packages/coding-agent
+        timeout-minutes: 75
+        env:
+          CI: '1'
+        run: npx vitest run
+
+      - name: Fail on generated drift
+        if: steps.drift.outcome == 'failure'
+        run: |
+          echo "::error::The committed model catalog is stale: regeneration changed it (see 'Record generated drift')."
+          exit 1
 
       - name: Workflow summary
         if: always()
@@ -102,6 +137,7 @@ jobs:
           {
             echo "## Model catalog regeneration"
             echo "- Status: ${{ job.status }}"
+            echo "- Generated drift: ${{ steps.drift.outcome }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
   local-release-coherence:
@@ -142,9 +178,27 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # omo#8700: fall behind the newest @anthropic-ai/claude-agent-sdk and the next Claude model ships
+  # unusable on anthropic-subscription. Nightly and advisory, so a new SDK never reds a PR base.
+  claude-sdk-currency:
+    name: Claude Agent SDK currency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Pin against the latest published SDK
+        run: node scripts/check-claude-code-model-support.mjs --sdk-currency
+
   report-failure:
     name: Report failure
-    needs: [check-main, model-catalog-regen, local-release-coherence]
+    needs: [check-main, model-catalog-regen, local-release-coherence, claude-sdk-currency]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -157,6 +211,7 @@ jobs:
           CHECK_MAIN_RESULT: ${{ needs.check-main.result }}
           MODEL_CATALOG_REGEN_RESULT: ${{ needs.model-catalog-regen.result }}
           LOCAL_RELEASE_COHERENCE_RESULT: ${{ needs.local-release-coherence.result }}
+          CLAUDE_SDK_CURRENCY_RESULT: ${{ needs.claude-sdk-currency.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           script: |
@@ -166,6 +221,7 @@ jobs:
               ['check-main', process.env.CHECK_MAIN_RESULT],
               ['model-catalog-regen', process.env.MODEL_CATALOG_REGEN_RESULT],
               ['local-release-coherence', process.env.LOCAL_RELEASE_COHERENCE_RESULT],
+              ['claude-sdk-currency', process.env.CLAUDE_SDK_CURRENCY_RESULT],
             ];
             const failed = results
               .filter(([, result]) => result !== 'success')

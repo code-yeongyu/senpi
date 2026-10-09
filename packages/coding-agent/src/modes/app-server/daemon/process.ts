@@ -1,8 +1,64 @@
 import { execFile } from "node:child_process";
 
+const WINDOWS_FILETIME_EPOCH = 116444736000000000n;
+export const PROCESS_START_TOLERANCE_MS = 3_000;
+
+/** FILETIME and C/localized lstart/ISO identities share one millisecond representation. */
+export function processStartTimeMs(identity: string): number | undefined {
+	if (/^\d+$/.test(identity)) {
+		const parsed = Number((BigInt(identity) - WINDOWS_FILETIME_EPOCH) / 10_000n);
+		return Number.isFinite(parsed) ? parsed : undefined;
+	}
+	// Persisted lstart values, like the C-locale form, describe the host's local timezone.
+	const localIdentity = identity.trim();
+	const korean =
+		/^(\d{4})\uB144\s+(\d{1,2})\uC6D4\s+(\d{1,2})\uC77C\s+[\uC6D4\uD654\uC218\uBAA9\uAE08\uD1A0\uC77C]\uC694\uC77C\s+(\d{1,2})\uC2DC\s+(\d{1,2})\uBD84\s+(\d{1,2})\uCD08$/.exec(
+			localIdentity,
+		);
+	const japanese =
+		/^[\u65E5\u6708\u706B\u6C34\u6728\u91D1\u571F](?:\u66DC\u65E5)?\s+(\d{1,2})\/\s*(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(
+			localIdentity,
+		);
+	const parts = korean
+		? korean.slice(1)
+		: japanese
+			? [japanese[6], japanese[1], japanese[2], japanese[3], japanese[4], japanese[5]]
+			: undefined;
+	if (parts === undefined) {
+		const parsed = Date.parse(identity);
+		return Number.isFinite(parsed) ? parsed : undefined;
+	}
+	const [year = NaN, month = NaN, day = NaN, hour = NaN, minute = NaN, second = NaN] = parts.map(Number);
+	const parsed = new Date(year, month - 1, day, hour, minute, second, 0);
+	// A recognized but invalid calendar must not fall back to Date.parse's rollover behavior.
+	return parsed.getFullYear() === year &&
+		parsed.getMonth() === month - 1 &&
+		parsed.getDate() === day &&
+		parsed.getHours() === hour &&
+		parsed.getMinutes() === minute &&
+		parsed.getSeconds() === second
+		? parsed.getTime()
+		: undefined;
+}
+
+export function sameProcessStartMs(recorded: number | undefined, observed: number | undefined): boolean {
+	return (
+		recorded !== undefined &&
+		observed !== undefined &&
+		Number.isFinite(recorded) &&
+		Number.isFinite(observed) &&
+		Math.abs(recorded - observed) <= PROCESS_START_TOLERANCE_MS
+	);
+}
+
 export interface DaemonPidFile {
 	readonly pid: number;
-	readonly processStartTime: string;
+	/**
+	 * Identity guard for the recorded pid. `null` means the host was registered while its
+	 * identity probe was starved: the pid is known, ownership is not provable, and no caller
+	 * may signal it on that record.
+	 */
+	readonly processStartTime: string | null;
 }
 
 export function parseDaemonPidFile(text: string): DaemonPidFile | undefined {
@@ -13,12 +69,17 @@ export function parseDaemonPidFile(text: string): DaemonPidFile | undefined {
 		if (error instanceof SyntaxError) return undefined;
 		throw error;
 	}
-	if (!isRecord(parsed) || typeof parsed.pid !== "number" || typeof parsed.processStartTime !== "string") {
+	const unguarded = parsed !== null && isRecord(parsed) && parsed.processStartTime === null;
+	if (
+		!isRecord(parsed) ||
+		typeof parsed.pid !== "number" ||
+		(!unguarded && typeof parsed.processStartTime !== "string")
+	) {
 		return undefined;
 	}
-	if (!Number.isInteger(parsed.pid) || parsed.pid <= 0 || parsed.processStartTime.trim() === "") {
-		return undefined;
-	}
+	if (!Number.isInteger(parsed.pid) || parsed.pid <= 0) return undefined;
+	if (unguarded) return { pid: parsed.pid, processStartTime: null };
+	if (typeof parsed.processStartTime !== "string" || parsed.processStartTime.trim() === "") return undefined;
 	return { pid: parsed.pid, processStartTime: parsed.processStartTime };
 }
 
@@ -64,13 +125,26 @@ export async function processMatchesPidFile(
 	isLive: (pid: number) => boolean = processIsLive,
 	retry: IdentityProbeRetry = {},
 ): Promise<boolean> {
+	// A record without an identity guard answers only the liveness half of the question: a pid
+	// that is gone is gone, and a live one stays unknown so it is never claimed or signalled.
+	if (pidFile.processStartTime === null) {
+		if (!isLive(pidFile.pid)) return false;
+		throw new ProcessIdentityUnreadableError(pidFile.pid, 0, new Error("pidfile carries no process identity guard"));
+	}
 	const attempts = Math.max(1, retry.attempts ?? 5);
 	const delayMs = retry.delayMs ?? 200;
 	let lastError: unknown;
 	for (let attempt = 1; attempt <= attempts; attempt++) {
 		try {
 			const current = await readStartTime(pidFile.pid);
-			return current === pidFile.processStartTime;
+			if (current !== undefined) {
+				const recorded = processStartTimeMs(pidFile.processStartTime);
+				const observed = processStartTimeMs(current);
+				if (recorded !== undefined && observed !== undefined) return sameProcessStartMs(recorded, observed);
+			}
+			if (!isLive(pidFile.pid)) return false;
+			lastError = new Error("process identity probe returned no usable identity for a live process");
+			if (attempt < attempts) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 		} catch (error: unknown) {
 			if (!isLive(pidFile.pid)) return false;
 			lastError = error;
@@ -85,6 +159,8 @@ export async function readProcessIdentity(
 	platform: NodeJS.Platform = process.platform,
 	timeoutMs?: number,
 	isLive: (pid: number) => boolean = processIsLive,
+	/** Owner records cross launch environments; legacy pidfiles keep their existing local-time format. */
+	timeZone?: "UTC",
 ): Promise<ProcessIdentityResult> {
 	const command =
 		platform === "win32"
@@ -103,7 +179,13 @@ export async function readProcessIdentity(
 		execFile(
 			command.executable,
 			command.args,
-			{ windowsHide: true, ...(effectiveTimeoutMs === undefined ? {} : { timeout: effectiveTimeoutMs }) },
+			{
+				windowsHide: true,
+				...(effectiveTimeoutMs === undefined ? {} : { timeout: effectiveTimeoutMs }),
+				...(platform === "win32" && timeZone === undefined
+					? {}
+					: { env: { ...process.env, LC_ALL: "C", LANG: "C", ...(timeZone ? { TZ: timeZone } : {}) } }),
+			},
 			(error, stdout) => {
 				if (error) {
 					const code = "code" in error ? error.code : undefined;
@@ -121,7 +203,7 @@ export async function readProcessIdentity(
 				if (output === "__SENPI_ABSENT__") return resolve({ kind: "absent" });
 				if (!output || (platform === "win32" && !/^\d+$/.test(output)))
 					return resolve({ kind: "error", error: new Error("invalid process identity output") });
-				resolve({ kind: "present", identity: output });
+				resolve({ kind: "present", identity: timeZone && platform !== "win32" ? `${output} UTC` : output });
 			},
 		).once("error", (error) => resolve({ kind: "error", error }));
 	});

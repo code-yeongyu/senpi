@@ -29,7 +29,7 @@ const EXPECTED_COST = {
 	tiers: [{ inputTokensAbove: 272000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
 };
 
-for (const provider of ["openai", "openai-codex"] as const) {
+for (const provider of ["openai", "chatgpt-subscription"] as const) {
 	describe(`${provider}/gpt-6-astra`, () => {
 		it("has the published catalog metadata and long-context pricing", () => {
 			const model = getModel(provider, "gpt-6-astra");
@@ -41,8 +41,8 @@ for (const provider of ["openai", "openai-codex"] as const) {
 				baseUrl: provider === "openai" ? "https://api.openai.com/v1" : "https://chatgpt.com/backend-api",
 				reasoning: true,
 				input: ["text", "image"],
-				// The documented maximum (922,000 input + 128,000 output); see generate-models.ts.
-				contextWindow: 1050000,
+				// The Astra series ships one project-wide context window across every provider catalog; see generate-models.ts.
+				contextWindow: 600000,
 				maxTokens: 128000,
 				cost: EXPECTED_COST,
 			});

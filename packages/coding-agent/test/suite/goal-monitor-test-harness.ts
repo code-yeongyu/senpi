@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from "node:timers";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/cache-warm.ts";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
 
@@ -116,7 +117,7 @@ export function createGoalStatusHarness(): GoalStatusHarness {
 	return { updates, setStatus, [statusWaiters]: waiters };
 }
 
-export function createGoalHarness(): GoalHarness {
+export function createGoalHarness(appendEntry?: ExtensionAPI["appendEntry"]): GoalHarness {
 	const tools = new Map<string, AnyTool>();
 	const handlers = new Map<string, GoalHandler[]>();
 	const messages = createSentMessageHarness();
@@ -126,7 +127,7 @@ export function createGoalHarness(): GoalHarness {
 		registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
 		registerCommand: () => {},
 		registerEntryRenderer: () => {},
-		appendEntry: (customType: string, data?: unknown) => entries.push({ customType, data }),
+		appendEntry: appendEntry ?? ((customType: string, data?: unknown) => entries.push({ customType, data })),
 		on: (event: string, handler: GoalHandler) => {
 			const registered = handlers.get(event) ?? [];
 			registered.push(handler);
@@ -155,7 +156,8 @@ export async function makeGoalContext(
 		isIdle: () => true,
 		hasPendingMessages: () => state.pendingMessages,
 		getPromptCacheSafeWaitSeconds: () => state.cacheSafeWaitSeconds,
-		getPromptCacheGoalBackstopMaxSeconds: () => state.goalBackstopMaxSeconds ?? 3570,
+		getPromptCacheGoalBackstopMaxSeconds: () =>
+			state.goalBackstopMaxSeconds ?? GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS / 1000,
 		ui: {
 			notify: (message: string) => notices.push(message),
 			select: async () => undefined,

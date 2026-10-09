@@ -692,11 +692,16 @@ describe("Anthropic provider-native replay", () => {
 		expect(resumableAssistant?.content).toContainEqual(pendingUse);
 
 		// Deferred: the reference emits sibling text after the result, closing the turn.
+		// The fork addedToolNames deferral applies only while upstream native tool changes
+		// are off (decisions.md L2d); the catalog enables them for claude-fable-5.
 		const closed = await capturePayload(
 			model,
 			[{ role: "user", content: "hello", timestamp: 1 }, makeAssistant(), makeToolResult()],
 			undefined,
-			{ tools: [taskTool, deferredTool], modelCompat: { supportsToolReferences: true } },
+			{
+				tools: [taskTool, deferredTool],
+				modelCompat: { supportsToolReferences: true, supportsMidConvoToolChanges: false },
+			},
 		);
 		const closedAssistant = closed.messages?.find((message) => message.role === "assistant");
 		expect(closedAssistant?.content).not.toContainEqual(pendingUse);
@@ -823,7 +828,8 @@ describe("Anthropic provider-native replay", () => {
 				},
 			],
 			undefined,
-			{ tools, modelCompat: { supportsToolReferences: true } },
+			// The fork addedToolNames deferral runs only with native tool changes off (decisions.md L2d).
+			{ tools, modelCompat: { supportsToolReferences: true, supportsMidConvoToolChanges: false } },
 		);
 
 		// The surviving result emits the reference (sibling text closes the turn),

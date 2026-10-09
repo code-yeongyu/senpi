@@ -4,6 +4,7 @@ import { convertMessages as convertGoogleMessages } from "../src/api/google-shar
 import { convertMessages as convertCompletionMessages } from "../src/api/openai-completions.ts";
 import { convertResponsesMessages } from "../src/api/openai-responses-shared.ts";
 import type { Context } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 import {
 	APPLY_PATCH_TOOL,
 	COMPLETIONS_COMPAT,
@@ -16,13 +17,17 @@ import {
 
 async function captureAnthropicPayload(context: Context): Promise<unknown> {
 	let payload: unknown;
-	const stream = streamAnthropic(makeModel("anthropic-messages", "anthropic", "claude-target"), context, {
-		apiKey: "fake-api-key",
-		onPayload: (candidate) => {
-			payload = candidate;
-			throw new Error("payload captured before transport");
+	const stream = streamAnthropic(
+		makeModel("anthropic-messages", "anthropic", "claude-target"),
+		normalizeContext(context),
+		{
+			apiKey: "fake-api-key",
+			onPayload: (candidate) => {
+				payload = candidate;
+				throw new Error("payload captured before transport");
+			},
 		},
-	});
+	);
 	await stream.result();
 	if (payload === undefined) {
 		throw new Error("Anthropic payload was not captured");
@@ -41,8 +46,12 @@ describe("model-switch replay characterization", () => {
 		const context: Context = { messages: HISTORY, tools: [APPLY_PATCH_TOOL] };
 
 		// When
-		const customReplay = convertResponsesMessages(model, context, new Set(["openai"]));
-		const functionReplay = convertResponsesMessages(model, { messages: HISTORY }, new Set(["openai"]));
+		const customReplay = convertResponsesMessages(model, normalizeContext(context), new Set(["openai"]));
+		const functionReplay = convertResponsesMessages(
+			model,
+			normalizeContext({ messages: HISTORY }),
+			new Set(["openai"]),
+		);
 
 		// Then
 		expect(customReplay).toMatchObject([
@@ -67,7 +76,7 @@ describe("model-switch replay characterization", () => {
 		const context: Context = { messages: makePatchHistory("openai-completions"), tools: [APPLY_PATCH_TOOL] };
 
 		// When
-		const replay = convertResponsesMessages(model, context, new Set(["openai"]));
+		const replay = convertResponsesMessages(model, normalizeContext(context), new Set(["openai"]));
 
 		// Then: getFreeformToolInput (openai-responses-shared.ts:123) extracts the raw patch string.
 		expect(replay).toMatchObject([
@@ -96,7 +105,7 @@ describe("model-switch replay characterization", () => {
 		};
 
 		// When
-		const replay = convertResponsesMessages(model, context, new Set(["openai"]));
+		const replay = convertResponsesMessages(model, normalizeContext(context), new Set(["openai"]));
 
 		// Then
 		expect(replay).toMatchObject([
@@ -144,10 +153,14 @@ describe("model-switch replay characterization", () => {
 		// When
 		const withFreeform = convertResponsesMessages(
 			model,
-			{ messages: mixedMessages, tools: [APPLY_PATCH_TOOL] },
+			normalizeContext({ messages: mixedMessages, tools: [APPLY_PATCH_TOOL] }),
 			new Set(["openai"]),
 		);
-		const withoutFreeform = convertResponsesMessages(model, { messages: mixedMessages }, new Set(["openai"]));
+		const withoutFreeform = convertResponsesMessages(
+			model,
+			normalizeContext({ messages: mixedMessages }),
+			new Set(["openai"]),
+		);
 
 		// Then: edit stays a function item in both branches; only apply_patch follows the declaration.
 		expect(withFreeform).toMatchObject([
@@ -176,11 +189,14 @@ describe("model-switch replay characterization", () => {
 		// When
 		const completionReplay = convertCompletionMessages(
 			makeModel("openai-completions", "openai", "gpt-target"),
-			context,
+			normalizeContext(context),
 			COMPLETIONS_COMPAT,
 		);
 		const anthropicPayload = await captureAnthropicPayload(context);
-		const googleReplay = convertGoogleMessages(makeModel("google-generative-ai", "google", "gemini-target"), context);
+		const googleReplay = convertGoogleMessages(
+			makeModel("google-generative-ai", "google", "gemini-target"),
+			normalizeContext(context),
+		);
 
 		// Then
 		expect(completionReplay).toMatchObject([
@@ -246,7 +262,7 @@ describe("model-switch replay characterization", () => {
 		// When
 		const replay = convertCompletionMessages(
 			makeModel("openai-completions", "opengateway", "anthropic/claude-fable-5"),
-			context,
+			normalizeContext(context),
 			COMPLETIONS_COMPAT,
 		);
 
@@ -292,7 +308,7 @@ describe("model-switch replay characterization", () => {
 		// When
 		const replay = convertCompletionMessages(
 			makeModel("openai-completions", "opengateway", "anthropic/claude-fable-5"),
-			context,
+			normalizeContext(context),
 			COMPLETIONS_COMPAT,
 		);
 

@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TerminalManager } from "../../src/core/extensions/builtin/terminal/manager.ts";
 import {
@@ -10,6 +14,7 @@ import { createBashOutputTool } from "../../src/core/extensions/builtin/terminal
 import type { TerminalToolContext } from "../../src/core/extensions/builtin/terminal/tools/context.ts";
 import { createKillBashTool } from "../../src/core/extensions/builtin/terminal/tools/kill-bash.ts";
 import { createMonitorTool, type MonitorInput } from "../../src/core/extensions/builtin/terminal/tools/monitor.ts";
+import type { ExtensionContext } from "../../src/core/extensions/types.ts";
 
 const MONITOR_ID_GRAMMAR = /^mon_[0-9A-HJKMNP-TV-Z]{16}$/;
 
@@ -47,6 +52,81 @@ class EventSink {
 		});
 	}
 }
+
+describe("terminal monitor restore-context environment", () => {
+	const savedForcePipe = process.env.SENPI_PTY_FORCE_PIPE;
+	let manager: TerminalManager;
+	let registry: MonitorRegistry;
+	let sink: EventSink;
+	let sessionDir: string;
+	let ctx: TerminalToolContext;
+
+	beforeEach(async () => {
+		process.env.SENPI_PTY_FORCE_PIPE = "1";
+		sessionDir = await mkdtemp(join(tmpdir(), "senpi-monitor-env-"));
+		manager = new TerminalManager();
+		sink = new EventSink();
+		registry = new MonitorRegistry((event) => sink.push(event));
+		ctx = {
+			manager,
+			cwd: sessionDir,
+			defaultCols: 120,
+			defaultRows: 40,
+			getEnv: () => ({ ...process.env }),
+			monitorRegistry: registry,
+			onMonitorEvent: (event) => sink.push(event),
+			getSessionContext: () =>
+				({
+					mode: "tui",
+					sessionManager: { getSessionId: () => "env-session", getSessionDir: () => sessionDir },
+				}) as unknown as ExtensionContext,
+		};
+	});
+
+	afterEach(async () => {
+		registry.dispose();
+		await manager.teardown();
+		await rm(sessionDir, { recursive: true, force: true });
+		if (savedForcePipe === undefined) delete process.env.SENPI_PTY_FORCE_PIPE;
+		else process.env.SENPI_PTY_FORCE_PIPE = savedForcePipe;
+	});
+
+	/** The watch's first `|`-separated line: already delivered during the create, or the next one to arrive. */
+	function envLine(): Promise<string> {
+		const isEnvLine = (event: MonitorEvent) => event.type === "line" && event.line.includes("|");
+		const delivered = sink.events.find(isEnvLine);
+		const next = delivered ? Promise.resolve(delivered) : sink.waitFor(isEnvLine, "env echo line");
+		return next.then((event) => (event.type === "line" ? event.line : ""));
+	}
+
+	it("hands a persistent command watch its stable id and a per-monitor state dir that exists", async () => {
+		const created = await createMonitorTool(ctx).execute("env", {
+			description: "env watch",
+			command:
+				'r="$SENPI_MONITOR_RESTORED"; printf "%s|%s|%s\\n" "$SENPI_MONITOR_ID" "$SENPI_MONITOR_STATE_DIR" "$r"; sleep 30',
+			persistent: true,
+		});
+		const monitorId = String(created.details?.monitor_id);
+		const [id, dir, restored] = (await envLine()).trim().split("|");
+		expect(id).toBe(monitorId);
+		expect(dir).toBe(join(sessionDir, "extensions", "terminal", "state", monitorId));
+		expect(restored).toBe("");
+		expect(existsSync(join(sessionDir, "extensions", "terminal", "state", monitorId))).toBe(true);
+	});
+
+	it("gives an ephemeral watch its id but no state dir", async () => {
+		const created = await createMonitorTool(ctx).execute("env", {
+			description: "ephemeral env watch",
+			command:
+				'd="$SENPI_MONITOR_STATE_DIR"; [ -n "$d" ] || d=none; printf "%s|%s\\n" "$SENPI_MONITOR_ID" "$d"; sleep 30',
+			timeout_ms: 60_000,
+		});
+		const [id, dir] = (await envLine()).trim().split("|");
+		expect(id).toBe(String(created.details?.monitor_id));
+		expect(dir).toBe("none");
+		expect(existsSync(join(sessionDir, "extensions", "terminal", "state"))).toBe(false);
+	});
+});
 
 describe("terminal monitor identity", () => {
 	let manager: TerminalManager;

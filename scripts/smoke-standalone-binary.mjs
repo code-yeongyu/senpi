@@ -30,6 +30,7 @@ try {
 		const result = spawnSync(binaryPath, [argument], {
 			cwd: smokeDirectory,
 			encoding: "utf8",
+			timeout: 60_000,
 			env: { ...process.env, PAGER: "cat", GIT_PAGER: "cat" },
 		});
 		if (result.error || result.status !== 0 || result.stdout.trim() === "") {
@@ -55,6 +56,7 @@ try {
 		{
 			cwd: smokeDirectory,
 			encoding: "utf8",
+			timeout: 60_000,
 			env: {
 				...process.env,
 				PAGER: "cat",
@@ -96,6 +98,9 @@ try {
 			`${basename(binaryPath)} codemode RPC smoke received an unsuccessful loaded-surfaces response: ${JSON.stringify(response)}`,
 		);
 	}
+	if (/Bundled extension unavailable|Failed to load extension[^\n]*codemode/i.test(rpcResult.stderr)) {
+		throw new Error(`${basename(binaryPath)} codemode RPC smoke emitted a load-failure warning: ${rpcResult.stderr.trim()}`);
+	}
 	const codemodeExtensions = response.data?.extensions?.filter(
 		(extension) =>
 			extension?.name === "codemode" &&
@@ -106,9 +111,6 @@ try {
 		throw new Error(
 			`${basename(binaryPath)} codemode RPC smoke expected one enabled <builtin:codemode> extension, got ${codemodeExtensions?.length ?? 0}`,
 		);
-	}
-	if (/Bundled extension unavailable|Failed to load extension[^\n]*codemode/i.test(rpcResult.stderr)) {
-		throw new Error(`${basename(binaryPath)} codemode RPC smoke emitted a load-failure warning: ${rpcResult.stderr.trim()}`);
 	}
 } finally {
 	if (existsSync(hiddenWorkerPath)) {

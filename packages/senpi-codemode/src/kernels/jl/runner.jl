@@ -1,4 +1,6 @@
 # allow: SIZE_OK — parser, stream capture, bridge calls, and the persistent execution loop share Main globals.
+write(stdout, "{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"stdlib-imports\"}}\n")
+flush(stdout)
 using Sockets
 
 const SENPI_ORIGINAL_STDOUT = stdout
@@ -7,11 +9,14 @@ out_read, out_write = redirect_stdout()
 err_read, err_write = redirect_stderr()
 redirect_stdin(devnull)
 
+write(SENPI_ORIGINAL_STDOUT, "{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"runtime-init\"}}\n")
+flush(SENPI_ORIGINAL_STDOUT)
 include("prelude.jl")
 
 const senpi_connection = Dict{String, Any}()
 const senpi_write_lock = ReentrantLock()
 global senpi_current_cell = nothing
+global senpi_memory_cell = nothing
 
 function senpi_escape(text::AbstractString)
     out = IOBuffer()
@@ -220,12 +225,15 @@ function senpi_http_body(response::AbstractString)
     String(output)
 end
 
-function senpi_bridge_request(path::String, payload)
+# `read_timeout` (seconds) bounds only the long-lived `wait()` request; ordinary calls read until the host closes.
+function senpi_bridge_request(path::String, payload; read_timeout=nothing)
     port = get(senpi_connection, "port", nothing)
     token = get(senpi_connection, "token", nothing)
     port isa Integer && token isa AbstractString || error("Julia tool bridge is not initialized")
     body = senpi_json(payload)
     socket = connect(ip"127.0.0.1", port)
+    timed_out = Ref(false)
+    timer = read_timeout === nothing ? nothing : Timer(_ -> (timed_out[] = true; close(socket)), Float64(read_timeout))
     try
         request = join([
             "POST " * path * " HTTP/1.1",
@@ -240,12 +248,14 @@ function senpi_bridge_request(path::String, payload)
         Base.write(socket, request)
         flush(socket)
         response = Base.read(socket, String)
+        timed_out[] && throw(SenpiBridgeError("bridge request timed out after $(read_timeout)s", "bridge_timeout"))
         parsed = senpi_json_parse(senpi_http_body(response))
         parsed isa AbstractDict || error("Bridge returned invalid JSON")
         get(parsed, "ok", false) === true && return get(parsed, "value", nothing)
         failure = get(parsed, "error", parsed)
-        error(failure isa AbstractDict ? string(get(failure, "message", failure)) : string(failure))
+        throw(SenpiBridgeError(failure isa AbstractDict ? string(get(failure, "message", failure)) : string(failure), failure isa AbstractDict ? get(failure, "code", nothing) : nothing))
     finally
+        timer === nothing || close(timer)
         close(socket)
     end
 end
@@ -281,6 +291,135 @@ function senpi_set_connection(value)
     end
 end
 
+const SENPI_MEMORY_INTERNALS = Set([:senpi_current_cell, :senpi_connection, :senpi_frame_io, :senpi_stdout_capture, :senpi_stderr_capture, :senpi_protocol_stdin])
+
+const SENPI_SIZER_SAMPLE = 1_000
+const SENPI_SIZER_NODE_BUDGET = 5_000
+const SENPI_SIZER_MAX_DEPTH = 64
+const SENPI_SIZER_POINTER = 8
+const SENPI_SIZER_OBJECT = 16
+const SENPI_SIZER_MIN_REPORTED = 1024 * 1024
+
+# Sizes a global with sampling and a node budget per global (leaves count too), so one deep global
+# never hides the ones measured after it and a huge container costs a bounded walk. Only concrete Base
+# containers are iterated; any other AbstractDict or AbstractSet is sized as an opaque struct, so no user
+# length or iterate method runs during a memory report.
+mutable struct SenpiSizer
+    seen::IdDict{Any, Nothing}
+    nodes::Int
+    approximate::Bool
+end
+SenpiSizer() = SenpiSizer(IdDict{Any, Nothing}(), 0, false)
+
+senpi_over_budget(sizer::SenpiSizer) = sizer.nodes >= SENPI_SIZER_NODE_BUDGET
+
+function senpi_size(sizer::SenpiSizer, value, depth::Int)::Int
+    sizer.nodes += 1
+    value isa Type && return 0
+    value isa Union{Number, Char, Bool, Symbol, Nothing} && return isbits(value) ? sizeof(value) : 0
+    value isa String && return SENPI_SIZER_OBJECT + sizeof(value)
+    if ismutable(value)
+        haskey(sizer.seen, value) && return 0
+        sizer.seen[value] = nothing
+    end
+    if depth >= SENPI_SIZER_MAX_DEPTH || senpi_over_budget(sizer)
+        sizer.approximate = true
+        return SENPI_SIZER_OBJECT
+    end
+    if value isa Array
+        isbitstype(eltype(value)) && return SENPI_SIZER_OBJECT + sizeof(value)
+        return SENPI_SIZER_OBJECT + length(value) * SENPI_SIZER_POINTER +
+            senpi_sampled(sizer, length(value), depth) do index
+                isassigned(value, index) ? value[index] : nothing
+            end
+    elseif value isa Union{Dict, IdDict}
+        count = length(value)
+        total = 0
+        taken = 0
+        for (key, item) in value
+            senpi_over_budget(sizer) && break
+            total += senpi_size(sizer, key, depth + 1) + senpi_size(sizer, item, depth + 1)
+            taken += 1
+            taken >= SENPI_SIZER_SAMPLE && break
+        end
+        taken < count && (sizer.approximate = true)
+        return SENPI_SIZER_OBJECT + count * 2 * SENPI_SIZER_POINTER + (taken == 0 ? 0 : div(total * count, taken))
+    elseif value isa Union{Set, Tuple}
+        count = length(value)
+        total = 0
+        taken = 0
+        for item in value
+            senpi_over_budget(sizer) && break
+            total += senpi_size(sizer, item, depth + 1)
+            taken += 1
+            taken >= SENPI_SIZER_SAMPLE && break
+        end
+        taken < count && (sizer.approximate = true)
+        return SENPI_SIZER_OBJECT + count * SENPI_SIZER_POINTER + (taken == 0 ? 0 : div(total * count, taken))
+    end
+    isbits(value) && return sizeof(value)
+    fields = fieldcount(typeof(value))
+    return SENPI_SIZER_OBJECT + fields * SENPI_SIZER_POINTER +
+        senpi_sampled(sizer, fields, depth) do index
+            isdefined(value, index) ? getfield(value, index) : nothing
+        end
+end
+
+# Up to SENPI_SIZER_SAMPLE evenly spaced elements; once the budget runs out part-way, the elements measured
+# so far stand in for the rest.
+function senpi_sampled(at, sizer::SenpiSizer, count::Int, depth::Int)::Int
+    count == 0 && return 0
+    picks = min(count, SENPI_SIZER_SAMPLE)
+    picks < count && (sizer.approximate = true)
+    step = count / picks
+    total = 0
+    measured = 0
+    for sample in 1:picks
+        if senpi_over_budget(sizer)
+            sizer.approximate = true
+            break
+        end
+        total += senpi_size(sizer, at(1 + floor(Int, (sample - 1) * step)), depth + 1)
+        measured += 1
+    end
+    return measured == 0 ? 0 : round(Int, total / measured * count)
+end
+
+function senpi_largest_globals(limit::Int)
+    try
+        sizer = SenpiSizer()
+        candidates = Tuple{String, Int, Bool}[]
+        Base.invokelatest() do
+            for name in names(Main, all = true)
+                name in SENPI_MEMORY_INTERNALS && continue
+                name in (:Main, :Base, :Core, :Ans, :ans) && continue
+                lowered = lowercase(string(name))
+                startswith(lowered, "senpi_") && continue
+                startswith(string(name), "Senpi") && continue
+                startswith(string(name), "#") && continue
+                isdefined(Main, name) || continue
+                value = getfield(Main, name)
+                value isa Module && continue
+                value isa IO && continue
+                value isa Type && continue
+                value isa Function && continue
+                sizer.approximate = false
+                sizer.nodes = 0
+                bytes = try
+                    senpi_size(sizer, value, 0) + SENPI_SIZER_POINTER
+                catch
+                    0
+                end
+                bytes >= SENPI_SIZER_MIN_REPORTED && push!(candidates, (string(name), bytes, sizer.approximate))
+            end
+        end
+        sort!(candidates, by = entry -> entry[2], rev = true)
+        [approximate ? Dict{String, Any}("name" => name, "bytes" => bytes, "approximate" => true) : Dict{String, Any}("name" => name, "bytes" => bytes) for (name, bytes, approximate) in candidates[1:min(limit, end)]]
+    catch
+        Dict{String, Any}[]
+    end
+end
+
 function senpi_run_cell(message)
     cell_id = string(get(message, "cellId", ""))
     code = string(get(message, "code", ""))
@@ -302,6 +441,7 @@ function senpi_run_cell(message)
         senpi_emit(Dict("type" => "result", "cellId" => cell_id, "ok" => false, "error" => senpi_error(error), "durationMs" => round(Int, (time() - started) * 1000)))
     finally
         global senpi_current_cell = nothing
+        global senpi_memory_cell = cell_id
     end
 end
 
@@ -313,10 +453,18 @@ while !eof(SENPI_ORIGINAL_STDIN)
         message isa AbstractDict || error("Bridge frame must be an object")
         kind = get(message, "type", nothing)
         if kind == "init"
+            senpi_emit(Dict("type" => "status", "event" => Dict("op" => "kernel-startup", "stage" => "host-init")))
             senpi_set_connection(get(message, "connection", nothing))
-            senpi_emit(Dict("type" => "ready"))
+            senpi_emit(Dict("type" => "ready", "memoryGlobals" => true))
         elseif kind == "run"
+            global senpi_memory_cell = nothing
             senpi_run_cell(message)
+        elseif kind == "memory-globals"
+            cell_id = get(message, "cellId", nothing)
+            if cell_id == senpi_memory_cell && senpi_current_cell === nothing
+                senpi_emit(Dict("type" => "memory-globals-result", "cellId" => cell_id, "globals" => senpi_largest_globals(5)))
+                global senpi_memory_cell = nothing
+            end
         elseif kind == "close"
             senpi_emit(Dict("type" => "closed"))
             break

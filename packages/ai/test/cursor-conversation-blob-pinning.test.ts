@@ -19,6 +19,8 @@ import {
 import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { Message, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const neverAbortedSignal = new AbortController().signal;
 
 function buildModel(baseUrl: string): Model<"cursor-agent"> {
@@ -143,7 +145,7 @@ async function runStream(
 ): Promise<void> {
 	const result = streamCursorAgent(
 		buildModel(baseUrl),
-		{ messages: options.messages ?? [{ role: "user", content: "hello", timestamp: 0 }] },
+		normalizeContext({ messages: options.messages ?? [{ role: "user", content: "hello", timestamp: 0 }] }),
 		{
 			apiKey: "test-token",
 			sessionId: options.sessionId,

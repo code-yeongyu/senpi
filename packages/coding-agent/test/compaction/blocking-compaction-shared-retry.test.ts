@@ -80,18 +80,40 @@ describe("blocking compaction shares the bounded summarization retry", () => {
 
 	describe("Given a non-transient summarization failure", () => {
 		it("Then the route does not spend a single retry", async () => {
-			// Given: a deterministic provider rejection retrying cannot fix.
+			// Given: a deterministic provider refusal retrying cannot fix.
 			const { beforeAgentStart } = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 9_950 });
 			registrations.push(harness.registration);
 			harness.registration.setResponses([
-				fauxAssistantMessage("", { stopReason: "error", errorMessage: "request blocked by provider policy" }),
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "request blocked by provider policy",
+					stopDetails: { type: "refusal" },
+				}),
 			]);
 
 			// When / Then: unchanged - it surfaces loudly on attempt one.
 			await expect(beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx)).rejects.toThrow(
 				/request blocked by provider policy/,
 			);
+			expect(harness.registration.state.callCount).toBe(1);
+		});
+
+		// Issue #1741: a terminal provider error is recovered by the deterministic
+		// checkpoint rather than rethrown, and that recovery must not be billed as a
+		// retry either.
+		it("Then a terminal provider error is recovered without a second request", async () => {
+			const { beforeAgentStart } = createCompactionHandlers();
+			const harness = createBlockingContext({ usageTokens: 9_950 });
+			registrations.push(harness.registration);
+			harness.registration.setResponses([
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Codex error: stream ended with an error response",
+				}),
+			]);
+
+			await expect(beforeAgentStart(createBeforeAgentStartEvent(), harness.ctx)).resolves.toBeUndefined();
 			expect(harness.registration.state.callCount).toBe(1);
 		});
 	});

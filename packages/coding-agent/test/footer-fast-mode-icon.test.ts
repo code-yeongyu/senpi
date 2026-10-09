@@ -24,7 +24,7 @@ describe("FooterComponent fast mode indicator", () => {
 		const session = createFooterSession({
 			sessionName: "",
 			modelId: "gpt-5.6-sol",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			reasoning: true,
 			thinkingLevel: "medium",
 			fastModeActive: true,
@@ -36,7 +36,7 @@ describe("FooterComponent fast mode indicator", () => {
 
 		// then
 		expect(rendered).toContain(`${LIGHTNING} gpt-5.6-sol:medium`);
-		expect(rendered).toContain(`(openai-codex) ${LIGHTNING} gpt-5.6-sol:medium`);
+		expect(rendered).toContain(`(chatgpt-subscription) ${LIGHTNING} gpt-5.6-sol:medium`);
 	});
 
 	it("leaves the model label alone while fast mode is off", () => {
@@ -44,7 +44,7 @@ describe("FooterComponent fast mode indicator", () => {
 		const session = createFooterSession({
 			sessionName: "",
 			modelId: "gpt-5.6-sol",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			reasoning: true,
 			thinkingLevel: "medium",
 			fastModeActive: false,
@@ -67,7 +67,7 @@ describe("FooterComponent fast mode indicator", () => {
 		const session = createFooterSession({
 			sessionName: "",
 			modelId: "模".repeat(30),
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			reasoning: true,
 			thinkingLevel: "medium",
 			fastModeActive: true,

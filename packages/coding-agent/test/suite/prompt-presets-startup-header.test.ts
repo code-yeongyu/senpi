@@ -52,7 +52,7 @@ function createHeaderContext(
 	let headerFactory: ((tui: never, theme: never) => Component) | undefined;
 	return {
 		context: {
-			model: { id: modelId, provider: "openai-codex", api: "openai-codex-responses" },
+			model: { id: modelId, provider: "chatgpt-subscription", api: "openai-codex-responses" },
 			cwd: "/repo",
 			getSystemPromptOptions: () => ({ cwd: "/repo", customPrompt: options?.customPrompt }),
 			ui: {

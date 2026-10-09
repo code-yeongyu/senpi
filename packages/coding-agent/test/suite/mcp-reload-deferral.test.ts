@@ -35,7 +35,7 @@ afterEach(async () => {
 	resetMcpServiceForTests();
 });
 
-describe("mcp session_start reload deferral", () => {
+describe("mcp session_start attach deferral", () => {
 	it("resolves session_start before reconnect completes when reason is reload", async () => {
 		const { extension, service, connectStarted, connectGate } = await loadSlowAttachExtension();
 
@@ -58,7 +58,7 @@ describe("mcp session_start reload deferral", () => {
 		expect(service.connectCompleted).toBe(true);
 	});
 
-	it("awaits reconnect during session_start when reason is startup", async () => {
+	it("also resolves session_start before attach completes when reason is startup", async () => {
 		const { extension, service, connectStarted, connectGate } = await loadSlowAttachExtension();
 
 		// Given: attachSession is blocked at the connect seam.
@@ -71,8 +71,10 @@ describe("mcp session_start reload deferral", () => {
 		await connectStarted.promise;
 		await drainMicrotasks();
 
-		// Then: the handler stays pending until reconnect completes.
-		expect(sessionStartResolved).toBe(false);
+		// Then: the handler settles while attach is still in flight. Startup used to await it here,
+		// which put a cold server's boot and catalog handshake in front of the first frame: measured
+		// at a 255ms median of a 292ms serial session_start dispatch against a real config.
+		expect(sessionStartResolved).toBe(true);
 		expect(service.connectCompleted).toBe(false);
 
 		connectGate.resolve();
@@ -80,7 +82,7 @@ describe("mcp session_start reload deferral", () => {
 		expect(service.connectCompleted).toBe(true);
 	});
 
-	it("awaits reconnect during session_start when reason is omitted", async () => {
+	it("also resolves session_start before attach completes when reason is omitted", async () => {
 		const { extension, service, connectStarted, connectGate } = await loadSlowAttachExtension();
 
 		let sessionStartResolved = false;
@@ -90,11 +92,35 @@ describe("mcp session_start reload deferral", () => {
 		await connectStarted.promise;
 		await drainMicrotasks();
 
-		expect(sessionStartResolved).toBe(false);
+		expect(sessionStartResolved).toBe(true);
 		expect(service.connectCompleted).toBe(false);
 
 		connectGate.resolve();
 		await sessionStart;
+		expect(service.connectCompleted).toBe(true);
+	});
+
+	it("holds before_agent_start until the startup attach completes, so turn 1 carries the tool set", async () => {
+		const { extension, service, connectStarted, connectGate } = await loadSlowAttachExtension();
+
+		// Given: session_start has started attach and returned without waiting for it.
+		await emitSessionStart(extension, "startup");
+		await connectStarted.promise;
+		expect(service.connectCompleted).toBe(false);
+
+		// When: the first turn begins while that attach is still in flight.
+		let beforeAgentStartResolved = false;
+		const beforeAgentStart = emitBeforeAgentStart(extension).then(() => {
+			beforeAgentStartResolved = true;
+		});
+		await drainMicrotasks();
+
+		// Then: it waits for the same single-flight attach. This is what makes deferring startup safe —
+		// without it the first turn's payload would go out with no MCP tools registered.
+		expect(beforeAgentStartResolved).toBe(false);
+
+		connectGate.resolve();
+		await beforeAgentStart;
 		expect(service.connectCompleted).toBe(true);
 	});
 });
@@ -130,6 +156,13 @@ function emitSessionStart(extension: Extension, reason: SessionStartEvent["reaso
 async function emit(extension: Extension, event: SessionStartEvent): Promise<void> {
 	for (const handler of extension.handlers.get("session_start") ?? []) {
 		await handler(event, { cwd: process.cwd(), isProjectTrusted: () => true });
+	}
+}
+
+async function emitBeforeAgentStart(extension: Extension): Promise<void> {
+	const event = { type: "before_agent_start", systemPromptOptions: {} };
+	for (const handler of extension.handlers.get("before_agent_start") ?? []) {
+		await handler(event as never, { cwd: process.cwd(), isProjectTrusted: () => true, ui: {} } as never);
 	}
 }
 

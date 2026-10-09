@@ -1,11 +1,15 @@
-import {
+import type {
 	TerminalScreen,
-	type TerminalScreenSnapshot,
+	TerminalScreenSnapshot,
 	TerminalSession,
-	type TerminalSessionExit,
-	type TerminalSessionOptions,
+	TerminalSessionExit,
+	TerminalSessionOptions,
 } from "@earendil-works/pi-pty";
+import { type ChildProcessIdentity, processBootAtMs } from "./process-identity.ts";
+import { loadPty } from "./pty.lazy.ts";
 import { DEFAULT_SCROLLBACK, MAX_SESSION_OUTPUT_CHARS } from "./shared.ts";
+
+const pty = await loadPty();
 
 export interface TerminalRuntimeOptions extends TerminalSessionOptions {
 	readonly scrollback?: number;
@@ -24,6 +28,8 @@ export interface DeltaRead {
 export class TerminalRuntimeSession {
 	readonly session: TerminalSession;
 	readonly command: string;
+	readonly startedAtMs: number;
+	private readonly argv: readonly string[];
 	private readonly screen: TerminalScreen;
 	private readonly decoder = new TextDecoder("utf-8", { fatal: false });
 	private buffer = "";
@@ -34,12 +40,13 @@ export class TerminalRuntimeSession {
 
 	constructor(command: string, options: TerminalRuntimeOptions) {
 		this.command = command;
-		this.screen = new TerminalScreen({
+		this.argv = [options.command ?? command, ...(options.args ?? [])];
+		this.screen = new pty.TerminalScreen({
 			cols: options.cols,
 			rows: options.rows,
 			scrollback: options.scrollback ?? DEFAULT_SCROLLBACK,
 		});
-		this.session = new TerminalSession(options);
+		this.session = new pty.TerminalSession(options);
 		this.unsubscribeData = this.session.onData((chunk) => {
 			const text = this.ingest(chunk);
 			if (text.length === 0) return;
@@ -52,10 +59,25 @@ export class TerminalRuntimeSession {
 			}
 		});
 		this.session.start();
+		this.startedAtMs = Date.now();
 	}
 
 	get backend(): string | null {
 		return this.session.backend;
+	}
+
+	/** The spawned child as a later process can recognise it; undefined when the backend exposes no pid. */
+	identity(): ChildProcessIdentity | undefined {
+		const pid = this.session.pid;
+		if (pid === undefined) return undefined;
+		const processGroupId = this.session.processGroupId;
+		return {
+			pid,
+			...(processGroupId === undefined ? {} : { processGroupId }),
+			startedAtMs: this.startedAtMs,
+			bootAtMs: processBootAtMs(),
+			argv: this.argv,
+		};
 	}
 
 	get exited(): boolean {

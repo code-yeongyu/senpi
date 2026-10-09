@@ -13,7 +13,8 @@ import type {
 	AssistantMessage,
 	AssistantMessageEvent,
 	CacheRetention,
-	Context,
+	JsonObject,
+	JsonValue,
 	Model,
 	ProviderEnv,
 	SimpleStreamOptions,
@@ -21,6 +22,7 @@ import type {
 	StreamOptions,
 	ThinkingLevel,
 	ToolCall,
+	TranscriptContext,
 } from "../types.ts";
 import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -95,9 +97,9 @@ type PiMessagesErrorBody = {
 
 export class PiMessagesResponseError extends Error {
 	code?: string;
-	readonly diagnosticDetails: Record<string, unknown>;
+	readonly diagnosticDetails: JsonObject;
 
-	constructor(message: string, code: string | undefined, diagnosticDetails: Record<string, unknown>) {
+	constructor(message: string, code: string | undefined, diagnosticDetails: JsonObject) {
 		super(message);
 		this.name = "PiMessagesResponseError";
 		this.code = code;
@@ -147,8 +149,8 @@ function createPiMessagesResponseError(
 		url: url.toString(),
 		status: response.status,
 		statusText: response.statusText,
-		error: errorBody?.error,
-		body: errorBody ? undefined : truncateDiagnosticString(body),
+		...(errorBody?.error === undefined ? {} : { error: errorBody.error as JsonValue }),
+		...(errorBody ? {} : { body: truncateDiagnosticString(body) }),
 		timestampMs: Date.now(),
 	});
 }
@@ -352,7 +354,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 
 export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 	model: Model<"pi-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: PiMessagesOptions,
 ): AssistantMessageEventStream => {
 	const eventStream = new AssistantMessageEventStream();
@@ -372,7 +374,27 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			let payload: unknown = {
 				model: model.id,
-				context,
+				context: {
+					...context,
+					messages: context.messages.map((message) =>
+						message.role === "toolResult"
+							? {
+									...message,
+									content: message.content.map((part) =>
+										part.type === "text"
+											? {
+													type: part.type,
+													text: part.text,
+													...(part.textSignature === undefined
+														? {}
+														: { textSignature: part.textSignature }),
+												}
+											: part,
+									),
+								}
+							: message,
+					),
+				},
 				options: {
 					temperature: options?.temperature,
 					maxTokens: options?.maxTokens,
@@ -410,6 +432,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 			}
 
 			for await (const piEvent of readPiMessagesEvents(response.body)) {
+				await options?.onProviderStreamEvent?.(piEvent, model);
 				const event = convertEvent(piEvent);
 				eventStream.push(event);
 				if (event.type === "done" || event.type === "error") {
@@ -428,7 +451,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 export const streamSimple: StreamFunction<"pi-messages", SimpleStreamOptions> = (
 	model: Model<"pi-messages">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const extra = options as PiMessagesOptions | undefined;

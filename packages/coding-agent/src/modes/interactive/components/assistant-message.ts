@@ -1,5 +1,13 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { type Component, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	Markdown,
+	type MarkdownTheme,
+	nextRenderRevision,
+	Spacer,
+	Text,
+} from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { type AssistantRenderDescriptor, createAssistantRenderDescriptors } from "./assistant-render-descriptors.ts";
@@ -27,7 +35,11 @@ export class AssistantMessageComponent extends Container {
 	private renderDescriptors: readonly AssistantRenderDescriptor[] = [];
 	private hasToolCalls = false;
 	private expanded = false;
+	private providerErrorOwned = false;
 	private isStreaming = false;
+	private thinkingVisibilityOverrides = new Map<number, boolean>();
+	/** Moves whenever the cached render is dropped; output is a function of the state `updateContent` records. */
+	private revision = nextRenderRevision();
 
 	constructor(
 		message?: AssistantMessage,
@@ -54,6 +66,7 @@ export class AssistantMessageComponent extends Container {
 
 	override invalidate(): void {
 		this.renderCache = undefined;
+		this.revision = nextRenderRevision();
 		super.invalidate();
 		this.renderDescriptors = [];
 		this.refreshContent();
@@ -62,6 +75,7 @@ export class AssistantMessageComponent extends Container {
 	setHideThinkingBlock(hide: boolean): void {
 		if (this.hideThinkingBlock === hide) return;
 		this.hideThinkingBlock = hide;
+		this.thinkingVisibilityOverrides.clear();
 		this.refreshContent();
 	}
 
@@ -77,10 +91,25 @@ export class AssistantMessageComponent extends Container {
 		this.refreshContent();
 	}
 
+	setProviderErrorOwned(owned: boolean): void {
+		if (this.providerErrorOwned === owned) return;
+		this.providerErrorOwned = owned;
+		this.refreshContent();
+	}
+
+	/** Transcript-only reasoning/empty streaming heads may sit inside a compact exploration group. */
+	get isExplorationDetail(): boolean {
+		return this.renderDescriptors.every((part) => part.kind === "spacer" || part.kind === "thinking-label");
+	}
+
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
 		this.renderDescriptors = [];
 		this.refreshContent();
+	}
+
+	override getRenderRevision(): number {
+		return this.revision;
 	}
 
 	override render(width: number): string[] {
@@ -112,12 +141,15 @@ export class AssistantMessageComponent extends Container {
 		}
 		this.lastMessageSignature = messageSignature;
 		this.renderCache = undefined;
+		this.revision = nextRenderRevision();
 		if (streamingChanged) this.renderDescriptors = [];
 		this.hasToolCalls = message.content.some((content) => content.type === "toolCall");
 		const descriptors = createAssistantRenderDescriptors(message, {
 			expanded: this.expanded,
+			providerErrorOwned: this.providerErrorOwned,
 			hiddenThinkingLabel: this.hiddenThinkingLabel,
 			hideThinkingBlock: this.hideThinkingBlock,
+			thinkingVisibilityOverrides: this.thinkingVisibilityOverrides,
 			hasToolCalls: this.hasToolCalls,
 		});
 		this.reconcileRenderDescriptors(descriptors);
@@ -153,20 +185,28 @@ export class AssistantMessageComponent extends Container {
 					transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
 				});
 			case "thinking-md":
-				return new Markdown(
-					descriptor.text,
-					this.outputPad,
-					0,
-					this.markdownTheme,
-					{
-						color: (text: string) => theme.fg("thinkingText", text),
-						italic: true,
-					},
-					{
-						transform: createMarkdownTransform("assistant-thinking", this.isStreaming, this.markdownTransformers),
-					},
+				return this.withThinkingToggle(
+					new Markdown(
+						descriptor.text,
+						this.outputPad,
+						0,
+						this.markdownTheme,
+						{
+							color: (text: string) => theme.fg("thinkingText", text),
+							italic: true,
+						},
+						{
+							transform: createMarkdownTransform(
+								"assistant-thinking",
+								this.isStreaming,
+								this.markdownTransformers,
+							),
+						},
+					),
+					descriptor,
 				);
 			case "thinking-label":
+				return this.withThinkingToggle(new Text(descriptor.text, this.outputPad, 0), descriptor);
 			case "error-text":
 				return new Text(descriptor.text, this.outputPad, 0);
 			case "provider-native-summary":
@@ -178,11 +218,30 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	/**
+	 * Left-clicking a thinking run toggles that run between its label and its body (upstream
+	 * 71026970a). The mouse handler is attached to the Markdown/Text child itself so the
+	 * incremental reconciler still sees the same child types it updates in place.
+	 */
+	private withThinkingToggle(component: Component, descriptor: AssistantRenderDescriptor): Component {
+		const runIndex = descriptor.thinkingRun;
+		if (runIndex === undefined) return component;
+		component.handleMouse = (event) => {
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			const hidden = this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock;
+			this.thinkingVisibilityOverrides.set(runIndex, !hidden);
+			this.refreshContent();
+			return { handled: true };
+		};
+		return component;
+	}
+
 	private createMessageSignature(message: AssistantMessage): string {
 		return createBoundedRenderSignature({
 			content: message.content,
 			hiddenThinkingLabel: this.hiddenThinkingLabel,
 			hideThinkingBlock: this.hideThinkingBlock,
+			thinkingVisibilityOverrides: [...this.thinkingVisibilityOverrides],
 			errorState: [message.diagnostics, message.errorMessage],
 			stopReason: message.stopReason,
 		});

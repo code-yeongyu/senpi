@@ -1,8 +1,11 @@
+import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { __setAnthropicOAuthNodeApisForTests, anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import type { AuthEvent, AuthPrompt } from "../src/auth/types.ts";
 
 const neverAbortedSignal = new AbortController().signal;
+const PREFERRED_CALLBACK_PORT = 53692;
+const nativeFetch = globalThis.fetch;
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -33,7 +36,7 @@ function getJsonBody(init?: RequestInit): Record<string, string> {
 	return JSON.parse(init.body) as Record<string, string>;
 }
 
-describe.sequential("Anthropic OAuth", () => {
+describe("Anthropic OAuth", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 		__setAnthropicOAuthNodeApisForTests(null);
@@ -77,6 +80,7 @@ describe.sequential("Anthropic OAuth", () => {
 				signal: neverAbortedSignal,
 				notify: (event) => events.push(event),
 				prompt: async (prompt) => {
+					if (prompt.type === "select") return "browser";
 					if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 					const authUrl = events.find((event) => event.type === "auth_url");
 					if (authUrl?.type !== "auth_url") throw new Error("Missing auth URL");
@@ -110,11 +114,15 @@ describe.sequential("Anthropic OAuth", () => {
 			signal: controller.signal,
 			notify: vi.fn(),
 			prompt: (prompt) =>
-				new Promise<string>((_resolve, reject) => {
-					promptSignal = prompt.signal;
-					prompt.signal?.addEventListener("abort", () => reject(new Error("prompt aborted")), { once: true });
-					promptOpened();
-				}),
+				prompt.type === "select"
+					? Promise.resolve("browser")
+					: new Promise<string>((_resolve, reject) => {
+							promptSignal = prompt.signal;
+							prompt.signal?.addEventListener("abort", () => reject(new Error("prompt aborted")), {
+								once: true,
+							});
+							promptOpened();
+						}),
 		});
 		const settled = login.then(
 			() => "resolved",
@@ -132,7 +140,7 @@ describe.sequential("Anthropic OAuth", () => {
 			anthropicOAuth.login({
 				signal: neverAbortedSignal,
 				notify: vi.fn(),
-				prompt: vi.fn(),
+				prompt: vi.fn(async (prompt: AuthPrompt) => (prompt.type === "select" ? "browser" : "")),
 			}),
 		).rejects.toThrow(/127\.0\.0\.1:53692/);
 	});
@@ -160,6 +168,7 @@ describe.sequential("Anthropic OAuth", () => {
 				if (event.type === "auth_url") authUrl = event.url;
 			},
 			prompt: async (prompt) => {
+				if (prompt.type === "select") return "browser";
 				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
 				const url = new URL(authUrl);
 				const state = url.searchParams.get("state");
@@ -172,6 +181,70 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(credentials.access).toBe("access-token");
 		expect(credentials.refresh).toBe("refresh-token");
 		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it("offers browser login first and uses the selected Anthropic copy code flow", async () => {
+		const selectPrompts: Array<{
+			message: string;
+			options: readonly { id: string; label: string }[];
+		}> = [];
+		let authUrl = "";
+		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			expect(getUrl(input)).toBe("https://platform.claude.com/v1/oauth/token");
+			const body = getJsonBody(init);
+			expect(body.grant_type).toBe("authorization_code");
+			expect(body.code).toBe("copied-code");
+			expect(body.state).toBe(new URL(authUrl).searchParams.get("state"));
+			expect(body.redirect_uri).toBe("https://platform.claude.com/oauth/code/callback");
+			return jsonResponse({
+				access_token: "access-token",
+				refresh_token: "refresh-token",
+				expires_in: 3600,
+			});
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const credentials = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: (event) => {
+				if (event.type === "auth_url") authUrl = event.url;
+			},
+			prompt: async (prompt) => {
+				if (prompt.type === "select") {
+					selectPrompts.push(prompt);
+					return "copy_code";
+				}
+				if (prompt.type !== "manual_code") throw new Error(`Unexpected prompt: ${prompt.type}`);
+				return `copied-code#${new URL(authUrl).searchParams.get("state")}`;
+			},
+		});
+
+		expect(credentials.access).toBe("access-token");
+		expect(credentials.refresh).toBe("refresh-token");
+		expect(new URL(authUrl).searchParams.get("redirect_uri")).toBe("https://platform.claude.com/oauth/code/callback");
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(selectPrompts).toEqual([
+			{
+				type: "select",
+				message: "Select Anthropic login method:",
+				options: [
+					{ id: "browser", label: "Browser login (default)" },
+					{ id: "copy_code", label: "Copy code login (headless)" },
+				],
+			},
+		]);
+	});
+
+	it("cancels when Anthropic login method selection is cancelled", async () => {
+		await expect(
+			anthropicOAuth.login({
+				signal: neverAbortedSignal,
+				prompt: async () => {
+					throw new Error("Login cancelled");
+				},
+				notify: () => {},
+			}),
+		).rejects.toThrow("Login cancelled");
 	});
 
 	it("omits scope from refresh token requests", async () => {
@@ -225,6 +298,7 @@ describe.sequential("Anthropic OAuth", () => {
 			notify: (event) => events.push(event),
 			prompt: async (prompt) => {
 				prompts.push(prompt);
+				if (prompt.type === "select") return "browser";
 				if (prompt.type === "manual_code") {
 					manualSignal = prompt.signal;
 					return "the-code";
@@ -239,5 +313,199 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(prompts.some((p) => p.type === "manual_code")).toBe(true);
 		// the prompt's signal is aborted once login settles, so UIs can dismiss it
 		expect(manualSignal?.aborted).toBe(true);
+	});
+
+	it("completes login through the browser callback and shows the sign-in page", async () => {
+		let exchangedCode: string | undefined;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+				if (getUrl(input) !== "https://platform.claude.com/v1/oauth/token")
+					return nativeFetch(input as string, init);
+				exchangedCode = getJsonBody(init).code;
+				return jsonResponse({ access_token: "access", refresh_token: "refresh", expires_in: 3600 });
+			}),
+		);
+
+		let callbackPage: Promise<Response> | undefined;
+		const credential = await anthropicOAuth.login({
+			signal: neverAbortedSignal,
+			notify: (event) => {
+				if (event.type !== "auth_url") return;
+				const authUrl = new URL(event.url);
+				const state = authUrl.searchParams.get("state") ?? "";
+				// The fork listener binds 53692 or an ephemeral port and advertises it in redirect_uri.
+				const redirectUri = new URL(authUrl.searchParams.get("redirect_uri") ?? "");
+				callbackPage = nativeFetch(
+					`http://127.0.0.1:${redirectUri.port}${redirectUri.pathname}?code=browser-code&state=${state}`,
+				);
+			},
+			prompt: (prompt) =>
+				prompt.type === "select"
+					? Promise.resolve("browser")
+					: new Promise((_, reject) => {
+							prompt.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+						}),
+		});
+
+		expect(credential.access).toBe("access");
+		expect(exchangedCode).toBe("browser-code");
+		const response = await callbackPage;
+		expect(response?.status).toBe(200);
+		expect(await response?.text()).toContain("Anthropic authentication completed.");
+	});
+});
+
+type PortHold = { bound: boolean; close: () => Promise<void> };
+
+/** Holds a loopback port with a real listener; `bound` is false when something else already owns it. */
+function occupyPort(port: number): Promise<PortHold> {
+	return new Promise((resolve) => {
+		const server: Server = createServer((_req, res) => {
+			res.writeHead(503);
+			res.end("occupied");
+		});
+		server.once("error", () => resolve({ bound: false, close: async () => {} }));
+		server.listen(port, "127.0.0.1", () =>
+			resolve({
+				bound: true,
+				close: () => new Promise<void>((done) => server.close(() => done())),
+			}),
+		);
+	});
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
+
+/** A manual-code prompt that stays open until the login aborts it. */
+function pendingPrompt(prompt: AuthPrompt): Promise<string> {
+	if (prompt.type === "select") return Promise.resolve("browser");
+	return new Promise<string>((_resolve, reject) => {
+		prompt.signal?.addEventListener("abort", () => reject(new Error("prompt aborted")), { once: true });
+	});
+}
+
+type StartedLogin = { login: Promise<{ access: string }>; authUrl: Promise<URL> };
+
+function startLogin(signal: AbortSignal = neverAbortedSignal): StartedLogin {
+	const authUrl = deferred<URL>();
+	const login = anthropicOAuth.login({
+		signal,
+		notify: (event) => {
+			if (event.type === "auth_url") authUrl.resolve(new URL(event.url));
+		},
+		prompt: pendingPrompt,
+	});
+	return { login, authUrl: authUrl.promise };
+}
+
+function redirectOf(authUrl: URL): URL {
+	const redirect = authUrl.searchParams.get("redirect_uri");
+	if (!redirect) throw new Error("auth URL carries no redirect_uri");
+	return new URL(redirect);
+}
+
+/** Token-exchange fake that lets loopback callback requests through to the real listener. */
+function stubTokenExchange(): { exchanges: Record<string, string>[]; loopbackFetch: typeof fetch } {
+	const realFetch = globalThis.fetch;
+	const exchanges: Record<string, string>[] = [];
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const url = getUrl(input);
+			if (url.startsWith("http://127.0.0.1:")) return realFetch(url, init);
+			exchanges.push(getJsonBody(init));
+			return jsonResponse({
+				access_token: `access-${exchanges.length}`,
+				refresh_token: "refresh",
+				expires_in: 3600,
+			});
+		}),
+	);
+	return { exchanges, loopbackFetch: realFetch };
+}
+
+describe("Anthropic OAuth callback listener", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it("binds an ephemeral loopback port when 53692 is already taken", async () => {
+		const occupied = await occupyPort(PREFERRED_CALLBACK_PORT);
+		const { exchanges, loopbackFetch } = stubTokenExchange();
+		try {
+			const started = startLogin();
+			const authUrl = await started.authUrl;
+			const redirect = redirectOf(authUrl);
+			expect(redirect.port).not.toBe(String(PREFERRED_CALLBACK_PORT));
+			const callback = await loopbackFetch(
+				`http://127.0.0.1:${redirect.port}/callback?code=browser-code&state=${authUrl.searchParams.get("state")}`,
+			);
+			expect(callback.status).toBe(200);
+			const credential = await started.login;
+			expect(credential.access).toBe("access-1");
+			expect(exchanges).toHaveLength(1);
+			expect(exchanges[0]?.code).toBe("browser-code");
+			expect(exchanges[0]?.redirect_uri).toBe(`http://localhost:${redirect.port}/callback`);
+		} finally {
+			await occupied.close();
+		}
+	});
+
+	it("keeps two concurrent logins in one process independent", async () => {
+		const { exchanges, loopbackFetch } = stubTokenExchange();
+		const first = startLogin();
+		const second = startLogin();
+		const [firstUrl, secondUrl] = await Promise.all([first.authUrl, second.authUrl]);
+		const firstPort = redirectOf(firstUrl).port;
+		const secondPort = redirectOf(secondUrl).port;
+		expect(secondPort).not.toBe(firstPort);
+		const secondCallback = await loopbackFetch(
+			`http://127.0.0.1:${secondPort}/callback?code=code-second&state=${secondUrl.searchParams.get("state")}`,
+		);
+		expect(secondCallback.status).toBe(200);
+		const firstCallback = await loopbackFetch(
+			`http://127.0.0.1:${firstPort}/callback?code=code-first&state=${firstUrl.searchParams.get("state")}`,
+		);
+		expect(firstCallback.status).toBe(200);
+		const [firstCredential, secondCredential] = await Promise.all([first.login, second.login]);
+		expect(secondCredential.access).toBe("access-1");
+		expect(firstCredential.access).toBe("access-2");
+		expect(exchanges.map((exchange) => [exchange.code, exchange.redirect_uri])).toEqual([
+			["code-second", `http://localhost:${secondPort}/callback`],
+			["code-first", `http://localhost:${firstPort}/callback`],
+		]);
+	});
+
+	it("times out an idle login after 10 minutes and releases its listener", async () => {
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		const controller = new AbortController();
+		const started = startLogin(controller.signal);
+		let outcome: string | undefined;
+		void started.login.then(
+			() => {
+				outcome = "resolved";
+			},
+			(error: unknown) => {
+				outcome = error instanceof Error ? error.message : String(error);
+			},
+		);
+		try {
+			const port = Number(redirectOf(await started.authUrl).port);
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+			await vi.waitFor(() => expect(outcome).toMatch(/timed out/i), { timeout: 5000 });
+			const released = await occupyPort(port);
+			expect(released.bound).toBe(true);
+			await released.close();
+		} finally {
+			controller.abort();
+		}
 	});
 });

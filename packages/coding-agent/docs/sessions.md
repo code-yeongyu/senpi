@@ -4,7 +4,7 @@ Senpi saves conversations as sessions so you can continue work, branch from earl
 
 ## Session Storage
 
-Sessions auto-save to `~/.senpi/agent/sessions/`, organized by working directory. Each session is a JSONL file with a tree structure.
+Sessions auto-save to `~/.senpi/agent/sessions/`, organized by working directory. Each session is a JSONL file with a tree structure. The file is created when the first user message is sent, so a session is not lost if senpi exits before the first assistant response.
 
 ```bash
 senpi -c                  # Continue most recent session
@@ -13,9 +13,22 @@ senpi --no-session        # Ephemeral mode; do not save
 senpi --name "my task"    # Set session display name at startup
 senpi --session <path|id> # Use a specific session file or partial session ID
 senpi --fork <path|id>    # Fork a session file or partial session ID into a new session
+senpi --rebind <path|id>  # Move a session of this repository, recorded at another path, here
 ```
 
 Use `/session` in interactive mode to see the current session file, session ID, message count, tokens, and cost.
+
+### Moved or re-cloned repositories
+
+Sessions are filed by the directory they started in. Each session also records which git repository that directory belonged to (its root commit and `origin` remote), so it can still be recognised after the repository moves.
+
+When `--session <id>` (or a pick in `--resume`) finds a session filed under another path and the current directory is the same git repository, senpi shows both paths and offers to move the session here. Answering `y` rebinds it: the session file moves to the current project, its recorded working directory is updated, and it keeps its id, history, goal, loops, and monitors. The old path no longer lists it. Use `--fork <id>` to copy it into a new session instead. A session from a different repository gets the fork prompt as before.
+
+The in-session `/resume` selector asks the same question when you pick such a session; answering No opens it where it is. The current-folder view of `/resume` and `--resume` also lists this repository's sessions whose old path no longer exists, marked "moved from <old path>", and `--continue` in a project with no session of its own offers the newest of them.
+
+A session that another senpi process still has open is never moved: the move stops and names that process (pid and directory) so you can quit it first. Each open session is advertised under `session-holders/` next to the session file; a record left by a process that has exited is ignored.
+
+`--rebind <path|id>` does the same without asking, for scripts. It refuses when the two directories are provably different repositories. Without an interactive terminal, `--session` never prompts: it prints the exact `--rebind` and `--fork` commands and exits with a non-zero status.
 
 For the JSONL file format and SessionManager API, see [Session Format](session-format.md).
 
@@ -25,7 +38,7 @@ For the JSONL file format and SessionManager API, see [Session Format](session-f
 |---------|-------------|
 | `/resume` | Browse and select previous sessions |
 | `/new` | Start a new session |
-| `/name <name>` | Set the current session display name |
+| `/rename [name]` | Rename the current session (`/name` is an alias) |
 | `/session` | Show session info |
 | `/tree` | Navigate the current session tree |
 | `/fork` | Create a new session from a previous user message |
@@ -51,10 +64,10 @@ When available, senpi uses the `trash` CLI for deletion instead of permanently r
 
 ## Naming Sessions
 
-Use `/name <name>` to set a human-readable session name:
+Use `/rename [name]` to set a human-readable session name. With an argument it sets the name immediately; without one it opens an inline editor prefilled with the current name (Enter commits, Esc cancels, empty names are rejected). `/name` is an alias.
 
 ```text
-/name Refactor auth module
+/rename Refactor auth module
 ```
 
 Set the name at startup with `--name` or `-n`:
@@ -114,6 +127,8 @@ Selecting an assistant, tool, compaction, or other non-user entry:
 3. Lets you continue from that point.
 
 Selecting the root user message resets the leaf to an empty conversation and places the original prompt in the editor.
+
+RPC clients get the same rule without an interactive picker. `navigate_tree` with `entryId` applies this selection behavior by default on the host and returns the text that would have gone to the editor as `editorText`; `edit_user_message` goes one step further and writes the edited prompt into the session as a new branch. To resume an existing branch at its exact entry instead (including an unanswered edited user message), use `navigate_tree` with `intent: "resume"`: the requested entry stays the leaf and no editor text is returned. Both intents are described in [RPC](rpc.md#navigate_tree).
 
 ## `/tree`, `/fork`, and `/clone`
 

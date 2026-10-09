@@ -24,6 +24,11 @@ export function buildCompactionContext(input: {
 	toolAdmissionEnabled: boolean;
 	breakerFallback: boolean;
 	laneOwnsCompaction: boolean;
+	/**
+	 * The lane replays into a resident transcript that only accepts appends, so no per-turn reduction
+	 * runs, including the breaker fallback: a rewrite of an already-sent message diverges it.
+	 */
+	appendOnlyTranscript?: boolean;
 	emergencyPruneLatch: EmergencyPruneLatch;
 	/** Emits the compaction log event for a real emergency prune at its one true site. */
 	logEmergencyPrune?: (fields: { route: string; tokensBefore: number; tokens: number }) => void;
@@ -39,6 +44,7 @@ export function buildCompactionContext(input: {
 	);
 	const sourceMessages =
 		!input.laneOwnsCompaction &&
+		input.appendOnlyTranscript !== true &&
 		(input.breakerFallback ||
 			shouldApplyContextReduction({
 				usageTokens: input.ctx.getContextUsage()?.tokens ?? null,

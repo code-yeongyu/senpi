@@ -229,17 +229,21 @@ export default function anthropicWebSearchExtension(pi: ExtensionAPI): void {
 		clearUi(ctx);
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (!supportsNativeAnthropicWebSearch(ctx.model)) {
-			return undefined;
-		}
+	pi.on(
+		"before_agent_start",
+		async (event, ctx) => {
+			if (!supportsNativeAnthropicWebSearch(ctx.model)) {
+				return undefined;
+			}
 
-		if (!isAnthropicWebSearchEnabled()) {
-			return undefined;
-		}
+			if (!isAnthropicWebSearchEnabled()) {
+				return undefined;
+			}
 
-		return {
-			systemPrompt: `${event.systemPrompt}\n${ANTHROPIC_WEB_SEARCH_SECTION}`,
-		};
-	});
+			return {
+				systemPrompt: `${event.systemPrompt}\n${ANTHROPIC_WEB_SEARCH_SECTION}`,
+			};
+		},
+		{ previewSafe: true },
+	);
 }

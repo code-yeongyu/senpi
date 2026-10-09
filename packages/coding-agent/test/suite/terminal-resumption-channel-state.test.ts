@@ -83,6 +83,7 @@ function createRunner(): FakeRunner {
 
 	const pi = {
 		registerTool: (tool: ToolLike) => tools.set(tool.name, tool),
+		registerMessageRenderer: () => {},
 		on: (eventType: string, handler: Handler) => {
 			const registered = handlers.get(eventType) ?? [];
 			registered.push(handler);

@@ -53,12 +53,35 @@ describe("goal cache-warm entry renderer", () => {
 		expect(text).toContain("Cache-warm wait · iteration 2");
 		expect(text).toContain("ready 2026-07-29 00:04 UTC (4m 30s)");
 		expect(text).toContain("1 wake source on duty");
+		expect(text).toMatch(/resumes as soon as a wake source\s+delivers/);
 		expect(text).toMatch(/5m\s+prompt-cache TTL/);
-		expect(text).toContain("~120K tokens kept warm");
-		expect(text).toContain("$0.324 saved");
+		expect(text).not.toContain("stays inside");
+		expect(text).toContain("~120K cache-read/write tokens (cumulative)");
+		expect(text).toContain("$0.324 discount if reused");
 	});
 
-	it("renders the resumed wake with savings", () => {
+	// code-yeongyu/senpi#831: a best-effort cache has no TTL, so the card claims neither warmth nor savings.
+	it("describes a best-effort provider cache without a TTL, warmth, or savings claim", () => {
+		for (const phase of ["scheduled", "resumed"] as const) {
+			const text = renderToText({
+				phase,
+				goalId: "goal-best-effort",
+				delayMs: 3_570_000,
+				waitedMs: 3_570_000,
+				activeMonitorCount: 1,
+				iteration: 1,
+				cache: { cachedTokens: 120_000, cacheLifetime: "best-effort" },
+			});
+			expect(text).toContain("~120K cache-read/write tokens (cumulative)");
+			expect(text).toMatch(/best-effort/);
+			expect(text).not.toContain("TTL");
+			expect(text).not.toContain("kept warm");
+			expect(text).not.toContain("stayed warm");
+			expect(text).not.toContain("saved");
+		}
+	});
+
+	it("renders elapsed wait with a conditional cache estimate", () => {
 		const text = renderToText({
 			phase: "resumed",
 			goalId: "goal-1",
@@ -70,10 +93,10 @@ describe("goal cache-warm entry renderer", () => {
 			cache: { ttlSeconds: 300, cachedTokens: 120_000, estimatedSavedUsd: 0.324 },
 		});
 		expect(text).toContain("Cache-warm wake · iteration 3");
-		expect(text).toContain("ready 2026-07-29 00:04 UTC (4m 30s)");
+		expect(text).toContain("waited 4m 30s");
 		expect(text).toContain("2 wake sources on duty");
-		expect(text).toContain("~120K tokens stayed warm");
-		expect(text).toContain("$0.324 saved");
+		expect(text).toContain("~120K cache-read/write tokens (cumulative)");
+		expect(text).toContain("$0.324 discount if reused");
 	});
 
 	it("renders the ready time in the local timezone", () => {
@@ -112,6 +135,7 @@ describe("goal cache-warm entry renderer", () => {
 			cache: { ttlSeconds: 300, cachedTokens: 120_000, estimatedSavedUsd: 0.324 },
 		});
 		expect(scheduled).toContain("TTL may elapse");
+		expect(scheduled).toContain("resumes as soon as a wake source delivers");
 		expect(scheduled).not.toContain("stays inside");
 		expect(scheduled).not.toContain("kept warm");
 		expect(scheduled).not.toContain("saved");
@@ -138,6 +162,8 @@ describe("goal cache-warm entry renderer", () => {
 		});
 		expect(text).toContain("Cache-warm wait");
 		expect(text).toContain("1 wake source on duty");
+		expect(text).toContain("Stall backstop");
+		expect(text).toContain("resumes as soon as a wake source delivers");
 		expect(text).not.toContain("tokens");
 	});
 

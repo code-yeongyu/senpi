@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
 	CreateAgentSessionRuntimeFactory,
 	CreateAgentSessionRuntimeResult,
@@ -36,6 +36,27 @@ function root(): string {
 	roots.push(value);
 	return value;
 }
+
+// The real config-reload default event source constructs node:worker_threads Workers on
+// darwin/linux; counting constructions through this mock is the observable for sharing.
+// (Module scope: vitest hoists vi.mock regardless, and a nested hoisted mock warns.)
+const workerMocks = vi.hoisted(() => ({ constructions: 0, terminates: 0 }));
+vi.mock("node:worker_threads", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:worker_threads")>();
+	const { EventEmitter } = await import("node:events");
+	class CountedWorker extends EventEmitter {
+		constructor(..._args: unknown[]) {
+			super();
+			workerMocks.constructions += 1;
+		}
+		postMessage(_message: unknown): void {}
+		terminate(): Promise<number> {
+			workerMocks.terminates += 1;
+			return Promise.resolve(0);
+		}
+	}
+	return { ...actual, Worker: CountedWorker };
+});
 
 function provider(api: string, owner: string) {
 	return {
@@ -157,6 +178,7 @@ function hostFixture() {
 				// answer them because both surfaces share one state builder.
 				effectiveServiceTier: undefined,
 				isFastModeActive: () => false,
+				agent: { state: {} },
 				get isStreaming() {
 					return streaming.get(durableSessionId) ?? false;
 				},
@@ -386,4 +408,73 @@ describe("multi-session RPC isolation battery", () => {
 		);
 		expect(host.registry.list()).toEqual([]);
 	});
+
+	// Windows keeps config watches on the main thread (no worker is constructed there),
+	// so the shared-worker invariant is asserted only on worker-offloaded platforms.
+	it.skipIf(process.platform === "win32")(
+		"builds one shared watch worker for three in-process sessions with config-reload on",
+		async () => {
+			const host = hostFixture();
+			await Promise.all(
+				[0, 1, 2].map((index) =>
+					host.send({
+						id: `open-${index}`,
+						type: "open_session",
+						cwd: host.cwd,
+						sessionPath: join(host.cwd, `${index}.jsonl`),
+					}),
+				),
+			);
+			const handles = [0, 1, 2].map((index) => openedHandle(host.output, `open-${index}`));
+			const entries = handles.map((handle) => host.registry.getForCommand(handle, "prompt"));
+
+			// One real config-reload instance per session, defaulting to the production
+			// event source (no injected subscribe), exactly as the builtin loads per session.
+			const shutdowns: Array<() => unknown> = [];
+			for (const [index, entry] of entries.entries()) {
+				const agentDir = join(host.cwd, `agent-${index}`);
+				mkdirSync(agentDir, { recursive: true });
+				const handlers = new Map<string, Array<(event: unknown, context: unknown) => unknown>>();
+				const extensionApi = {
+					events: createEventBus(),
+					on: (event: string, handler: (event: unknown, context: unknown) => unknown) => {
+						const registered = handlers.get(event) ?? [];
+						registered.push(handler);
+						handlers.set(event, registered);
+					},
+				} as unknown as ExtensionAPI;
+				configReloadExtension(extensionApi, { agentDir });
+				const context = {
+					cwd: host.cwd,
+					mode: "rpc",
+					sessionManager: entry.runtime!.session.sessionManager,
+					ui: { notify: () => {} },
+					isIdle: () => true,
+					hasPendingMessages: () => false,
+					isProjectTrusted: () => true,
+					isCompacting: () => false,
+					requestReload: async () => {},
+				} as unknown as ExtensionContext;
+				const sessionStart = handlers.get("session_start")?.[0];
+				if (!sessionStart) throw new Error("config-reload extension did not register session_start");
+				await runWithProviderScope(entry.scope, () =>
+					sessionStart({ type: "session_start", reason: "startup" } satisfies SessionStartEvent, context),
+				);
+				const sessionShutdown = handlers.get("session_shutdown")?.[0];
+				if (!sessionShutdown) throw new Error("config-reload extension did not register session_shutdown");
+				shutdowns.push(() =>
+					runWithProviderScope(entry.scope, () =>
+						sessionShutdown({ type: "session_shutdown", reason: "quit" }, context),
+					),
+				);
+			}
+
+			// Three sessions with config-reload on share one process-wide watch worker.
+			expect(workerMocks.constructions).toBe(1);
+
+			// Draining every session's watchers tears the shared worker down exactly once.
+			for (const shutdown of shutdowns) await shutdown();
+			expect(workerMocks.terminates).toBe(1);
+		},
+	);
 });

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,7 +7,7 @@ import {
 	SessionManager,
 	setSessionEntryLoaderForTesting,
 } from "../../src/core/session-manager.ts";
-import { ResidentStringStore } from "../../src/core/session-resident-store.ts";
+import { RESIDENT_STRING_PREFIX, ResidentStringStore } from "../../src/core/session-resident-store.ts";
 import { assistantMsg, userMsg } from "../utilities.ts";
 
 const LARGE_TEXT = "x".repeat(1024 * 1024);
@@ -64,17 +64,30 @@ describe("SessionManager resident mirror", () => {
 			return loadEntriesFromFile(filePath);
 		});
 		try {
-			session.getEntries();
-			session.getEntries();
-			expect(loadCount).toBe(2);
+			expect(session.getEntries().map((entry) => entry.type)).toEqual([
+				"message",
+				"message",
+				"message",
+				"compaction",
+			]);
+			// The first full read after the trim is kept and reused, and entries appended since still appear.
+			const laterId = session.appendMessage(userMsg("later"));
+			expect(
+				session
+					.getEntries()
+					.map((entry) => entry.id)
+					.at(-1),
+			).toBe(laterId);
+			expect(session.getEntries()).toHaveLength(5);
+			expect(loadCount).toBe(1);
 			session.buildSessionContext();
-			expect(loadCount).toBe(2);
+			expect(loadCount).toBe(1);
 		} finally {
 			restoreLoader();
 		}
 	});
 
-	it("batches compact-context recovery after resident eviction", () => {
+	it("recovers compact context from the blob backing after resident eviction", () => {
 		const session = SessionManager.create(tempDir, tempDir);
 		session.appendMessage(assistantMsg("ready"));
 		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
@@ -89,14 +102,41 @@ describe("SessionManager resident mirror", () => {
 		});
 		try {
 			session.buildContextEntries();
-			expect(loadCount).toBe(1);
+			expect(loadCount).toBe(0);
 			expect(session.getResidentStoreStats().blobBytes).toBeLessThanOrEqual(64 * 1024 * 1024);
 			const compactCache = (session as unknown as { compactEntriesCache: { entries: unknown[] } })
 				.compactEntriesCache;
 			expect(JSON.stringify(compactCache.entries)).not.toContain(LARGE_TEXT);
 			const firstReadCount = loadCount;
 			session.buildContextEntries();
-			expect(loadCount - firstReadCount).toBeLessThanOrEqual(1);
+			expect(loadCount - firstReadCount).toBe(0);
+		} finally {
+			restoreLoader();
+		}
+	});
+
+	it("recovers evicted entries in getEntries from the blob backing", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendMessage(assistantMsg("ready"));
+		for (let i = 0; i < 70; i++) {
+			session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}:RESUME_EVICTED_SENTINEL` });
+		}
+
+		let loadCount = 0;
+		const restoreLoader = setSessionEntryLoaderForTesting((filePath) => {
+			loadCount++;
+			return loadEntriesFromFile(filePath);
+		});
+		try {
+			const entries = session.getEntries();
+			const payloads = entries
+				.filter((entry) => entry.type === "custom")
+				.map((entry) => (entry.data as { payload: string }).payload);
+
+			expect(payloads).toHaveLength(70);
+			expect(payloads[0]).toBe(`0:${LARGE_TEXT}:RESUME_EVICTED_SENTINEL`);
+			expect(payloads.at(-1)).toBe(`69:${LARGE_TEXT}:RESUME_EVICTED_SENTINEL`);
+			expect(loadCount).toBe(0);
 		} finally {
 			restoreLoader();
 		}
@@ -115,9 +155,107 @@ describe("SessionManager resident mirror", () => {
 		expect(session.getEntries().map((entry) => entry.id)).toEqual([firstKeptEntryId]);
 	});
 
-	it("bounds standalone resident stores too", () => {
-		const store = new ResidentStringStore();
+	it("bounds standalone resident stores when a backing directory exists", () => {
+		const store = new ResidentStringStore({ blobsDir: () => join(tempDir, "standalone-blobs") });
 		for (let i = 0; i < 70; i++) store.externalize(`${i}:${LARGE_TEXT}`);
 		expect(store.stats().blobBytes).toBeLessThanOrEqual(64 * 1024 * 1024);
+	});
+
+	it("keeps sentinel tokens out of the branched session JSONL", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendMessage(assistantMsg("ready"));
+		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
+		const firstKeptEntryId = session.appendMessage(userMsg("before"));
+		session.appendMessage(assistantMsg("after"));
+		const previousBlobsDir = session.getResidentStore().resolvedBlobsDir();
+
+		const branchedFile = session.createBranchedSession(firstKeptEntryId);
+		expect(branchedFile).toBeDefined();
+		if (previousBlobsDir) {
+			expect(existsSync(previousBlobsDir)).toBe(false);
+		}
+		const branched = readFileSync(branchedFile!, "utf8");
+		expect(branched).not.toContain(RESIDENT_STRING_PREFIX);
+		expect(branched).toContain(LARGE_TEXT.slice(0, 64));
+	});
+
+	it("removes the blob directory when the session manager is disposed", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
+		const blobsDir = session.getResidentStore().resolvedBlobsDir();
+		expect(blobsDir).toBeDefined();
+		expect(existsSync(blobsDir!)).toBe(true);
+
+		session.dispose();
+
+		expect(existsSync(blobsDir!)).toBe(false);
+	});
+
+	it("clears blobs a dead process left behind when a persisted session is reopened", () => {
+		// An assistant message is what flushes the JSONL to disk; without one there
+		// is no file for a later process to reopen.
+		const previous = SessionManager.create(tempDir, tempDir);
+		previous.appendMessage(assistantMsg("ready"));
+		for (let i = 0; i < 70; i++) previous.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
+		const sessionFile = previous.getSessionFile()!;
+		const previousBlobsDir = previous.getResidentStore().resolvedBlobsDir()!;
+		// The writer is gone with its process; only its blob directory outlived it.
+		previous.dispose();
+		mkdirSync(previousBlobsDir, { recursive: true });
+		const staleBlob = join(previousBlobsDir, `${"9".repeat(64)}.blob`);
+		writeFileSync(staleBlob, JSON.stringify({ v: 1, text: LARGE_TEXT }), "utf8");
+
+		const reopened = SessionManager.open(sessionFile, tempDir);
+
+		expect(existsSync(staleBlob)).toBe(false);
+		const payloads = reopened
+			.getEntries()
+			.filter((entry) => entry.type === "custom")
+			.map((entry) => (entry.data as { payload: string }).payload);
+		expect(payloads).toHaveLength(70);
+		expect(payloads[0]).toBe(`0:${LARGE_TEXT}`);
+		expect(payloads.at(-1)).toBe(`69:${LARGE_TEXT}`);
+	});
+
+	it("keeps the blob directory while another live manager still owns the session file", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendMessage(assistantMsg("ready"));
+		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
+		const blobsDir = session.getResidentStore().resolvedBlobsDir()!;
+		const sessionFile = session.getSessionFile()!;
+
+		// A second manager over the same file (the app-server loads a thread that is
+		// already open). Neither its open nor its disposal may take the cache the
+		// first manager is still hydrating from.
+		const sibling = SessionManager.open(sessionFile, tempDir);
+		expect(readdirSync(blobsDir).some((name) => name.endsWith(".blob"))).toBe(true);
+
+		sibling.dispose();
+
+		expect(existsSync(blobsDir)).toBe(true);
+		expect(
+			session
+				.getEntries()
+				.filter((entry) => entry.type === "custom")
+				.map((entry) => (entry.data as { payload: string }).payload),
+		).toHaveLength(70);
+
+		// Once the last owner lets go, the directory goes with it.
+		session.dispose();
+
+		expect(existsSync(blobsDir)).toBe(false);
+	});
+
+	it("removes the previous session's blob directory on newSession", () => {
+		const session = SessionManager.create(tempDir, tempDir);
+		session.appendMessage(assistantMsg("ready"));
+		for (let i = 0; i < 70; i++) session.appendCustomEntry("large-metadata", { payload: `${i}:${LARGE_TEXT}` });
+		const previousBlobsDir = session.getResidentStore().resolvedBlobsDir();
+		expect(previousBlobsDir).toBeDefined();
+		expect(existsSync(previousBlobsDir!)).toBe(true);
+
+		session.newSession();
+
+		expect(existsSync(previousBlobsDir!)).toBe(false);
 	});
 });

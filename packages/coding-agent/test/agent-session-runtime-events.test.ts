@@ -139,7 +139,13 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		const secondSessionFile = runtimeHost.session.sessionFile;
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "new", targetSessionFile: undefined },
-			{ type: "session_shutdown", reason: "new", targetSessionFile: secondSessionFile },
+			// The host hands each session_shutdown handler its own budget signal.
+			{
+				type: "session_shutdown",
+				reason: "new",
+				targetSessionFile: secondSessionFile,
+				signal: expect.any(AbortSignal),
+			},
 			{ type: "session_start", reason: "new", previousSessionFile: originalSessionFile },
 		]);
 
@@ -151,7 +157,12 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		await runtimeHost.session.bindExtensions({});
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "resume", targetSessionFile: originalSessionFile },
-			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
+			{
+				type: "session_shutdown",
+				reason: "resume",
+				targetSessionFile: originalSessionFile,
+				signal: expect.any(AbortSignal),
+			},
 			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
 		]);
 	});
@@ -238,7 +249,12 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		await runtimeHost.session.bindExtensions({});
 		expect(events).toEqual([
 			{ type: "session_before_fork", entryId: userMessage.entryId, position: "before" },
-			{ type: "session_shutdown", reason: "fork", targetSessionFile: runtimeHost.session.sessionFile },
+			{
+				type: "session_shutdown",
+				reason: "fork",
+				targetSessionFile: runtimeHost.session.sessionFile,
+				signal: expect.any(AbortSignal),
+			},
 			{ type: "session_start", reason: "fork", previousSessionFile },
 		]);
 

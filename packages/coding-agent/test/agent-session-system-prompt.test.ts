@@ -74,7 +74,8 @@ describe("AgentSession CLI system prompt overrides", () => {
 		});
 
 		expect(session.systemPrompt).toContain("You are senpi, a coding agent.");
-		expect(session.systemPrompt).toContain("Current working directory:");
+		// senpi#2093: cwd travels in the environment-context message, not the prompt.
+		expect(session.systemPrompt).not.toContain("Current working directory:");
 		expect(session.systemPrompt).toContain("\n\nFirst CLI append.\n\nSecond CLI append.");
 
 		session.dispose();

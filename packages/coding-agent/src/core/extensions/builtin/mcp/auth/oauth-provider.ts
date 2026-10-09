@@ -31,15 +31,54 @@ export function tokenExpiresAt(tokens: OAuthTokens, now = Date.now()): number | 
 	return now + tokens.expires_in * 1000;
 }
 
+/** Compares authorization server identifiers the way the SDK does: parsed, tolerating one trailing `/`. */
+export function sameAuthorizationServer(a: string, b: string): boolean {
+	const normalize = (value: string): string => {
+		try {
+			return new URL(value).href.replace(/\/$/, "");
+		} catch (error) {
+			if (error instanceof TypeError) return value.replace(/\/$/, "");
+			throw error;
+		}
+	};
+	return normalize(a) === normalize(b);
+}
+
+/**
+ * The authorization server a stored grant belongs to (senpi#2940, GHSA-6qxp-vccf-f47h): its `issuer` stamp, or
+ * for a record saved before the stamp existed, the authorization server its sign-in discovered. A record with
+ * neither cannot be attributed, so its refresh token is never presented anywhere.
+ */
+export function storedGrantIssuer(record: McpStoredAuth | undefined): string | undefined {
+	return record?.issuer ?? record?.discoveryState?.authorizationServerUrl?.toString();
+}
+
+/**
+ * Fixes who an unstamped grant belongs to before the discovery record it falls back to is replaced (senpi#2940).
+ * A later discovery reflects what the MCP server advertises now, not where the grant was issued, so it must never
+ * attribute an existing grant: the grant keeps the server it was attributed to, or loses its refresh token.
+ */
+export function freezeGrantAttribution(record: McpStoredAuth | undefined): McpStoredAuth {
+	const next: McpStoredAuth = { ...(record ?? {}) };
+	if (next.issuer !== undefined || (next.accessToken === undefined && next.refreshToken === undefined)) return next;
+	const issuer = storedGrantIssuer(next);
+	if (issuer !== undefined) next.issuer = issuer;
+	else delete next.refreshToken;
+	return next;
+}
+
 export function storedAuthToTokens(record: McpStoredAuth | undefined, now = Date.now()): OAuthTokens | undefined {
 	if (record?.accessToken === undefined || record.accessToken.length === 0) return undefined;
 	const expiresIn =
 		record.expiresAt === undefined ? undefined : Math.max(0, Math.ceil((record.expiresAt - now) / 1000));
+	const issuer = storedGrantIssuer(record);
 	return {
 		access_token: record.accessToken,
-		refresh_token: record.refreshToken,
+		// An unattributed refresh token is withheld: the SDK would post it to whichever server it discovers.
+		refresh_token: issuer === undefined ? undefined : record.refreshToken,
 		token_type: "Bearer",
 		...(expiresIn === undefined ? {} : { expires_in: expiresIn }),
+		...(issuer === undefined ? {} : { issuer }),
 	};
 }
 
@@ -47,6 +86,7 @@ export function mergeTokensIntoStoredAuth(
 	current: McpStoredAuth | undefined,
 	tokens: OAuthTokens,
 	serverUrl: string,
+	issuer?: string,
 ): McpStoredAuth {
 	const next: McpStoredAuth = {
 		...(current ?? {}),
@@ -58,6 +98,8 @@ export function mergeTokensIntoStoredAuth(
 	const expiresAt = tokenExpiresAt(tokens);
 	if (expiresAt !== undefined) next.expiresAt = expiresAt;
 	else delete next.expiresAt;
+	const stamp = tokens.issuer ?? issuer;
+	if (stamp !== undefined) next.issuer = stamp;
 	return next;
 }
 
@@ -116,11 +158,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
+		// The SDK stamps `info.issuer`; it is persisted with the rest so the binding survives a restart.
 		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: info }));
 	}
 
 	async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
-		await this.#store.update((current) => ({ ...(current ?? {}), discoveryState: state }));
+		await this.#store.update((current) => ({ ...freezeGrantAttribution(current), discoveryState: state }));
 	}
 
 	discoveryState(): OAuthDiscoveryState | undefined {

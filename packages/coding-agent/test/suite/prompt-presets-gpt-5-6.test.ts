@@ -27,7 +27,7 @@ function createModel(id: string): Model<Api> {
 function buildPrompt(
 	presetName: PromptPresetName,
 	modelId: string,
-	selectedTools: readonly string[] = ["eval", "monitor", "read", "bash"],
+	selectedTools: readonly string[] = ["eval", "monitor", "read", "bash", "apply_patch"],
 ): string {
 	const settings: PromptPresetSettings = { promptPreset: presetName };
 	const preset = resolvePreset(createModel(modelId), settings, {
@@ -66,27 +66,25 @@ function occurrences(haystack: string, needle: string): number {
 
 const EXPECTED_CONCERN: Record<Gpt56ExecutionRuleId, Gpt56ExecutionConcern> = {
 	"eval-first-routing": "tool-orchestration",
-	"parallel-batching": "tool-orchestration",
-	"over-call-bias": "tool-orchestration",
-	"in-kernel-reduction": "tool-orchestration",
+	"evidence-comparison": "tool-orchestration",
+	"perceived-state-loop": "tool-orchestration",
 	"stay-direct-exceptions": "tool-orchestration",
 	delegation: "delegation",
 	"todo-granularity": "todo-discipline",
-	"test-first": "test-first",
+	"test-decision": "tests",
 	"atomic-commits": "commit-discipline",
 	"lsp-symbol-routing": "symbol-routing",
 };
 
 const EXPECTED_SECTION: Record<Gpt56ExecutionRuleId, string> = {
 	"eval-first-routing": "Working the Task",
-	"parallel-batching": "Working the Task",
-	"over-call-bias": "Working the Task",
-	"in-kernel-reduction": "Working the Task",
+	"evidence-comparison": "Working the Task",
+	"perceived-state-loop": "Working the Task",
 	"stay-direct-exceptions": "Working the Task",
 	delegation: "Working the Task",
 	"todo-granularity": "Working the Task",
 	"lsp-symbol-routing": "Working the Task",
-	"test-first": "Pragmatism & Scope",
+	"test-decision": "Verification",
 	"atomic-commits": "Hard Limits",
 };
 
@@ -105,7 +103,7 @@ describe("GPT-5.6 execution discipline", () => {
 			expect(rule.directive).not.toMatch(/\p{Extended_Pictographic}/u);
 		}
 		const orchestration = GPT56_EXECUTION_RULES.filter((rule) => rule.concern === "tool-orchestration");
-		expect(orchestration.length).toBeGreaterThanOrEqual(5);
+		expect(orchestration.length).toBe(4);
 	});
 
 	it("renders every directive exactly once, at its point of use in the core", () => {
@@ -142,7 +140,15 @@ describe("GPT-5.6 execution discipline", () => {
 		expect(sections.get("Working the Task")).toContain(bridge);
 	});
 
-	it("drops the anti-test default that contradicts the test-first directive", () => {
+	it("routes a narrow question through request_user_input when it is available", () => {
+		const prompt = buildPrompt("gpt-5.6", "gpt-5.6-sol");
+
+		expect(prompt).toContain("request_user_input");
+		expect(prompt).toContain("one narrow question through request_user_input when it is available, then stop.");
+		expect(prompt).not.toContain("one narrow question, then stop.");
+	});
+
+	it("renders the apply_patch file-operations tuning for the luna variant", () => {
 		// given
 		const prompt = buildPrompt("gpt-5.6", "gpt-5.6-luna");
 

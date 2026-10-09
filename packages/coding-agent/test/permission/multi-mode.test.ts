@@ -178,13 +178,11 @@ describe("Permission System - Multi-Mode Tests", () => {
 		it("auto-denies with helpful message when no rules match", () => {
 			// given
 			const request = createRequest({ id: "print-test-1", permission: "bash", patterns: ["rm -rf /"] });
-			const staticRuleset: Ruleset = [];
-			const cliOverride: Ruleset = [];
 			const emittedEvents: Array<{ event: string; data: unknown }> = [];
 			const emitEvent = (event: string, data: unknown) => emittedEvents.push({ event, data });
 
 			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+			const result = handleNoUI(request, { emitEvent });
 
 			// then
 			expect(result).toEqual({
@@ -197,85 +195,6 @@ describe("Permission System - Multi-Mode Tests", () => {
 				event: "permission_asked",
 				data: request,
 			});
-		});
-
-		it("allows when CLI override specifies allow", () => {
-			// given
-			const request = createRequest({ id: "print-test-2", permission: "bash", patterns: ["ls"] });
-			const staticRuleset: Ruleset = [];
-			const cliOverride: Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then
-			expect(result).toBeUndefined();
-			expect(emitEvent).toHaveBeenCalledWith("permission_asked", request);
-		});
-
-		it("denies when CLI override specifies deny", () => {
-			// given
-			const request = createRequest({ id: "print-test-3", permission: "bash", patterns: ["rm *"] });
-			const staticRuleset: Ruleset = [];
-			const cliOverride: Ruleset = [{ permission: "bash", pattern: "rm *", action: "deny" }];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then
-			expect(result).toEqual({
-				requestID: "print-test-3",
-				reply: "reject",
-				message: "Permission denied by CLI flag: bash",
-			});
-		});
-
-		it("allows when static ruleset specifies allow", () => {
-			// given
-			const request = createRequest({ id: "print-test-4", permission: "edit", patterns: ["src/*.ts"] });
-			const staticRuleset: Ruleset = [{ permission: "edit", pattern: "src/*", action: "allow" }];
-			const cliOverride: Ruleset = [];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then
-			expect(result).toBeUndefined();
-		});
-
-		it("denies when static ruleset specifies deny", () => {
-			// given
-			const request = createRequest({ id: "print-test-5", permission: "edit", patterns: ["node_modules/*"] });
-			const staticRuleset: Ruleset = [{ permission: "edit", pattern: "node_modules/*", action: "deny" }];
-			const cliOverride: Ruleset = [];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then
-			expect(result).toEqual({
-				requestID: "print-test-5",
-				reply: "reject",
-				message: "Permission denied by config: edit",
-			});
-		});
-
-		it("CLI override takes precedence over static ruleset", () => {
-			// given - static denies but CLI allows
-			const request = createRequest({ id: "print-test-6", permission: "bash", patterns: ["ls"] });
-			const staticRuleset: Ruleset = [{ permission: "bash", pattern: "*", action: "deny" }];
-			const cliOverride: Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }];
-			const emitEvent = vi.fn();
-
-			// when
-			const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
-
-			// then - CLI override wins
-			expect(result).toBeUndefined();
 		});
 	});
 
@@ -372,12 +291,10 @@ describe("Permission System - Multi-Mode Tests", () => {
 			it("auto-denies same as print mode", () => {
 				// given
 				const request = createRequest({ id: "sdk-no-ui-1", permission: "bash", patterns: ["rm -rf /"] });
-				const staticRuleset: Ruleset = [];
-				const cliOverride: Ruleset = [];
 				const emitEvent = vi.fn();
 
 				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, emitEvent);
+				const result = handleNoUI(request, { emitEvent });
 
 				// then
 				expect(result?.reply).toBe("reject");

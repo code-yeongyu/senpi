@@ -12,7 +12,7 @@
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { MonitorRegistry } from "./monitor-registry.ts";
-import type { RestoreHandler, RestoreHandlerResult } from "./restore.ts";
+import type { RestoreContext, RestoreHandler, RestoreHandlerResult } from "./restore.ts";
 import type { ManifestMonitor, TerminalManifestCheckpoint, TerminalManifestWriter } from "./terminal-manifest.ts";
 
 /**
@@ -65,9 +65,13 @@ const DEFAULT_RESTORED_WATCH_MS = 300_000;
  */
 export function createCheckpointedFileRestoreHandler(deps: CheckpointedFileRestoreDeps): RestoreHandler {
 	const now = deps.now ?? Date.now;
-	return async (monitor: ManifestMonitor): Promise<RestoreHandlerResult> => {
+	return async (monitor: ManifestMonitor, context: RestoreContext): Promise<RestoreHandlerResult> => {
 		if (monitor.runtimeKind !== "file" || monitor.path === undefined || monitor.cwd === undefined) {
 			return lost(`monitor ${monitor.monitorId} is not a restorable file watch`);
+		}
+		const ephemeral = monitor.durabilityClass === "ephemeral";
+		if (ephemeral && context.remainingMs === undefined) {
+			return lost(`monitor ${monitor.monitorId} has no time left on its deadline`);
 		}
 		const saved = monitor.lastCheckpoint;
 		if (saved === null) return lost(`monitor ${monitor.monitorId} has no checkpoint to compare against`);
@@ -84,12 +88,18 @@ export function createCheckpointedFileRestoreHandler(deps: CheckpointedFileResto
 
 		let runtimeId: string;
 		try {
+			const startedAt = now();
+			// An ephemeral watch resumes with only the time it had left; a durable one has no deadline.
+			const lifetime =
+				ephemeral && context.remainingMs !== undefined
+					? { persistent: false, deadlineMs: startedAt + context.remainingMs, timeoutMs: context.remainingMs }
+					: { persistent: true, deadlineMs: null, timeoutMs: remainingMs(monitor, startedAt) };
 			const registered = await deps.registry.registerFile({
 				description: monitor.description,
 				path: monitor.path,
 				monitorId: monitor.monitorId,
+				...lifetime,
 				event: monitor.event ?? "create",
-				timeoutMs: remainingMs(monitor, now()),
 				cwd: monitor.cwd,
 				// Preserve the parent approved at permission time: registerFile re-checks it.
 				...(monitor.approvedParent !== undefined ? { approvedParent: monitor.approvedParent } : {}),

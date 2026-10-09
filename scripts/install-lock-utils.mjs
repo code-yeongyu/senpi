@@ -1,5 +1,20 @@
 import { posix } from "node:path";
 
+/**
+ * The indentation a lockfile already uses. Every lock-class artifact here is tab-indented and
+ * `npm install --package-lock-only` preserves whatever indent it finds, so a generator that
+ * re-serializes with a fixed width reformats the whole file and buries the dependency delta
+ * under thousands of whitespace-only lines.
+ */
+export function detectJsonIndent(source, fallback = "\t") {
+	const match = /^\{\r?\n([ \t]+)"/.exec(source);
+	return match ? match[1] : fallback;
+}
+
+export function serializeLockfile(lockfile, indent) {
+	return `${JSON.stringify(lockfile, null, indent)}\n`;
+}
+
 export function packageDependencies(entry) {
 	return {
 		...(entry.dependencies ?? {}),

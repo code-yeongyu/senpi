@@ -1,4 +1,1149 @@
+## 2026-10-08 - A required question never tells the model to proceed without an answer (senpi#2949)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `QuestionRequest` gains optional `required?: boolean`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/params.ts`: both tool schemas (`ask_user_question` and `request_user_input`) accept an optional `required` boolean.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/schema.ts`: `toCanonical` validates `required` and carries it on the request only when true.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/format.ts`: for a required question, every settlement without an answer (`timed_out`, `cancelled`, `orphaned-after-restart`, `unavailable`) renders "No answer: do not take the action it gates. Keep that action pending and end the turn." in both the tool result and the late-answer frame; a selection made before going idle is shown but labelled not an answer. Calls without the flag render exactly as before.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: passes `required` to both formatters; the same-turn re-ask guard uses the no-action text for a required question; the tool description says what `required` does in one clause.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts`: a required question that cannot be restored after a restart keeps its flag, so its orphaned notice is the no-action text.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: the ask-user timeout Notification renders the required text for a required question, so it no longer says the agent continues on best judgment.
+
+### Why
+
+- An approval gate asked through the question tool had no "no answer means don't" mode: a timeout told the model to "continue the work to completion on your best judgment", and a real model weighed that harness text above the skill's "a timed-out answer is not approval" and took the gated action (senpi#2949).
+
+### Why an extension could not handle it
+
+- The result text of every settlement is produced by the builtin ask-user tool; another extension cannot change what this tool returns.
+
+### Expected merge conflict zones
+
+- LOW: `ask-user/format.ts` `formatBody` and its two exports, `ask-user/params.ts` both parameter objects, `ask-user/tool.ts` `result`/`deliverAnswer`/re-ask guard, `types.ts` `QuestionRequest`.
+
+## 2026-10-08 - ExtensionRunner.emitBusEvent (senpi#2967)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBusEvent(channel, data)` publishes on the shared extension event bus, the counterpart of `onBusEvent`. The session uses it to announce `engine:turn-limit` when it refuses an engine-originated turn.
+
+### Why
+
+- The engine-wide turn bound (`src/core/engine-turn-limit.ts`) lives in the session, not in an extension, and hosts/extensions need an observable signal when it trips.
+
+### Why an extension could not handle it
+
+- The session owns the runner's bus; extensions emit through `pi.events`, which the session cannot reach.
+
+### Expected merge conflict zones
+
+- LOW: `runner.ts` next to `onBusEvent`.
+
+## 2026-10-07 - Opt-in shared transcript for non-mutating context hooks (senpi#2525)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `ContextHandlerOptions` with `mutatesMessages?: boolean`; the `context` and `context_with_system` `pi.on` overloads accept it; `Extension` gains `nonMutatingContextHandlers?: WeakSet<HandlerFn>`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `pi.on("context" | "context_with_system", handler, { mutatesMessages: false })` records the handler on the extension.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitContext` skips the per-turn `cloneJsonValue` deep copy and shares the live transcript objects (a shallow array copy only) when every `context` and `context_with_system` handler about to run, honoring `excludeExtensionPath`, declared `mutatesMessages: false`. Any undeclared handler keeps the historical behavior: one deep clone up front. Each cloned message is marked transient, so the token estimators compute it directly instead of keying and caching an object that never repeats. Both phases' handler sets are snapshotted once at the start of the pass and used for the decision and both loops, so a handler registered while an earlier one runs joins from the next request and never sees the shared transcript in this one. Entry-id tagging is unchanged: originals resolve through the existing WeakMap, and messages derived by pipeline stages keep identity through `inheritSessionContextEntryId`.
+
+### Why
+
+senpi#2525: the per-turn deep clone of the whole context cost about 27% of a turn's run-loop time on a 10k-message uncompacted session. Handlers that only read or return new objects pay for isolation they never use; the declaration lets them share the transcript, while any undeclared handler forces the clone back on for everyone.
+
+### Why an extension could not handle it
+
+The clone decision is made by the runner before any handler runs; no extension API can observe or change how the host passes `event.messages`.
+
+### Expected merge conflict zones
+
+- `types.ts`: the `pi.on` overload block and the `Extension` handler-registry fields.
+- `loader.ts`: the `on()` registration body.
+- `runner.ts`: the `emitContext` prologue.
+
+## 2026-10-07 - An extension's model switch names the extension (senpi#2870)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SetModelHandler` takes an optional `ModelChangeOrigin` as its second argument.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `pi.setModel` and `pi.setSessionModel` pass `{ source: "extension", actor: extension.path }`, so the `model_change` entry names the extension that switched. The public API (`pi.setModel(model)`) is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/switch-admission.ts`: a `PendingModelSwitch` carries the origin of the switch it holds.
+
+### Why
+
+senpi#2870: a switch made by an extension was indistinguishable from one made by the user.
+
+### Why an extension could not handle it
+
+The attribution is added by the loader around every extension's calls.
+
+### Expected merge conflict zones
+
+- `loader.ts`: the `setModel` and `setSessionModel` members of the extension API object.
+- `types.ts`: `SetModelHandler`.
+
+## 2026-10-03 - Session-scoped EvalHandleHost provide/read pair (codemode plan node 10)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.provideEvalHandleHost(host)` registers the session's `EvalHandleHost` (the capability declared in `eval-handle-host.ts`: `watch`/`result`/`send`/`cancel`/`output` fenced by owner session, id and `run_epoch`); `ExtensionContext.evalHandleHost` reads it back, optional and absent on runtimes without a provider; `ExtensionRuntimeState.evalHandleHost` is the per-runtime slot.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API method stores the host on the extension runtime (last provider wins); `invalidate()` clears it so a replaced or reloaded session never reads a stale host.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createContext` exposes the slot as the `evalHandleHost` getter beside `kernelTools`.
+- `packages/coding-agent/src/index.ts` re-exports the capability types and `EvalHandleError`.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the task/workpool owner (an extension) provides the capability and codemode (another extension) consumes it per session; the direction is the reverse of `kernelTools` (long-lived, provider-to-consumer), so a call-scoped AsyncLocalStorage does not fit, and a process-global registry would let every session's task extension register into one slot on a multi-session host.
+- `packages/coding-agent/src/core/extensions/loader.ts` / `runner.ts`: the runtime is the only object both extensions of one session share, so it is the session-scoped carrier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns `ExtensionAPI` and `ExtensionContext`; an extension cannot add a surface other extensions receive, and two extensions have no shared per-session object other than the runtime.
+
+### Expected merge conflict zones
+
+- `types.ts`: the `ExtensionContext` body after `kernelTools`, the `ExtensionAPI` tool-registration block after `registerRemovedToolHint`, and the tail of `ExtensionRuntimeState`; `loader.ts` `createExtensionAPI` beside `registerRemovedToolHint` and the `invalidate` closure; `runner.ts` `createContext` getters.
+
+## 2026-10-02 - Extension memory reporters (senpi#2561)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.registerMemoryReporter(name, reporter)` and `MemoryReporter` (`() => Readonly<Record<string, number>>`); `Extension.memoryReporters` is optional for records built before it.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the API stores reporters per extension and refuses the report's reserved names.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getMemoryReporters()` returns every extension's reporters in load order.
+
+### Why
+
+- Layers owned by extensions (task children, caches) must appear in the on-demand memory report; only the extension knows their size.
+
+### Why an extension could not handle it
+
+- The report is assembled by the host; an extension needs a registration surface to contribute to it.
+
+### Expected merge conflict zones
+
+- `types.ts` beside `registerMarkdownTransformer`; `loader.ts` `createExtensionAPI` and the extension record literal; `runner.ts` beside `getMarkdownTransformers`.
+
+## 2026-10-02 - Ask-user answer provenance (senpi#2533)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `QuestionResponse.resolvedBy` identifies the answering surface; no-answer terminal outcomes omit it.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts`: new bus event `ask-user:closed` (`ASK_USER_CLOSED_EVENT`, `AskUserClosedEvent { requestId, status, resolvedBy? }`, `emitAskUserClosed`). The existing `ask-user:settled` payload's `response` now carries `resolvedBy`; it still fires for the same outcomes (never for `cancelled`).
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`, `resume.ts`: `ask-user:closed` fires exactly once per question for every terminal outcome: answers, comments, timeouts, cancellation, unavailable UI, and orphaned restart recovery. Detaching the old UI on reload is not a terminal outcome and emits nothing.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/pending.ts`, `format.ts`: submitted responses keep `resolvedBy`, and blocking tool result details carry it.
+- `packages/coding-agent/docs/extensions.md`: documents both bus events and `resolvedBy`.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: integrations mirroring a question need to tell users where it was answered.
+- `ask-user:closed`: `ask-user:settled` skips `cancelled`, so an extension never learned that a non-blocking question was cancelled; changing settled would have changed its existing listeners (the hooks builtin).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the answering host must provide provenance in the shared response type.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: QuestionResponse.
+- Fork-only `builtin/ask-user/` files: the settle path in `tool.ts` `startQuestion`, the unavailable returns in `createAskUserTool`, and `settleUnrestorable` in `resume.ts`.
+
+## 2026-10-01 - Extension load key (senpi#2509)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/extension-load-key.ts` (new): `extensionLoadKey(api)` returns the opaque identity of the extension load that created an `ExtensionAPI`, the same object the host holds as that load's runtime.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `createExtensionAPI` records that key for every API it builds.
+
+### Why
+
+The tool-search builtin registers its service per extension load, and the session that binds that load adopts it, so no service is shared across sessions.
+
+### Why an extension could not handle it
+
+Only the loader knows which load created an API. The public `ExtensionAPI` is unchanged.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: the import block and the end of `createExtensionAPI`.
+
+## 2026-10-01 - Commands declare required arguments (senpi#2479)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: expose `RegisteredCommand.requiresArguments`; false submits on picker Enter, and when omitted a declared `argumentHint` makes Enter wait for input.
+
+### Why
+
+A usage hint cannot tell the picker whether bare invocation opens a menu or needs input, so optional-argument commands opt into first-Enter submission.
+
+### Why an extension could not handle it
+
+The host owns the public registration contract.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: RegisteredCommand metadata.
+
+## 2026-09-29 - Explicit Astra Ultrafast request tier (senpi#2399)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: add `ultrafast` to the public ServiceTier type.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: extension contexts and provider registrations must describe the native tier.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: an extension cannot widen the host's public extension contract.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: ServiceTier union.
+
 # Core Extensions Changes
+
+## 2026-10-01 - `before_agent_start` distinguishes admitted deliveries (senpi#2424)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `BeforeAgentStartEvent.trigger` adds `"delivery"` for a turn started by an admitted `session_control_delivery`; `"prompt"` and `"extension"` retain their existing meanings.
+- `packages/coding-agent/src/core/extensions/session-control-types.ts`: `isSessionControlDeliveryDetails` is the shared predicate for the full admission provenance (`delivery_id`, `source`, and `deliverAs`) consumed by the host and todotools.
+
+### Why
+
+- A session-control delivery is the target session's work request, while an extension bootstrap is not. The two paths previously shared `"extension"`, so an extension could not apply first-request policy correctly.
+
+### Why an extension could not handle it
+
+- The host emits `before_agent_start` and owns the public event discriminant; an extension can only consume the value it receives.
+
+### Expected merge conflict zones
+
+- `types.ts`: the `BeforeAgentStartEvent.trigger` union and its JSDoc.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): shared type roots (contract wave)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: What changed: adopted upstream ToolAnnotations/ToolNamespace/ToolLoadout, outputSchema/defaultActive/prepareLoadout, ExtensionToolContext nested executeTool, parentToolCallId, structuredContent, pi.on() unsubscribe return for every overload, provider_stream_event, context_with_system, agent_before_settle and TurnEndEvent boundary state, virtual models, split ProviderModelConfig, getSettings, InlineExtension replaceable/builtin. Kept fork: ToolExposure direct/search/eval (+ model-only/hidden; deferred/codemode accepted as aliases), search metadata, executeTool<TDetails> API and the single generic ExecuteToolOptions, registerMcpServer(name, McpServerDeclaration), lazy tool activators, removed-tool hints, RPC channel, before_agent_start preview shape, fork provider/runtime registration types. Excluded (D-2, D-5): unregisterMcpServer, getMcpServers, mcp_servers_change, McpServerConfig/McpServerRegistry, cache_warming_decision. Why: omo consumes the fork exposure literals, registerMcpServer, lazy activators and executeTool; upstream additions are adopted only where they do not duplicate a fork capability. Why an extension could not handle it: this file is the extension API contract itself. Expected merge conflict zones: imports, ToolExposure block and normalizeToolExposure, ToolDefinition exposure fields, on() overload list, ExtensionAPI MCP/virtual-model block, ProviderModelConfig, ToolInfo, ExtensionRuntimeState, ExtensionContextActions tail.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the four shared type roots (plan D-24 contract wave, D-2, D-3, D-16).
+
+### Why an extension could not handle it
+
+They are the public type contracts every provider, the agent loop, extensions and RPC compile against; an extension consumes these types and cannot change them.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/index.ts`: What changed: union of fork exports (`ExecuteTool*`, `ToolPermissionRequest`) and upstream exports (boundary/draft types, `ContextWithSystemEvent`, `ExtensionToolContext`, `ExtensionVirtualModel`, `ProviderStreamEvent`, `ToolAnnotations`, `ToolLoadout*`, `ToolNamespace`, ...); dropped auto-merged `CacheWarmingDecisionEvent(Result)` and `McpServersChangeEvent` (not in the A2 types). Every re-exported name was checked to exist in `types.ts`. Expected merge conflict zones: the `export type { ... } from "./types.ts"` list.
+- `packages/coding-agent/src/core/extensions/loader.ts`: What changed: `pi.on()` returns an unsubscribe for every overload and registers a per-call wrapper (the `previewSafe` WeakSet now records the registered wrapper, which is what the runner dispatches and checks); `createExtensionRuntime()` adds `getSettings`, `pendingVirtualModelRegistrations`, `createContext`, `registerVirtualModel`/`unregisterVirtualModel`; `ExtensionAPI` adds `getSettings()`, `registerVirtualModel()`, `unregisterVirtualModel()`; `createExtension()` derives source/baseDir through `getSyntheticPathSource()`/`isSyntheticPath()` so both `<builtin:x>` and upstream `builtin:x` paths are synthetic; `LoadExtensionsResult.warnings` (upstream duplicate-runtime prevention, 8d897edaa6) is initialised and returned. Kept byte-identical: the static `VIRTUAL_MODULES` alias table (incl. `@code-yeongyu/senpi`), the static bundled imports it references, native Bun importer + `importNodeOnlyApi("jiti/static")` lazy jiti, reserved `tool_search` (builtin scoping), fork `registerMcpServer(name, McpServerDeclaration)` via `validateMcpServerDeclaration`, session control / rpc API, extension module cache. Why: upstream API additions omo and user extensions can call, without giving up the fork loader's single-generation module cache and bundled-name aliases (omo bundle-purity pins the alias set). Why an extension could not handle it: the loader builds the `pi` API object itself. Not adopted: `../mcp-servers.ts` (`McpServerRegistry`, `validateMcpServerConfig`, `unregisterMcpServer`, `getMcpServers`) (D-2); upstream lazy `getCreateJiti()`/`getVirtualModules()` wiring (the fork already defers jiti and keeps its alias table in this file). Per-ref git cache (f444ea5eaf) and the replaced-builtin warning (9d1a650352) live entirely in `package-manager.ts`/`resource-loader.ts` (L7a); the loader-side half of 8d897edaa6 is the `warnings` field above. Expected merge conflict zones: import block (bundled imports vs upstream lazy loaders, source-info helpers, virtual-models import), type import list, `on()` body, the API tail after `rpc` (upstream MCP + virtual model methods), `createExtensionModuleImporter` jiti options, `createExtension` head, `loadExtensionsInternal` locals. Upstream `BUILTIN_PATH_PREFIX`, `getSyntheticPathSource()`, `isSyntheticPath()` adopted beside the fork `system` scope; consumed by `loader.ts`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: What changed: adopted upstream `emitBoundary()` (turn_end / agent_before_settle boundary drafts, per-handler preview rebuild, invalid-preview reporting), `createToolContext(toolCallId, signal)` (nested `ctx.tools` / `ctx.executeTool()` backed by `ExtensionContextActions.executeTool` / `getCallableTools`), dispatch over per-dispatch handler snapshots (`snapshotEventHandlers`, so `pi.on()` unsubscribe and registration during a dispatch are safe), `context_with_system` second phase plus system-message restoration after `context` handlers (the filter and restore are skipped when the transcript has no system message, so a `context` handler's `event.messages` stays the list the request carries - fork context-clone contract), `structuredContent` on `tool_result`, fail-closed `user_bash` (invalid results and handler throws reject instead of falling through to local execution), virtual model registration flush and live `registerVirtualModel`/`unregisterVirtualModel`, `runtime.getSettings`, `runtime.createContext`, `ContextWithSystemEvent`/`TurnEndEvent`/`AgentBeforeSettleEvent` removed from the generic `emit()` union. Kept fork: tool-hook lifecycle observer and `nextToolHookRunIndex` pairing (PreToolUse/PostToolUse status), `uiPromptDepth`, `createContext(extensionPath)` per handler, `excludeExtensionPath` on `context`/`context_with_system`/`before_provider_request`, `SESSION_CONTEXT_ENTRY_ID` tagging via `cloneJsonValue`, `emitModelSelect` with live prompt options, the fork `before_agent_start` shape (`systemPrompt` string parameter, `preview`/`previewSafe`, abort `signal`, `trigger`, `{ messages?, systemPrompt? }` result), provider flush through `drainPendingProviderRegistrations`. `createToolContext` gained an optional third `baseContext` parameter so the host's per-invocation context (senpi `steeringSignal`, disposal) is the one the nested-call properties are defined on. Why: upstream nested tool calls, boundary drafts, virtual models and unsubscribe are required by the adopted session projection and extension API; the fork keeps its prompt-preview, hook-status and per-extension context semantics that omo and the fork builtins depend on. Why an extension could not handle it: the runner is the event dispatcher every extension goes through. Not adopted: `emitCacheWarmingDecision` / `CacheWarmingAction` (D-5), `reportUnhandledMcpServers` / `mcp_servers_change` listener / `reportedMcpServers` (D-2), upstream `normalizeBuildSystemPromptOptions` / `forceSystemPrompt` before_agent_start model (C-EX-9). Expected merge conflict zones: import block (pi-ai value import of `getCurrentSystemMessage`, system-prompt import), private field block after `getAgentDirFn`, `bindCore()` runtime copies and the provider/virtual-model flush, `createToolContext` signature, every `for ... of snapshotEventHandlers(...)` loop head in fork-modified emitters (`emitUserBash`, `emitContext`, `emitBeforeProviderRequest`, `emitBeforeProviderHeaders`, `emitBeforeAgentStart`), `emitModelSelect` vs upstream `emitCacheWarmingDecision` slot.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: What changed: extension tools now execute with an `ExtensionToolContext` built by `runner.createToolContext(toolCallId, signal, invocation?.context)`; kept fork per-invocation context factory (steering signal + dispose) and `addedToolNames` lazy-activation reporting. Why: upstream nested tool calls need the tool-call id on the context; the fork's steering-aware invocation context must stay the base object. Why an extension could not handle it: this is the adapter between registered tools and the agent runtime. Expected merge conflict zones: `wrapRegisteredTool` body and signature.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the extension loader/runner/wrapper adopt upstream contracts additively and keep the fork builtins, signatures and loader alias table (plan D-2).
+
+### Why an extension could not handle it
+
+This is the extension host itself; extensions cannot redefine how they are loaded, wrapped or dispatched.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-29 - `listAdmittedDeliveries()` reports deliveries the session file refused
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts` (fork-only): `AdmittedDeliveries.failed?: readonly FailedDelivery[]` and the new `FailedDelivery { delivery_id, error }`, present only while non-empty, so a ledger with no refused write is unchanged; `already_admitted` also covers a failed delivery until the file takes a later entry.
+
+### Why
+
+A delivery whose entry the file refused must be settled rather than held (senpi#2328, todo 28); the drain needs to see that it failed and why.
+
+### Why an extension could not handle it
+
+The ledger is the runtime's; this is its public shape.
+
+### Expected merge conflict zones
+
+- `AdmittedDeliveries` in `session-control-types.ts`.
+
+## 2026-09-29 - `pi.session`: external-message admission, its ledger, the durable header and the control endpoint; `session_control_wake`
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/session-control-types.ts` (new): the contract - `SessionControlActions`, `RegisterControlEndpointOptions` (`inboxDir`, `drain`, optional `isSessionReferenced`), `SessionControlRegistration` (`registered { socket, dispose }` | `unsupported { unsupported_platform | unsupported_mode }` | `failed { reason }`), `SessionControlWakeEvent { reason, reasons, delivery_ids? }`, the admission input/result/gate/ledger types and `SESSION_CONTROL_DELIVERY_TYPE`. Re-exported from `types.ts`, `extensions/index.ts` and the package root.
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.session: SessionControlActions` (`registerControlEndpoint`, `admissionGate`, `admitExternalMessage`, `listAdmittedDeliveries`, `persistHeaderNow`); the `session_control_wake` event in `ExtensionEvent` and its `on` overload; optional `ExtensionActions.sessionControl`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the runtime starts with a throwing pre-bind `sessionControl` stub; `pi.session.*` asserts the instance is active and delegates to the bound actions.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindCore` copies `sessionControl` when the host supplies it.
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports the new types.
+
+### Why
+
+The session gateway applies other sessions' messages through one seam inside the target (the OmO thread component): it needs an atomic, idempotent admission call, the runtime's ledger to reconcile claims, a durable session id before exposure, and an endpoint plus edge-driven wakes so an idle target drains without a timer. A plain senpi TUI never registers, so it binds no socket and writes no registry entry.
+
+### Why an extension could not handle it
+
+The atomicity and the ledger live in the session runtime's queues and persistence, and the endpoint needs the TUI's editor, question and stop/continue state; none of it is reachable from the existing API.
+
+### Expected merge conflict zones
+
+- `types.ts`: the `ExtensionEvent` union after `AgentSettledEvent`, the `on` overload after `agent_settled`, the end of `ExtensionAPI` after `events`, the end of `ExtensionActions`, the `session-control-types.ts` import/export lines.
+- `loader.ts`: the runtime stub literal after `setSessionFastMode`, the API literal before `rpc`.
+- `runner.ts`: the `bindCore` action copies.
+
+## 2026-09-29 - Turns requested during `session_start` dispatch start after every handler (senpi#1972)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindCore` routes `sendMessage(..., { triggerTurn: true })` and `sendUserMessage` through a `SessionStartTurnGate`, and `emit` runs a `session_start` dispatch inside that gate (the former `emit` body is now the private `dispatchEmit`; `emit` itself is not `async`, so every other event resolves on exactly the microtask it did before — an extra `async` hop there delayed `agent_end` settlement enough to break `post-compaction-tool-continuation-deadlock`). A turn an extension requests while `session_start` handlers are still being dispatched starts right after the last handler returns, in request order; a synchronous throw from starting it is reported through `emitError` with `RUNTIME_EXTENSION_PATH`. Messages without `triggerTurn`, and turns requested from any other event, go through unchanged and immediately.
+- `packages/coding-agent/src/core/extensions/session-start-turn-gate.ts` (new, fork-only): the gate.
+
+### Why
+
+- Handlers run one after another in registration order, and some extensions start a turn from their own `session_start` handler (terminal monitor restore, goal continuation, loop runs). That turn reached the provider before later handlers had set up their per-session state. The Claude subscription provider restores its continuity binding in its `session_start` handler and is registered after those extensions, so the first resumed turn found no binding and re-sent the whole conversation as `flatten / registry_miss` while a valid binding sat on disk (senpi#1972, oh-my-openagent#8424 finding 3).
+- Holding the turn removes the order dependency itself: nothing is reordered, ordinary event dispatch and `message_end` rewrite ordering are untouched, and it covers every extension, not just that provider.
+- It cannot deadlock a handler: `sendMessage` / `sendUserMessage` are fire-and-forget, so no handler awaits the turn it requested. The held turn still starts inside `AgentSession.bindExtensions` before its binding-phase prompt readiness is cleared, so the senpi goal-resume exemption (b5ec70f266) sees the same state as before.
+
+### Why an extension could not handle it
+
+- The order problem sits between extensions: the extension that starts the turn cannot know which later handler the turn depends on, and a handler cannot run before the ones registered ahead of it. Only the runner sees the whole dispatch.
+
+### Expected merge conflict zones
+
+- LOW: the `sendMessage` / `sendUserMessage` lines in `bindCore`, the `sessionStartTurns` field next to `shutdownHandler`, and the two-line `emit` wrapper above `dispatchEmit`. An upstream edit inside the old `emit` body now lands in `dispatchEmit`.
+
+## 2026-09-29 - `pi.sharedHostEnabled` is removed from the extension API (senpi#2328)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionAPI.sharedHostEnabled` is removed, and so are `ExtensionSessionProfile.sharedHostEnabled` and its `false` default in `DEFAULT_EXTENSION_SESSION_PROFILE`. The profile now carries `sessionKind` and `sessionContext` only; both are unchanged.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `ExtensionSessionOptions.sharedHostEnabled` is removed, `sessionProfile()` no longer fills it, and `createExtensionAPI` no longer puts it on the `pi` object. No deprecated alias remains: an extension that reads `pi.sharedHostEnabled` gets `undefined`.
+- This supersedes the 2026-09-09 entries below that introduced `ExtensionAPI.sharedHostEnabled` and carried it in `ExtensionSessionProfile`.
+
+### Why
+
+- The field could only ever be `true` inside the interactive shared-host join, which is removed (senpi#2328). Keeping it would advertise a capability no session can have.
+
+### Why an extension could not handle it
+
+- `ExtensionAPI` and the loader that builds it are the extension contract itself.
+
+### Expected merge conflict zones
+
+- LOW: the `ExtensionSessionProfile` interface, `DEFAULT_EXTENSION_SESSION_PROFILE`, and the Session Context block at the head of `ExtensionAPI` in `types.ts`.
+- LOW: `ExtensionSessionOptions`, `sessionProfile()`, and the head of the `api` object in `createExtensionAPI` in `loader.ts`.
+
+## 2026-09-27 - `kernelPrelude`, `permissionParser`, and the `tool_activated` event on the extension API
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`:
+  - `KernelPreludeContribution`, and `ToolDefinition.kernelPrelude`.
+  - `ToolPermissionRequest`, and `ToolDefinition.permissionParser(input, cwd)`.
+  - `ToolActivatedEvent`, plus its `pi.on("tool_activated")` overload.
+  - `ToolInfo` now carries `kernelPrelude` and `permissionParser`.
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports `KernelPreludeContribution` and `ToolPermissionRequest`.
+- `packages/coding-agent/src/core/extensions/kernel-prelude.ts` (new): validates a prelude's exports against the built-in kernel helpers.
+
+### Why
+
+- These are generic extension hooks, so a whole capability can ship from an extension package without edits to senpi core.
+
+### Why an extension could not handle it
+
+- They are public extension API types.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `ToolDefinition` field list, the `ExtensionEvent` union, the `on()` overloads, and the `ToolInfo` pick in `types.ts`.
+
+## 2026-09-27 - Directory entries and JSON dependencies load on Bun 1.3.x (senpi#2164)
+
+### What changed
+
+- `bun-extension-importer.ts`: only files the graph transpiles (`.[cm]?[jt]sx?`) get a `senpi-extension:` id. Every other resolved file (JSON, TOML, text, native addons) resolves to its real path, so Bun's own loader imports or requires it, attributes included. `import()` of an extension path that is a directory resolves it through `Bun.resolveSync` (package `main`/`exports`, then `index.*`) before importing; a regular file keeps the direct realpath, because `Bun.resolveSync` reads a literal `?` in a path as a query.
+- `bun-extension-registry.ts`: `onResolve` no longer hands non-JS ids back to Bun's `file` namespace, because the importer no longer mints them. `metadata()` treats an absolute-path id as that file, so `import.meta.resolve` still returns a `file:` URL and `require.resolve` the path for those targets.
+
+### Why
+
+- On Bun 1.3.x a runtime plugin's `onResolve` hand-back to the `file` namespace works only for a statically linked import. A runtime `import()`, a `require()`, or the importer's own top-level import fails with `Cannot find module 'file:/…'` or `ENOENT reading "file:/…"`. This was measured on 1.3.14; 1.4.0 accepts the same hand-back. In practice ajv's `require("./refs/data.json")` broke every `pi-zai-mcp` entry point, and a package extension declared as `"."` (`pi-glm-usage`) never loaded, while native Bun loads both. The existing `preserves import attributes when an extension computes the specifier` regression failed on 1.3.14 for the same reason.
+
+### Why an extension could not handle it
+
+- This is the loader that evaluates extension source; it runs before any extension exists.
+
+### Expected merge conflict zones
+
+- LOW: `resolveTarget`/`fileTarget` and the returned `import()` in `bun-extension-importer.ts`; `metadata().resolvePath` and the `onResolve` body in `bun-extension-registry.ts`.
+
+## 2026-09-25 - before_agent_start says who started the turn (`trigger`) (senpi#2137)
+
+### What changed
+
+- `types.ts` `BeforeAgentStartEvent.trigger: "prompt" | "extension"`. `runner.ts` `emitBeforeAgentStart` takes an optional `trigger` (default `"prompt"`) and puts it on the event. `agent-session.ts` passes `"extension"` from the `sendCustomMessage(..., { triggerTurn: true })` path; the user-prompt path and the preview keep the default. `docs/extensions.md` documents the field.
+
+### Why
+
+- The user-prompt path and the hidden extension-triggered path emitted the same event shape, so a handler could not tell a user request from an extension's bootstrap text. The todotools first-turn plan opener armed on an omo onboarding turn and then skipped the user's real first request (senpi#2137).
+
+### Why an extension could not handle it
+
+- Only the host knows which path started the turn; the event is the one place handlers see it.
+
+### Expected merge conflict zones
+
+- The `BeforeAgentStartEvent` interface, the `emitBeforeAgentStart` options object, and the `triggerTurn` call site in `agent-session.ts`.
+
+## 2026-09-24 - before_agent_start handlers opt in to the preview pass with `previewSafe` (senpi#2115)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `BeforeAgentStartHandlerOptions` (`previewSafe?: boolean`), accepted as the optional third argument of the `before_agent_start` overload of `ExtensionAPI.on`; `Extension` gains optional `previewSafeHandlers?: WeakSet<HandlerFn>`. `ExtensionContext.getPromptCachePrefixRequest?(options?)` and `ExtensionContextActions.getPromptCachePrefixRequest?` take `PromptCachePrefixRequestOptions` (`signal`) and resolve a `PromptCachePrefixResult` (`{ status: "ready", request }` or `{ status: "skipped", reason }`) instead of `PromptCachePrefixRequest | undefined`. The `preview` doc on `BeforeAgentStartEvent` says only preview-safe handlers receive it.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `on(event, handler, options)` records a `before_agent_start` handler registered with `{ previewSafe: true }` in `extension.previewSafeHandlers`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: new `getPreviewUnsafeBeforeAgentStartPaths()` lists extensions with a `before_agent_start` handler that is not preview-safe; `emitBeforeAgentStart`'s fifth argument gains `signal`, a preview invokes only preview-safe handlers, and an aborted signal stops dispatch before the next handler. The bound `getPromptCachePrefixRequest` context action forwards its options and resolves `skipped` when the host binds no builder.
+- Fork-only builtins: every builtin `before_agent_start` handler registers `{ previewSafe: true }`. `anthropic-bash`, `anthropic-web-search`, `openai-web-search`, `bash-timeout`, `terminal`, `todotools`, `prompt-preset`, and `imagegen` only compute a system prompt. `compaction` and `hooks` already returned early on a preview. `prompt-url-widget` now returns early on a preview; `rules` composes the same block on a preview without touching `nativeContextPaths` or the static-injection marks; `openai-image-gen` reads the arbitration on a preview without committing `state` or `setNativeBypass`; `mcp` awaits only the session-start attach on a preview and skips the elicitation UI binding and skill-declared server attach.
+
+### Why
+
+Extensions written against the pre-#2096 contract never check `event.preview`, so running them in a preview executed real-turn side effects for a turn that does not exist (an external memory extension lost its drained notices). Only a handler's author can say whether it is side-effect free, so the preview must be opt-in per handler, and a preview that cannot include every handler would compose the wrong prefix, so it is skipped rather than run partially.
+
+### Why an extension could not handle it
+
+Handler registration and dispatch are owned by the loader and runner; an extension cannot mark another extension's handler or keep the host from invoking it.
+
+### Extension impact
+
+- `pi.on("before_agent_start", handler)` is unchanged for real turns. A handler that is side-effect free when `event.preview` is `true` should register with `{ previewSafe: true }`; while any registered handler lacks it, the session-start prompt-cache prewarm is skipped and records a `prompt-cache-prewarm` entry with phase `skipped` and the reason.
+- Breaking for callers of `ctx.getPromptCachePrefixRequest()` (introduced by #2096 in 2026.9.24-2): read `result.status` and `result.request`.
+
+### Expected merge conflict zones
+
+- LOW: the `getPromptCachePrefixRequest` doc and signature in `ExtensionContext`, the block after `PromptCachePrefixRequest`, the end of `BeforeAgentStartEvent`, the `before_agent_start` overload of `ExtensionAPI.on`, the `handlers` field of `Extension`, and the end of `ExtensionContextActions` in `types.ts`.
+- LOW: the `on` registration method and the `./types.ts` import block in `loader.ts`.
+- LOW: the `getPromptCachePrefixRequest` context entry and the `emitBeforeAgentStart` signature and dispatch loop in `runner.ts`.
+
+## 2026-09-24 - before_agent_start preview pass and the prompt-cache prefix request (senpi#2096)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `BeforeAgentStartEvent` gains optional `preview?: boolean`; new `PromptCachePrefixRequest` (`model`, `context`, `options`); `ExtensionContext.getPromptCachePrefixRequest?()` and `ExtensionContextActions.getPromptCachePrefixRequest?`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeAgentStart` takes an optional fifth `{ preview }` argument and sets `event.preview: true` when it is set; the bound `getPromptCachePrefixRequest` action is exposed on every handler context.
+- Fork-only builtins: `builtin/compaction/index.ts` and `builtin/hooks/index.ts` return early from `before_agent_start` on a preview, so it runs no compaction, reminder, or restoration and does not consume a queued UserPromptSubmit context.
+
+### Why
+
+The session-start OpenAI prompt-cache prewarm must send the first turn's exact prefix, and that turn's system prompt is only known after `before_agent_start`. The preview pass runs the same handlers with an empty prompt so the prewarm gets the same system prompt without a turn.
+
+### Why an extension could not handle it
+
+Only the host can run the `before_agent_start` chain, and only the host knows the tools, loop options, and provider preparation the next turn uses.
+
+### Extension impact
+
+- Additive: `preview` is absent on every real turn. Handlers with one-shot side effects should return early when `event.preview` is `true`; handlers that only compute a system prompt need no change.
+
+### Expected merge conflict zones
+
+- LOW: the end of `BeforeAgentStartEvent`, the `prepareProviderRequest` neighbourhood of `ExtensionContext`, `ProviderRequestPreparation`'s neighbourhood, and the end of `ExtensionContextActions` in `types.ts`.
+- LOW: the `getSystemPromptOptionsFn` field and its `bindCore` assignment, the `prepareProviderRequest` context entry, and the `emitBeforeAgentStart` signature/event literal in `runner.ts`.
+
+## 2026-09-23 - Entry renderers can replace the card directly before them (senpi#2051)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `EntryRendererOptions` with an optional `replaces(previous, next)` predicate; `registerEntryRenderer` takes it as an optional third argument, and `Extension` gains an optional `entryRendererOptions` map.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `registerEntryRenderer` stores the options next to the renderer (a re-registration without options clears them).
+- `packages/coding-agent/src/core/extensions/runner.ts`: `getEntryRendererOptions(customType)` returns the options of the extension that owns the renderer `getEntryRenderer` resolves.
+- `packages/coding-agent/src/core/extensions/index.ts` and `packages/coding-agent/src/index.ts` export `EntryRendererOptions`.
+
+### Why
+
+- A Goal wait appends a `goal-cache-warmup` entry when it is scheduled and another when it wakes; a reload used to append a third. Every entry became its own transcript card, so one wait rendered as a stack. The goal extension needs to say "this entry updates the card before it" without the host hard-coding a goal rule.
+
+### Why an extension could not handle it
+
+- An entry renderer only sees its own entry; the transcript container that decides whether a card is added or replaced is host-owned.
+
+### Extension impact
+
+- Additive and optional: existing `registerEntryRenderer(type, renderer)` calls behave exactly as before.
+
+### Expected merge conflict zones
+
+- The `EntryRenderer` type block and the `registerEntryRenderer` declaration in `types.ts`; `registerEntryRenderer` in `loader.ts`; `getEntryRenderer` in `runner.ts`; the rendering export lists in both `index.ts` files.
+
+## 2026-09-22 - One extension module generation per source version, not per session (senpi#1948)
+
+### What changed
+
+- New `extension-module-cache.ts` owns the process-wide extension module generation: the live importer, the factories compiled under it, and a fingerprint (`mtimeNs:size`) of every source file that generation compiled. `cachedExtensionFactory()` serves a compiled factory while every recorded file is unchanged, `extensionModuleImporter()` hands out the one live importer, and `rememberExtensionFactory()` records a freshly compiled factory. A changed or deleted source drops the whole generation, so the next load compiles a new one.
+- `loader.ts` loads through that cache on every path: the per-cwd LRU factory cache (`extensionCacheByCwd`, `MAX_EXTENSION_CACHE_CWD_ENTRIES`, `ExtensionCacheToken`) and the `useCache` opt-in are gone, `loadExtensions` and `loadExtensionsCached` behave identically, and `clearExtensionCache` re-exports the cache module's.
+- `bun-extension-importer.ts` exposes `compiledFiles()`, the source files its graph transpiled. An importer without it (the Node jiti path) is never cached, because its graph cannot be checked for staleness.
+- Invalidation stops REUSING a generation and never disposes it: a session loaded under it can still lazily `import()` from its graph after its factory returned, and a disposed graph makes that throw `ExtensionGenerationDisposedError`. Its modules stay registered either way.
+
+### Why
+
+- A module registry has no eviction API, so each importer generation's modules stay resident for the life of the process. Loading extensions per session therefore cost a shared RPC host one permanent copy of the whole extension graph per `open_session`: measured +14 to +17 MB of settled resident memory per session on the compiled runtime with a full extension set, and ~90-150 new `ModuleRecord`s per session in a heap snapshot. A host reached multiple GB in a few hours of ordinary use.
+- After the change the same measurement (source host, same plugin, five open/close cycles, heap read after a full GC) goes from ~+16 MB per session to ~+0.77 MB, and retained objects from ~125,000 per session to ~271.
+
+### Why an extension could not handle it
+
+- The loader is what evaluates extension modules; an extension cannot decide how many times its own source is compiled.
+
+### Extension impact
+
+- An extension's module scope is now evaluated once per process while its source is unchanged, and its factory still runs once per session, so each session keeps its own instance. Module-scope state was never per session (factories must be pure - `AGENTS.md`), so this changes no documented contract. Editing an extension still takes effect on the next load: the edit changes the fingerprint and the graph is recompiled.
+
+### Expected merge conflict zones
+
+- The cache block near the top of `loader.ts` and its `loadExtensionsInternal` signature, whenever upstream touches loader caching.
+
+
+## 2026-09-21 - Read es-module-lexer 3 import records in the Bun extension importer (senpi#1895)
+
+### What changed
+
+- `bun-extension-importer.ts` reads the tagged-union records that `es-module-lexer` 3 returns from the asm.js full build: `type === "dynamic"` replaces `d >= 0`, `importStart`/`importEnd` replace `ss`/`se`, `specifier` replaces `n`, `start`/`end` replace `s`/`e`, `dynamicStart` replaces the dynamic `d` index, and `attributesStart` replaces `a`. Static and `export * from` edges are matched by `type`; `import.meta` records are skipped as before.
+- `bun-extension-commonjs.ts` is unchanged: the full build still returns `hasModuleSyntax` as the fourth tuple element.
+
+### Why
+
+- `es-module-lexer` 3.0.0 replaced the terse v2 record fields with descriptive tagged unions and turned `es-module-lexer/js` into the asm.js full build; the importer's field reads stopped compiling (seven `TS2339` errors) and eleven extension tests failed until the records were read by their new names.
+
+### Why an extension could not handle it
+
+- The importer runs before any extension code is evaluated and rewrites the extension's own import edges; it is engine-owned.
+
+### Extension impact
+
+- None: rewritten output is byte-identical for the covered cases (static, dynamic, attributes, `export * from`).
+
+### Expected merge conflict zones
+
+- The import-edge rewrite loop in `bun-extension-importer.ts`, whenever upstream touches the importer.
+
+## 2026-09-21 - Retained-session parked/resumed events (#1902)
+
+### What changed
+
+- `types.ts` adds `SessionParkedEvent` and `SessionResumedEvent` to the session event union and `ExtensionAPI.on` overloads; `index.ts` exports both.
+- The existing `runner.ts` generic emit union derives from `ExtensionEvent`, so both events use its existing ordered handler dispatch.
+
+### Why
+
+- Optional per-session work needs an explicit attachment lifecycle signal without confusing parking with shutdown or session switching.
+
+### Why an extension could not handle it
+
+- Public event types and host-originated attachment transitions are owned by the engine.
+
+### Expected merge conflict zones
+
+- Session event union, event-subscription overloads and public type exports.
+
+## 2026-09-21 - User-message edits and backward-compatible entry-addressed navigation
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: adds required `ctx.editUserMessage(entryId, text, options?)` beside assistant edits, with identical options and core typed rejections. `navigateTree` accepts either the shipped positional string plus options or `{ entryId, ...options }`, including `expectedLeafId`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds, resets, and injects the user-edit action with the existing active-context guard. Normalizes object-form navigation once into the positional host action without changing the caller's token.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: an object alongside the string preserves existing extension calls; replacing the positional signature would break them. The options object makes entry addressing explicit without adding another method.
+- `packages/coding-agent/src/core/extensions/runner.ts`: core already implements tree selection and user edits; extensions need those capabilities through their command context. Message entry IDs remain distinct from metadata-advanced leaf tokens.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns the command contract; extensions cannot add required members to their own context.
+- `packages/coding-agent/src/core/extensions/runner.ts` owns host action binding and context construction in all modes.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: command context and action declarations beside `navigateTree` and `editAssistantMessage`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: handler types, default fields, command binding/reset, and context injection.
+
+## 2026-09-20 - Import attributes survive the CommonJS rewrite (#1864)
+
+### What changed
+
+- `bun-extension-importer.ts`: the CommonJS branch of `load()` carries the text between the specifier and the end of the statement - the `with` or legacy `assert` clause - into `rewriteCommonJsImport`.
+- `bun-extension-commonjs.ts`: `rewriteCommonJsImport` takes that clause as an optional fourth argument and appends it to the emitted import, both in the aliased form and in the bare-specifier fallback.
+- `test/extensions/bun-extension-regressions.test.ts`: the file-loader regression imports a `.json` asset instead of a `.bin` one.
+
+### Why
+
+- The CommonJS branch added in #1838 replaces the whole import statement (`edge.ss` .. `edge.se`) and rebuilds it from the binding clause and the resolved id, so everything after the specifier was dropped. Import attributes live exactly there, and they pick the loader: measured through the importer, `import value from "./helper.json" with { type: "file" }` returned `{"value":41}`, `.toml` returned the parsed table and `.txt` returned its text, while plain Bun returns the path for all three. A dynamic import was never affected, because that branch replaces only the `import` keyword.
+- The shipped regression could not catch it. Its fixture was `asset.bin`, and an unknown extension already resolves to Bun's file loader, so the assertion passed with or without the attribute - measured: the same import with no attribute at all returns the same path. A file Bun parses by default is what makes the assertion able to fail.
+
+### Why an extension could not handle it
+
+- This is the loader that evaluates extension source; it runs before any extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the CommonJS branch of the edit loop in `bun-extension-importer.ts` `load()`, and the `rewriteCommonJsImport` signature in `bun-extension-commonjs.ts`.
+
+## 2026-09-20 - The extension runtime's import is built at runtime (#1862)
+
+### What changed
+
+- `bun-extension-registry.ts`: `metadata().import` now calls a module-level `importModule`, built once with `new Function("specifier", "options", "return import(specifier, options)")`, instead of writing `import(id, { ...options })` inline. The resolved specifier and the caller's `ImportCallOptions` are forwarded unchanged, so an extension's dynamic import and its attributes behave exactly as before.
+
+### Why
+
+- esbuild accepts only a fully static second argument for `import()`: measured on esbuild 0.28.2, `import(x, { ...options })`, `import(x, options)`, `import(x, { with: options?.with })` and `import(x, { with: { type: t } })` each warn `unsupported-dynamic-import`, while `import(x)` and `import(x, { with: { type: "json" } })` do not. The attributes here are whatever an extension wrote, so no static form exists.
+- `scripts/build-coding-agent-bundle.mjs` runs esbuild over this module twice (the main entry pass and the lazy/worker pass), so every release build - and every downstream build that vendors this package - printed the same warning twice. esbuild emitted the call verbatim either way, so nothing behaved differently; the cost was that the one place a real bundler warning would appear was already occupied.
+- esbuild has no per-call suppression, and the import must stay dynamic because extensions resolve through the Bun plugin at runtime. Building the import function at runtime is the supported way to keep the bundler out of a call it cannot follow.
+
+### Why an extension could not handle it
+
+- This is the loader that evaluates extension source; it runs before any extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the module-level `importModule` declaration and the `import` member of `metadata()` in `bun-extension-registry.ts`.
+
+## 2026-09-19 - CommonJS bodies evaluate sloppy, and package type decides .js (#1841)
+
+### What changed
+
+- `bun-extension-importer.ts`: the CommonJS body is compiled with the `Function` constructor instead of being emitted as a function literal inside the generated ES module. A literal inherits the module's strict mode; `Function` is sloppy by default, matching Node and plain Bun. The per-file metadata object is passed as the first parameter so the transformed body keeps the identifiers the transpiler already bound, a `//# sourceURL=` trailer keeps stack frames on the dependency file, and a thin forwarding wrapper preserves Node's `this === module.exports` receiver plus the existing `graph.commonJs` cycle and eviction lifecycle.
+- `bun-extension-importer.ts`: Bun's transpiler strips a leading `"use strict"` directive, so the original source is scanned for its complete directive prologue and strict mode is re-applied to the compiled body. The scan accepts custom directives, comments, and ASI separators, while a non-prologue occurrence - in a comment, a string value, or a nested function - does not opt in.
+- `bun-extension-commonjs.ts`: new `isEsmByPackageType()` resolves the nearest `package.json` `"type"` for `.js` only. Its uncached walk stops at `node_modules` (or the filesystem root), so an application `"type": "module"` cannot leak into a manifest-less dependency. `isCommonJsFile()` and the importer's wrapper decision both consult it for `.js`, so a `"type": "module"` `.js` file with only top-level await takes the ESM path. `.cjs` still always wins, and `.mjs`/`.mts`/TypeScript classification is unchanged.
+
+### Why
+
+- Directive detection also preserves inequality expressions, Unicode comment terminators, string literals, and identifier boundaries instead of accidentally changing strict mode at an ASI boundary.
+- #1841: a CommonJS dependency evaluated in strict mode because its wrapper lived inside an ES module, so implicit-global assignment threw `ReferenceError` and jsdom 27's `@acemir/cssom`/`cssstyle` raised `Attempted to assign to readonly property` through the loader while the same code parses under plain `bun` and `node`. Separately, a `.js` file in a `"type": "module"` package was classified by syntax alone, so a file whose only module-level syntax is `await` was wrapped as CommonJS and failed to parse with `"await" can only be used inside an "async" function`.
+
+### Why an extension could not handle it
+
+- Both decisions are made while the loader transforms dependency source inside the Bun plugin, before any extension code exists to observe them.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `!hasModuleSyntax` wrapper branch in `bun-extension-importer.ts` `load()`.
+- LOW: the extension checks in `detect()` in `bun-extension-commonjs.ts`.
+
+## 2026-09-19 - CommonJS dependencies evaluate with Node's module semantics (#1838)
+
+### What changed
+
+- `bun-extension-importer.ts`: a CommonJS module is wrapped in Node's module function wrapper — `export default <meta>.commonJs(function (exports, module) { ... });` — instead of the previous `const module = { exports: {} }; const exports = module.exports;` prologue. `exports` and `module` are parameters again, so a dependency may reassign either; the body still runs in strict mode because the wrapper lives inside an ES module.
+- `bun-extension-importer.ts`: `graph.evaluateCommonJs()` registers the live `module` object of a CommonJS file before its body runs, and `graph.require()` answers from that registry before falling back to Bun's native require. A require issued inside a cycle therefore receives the partially built exports, as in Node, and a repeated require returns the same object. A body that throws is evicted from the registry, so a later require re-throws instead of returning a half-built module.
+- `bun-extension-registry.ts`: the per-file `require` handed to extension code is a function object carrying `resolve`, which returns the absolute path of a graph-resolved file (and the id itself for builtins and virtual modules); the metadata gains `commonJs(body)` and `ExtensionGraph` gains `evaluateCommonJs(filename, body)`.
+- `bun-extension-importer.ts`: files with a `.mjs` or `.mts` extension stay on the ESM path even when they carry no import or export statement, so top-level `await` in such a file keeps parsing. The shebang strip now runs on the transpiled source before any prologue is prepended; Bun's transpiler already removes a hashbang, so this is a tidy-up rather than a behavior change.
+
+### Why
+
+- `const exports` made every CommonJS file that reassigns `exports` a parse-time failure under Bun: `module.exports = exports = { ... }` is the published shape of `whatwg-url/lib/utils.js` and `jsdom/lib/generated/idl/utils.js`, and Bun rejects the wrapped module with `This assignment will throw because "exports" is a constant`. The rejection is not contained to that module: the whole extension graph fails to load, which is how it surfaced (an extension that pulls in jsdom through its dependency graph could not load at all).
+- With that prologue gone the same graph hit the next two gaps. `jsdom/lib/jsdom/living/xhr/XMLHttpRequest-impl.js` calls `require.resolve("./xhr-sync-worker.js")`, and `resolve` only existed as a sibling key of the metadata object, so `require.resolve` was undefined. `@acemir/cssom` requires `CSSStyleDeclaration` and `CSSStyleRule` mutually; a CommonJS module reached through the graph exposed its exports only through `export default module.exports`, which is assigned after the body finishes, so the inner require of a cycle saw `undefined`.
+- Node evaluates a CommonJS module inside a function whose `exports` and `module` are parameters, hands out the module object from its cache as soon as evaluation starts, and gives every module a `require.resolve`. Matching those three points is what lets a published CommonJS dependency load here the way it does under `node` and under plain `bun` for the shapes jsdom and whatwg-url use; the jsdom probe extension and pi-webfetch load on the rebuilt engine. One difference stays: the body runs in strict mode, so a dependency that relies on sloppy-mode behavior (assigning an implicit global, writing a read-only property) still throws here.
+
+### Why an extension could not handle it
+
+- This is the loader that evaluates extension source; it runs before any extension exists.
+
+### Expected merge conflict zones
+
+- LOW: the `!hasModuleSyntax` branch and the runtime-prologue template at the end of `graph.load()`, `graph.require()` and the new `graph.evaluateCommonJs()` in `bun-extension-importer.ts`; `metadata()` and the `ExtensionGraph` interface in `bun-extension-registry.ts`.
+
+## 2026-09-18 — The extension runtime shim resolves to a file, not a Bun virtual module (omo#8427)
+
+### What changed
+
+- `bun-extension-registry.ts`: `"runtime"` resolves to `extension-runtime-module.js` on disk instead of a `builder.module()` virtual module; the metadata factory is published through `Symbol.for("senpi.extension.runtime.metadata")` and read back by that file.
+- `extension-runtime-module.ts` (new): the shim the namespace resolves to when it exists on disk. Inside a `bun build --compile` binary `import.meta.url` is a `$bunfs` URL with no real file behind it, so the compiled binary keeps the virtual-module route (which never failed there) and only the on-disk case takes the file route.
+- Module ids are parsed by one `splitModuleId()` helper that requires a real `<generation>/<encoded filename>` shape and raises `ExtensionModuleIdError` otherwise, replacing two open-coded `indexOf("/")` slices.
+
+### Why
+
+- On `windows-latest` under `bun test --parallel`, a `builder.module()` registration is intermittently invisible to Bun's resolver while the hooks keep working. Measured on the shard (omo run 35329245740): `onResolve` fired for `"runtime"` and returned `{ path: "runtime", namespace }` with the registration still listed (`hasModuleReg: ["runtime"]`), and Bun answered `Cannot find package 'runtime'` anyway — generation 0 on its only resolve, generation 1 on its **41st** after 40 successes in the same worker. An independent plugin's virtual module resolved fine in that worker, so this is not a Bun-wide outage. Every agent-dir extension in the affected worker then failed to load, which is what made omo's two marker tests red on every `windows 2/2` shard across three releases.
+- The `indexOf("/")` slices produced `Cannot find package '1'` (the generation number) for an id whose encoded half holds no literal slash — a second defect the first one had been masking.
+
+### Why an extension could not handle it
+
+- This is the loader that runs before any extension exists.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `setup(builder)` body in `bun-extension-registry.ts`.
+
+## 2026-09-18 - The extension reference publishes the session identity and what the config-reload watcher costs (senpi#1782)
+
+### What changed
+
+- `packages/coding-agent/docs/extensions.md` gains "pi.sessionKind / pi.sessionContext / pi.sharedHostEnabled" at the head of the ExtensionAPI section: the property table, a factory-time gating example, the fact that the engine never interprets `sessionContext` (no auth, model or resource decision reads it), the boundary caps an extension therefore receives pre-validated, and a link to the wire side in `docs/rpc.md`.
+- `packages/coding-agent/docs/extensions.md` "Config reload" gains a measured cost callout: the watcher is per session and lazily spawns one `node:worker_threads` Worker each, so a shared host carries about one extra OS thread and ~5 MB per session (senpi#1794), and a host with the builtin disabled adds no thread per session.
+
+### Why
+
+- `sessionKind`/`sessionContext` shipped on `ExtensionAPI` and are the mechanism the shared daemon offers instead of per-session extension paths, but an extension author had no documentation for them at all - the only description lived in the RPC protocol reference, which extension authors do not read.
+- The config-reload watcher is the dominant per-session cost of a shared daemon and is invisible from the extension docs, where the builtin is described purely as a convenience. An operator sizing a host, and any author writing a similar watcher, needs the number and the cause in the same place as the feature.
+
+### Why an extension could not handle it
+
+- Documentation of the `ExtensionAPI` contract and of a default-on builtin; both are engine surfaces an extension consumes rather than defines.
+
+### Expected merge conflict zones
+
+- LOW: the head of the "ExtensionAPI Methods" section and the first paragraphs of "Config reload" in `docs/extensions.md`.
+
+
+## 2026-09-18 - Named imports from CommonJS packages link through the extension graph (senpi#1807)
+
+### What changed
+
+- `bun-extension-importer.ts`: `load()` resolves each static import to its real path and, when the target has no module syntax (or is `.cjs`), replaces the whole import statement with a `default` import plus destructuring instead of only rewriting the specifier. `resolve()` now delegates to a `resolveTarget` helper that returns both the graph id and the real path.
+- `bun-extension-commonjs.ts` (new): `isCommonJsFile` (cached lexer probe, `.cjs`/`.mjs`/TypeScript short-circuits) and `rewriteCommonJsImport` / `parseImportClause`, which turn `import { A, B as C } from "x"`, `import * as ns`, and `import d` into bindings off `module.exports`.
+
+### Why
+
+- A CommonJS module in the graph is wrapped to expose only `export default module.exports`, so Bun's ESM linker rejected `import { Readability } from "@mozilla/readability"` with `Export named 'Readability' not found in module 'senpi-extension:...'`, while the same import works in plain Bun and Node (they synthesize named exports with cjs-module-lexer). CommonJS has no live bindings, so `default` plus destructuring is exactly Node's interop semantics, with no new dependency.
+
+### Why an extension could not handle it
+
+- The failure happens while the loader links the extension's own module graph, before any extension code runs.
+
+### Expected merge conflict zones
+
+- MEDIUM: the import-edge loop inside `load()` and the `resolve` member of `graph` in `bun-extension-importer.ts`. `bun-extension-commonjs.ts` is fork-only.
+
+## 2026-09-17 - ExtensionAPI publishes the session's kind and opaque context (senpi#1782)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds the session-identity vocabulary next to the extension API: `SessionKind` (`"interactive" | "worker"`), `SessionContext` (`Readonly<Record<string,string>>`), the shared frozen `EMPTY_SESSION_CONTEXT`, the `ExtensionSessionProfile` value object (shared-host flag + kind + context) and its `DEFAULT_EXTENSION_SESSION_PROFILE`. `ExtensionAPI` gains the read-only `sessionKind` and `sessionContext` beside `sharedHostEnabled`; both are `interactive`/`{}` for classic launches and for every open that omits them.
+- `packages/coding-agent/src/core/extensions/loader.ts` carries ONE `ExtensionSessionProfile` where it previously carried a bare `sharedHostEnabled` boolean (`createExtensionAPI`, `initializeExtension`, `loadExtension`, `loadExtensionFromFactory`), so the parameter count is unchanged while three per-session facts travel. The public `loadExtensions` options bag gains `sessionKind`/`sessionContext` beside `sharedHostEnabled` (all optional, `ExtensionSessionOptions`), and `sessionProfile()` applies the defaults once.
+- `packages/coding-agent/src/core/extensions/index.ts` re-exports `SessionKind`, `SessionContext` and `EMPTY_SESSION_CONTEXT`.
+
+### Why
+
+- A shared RPC host loads ONE extension set and serves every session of the machine, including machine-driven worker sessions. `pi.sessionContext` is how a single extension instance recognizes the session it was loaded for (senpi#1782: the omo plugin gates itself per session by `role`) without the host accepting per-session extension paths or CLI flags on the wire.
+- The values are inert by construction: they are read-only on the API, frozen by the RPC registry, and never consulted by auth, model or resource resolution.
+
+### Why an extension could not handle it
+
+- `types.ts` owns the published `ExtensionAPI` contract and `loader.ts` is the only place that constructs it; an extension cannot add a field that other extensions receive, nor learn a per-session identity the host never gave it.
+
+### Expected merge conflict zones
+
+- LOW: the `ExtensionAPI` header block after `sharedHostEnabled` in `types.ts`, and the `sharedHostEnabled` parameter of the four loader functions in `loader.ts`.
+
+## 2026-09-17 - Native Bun extension imports on every bun runtime (senpi#1781)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts` selects `createBunExtensionImporter(VIRTUAL_MODULES)` when `isBunBinary || isBunRuntime` (the module-local `usesNativeBunImports`) instead of only inside a compiled binary, and the same predicate gates the live-runtime factory retention in `initializeExtension` so a plain bun runtime keeps its generation graph reachable exactly as the compiled binary does.
+- Node runtimes (Node SEA, the esbuild-bundled Node distribution, unbundled dist installs) keep the lazily imported jiti path with their existing `virtualModules` / `alias` / `tsconfigPaths` options and `moduleCache: false`.
+
+### Why
+
+- The Bun APIs the native importer needs (`Bun.Transpiler`, `Bun.resolveSync`, `Bun.plugin`) exist on any bun process, not only in `$bunfs`. Gating on the binary alone made every bun-global install re-run jiti + Babel over the bundled codemode extension (136 TypeScript files) and every user `.ts` extension on each boot: about 467ms of Babel plus 118ms of jiti cache writes per start.
+
+### Why an extension could not handle it
+
+- The loader resolves and evaluates extension modules before any extension code exists; an extension cannot choose the transformer that loads it.
+
+### Expected merge conflict zones
+
+- MEDIUM: the runtime-detection block and `createExtensionModuleImporter()` in `loader.ts`, plus the retention branch in `initializeExtension`.
+
+## 2026-09-16 - Type kernelTools as the shipped invoke-scope surface (senpi#1731)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` types `ExtensionContext.kernelTools` as `ExtensionKernelTools` instead of a hand-written `invoke(request, signal?: AbortSignal)` copy.
+- `packages/coding-agent/src/core/extensions/kernel-tools-context.ts` owns `ExtensionKernelTools`, `KernelToolInvokeOptions`, and `KernelToolInvokeScope`: `invoke` accepts `{ signal?, scope? }` (bare `AbortSignal` still typed) and `capabilities.invokeScope` is present.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` is the public `ExtensionContext` contract; coding-agent is the lower layer and must declare the shipped kernel-tools surface rather than import it from senpi-codemode.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns `ExtensionContext`; an extension cannot replace the host's published type.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts` after `steeringSignal`; `packages/coding-agent/src/core/extensions/kernel-tools-context.ts` `ExtensionKernelTools` declaration.
+
+## 2026-09-16 - Host budget for session_shutdown handlers (senpi#1732)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts` bounds each `session_shutdown` handler inside `emit`: the budget (warn 2s, hard cap 10s) is read once per shutdown emission from `SettingsManager`, every handler receives its own `AbortController` signal, a single warning names the extension and the elapsed ms at the warn threshold, and at the cap the runner aborts that signal, emits an extension error (`handler timed out after <N>ms`) and continues with the next handler instead of awaiting the hung one. All other events keep the uncapped sequential await.
+- `packages/coding-agent/src/core/extensions/types.ts` adds the additive optional `SessionShutdownEvent.signal` so a handler can observe the host cap; handlers that ignore it behave exactly as before.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/runner.ts` is the only place that awaits extension shutdown handlers, so it is the only place that can stop one hung extension from holding quit/reload/new/resume hostage.
+- `packages/coding-agent/src/core/extensions/types.ts` owns the event contract every extension consumes; the cancellation signal has to travel on the event.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/runner.ts` runs the handler loop; an extension can only budget itself, and the failure mode is precisely an extension that does not.
+- `packages/coding-agent/src/core/extensions/types.ts` is host-owned; an extension cannot add a field other extensions receive.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: the `emit` handler loop and the new private `resolveSessionShutdownBudget` / `runSessionShutdownHandler` methods placed directly above it; the `SettingsManager` import. Upstream's own shutdown cap (`SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS`) would land in the same loop - keep the settings-driven warn/cap pair.
+- `packages/coding-agent/src/core/extensions/types.ts`: the `SessionShutdownEvent` body after `targetSessionFile`.
+
+## 2026-09-16 - Transient kernelTools capability (#1647)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional `ExtensionContext.kernelTools`.
+- `packages/coding-agent/src/core/extensions/kernel-tools-context.ts` holds the AsyncLocalStorage binder.
+- `packages/coding-agent/src/core/extensions/runner.ts` createContext reads that store.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` is the exported host-tool execution context; task/workpool must see the originating eval's capability.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns ExtensionContext; an extension cannot add a field for other tools.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts` after `steeringSignal`; `runner.ts` createContext getters.
+
+## 2026-09-14 - Declarative eval-only tool exposure (#1678)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds `"eval"` to ToolExposure, documents registry availability with model-facing withholding, and preserves that value in normalizeToolExposure with the same lazy-activation default as direct tools.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` must preserve a tool's declared eval exposure so session policy can hide it from direct calls without removing it from the executable catalog.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns the public ToolDefinition contract and shared normalizer; an extension cannot extend their accepted values for other consumers.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: ToolExposure, ToolDefinition.exposure and normalizeToolExposure. Preserve the eval value and the existing search metadata behavior.
+
+## 2026-09-14 - Register herdr with host-owned loaded extension paths (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional read-only `ExtensionContext.loadedExtensionPaths`, including event-only extensions and synthetic factory identifiers.
+- `packages/coding-agent/src/core/extensions/runner.ts` supplies a guarded lazy getter from the resolved paths it already tracks, so relative discovery paths remain usable outside the process cwd.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` registers `herdr` immediately after `ask-user`. The builtin reads the host list at session start, inspects only the first 400 bytes of matching reporter files, and defers only to user-authored reporters. `docs/extensions.md` documents the handoff and coexistence policy.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` exposes the discovery result without making older hand-built contexts incompatible.
+- `packages/coding-agent/src/core/extensions/runner.ts` includes loaded event-only extensions that would be invisible to tool/command enumeration; otherwise a user reporter and the builtin could compete for pane state.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned contract; extension factories cannot inspect co-loaded extensions themselves.
+- `packages/coding-agent/src/core/extensions/runner.ts` owns discovery identities and context lifetime guards. The lifecycle reporter itself remains an extension, not a new host service.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.agentDir` neighbors; keep the field optional and read-only.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `createContext()` getter list; preserve `assertActive()` and resolved paths.
+- `packages/coding-agent/src/core/extensions/builtin/index.ts`: imports and the registration after `ask-user`; retain other builtin ordering.
+
+
+## 2026-09-13 - Optional authoritative session goal-store path (senpi#1663)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional read-only `ExtensionContext.goalStoreFile`, preserving source compatibility for hand-built contexts.
+- `packages/coding-agent/src/core/extensions/runner.ts` implements the guarded lazy getter in `createContext()` using `goalFilePath(goalStoreRef(runner.sessionManager, runner.cwd))`. Reading it does not create a file. Persisted sessions honor session-directory overrides; in-memory sessions use the cwd-hashed no-session bucket.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` gives shell tools and eval kernels a shared authoritative path to expose as `PI_GOAL_STORE_FILE`, alongside `ctx.cwd` as `PI_SESSION_CWD`.
+- `packages/coding-agent/src/core/extensions/runner.ts` resolves that path from the actual session manager and cwd rather than letting consumers guess from a session JSONL filename, which is insufficient for overridden directories and in-memory sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` owns the public host-context contract; an extension cannot add a getter available to every other extension and core tool.
+- `packages/coding-agent/src/core/extensions/runner.ts` owns context creation and lifecycle guards. Resolving the path there avoids duplicate consumer-specific storage logic and rejects stale contexts consistently.
+
+### Expected merge conflict zones
+
+- LOW: the `ExtensionContext.sessionManager` neighborhood in `packages/coding-agent/src/core/extensions/types.ts`.
+- LOW: the goal persistence imports and `createContext()` getter list in `packages/coding-agent/src/core/extensions/runner.ts`. Preserve the optional public field and `assertActive()` guard.
+
+### Tests
+
+- `packages/coding-agent/test/suite/session-goal-store-context.test.ts`: persisted, `SessionManager.open(path, otherSessionDir)`, and in-memory paths; getter reads do not create files.
+- `packages/coding-agent/test/sdk-session-manager.test.ts`: SDK-created session paths reach the registered bash tool.
+- `packages/senpi-codemode/test/extension-session-env.test.ts`: runtime creation forwards cwd and the optional goal-store path from the extension context.
+
+
+
+## 2026-09-13 - Pending-question arrival and blocked bus contracts (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/docs/extensions.md` documents `ask-user:asked` and `herdr:blocked` on the existing extension bus: fresh registration, per-ID active/inactive pairs, both wait modes, and transport replay suppression. No public lifecycle-event union or transport frame changes are required.
+
+### Why
+
+- Status and Notification integrations must distinguish a fresh question from UI hydration and retain blocked state while any request remains pending.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` owns registration and authoritative settlement; `packages/coding-agent/src/modes/interactive/interactive-mode.ts` owns host dialog lifetimes. A consuming extension cannot infer these boundaries reliably from tool-return text.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/docs/extensions.md`: lifecycle events section. Implementation details are tracked in `builtin/changes.md` and `modes/interactive/changes.md`.
+
+
+## 2026-09-13 - `resources_discover` advertises scoped-entry support (senpi#1655)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ResourcesDiscoverEvent` gains `scopedEntries: true`, the capability signal that the host accepts `{ path, scope }` entries (senpi#1640) in the result.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitResourcesDiscover` constructs the event with `scopedEntries: true`.
+- Docs: `docs/extensions.md` shows a handler that returns the object form only when the field is present.
+
+### Why
+
+- A host that predates scoped entries treats an object entry as a path string and aborts session start (`input.trim is not a function` from `resolvePath`), so a distribution extension that must load on both old and new engines had no safe way to use the scoped form. The event field is the feature-detect: absent on old hosts, `true` here.
+
+### Why an extension could not handle it
+
+- Only the host knows which entry forms its runner accepts; an extension cannot probe the runner without crashing an old host, and engine version strings do not identify dev builds that already carry the feature.
+
+### Expected merge conflict zones
+
+- LOW: the `ResourcesDiscoverEvent` interface in `types.ts` and the event literal inside `emitResourcesDiscover` in `runner.ts`; both sit beside the senpi#1640 changes.
+
+## 2026-09-13 - Native compiled-Bun extension importer
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts` creates an asynchronous batch importer only on cache misses: compiled Bun lazily loads its native transformer, while Node lazily imports `jiti/static` through a variable specifier. Node SEA, bundled Node, source TypeScript and unbundled Node retain their existing options and `moduleCache: false`. Live runtimes retain factory wrappers until invalidation, independently of the existing per-cwd factory cache.
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts` uses synchronous Bun transpilation plus parsed import-expression rewriting so static imports, computed imports and computed requires resolve from each real file directory into one generation. Native data and addon paths remain in the file namespace. Real-file import metadata is preserved.
+- `packages/coding-agent/src/core/extensions/bun-extension-registry.ts` owns one shared runtime hook set with weak generation references, explicit disposal and finalization. Permanent module callbacks never capture a graph; reachable factory wrappers keep old dynamic imports usable.
+- `packages/coding-agent/src/core/extensions/bun-extension-error.ts` retains Bun parser diagnostics with real-file attribution and source positions instead of reducing them to an aggregate message.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/loader.ts` previously put jiti's transformer in the standalone compiled graph. Fresh root imports alone would leave helpers stale and duplicate host modules would break reference identity. Per-generation permanent plugin closures leak graph state; computed edges must not escape to the native global module cache.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/loader.ts` chooses the importer before extension code can run. Generation isolation and host namespace registration belong to that host-owned boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: importer type, lazy runtime branch, runtime invalidation, asynchronous batch cache and import call. The Node option branches and per-cwd factory cache policy must remain intact. The Bun importer, registry and diagnostic modules are fork-owned.
+
+## 2026-09-13 - Optional steering-specific tool signal (senpi#1637)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional read-only `ExtensionContext.steeringSignal`, separate from cancellation.
+- `packages/coding-agent/src/core/extensions/wrapper.ts` accepts an optional invocation-context factory and disposes its scope in `finally`, including thrown and detached results. Callers without the factory retain their prior context behavior.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` lets foreground tools observe steering without polling or cancelling work.
+- `packages/coding-agent/src/core/extensions/wrapper.ts` is the shared invocation boundary for built-in and extension tools, so it can remove session-owned subscriptions at settlement.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned context contract.
+- `packages/coding-agent/src/core/extensions/wrapper.ts` adapts every registered tool before execution, outside an individual extension's lifecycle.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.signal` neighbours.
+- `packages/coding-agent/src/core/extensions/wrapper.ts`: wrapper signatures and the execute call; tool-result metadata handling remains unchanged.
+
+## 2026-09-13 - `system` scope for builtin extensions and scoped `resources_discover` entries (senpi#1640)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: `createExtension` passes `scope: source === "builtin" ? "system" : "temporary"` to `createSyntheticSourceInfo`, so a `<builtin:*>` extension starts out as `system` instead of `temporary`.
+- `packages/coding-agent/src/core/extensions/types.ts`: new `ResourceDiscoverEntry = string | { path: string; scope?: SourceScope }`; `ResourcesDiscoverResult.skillPaths` / `promptPaths` / `themePaths` / `hookPaths` are `ResourceDiscoverEntry[]` instead of `string[]`. A bare string inherits its scope from the contributor; the object form pins it.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitResourcesDiscover` returns `DiscoveredResourceEntry[]` (`{ path, extensionPath, scope? }`, from the fork-only `packages/coding-agent/src/core/discovered-resource-scope.ts`) and normalises each handler entry through a local `toEntry`, keeping `scope` only when the handler set one. `agent-session.ts` resolves the final scope with `resolveDiscoveredResourcePaths`.
+
+### Why
+
+- Builtin extensions are part of the harness and should carry the new `system` scope from creation, and a system extension that surfaces user-owned data (for example a skills directory under the home folder) needs a way to say those paths are `user`, not `system`.
+
+### Why an extension could not handle it
+
+- The loader owns the synthetic source info of builtins, and the runner owns the shape of `resources_discover` results before `agent-session.ts` sees them. An extension can only fill in the entries; it cannot widen the result type or re-scope its own registration.
+
+### Expected merge conflict zones
+
+- MEDIUM: `emitResourcesDiscover` in `packages/coding-agent/src/core/extensions/runner.ts` (return type, the four accumulator arrays, `toEntry` and the four `push` lines).
+- LOW: `ResourceDiscoverEntry` / `ResourcesDiscoverResult` and the `SourceScope` import in `packages/coding-agent/src/core/extensions/types.ts`; the `createSyntheticSourceInfo` call in `createExtension` in `packages/coding-agent/src/core/extensions/loader.ts`.
+
+## 2026-09-10 - ctx.editAssistantMessage
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionCommandContext.editAssistantMessage(entryId, text, options?)` and the matching required member on `ExtensionCommandContextActions`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `EditAssistantMessageHandler`, the `editAssistantMessageHandler` field bound from `actions.editAssistantMessage`, and its context injection beside `navigateTree`.
+
+### Why
+
+- Extensions could navigate the tree but not replace an assistant response; the desktop and scripted clients need the same operation the TUI has.
+
+### Why an extension could not handle it
+
+- Extensions cannot add members to their own context; the runner owns the binding.
+
+### Expected merge conflict zones
+
+- LOW: the `navigateTree` neighbours in `types.ts` (two declaration sites) and `runner.ts` (field, bind, inject).
+
+## 2026-09-10 - Optional ExtensionUIContext.question prompt kind
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: exports canonical `QuestionRequest` / `QuestionResponse`, adds optional `ExtensionUIContext.question()`, and extends `UIPromptKind` with `"question"`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `wrapUIPromptContext` wraps `question` with `withUIPrompt("question", request.questions[0]?.header, ...)` only when the underlying UI provides it.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` is the public extension UI contract; later ask-user modes need a typed optional prompt without breaking hand-built `Pick<ExtensionUIContext, ...>` contexts.
+- `packages/coding-agent/src/core/extensions/runner.ts` already emits `ui_prompt_start` / `ui_prompt_end` around select/confirm/input/editor/custom; question prompts must use the same wrapping so the runner can pause on a blocking user-facing question.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned UI surface; extensions cannot add methods to that public contract themselves.
+- `packages/coding-agent/src/core/extensions/runner.ts` owns prompt wrapping and event emission before any extension sees `ctx.ui`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIContext` dialog methods (~select/confirm/input) and the `UIPromptKind` union.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `wrapUIPromptContext`.
+
+## 2026-09-10 - Expose getAskUserSettings on ExtensionContext
+
+### What changed
+
+- `types.ts`: optional `ExtensionContext.getAskUserSettings()` / `ExtensionContextActions.getAskUserSettings` return `{ enabled, timeoutMinutes }` (optional so hand-built contexts and test stubs stay valid).
+- `runner.ts`: default `{ enabled: true, timeoutMinutes: 30 }`, bindCore plumbing next to `getLookAtSettings`, and the live context accessor.
+
+### Why
+
+- Built-in question tooling (todo 7) must read the resolved ask-user enable/timeout from the same context surface as look-at settings.
+
+### Why an extension could not handle it
+
+- `types.ts` and `runner.ts` define and bind the host-owned context; extensions cannot add accessors to that contract.
+
+### Expected merge conflict zones
+
+- MEDIUM: `types.ts` accessor declarations next to `getLookAtSettings` (todo 3 edits the UI-context region of the same file).
+- MEDIUM: `runner.ts` bindCore/createContext plumbing next to `getLookAtSettings` (todo 3 edits `wrapUIPromptContext`).
+
+## 2026-09-09 - Expose shared-host policy during extension registration
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds the read-only `ExtensionAPI.sharedHostEnabled` capability.
+- `packages/coding-agent/src/core/extensions/loader.ts` forwards the loading policy into extension factories.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` lets RPC-dependent tools distinguish enabled and disabled hosts before registering.
+- `packages/coding-agent/src/core/extensions/loader.ts` makes the decision available before a factory registers searchable tools.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-owned registration API.
+- `packages/coding-agent/src/core/extensions/loader.ts` constructs that API before session events or bound runtime actions are available.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: registration-time context fields.
+- `packages/coding-agent/src/core/extensions/loader.ts`: factory initialization and loading options.
+
+## 2026-09-09 - Register compact read classifiers through the extension API
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: adds `ExtensionAPI.registerReadClassifier(classifier): () => void`, using the shared `ReadClassifier` type.
+- `packages/coding-agent/src/core/extensions/loader.ts`: registers classifiers in the shared read registry and returns a tracked unregister function. Failed factory loads and runtime invalidation remove their registrations; stale APIs cannot register new classifiers.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts` gives extensions a typed way to classify memory paths without replacing the built-in read tool.
+- `packages/coding-agent/src/core/extensions/loader.ts` connects that API to the renderer's registry while preserving the existing failed-load and reload cleanup lifecycle.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts` defines the host-provided API; extensions cannot add methods to that public contract themselves.
+- `packages/coding-agent/src/core/extensions/loader.ts` owns API construction and runtime cleanup, so it must wire registrations into the shared registry and remove them when their owner becomes inactive.
+
+### Expected merge conflict zones
+
+- LOW: the `ReadClassifier` import and the rendering-registration methods next to `registerEntryRenderer` in `packages/coding-agent/src/core/extensions/types.ts`.
+- LOW: the registry import and `createExtensionAPI` registration block in `packages/coding-agent/src/core/extensions/loader.ts`.
+
+## 2026-09-08 - Runner fallback for the goal backstop setting follows the 270s default
+
+### What changed
+
+- `runner.ts`: the `getPromptCacheGoalBackstopMaxSecondsFn` placeholder (used until the session wires `SettingsManager.getPromptCacheGoalBackstopMaxSeconds`) returns 270 instead of 3570, matching the new `promptCache.goalBackstopMaxSeconds` default.
+
+### Why
+
+- The goal monitor re-checks a parked goal every backstop interval so a wake source that never delivers cannot strand it for an hour; a host that has not wired the settings getter must arm the same 270s floor. See `builtin/goal/changes.md` (2026-09-08).
+
+### Why an extension could not handle it
+
+- The placeholder is the runner's own default for the extension context action; extensions only read the resolved value.
+
+### Expected merge conflict zones
+
+- LOW: the single `getPromptCacheGoalBackstopMaxSecondsFn` initializer in `runner.ts`.
+
+## 2026-09-08 - Expose the effective service tier and let core carry it (code-yeongyu/oh-my-openagent#6795)
+
+### What changed
+
+- `types.ts`: `ExtensionContext.effectiveServiceTier` (optional) reports the tier the session's requests carry right now - `serviceTier` promoted to `"priority"` while session fast mode is on. `ExtensionContextActions.getEffectiveServiceTier` (optional) feeds it; `runner.ts` falls back to `getServiceTier` when a host omits it.
+- `builtin/service-tier.ts`: exports `supportsServiceTier(api)`. On `model_select`, a remembered `"auto"` for a Codex model whose catalog says priority now also clears the SESSION's cached tier (`setSessionFastMode(false)`, which only touches a catalog-inherited Codex priority), instead of suppressing the tier in the payload hook alone.
+
+### Why
+
+- The session itself now puts `effectiveServiceTier` on the request (`core/sdk.ts`), so the extension's memory decision has to reach session state or the two writers would disagree after a mid-session switch. Hosts that delegate work (oh-my-openagent tasks) need the effective tier, not the catalog tier, to inherit a parent's `/fast`.
+
+### Why an extension could not handle it
+
+- Both are context surface: what the runner exposes to extensions, and how the builtin keeps the session's request-side tier honest.
+
+### Expected merge conflict zones
+
+- LOW: `ExtensionContext`/`ExtensionContextActions` in `types.ts`, the context getters in `runner.ts`, the `model_select` handler in `builtin/service-tier.ts`.
+
 
 ## 2026-09-04 - UI prompt lifecycle events
 
@@ -1972,3 +3117,77 @@ If upstream modifies compaction event definitions in `types.ts`, preserve the ad
 Extension APIs now expose `pi.rpc.emit(name, data)`. It validates a non-empty name and publishes an
 opaque payload on the generation-owned extension bus; it does not write to a transport directly.
 Keep ordinary `pi.events` extension-local, and keep RPC delivery opt-in at the connection boundary.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: fork loader (per-cwd LRU module cache capped at `MAX_EXTENSION_CACHE_CWD_ENTRIES`, `@code-yeongyu/senpi` alias table, pending provider registration queue, read-classifier and MCP declaration registration, RPC event channel) with `registerTool` running the fork `runtime.assertActive()` and `tool_search` reservation first and then upstream's object-schema parameter check with its exact error text (D-O).
+
+### Why
+
+- Extension registration has to keep the fork's isolation and reserved-name rules while rejecting non-object tool schemas the same way upstream does.
+
+### Why an extension could not handle it
+
+- The loader is what instantiates extensions; its validation order is not visible to them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `registerTool` in `createExtension`; the alias table and importer factory.
+
+## Adopted upstream v1.0.0 extension loader (2026-10-02)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/loader.ts` — upstream extension loading changes are kept while the fork's eval-only policy stays.
+
+### Why
+
+The fork's eval-only extension policy is preserved and tested; upstream's loader improvements are adopted underneath.
+
+### Why an extension could not handle it
+
+Extension loading is the core loader itself, not expressible as an extension.
+
+### Expected merge conflict zones
+
+Upstream edits to the extension loader at the next sync.
+
+## ExtensionContext.browserEngine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext.browserEngine?: BrowserEngine` and the optional `ExtensionContextActions.getBrowserEngine`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the context getter and its bound action (default `undefined`).
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts`: the PTY bash tool exports `OMO_BROWSER_ENGINE` from the session context and marks it for removal when the session chose none.
+
+### Why
+
+A shared RPC host serves many sessions, so the browser engine an opener chose (`open_session.browserEngine`) must travel with the session, not the process. Extensions and the tool subprocesses they spawn read it from the session context like the other per-session values.
+
+### Why an extension could not handle it
+
+The value lives in the session's launch profile and the bash tool environment is assembled in core.
+
+### Expected merge conflict zones
+
+The context getter block in `runner.ts` (next to `goalStoreFile`) and the `SessionEnvSource` / `sessionEnvOverrides` pair in the terminal bash tool.
+
+## 2026-10-04 — `ExtensionUIDialogOptions` names the tool call a dialog is about (#2710)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIDialogOptions` gains optional `toolCallId` and `parentToolCallId`. UI contexts that do not use them (TUI, print) ignore them.
+
+### Why
+
+The engine runs a message's `tool_call` hooks (where the permission system asks) for every call before any of them runs, so with several calls of one tool in flight a client could not tell which call a prompt approved (#2710). The desktop had to show "the code can't be shown" for every prompt after the first.
+
+### Why an extension could not handle it
+
+The dialog options type is the public extension API that every UI context receives; the field has to exist there for the permission extension to hand the id to the RPC context.
+
+### Expected merge conflict zones
+
+The `ExtensionUIDialogOptions` interface in `types.ts`.

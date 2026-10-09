@@ -31,7 +31,9 @@ export interface MonitorNotifierDeps extends TerminalNotifierDeps {
 
 interface Overflow {
 	readonly id: string;
+	readonly description: string;
 	count: number;
+	kinds: Set<MonitorEvent["type"]>;
 }
 
 function boundedPositiveInt(value: number, fallback: number, minimum: number, maximum: number): number {
@@ -109,7 +111,7 @@ export class MonitorNotifier {
 			event.type !== "summary" &&
 			(this.#events.length >= settings.maxLinesPerInjection || this.#eventChars + rendered.length > queueLimit)
 		) {
-			this.#recordOverflow(event.id);
+			this.#recordOverflow(event);
 		} else {
 			this.#events.push(event);
 			this.#eventChars += rendered.length;
@@ -145,10 +147,16 @@ export class MonitorNotifier {
 		this.#lastInjectedBatch.clear();
 	}
 
-	#recordOverflow(id: string): void {
-		const overflow = this.#overflow.get(id) ?? { id, count: 0 };
+	#recordOverflow(event: MonitorEvent): void {
+		const overflow = this.#overflow.get(event.id) ?? {
+			id: event.id,
+			description: event.description,
+			count: 0,
+			kinds: new Set<MonitorEvent["type"]>(),
+		};
 		overflow.count++;
-		this.#overflow.set(id, overflow);
+		overflow.kinds.add(event.type);
+		this.#overflow.set(event.id, overflow);
 	}
 
 	#schedule(delayMs: number): void {
@@ -218,7 +226,8 @@ export class MonitorNotifier {
 			: "";
 		const content = this.#buildMessage(selected, overflowCount, pauseNotice, settings.maxCharsPerInjection);
 
-		delivery.send(content, reachesBudget ? { forceWake: true } : undefined);
+		const details = { monitors: this.#monitorDetails(selected, injectedIds) };
+		delivery.send(content, reachesBudget ? { forceWake: true, details } : { details });
 		this.#lastWakeAt = now;
 		for (const id of injectedIds) {
 			this.#lastInjectionAt.set(id, now);
@@ -271,6 +280,24 @@ export class MonitorNotifier {
 		);
 		const remainingIds = new Set([...deferred.map((event) => event.id), ...this.#overflow.keys()]);
 		if (remainingIds.size > 0) this.#scheduleNextRateLimit(remainingIds, now, settings);
+	}
+
+	#monitorDetails(
+		events: readonly MonitorEvent[],
+		ids: ReadonlySet<string>,
+	): Array<{ id: string; description: string; eventCount: number; kinds: string[] }> {
+		return [...ids].map((id) => {
+			const own = events.filter((event) => event.id === id);
+			const overflow = this.#overflow.get(id);
+			const kinds = new Set<MonitorEvent["type"]>(own.map((event) => event.type));
+			for (const kind of overflow?.kinds ?? []) kinds.add(kind);
+			return {
+				id,
+				description: own[0]?.description ?? overflow?.description ?? id,
+				eventCount: own.length + (overflow?.count ?? 0),
+				kinds: [...kinds],
+			};
+		});
 	}
 
 	#buildMessage(

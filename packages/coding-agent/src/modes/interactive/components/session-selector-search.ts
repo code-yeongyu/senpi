@@ -1,4 +1,4 @@
-import { fuzzyMatch } from "@earendil-works/pi-tui";
+import { fuzzyMatchLower } from "@earendil-works/pi-tui";
 import type { SessionInfo } from "../../../core/session-manager.ts";
 
 export type SortMode = "threaded" | "recent" | "relevance";
@@ -23,8 +23,39 @@ function normalizeWhitespaceLower(text: string): string {
 	return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function getSessionSearchText(session: SessionInfo): string {
-	return `${session.id} ${session.name ?? ""} ${session.allMessagesText} ${session.cwd}`;
+interface SessionSearchText {
+	/** Original case, for the regex branch (its `i` flag handles case). */
+	readonly text: string;
+	/** Lower-cased once, for fuzzy tokens. */
+	readonly lower: string;
+	/** Whitespace-normalized lower case, built on the first phrase token. */
+	normalized?: string;
+}
+
+/**
+ * Search text per row object. A re-listed directory yields new `SessionInfo` objects, so a fresh
+ * listing recomputes and the old rows' text is collected with them.
+ */
+const searchTextCache = new WeakMap<SessionInfo, SessionSearchText>();
+
+function getSessionSearchText(session: SessionInfo): SessionSearchText {
+	const cached = searchTextCache.get(session);
+	if (cached) return cached;
+	const text = `${session.id} ${session.name ?? ""} ${session.allMessagesText} ${session.cwd}`;
+	const entry: SessionSearchText = { text, lower: text.toLowerCase() };
+	searchTextCache.set(session, entry);
+	return entry;
+}
+
+/** Query tokens with their per-query case folding done once, not once per session. */
+type PreparedToken = { kind: "fuzzy"; lower: string } | { kind: "phrase"; normalized: string };
+
+function prepareTokens(parsed: ParsedSearchQuery): PreparedToken[] {
+	return parsed.tokens.map((token) =>
+		token.kind === "phrase"
+			? { kind: "phrase", normalized: normalizeWhitespaceLower(token.value) }
+			: { kind: "fuzzy", lower: token.value.toLowerCase() },
+	);
 }
 
 export function hasSessionName(session: SessionInfo): boolean {
@@ -114,38 +145,38 @@ export function parseSearchQuery(query: string): ParsedSearchQuery {
 }
 
 export function matchSession(session: SessionInfo, parsed: ParsedSearchQuery): MatchResult {
-	const text = getSessionSearchText(session);
+	return matchPrepared(session, parsed, prepareTokens(parsed));
+}
+
+function matchPrepared(session: SessionInfo, parsed: ParsedSearchQuery, tokens: PreparedToken[]): MatchResult {
+	const searchText = getSessionSearchText(session);
 
 	if (parsed.mode === "regex") {
 		if (!parsed.regex) {
 			return { matches: false, score: 0 };
 		}
-		const idx = text.search(parsed.regex);
+		const idx = searchText.text.search(parsed.regex);
 		if (idx < 0) return { matches: false, score: 0 };
 		return { matches: true, score: idx * 0.1 };
 	}
 
-	if (parsed.tokens.length === 0) {
+	if (tokens.length === 0) {
 		return { matches: true, score: 0 };
 	}
 
 	let totalScore = 0;
-	let normalizedText: string | null = null;
 
-	for (const token of parsed.tokens) {
+	for (const token of tokens) {
 		if (token.kind === "phrase") {
-			if (normalizedText === null) {
-				normalizedText = normalizeWhitespaceLower(text);
-			}
-			const phrase = normalizeWhitespaceLower(token.value);
-			if (!phrase) continue;
-			const idx = normalizedText.indexOf(phrase);
+			searchText.normalized ??= normalizeWhitespaceLower(searchText.text);
+			if (!token.normalized) continue;
+			const idx = searchText.normalized.indexOf(token.normalized);
 			if (idx < 0) return { matches: false, score: 0 };
 			totalScore += idx * 0.1;
 			continue;
 		}
 
-		const m = fuzzyMatch(token.value, text);
+		const m = fuzzyMatchLower(token.lower, searchText.lower);
 		if (!m.matches) return { matches: false, score: 0 };
 		totalScore += m.score;
 	}
@@ -166,12 +197,13 @@ export function filterAndSortSessions(
 
 	const parsed = parseSearchQuery(query);
 	if (parsed.error) return [];
+	const tokens = prepareTokens(parsed);
 
 	// Recent mode: filter only, keep incoming order.
 	if (sortMode === "recent") {
 		const filtered: SessionInfo[] = [];
 		for (const s of nameFiltered) {
-			const res = matchSession(s, parsed);
+			const res = matchPrepared(s, parsed, tokens);
 			if (res.matches) filtered.push(s);
 		}
 		return filtered;
@@ -180,7 +212,7 @@ export function filterAndSortSessions(
 	// Relevance mode: sort by score, tie-break by modified desc.
 	const scored: { session: SessionInfo; score: number }[] = [];
 	for (const s of nameFiltered) {
-		const res = matchSession(s, parsed);
+		const res = matchPrepared(s, parsed, tokens);
 		if (!res.matches) continue;
 		scored.push({ session: s, score: res.score });
 	}

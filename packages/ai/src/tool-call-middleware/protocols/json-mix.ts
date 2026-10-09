@@ -1,4 +1,4 @@
-import type { Tool } from "../../types.ts";
+import type { Tool, ToolCall } from "../../types.ts";
 import { validateToolArguments } from "../../utils/validation.ts";
 import type { ParsedToolCall, ParserOptions, StreamParser, StreamParserEvent } from "../types.ts";
 
@@ -740,7 +740,7 @@ export function createJsonMixStreamParser(
 							type: "toolCall",
 							id: state.activeToolCall?.id ?? options.createToolCallId(state.toolCallCount),
 							name: parsedToolCall.name,
-							arguments: parsedToolCall.arguments,
+							arguments: parsedToolCall.arguments as ToolCall["arguments"],
 						});
 
 						if (!state.activeToolCall) {

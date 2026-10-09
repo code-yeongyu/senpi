@@ -1,5 +1,5 @@
 import type { Settings, SettingsManager } from "../../../settings-manager.ts";
-import { parsePermissionPresetName } from "./cli.ts";
+import { PERMISSION_PRESET_NAMES, parsePermissionPresetName } from "./cli.ts";
 import { DEFAULT_PERMISSION_PRESET, fromConfig, merge, rulesForPreset } from "./config.ts";
 import { loadApproved } from "./storage.ts";
 import type { PermissionConfig, PermissionPresetName, Ruleset } from "./types.ts";
@@ -26,7 +26,7 @@ export function loadPermissionSettings(
 	cliOverride: Ruleset,
 	projectDir: string,
 	cliPresetOverride?: PermissionPresetName,
-): { staticRuleset: Ruleset; approved: Ruleset } {
+): { staticRuleset: Ruleset; approved: Ruleset; preset: PermissionPresetName } {
 	const globalSettings = settingsManager.getGlobalSettings() as Settings & PermissionSettings;
 	const globalPreset = parseSettingsPreset(globalSettings.permissionPreset, "global");
 	const globalPresetRuleset = globalPreset ? rulesForPreset(globalPreset) : [];
@@ -49,7 +49,8 @@ export function loadPermissionSettings(
 	);
 	const approved = loadApproved(projectDir);
 
-	return { staticRuleset, approved };
+	const preset = cliPresetOverride ?? projectPreset ?? globalPreset ?? DEFAULT_PERMISSION_PRESET;
+	return { staticRuleset, approved, preset };
 }
 
 function parseSettingsPreset(value: unknown, scope: "global" | "project"): PermissionPresetName | undefined {
@@ -63,7 +64,7 @@ function parseSettingsPreset(value: unknown, scope: "global" | "project"): Permi
 	const preset = parsePermissionPresetName(value);
 	if (!preset) {
 		throw new Error(
-			`Invalid ${scope} permissionPreset "${value}". Expected one of: full-access, workspace, read-only, ask.`,
+			`Invalid ${scope} permissionPreset "${value}". Expected one of: ${PERMISSION_PRESET_NAMES.join(", ")}.`,
 		);
 	}
 	return preset;

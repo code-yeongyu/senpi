@@ -9,7 +9,11 @@
  * $HOME and leaves faux-provider JSONLs there permanently, where downstream
  * tools (e.g. tokscale) then mis-count them as real usage.
  */
-import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv } from "./support/quarantine.ts";
+import { resolveQuarantineAgentDir, scrubAmbientAgentDirEnv, scrubHostLifecycleEnv } from "./support/quarantine.ts";
+
+// Run from inside a host generation (the normal agent case), the suite would otherwise inherit that
+// host's lifecycle and hand it to every host it spawns.
+scrubHostLifecycleEnv(process.env);
 
 for (const key of ["PI_RULES_DISABLED", "PI_RULES_MAX_RULE_CHARS", "PI_RULES_MAX_RESULT_CHARS"] as const) {
 	delete process.env[key];

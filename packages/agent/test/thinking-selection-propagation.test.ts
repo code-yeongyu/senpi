@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, Model, SimpleStreamOptions, ThinkingSelection } from "@earendil-works/pi-ai";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, normalizeContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { Agent } from "../src/agent.ts";
@@ -159,7 +159,7 @@ describe("thinking selection propagation", () => {
 			});
 		}) as typeof fetch;
 		try {
-			await streamProxy(testModel(), { messages: [] }, options).result();
+			await streamProxy(testModel(), normalizeContext({ messages: [] }), options).result();
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

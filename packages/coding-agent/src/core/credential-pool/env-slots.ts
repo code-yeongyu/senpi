@@ -1,4 +1,4 @@
-import { getApiKeyEnvVars } from "@earendil-works/pi-ai";
+import { getApiKeyEnvVars, normalizeProviderId } from "@earendil-works/pi-ai";
 
 export const MAX_ENV_SLOT_INDEX = 16;
 
@@ -15,7 +15,10 @@ export type EnvCredentialSlot = {
  * canonical mapping lists several variables.
  */
 export function primaryEnvVar(providerId: string): string | undefined {
-	if (providerId === "claude-sdk-oauth") return "CLAUDE_CODE_OAUTH_TOKEN";
+	// Read boundary (senpi#1989): a caller may still pass the legacy provider id,
+	// so compare normalized. CLAUDE_CODE_OAUTH_TOKEN is a frozen env-var name and
+	// is deliberately unchanged.
+	if (normalizeProviderId(providerId) === "anthropic-subscription") return "CLAUDE_CODE_OAUTH_TOKEN";
 	const envVars = getApiKeyEnvVars(providerId);
 	if (!envVars || envVars.length === 0) return undefined;
 	return envVars.find((name) => name.endsWith("_API_KEY")) ?? envVars[0];

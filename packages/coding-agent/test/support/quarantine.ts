@@ -41,6 +41,27 @@ export function scrubAmbientAgentDirEnv(env: NodeJS.ProcessEnv = process.env): v
 	delete env[BRAND_ENV_VAR];
 }
 
+/** Namespace of the lifecycle environment a host generation exports to everything it runs. */
+const HOST_LIFECYCLE_ENV_PREFIX = "SENPI_RPC_HOST_";
+
+/**
+ * Remove every `SENPI_RPC_HOST_*` variable from `env`.
+ *
+ * A host generation exports its lifecycle (`SENPI_RPC_HOST_GENERATION`, `_INSTANCE_ID`, `_DAEMON_DIR`,
+ * `_PUBLIC_SOCKET`, `_WATCH_PPID`, `_WATCH_FD`, `_SCRATCH_DIR`, `_CLEANUP_PATHS`; see
+ * `TRANSIENT_ENV_NAMES` in `src/modes/rpc/host-daemon-env.ts`) to every session it runs, and a
+ * `vitest` run started from such a session inherits all of it: protocol-identity tests then read the
+ * outer host's generation, and hosts the suite spawns watch a foreign supervisor pid. Scrubbed by
+ * prefix, like the agent-directory lanes, so a variable added to that list later cannot leak in; the
+ * tuning variables in the same namespace (idle window, RSS threshold) go too, and a test that needs
+ * one sets it explicitly.
+ */
+export function scrubHostLifecycleEnv(env: NodeJS.ProcessEnv = process.env): void {
+	for (const key of Object.keys(env)) {
+		if (key.startsWith(HOST_LIFECYCLE_ENV_PREFIX)) delete env[key];
+	}
+}
+
 /**
  * Resolve the agent directory the test suite should run against.
  *

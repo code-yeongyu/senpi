@@ -1,3 +1,5 @@
+import { stripProviderRequestIds } from "@earendil-works/pi-ai/utils/retry";
+
 /**
  * Runtime-only selector suppression. A SelectorCooldowns instance belongs to one
  * AgentSession and is deliberately never persisted to settings or session files.
@@ -38,12 +40,20 @@ export class SelectorCooldowns {
 			return retryAfterMs;
 		}
 
-		const message = errorMessage?.toLowerCase() ?? "";
+		const message = stripProviderRequestIds(errorMessage ?? "").toLowerCase();
 		if (/usage[- ]limit|quota|insufficient_quota|billing|credits[-_ ]required|credits are required/.test(message))
 			return 30 * 60_000;
 		if (/rate[ -]?limit|429|too many requests/.test(message)) return 30_000;
 		if (/overloaded|capacity/.test(message)) return 45_000 + this.capacityJitterMs();
 		if (/5xx|\b5\d\d\b|server|internal error/.test(message)) return 20_000;
+		// A reason-less forbidden rejection is a per-request blip on a healthy credential (senpi#2376).
+		if (
+			/"type"\s*:\s*"forbidden"[^}]*request not allowed|request not allowed[^}]*"type"\s*:\s*"forbidden"/.test(
+				message,
+			)
+		) {
+			return 60_000;
+		}
 		// Transport blips (timeouts, DNS, socket drops) say nothing about model
 		// health; the 5-minute default parked the primary and blocked revert-to-primary.
 		if (

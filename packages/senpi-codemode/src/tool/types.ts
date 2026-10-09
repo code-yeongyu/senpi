@@ -1,6 +1,19 @@
-import type { AgentToolResult, AgentToolUpdateCallback } from "@code-yeongyu/senpi";
-import { type TUnsafe, Type } from "typebox";
+import type {
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	ExtensionKernelTools,
+	KernelPreludeContribution,
+} from "@code-yeongyu/senpi";
+import { type TSchema, type TUnsafe, Type } from "typebox";
+import type { KernelMemoryReport } from "../bridge/memory-protocol.ts";
 import type { HostToKernelMessage, KernelToHostMessage } from "../bridge/protocol.ts";
+import {
+	DEFAULT_FOREGROUND_WINDOW_SECONDS,
+	DEFAULT_HARD_LIMIT_SECONDS,
+	DEFAULT_RUN_BUDGET_SECONDS,
+	defaultCodemodeSettings,
+} from "../config/settings.ts";
+import type { KernelToolsCapability, KernelToolsDescribeResult } from "../kernels/js/kernel-tools-types.ts";
 import type { TruncationMeta } from "../output/output-meta.ts";
 
 export const evalLanguageOrder = ["js", "py", "rb", "jl"] as const;
@@ -11,13 +24,30 @@ export function enabledLanguageList(enabled: EnabledEvalLanguages): EvalLanguage
 	return evalLanguageOrder.filter((language) => enabled[language]);
 }
 
-export const EVAL_SUMMARY_MAX_LENGTH = 80;
+/** The deadlines the schema teaches the model; every number comes from the resolved settings. */
+export interface EvalDeadlineSeconds {
+	readonly runBudgetSeconds: number;
+	/** Effective interactive detach point: `cellTimeoutSeconds` capped by the foreground window. */
+	readonly detachAfterSeconds: number;
+	/** Longest a host tool call can hold an interactive call before it detaches anyway. */
+	readonly foregroundWindowSeconds: number;
+	readonly hardLimitSeconds: number;
+}
 
-const TIMEOUT_FIELD_DESCRIPTION =
-	"Seconds the cell may block the turn before it detaches, and the amount by which it raises the wall-clock hard limit. In interactive sessions the detach point is capped at the foreground window (default 60s), so a large value frees the turn at the window while the cell keeps running; on_timeout:'error' (and print/json) keep the full value as the uncapped deadline.";
+export const defaultEvalDeadlineSeconds: EvalDeadlineSeconds = {
+	runBudgetSeconds: DEFAULT_RUN_BUDGET_SECONDS,
+	detachAfterSeconds: Math.min(defaultCodemodeSettings.cellTimeoutSeconds, DEFAULT_FOREGROUND_WINDOW_SECONDS),
+	foregroundWindowSeconds: DEFAULT_FOREGROUND_WINDOW_SECONDS,
+	hardLimitSeconds: DEFAULT_HARD_LIMIT_SECONDS,
+};
 
-const ON_TIMEOUT_FIELD_DESCRIPTION =
-	"Timeout behavior. Interactive sessions detach by default (at the foreground window); print/json sessions error by default. 'error' uses the full timeout as an uncapped deadline.";
+function timeoutFieldDescription(deadlines: EvalDeadlineSeconds): string {
+	return `Run budget in seconds for this cell's own execution (default ${deadlines.runBudgetSeconds}s); time parked in host tool calls such as agent() or tool.* is not charged. When it runs out the cell is killed, and a js cell that cannot settle (a pending timer or Bun.$ command, a synchronous call) restarts its kernel and loses every global. Raise it only for a declared long run; a value above ${deadlines.hardLimitSeconds}s also raises the wall-clock hard limit. It does not move the detach point.`;
+}
+
+function onTimeoutFieldDescription(deadlines: EvalDeadlineSeconds): string {
+	return `'detach' (interactive default): the call returns after ${deadlines.detachAfterSeconds}s of the cell's own work (a host tool call in flight can hold it up to the ${deadlines.foregroundWindowSeconds}s foreground window) while the cell keeps running; completion arrives as a notification. 'error' (print/json default): the call blocks until the cell settles or a deadline kills it.`;
+}
 
 export interface EvalToolInput {
 	readonly language: EvalLanguage;
@@ -27,103 +57,210 @@ export interface EvalToolInput {
 	readonly timeout?: number;
 	readonly on_timeout?: "detach" | "error";
 	readonly reset?: boolean;
+	/** Run in a fresh sandbox VM instead of the persistent kernel; accepted only while `sandbox.enabled` is on. */
+	readonly isolate?: boolean;
 }
 
-export interface EvalControlInput {
-	readonly action: "peek" | "stop";
-	readonly cell_id: string;
+export interface EvalListInput {
+	readonly action: "list";
 }
+
+export type EvalControlInput =
+	| EvalListInput
+	| {
+			readonly action: "peek" | "stop";
+			readonly cell_id: string;
+	  };
 
 export type EvalToolRequest = EvalToolInput | EvalControlInput;
 
-const fullEvalInputSchema = Type.Object({
-	action: Type.Optional(
-		Type.Union([Type.Literal("run"), Type.Literal("peek"), Type.Literal("stop")], {
-			description: "Defaults to run. peek and stop require cell_id.",
-		}),
-	),
-	language: Type.Optional(
-		Type.Union([Type.Literal("js"), Type.Literal("py"), Type.Literal("rb"), Type.Literal("jl")]),
-	),
-	code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
-	summary: Type.Optional(
-		Type.String({
-			maxLength: EVAL_SUMMARY_MAX_LENGTH,
-			description:
-				"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
-		}),
-	),
-	timeout: Type.Optional(Type.Number({ minimum: 1, description: TIMEOUT_FIELD_DESCRIPTION })),
-	on_timeout: Type.Optional(
-		Type.Union([Type.Literal("detach"), Type.Literal("error")], {
-			description: ON_TIMEOUT_FIELD_DESCRIPTION,
-		}),
-	),
-	reset: Type.Optional(Type.Boolean({ description: "Reset this language kernel before running." })),
-	cell_id: Type.Optional(Type.String({ description: "Detached eval cell id for peek or stop." })),
-});
+// Run fields are optional at the root for control calls, but required in the run branch.
+const LANGUAGE_FIELD_DESCRIPTION =
+	"REQUIRED for run. Kernel that runs the cell; each language keeps its own persistent state across eval calls.";
+const CODE_FIELD_DESCRIPTION = "REQUIRED for run. Cell body, verbatim.";
+
+function evalInputProperties<Language extends TSchema>(languageSchema: Language, deadlines: EvalDeadlineSeconds) {
+	return {
+		action: Type.Optional(
+			Type.Union([Type.Literal("run"), Type.Literal("peek"), Type.Literal("stop"), Type.Literal("list")], {
+				description:
+					"Defaults to run. peek and stop require cell_id. list: live and recently settled cells across languages.",
+			}),
+		),
+		language: Type.Optional(languageSchema),
+		code: Type.Optional(Type.String({ description: CODE_FIELD_DESCRIPTION })),
+		summary: Type.Optional(
+			Type.String({
+				description:
+					"REQUIRED for run. One line in the language the user writes in: a progress update saying what you are doing and why, not a label for the code; shown in the TUI while the cell runs.",
+			}),
+		),
+		timeout: Type.Optional(Type.Number({ minimum: 1, description: timeoutFieldDescription(deadlines) })),
+		on_timeout: Type.Optional(
+			Type.Union([Type.Literal("detach"), Type.Literal("error")], {
+				description: onTimeoutFieldDescription(deadlines),
+			}),
+		),
+		reset: Type.Optional(
+			Type.Boolean({
+				description: "Reset this language kernel before running; refused while that language has live cells.",
+			}),
+		),
+		cell_id: Type.Optional(Type.String({ minLength: 1, description: "Eval cell id for peek or stop." })),
+	};
+}
+
+function evalLanguageUnion(languages: readonly EvalLanguage[]) {
+	return Type.Union(
+		languages.map((item) => Type.Literal(item)),
+		{ description: LANGUAGE_FIELD_DESCRIPTION },
+	);
+}
+
+const fullEvalInputSchema = Type.Object(
+	evalInputProperties(evalLanguageUnion(evalLanguageOrder), defaultEvalDeadlineSeconds),
+);
 
 /** Runtime accepts a discriminated run/control union. */
 export type EvalInputSchema = TUnsafe<EvalToolRequest> & Pick<typeof fullEvalInputSchema, "properties">;
 
-export function createEvalInputSchema(enabled: EnabledEvalLanguages): EvalInputSchema {
+const ISOLATE_FIELD_DESCRIPTION =
+	"js only. Fresh sandbox per call: no persistence, no fs/net/process/timers; only tool.* plus print/display.";
+
+export function createEvalInputSchema(
+	enabled: EnabledEvalLanguages,
+	deadlines: EvalDeadlineSeconds = defaultEvalDeadlineSeconds,
+	options: { readonly sandbox?: boolean } = {},
+): EvalInputSchema {
 	const languages = enabledLanguageList(enabled);
 	if (languages.length === 0) throw new Error("eval requires at least one enabled language");
-	const languageSchema =
-		languages.length === 1
-			? Type.Union([Type.Literal(languages[0])])
-			: Type.Union(languages.map((item) => Type.Literal(item)));
+	const languageSchema = evalLanguageUnion(languages);
+	// The sandbox field exists in the schema only while sandbox cells are turned on, so the default schema
+	// (and the prompt built from it) stays exactly what it was.
+	const properties =
+		options.sandbox === true && languages.includes("js")
+			? {
+					...evalInputProperties(languageSchema, deadlines),
+					isolate: Type.Optional(Type.Boolean({ description: ISOLATE_FIELD_DESCRIPTION })),
+				}
+			: evalInputProperties(languageSchema, deadlines);
 	return Type.Unsafe<EvalToolRequest>(
-		Type.Object({
-			action: Type.Optional(
-				Type.Union([Type.Literal("run"), Type.Literal("peek"), Type.Literal("stop")], {
-					description: "Defaults to run. peek and stop require cell_id.",
-				}),
-			),
-			language: Type.Optional(languageSchema),
-			code: Type.Optional(Type.String({ description: "Cell body, verbatim." })),
-			summary: Type.Optional(
-				Type.String({
-					maxLength: EVAL_SUMMARY_MAX_LENGTH,
-					description:
-						"REQUIRED for run. ONE line in the USER'S conversational language (Korean conversation -> Korean summary) stating WHAT this cell does and FOR WHAT PURPOSE; shown in the TUI while the cell runs. Longer values are force-truncated to 80 chars.",
-				}),
-			),
-			timeout: Type.Optional(Type.Number({ minimum: 1, description: TIMEOUT_FIELD_DESCRIPTION })),
-			on_timeout: Type.Optional(
-				Type.Union([Type.Literal("detach"), Type.Literal("error")], {
-					description: ON_TIMEOUT_FIELD_DESCRIPTION,
-				}),
-			),
-			reset: Type.Optional(Type.Boolean({ description: "Reset this language kernel before running." })),
-			cell_id: Type.Optional(Type.String({ description: "Detached eval cell id for peek or stop." })),
+		Type.Object(properties, {
+			// Keep branches self-contained for Mistral-hosted GLM (#2240).
+			anyOf: [
+				Type.Object(
+					{ ...properties, action: Type.Optional(Type.Literal("run")) },
+					{ required: ["language", "code", "summary"] },
+				),
+				Type.Object({ action: Type.Literal("list") }),
+				Type.Object(
+					{ action: Type.Union([Type.Literal("peek"), Type.Literal("stop")]), cell_id: properties.cell_id },
+					{ required: ["action", "cell_id"] },
+				),
+			],
 		}),
 	) as EvalInputSchema;
 }
 export type EvalKernelResult = Extract<KernelToHostMessage, { type: "result" }>;
 export type EvalToolCallMessage = Extract<KernelToHostMessage, { type: "tool-call" }>;
 
+export type HostCellOutcome =
+	| { readonly ok: true; readonly valueRepr?: string }
+	| { readonly ok: false; readonly error: { readonly message: string; readonly name?: string } };
+
+/**
+ * Work the host runs in the cell's place when the entry reaches the front of the kernel's queue: no code is
+ * sent to the interpreter, and aborting the signal (interrupt, timeout, kernel close) ends it without
+ * restarting the interpreter.
+ */
+export type HostCellExecutor = (context: {
+	readonly signal: AbortSignal;
+	readonly emit: (message: KernelToHostMessage) => void;
+}) => Promise<HostCellOutcome>;
+
 export interface EvalKernelRunInput {
 	readonly cellId: string;
 	readonly code: string;
+	readonly host?: HostCellExecutor;
 	readonly timeoutMs?: number;
+	readonly onStarted?: () => void;
+	readonly onMessage?: (message: KernelToHostMessage) => void;
+	/** Globals of the tools active when the cell was submitted; kernels without preludes ignore them. */
+	readonly kernelPreludes?: readonly KernelPreludeContribution[];
+	/**
+	 * Python only: read when the cell starts running (not when it was queued), so a cell queued behind `%pip`
+	 * sees the revision it published. `""` means no environment: the previous revision leaves the import path.
+	 */
+	readonly envRoot?: () => string;
+	/** The file a `%load` cell runs: tracebacks name it and its relative imports resolve from its directory. */
+	readonly sourceFile?: string;
+	/**
+	 * JavaScript only: the session's managed package revision; bare imports that do not resolve from cwd fall back to
+	 * it. Read when the cell starts running (not when it was queued), so a cell queued behind `%bun add` resolves the
+	 * revision that install published.
+	 */
+	readonly packageRoot?: () => string | undefined;
+	/**
+	 * Called when the cell's turn comes in the kernel's queue, never earlier: what to run instead of `code` (a `%load`
+	 * cell's file), or a refusal that settles the cell as failed in queue order.
+	 */
+	readonly resolveAtStart?: () => CellSourceAtStart;
+	/**
+	 * Subprocess kernels attach this to the cell's host calls, and the host gives those calls the cell's kernel tools.
+	 * A fresh secret per run, sent only to the kernel that runs the cell; never a model-visible id.
+	 */
+	readonly bridgeCellToken?: string;
 }
+
+export type CellSourceAtStart =
+	| { readonly ok: true; readonly code: string; readonly sourceFile?: string }
+	| { readonly ok: false; readonly message: string };
 
 export interface KernelInterruptHandle {
 	/** Resolves once the kernel knows whether user state survived the interrupt. */
 	readonly stateRetained: Promise<boolean>;
+	/** Extra outcome detail worth showing the model, e.g. that a blocked worker was abandoned. */
+	readonly note?: string;
+}
+
+/** An unstarted cell a dead kernel hands back, so its replacement runs it with the same input and callbacks. */
+export interface PendingCell {
+	readonly input: EvalKernelRunInput;
+	readonly settle: (result: EvalKernelResult) => void;
 }
 
 export interface EvalKernel {
 	run(input: EvalKernelRunInput): Promise<EvalKernelResult>;
-	interrupt(reason?: string): Promise<KernelInterruptHandle>;
+	cancelQueued(cellId: string, reason: string): boolean;
+	interrupt(reason?: string, cellId?: string): Promise<KernelInterruptHandle>;
+	queueSnapshot(): { activeCellId: string | null; queuedCellIds: readonly string[] };
 	deliverToolReply(message: Extract<HostToKernelMessage, { type: "tool-reply" }>): void;
 	reset(): Promise<void>;
 	close(): Promise<void>;
+	/** Names this kernel has registered; JS collides with other languages in the same session. */
+	listKernelToolNames?(): readonly string[];
+	/** False once the interpreter died on its own; the session manager then replaces the instance. */
+	isAlive?(): boolean;
+	/** Hands over, and forgets, every queued cell of a dead kernel that never started. */
+	drainPending?(): readonly PendingCell[];
+	/** Describes this kernel's registered kernel tools; only an in-process JS kernel has them. */
+	describeKernelTools?(names: readonly string[]): Promise<KernelToolsDescribeResult>;
+	/** Invokes one of this kernel's kernel tools; present exactly when `describeKernelTools` is. */
+	invokeKernelTool?: ExtensionKernelTools["invoke"];
 }
 
 export interface EvalKernelManager {
 	getKernel(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): Promise<EvalKernel>;
+	/**
+	 * Drops the per-cell listener `getKernel` registered for `language` once that cell settled.
+	 * Identity-checked, so releasing a superseded listener never unbinds a newer cell's listener.
+	 */
+	releaseKernelListener?(language: EvalLanguage, onMessage: (message: KernelToHostMessage) => void): void;
+	/**
+	 * Binds a running cell's kernel-tools capability to the host calls that carry `token` (subprocess kernels reach
+	 * the host over the bridge, outside the cell's async context). The returned release runs when the cell settles.
+	 */
+	bindCellKernelTools?(token: string, capability: KernelToolsCapability): () => void;
 }
 
 export type ExecuteTool = (
@@ -141,6 +278,7 @@ export interface EvalToolCallSummary {
 	readonly argsTruncated?: boolean;
 	readonly durationMs?: number;
 	readonly resultPreview?: string;
+	readonly details?: unknown;
 }
 
 export type EvalStatusEvent = { readonly op: string } & Readonly<Record<string, unknown>>;
@@ -150,6 +288,8 @@ export interface EvalRuntimeInfo {
 	readonly name: string;
 	readonly version: string;
 	readonly path?: string;
+	/** JS only: the kernel runs in a child process (`process`), or the cell ran in an isolated QuickJS VM (`sandbox`). */
+	readonly isolation?: "process" | "sandbox";
 }
 
 export type EvalRuntimes = Readonly<Partial<Record<EvalLanguage, EvalRuntimeInfo>>>;
@@ -167,7 +307,8 @@ export type EvalCellResult = {
 	readonly language: EvalLanguage;
 	readonly output: string;
 	readonly runtime?: EvalRuntimeInfo;
-	readonly status: "pending" | "running" | "detached" | "complete" | "error" | "cancelled";
+	readonly status: "pending" | "queued" | "running" | "detached" | "complete" | "error" | "cancelled";
+	readonly queuedBehind?: readonly string[];
 	readonly exitCode?: number;
 	readonly durationMs?: number;
 	/** Epoch ms when the cell started; lets renderers tick elapsed time between update events. */
@@ -175,6 +316,22 @@ export type EvalCellResult = {
 	readonly statusEvents?: readonly EvalStatusEvent[];
 	readonly hasMarkdown?: boolean;
 };
+
+export interface EvalListedCell {
+	readonly cellId: string;
+	readonly language: EvalLanguage;
+	readonly state: "queued" | "running" | "detached" | "completed" | "failed" | "cancelled";
+	readonly startedAtMs: number;
+	readonly queuedBehind?: readonly string[];
+	readonly summary?: string;
+}
+
+export interface EvalListDetails {
+	readonly action: "list";
+	readonly cells: readonly EvalListedCell[];
+}
+
+export type EvalResultDetails = EvalToolDetails | EvalListDetails;
 
 export interface EvalToolDetails {
 	readonly language: EvalLanguage;
@@ -189,10 +346,20 @@ export interface EvalToolDetails {
 	readonly toolCalls: readonly EvalToolCallSummary[];
 	readonly truncated: boolean;
 	readonly isError?: boolean;
+	/** Machine-readable reason for a tool-boundary cancellation. */
+	readonly code?: string;
 	readonly phase?: string;
 	readonly cells?: readonly EvalCellResult[];
 	readonly statusEvents?: readonly EvalStatusEvent[];
 	readonly jsonOutputs?: readonly unknown[];
 	readonly notice?: string;
 	readonly meta?: TruncationMeta;
+	/** Kernel memory after the cell; its notice text is delivered as its own content part. */
+	readonly memory?: EvalMemoryDetails;
+	/** What a kernel death did to this cell's state, when one did. */
+	readonly kernelState?: EvalKernelState;
 }
+
+export type EvalKernelState = NonNullable<EvalKernelResult["kernelState"]>;
+
+export type EvalMemoryDetails = Omit<KernelMemoryReport, "notice">;

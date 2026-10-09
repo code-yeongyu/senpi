@@ -12,6 +12,8 @@ import {
 import { stream as streamCursorAgent } from "../src/api/cursor-agent.ts";
 import type { CursorAgentCompat, Model } from "../src/model.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const neverAbortedSignal = new AbortController().signal;
 
 function buildModel(
@@ -91,7 +93,7 @@ async function captureRunRequest(
 	const baseUrl = `http://127.0.0.1:${address.port}`;
 	const stream = streamCursorAgent(
 		{ ...model, baseUrl },
-		{ messages: [{ role: "user", content: "hello", timestamp: 0 }] },
+		normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 0 }] }),
 		{ apiKey: "test-token", signal: neverAbortedSignal, ...options },
 	);
 	for await (const _event of stream) {

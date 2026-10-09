@@ -52,7 +52,8 @@ describe("detached eval settlement", () => {
 				},
 			}),
 		);
-		manager.markRunning(cell, new FakeKernel([]), provider);
+		manager.bindKernel(cell, new FakeKernel([]), provider);
+		manager.markRunning(cell);
 		manager.detach(cell);
 		manager.peek("provider-cell");
 		expect(provider).toHaveBeenCalledOnce();

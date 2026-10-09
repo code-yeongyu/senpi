@@ -317,6 +317,7 @@ function sanitizeContinuationState(goal: Goal): Goal {
 	if (!isNonNegativeSafeInteger(next.consecutiveContinuations)) delete next.consecutiveContinuations;
 	if (!isNonNegativeSafeInteger(next.unattendedContinuations)) delete next.unattendedContinuations;
 	if (typeof next.lastContinuationSignature !== "string") delete next.lastContinuationSignature;
+	if (!isNonNegativeSafeInteger(next.continuationStoppedAt)) delete next.continuationStoppedAt;
 	return next;
 }
 

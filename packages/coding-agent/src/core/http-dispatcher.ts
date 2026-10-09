@@ -17,6 +17,42 @@ const originalGlobalFetch = globalThis.fetch;
 let installedGlobalFetch: typeof globalThis.fetch | undefined;
 let multiSessionDispatcherTimeoutMs: number | undefined;
 
+/** Facts the global-install decision reads; injected so the decision is testable per runtime. */
+export interface UndiciGlobalsInstallInput {
+	/** `process.versions`; a `bun` entry means this process IS Bun. */
+	readonly versions: Readonly<Record<string, string | undefined>>;
+	/** `globalThis.fetch` at the time of the call. */
+	readonly currentFetch: unknown;
+	/** `globalThis.fetch` captured when this module loaded. */
+	readonly originalFetch: unknown;
+	/** `globalThis.fetch` left behind by the previous install, if any. */
+	readonly installedFetch: unknown;
+}
+
+/**
+ * Whether `configureHttpDispatcher` may replace the global `fetch` (and the
+ * WebSocket/Headers/Request/Response constructors) with the bundled Undici
+ * implementation.
+ *
+ * Bun keeps its native fetch: the distributed CLI inlines npm undici, and its
+ * fetch running on Bun 1.3.x answers with the response headers but never
+ * delivers a streamed body, so every SSE model response stalls after the
+ * headers (#1890). Bun's own fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY,
+ * which `applyHttpProxySettings` sets, and stream stalls stay bounded by the
+ * agent-level idle and stream-start guards derived from the same
+ * `httpIdleTimeoutMs` setting.
+ *
+ * Node installs the globals so fetch and the dispatcher share one undici
+ * implementation (see the call site); a caller that deliberately replaced
+ * `fetch` after module load keeps its override.
+ */
+export function shouldInstallUndiciGlobals(input: UndiciGlobalsInstallInput): boolean {
+	if (input.versions.bun !== undefined) return false;
+	return input.installedFetch === undefined
+		? input.currentFetch === input.originalFetch
+		: input.currentFetch === input.installedFetch;
+}
+
 function isMultiSessionRpcProcess(): boolean {
 	return process.argv.includes("--multi-session");
 }
@@ -123,10 +159,12 @@ export function configureHttpDispatcher(timeoutMs: number = DEFAULT_HTTP_IDLE_TI
 	// bundled fetch can otherwise consume compressed responses through npm undici's
 	// dispatcher without decompressing them, causing response.json() failures.
 	// If a caller replaced fetch after module load, preserve that deliberate override.
-	const shouldInstallGlobals =
-		installedGlobalFetch === undefined
-			? globalThis.fetch === originalGlobalFetch
-			: globalThis.fetch === installedGlobalFetch;
+	const shouldInstallGlobals = shouldInstallUndiciGlobals({
+		versions: process.versions,
+		currentFetch: globalThis.fetch,
+		originalFetch: originalGlobalFetch,
+		installedFetch: installedGlobalFetch,
+	});
 	if (shouldInstallGlobals) {
 		undici.install?.();
 		installedGlobalFetch = globalThis.fetch;

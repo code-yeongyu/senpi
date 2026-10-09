@@ -1,4 +1,4 @@
-import { MEDIA_PLACEHOLDERS_CAPABILITY, RENDERED_COMPONENTS_CAPABILITY } from "./custom-capability.ts";
+import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { omitInlineMedia } from "./media-placeholders.ts";
 import { SocketEventSinkActor } from "./socket-event-fanout.ts";
@@ -17,8 +17,6 @@ export interface SessionEventWriterConnection {
 	 */
 	readonly close?: () => void;
 }
-
-export const RENDERED_COMPONENT_RECORD = "__senpiRenderedComponent";
 
 const BROADCAST_LIFECYCLE_RECORDS = new Set([
 	"agent_start",
@@ -46,7 +44,6 @@ type SnapshotRecord = {
 	readonly line: string;
 	placeholderLine?: string;
 	readonly source?: Record<string, unknown>;
-	readonly rendered: boolean;
 };
 
 /** The placeholder variant of a remembered record, derived and memoized on first use. */
@@ -61,6 +58,7 @@ function snapshotPlaceholderLine(record: SnapshotRecord): string {
 export class SessionEventFanout {
 	private readonly connections = new Map<string, RegisteredConnection>();
 	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
+	private readonly pendingQuestions = new Map<string, Map<string, Record<string, unknown>>>();
 	private readonly connectionCapabilities = new Map<string, Set<string>>();
 	private readonly connectionSessions = new Map<string, Set<string>>();
 	private readonly registeredCapabilityConnections = new Set<string>();
@@ -68,7 +66,7 @@ export class SessionEventFanout {
 	registerConnection(
 		id: string,
 		connection: SessionEventWriterConnection,
-		options: { readonly maxQueueBytes?: number } = {},
+		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
 	): void {
 		const actor = new SocketEventSinkActor(
 			connection,
@@ -85,6 +83,7 @@ export class SessionEventFanout {
 				connection.close?.();
 			},
 			options.maxQueueBytes,
+			options.stallMs,
 		);
 		this.connections.set(id, { connection, actor });
 		this.connectionCapabilities.set(id, new Set());
@@ -108,6 +107,14 @@ export class SessionEventFanout {
 		sessions.add(sessionId);
 		this.connectionSessions.set(id, sessions);
 		this.replaySnapshot(id, sessionId);
+		for (const frame of this.pendingQuestions.get(sessionId)?.values() ?? []) {
+			this.connections.get(id)?.actor.enqueue(
+				serializeJsonLine({
+					...frame,
+					remainingMs: typeof frame.deadlineAtMs === "number" ? Math.max(0, frame.deadlineAtMs - Date.now()) : 0,
+				}),
+			);
+		}
 	}
 
 	detachConnectionFromSession(id: string, sessionId: string): void {
@@ -117,11 +124,8 @@ export class SessionEventFanout {
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		const registered = this.connections.get(id);
 		if (!registered) return;
-		const wasCapable = this.connectionCapabilities.get(id)?.has(RENDERED_COMPONENTS_CAPABILITY) ?? false;
 		this.connectionCapabilities.set(id, new Set(capabilities));
 		this.registeredCapabilityConnections.add(id);
-		if (!wasCapable && capabilities.includes(RENDERED_COMPONENTS_CAPABILITY))
-			for (const sessionId of this.connectionSessions.get(id) ?? []) this.replayRendered(id, sessionId);
 	}
 
 	clearConnectionCapabilities(id: string): void {
@@ -140,13 +144,6 @@ export class SessionEventFanout {
 		return [...(this.connectionCapabilities.get(id) ?? [])];
 	}
 
-	hasCapableConnection(sessionId: string): boolean {
-		for (const id of this.connectionCapabilities.keys())
-			if (this.connectionHas(id, RENDERED_COMPONENTS_CAPABILITY) && this.connectionSessions.get(id)?.has(sessionId))
-				return true;
-		return false;
-	}
-
 	/** Whether a connection advertised a capability. The only capability lookup in this file. */
 	connectionHas(id: string | undefined, capability: string): boolean {
 		return id === undefined ? false : (this.connectionCapabilities.get(id)?.has(capability) ?? false);
@@ -156,20 +153,11 @@ export class SessionEventFanout {
 		sessionId: string,
 		targetId: string | undefined,
 		isTargeted: boolean,
-		rendered: boolean,
 		recordType: unknown,
 	): readonly (string | undefined)[] {
 		if (isTargeted) return [targetId];
 		if (typeof recordType === "string" && BROADCAST_LIFECYCLE_RECORDS.has(recordType))
 			return this.connections.size > 0 ? [...this.connections.keys()] : [undefined];
-		if (rendered)
-			return this.connections.size > 0
-				? [...this.connections.keys()].filter(
-						(id) =>
-							this.connectionHas(id, RENDERED_COMPONENTS_CAPABILITY) &&
-							this.connectionSessions.get(id)?.has(sessionId),
-					)
-				: [undefined];
 		return this.connections.size > 0
 			? [...this.connections.keys()].filter((id) => this.connectionSessions.get(id)?.has(sessionId))
 			: [undefined];
@@ -192,6 +180,12 @@ export class SessionEventFanout {
 		for (const { actor } of this.connections.values()) actor.enqueue(line);
 	}
 
+	/** Deliver one line to the connections attached to a session, never to the rest of the fanout. */
+	deliverToSession(sessionId: string, line: string): void {
+		for (const [id, { actor }] of this.connections)
+			if (this.connectionSessions.get(id)?.has(sessionId)) actor.enqueue(line);
+	}
+
 	rememberSnapshot(
 		sessionId: string,
 		value: Record<string, unknown>,
@@ -199,13 +193,23 @@ export class SessionEventFanout {
 		placeholderLine?: string,
 		source?: Record<string, unknown>,
 	): void {
+		if (value.type === "extension_ui_request" && value.method === "question" && typeof value.id === "string") {
+			const pending = this.pendingQuestions.get(sessionId) ?? new Map<string, Record<string, unknown>>();
+			pending.set(value.id, { ...value });
+			this.pendingQuestions.set(sessionId, pending);
+			return;
+		}
+		if (value.type === "question_resolved" && typeof value.id === "string") {
+			this.pendingQuestions.get(sessionId)?.delete(value.id);
+			return;
+		}
+		if (value.type === "question_updated" && typeof value.id === "string") {
+			const frame = this.pendingQuestions.get(sessionId)?.get(value.id);
+			if (frame) Object.assign(frame, { deadlineAtMs: value.deadlineAtMs, remainingMs: value.remainingMs });
+			return;
+		}
 		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
-		const record: SnapshotRecord = {
-			line,
-			placeholderLine,
-			source,
-			rendered: value[RENDERED_COMPONENT_RECORD] === true,
-		};
+		const record: SnapshotRecord = { line, placeholderLine, source };
 		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
 			this.sessionSnapshots.set(sessionId, [record]);
 		} else if (this.sessionSnapshots.has(sessionId)) {
@@ -215,21 +219,15 @@ export class SessionEventFanout {
 	}
 
 	forgetSession(sessionId: string): void {
+		this.pendingQuestions.delete(sessionId);
 		this.sessionSnapshots.delete(sessionId);
 	}
 
 	private replaySnapshot(id: string, sessionId: string): void {
 		const actor = this.connections.get(id)?.actor;
 		if (!actor) return;
-		const capable = this.connectionHas(id, RENDERED_COMPONENTS_CAPABILITY);
 		const placeholders = this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY);
 		for (const record of this.sessionSnapshots.get(sessionId) ?? [])
-			if (!record.rendered || capable) actor.enqueue(placeholders ? snapshotPlaceholderLine(record) : record.line);
-	}
-
-	private replayRendered(id: string, sessionId: string): void {
-		const actor = this.connections.get(id)?.actor;
-		if (!actor) return;
-		for (const record of this.sessionSnapshots.get(sessionId) ?? []) if (record.rendered) actor.enqueue(record.line);
+			actor.enqueue(placeholders ? snapshotPlaceholderLine(record) : record.line);
 	}
 }

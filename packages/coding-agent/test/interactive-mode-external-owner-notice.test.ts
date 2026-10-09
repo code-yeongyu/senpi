@@ -145,6 +145,7 @@ describe("external-owner compaction rejection rendering", () => {
 			session: {
 				abortCompaction: vi.fn(),
 				setModel: vi.fn().mockResolvedValue(undefined),
+				setSessionModel: vi.fn().mockResolvedValue(undefined),
 			},
 			updateEditorBorderColor: vi.fn(),
 			showRiskyMainModelWarning: vi.fn(),
@@ -154,10 +155,15 @@ describe("external-owner compaction rejection rendering", () => {
 		const selectModelFromUi = Reflect.get(InteractiveMode.prototype, "selectModelFromUi") as (
 			this: typeof fakeThis,
 			model: { id: string },
+			done: undefined,
+			selection: { origin: { source: "picker" }; persistDefault: boolean },
 		) => Promise<void>;
 
 		await handleEvent.call(fakeThis, externalOwnerEvent());
-		await selectModelFromUi.call(fakeThis, { id: "some-model" });
+		await selectModelFromUi.call(fakeThis, { id: "some-model" }, undefined, {
+			origin: { source: "picker" },
+			persistDefault: false,
+		});
 		expect(fakeThis.footer.setCompactionDelegated).toHaveBeenLastCalledWith(false);
 
 		await handleEvent.call(fakeThis, externalOwnerEvent());

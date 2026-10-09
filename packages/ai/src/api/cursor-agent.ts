@@ -26,7 +26,6 @@ import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
 	Api,
 	AssistantMessage,
-	Context,
 	ImageContent,
 	Message,
 	Model,
@@ -37,6 +36,7 @@ import type {
 	Tool,
 	ToolCall,
 	ToolResultMessage,
+	TranscriptContext,
 } from "../types.ts";
 import {
 	type CursorExecResolvedCarrier,
@@ -48,10 +48,12 @@ import {
 	kStreamingLastParseLen,
 	kStreamingPartialJson,
 } from "../utils/block-symbols.ts";
+import { recordCursorContextLimit } from "../utils/cursor-context-limit.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getCurrentSystemPrompt, getCurrentTools } from "../utils/transcript.ts";
 import { deterministicUuid } from "./cursor-agent/deterministic-id.ts";
 import { armExecHeartbeat } from "./cursor-agent/exec-lifecycle.ts";
 import {
@@ -708,10 +710,11 @@ export function mapH2TransportError(error: unknown, baseUrl: string): unknown {
 
 export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 	model: Model<"cursor-agent">,
-	context: Context,
+	context: TranscriptContext,
 	options?: CursorAgentOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const requestView = toCursorRequestView(context);
 
 	(async () => {
 		const output: AssistantMessage = {
@@ -836,7 +839,7 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				const cachedState = conversationStateCache.get(conversationId);
 				const { requestBytes, conversationState, requestedModel, modelDetails } = await buildGrpcRequest(
 					model,
-					context,
+					requestView,
 					options,
 					{
 						conversationId,
@@ -853,7 +856,7 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 				// This request's working set is pinned now, so the process ceiling can
 				// reclaim from cold conversations without touching what it needs.
 				enforceConversationTotalBlobLimit();
-				const requestContextTools = buildMcpToolDefinitions(context.tools);
+				const requestContextTools = buildMcpToolDefinitions(requestView.tools);
 
 				const baseUrl = model.baseUrl || CURSOR_API_URL;
 				const requestPath = "/agent.v1.AgentService/Run";
@@ -940,6 +943,9 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
 
 				const onConversationCheckpoint = (checkpoint: ConversationStateStructure) => {
 					attemptSawCheckpoint = true;
+					// The server states this model's real ceiling here; the catalog only
+					// guesses it. The first checkpoint of a conversation reports 0.
+					recordCursorContextLimit(model.id, checkpoint.tokenDetails?.maxTokens);
 					conversationStateCache.set(conversationId!, checkpoint);
 				};
 				const healthFailThresholdMs =
@@ -1265,7 +1271,7 @@ export const stream: StreamFunction<"cursor-agent", CursorAgentOptions> = (
  */
 export const streamSimple: StreamFunction<"cursor-agent", SimpleStreamOptions> = (
 	model: Model<"cursor-agent">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	return stream(model, context, options as CursorAgentOptions);
@@ -3680,7 +3686,7 @@ export function synthesizeCursorExecToolCall(
 		type: "toolCall",
 		id: toolCallId,
 		name: toolName,
-		arguments: omitUndefinedArgs(args),
+		arguments: omitUndefinedArgs(args) as ToolCall["arguments"],
 		[kStreamingBlockIndex]: output.content.length,
 		[kStreamingBlockKind]: "cursor-exec",
 		[kCursorExecResolved]: true,
@@ -3783,7 +3789,7 @@ export function processInteractionUpdate(
 			type: "toolCall",
 			id: scmCall?.args?.toolCallId || update.message.value.callId || randomUUID(),
 			name: "connect_scm",
-			arguments: repository ? { owner: repository.owner, repo: repository.repo } : {},
+			arguments: (repository ? { owner: repository.owner, repo: repository.repo } : {}) as ToolCall["arguments"],
 			[kStreamingBlockIndex]: output.content.length,
 			[kStreamingBlockKind]: "connect-scm",
 			[kStreamingEnvelopeId]: update.message.value.callId || undefined,
@@ -3899,7 +3905,7 @@ export function processInteractionUpdate(
 				settled.arguments = mergeCursorMcpToolCallArgs(
 					settled.arguments as Record<string, unknown> | undefined,
 					decodedArgs,
-				);
+				) as ToolCall["arguments"];
 				if (settled.name === "task") {
 					settled.arguments = keepUsableCursorTaskArgs(previousArgs, settled.arguments);
 				}
@@ -3910,7 +3916,7 @@ export function processInteractionUpdate(
 				const scmCall = selectConnectScmCall(toolCall);
 				const repository = selectConnectScmRepository(scmCall);
 				if (repository) {
-					settled.arguments = { owner: repository.owner, repo: repository.repo };
+					settled.arguments = { owner: repository.owner, repo: repository.repo } as ToolCall["arguments"];
 				}
 				const { text, isError } = describeConnectScmResult(scmCall);
 				void state.onToolResult?.({
@@ -4459,7 +4465,11 @@ function buildConversationTurns(
 }
 
 /** Returns the serialized byte cost of Cursor's complete stored history representation. */
-export { buildCursorHistoryWireBytesForTest, measureCursorHistorySerializedBytes } from "./cursor-agent/measure.ts";
+export {
+	buildCursorHistoryWireBytesForTest,
+	measureCursorHistorySerializedBytes,
+	measureCursorModelInputSerializedBytes,
+} from "./cursor-agent/measure.ts";
 
 /** Exported for tests: decodes Cursor history blobs built from conversation messages. */
 export function buildCursorHistoryForTest(
@@ -4527,9 +4537,24 @@ function extractImages(content: (TextContent | ImageContent)[]) {
 		);
 }
 
+/** A Cursor run request's view of a transcript: the replayed prompt and tools, and the non-system turns. */
+interface CursorRequestView {
+	systemPrompt: string;
+	messages: Message[];
+	tools: Tool[];
+}
+
+function toCursorRequestView(context: TranscriptContext): CursorRequestView {
+	return {
+		systemPrompt: getCurrentSystemPrompt(context.messages),
+		messages: context.messages.filter((message) => message.role !== "system"),
+		tools: getCurrentTools(context.messages),
+	};
+}
+
 async function buildGrpcRequest(
 	model: Model<"cursor-agent">,
-	context: Context,
+	request: CursorRequestView,
 	options: CursorAgentOptions | undefined,
 	state: {
 		conversationId: string;
@@ -4548,12 +4573,12 @@ async function buildGrpcRequest(
 }> {
 	const blobStore = state.blobStore;
 
-	const systemPromptIds = buildCursorSystemPromptJsons(context.systemPrompt, model.id).map((json) =>
+	const systemPromptIds = buildCursorSystemPromptJsons(request.systemPrompt, model.id).map((json) =>
 		storeCursorBlob(blobStore, new TextEncoder().encode(json)),
 	);
 
-	const activeUserMessageIndex = context.messages.length - 1;
-	const activeMessage = context.messages[activeUserMessageIndex];
+	const activeUserMessageIndex = request.messages.length - 1;
+	const activeMessage = request.messages[activeUserMessageIndex];
 	const activeUserMessage = activeMessage?.role === "user" ? activeMessage : undefined;
 	let userContent: string | (TextContent | ImageContent)[] | undefined;
 	let userText = "";
@@ -4586,13 +4611,13 @@ async function buildGrpcRequest(
 	// Build conversation turns from prior messages, excluding only the active
 	// user message when the request is sending one. Resume actions must
 	// preserve trailing tool results.
-	const turns = buildConversationTurns(context.messages, blobStore, activeUserMessage ? activeUserMessageIndex : -1);
+	const turns = buildConversationTurns(request.messages, blobStore, activeUserMessage ? activeUserMessageIndex : -1);
 
 	// Cursor's server uses `rootPromptMessagesJson` (not `turns[]`) to build
 	// the actual model prompt; without it multi-turn conversations lose prior
 	// context.
 	const rootPromptMessagesJson = buildRootPromptMessagesJson(
-		context.messages,
+		request.messages,
 		systemPromptIds,
 		blobStore,
 		activeUserMessage ? activeUserMessageIndex : -1,
@@ -4665,7 +4690,7 @@ async function buildGrpcRequest(
 
 	log("info", "builtRunRequest", {
 		bytes: requestBytes.length,
-		tools: context.tools?.length ?? 0,
+		tools: request.tools.length,
 	});
 
 	return { requestBytes, blobStore, conversationState, requestedModel, modelDetails };

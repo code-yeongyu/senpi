@@ -1,4 +1,4 @@
-import type { KnownProvider, Model } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, test, vi } from "vitest";
@@ -428,11 +428,11 @@ describe("resolveCliModel", () => {
 			...mockModels[1],
 			id: "gpt-5.6-sol",
 			name: "GPT 5.6 Sol",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 		};
 		const registry = {
 			getModels: () => [azureModel, codexModel],
-			hasConfiguredAuth: (provider: string) => provider === "openai-codex",
+			hasConfiguredAuth: (provider: string) => provider === "chatgpt-subscription",
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRuntime"];
 
 		const result = resolveCliModel({
@@ -441,7 +441,7 @@ describe("resolveCliModel", () => {
 		});
 
 		expect(result.error).toBeUndefined();
-		expect(result.model?.provider).toBe("openai-codex");
+		expect(result.model?.provider).toBe("chatgpt-subscription");
 		expect(result.model?.id).toBe("gpt-5.6-sol");
 	});
 
@@ -456,7 +456,7 @@ describe("resolveCliModel", () => {
 			...mockModels[1],
 			id: "gpt-5.6-sol",
 			name: "GPT 5.6 Sol",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 		};
 		const registry = {
 			getModels: () => [azureModel, codexModel],
@@ -471,7 +471,7 @@ describe("resolveCliModel", () => {
 		expect(result.model).toBeUndefined();
 		expect(result.error).toContain('Model "gpt-5.6-sol" is ambiguous across providers');
 		expect(result.error).toContain("azure-openai-responses/gpt-5.6-sol");
-		expect(result.error).toContain("openai-codex/gpt-5.6-sol");
+		expect(result.error).toContain("chatgpt-subscription/gpt-5.6-sol");
 		expect(result.error).toContain("Use --provider or provider/model");
 	});
 
@@ -697,8 +697,8 @@ describe("resolveCliModel", () => {
 
 describe("default model selection", () => {
 	test("openai defaults track current models", () => {
-		expect(defaultModelPerProvider.openai).toBe("gpt-5.6-sol");
-		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.6-sol");
+		expect(defaultModelPerProvider.openai).toBe("gpt-6.1-sol");
+		expect(defaultModelPerProvider["chatgpt-subscription"]).toBe("gpt-6.1-sol");
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
@@ -711,22 +711,31 @@ describe("default model selection", () => {
 	});
 
 	test("every bundled provider default resolves in its catalog", () => {
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
+		for (const provider of Object.keys(defaultModelPerProvider)) {
 			// radius/ollama are dynamic catalogs; cursor is authentication-only until
 			// its chat protocol is ported.
 			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
 			const defaultModelId = defaultModelPerProvider[provider];
-			const modelIds = getModels(provider).map((model) => model.id);
+			// The anthropic-subscription builtin extension serves the bundled anthropic catalog.
+			const catalogProvider = provider === "anthropic-subscription" ? "anthropic" : provider;
+			// `KnownProvider` deliberately retains the legacy `openai-codex` id, which is no longer a
+			// catalog key, so the catalog lookup takes its own narrower parameter type.
+			const modelIds = getModels(catalogProvider as Parameters<typeof getModels>[0]).map((model) => model.id);
 			expect(modelIds.length, `${provider} should expose a bundled catalog`).toBeGreaterThan(0);
 			expect(modelIds, `${provider} should include its default ${defaultModelId}`).toContain(defaultModelId);
 		}
 	});
 
-	test("built-in defaults exist in generated provider catalogs", () => {
+	test("built-in chat providers have defaults in their generated catalogs", () => {
 		for (const provider of getBuiltinProviders()) {
+			const chatModels = getBuiltinModels(provider);
 			const defaultId = defaultModelPerProvider[provider];
+			if (chatModels.length === 0) {
+				expect(defaultId, `${provider} has no chat models and should have no chat default`).toBeUndefined();
+				continue;
+			}
 			expect(
-				getBuiltinModels(provider).some((model) => model.id === defaultId),
+				chatModels.some((model) => model.id === defaultId),
 				`${provider} default ${defaultId} should exist in its generated catalog`,
 			).toBe(true);
 		}
@@ -741,7 +750,7 @@ describe("default model selection", () => {
 	});
 
 	test("xai default tracks current model", () => {
-		expect(defaultModelPerProvider.xai).toBe("grok-4.5");
+		expect(defaultModelPerProvider.xai).toBe("grok-4.7");
 	});
 
 	test("qwen token plan individual default tracks current model", () => {
@@ -931,7 +940,7 @@ describe("default model selection", () => {
 		};
 		const custom: Model<"anthropic-messages"> = {
 			...openAiDefault,
-			id: "grok-4.5",
+			id: "grok-4.7",
 			provider: "xai",
 		};
 		const runtime = {
@@ -958,7 +967,7 @@ describe("default model selection", () => {
 			scopedModels: [],
 			isContinuing: false,
 			defaultProvider: "xai",
-			defaultModelId: "grok-4.5",
+			defaultModelId: "grok-4.7",
 			modelRuntime: runtime,
 		});
 		const providerDefault = await findInitialModel({

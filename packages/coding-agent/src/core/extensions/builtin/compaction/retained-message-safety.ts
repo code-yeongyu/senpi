@@ -14,6 +14,25 @@ function hasTextOnlyContent(content: unknown, allowString: boolean): boolean {
 	return content.every((block) => isRecord(block) && block.type === "text" && typeof block.text === "string");
 }
 
+function isWellFormedImageBlock(block: Record<string, unknown>): boolean {
+	return (
+		block.type === "image" &&
+		typeof block.mimeType === "string" &&
+		block.mimeType.startsWith("image/") &&
+		typeof block.data === "string" &&
+		block.data.length > 0
+	);
+}
+
+function hasSafeToolResultContent(content: unknown): boolean {
+	if (!Array.isArray(content)) return false;
+	return content.every(
+		(block) =>
+			isRecord(block) &&
+			((block.type === "text" && typeof block.text === "string") || isWellFormedImageBlock(block)),
+	);
+}
+
 function isUsage(value: unknown): boolean {
 	if (!isRecord(value) || !isRecord(value.cost)) return false;
 	for (const field of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] as const) {
@@ -133,7 +152,7 @@ function hasSafeToolResultEnvelope(message: Record<string, unknown>): boolean {
 		message.toolCallId.length > 0 &&
 		typeof message.toolName === "string" &&
 		message.toolName.length > 0 &&
-		hasTextOnlyContent(message.content, false) &&
+		hasSafeToolResultContent(message.content) &&
 		typeof message.isError === "boolean" &&
 		isFiniteNumber(message.timestamp) &&
 		(message.usage === undefined || isUsage(message.usage)) &&

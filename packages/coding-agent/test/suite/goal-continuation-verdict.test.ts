@@ -36,6 +36,7 @@ function makeInput(overrides: Partial<VerdictInput> = {}): VerdictInput {
 		hasPendingMessages: false,
 		path: "immediate",
 		lastStopReason: "stop",
+		lastTurnWasMalformedToolUse: false,
 		consecutiveContinuations: 0,
 		lastContinuationSignature: undefined,
 		currentSignature: "goal-1:1/2:abc123",
@@ -43,6 +44,7 @@ function makeInput(overrides: Partial<VerdictInput> = {}): VerdictInput {
 		recentNormalizedOutputHashes: [],
 		toollessContinuationStreak: 0,
 		continuationPending: false,
+		lastTurnStuckOnContextOverflow: false,
 		...overrides,
 	};
 }
@@ -198,6 +200,32 @@ describe("goal continuation verdict", () => {
 				makeInput({ path: "systemRecovery", isIdle: false, lastStopReason: "error", ...overrides }),
 			),
 		).toEqual({ kind: "deny", reason });
+	});
+
+	it("denies with context-overflow on every automatic path when the last turn was stuck on a context overflow", () => {
+		for (const path of [
+			"immediate",
+			"monitorDelayed",
+			"userGrace",
+			"sessionStart",
+			"systemRecovery",
+			"providerRecovery",
+		] as const) {
+			expect(
+				evaluateGoalContinuation(
+					makeInput({ path, isIdle: false, lastStopReason: "error", lastTurnStuckOnContextOverflow: true }),
+				),
+			).toEqual({ kind: "deny", reason: "context-overflow" });
+		}
+	});
+
+	it("admits malformed toolUse only when no tool call was produced", () => {
+		expect(
+			evaluateGoalContinuation(makeInput({ lastStopReason: "toolUse", lastTurnWasMalformedToolUse: true })),
+		).toMatchObject({ kind: "continue" });
+		expect(
+			evaluateGoalContinuation(makeInput({ lastStopReason: "toolUse", lastTurnWasMalformedToolUse: false })),
+		).toEqual({ kind: "deny", reason: "not-eligible" });
 	});
 
 	it("keeps provider recovery eligible while the session is settling", () => {
