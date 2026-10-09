@@ -1030,11 +1030,17 @@ export class McpService {
 		if (binding !== undefined) binding.instructions = instructions;
 	}
 
-	/** The instructions block of the session that owns `pi`, never a peer's (senpi#3001). */
+	/**
+	 * The instructions block of the session that owns `pi`, never a peer's (senpi#3001). It is rebuilt first when a
+	 * connection that session declares went stale; a peer's stale connection cannot be in it.
+	 */
 	getMcpInstructions(pi: object): string {
 		const binding = this.#bindings.get(pi);
 		if (binding === undefined) return "";
-		if ([...this.#connections.values()].some((entry) => entry.credentialsCurrent?.() === false)) {
+		const declared = [...this.#connections.values()].filter((entry) =>
+			declares(binding.config, entry.name, entry.configHash),
+		);
+		if (declared.some((entry) => entry.credentialsCurrent?.() === false)) {
 			refreshMcpInstructionsForSession(this, pi);
 		}
 		return binding.instructions;
