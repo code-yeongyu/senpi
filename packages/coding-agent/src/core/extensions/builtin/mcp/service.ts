@@ -1037,12 +1037,10 @@ export class McpService {
 	getMcpInstructions(pi: object): string {
 		const binding = this.#bindings.get(pi);
 		if (binding === undefined) return "";
-		const declared = [...this.#connections.values()].filter((entry) =>
-			declares(binding.config, entry.name, entry.configHash),
+		const stale = [...this.#connections.values()].some(
+			(entry) => declares(binding.config, entry.name, entry.configHash) && entry.credentialsCurrent?.() === false,
 		);
-		if (declared.some((entry) => entry.credentialsCurrent?.() === false)) {
-			refreshMcpInstructionsForSession(this, pi);
-		}
+		if (stale) refreshMcpInstructionsForSession(this, pi);
 		return binding.instructions;
 	}
 
@@ -1097,9 +1095,9 @@ export class McpService {
 		return wireAuthStatus(this.#entryForName(name), this.#config?.servers[name], this.#credentialOptions(name));
 	}
 
-	/** Cached instructions of `name`; with `pi`, only from a connection that session is offered (senpi#3001). */
-	getCachedInstructions(name: string, pi?: object): string | undefined {
-		const entry = pi === undefined ? this.#entryForName(name) : this.#offeredEntry(name, pi);
+	/** Cached instructions of `name` from a connection the session `pi` is offered (senpi#3001). */
+	getCachedInstructions(name: string, pi: object): string | undefined {
+		const entry = this.#offeredEntry(name, pi);
 		return entry?.credentialsCurrent?.() === false ? undefined : entry?.cachedCatalog?.instructions;
 	}
 
