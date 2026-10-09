@@ -170,7 +170,7 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 	it(
 		"keeps classic parent MCP ownership across a builtin-only SDK child's lifecycle",
 		async () => {
-			// given: родитель использует общий сервер и собственную extension-декларацию.
+			// given: the parent uses a common server and its own extension declaration.
 			setConfig(root, {
 				fx: {
 					...stdioServer(["--tools", "2", "--spawn-counter-file", spawnCounter]),
@@ -208,7 +208,7 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 			};
 			await assertParent();
 
-			// when: настоящий builtin-only loader загружается до создания SDK-сессии, вне provider scope.
+			// when: a real builtin-only loader loads before SDK session creation, outside a provider scope.
 			let registered = Promise.withResolvers<void>();
 			const settingsManager = SettingsManager.create(root.cwd, root.agentDir);
 			const childLoader = new DefaultResourceLoader({
@@ -249,7 +249,7 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 				});
 				await registered.promise;
 
-				// then: ребёнок не получает родительский сервер и не меняет его предложения или соединение.
+				// then: the child neither inherits the parent's server nor changes its offered tools or connection.
 				expect(child.getToolDefinition(parentOnlyTool)).toBeUndefined();
 				const childValue = "child-private";
 				expect(getMessageText(await child.executeTool(TOOL, { value: childValue }))).toContain(

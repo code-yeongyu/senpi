@@ -18,6 +18,8 @@
 
 - On the Anthropic Subscription lane, a long streamed tool call (for example a large `write` or a `team_create` with long member prompts) no longer fails with "session stream queue exceeded 256 messages" and loses the tool call: the stream now waits for the reader instead of overflowing ([#2822](https://github.com/code-yeongyu/senpi/issues/2822)).
 
+- MCP tools in a parent session no longer become unavailable when a builtin-only SDK child loads, reloads, or shuts down. The child owns its MCP service instead of replacing the parent's shared configuration ([#2992](https://github.com/code-yeongyu/senpi/pull/2992) by [@mark-by](https://github.com/mark-by)).
+
 ### Removed
 
 ## [2026.10.10-9] - 2026-10-08
