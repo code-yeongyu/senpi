@@ -40,6 +40,15 @@ jobs:
           CHANGELOG_GATE_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: node scripts/check-pr-changelog.mjs
 
+      # Audit the whole tree against the pinned upstream: every upstream-owned
+      # production path must be covered by its exact nearest changes.md tracker.
+      # Catches a newly added nearest tracker shadowing a parent's coverage
+      # (senpi#2895 -> senpi#3006), which the per-PR gate above cannot see.
+      # Needs the full history already fetched above; fails with rc 1 when any
+      # path is uncovered, no changelog label required.
+      - name: Audit changes.md coverage against the upstream pin
+        run: node scripts/audit-changes-md.mjs
+
       - name: Workflow summary
         if: always()
         shell: bash

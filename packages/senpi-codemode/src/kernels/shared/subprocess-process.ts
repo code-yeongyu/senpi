@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
+import { killWindowsTree } from "../js/windows-tree-kill-host.ts";
 
 export interface SubprocessLike {
 	readonly pid?: number;
@@ -51,6 +52,7 @@ export class SubprocessProcess {
 	private outputDetached = false;
 	private errorReported = false;
 	private terminationPromise: Promise<boolean> | null = null;
+	private windowsTreeKill: Promise<void> | undefined;
 
 	constructor(child: SubprocessLike, handlers: SubprocessProcessHandlers) {
 		this.child = child;
@@ -125,6 +127,8 @@ export class SubprocessProcess {
 		this.retire();
 		if (this.exited) return true;
 		this.kill(initialSignal);
+		// On Windows the kill first lists processes (up to 5 s); the exit wait starts once taskkill has run.
+		if (this.windowsTreeKill) await this.windowsTreeKill;
 		if (await this.waitForExit(escalationMs)) return true;
 		this.kill("SIGKILL");
 		return await this.waitForExit(forcedExitWaitMs);
@@ -152,7 +156,8 @@ export class SubprocessProcess {
 
 	private kill(signal: NodeJS.Signals): void {
 		if (globalThis.process.platform === "win32") {
-			if (this.child.pid !== undefined) killProcessTree(this.child.pid);
+			// taskkill /F is already forced, so escalation reuses the first kill instead of listing again.
+			if (this.child.pid !== undefined) this.windowsTreeKill ??= killWindowsTree(this.child.pid);
 			else this.child.kill(signal);
 			return;
 		}
@@ -165,15 +170,6 @@ export class SubprocessProcess {
 			}
 		}
 		this.child.kill(signal);
-	}
-}
-
-// Windows has no process-group signal: taskkill /T /F walks the tree rooted at the child.
-function killProcessTree(pid: number): void {
-	try {
-		nodeSpawn("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
-	} catch (error) {
-		if (!(error instanceof Error)) throw error;
 	}
 }
 

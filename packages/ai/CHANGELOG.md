@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- The five nearest `changes.md` trackers #2895 added under `packages/ai/src/{api,auth,auth/oauth,providers,utils}/` now carry forward the parent tracker's coverage of the upstream-modified files beneath them, so `scripts/audit-changes-md.mjs` reports 0 uncovered paths again, with a regression test pinning the exact-nearest-tracker rule ([#3006](https://github.com/code-yeongyu/senpi/issues/3006)).
+
 ### Removed
 
 ## [2026.10.10-10] - 2026-10-09

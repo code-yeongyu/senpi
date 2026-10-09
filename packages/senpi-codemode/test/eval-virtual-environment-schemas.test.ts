@@ -66,7 +66,30 @@ describe("tool_schema('eval:*') virtual entries", () => {
 			"%npm",
 			"%environment",
 			"%load",
+			"packages.install",
 		]);
+	});
+
+	it("document packages.install with its signature, managers, receipt and codes", () => {
+		const { description, parameters } = entry("eval:environments");
+		for (const text of [
+			"packages.install(manager, requirements, {timeout?})",
+			'"pip"',
+			'"bun"',
+			'"npm"',
+			"timeout=",
+			"600",
+			"manager, mode, root, revision, requested, resolved, changed",
+			"installer, mode, revision, added, shadowed",
+			"stop",
+			"environment_install_timeout",
+		]) {
+			expect(description).toContain(text);
+		}
+		const properties = (parameters as { properties: Record<string, unknown> }).properties;
+		expect(properties["packages.install"]).toEqual({
+			description: "js and py: packages.install(manager, requirements, {timeout?}) (py: timeout=...)",
+		});
 	});
 
 	it("document isolate, its refusals and the sandbox limits", () => {
@@ -88,6 +111,16 @@ describe("tool_schema('eval:*') virtual entries", () => {
 			expect(documented.length).toBeGreaterThan(0);
 			expect(documented.filter((code) => code !== undefined && !emitted.has(code))).toEqual([]);
 		}
+	});
+
+	it("document every error code the source raises", () => {
+		const emitted = emittedCodes();
+		const documented = new Set(
+			[entry("eval:environments"), entry("eval:isolation")].flatMap(({ description }) =>
+				[...description.matchAll(DOCUMENTED_CODE)].map((match) => match[1]),
+			),
+		);
+		expect([...emitted].filter((code) => !documented.has(code))).toEqual([]);
 	});
 
 	it("keep each code in the entry that owns it", () => {

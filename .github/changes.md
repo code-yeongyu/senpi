@@ -1,3 +1,21 @@
+## 2026-10-09 - The changelog gate audits the whole tree against the upstream pin (senpi#3006)
+
+### What changed
+
+- `.github/workflows/changelog-gate.yml`: a new step, "Audit changes.md coverage against the upstream pin", runs `node scripts/audit-changes-md.mjs` after the per-PR gate in the same job. The job already checks out the PR head with `fetch-depth: 0`, so the pinned upstream commit is present; the audit exits 1 when any upstream-owned production path is uncovered by its exact nearest changes.md tracker.
+
+### Why
+
+The per-PR gate (`scripts/check-pr-changelog.mjs`) sees only the PR's own diff, so it cannot catch a newly added nearest changes.md tracker that shadows coverage a parent tracker already provided — the senpi#2895 shape that left 43 paths uncovered (senpi#3006). The repository-wide audit sees exactly that state; running it on every pull request keeps the next shadowing tracker from merging.
+
+### Why an extension could not handle it
+
+CI job composition is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the changelog-gate steps list, if upstream ever grows an equivalent job.
+
 ## 2026-10-08 - Every main commit gets its own CI run, never cancelled or replaced by a later merge (senpi#2960)
 
 ### What changed

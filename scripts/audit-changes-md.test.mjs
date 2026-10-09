@@ -122,3 +122,40 @@ describe("changes.md tracker parsing and rename coverage", () => {
 
 
 });
+
+// senpi#3006: senpi#2895 added five nearer changes.md trackers under
+// packages/ai/src/{api,auth,auth/oauth,providers,utils}/ that named only the files
+// that PR touched. Coverage is resolved against the exact nearest tracker, so the
+// upstream-modified files beneath them - covered by packages/ai/src/changes.md until
+// then - turned uncovered overnight (43 of 487). This is a characterization pin of
+// the #2895 fixture shape (a nearest tracker listing only some of the files beneath
+// it, so the rest go uncovered); the same nearest-tracker shadowing rule is already
+// pinned generically in check-pr-changes-md.test.mjs ("fails when only a non-nearest
+// changes.md is touched", "does not fall through an existing empty nearest tracker
+// to a parent"). The durable recurrence guard is the repository-wide audit now run
+// in the changelog-gate CI job (.github/workflows/changelog-gate.yml).
+describe("changes.md audit: the senpi#2895 fixture shape (senpi#3006)", () => {
+	const AI_SRC_TRACKER = "packages/ai/src/changes.md";
+	const API_TRACKER = "packages/ai/src/api/changes.md";
+	const PRE_EXISTING = ["packages/ai/src/api/cloudflare.ts", "packages/ai/src/api/pi-messages.ts"];
+	const NEW_PR_FILE = "packages/ai/src/api/lazy.ts";
+	const inventory = [...PRE_EXISTING, NEW_PR_FILE];
+
+	it("reports uncovered when a new nearest tracker lists only some of the files beneath it", () => {
+		const result = auditRepository(inventory, {
+			trackerDiffs: {
+				[AI_SRC_TRACKER]: [trackerEntry([...PRE_EXISTING])],
+				// senpi#2895's shape: the new tracker covers only the file its PR added,
+				// so the pre-existing files its parent covered turn uncovered.
+				[API_TRACKER]: [trackerEntry([NEW_PR_FILE])],
+			},
+		});
+		assert.equal(result.pass, false, "hidden previously-covered paths must fail the audit");
+		assert.deepEqual(
+			result.uncovered,
+			[...PRE_EXISTING],
+			"the exact nearest tracker shadows the parent: its unlisted paths are uncovered",
+		);
+		assert.match(result.reason, /changes\.md coverage missing/, "failure names changes.md coverage");
+	});
+});

@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- On Windows, ending a kernel's process tree (cell timeout, reset, shutdown) no longer uses `taskkill /T`: the tree is computed from creation times and each process is ended by pid, so an older, unrelated process holding a recycled parent pid is never killed ([#2999](https://github.com/code-yeongyu/senpi/issues/2999)).
+
+- `tool_schema("eval:environments")` now documents the `packages.install(manager, requirements, {timeout?})` cell helper that shipped in #2877: the signature (Python spells the option `timeout=`, default 600 s), the managers per language (`pip` for Python; `bun`/`npm` for JavaScript), the receipt fields, cancellation by `stop`, and the `environment_install_timeout` error code it raises. A two-way contract test now keeps every `environment_*`/`eval_isolate_*` code the source raises documented in its owning entry. ([#3003](https://github.com/code-yeongyu/senpi/issues/3003))
+
 ### Removed
 
 ## [2026.10.10-10] - 2026-10-09

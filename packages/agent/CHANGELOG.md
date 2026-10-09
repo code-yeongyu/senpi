@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- On Windows, `NodeExecutionEnv` stops a command's process tree without `taskkill /T`: the tree is computed from creation times and each process is ended by pid, so an older, unrelated process holding a recycled parent pid is never killed ([#2999](https://github.com/code-yeongyu/senpi/issues/2999)).
+
 ### Removed
 
 ## [2026.10.10-10] - 2026-10-09

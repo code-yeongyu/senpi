@@ -1,3 +1,21 @@
+## 2026-10-09 - The agent ./harness/env/nodejs entry graph allows one more file (senpi#2999)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-agent-core` `./harness/env/nodejs` budget is 6 files (was 5). The added file is `harness/env/windows-process-tree.ts`, the leaf that plans Windows process-tree kills from one process listing with creation-time-checked parentage, used instead of `taskkill /T`. It imports only `node:child_process`; the reason is recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+`NodeExecutionEnv` kills command trees through it, so the entry graph grows by exactly that one module.
+
+### Why an extension could not handle it
+
+Entry-graph budgets are repository tooling.
+
+### Expected merge conflict zones
+
+- The `./harness/env/nodejs` row in `check-entry-graphs.mjs`.
+
 ## 2026-10-08 - The release reuses the release commit's sharded CI instead of re-running the suite (senpi#2943)
 
 ### What changed

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { killWindowsTree, listWindowsRows } from "./windows-tree-kill-host.ts";
 
 // Host-side twin of worker-runtime's `process-tree.js`. The worker file must stay plain
 // JavaScript (a Node worker thread spawned from a `.js` entry has no TypeScript loader), and
@@ -100,7 +101,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Retire whole process trees: snapshot the descendants first (a parent that dies before the
  * snapshot would reparent them to init), SIGTERM everything, wait `graceMs` for the pids to
- * disappear, then SIGKILL whatever is left. On Windows `taskkill /T /F` does the walk and the kill.
+ * disappear, then SIGKILL whatever is left. On Windows the checked tree is killed by pid (`windows-tree-kill.js`).
  */
 export async function terminateProcessTrees(
 	roots: readonly number[],
@@ -109,7 +110,8 @@ export async function terminateProcessTrees(
 	const liveRoots = roots.filter(isProcessAlive);
 	if (liveRoots.length === 0) return;
 	if (process.platform === "win32") {
-		for (const pid of liveRoots) await taskkillTree(pid);
+		const listing = listWindowsRows();
+		for (const pid of liveRoots) await killWindowsTree(pid, listing);
 		return;
 	}
 	const table = await readProcessTable();
@@ -149,10 +151,4 @@ async function withoutZombies(pids: number[]): Promise<number[]> {
 		if (typeof stat === "string" && stat.startsWith("Z")) zombies.add(Number(pidText));
 	}
 	return pids.filter((pid) => !zombies.has(pid));
-}
-
-function taskkillTree(pid: number): Promise<void> {
-	return new Promise((resolve) => {
-		execFile("taskkill", ["/T", "/F", "/PID", String(pid)], { windowsHide: true }, () => resolve());
-	});
 }

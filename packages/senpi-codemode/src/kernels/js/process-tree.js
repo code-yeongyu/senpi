@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { killWindowsTree, listWindowsRows } from "./windows-tree-kill.js";
 
 // Plain JS (with process-tree.d.ts) because the worker runtime imports it and
 // worker files cannot import TypeScript; the host imports the same module so a
@@ -30,7 +31,7 @@ export function signalProcess(pid, signal) {
 
 /**
  * Parent-to-children map of every process visible to `ps`. Windows has no
- * `ps`; callers there kill through `taskkill /T`, which walks the tree itself.
+ * `ps`; callers there kill the checked tree from `windows-tree-kill.js`.
  */
 export async function readProcessTable() {
 	if (process.platform === "win32") return new Map();
@@ -78,13 +79,14 @@ function sleep(ms) {
  * Retire whole process trees: snapshot the descendants first (a parent that
  * dies before the snapshot would reparent them to init), SIGTERM everything,
  * wait `graceMs` for `settled` (or for the pids to disappear), then SIGKILL
- * whatever is left. On Windows `taskkill /T /F` does the walk and the kill.
+ * whatever is left. On Windows the checked tree is killed by pid (`windows-tree-kill.js`).
  */
 export async function terminateProcessTrees(roots, options) {
 	const liveRoots = roots.filter(isProcessAlive);
 	if (liveRoots.length === 0) return;
 	if (process.platform === "win32") {
-		for (const pid of liveRoots) await taskkillTree(pid);
+		const listing = listWindowsRows();
+		for (const pid of liveRoots) await killWindowsTree(pid, listing);
 		return;
 	}
 	const table = await readProcessTable();
@@ -140,11 +142,6 @@ function ps(args) {
 	});
 }
 
-function taskkillTree(pid) {
-	return new Promise((resolve) => {
-		execFile("taskkill", ["/T", "/F", "/PID", String(pid)], { windowsHide: true }, () => resolve());
-	});
-}
 
 function isRecord(value) {
 	return typeof value === "object" && value !== null;

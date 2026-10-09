@@ -1,3 +1,25 @@
+## 2026-10-09 - Restore oauth-tracker coverage for upstream-modified paths (senpi#3006)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/load.ts`: the bundled OAuth flow loader registry — the `cursor` flow joined the lazy loader registry and the standalone-Bun static bundle, and the subscription-provider symbol/module renames (senpi#1989) and the Devin CLI login flow were carried through the v0.99.1 sync.
+- `packages/ai/src/auth/oauth/openai-codex.ts`: DELETED in the fork — renamed to `packages/ai/src/auth/oauth/chatgpt-subscription.ts` (senpi#1989, fork rename `3c816ead49`) and kept deleted through the v0.99.1 sync. Upstream edits to this path must stay unadopted; port applicable deltas into the `chatgpt-subscription` counterpart instead of resurrecting the file.
+
+These files were covered by the parent tracker until senpi#2895 added this nearer tracker without listing them, hiding them from the audit's exact-nearest-tracker rule.
+
+### Why
+
+The repository audit requires every upstream-modified production path to be named by an entry in its exact nearest changes.md tracker. senpi#2895 introduced this tracker and named only the per-provider token-error modules it touched, so these 2 pre-existing upstream-modified files lost the coverage the parent tracker had provided and were reported uncovered.
+
+### Why an extension could not handle it
+
+changes.md coverage is fork-owned documentation metadata; no extension or runtime hook can supply it.
+
+### Expected merge conflict zones
+
+- LOW: the loader map in `packages/ai/src/auth/oauth/load.ts`, against any other bundled OAuth provider addition.
+- HIGH: `packages/ai/src/auth/oauth/openai-codex.ts` is deleted in the fork but still edited upstream — a sync must not resurrect it; port applicable deltas into `packages/ai/src/auth/oauth/chatgpt-subscription.ts` and keep this path deleted.
+
 ## 2026-10-07 - Token endpoint errors retain HTTP status (senpi#2893)
 
 ### What changed
