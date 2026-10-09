@@ -1076,14 +1076,28 @@ export class McpService {
 		return this.#pendingAuth;
 	}
 
+	/**
+	 * The server config and credentials an auth command for `name` acts on. With `pi`, from `pi`'s viewer (see
+	 * `#viewerFor`): its own declaration, with the agent dir and env of the connection its credentials resolve, else its
+	 * own; none when it sees nothing (senpi#3001). Without `pi`, the merged config's server and `#credentialOptions`.
+	 */
 	getAuthTarget(
 		name: string,
+		pi?: object,
 	):
 		| { config: McpServerConfig; agentDir?: string; env?: Record<string, string | undefined>; callbackUrl?: string }
 		| undefined {
-		const server = this.#config?.servers[name];
+		const viewer = pi === undefined ? undefined : this.#viewerFor(pi);
+		if (viewer === null) return undefined;
+		const server = (viewer?.config ?? this.#config)?.servers[name];
 		if (server?.config === undefined) return undefined;
-		const credentials = this.#credentialOptions(name);
+		const entry = viewer === undefined ? undefined : this.#sameCredentialEntry(viewer, name);
+		const credentials =
+			viewer === undefined
+				? this.#credentialOptions(name)
+				: entry === undefined
+					? viewer.options
+					: { agentDir: entry.agentDir, env: entry.env };
 		return {
 			config: server.config,
 			agentDir: credentials?.agentDir,

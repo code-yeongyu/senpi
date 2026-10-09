@@ -14,10 +14,10 @@ export async function handleMcpAuthCommand(
 	service: McpService,
 ): Promise<void> {
 	const name = args[0] ?? "";
-	const target = service.getAuthTarget(name);
-	// Only a server this session declares, as `ensureKnown` checks for every other subcommand (senpi#3001): the merged
-	// config also holds a peer's servers, whose tokens live in the peer's agent dir.
-	if (name.length === 0 || target === undefined || !service.getServerSnapshots(pi).some((s) => s.name === name)) {
+	// The session's own declaration and credentials (senpi#3001): the merged config also holds a peer's servers, and
+	// may hold a peer's same-named server at another URL, whose tokens live in the peer's store.
+	const target = service.getAuthTarget(name, pi);
+	if (name.length === 0 || target === undefined) {
 		ctx.ui.notify(`Unknown MCP server: ${name || "<missing>"}`, "error");
 		return;
 	}

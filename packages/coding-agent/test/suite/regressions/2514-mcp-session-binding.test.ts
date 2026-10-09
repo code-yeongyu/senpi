@@ -3,12 +3,13 @@
 // service, never the binding of whichever session attached last.
 
 import { execFileSync } from "node:child_process";
-import { closeSync, constants, mkdirSync, openSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, mkdirSync, openSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
+import { McpTokenStore } from "../../../src/core/extensions/builtin/mcp/auth/token-store.ts";
 import { getMcpCatalogCachePath } from "../../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import mcpExtension from "../../../src/core/extensions/builtin/mcp/index.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
@@ -1366,7 +1367,41 @@ describe("senpi#3001: /mcp auth commands reach only a server the session declare
 		},
 		REGISTRATION_TIMEOUT_MS * 3,
 	);
+
+	it(
+		"logs a session out of its own server, never a peer's same-named server at another URL",
+		async () => {
+			// Given: each session declares a disabled `jira` at its own URL, with stored tokens for both; the peer attached
+			// last, so the merged config holds the peer's `jira`.
+			setConfig(root, {});
+			const declareJira = (url: string) => (pi: ExtensionAPI) => {
+				pi.registerMcpServer("jira", { type: "http", url, enabled: false });
+			};
+			const alphaTokens = storeJiraTokens("https://alpha.example.invalid/mcp");
+			const bravoTokens = storeJiraTokens("https://bravo.example.invalid/mcp");
+			const alpha = await openSession(await mcpExtensions(declareJira("https://alpha.example.invalid/mcp")));
+			await openSession(await mcpExtensions(declareJira("https://bravo.example.invalid/mcp")));
+			const runner = alpha.getExtensionRunner();
+			runner.setUIContext(createUi());
+
+			// When: the first session runs `/mcp logout jira`.
+			await runner.getCommand("mcp")?.handler("logout jira", runner.createCommandContext());
+
+			// Then: its own tokens are gone and the peer's are kept.
+			expect(existsSync(alphaTokens)).toBe(false);
+			expect(existsSync(bravoTokens)).toBe(true);
+		},
+		REGISTRATION_TIMEOUT_MS * 3,
+	);
 });
+
+/** Store an OAuth record for `jira` at `serverUrl` in the shared agent dir; returns its tokens file. */
+function storeJiraTokens(serverUrl: string): string {
+	const store = new McpTokenStore({ serverName: "jira", serverUrl });
+	mkdirSync(store.dir, { recursive: true });
+	writeFileSync(store.tokensPath, JSON.stringify({ accessToken: "placeholder" }));
+	return store.tokensPath;
+}
 
 describe("senpi#3001: a session handle the service has not bound sees no peer's MCP servers", () => {
 	it("gives a released session's handle no server, connection or exposure while a peer is live", async () => {
