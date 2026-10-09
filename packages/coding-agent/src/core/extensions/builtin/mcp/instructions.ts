@@ -2,7 +2,7 @@ import type { McpService } from "./service.ts";
 
 const MAX_INSTRUCTIONS_CHARS = 4000;
 
-/** Rebuild the instructions block of the session that owns `pi` from its own servers (senpi#3001). */
+/** Rebuild instructions from this session's servers (senpi#3001). */
 export function refreshMcpInstructionsForSession(service: McpService, pi: object): void {
 	service.setMcpInstructions(buildMcpInstructionsBlock(service, pi), pi);
 }

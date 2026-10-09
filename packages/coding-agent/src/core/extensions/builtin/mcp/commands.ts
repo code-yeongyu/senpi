@@ -109,7 +109,7 @@ async function notifyStatus(ctx: ExtensionCommandContext, pi: object, service: M
 	ctx.ui.notify(await renderStatus("MCP status", pi, service));
 }
 
-/** Only the servers this session declares, never a peer's (senpi#3001). */
+/** Render only this session's declared servers (senpi#3001). */
 async function renderStatus(title: string, pi: object, service: McpCommandService): Promise<string> {
 	const rows = await buildMcpStatusRows(service.getServerSnapshots(pi), (name) =>
 		service.getServerExposureStatus(name, pi),
@@ -170,8 +170,7 @@ async function testServer(
 	if (!ensureKnown(name, ctx, pi, service, notify)) return;
 	const connection = service.getConnection(name, pi);
 	if (connection === undefined) {
-		// The session's own snapshot says why (senpi#3001): a server it does not enable, or its own connection (the one
-		// its snapshot carries an uptime for) whose credentials went stale; else the live one holds another session's.
+		// Uptime identifies this session's stale connection; without it, the connection belongs to another session.
 		const snapshot = service.getServerSnapshots(pi).find((candidate) => candidate.name === name);
 		const reason =
 			snapshot !== undefined && snapshot.configState !== "enabled"
