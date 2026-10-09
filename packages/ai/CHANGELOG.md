@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 2 models.
+
 ### Fixed
 
 ### Removed
