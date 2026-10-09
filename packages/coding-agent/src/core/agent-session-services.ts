@@ -20,6 +20,7 @@ import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAg
 import type { SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import { joinStartupBranches } from "./startup-branch-join.ts";
+import { startupPhase } from "./startup-phase-probe.ts";
 
 /**
  * Non-fatal issues collected while creating services or sessions.
@@ -165,28 +166,35 @@ export async function createAgentSessionServices(
 ): Promise<AgentSessionServices> {
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
-	const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+	const authStorage = startupPhase("auth-storage", () => AuthStorage.create(join(agentDir, "auth.json")));
 	const runtimePromise =
 		options.modelRuntime !== undefined
 			? Promise.resolve(options.modelRuntime)
-			: ModelRuntime.create({
-					credentials: authStorage,
-					authPath: join(agentDir, "auth.json"),
-					agentDir,
-					modelsPath: join(agentDir, "models.json"),
-					signal: options.modelRuntimeSignal,
-				});
-	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
-	const resourceLoader = new DefaultResourceLoader({
-		...(options.resourceLoaderOptions ?? {}),
-		cwd,
-		agentDir,
-		settingsManager,
-		mcpRegistry: options.mcpRegistry,
-	});
+			: startupPhase("model-runtime-create", () =>
+					ModelRuntime.create({
+						credentials: authStorage,
+						authPath: join(agentDir, "auth.json"),
+						agentDir,
+						modelsPath: join(agentDir, "models.json"),
+						signal: options.modelRuntimeSignal,
+					}),
+				);
+	const settingsManager =
+		options.settingsManager ?? startupPhase("settings-create", () => SettingsManager.create(cwd, agentDir));
+	const resourceLoader = startupPhase(
+		"resource-loader-create",
+		() =>
+			new DefaultResourceLoader({
+				...(options.resourceLoaderOptions ?? {}),
+				cwd,
+				agentDir,
+				settingsManager,
+				mcpRegistry: options.mcpRegistry,
+			}),
+	);
 	const { primary: modelRuntime } = await joinStartupBranches(
 		runtimePromise,
-		resourceLoader.reload(options.resourceLoaderReloadOptions),
+		startupPhase("resource-reload", () => resourceLoader.reload(options.resourceLoaderReloadOptions)),
 	);
 	const modelRegistry = new ModelRegistry(modelRuntime, authStorage);
 	modelRuntime.setSettingsManager(settingsManager);
@@ -219,9 +227,11 @@ export async function createAgentSessionServices(
 	// it added - an unscoped refresh there rebuilt every provider on every open,
 	// serialized on the one instance (senpi#1844).
 	if (options.modelRuntime === undefined) {
-		await modelRuntime.refresh({ allowNetwork: false });
+		await startupPhase("provider-refresh", () => modelRuntime.refresh({ allowNetwork: false }));
 	} else if (registeredProviders.size > 0) {
-		await modelRuntime.refresh({ allowNetwork: false, providers: [...registeredProviders] });
+		await startupPhase("provider-refresh-registered", () =>
+			modelRuntime.refresh({ allowNetwork: false, providers: [...registeredProviders] }),
+		);
 	}
 	for (const { definition, extensionPath } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
 		try {
@@ -259,29 +269,31 @@ export async function createAgentSessionServices(
 export async function createAgentSessionFromServices(
 	options: CreateAgentSessionFromServicesOptions,
 ): Promise<CreateAgentSessionResult> {
-	return createAgentSession({
-		cwd: options.services.cwd,
-		agentDir: options.services.agentDir,
-		modelRuntime: options.services.modelRuntime,
-		modelRegistry: options.services.modelRegistry,
-		authStorage: options.services.authStorage,
-		settingsManager: options.services.settingsManager,
-		resourceLoader: options.services.resourceLoader,
-		sessionManager: options.sessionManager,
-		model: options.model,
-		initialModelProvenance: options.initialModelProvenance,
-		thinkingLevel: options.thinkingLevel,
-		thinkingSelection: options.thinkingSelection,
-		serviceTier: options.serviceTier,
-		scopedModels: options.scopedModels,
-		favoriteModels: options.favoriteModels,
-		tools: options.tools,
-		excludeTools: options.excludeTools,
-		noTools: options.noTools,
-		customTools: options.customTools,
-		sessionStartEvent: options.sessionStartEvent,
-		autoTitleSessions: options.autoTitleSessions,
-		promptSurface: options.promptSurface,
-		browserEngine: options.browserEngine,
-	});
+	return startupPhase("session-create", () =>
+		createAgentSession({
+			cwd: options.services.cwd,
+			agentDir: options.services.agentDir,
+			modelRuntime: options.services.modelRuntime,
+			modelRegistry: options.services.modelRegistry,
+			authStorage: options.services.authStorage,
+			settingsManager: options.services.settingsManager,
+			resourceLoader: options.services.resourceLoader,
+			sessionManager: options.sessionManager,
+			model: options.model,
+			initialModelProvenance: options.initialModelProvenance,
+			thinkingLevel: options.thinkingLevel,
+			thinkingSelection: options.thinkingSelection,
+			serviceTier: options.serviceTier,
+			scopedModels: options.scopedModels,
+			favoriteModels: options.favoriteModels,
+			tools: options.tools,
+			excludeTools: options.excludeTools,
+			noTools: options.noTools,
+			customTools: options.customTools,
+			sessionStartEvent: options.sessionStartEvent,
+			autoTitleSessions: options.autoTitleSessions,
+			promptSurface: options.promptSurface,
+			browserEngine: options.browserEngine,
+		}),
+	);
 }
