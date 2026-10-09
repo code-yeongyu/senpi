@@ -16,7 +16,7 @@ import {
 } from "./render-blocks.ts";
 import { renderCell, summaryBlock } from "./render-cell.ts";
 import { headlined, LIVE_LINE_PREFIX } from "./render-live.ts";
-import type { EvalCellResult, EvalToolRequest } from "./types.ts";
+import type { EvalCellResult, EvalToolInput, EvalToolRequest } from "./types.ts";
 
 // The call renderer reads the assistant message's raw arguments, which keep the provider's
 // original summary (senpi#1472 detached preparation from the message), so it normalizes here,
@@ -30,7 +30,7 @@ function cellIdSuffix(cellId: unknown): string {
 }
 
 export function renderEvalCall(
-	args: EvalToolRequest,
+	args: EvalToolRequest | Partial<EvalToolInput>,
 	theme: Theme | undefined,
 	context: CallRenderContext,
 ): EvalRenderComponent {
@@ -44,7 +44,8 @@ export function renderEvalCall(
 	}
 	if (!isEvalRunInput(args)) {
 		// While a peek/stop call streams in, `cell_id` can still be missing; the title is the action alone until it arrives.
-		const title = args.action === "list" ? "eval list" : `eval ${args.action}${cellIdSuffix(args.cell_id)}`;
+		const cellId = "cell_id" in args ? args.cell_id : undefined;
+		const title = args.action === "list" ? "eval list" : `eval ${args.action}${cellIdSuffix(cellId)}`;
 		component.syncLiveTicker(false, context.invalidate);
 		component.setBlocks([{ kind: "text", text: style(theme, "toolTitle", title) }]);
 		return component;

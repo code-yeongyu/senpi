@@ -15,8 +15,8 @@
  */
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
+import { type BunFfi, loadBunFfi } from "./bun-ffi.ts";
 
-type BunFfi = typeof import("bun:ffi");
 type GroupCpuReader = (pgid: number) => bigint | undefined;
 
 const RUSAGE_INFO_V2 = 2;
@@ -59,7 +59,7 @@ export function parsePsCpuTime(text: string): bigint | undefined {
 function createGroupReader(): GroupCpuReader | undefined {
 	if (process.platform === "linux") return linuxGroupReader;
 	if (process.platform !== "darwin") return undefined;
-	const ffi = process.getBuiltinModule("bun:ffi") as BunFfi | undefined;
+	const ffi = loadBunFfi();
 	if (ffi === undefined) return darwinPsGroupReader;
 	try {
 		return darwinGroupReader(ffi);
@@ -116,7 +116,10 @@ function linuxGroupReader(pgid: number): bigint | undefined {
 }
 
 function darwinGroupReader({ dlopen, FFIType, ptr }: BunFfi): GroupCpuReader {
-	const library = dlopen("libSystem.B.dylib", {
+	const library = dlopen<{
+		proc_listpgrppids: (pgid: number, buffer: number, byteLength: number) => number;
+		proc_pid_rusage: (pid: number, flavor: number, buffer: number) => number;
+	}>("libSystem.B.dylib", {
 		proc_listpgrppids: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
 		proc_pid_rusage: { args: [FFIType.i32, FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
 	});

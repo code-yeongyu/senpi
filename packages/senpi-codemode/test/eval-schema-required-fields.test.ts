@@ -72,7 +72,11 @@ describe("eval action schemas", () => {
 		];
 		for (const [label, wire] of wires) {
 			expect(wire, label).toBeDefined();
-			const branches = (JSON.parse(JSON.stringify(wire)) as { anyOf?: unknown[] }).anyOf ?? [];
+			const parsed: unknown = JSON.parse(JSON.stringify(wire));
+			const branches =
+				typeof parsed === "object" && parsed !== null && "anyOf" in parsed && Array.isArray(parsed.anyOf)
+					? parsed.anyOf
+					: [];
 			// The raw schema keeps the run/control union; a converter may flatten it away entirely.
 			if (label === "raw") expect(branches.length).toBeGreaterThan(0);
 			expect(branches.flatMap((branch, i) => enumPaths(branch, `${label}.anyOf[${i}]`))).toEqual([]);

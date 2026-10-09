@@ -1,5 +1,47 @@
 # senpi-codemode fork changes
 
+## 2026-10-09 - Reduce Python per-cell queue and capture bookkeeping (senpi#3034)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: the control-reader/main FIFO uses `queue.SimpleQueue` instead of `queue.Queue`; cell and callback execution share one combined stdout/stderr capture scope, retaining both thread-local targets and inherited context variables.
+- `packages/senpi-codemode/test/py-kernel-bookkeeping.test.ts`, `packages/senpi-codemode/test/py-kernel-bookkeeping.py`: count actual FIFO operations, Python queue condition entries/notifications, capture setups and owner acquisition/release on successful and raised cells. The real reader finishes admission before dispatch so scheduler-dependent waits do not enter the count.
+- `packages/senpi-codemode/test/gate/allowlist.json`: add the new regression key under `senpi#3034`; the baseline remains unchanged.
+
+### Why
+
+- The FIFO only needs put/get. Per cell, two Python queue lock entries and two notifications disappear, and capture setups fall from two to one. The reader thread and owner token remain in place.
+
+### Why an extension could not handle it
+
+- Control-frame dispatch and interpreter output routing belong to the embedded Python kernel.
+
+### Expected merge conflict zones
+
+- Python stream capture and main-loop queue construction; no ownership, scope, cancellation or descriptor changes.
+
+## 2026-10-09 - Ruby and Julia globals diagnostics are requested only above host thresholds (senpi#3028)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/shared/kernel-memory-host.ts`: keep current-footprint accounting on every result, collect globals at or above either enabled notice/ceiling threshold regardless of notice hysteresis, and omit ordinary below-threshold result payloads.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts`: bound the read-only diagnostic request to five seconds and fence replies by interpreter, pending run, and cell identity.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts`, `packages/senpi-codemode/src/kernels/shared/subprocess-queue.ts`: retain FIFO ownership until diagnostics settle, settle an already-finished result without globals when stop arrives during that optional request, and clear the pending request on retirement.
+- `packages/senpi-codemode/src/bridge/memory-protocol.ts`, `packages/senpi-codemode/src/bridge/protocol.ts`: advertise runner support and validate the cell-owned globals request/reply.
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`, `packages/senpi-codemode/src/kernels/rb/runner.rb`: replace eager post-cell sizing and nested result serialization with a read-only request using the unchanged bounded sizers. Successful and raised cells both receive globals when their host-read footprint reaches a threshold.
+
+### Why
+
+- Every successful scalar cell previously walked all globals and serialized a memory payload even below the default 1024 MiB notice threshold. Work-count tests prove zero walks/payloads below threshold, and snapshots captured from main preserve above-threshold notices and sizing.
+
+### Why an extension could not handle it
+
+- Interpreter protocol, result settlement, footprint accounting, and kernel ownership belong to codemode itself.
+
+### Expected merge conflict zones
+
+- Shared subprocess result/retirement paths and Ruby/Julia runner dispatch; no peak-RSS gate, eval schema, or threshold changes.
+
 
 ## 2026-10-04 - The pi codemode sandbox runtime is vendored with streaming output and a store policy (codemode plan node 18, part 1)
 

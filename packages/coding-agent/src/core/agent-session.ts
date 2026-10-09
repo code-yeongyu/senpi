@@ -155,6 +155,7 @@ import {
 	UserEditError,
 	userTextEquals,
 } from "./edited-user-message.ts";
+import { ENGINE_PAUSED_ENTRY_TYPE, enginePauseSinceLastTurn, settledRepetitiveTurnPause } from "./engine-paused.ts";
 import {
 	ENGINE_TURN_LIMIT_ENTRY_TYPE,
 	ENGINE_TURN_LIMIT_EVENT,
@@ -390,6 +391,10 @@ const DEFERRED_RETRY_QUEUE_OWNERS = new WeakSet<object>();
 // ============================================================================
 // Skill Invocation Formatting and Parsing (see ./skill-invocation.ts)
 // ============================================================================
+
+/** The turn_end boundary report for a turn still unwinding after dispose() (senpi#2995). */
+export const TURN_END_SKIPPED_AFTER_SHUTDOWN =
+	"turn_end skipped: the session shut down during this turn, so its last response was not saved";
 
 export {
 	formatSkillInvocationPrompt,
@@ -1093,6 +1098,7 @@ export class AgentSession {
 	/** User-abort generation at the start of an idle trigger turn's awaited admission hooks. */
 	private _triggerTurnAdmissionAbortGeneration: number | undefined;
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
+	private _engineTurnPauseRecorded = false;
 	private _nextInputId = 0;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
@@ -1234,6 +1240,8 @@ export class AgentSession {
 	/** Assistant turns whose `turn_end` boundary committed entries, so the next request must re-read agent state. */
 	private readonly _boundaryRefreshedTurns = new WeakSet<object>();
 	private _lastActivityOutcome: AgentActivityOutcome = "completed";
+	/** Set when dispose() starts; a turn still unwinding after it cannot resolve persisted entries (senpi#2995). */
+	private _disposed = false;
 	private _isBeforeSettle = false;
 	private _abortDuringBeforeSettle = false;
 
@@ -1920,7 +1928,10 @@ export class AgentSession {
 			this._extensionRunner.emitError({
 				extensionPath: "<boundary>",
 				event: "turn_end",
-				error: "turn_end could not resolve the persisted assistant entry ID",
+				// After dispose() the aborted response is never persisted, so a missing entry there is the shutdown.
+				error: this._disposed
+					? TURN_END_SKIPPED_AFTER_SHUTDOWN
+					: "turn_end could not resolve the persisted assistant entry ID",
 			});
 			return false;
 		}
@@ -2641,6 +2652,23 @@ export class AgentSession {
 		}
 		if (settlementEpoch !== this._settlementEpoch) return;
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		if (settledRepetitiveTurnPause(this.sessionManager.getBranch())) {
+			try {
+				this._emitEntryAppended(
+					this.sessionManager.appendCustomEntry(ENGINE_PAUSED_ENTRY_TYPE, {
+						reason: "repetition",
+						rule: "repetitive-turns",
+						customType: "ttsr-injection",
+						at: Date.now(),
+					}),
+				);
+			} catch (error) {
+				this._sessionLogger.warn("engine_turn_record_write_failed", {
+					entry: ENGINE_PAUSED_ENTRY_TYPE,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
 		this.releaseSettledSessionMemory();
 		this._emit({ type: "agent_idle" });
 	}
@@ -3842,6 +3870,7 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
+		this._disposed = true;
 		for (const dispose of this._toolContextDisposers) dispose();
 		try {
 			this._probeBackScheduler.cancel("dispose");
@@ -5705,6 +5734,7 @@ export class AgentSession {
 	 * full disk) only loses the count, as the turn's own persistence reports the failure (senpi#2967).
 	 */
 	private _recordEngineTurnStart(customType: string): void {
+		this._engineTurnPauseRecorded = false;
 		this._engineTurnStarts.push({ at: Date.now(), toolUsed: false });
 		try {
 			this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_START_ENTRY_TYPE, { customType }));
@@ -5737,6 +5767,7 @@ export class AgentSession {
 	private _observeEngineTurnMessage(message: AgentMessage): void {
 		if (message.role === "user" || (message.role === "custom" && isUserDirectedTurn(message.customType))) {
 			this._engineTurnStarts = [];
+			this._engineTurnPauseRecorded = false;
 			return;
 		}
 		const running = this._engineTurnStarts.at(-1);
@@ -5764,6 +5795,24 @@ export class AgentSession {
 		);
 		if (stop === null) return false;
 		const details = { customType, ...stop, at: Date.now() };
+		if (!this._engineTurnPauseRecorded && !enginePauseSinceLastTurn(this.sessionManager.getBranch())) {
+			this._engineTurnPauseRecorded = true;
+			try {
+				this._emitEntryAppended(
+					this.sessionManager.appendCustomEntry(ENGINE_PAUSED_ENTRY_TYPE, {
+						reason: stop.reason === "per-user-input" ? "cap-per-message" : "cap-per-minute",
+						customType,
+						count: stop.reason === "per-user-input" ? stop.sinceUserInput : stop.toolFreeInWindow,
+						at: details.at,
+					}),
+				);
+			} catch (error) {
+				this._sessionLogger.warn("engine_turn_record_write_failed", {
+					entry: ENGINE_PAUSED_ENTRY_TYPE,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
 		try {
 			this._emitEntryAppended(this.sessionManager.appendCustomEntry(ENGINE_TURN_LIMIT_ENTRY_TYPE, details));
 		} catch (error) {

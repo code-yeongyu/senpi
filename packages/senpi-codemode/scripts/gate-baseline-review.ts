@@ -1,7 +1,7 @@
 import { basename, dirname } from "node:path";
 import { Check } from "typebox/value";
 import { runProcess } from "./gate-process.ts";
-import { canonical, GateInputError, type GateReport, reportSchema } from "./gate-report.ts";
+import { allowlistSchema, canonical, GateInputError, type GateReport, reportSchema } from "./gate-report.ts";
 
 export type BaselineChange = { readonly key: string; readonly reason: string };
 
@@ -124,8 +124,6 @@ export async function readBaseBaseline(input: {
 
 function parseAllowlist(text: string, sha: string): AllowlistNodes {
 	const value: unknown = JSON.parse(text);
-	if (typeof value !== "object" || value === null || !("nodes" in value) || typeof value.nodes !== "object" || value.nodes === null) {
-		throw new GateInputError(`allowlist at merge base ${sha}`);
-	}
-	return value as AllowlistNodes;
+	if (!Check(allowlistSchema, value)) throw new GateInputError(`allowlist at merge base ${sha}`);
+	return value;
 }

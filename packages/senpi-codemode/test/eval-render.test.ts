@@ -167,7 +167,14 @@ describe("eval renderer", () => {
 
 	it("Given legacy stored details carrying title and no summary when rendered then no label line and no crash", () => {
 		// Given a pre-summary stored payload: title survived in old sessions, summary never existed.
-		// The cast simulates legacy data rehydrated into the current details shape.
+		// The shape simulates legacy data rehydrated into the current details shape.
+		type LegacyStoredCell = EvalToolDetails["cells"] extends ReadonlyArray<infer C> | undefined
+			? C & { readonly title?: string }
+			: never;
+		type LegacyStoredDetails = Omit<EvalToolDetails, "cells"> & {
+			readonly title?: string;
+			readonly cells?: readonly LegacyStoredCell[];
+		};
 		const legacyCellDetails = {
 			language: "py",
 			title: "legacy label",
@@ -185,14 +192,14 @@ describe("eval renderer", () => {
 					durationMs: 3,
 				},
 			],
-		} as unknown as EvalToolDetails;
+		} satisfies LegacyStoredDetails;
 		const legacyFallbackDetails = {
 			language: "py",
 			title: "legacy label",
 			durationMs: 3,
 			toolCalls: [],
 			truncated: false,
-		} as unknown as EvalToolDetails;
+		} satisfies LegacyStoredDetails;
 
 		// When the cell frame and the fallback frame (no cells) render collapsed and expanded
 		const renders = [

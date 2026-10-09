@@ -134,6 +134,14 @@ export async function updateGoal(
 			next.consecutiveContinuations = 0;
 			next.unattendedContinuations = 0;
 			delete next.lastContinuationSignature;
+			delete next.continuationStoppedAt;
+		}
+		if (source === "user" && requestedStatus === "active") {
+			next.consecutiveContinuations = 0;
+			next.unattendedContinuations = 0;
+			delete next.lastContinuationSignature;
+			delete next.continuationStoppedAt;
+			next.lastStartedAt ??= nowSeconds();
 		}
 		if (tokenBudget === undefined) delete next.tokenBudget;
 		else next.tokenBudget = tokenBudget;
@@ -184,6 +192,7 @@ export async function accountGoalUsage(
 			timeUsedSeconds: goal.timeUsedSeconds + Math.max(0, Math.trunc(elapsedSeconds)),
 			updatedAt: nextUpdatedAt(goal.updatedAt),
 		};
+		if (goal.status === "active" && goal.lastStartedAt !== undefined) next.lastStartedAt = nowSeconds();
 		await held.write(next);
 		return next;
 	});
@@ -204,6 +213,8 @@ export async function recordContinuationDelivered(
 			unattendedContinuations: (goal.unattendedContinuations ?? 0) + (options.countUnattended === false ? 0 : 1),
 			lastContinuationSignature: signature,
 		};
+		delete next.continuationStoppedAt;
+		if (next.status === "active") next.lastStartedAt ??= nowSeconds();
 		await held.write(next);
 		return next;
 	});
@@ -219,8 +230,47 @@ export async function resetContinuationStreak(
 		const next: Goal = { ...goal, consecutiveContinuations: 0 };
 		if (options.unattended === true) next.unattendedContinuations = 0;
 		delete next.lastContinuationSignature;
+		delete next.continuationStoppedAt;
+		if (options.unattended === true && next.status === "active") next.lastStartedAt ??= nowSeconds();
 		await held.write(next);
 		return next;
+	});
+}
+
+/** Claims one denial under the same lock as input/reset, so evaluation retries cannot append another stop. */
+export async function recordGoalContinuationStopped(
+	ref: GoalStoreRef,
+	expected: Goal,
+	at: number,
+	blockedReason: string | undefined,
+): Promise<{ goal: Goal | null; recorded: boolean }> {
+	return withGoalFileLock(ref, async (held) => {
+		const current = await readGoalFile(ref);
+		if (
+			current?.id !== expected.id ||
+			current.status !== "active" ||
+			(blockedReason === undefined && current.continuationStoppedAt !== undefined) ||
+			current.lastContinuationSignature !== expected.lastContinuationSignature ||
+			current.consecutiveContinuations !== expected.consecutiveContinuations
+		) {
+			return { goal: current, recorded: false };
+		}
+		const next =
+			blockedReason === undefined
+				? { ...current, updatedAt: nextUpdatedAt(current.updatedAt) }
+				: transitionGoalStatus(current, "blocked", "model", blockedReason, nextUpdatedAt(current.updatedAt));
+		if (blockedReason === undefined && current.lastStartedAt !== undefined) {
+			next.timeUsedSeconds += Math.max(0, Math.trunc(at / 1000) - current.lastStartedAt);
+		}
+		if (blockedReason !== undefined) {
+			next.consecutiveContinuations = 0;
+			next.unattendedContinuations = 0;
+			delete next.lastContinuationSignature;
+		}
+		delete next.lastStartedAt;
+		next.continuationStoppedAt = at;
+		await held.write(next);
+		return { goal: next, recorded: true };
 	});
 }
 

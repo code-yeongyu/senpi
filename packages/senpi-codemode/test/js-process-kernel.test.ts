@@ -173,7 +173,8 @@ describe("JavaScriptKernel process isolation", () => {
 
 			await kernel.close();
 			kernels.delete(kernel);
-			await waitFor("child exit", () => !pidAlive(pid as number));
+			if (pid === undefined) throw new Error("the process-mode child had no pid");
+			await waitFor("child exit", () => !pidAlive(pid));
 		},
 		30_000,
 	);
@@ -193,8 +194,8 @@ describe("JavaScriptKernel process isolation", () => {
 			);
 			expect(cell.result).toMatchObject({ ok: true, valueRepr: '"done"' });
 			const text = cell.messages
-				.filter((message) => message.type === "text")
-				.map((message) => (message as { data: string }).data)
+				.filter((message): message is Extract<typeof message, { type: "text" }> => message.type === "text")
+				.map((message) => message.data)
 				.join("");
 			expect(text).toContain("via-process-stdout");
 			if (process.versions.bun !== undefined) expect(text).toContain("via-bun-write");
@@ -220,7 +221,8 @@ describe("JavaScriptKernel process isolation", () => {
 				const crashed = await runJavaScriptCell(kernel, 'process.kill(process.pid, "SIGSEGV")', 15_000);
 				expect(crashed.result).toMatchObject({ ok: false });
 				if (!crashed.result.ok) expect(crashed.result.error.message).toMatch(/SIGSEGV|signal 11/);
-				await waitFor("crashed child exit", () => !pidAlive(pid as number));
+				if (pid === undefined) throw new Error("the process-mode child had no pid");
+				await waitFor("crashed child exit", () => !pidAlive(pid));
 
 				const after = await runJavaScriptCell(kernel, "return typeof globalThis.beforeCrash");
 				expect(after.result).toMatchObject({ ok: true, valueRepr: '"undefined"' });
@@ -269,7 +271,21 @@ describe("JavaScriptKernel process isolation", () => {
 				].join("\n"),
 				15_000,
 			);
-			const value = JSON.parse(parseJavaScriptResult(run.result) as string) as { own: number; child: number };
+			const serialized = parseJavaScriptResult(run.result);
+			if (typeof serialized !== "string")
+				throw new Error(`expected a JSON string result, got ${String(serialized)}`);
+			const parsedJson: unknown = JSON.parse(serialized);
+			if (
+				typeof parsedJson !== "object" ||
+				parsedJson === null ||
+				!("own" in parsedJson) ||
+				typeof parsedJson.own !== "number" ||
+				!("child" in parsedJson) ||
+				typeof parsedJson.child !== "number"
+			) {
+				throw new Error(`expected { own: number; child: number }, got ${serialized}`);
+			}
+			const value = { own: parsedJson.own, child: parsedJson.child };
 
 			// PR_GET_DUMPABLE: 0 for the kernel child; exec resets it, so a process the cell starts reads 1.
 			expect(value).toEqual({ own: 0, child: 1 });
@@ -543,7 +559,9 @@ return "done";`,
 			const server = createServer(() => requested.resolve());
 			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 			try {
-				const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/`;
+				const address = server.address();
+				if (typeof address !== "object" || address === null) throw new Error("the probe server is not bound");
+				const url = `http://127.0.0.1:${address.port}/`;
 				const kernel = processKernel();
 				await runJavaScriptCell(kernel, "globalThis.keep = 41; return 1");
 				const pid = kernel.processPid;
@@ -709,6 +727,8 @@ return "done";`,
 				expect(pidAlive(childPid)).toBe(true);
 				const hostExited = new Promise<void>((resolve) => host.once("exit", () => resolve()));
 
+				// The host may already be gone (EPIPE); its exit is what the test waits for either way (senpi#3016).
+				host.stdin.on("error", () => {});
 				if (how === "exits without closing its kernel") host.stdin.write("exit\n");
 				else host.kill("SIGKILL");
 				await hostExited;
@@ -813,7 +833,9 @@ return "done";`,
 			await pending;
 
 			expect(call.args).toEqual({ path: "x", n: 1n, opts: undefined });
-			expect(Object.hasOwn(call.args as object, "opts")).toBe(true);
+			if (typeof call.args !== "object" || call.args === null)
+				throw new Error("the tool call carried no args object");
+			expect(Object.hasOwn(call.args, "opts")).toBe(true);
 		},
 	);
 
@@ -925,7 +947,11 @@ return "done";`,
 				'const started = Date.now(); try { await tool.read({ path: "x".repeat(12 * 1024 * 1024) }); return "sent"; } catch (error) { return [error.message, Date.now() - started]; }',
 				15_000,
 			);
-			const [message, waitedMs] = parseJavaScriptResult(run.result) as [string, number];
+			const parsed: unknown = parseJavaScriptResult(run.result);
+			if (!Array.isArray(parsed) || typeof parsed[0] !== "string" || typeof parsed[1] !== "number") {
+				throw new Error(`expected a [message, waitedMs] pair, got ${JSON.stringify(parsed)}`);
+			}
+			const [message, waitedMs] = parsed;
 
 			expect(message).toContain("too large");
 			expect(waitedMs).toBeLessThan(2_000);

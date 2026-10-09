@@ -185,7 +185,13 @@ describe("IdleParkingKernel", () => {
 		expect("describeKernelTools" in parked).toBe(true);
 		await parked.describeKernelTools?.(["add"]);
 		expect(describe).toHaveBeenCalledWith(["add"]);
-		const calling = parked.invokeKernelTool?.({ name: "add", args: {} } as never);
+		const calling = parked.invokeKernelTool?.({
+			name: "add",
+			kernel_generation: 1,
+			definition_revision: 1,
+			args: {},
+			call_id: "idle-parking-probe",
+		});
 		await vi.advanceTimersByTimeAsync(5 * MINUTE);
 		expect(first.closed).toBe(false);
 

@@ -60,7 +60,7 @@ async function refuseOutsideLinks(root: string, dir: string): Promise<void> {
 export async function assertInstalledInRevision(stdout: string, staging: string): Promise<void> {
 	const line = stdout.split("\n").find((entry) => entry.startsWith("Successfully installed "));
 	if (line === undefined) return;
-	const present = new Set((await readdir(staging).catch(() => [] as string[])).flatMap(installedName));
+	const present = new Set((await readdir(staging).catch((): string[] => [])).flatMap(installedName));
 	for (const token of line.slice("Successfully installed ".length).trim().split(/\s+/u)) {
 		const name = token.slice(0, token.lastIndexOf("-"));
 		if (!present.has(canonicalName(name))) {

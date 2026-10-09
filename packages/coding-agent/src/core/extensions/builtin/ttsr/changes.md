@@ -1,5 +1,41 @@
 # TTSR Fork Tracker
 
+## 2026-10-09 - A failed engine pause write preserves the TTSR stop announcement (senpi#3014)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: retain the existing loop-stop entry, event and notice before attempting the new engine pause entry; catch and warn on that additive publication failure using a session logger captured before publication.
+
+### Why
+
+The new second append could throw between the existing loop-stop entry and its event/notice, hiding the stop announcement.
+
+### Why an extension could not handle it
+
+This builtin owns the repeated-rule stop branch and must complete its existing announcement.
+
+### Expected merge conflict zones
+
+`ttsr/index.ts` logger import and repeated-rule `agent_settled` branch. Keep the existing announcement ahead of the best-effort engine pause write.
+
+## 2026-10-09 - Publish the common engine pause entry (senpi#3007)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/index.ts`: the consumed repeated-rule nudge appends `engine-paused` with reason `repetition`, its rule, and `ttsr-injection`, alongside the unchanged `ttsr-loop-stopped` entry, event, and notice.
+
+### Why
+
+Clients need one durable self-stop signal rather than interpreting TTSR notices.
+
+### Why an extension could not handle it
+
+This builtin owns the repeated-rule stop decision and consumes the nudge exactly once.
+
+### Expected merge conflict zones
+
+The `agent_settled` repeated-rule branch. The final idle case for a one-shot repetitive-turns correction is recorded in the engine after all deferred turn claims settle.
+
 ## 2026-10-08 - One corrective follow-up per rule per user message (senpi#2967)
 
 ### What changed

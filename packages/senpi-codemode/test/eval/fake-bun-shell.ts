@@ -128,6 +128,31 @@ export function output(stdout: string, stderr = "", exitCode = 0): FakeShellOutp
 	return { stdout: Buffer.from(stdout), stderr: Buffer.from(stderr), exitCode };
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+	return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+/** Bun.spawn's two call shapes: `spawn(cmd, options?)` and `spawn(options)`; anything else is a test bug. */
+function spawnArgs(args: readonly unknown[]): { readonly cmd: string[]; readonly options: Record<string, unknown> } {
+	const [first, second] = args;
+	if (isStringArray(first)) {
+		if (second !== undefined && !isPlainRecord(second))
+			throw new Error(`spawn options must be an object, got ${JSON.stringify(second)}`);
+		return { cmd: first, options: { ...(second ?? {}) } };
+	}
+	if (isPlainRecord(first)) {
+		const options = { ...first };
+		if (!isStringArray(options.cmd))
+			throw new Error(`spawn options.cmd must be a string array, got ${JSON.stringify(options.cmd)}`);
+		return { cmd: options.cmd, options };
+	}
+	throw new Error(`spawn expected a cmd array or an options object, got ${JSON.stringify(first)}`);
+}
+
 export function createFakeBun(): {
 	bun: FakeBun;
 	printed: string[];
@@ -139,42 +164,42 @@ export function createFakeBun(): {
 	const spawnCalls: FakeSpawnCall[] = [];
 	const spawnSyncCalls: FakeSpawnCall[] = [];
 	const outputs = new Map<string, FakeShellOutput>();
-	const shell = ((strings: TemplateStringsArray) => {
-		const joined = strings.join("");
-		const framed = STDIN_ISOLATION_FRAME.exec(joined);
-		shell.framed.push(framed !== null);
-		const command = framed?.[1] ?? joined;
-		return new FakeShellPromise(outputs.get(command) ?? output(""), printed);
-	}) as FakeShell;
-	shell.calls = [];
-	shell.framed = [];
-	shell.nothrow = () => {
-		shell.calls.push("nothrow");
-		return shell;
-	};
-	shell.throws = (shouldThrow) => {
-		shell.calls.push(`throws:${shouldThrow}`);
-		return shell;
-	};
-	shell.env = () => {
-		shell.calls.push("env");
-		return shell;
-	};
-	shell.cwd = () => {
-		shell.calls.push("cwd");
-		return shell;
-	};
-	shell.braces = (pattern) => [pattern];
-	shell.escape = (value) => value;
-	shell.Shell = () => {};
-	shell.ShellPromise = FakeShellPromise;
-	shell.ShellError = FakeShellError;
+	const shell: FakeShell = Object.assign(
+		(strings: TemplateStringsArray): FakeShellPromise => {
+			const joined = strings.join("");
+			const framed = STDIN_ISOLATION_FRAME.exec(joined);
+			shell.framed.push(framed !== null);
+			const command = framed?.[1] ?? joined;
+			return new FakeShellPromise(outputs.get(command) ?? output(""), printed);
+		},
+		{
+			calls: [],
+			framed: [],
+			nothrow() {
+				shell.calls.push("nothrow");
+				return shell;
+			},
+			throws(shouldThrow: boolean) {
+				shell.calls.push(`throws:${shouldThrow}`);
+				return shell;
+			},
+			env() {
+				shell.calls.push("env");
+				return shell;
+			},
+			cwd() {
+				shell.calls.push("cwd");
+				return shell;
+			},
+			braces: (pattern: string) => [pattern],
+			escape: (value: string) => value,
+			Shell: () => {},
+			ShellPromise: FakeShellPromise,
+			ShellError: FakeShellError,
+		} satisfies Omit<FakeShell, "calls" | "framed"> & { calls: string[]; framed: boolean[] },
+	);
 	const spawn = (...args: unknown[]): FakeSubprocess => {
-		const [first, second] = args;
-		const options: Record<string, unknown> = Array.isArray(first)
-			? { ...(second as Record<string, unknown> | undefined) }
-			: { ...(first as Record<string, unknown>) };
-		const cmd = Array.isArray(first) ? (first as string[]) : (options.cmd as string[]);
+		const { cmd, options } = spawnArgs(args);
 		spawnCalls.push({ cmd, options });
 		const stderr =
 			options.stderr === "pipe"
@@ -188,11 +213,7 @@ export function createFakeBun(): {
 		return { stderr, exited: Promise.resolve(0) };
 	};
 	const spawnSync = (...args: unknown[]): unknown => {
-		const [first, second] = args;
-		const options: Record<string, unknown> = Array.isArray(first)
-			? { ...(second as Record<string, unknown> | undefined) }
-			: { ...(first as Record<string, unknown>) };
-		const cmd = Array.isArray(first) ? (first as string[]) : (options.cmd as string[]);
+		const { cmd, options } = spawnArgs(args);
 		spawnSyncCalls.push({ cmd, options });
 		return { stdout: Buffer.from(""), stderr: Buffer.from(""), exitCode: 0 };
 	};

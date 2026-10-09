@@ -8,7 +8,19 @@
 
 ### Changed
 
-- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+### Fixed
+
+### Removed
+
+## [2026.10.10-11] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`) ([#3002](https://github.com/code-yeongyu/senpi/pull/3002)).
 
 ### Fixed
 

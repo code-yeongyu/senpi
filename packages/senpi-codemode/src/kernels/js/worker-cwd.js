@@ -51,6 +51,7 @@ const FS_PATH_ARGS = {
 
 const CHILD_PROCESS_FILE_ARGS = ["spawn", "spawnSync", "execFile", "execFileSync", "fork"];
 const CHILD_PROCESS_COMMAND_ARGS = ["exec", "execSync"];
+const ASYNC_GROUP_SPAWNERS = new Set(["spawn", "fork"]);
 
 export function installSessionCwd(cwd, options) {
 	// A process-mode kernel child IS the main thread; the worker guard relaxes only for that entry.
@@ -95,7 +96,9 @@ function patchFs(fs, promises, at, root) {
 function patchChildProcess(childProcess, at, root) {
 	for (const name of CHILD_PROCESS_FILE_ARGS) {
 		replace(childProcess, name, (fn) => {
-			const withCwd = withOptionsCwd(fn, fileOptionsIndex, root);
+			// Only asynchronous spawners start a new group: a synchronous call keeps the terminal (ssh/sudo/git prompts),
+			// and Bun ignores `detached` for execFile. Those calls get a notice instead (group-signal-notice.js).
+			const withCwd = withOptionsCwd(fn, fileOptionsIndex, root, ASYNC_GROUP_SPAWNERS.has(name));
 			return name === "fork" ? resolvingArgs(withCwd, [0], at) : withCwd;
 		});
 	}
@@ -107,7 +110,7 @@ function patchBun(bun, at, root) {
 	replace(bun, "file", (fn) => resolvingArgs(fn, [0], at));
 	replace(bun, "write", (fn) => resolvingArgs(fn, [0], at));
 	replace(bun, "spawn", (fn) => withBunSpawnCwd(fn, root));
-	replace(bun, "spawnSync", (fn) => withBunSpawnCwd(fn, root));
+	replace(bun, "spawnSync", (fn) => withBunSpawnCwd(fn, root, false));
 	if (typeof bun.$?.cwd === "function") bun.$.cwd(root);
 	const glob = bun.Glob?.prototype;
 	if (glob) {
@@ -149,30 +152,58 @@ function fileOptionsIndex(args) {
 	return Array.isArray(args[1]) || (args[1] == null && args.length > 2) ? 2 : 1;
 }
 
-function withOptionsCwd(fn, optionsIndex, root) {
+function withOptionsCwd(fn, optionsIndex, root, inOwnGroup = false) {
+	const group = inOwnGroup ? ownGroup : (options) => options;
 	return function withSessionCwd(...args) {
 		const index = optionsIndex(args);
 		const options = args[index];
-		if (options === undefined || options === null) args[index] = { cwd: root };
-		else if (typeof options === "function") args.splice(index, 0, { cwd: root });
-		else if (typeof options === "object") args[index] = { ...options, cwd: cwdFrom(options.cwd, root) };
-		return fn.apply(this, args);
+		if (options === undefined || options === null) args[index] = group({ cwd: root });
+		else if (typeof options === "function") args.splice(index, 0, group({ cwd: root }));
+		else if (typeof options === "object") args[index] = group({ ...options, cwd: cwdFrom(options.cwd, root) });
+		if (!inOwnGroup || process.platform === "win32" || (isPlainOptions(options) && options.detached !== undefined)) {
+			return fn.apply(this, args);
+		}
+		// Bun's child_process spawns through Bun.spawn, whose child tracking skips `detached` children as ones the
+		// cell keeps on purpose. While this call runs, `detached` is ours, so the child is still retired with the cell.
+		const depth = globalThis[INJECTED_GROUP] ?? 0;
+		globalThis[INJECTED_GROUP] = depth + 1;
+		try {
+			return fn.apply(this, args);
+		} finally {
+			globalThis[INJECTED_GROUP] = depth;
+		}
 	};
 }
 
-function withBunSpawnCwd(fn, root) {
+function withBunSpawnCwd(fn, root, inOwnGroup = true) {
+	const group = inOwnGroup ? ownGroup : (options) => options;
 	return function spawnInSessionCwd(...args) {
 		const [first, second] = args;
 		if (Array.isArray(first)) {
 			const options = second === undefined || second === null ? {} : second;
 			if (typeof options !== "object") return fn.apply(this, args);
-			return fn.call(this, first, { ...options, cwd: cwdFrom(options.cwd, root) }, ...args.slice(2));
+			return fn.call(this, first, group({ ...options, cwd: cwdFrom(options.cwd, root) }), ...args.slice(2));
 		}
 		if (first !== null && typeof first === "object") {
-			return fn.call(this, { ...first, cwd: cwdFrom(first.cwd, root) }, ...args.slice(1));
+			return fn.call(this, group({ ...first, cwd: cwdFrom(first.cwd, root) }), ...args.slice(1));
 		}
 		return fn.apply(this, args);
 	};
+}
+
+// senpi#2995: a JS kernel runs inside the agent process, so a child spawned from a cell would join the agent's
+// process group, and a cell that later signals that group (`kill -TERM -- -$PGID`) stops the agent itself. On
+// POSIX every cell child starts its own group instead; kernel teardown still retires it by pid and descendants.
+// A cell that sets `detached` itself keeps its choice. Windows is left alone: there `detached` opens a console.
+export const INJECTED_GROUP = Symbol.for("senpi.kernel.injectedProcessGroup");
+
+function isPlainOptions(value) {
+	return value !== null && typeof value === "object";
+}
+
+function ownGroup(options) {
+	if (process.platform === "win32" || options.detached !== undefined) return options;
+	return { ...options, detached: true };
 }
 
 function globScanOptions(options, root) {

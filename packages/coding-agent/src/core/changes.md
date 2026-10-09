@@ -1,3 +1,42 @@
+## 2026-10-09 - Durable engine self-stop signals (senpi#3007)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: appends `engine-paused` beside engine limits (`cap-per-message` or `cap-per-minute`) and at the final idle boundary after a repetitive-turns corrective turn. Deferred turn claims, active work, and settlement epochs prevent a premature pause while another turn starts. Limit signals retain the existing best-effort write behavior.
+- `packages/coding-agent/src/core/engine-paused.ts`: reads durable branch evidence to identify the latest corrective turn and to avoid duplicate pause entries after an already-recorded self-stop.
+
+### Why
+
+RPC clients otherwise infer pauses from several unrelated entries or from an ambiguous corrective-turn-to-idle sequence.
+
+### Why an extension could not handle it
+
+Only the engine owns cross-source limits and knows whether settlement-deferred turns actually started before the final idle edge.
+
+### Expected merge conflict zones
+
+The final idle boundary, engine-turn admission, and user/start reset bookkeeping in `agent-session.ts`; the helper is fork-owned.
+
+## 2026-10-09 - A session the OmO desktop moved resumes in the folder's new home (senpi#2990)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: `SessionManager.open` without a cwd override maps the header's cwd through `resolveMovedPath` (the senpi#2898 moved-path resolver) before using it. `findMostRecentSession`, `findById` and `list` (with a session dir) match header cwds through one `sessionCwdMatcher` per call (`core/moved-session-cwd.ts`, new), which also accepts a header cwd whose moved location is the current cwd and resolves each distinct recorded cwd at most once, so `list`'s per-progress-tick re-filter stays linear. `sessionCwdMatches` is gone. The session file is never rewritten.
+- `packages/coding-agent/src/core/resume-target.ts`: `resolveResumeTarget` treats a session whose recorded cwd moved to the current cwd as the directory's own session, so `--resume` opens it without offering a rebind.
+- `packages/coding-agent/src/core/moved-sessions.ts`: a session at a vanished path that the desktop moved to the current cwd is that folder's own session, not a repository-moved one. It is never badged as moved. Moved-here detection needs no git identity: only project dirs whose recorded path a trusted breadcrumb maps to the current folder are listed for it, and only the moved-repository lookup (senpi#2184) reads the identity and lists every vanished dir. A session dir that cannot be read, for any reason, is skipped instead of failing the listing, as `findMostRecentSession` and `listSessionsFromDir` already do: `--continue` reads other folders' dirs before its own, so one broken unrelated dir must never block the user's own session. `listMovedSessions` (the `--continue` rebind offer) leaves such a session out, the new `movedHereSessionToContinue` returns the newest one when it is newer by mtime than the folder's own newest session, and `withMovedSessions` lists it once: in a shared session dir the folder's own list already holds it, so only moved-repository sessions are looked up there, and it is added unbadged in the default per-folder layout, where only the vanished-path lookup reaches it.
+
+### Why
+
+The desktop moves its data home and leaves session headers naming the old location. senpi#2898 resolved a scheduled job's paths, but the headless `senpi -p --session <file>` it spawns took the cwd from the header as stored, found it missing and exited 1 ("Stored session working directory does not exist"), so a job created before the move ended in `failed/`. A cwd maps only when a trusted breadcrumb lists it, and a re-used worktree (its own `.git`) stays where it is, so nothing changes without a desktop move.
+
+### Why an extension could not handle it
+
+The session cwd is decided while the CLI opens the session file, before any extension loads, and the missing-cwd exit happens in `main.ts` right after.
+
+### Expected merge conflict zones
+
+- LOW: the `cwd` line in `SessionManager.open`, and the cwd filters in `findMostRecentSession`, `findById` and `list` (upstream's `sessionCwdMatches` calls) in `session-manager.ts`.
+
 ## 2026-10-08 - Foreign session-holder admission evidence (senpi#2951)
 
 ### What changed
@@ -34,6 +73,24 @@ The threshold decision, the cut point and the `RequiredCompactionError` throw al
 ### Expected merge conflict zones
 
 - LOW: the `if (inlineReason)` branch of the threshold block in `_checkCompaction`, and the `RequiredCompactionError` class header.
+
+## 2026-10-09 - Accurate turn_end report when the session shuts down mid-turn (senpi#2995)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `dispose()` sets a private `_disposed` flag. When the `turn_end` boundary cannot resolve the assistant entry after that, it reports "turn_end skipped: the session shut down during this turn, so its last response was not saved", replacing "turn_end could not resolve the persisted assistant entry ID".
+
+### Why
+
+- A signal shutdown (SIGTERM/SIGHUP) disposes the session while a response is still streaming. The aborted response is never persisted, so the boundary cannot resolve its entry. The old text pointed at a persistence bug that did not exist, and sent the senpi#2995 diagnosis the wrong way.
+
+### Why an extension could not handle it
+
+- The `<boundary>` error is emitted by `AgentSession` itself, before any extension handler runs.
+
+### Expected merge conflict zones
+
+- LOW: the `!messageEntryId` branch of `_dispatchTurnEndBoundary` and the first line of `dispose()` in `agent-session.ts`.
 
 ## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
 

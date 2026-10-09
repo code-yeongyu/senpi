@@ -301,6 +301,15 @@ Use `customType` to identify your extension's entries on reload. Interactive mod
 
 [Virtual model](virtual-models.md) router state is stored as custom entries with `customType` `pi.virtual-model-state` and `data` `{ provider, modelId, state }`.
 
+#### Goal and engine self-stop entries
+
+These custom entries are persisted in the session and delivered to RPC clients as `entry_appended`. They do not enter model context. Existing `engine-turn-limit`, `ttsr-loop-stopped`, and notices remain unchanged.
+
+- `goal-continuation-stopped`: `data` is `{ goalId: string, reason: "stale" | "repetition" | "cap" | "unattended" | "length-exhausted" | "context-overflow", consecutiveContinuations: number, unattendedContinuations: number, at: number }`. Every active-goal denial except `not-eligible` and `single-flight` records one decision, not one entry per evaluation probe. Blocking guards still block; stale leaves the goal active but commits the remaining measured time and closes its measurement window. An accepted user message or `/goal resume` resets the stop and continuation streak and opens accounting again. The stop entry remains historical; a subsequent continuation can stop again.
+- `engine-paused`: `data` is `{ reason: "repetition" | "goal-repeat" | "cap-per-message" | "cap-per-minute" | "goal-stale", rule?: string, customType?: string, count?: number, at: number }`. The engine limit maps `per-user-input` to `cap-per-message` (`count` is `sinceUserInput`) and `tool-free-rate` to `cap-per-minute` (`count` is `toolFreeInWindow`). TTSR uses `repetition` and names the rule when it refuses another correction or its one-shot repetitive-turns correction reaches final idle without another turn starting. Goal output repetition uses `goal-repeat`; stale uses `goal-stale`, with the consecutive-continuation count and `customType: "goal-continuation"`.
+
+`at` is Unix epoch milliseconds. Consumers can use these entries instead of parsing notice wording, and replay them from session history after reopen.
+
 ### CustomMessageEntry
 
 Extension-injected messages that DO participate in LLM context.

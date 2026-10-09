@@ -50,7 +50,7 @@ function printDecision(decision: Decision, out: string): void {
 	console.log("  row | threshold | band | MDE | ratio | median paired ratio | verdict");
 	for (const result of decision.results) {
 		console.log(
-			`  ${result.scenario} ${result.runtimeId} ${result.metric} | ${fixed(result.threshold)} | ${fixed(result.band)} | ${fixed(result.mde)} | ${fixed(result.ratio)} | ${fixed(result.medianPairedRatio)} | ${result.verdict}`,
+			`  ${result.scenario} ${result.runtimeId} ${result.metric} | ${fixed(result.threshold)} | ${fixed(result.band)} | ${fixed(result.mde)} | ${fixed(result.ratio)} | ${fixed(result.medianPairedRatio)} | ${result.verdict}${result.headBudget === undefined ? "" : " (head budget)"}`,
 		);
 	}
 	const count = (verdict: string) => decision.results.filter((result) => result.verdict === verdict).length;

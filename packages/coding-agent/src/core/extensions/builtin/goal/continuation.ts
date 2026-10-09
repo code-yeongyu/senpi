@@ -181,6 +181,7 @@ export function continuationTurnUsedTools(messages: readonly AgentMessage[]): bo
 
 function isEligibleForGoalContinuation(input: GoalContinuationInput): boolean {
 	if (input.goal?.status !== "active" || input.hasPendingMessages) return false;
+	if (input.path === "sessionStart" && input.goal.continuationStoppedAt !== undefined) return false;
 	if (input.path === "systemRecovery" || input.path === "providerRecovery") return true;
 	if (input.path === "immediate") {
 		return (

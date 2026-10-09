@@ -244,6 +244,10 @@ export class PythonKernelTransport {
 		this.#child.stderr.on("data", onStderr);
 		this.#child.on("error", onError);
 		this.#child.on("exit", onExit);
+		// senpi#3016: a frame written while the interpreter is dying fails on the stdin stream (EPIPE), not on the child.
+		// #onError already ignores it once the child has exited or the transport is inactive, and the listener is never
+		// detached, so a late write failure is never unhandled.
+		this.#child.stdin.on("error", onError);
 		const { sessionId, connection, memory, kernelGeneration } = this.#options;
 		this.#write({
 			type: "init",

@@ -1,4 +1,5 @@
 import { assertCellLive } from "./cell-run-context.js";
+import { groupSignalNotice, noticeChildProcessGroupSignals, shellCommandText, signalsProcessGroup } from "./group-signal-notice.js";
 
 const SHELL_CONFIG_METHODS = ["env", "cwd", "nothrow", "throws"];
 const SHELL_READ_METHODS = ["text", "json", "lines", "arrayBuffer", "bytes", "blob"];
@@ -28,7 +29,9 @@ export function installShellCapture(options) {
 	bun.$ = capturedShell(originalShell, options);
 	bun.spawn = capturedSpawn(originalSpawn, options, pinEnv);
 	if (originalSpawnSync !== null) bun.spawnSync = capturedSpawnSync(originalSpawnSync, pinEnv);
+	const restoreChildProcessNotice = noticeChildProcessGroupSignals(options.emitText, options.isActive);
 	return () => {
+		restoreChildProcessNotice();
 		bun.$ = originalShell;
 		bun.spawn = originalSpawn;
 		if (originalSpawnSync !== null) bun.spawnSync = originalSpawnSync;
@@ -43,6 +46,7 @@ function capturedShell(originalShell, options) {
 	const shell = (strings, ...expressions) => {
 		assertCellLive();
 		if (!options.isActive()) return originalShell(strings, ...expressions);
+		if (signalsProcessGroup(shellCommandText(strings, expressions))) options.emitText("stderr", groupSignalNotice("Bun.$"));
 		const promise = originalShell(isolateStdin(strings), ...expressions);
 		return captureShellPromise(promise, options);
 	};

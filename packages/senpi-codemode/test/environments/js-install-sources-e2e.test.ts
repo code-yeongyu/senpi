@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +10,48 @@ import { hasCommand, packFixture, session, textOf } from "./js-magic-session.ts"
 
 const probeSource = 'export const probe = () => "ok";\n';
 const cleanupDirs: string[] = [];
+
+type PackageLock = { readonly packages: Record<string, { readonly resolved?: string }> };
+type PackageManifest = { readonly dependencies: Record<string, string> };
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		Object.values(value).every((entry) => typeof entry === "string")
+	);
+}
+
+function parsePackageLock(text: string): PackageLock {
+	const value: unknown = JSON.parse(text);
+	if (typeof value !== "object" || value === null || !("packages" in value))
+		throw new Error("package-lock has no packages");
+	const packages: unknown = value.packages;
+	if (typeof packages !== "object" || packages === null) throw new Error("package-lock packages is not an object");
+	const entries = Object.fromEntries(
+		Object.entries(packages).map(([key, entry]) => {
+			if (typeof entry !== "object" || entry === null) throw new Error(`package-lock entry ${key} is not an object`);
+			const resolved = "resolved" in entry && typeof entry.resolved === "string" ? { resolved: entry.resolved } : {};
+			return [key, resolved];
+		}),
+	);
+	return { packages: entries };
+}
+
+function parsePackageManifest(text: string): PackageManifest {
+	const value: unknown = JSON.parse(text);
+	if (typeof value !== "object" || value === null || !("dependencies" in value))
+		throw new Error("manifest has no dependencies");
+	if (!isStringRecord(value.dependencies)) throw new Error("manifest dependencies is not a string map");
+	return { dependencies: value.dependencies };
+}
+
+function listeningPort(address: ReturnType<ReturnType<typeof createServer>["address"]>): number {
+	if (typeof address !== "object" || address === null || !("port" in address) || typeof address.port !== "number")
+		throw new Error(`expected a bound TCP address, got ${JSON.stringify(address)}`);
+	return address.port;
+}
 
 afterEach(async () => {
 	for (const dir of cleanupDirs.splice(0)) await rm(dir, { recursive: true, force: true });
@@ -110,7 +151,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a package insta
 		});
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		try {
-			const { port } = server.address() as AddressInfo;
+			const port = listeningPort(server.address());
 			await run(`%bun add ${source}`);
 			const active = (await readActiveRevision(activeBase(root)))?.dir ?? "";
 			const before = tree(active);
@@ -216,9 +257,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a package insta
 		expect(textOf(imported).trim()).toBe('"three"');
 		// npm keys each package by its path and records where a link points; neither may name a staging directory, or the
 		// lockfile stops resolving once the staged revision is renamed.
-		const lock = JSON.parse(await readFile(join(revision, "package-lock.json"), "utf8")) as {
-			packages: Record<string, { resolved?: string }>;
-		};
+		const lock = parsePackageLock(await readFile(join(revision, "package-lock.json"), "utf8"));
 		const paths = Object.entries(lock.packages).flatMap(([key, entry]) => [key, entry.resolved ?? ""]);
 		expect(paths.filter((path) => path.includes(".staging-rev"))).toEqual([]);
 	}, 240_000);
@@ -354,7 +393,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a package insta
 		await run(`%npm add ${tarball}`);
 		const revision = (await readActiveRevision(activeBase(root)))?.dir ?? "";
 		const manifestPath = join(revision, "package.json");
-		const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { dependencies: Record<string, string> };
+		const manifest = parsePackageManifest(await readFile(manifestPath, "utf8"));
 		delete manifest.dependencies["senpi-dir-forgotten"];
 		await writeFile(manifestPath, JSON.stringify(manifest));
 

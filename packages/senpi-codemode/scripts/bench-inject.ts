@@ -38,6 +38,7 @@ function scaled(rep: Rep, factor: number): Rep {
 		cpuMs: rep.cpuMs * factor,
 		wallMs: rep.wallMs * factor,
 		...(rep.p95Ms === undefined ? {} : { p95Ms: rep.p95Ms * factor }),
+		...(rep.observations === undefined ? {} : { observations: rep.observations }),
 	};
 }
 

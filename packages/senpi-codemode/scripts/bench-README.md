@@ -49,6 +49,10 @@ no FAIL row and at least one noise-limited row ends with the claim "no regressio
 detected; rows marked noise-limited can only detect slowdowns above their stated
 MDE".
 
+### Absolute head budgets
+
+A few rows can't meet the base-ratio gate by design, so `scripts/bench-head-budget.ts` judges them on the head alone, and the printed table marks them `(head budget)`. `crash-queue-100` on Ruby and Julia is one: its base never recovered from the crash (every queued cell failed, no replacement, about 20 ms), so the head/base ratio compared a failure path with the real work. Every head repetition must report the recovered observations (100 queued cells run, each once, after one replacement). The head's median wall and cpu must also stay under absolute ceilings, set at twice the measured head medians of a calm run, with the host named in the file. The ceilings are absolute, so rerun a budget failure on a calm host before treating it as a regression.
+
 ## What a run can claim on available hardware
 
 The acceptance self-vs-self run (3 blocks x 15 repetitions, a quiet host on AC,

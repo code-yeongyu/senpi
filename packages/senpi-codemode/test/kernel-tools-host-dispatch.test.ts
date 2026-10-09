@@ -17,6 +17,14 @@ import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fa
 
 type ProbeArgs = { readonly phase: string; readonly tool?: string; readonly arg?: number };
 
+function isProbeArgs(value: unknown): value is ProbeArgs {
+	return typeof value === "object" && value !== null && "phase" in value && typeof value.phase === "string";
+}
+
+function isKernelToolsDescribeResult(value: unknown): value is KernelToolsDescribeResult {
+	return typeof value === "object" && value !== null && "results" in value && Array.isArray(value.results);
+}
+
 type HostObservation = {
 	readonly phase: string;
 	readonly kernelToolsDefined: boolean;
@@ -62,7 +70,8 @@ class LiveJavaScriptKernelManager implements EvalKernelManager {
 	 * cell it dispatches for, which is exactly what the capability must not depend on (#1754).
 	 */
 	async startWorker(): Promise<JavaScriptKernel> {
-		const kernel = (await this.getKernel("js", () => undefined)) as JavaScriptKernel;
+		const kernel = await this.getKernel("js", () => undefined);
+		if (!(kernel instanceof JavaScriptKernel)) throw new Error("this manager only serves JavaScriptKernel instances");
 		const warmUp = await kernel.run({ cellId: "warm-up", code: "1", timeoutMs: 8_000 });
 		if (!warmUp.ok) throw new Error(`warm-up cell failed: ${warmUp.error.message}`);
 		return kernel;
@@ -93,13 +102,15 @@ function outputText(cell: AgentToolResult<EvalToolDetails>): string {
  */
 function probingExecuteTool(ctx: ExtensionContext, observations: HostObservation[]) {
 	return async (_toolName: string, params: unknown): Promise<AgentToolResult<unknown>> => {
-		const probe = params as ProbeArgs;
+		if (!isProbeArgs(params)) throw new Error(`probe expected { phase: string }, got ${JSON.stringify(params)}`);
+		const probe = params;
 		const kernelTools = ctx.kernelTools;
 		if (!kernelTools) {
 			observations.push({ phase: probe.phase, kernelToolsDefined: false });
 			return textResult("kernel tools unavailable");
 		}
-		const described = (await kernelTools.describe([probe.tool ?? ""])) as KernelToolsDescribeResult;
+		const described = await kernelTools.describe([probe.tool ?? ""]);
+		if (!isKernelToolsDescribeResult(described)) throw new Error("describe returned an unexpected shape");
 		const entry = described.results[0];
 		if (entry?.ok !== true) {
 			observations.push({ phase: probe.phase, kernelToolsDefined: true, failure: `describe refused ${probe.tool}` });
@@ -228,7 +239,8 @@ describe("kernel tools on the real worker tool-call path", () => {
 		const ctx = hostContext();
 		const observations: HostObservation[] = [];
 		const executeTool = async (_toolName: string, params: unknown): Promise<AgentToolResult<unknown>> => {
-			const probe = params as ProbeArgs;
+			if (!isProbeArgs(params)) throw new Error(`probe expected { phase: string }, got ${JSON.stringify(params)}`);
+			const probe = params;
 			observations.push({ phase: probe.phase, kernelToolsDefined: ctx.kernelTools !== undefined });
 			return textResult("host tool done");
 		};
@@ -296,21 +308,64 @@ describe("kernel tools on the real worker tool-call path", () => {
 				lifecycle.onDeath("interpreter exited");
 			});
 			return Object.assign(new FakeKernel([]), {
-				describeKernelTools: async (names: readonly string[]) => ({ from: name, names }),
-				invokeKernelTool: async () => name,
+				describeKernelTools: async (names: readonly string[]): Promise<KernelToolsDescribeResult> => ({
+					results: names.map((requested) => ({
+						name: requested,
+						ok: true as const,
+						descriptor: {
+							name: requested,
+							description: `from ${name}`,
+							input_schema: {},
+							language: "py" as const,
+							kernel_generation: 1,
+							definition_revision: 1,
+						},
+					})),
+				}),
+				invokeKernelTool: async (): Promise<unknown> => name,
 				drainPending: () => [],
 				isAlive: () => alive,
 			});
 		};
 		const held = await ReplaceableKernel.create("py", start);
 		expect(hasKernelTools(held)).toBe(true);
-		expect(await describeThrough(held)).toEqual({ from: "instance-1", names: ["add"] });
+		expect(await describeThrough(held)).toEqual({
+			results: [
+				{
+					name: "add",
+					ok: true,
+					descriptor: {
+						name: "add",
+						description: "from instance-1",
+						input_schema: {},
+						language: "py",
+						kernel_generation: 1,
+						definition_revision: 1,
+					},
+				},
+			],
+		});
 
 		deaths[0]?.();
 		await held.reset();
 
 		expect(instances).toEqual(["instance-1", "instance-2"]);
-		expect(await describeThrough(held)).toEqual({ from: "instance-2", names: ["add"] });
+		expect(await describeThrough(held)).toEqual({
+			results: [
+				{
+					name: "add",
+					ok: true,
+					descriptor: {
+						name: "add",
+						description: "from instance-2",
+						input_schema: {},
+						language: "py",
+						kernel_generation: 1,
+						definition_revision: 1,
+					},
+				},
+			],
+		});
 		await held.close();
 	});
 });

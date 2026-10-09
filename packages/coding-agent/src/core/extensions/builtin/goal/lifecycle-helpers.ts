@@ -1,6 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { isTurnStuckOnContextOverflow } from "../../../compaction/stuck-overflow.ts";
+import { enginePauseSinceLastTurn } from "../../../engine-paused.ts";
 import { GOAL_CONTINUATION_MESSAGE_TYPE } from "../../../messages.ts";
+import { createSessionLogger } from "../../../session-log.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { getLatestPhasesFromBranchEntries } from "../todotools/state.ts";
@@ -20,7 +22,7 @@ import {
 	UNATTENDED_CONTINUATION_BLOCKED_REASON,
 } from "./continuation-recovery.ts";
 import { buildContinuationPrompt } from "./prompt.ts";
-import { recordContinuationDelivered, updateGoal } from "./store.ts";
+import { recordContinuationDelivered, recordGoalContinuationStopped } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
 import { openTodoTaskContents } from "./todo-gate.ts";
 import type { Goal } from "./types.ts";
@@ -180,23 +182,61 @@ async function handleDeniedContinuation(
 	goal: Goal,
 	input: Omit<GoalContinuationInput, "goal">,
 	reason: Extract<GoalContinuationVerdict, { kind: "deny" }>["reason"],
-): Promise<Goal> {
+): Promise<Goal | null> {
+	if (goal.status !== "active" || reason === "not-eligible" || reason === "single-flight") return goal;
+	const logger = createSessionLogger(ctx.agentDir);
+	const at = Date.now();
 	const blockedReason = blockedReasonForContinuationGuard(reason);
-	if (blockedReason === undefined) return goal;
-
-	const blocked = await updateGoal(
+	const stopped = await recordGoalContinuationStopped(
 		goalStoreRef(ctx.sessionManager, ctx.cwd),
-		{ status: "blocked", reason: blockedReason },
-		"model",
+		goal,
+		at,
+		blockedReason,
 	);
-	if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
-	pi.events?.emit("goal_continuation_guard_tripped", {
-		goalId: goal.id,
-		reason,
-		count: input.consecutiveContinuations,
-		unattendedContinuations: goal.unattendedContinuations ?? 0,
-	});
-	return blocked;
+	if (!stopped.recorded) return stopped.goal;
+	// Preserve the guard's existing side effects even if publishing the additive entries fails.
+	if (blockedReason !== undefined) {
+		if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
+		pi.events?.emit("goal_continuation_guard_tripped", {
+			goalId: goal.id,
+			reason,
+			count: input.consecutiveContinuations,
+			unattendedContinuations: goal.unattendedContinuations ?? 0,
+		});
+	}
+	try {
+		pi.appendEntry("goal-continuation-stopped", {
+			goalId: goal.id,
+			reason,
+			consecutiveContinuations: input.consecutiveContinuations,
+			unattendedContinuations: goal.unattendedContinuations ?? 0,
+			at,
+		});
+	} catch (error) {
+		logger.warn("goal_continuation_record_write_failed", {
+			kind: "goal-continuation-stopped",
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+	try {
+		if (
+			(reason === "stale" || reason === "repetition") &&
+			!enginePauseSinceLastTurn(ctx.sessionManager.getBranch())
+		) {
+			pi.appendEntry("engine-paused", {
+				reason: reason === "stale" ? "goal-stale" : "goal-repeat",
+				customType: GOAL_CONTINUATION_MESSAGE_TYPE,
+				count: input.consecutiveContinuations,
+				at,
+			});
+		}
+	} catch (error) {
+		logger.warn("goal_continuation_record_write_failed", {
+			kind: "engine-paused",
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+	return stopped.goal;
 }
 
 function blockedReasonForContinuationGuard(

@@ -5,9 +5,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 type Fs = typeof import("node:fs/promises");
 type Hook = (path: string, content: string) => Promise<void>;
-const fsHook = vi.hoisted(
-	() => ({ onRead: undefined, real: undefined }) as { onRead: Hook | undefined; real: Fs | undefined },
-);
+
+type FsHookSlot = { onRead: Hook | undefined; real: Fs | undefined };
+const fsHook: FsHookSlot = vi.hoisted((): FsHookSlot => ({ onRead: undefined, real: undefined }));
+
+function realFs(): Fs {
+	const real = fsHook.real;
+	if (real === undefined) throw new Error("the node:fs/promises mock has not captured the real module yet");
+	return real;
+}
 
 // Every read the lock makes passes through onRead, so a test can act as another waiter at that exact point.
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -36,7 +42,7 @@ function exitedPid(): number {
 }
 
 async function publishLock(base: string, name: string, content: string): Promise<void> {
-	const fs = fsHook.real as Fs;
+	const fs = realFs();
 	const temp = join(base, `test-temp-${crypto.randomUUID()}`);
 	await fs.writeFile(temp, content);
 	await fs.link(temp, join(base, name)).catch(() => undefined);
@@ -45,7 +51,7 @@ async function publishLock(base: string, name: string, content: string): Promise
 
 describe("Given a waiter that judged the root lock stale", () => {
 	it("When other waiters replace it with live locks before this waiter acts, then no live lock is ever deleted", async () => {
-		const fs = fsHook.real as Fs;
+		const fs = realFs();
 		const base = await fs.mkdtemp(join(tmpdir(), "senpi-lock-race-"));
 		roots.push(base);
 		const lock = join(base, ".install.lock");
@@ -81,7 +87,7 @@ describe("Given a waiter that judged the root lock stale", () => {
 
 describe("Given two waiters that find the same stale lock", () => {
 	it("When both try to reap it, then only the waiter holding the reap claim removes it and they hold the lock one at a time", async () => {
-		const fs = fsHook.real as Fs;
+		const fs = realFs();
 		const base = await fs.mkdtemp(join(tmpdir(), "senpi-lock-claim-"));
 		roots.push(base);
 		const lock = join(base, ".install.lock");
@@ -128,7 +134,7 @@ describe("Given two waiters that find the same stale lock", () => {
 
 describe("Given a stale lock that a live waiter is reaping", () => {
 	it("When another waiter finds it, then that waiter waits quietly instead of re-reading the lock in a loop", async () => {
-		const fs = fsHook.real as Fs;
+		const fs = realFs();
 		const base = await fs.mkdtemp(join(tmpdir(), "senpi-lock-quiet-"));
 		roots.push(base);
 		const lock = join(base, ".install.lock");
@@ -159,7 +165,7 @@ describe("Given a stale lock that a live waiter is reaping", () => {
 
 describe("Given a waiter inspecting a reap claim", () => {
 	it("When its install is cancelled during that inspection, then it stops promptly instead of waiting for the lock", async () => {
-		const fs = fsHook.real as Fs;
+		const fs = realFs();
 		const base = await fs.mkdtemp(join(tmpdir(), "senpi-lock-abort-"));
 		roots.push(base);
 		await fs.writeFile(

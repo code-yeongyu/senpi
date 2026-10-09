@@ -78,6 +78,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { envValue } from "./core/brand.ts";
 import { type CredentialAccountSummary, summarizeCredentialAccounts } from "./core/credential-accounts.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { resolveMovedPath } from "./core/extensions/builtin/moved-path-guard/resolve.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { installMemoryReportSignal } from "./core/memory-report/memory-report-write.ts";
@@ -88,7 +89,7 @@ import {
 	type ScopedModel,
 } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
-import { markMovedSessions, withMovedSessions } from "./core/moved-sessions.ts";
+import { markMovedSessions, movedHereSessionToContinue, withMovedSessions } from "./core/moved-sessions.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { recordProcessLifetime } from "./core/process-crash-record.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -576,6 +577,9 @@ export async function createSessionManager(
 				return openSessionOrExit(resolved.path, sessionDir);
 
 			case "global": {
+				// Recorded under a folder the OmO desktop moved here: this folder's own session (senpi#2990).
+				if (resolved.cwd !== "" && resolvePath(resolveMovedPath(resolved.cwd)) === resolvePath(cwd))
+					return openSessionOrExit(resolved.path, sessionDir);
 				// The confirmation blocks on readline, which only an interactive session can
 				// answer. Print, JSON, RPC, and app-server runs reach here with a TTY attached
 				// too (`-p` from a terminal), where the question hangs the process or resolves
@@ -640,10 +644,14 @@ export async function createSessionManager(
 	}
 
 	if (parsed.continue) {
+		// A shared session dir matches sessions the OmO desktop moved here in continueRecent. In the default per-folder
+		// layout they sit in the old folder's dir: continue the newest of those and the folder's own, in place (senpi#2990).
+		const movedHere = sessionDir === undefined ? await movedHereSessionToContinue(cwd) : undefined;
+		if (movedHere !== undefined) return SessionManager.open(movedHere, sessionDir);
 		const recent = SessionManager.continueRecent(cwd, sessionDir);
 		const recentFile = recent.getSessionFile();
 		if (recentFile !== undefined && existsSync(recentFile)) return recent;
-		const moved = await movedSessionToContinue({
+		const movedChoice = await movedSessionToContinue({
 			cwd,
 			...(sessionDir === undefined ? {} : { sessionDir }),
 			interactive: appMode === "interactive",
@@ -651,7 +659,7 @@ export async function createSessionManager(
 			out: (line) => console.log(line),
 			err: (line) => console.error(line),
 		});
-		return moved === undefined ? recent : rebindSessionOrExit(moved, cwd, sessionDir);
+		return movedChoice === undefined ? recent : rebindSessionOrExit(movedChoice, cwd, sessionDir);
 	}
 
 	if (parsed.sessionId) {

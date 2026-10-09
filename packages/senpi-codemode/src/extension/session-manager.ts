@@ -24,7 +24,7 @@ import {
 } from "./kernel-registration.ts";
 import type { RegisteredKernelSource } from "./kernel-registry.ts";
 import { ReplaceableKernel } from "./kernel-replacement.ts";
-import { assertSessionCwdAvailable } from "./session-cwd.ts";
+import { assertSessionCwdAvailable, assertSessionCwdAvailableSync } from "./session-cwd.ts";
 import type {
 	BridgeEndpoint,
 	CodemodeSessionManager,
@@ -114,7 +114,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		this.#onMessageRefs.set(language, onMessage);
 		const existing = this.#kernels.get(language);
 		if (existing) {
-			await assertSessionCwdAvailable(this.#options.cwd);
+			assertSessionCwdAvailableSync(this.#options.cwd);
 			return existing;
 		}
 		const pending = this.#kernelCreations.get(language);
@@ -311,8 +311,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	/** Only an already running JavaScript kernel can define a colliding name; none is started for this. */
 	#javaScriptKernelToolsDescribe(names: readonly string[]): Promise<KernelToolsDescribeResult> | undefined {
 		const js = this.#kernels.get("js");
-		if (!js || !("describeKernelTools" in js) || typeof js.describeKernelTools !== "function") return undefined;
-		return (js.describeKernelTools as (names: readonly string[]) => Promise<KernelToolsDescribeResult>)(names);
+		if (!js || typeof js.describeKernelTools !== "function") return undefined;
+		return js.describeKernelTools(names);
 	}
 
 	#foreignKernelToolNames(): string[] {

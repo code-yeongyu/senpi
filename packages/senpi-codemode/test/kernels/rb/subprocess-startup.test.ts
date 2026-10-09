@@ -3,6 +3,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeBridgeFrame, encodeBridgeFrame, type KernelToHostMessage } from "../../../src/bridge/protocol.ts";
 import { parsePsCpuTime } from "../../../src/kernels/shared/process-group-cpu.ts";
+import type { SubprocessLike } from "../../../src/kernels/shared/subprocess-kernel.ts";
 import { SubprocessKernel } from "../../../src/kernels/shared/subprocess-kernel.ts";
 import { SubprocessStartupWatchdog } from "../../../src/kernels/shared/subprocess-startup.ts";
 
@@ -11,10 +12,13 @@ const NO_PROGRESS_MS = 30_000;
 const FAKE_PID = 2 ** 30;
 
 function stage(name: string): KernelToHostMessage {
-	return { type: "status", event: { op: "kernel-startup", stage: name } } as KernelToHostMessage;
+	return { type: "status", event: { op: "kernel-startup", stage: name } } satisfies Extract<
+		KernelToHostMessage,
+		{ type: "status" }
+	>;
 }
 
-class SilentInterpreter extends EventEmitter {
+class SilentInterpreter extends EventEmitter implements SubprocessLike {
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
 	readonly pid = FAKE_PID;
@@ -189,7 +193,7 @@ describe("SubprocessKernel startup", () => {
 			args: [],
 			sessionId: "rb-stalled",
 			connection: { port: 1, token: "t" },
-			spawn: () => interpreter as never,
+			spawn: () => interpreter,
 			startup: { label: "Ruby", noProgressMs: NO_PROGRESS_MS, readGroupCpuTime: () => 7n },
 		});
 		interpreter.say(stage("runtime-init"));
@@ -213,7 +217,7 @@ describe("SubprocessKernel startup", () => {
 			args: [],
 			sessionId: "rb-stall-death",
 			connection: { port: 1, token: "t" },
-			spawn: () => interpreter as never,
+			spawn: () => interpreter,
 			onDeath: (reason) => deaths.push(reason),
 			startup: { label: "Ruby", noProgressMs: NO_PROGRESS_MS, readGroupCpuTime: () => 7n },
 		});
@@ -242,7 +246,7 @@ describe("SubprocessKernel startup", () => {
 			args: [],
 			sessionId: "rb-ready-idle",
 			connection: { port: 1, token: "t" },
-			spawn: () => interpreter as never,
+			spawn: () => interpreter,
 			onDeath: (reason) => deaths.push(reason),
 			startup: { label: "Ruby", noProgressMs: NO_PROGRESS_MS, readGroupCpuTime: () => 7n },
 		});
@@ -265,7 +269,7 @@ describe("SubprocessKernel startup", () => {
 			args: [],
 			sessionId: "jl-exit-before-ready",
 			connection: { port: 1, token: "t" },
-			spawn: () => interpreter as never,
+			spawn: () => interpreter,
 			onDeath: (reason) => deaths.push(reason),
 			startup: { label: "Julia", noProgressMs: NO_PROGRESS_MS, readGroupCpuTime: readCpu },
 		});
@@ -288,7 +292,7 @@ describe("SubprocessKernel startup", () => {
 			args: [],
 			sessionId: "rb-closed-starting",
 			connection: { port: 1, token: "t" },
-			spawn: () => interpreter as never,
+			spawn: () => interpreter,
 			onDeath: (reason) => deaths.push(reason),
 			startup: { label: "Ruby", noProgressMs: NO_PROGRESS_MS, readGroupCpuTime: readCpu },
 		});
@@ -312,7 +316,7 @@ describe("SubprocessKernel startup", () => {
 			args: [],
 			sessionId: "rb-unkillable-starting",
 			connection: { port: 1, token: "t" },
-			spawn: () => interpreter as never,
+			spawn: () => interpreter,
 			onDeath: (reason) => deaths.push(reason),
 			startup: { label: "Ruby", noProgressMs: NO_PROGRESS_MS, readGroupCpuTime: readCpu },
 		});
@@ -334,7 +338,7 @@ describe("SubprocessKernel startup", () => {
 			args: [],
 			sessionId: "rb-frames",
 			connection: { port: 1, token: "t" },
-			spawn: () => interpreter as never,
+			spawn: () => interpreter,
 			onMessage: (message) => seen.push(message.type === "status" ? `status:${message.event.op}` : message.type),
 			startup: { label: "Ruby", noProgressMs: NO_PROGRESS_MS, readGroupCpuTime: () => 7n },
 		});
@@ -360,7 +364,7 @@ describe("SubprocessKernel startup", () => {
 			args: [],
 			sessionId: "jl-slow",
 			connection: { port: 1, token: "t" },
-			spawn: () => interpreter as never,
+			spawn: () => interpreter,
 			startup: { label: "Julia", noProgressMs: NO_PROGRESS_MS, readGroupCpuTime: () => (cpu += 10n) },
 		});
 		await vi.advanceTimersByTimeAsync(5 * NO_PROGRESS_MS);

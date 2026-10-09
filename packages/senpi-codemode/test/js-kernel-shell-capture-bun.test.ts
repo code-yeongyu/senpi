@@ -67,7 +67,9 @@ async function runCellUnderBunWithOpenStdin(code: string): Promise<DriverRun> {
 		child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
 			stderr += chunk;
 		});
-		const [status] = (await once(child, "exit")) as [number | null];
+		const exitEvent = await once(child, "exit");
+		const status = exitEvent[0];
+		if (typeof status !== "number" && status !== null) throw new Error(`unexpected exit event: ${String(status)}`);
 		if (status !== 0) throw new Error(`bun driver exited with ${status}: ${stderr}`);
 		const report: DriverReport = JSON.parse(await readFile(reportPath, "utf8"));
 		return { stdout, stderr, report };

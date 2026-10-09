@@ -23,6 +23,8 @@ export type Goal = {
 	consecutiveContinuations?: number;
 	unattendedContinuations?: number;
 	lastContinuationSignature?: string;
+	/** Durable claim for a stopped continuation; cleared by input, resume, or a delivered continuation. */
+	continuationStoppedAt?: number;
 	createdAt: number;
 	updatedAt: number;
 	lastStartedAt?: number;

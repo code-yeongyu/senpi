@@ -4,15 +4,13 @@ import { EvalDetachedCellManager } from "../src/tool/detached-cell-manager.ts";
 import { createEvalTool } from "../src/tool/eval-tool.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext } from "./eval/fakes.ts";
 
-type TextContent = Extract<AgentToolResult<unknown>["content"][number], { type: "text" }>;
-
 afterEach(() => {
 	vi.useRealTimers();
 });
 
 function textOf(result: AgentToolResult<unknown>): string {
 	const texts: string[] = [];
-	for (const part of result.content as readonly TextContent[]) {
+	for (const part of result.content) {
 		if (part.type === "text") texts.push(part.text);
 	}
 	return texts.join("\n");

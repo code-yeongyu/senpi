@@ -25,6 +25,7 @@ import {
 	type EvalListInput,
 	type EvalResultDetails,
 	type EvalToolDetails,
+	type EvalToolInput,
 	type EvalToolRequest,
 	enabledLanguageList,
 } from "./types.ts";
@@ -34,7 +35,7 @@ export type { CreateEvalToolOptions } from "./eval-tool-options.ts";
 export type { EnabledEvalLanguages, EvalKernel, EvalKernelManager } from "./types.ts";
 
 type EvalExecuteArgs<Request extends EvalToolRequest> = Parameters<
-	ToolDefinition<TUnsafe<Request>, EvalToolDetails>["execute"]
+	ToolDefinition<TUnsafe<Request | Partial<EvalToolInput>>, EvalToolDetails>["execute"]
 >;
 
 export function createEvalTool(options: CreateEvalToolOptions) {

@@ -3036,6 +3036,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `message_start` | Message begins |
 | `message_update` | Streaming update (text/thinking/toolcall deltas) |
 | `message_end` | Message completes |
+| `entry_appended` | A durable session entry was appended, including goal and engine self-stop custom entries |
 | `bash_execution_update` | Direct RPC bash command output chunk |
 | `tool_execution_start` | Tool begins execution |
 | `tool_execution_update` | Tool execution progress (streaming output) |
@@ -3237,6 +3238,15 @@ Emitted after the full session-level run settles. At this point senpi will not c
 A multi-session host that closes, parks or releases a session mid-turn first publishes the settle that turn will now
 never write, with `"reason": "session_closed"`, on the same broadcast as every `agent_settled`: whoever counted the
 `agent_start` (the supervisor's idle-exit observer included) sees it end. Older hosts never send `reason`.
+
+### entry_appended: goal and engine stops
+
+`entry_appended` carries the full durable session entry in `entry`. For `entry.type: "custom"`, self-stops use these `entry.customType` values:
+
+- `goal-continuation-stopped`: `entry.data` contains `goalId`, `reason` (`stale`, `repetition`, `cap`, `unattended`, `length-exhausted`, or `context-overflow`), `consecutiveContinuations`, `unattendedContinuations`, and `at`.
+- `engine-paused`: `entry.data` contains `reason` (`repetition`, `goal-repeat`, `cap-per-message`, `cap-per-minute`, or `goal-stale`), `at`, and optional `rule`, `customType`, and `count`.
+
+`at` is epoch milliseconds. These records survive session reopen and are available through the session-entry history. A goal stop is historical: accepted user input or `/goal resume` resets the stop, rather than deleting the entry. See [Session File Format](session-format.md#goal-and-engine-self-stop-entries) for the reason mapping and stale measurement-window behavior. Existing limit/rule entries and UI notices are preserved.
 
 ### turn_start / turn_end
 

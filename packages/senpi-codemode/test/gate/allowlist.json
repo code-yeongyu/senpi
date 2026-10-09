@@ -1,6 +1,44 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3034": {
+			"additions": [
+				"legacyContracts/test/py-kernel-bookkeeping.test.ts/Python per-cell bookkeeping uses two FIFO operations zero Python queue locks and one capture scope per cell"
+			],
+			"reason": "senpi#3034, plan row 45 fix c: deterministic reader/main work counts retain two FIFO operations and one owner acquire/release while removing Python queue condition work and halving capture-scope setups."
+		},
+		"senpi#3028": {
+			"additions": [
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals jl collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb does no globals work or payload serialization below threshold",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb preserves above threshold notice and globals payload",
+				"legacyContracts/test/kernel-memory-globals.test.ts/lazy memory globals rb collects globals above threshold when hysteresis suppresses notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retains ownership until a matching reply and reads the footprint once",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request ignores replies from a different process cell or pending run",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request bounds a missing reply without skipping the footprint notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request retires the pending deadline on reset without formatting a stale notice",
+				"legacyContracts/test/subprocess-memory-globals.test.ts/owned memory globals request requests globals at an enabled ceiling even when the notice threshold is disabled",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (rb) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"legacyContracts/test/kernels/rb/subprocess-memory-ceiling.test.ts/SubprocessKernel (jl) memory ceiling Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives",
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts"
+			],
+			"reason": "senpi#3028 separates every-cell footprint accounting from bounded, cell-owned globals diagnostics; below-threshold work counts and main notice snapshots prove parity."
+		},
+		"senpi#3033": {
+			"additions": [
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips performs zero async stat round trips on each warm cell",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is deleted",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips refuses the very next cell when the cwd is replaced by a file",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EACCES error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original ELOOP error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EMFILE error on warm reuse",
+				"legacyContracts/test/session-manager-warm-cwd.test.ts/warm cells validate the session cwd without async stat round trips surfaces the original EIO error on warm reuse"
+			],
+			"reason": "senpi#3033, plan row 45 fix b: warm cells check the real cwd on every reuse without an async filesystem round trip; deletion and replacement refuse the next cell with the existing error, and unrelated I/O errors retain their identity."
+		},
 		"1": {
 			"additions": [],
 			"reason": "The initial harness preserves the merge-base surfaces without additive production changes."
@@ -660,6 +698,40 @@
 			],
 			"reason": "Lead decision A (2026-10-01), node 32: add event-ordered shell restart notice and preservation witnesses without changing default prompts, schemas, helpers, or native shell semantics."
 		},
+		"37": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries are exactly the five documented names",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document the magics, %load and the environment modes",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document isolate, its refusals and the sandbox limits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries name only error codes the source actually emits",
+				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries keep each code in the entry that owns it"
+			],
+			"reason": "Plan row 37 (F4/F5 shortfall, IS-3): the eval:environments and eval:isolation virtual tool_schema entries, a module the extension and first kernel load, and their contract tests. Additive only; no prompt cell changes."
+		},
+		"38": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/environments/packages-install.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/environments/packages-install.ts",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When it installs a local tarball with bun, then it returns the receipt %bun add reports and the next cell imports the package",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then nothing is published and the kernel answers the next cell",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the manager is not a JavaScript installer, then the cell fails with environment_installer_unavailable and installs nothing",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When it installs a local wheel, then it returns the %pip receipt and the next cell imports the package",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the install fails, then the cell error carries environment_install_failed and pip's stderr tail",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch fails with environment_install_timeout when the install outlives its timeout",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch reports the owning cell's stop as environment_install_cancelled, not as a timeout",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses a manager whose environment the cell does not have",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses malformed arguments before any install starts",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then the install itself is cancelled, nothing is published and the kernel answers the next cell",
+				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published",
+				"legacyContracts/test/environments/packages-install-runtime-wiring.test.ts/Given a session runtime with Python enabled When it is created, then the bridge's packages.install() and the %pip magics share one Python environment",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch passes the requirement list to the session installer as separate arguments, never re-split, and returns its receipt",
+				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch validates a list with the same %pip rules, keeping markers and backslashes as written",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When packages.install() passes a requirement list, then each item reaches pip as one argument: a path with a space and a marker stay intact"
+			],
+			"reason": "Plan row 38 (F4 shortfall, IS-6): the packages.install() cell helper, a module the extension and first kernel load, and its contract tests. The helper is reached through a reserved bridge tool and documented on demand; no prompt cell changes."
+		},
 		"2718": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/process-cpu.ts",
@@ -1193,40 +1265,6 @@
 			],
 			"reason": "senpi#2850: a summary-less live row skips a first code line that sanitizes to nothing; the contract fails before the change (the row shows only the ellipsis)."
 		},
-		"37": {
-			"additions": [
-				"imports/extension/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/bridges/eval-environment-schemas.ts",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries are exactly the five documented names",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document the magics, %load and the environment modes",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document isolate, its refusals and the sandbox limits",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries name only error codes the source actually emits",
-				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries keep each code in the entry that owns it"
-			],
-			"reason": "Plan row 37 (F4/F5 shortfall, IS-3): the eval:environments and eval:isolation virtual tool_schema entries, a module the extension and first kernel load, and their contract tests. Additive only; no prompt cell changes."
-		},
-		"38": {
-			"additions": [
-				"imports/extension/packages/senpi-codemode/src/environments/packages-install.ts",
-				"imports/firstKernel/packages/senpi-codemode/src/environments/packages-install.ts",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When it installs a local tarball with bun, then it returns the receipt %bun add reports and the next cell imports the package",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then nothing is published and the kernel answers the next cell",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the manager is not a JavaScript installer, then the cell fails with environment_installer_unavailable and installs nothing",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When it installs a local wheel, then it returns the %pip receipt and the next cell imports the package",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the install fails, then the cell error carries environment_install_failed and pip's stderr tail",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch fails with environment_install_timeout when the install outlives its timeout",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch reports the owning cell's stop as environment_install_cancelled, not as a timeout",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses a manager whose environment the cell does not have",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch refuses malformed arguments before any install starts",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a JavaScript cell When the owning cell is cancelled once the installer has started, then the install itself is cancelled, nothing is published and the kernel answers the next cell",
-				"legacyContracts/test/environments/packages-install-e2e.test.ts/Given packages.install() in a Python cell When the owning cell is cancelled once pip has started, then the install itself is cancelled and nothing is published",
-				"legacyContracts/test/environments/packages-install-runtime-wiring.test.ts/Given a session runtime with Python enabled When it is created, then the bridge's packages.install() and the %pip magics share one Python environment",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch passes the requirement list to the session installer as separate arguments, never re-split, and returns its receipt",
-				"legacyContracts/test/environments/packages-install.test.ts/packages.install() host dispatch validates a list with the same %pip rules, keeping markers and backslashes as written",
-				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root When packages.install() passes a requirement list, then each item reaches pip as one argument: a path with a space and a marker stay intact"
-			],
-			"reason": "Plan row 38 (F4 shortfall, IS-6): the packages.install() cell helper, a module the extension and first kernel load, and its contract tests. The helper is reached through a reserved bridge tool and documented on demand; no prompt cell changes."
-		},
 		"senpi#2909": {
 			"additions": [
 				"legacyContracts/test/bench/run-retry.test.ts/per-block spike retry (senpi#2909) keeps nothing from a discarded attempt that had already collected data",
@@ -1462,6 +1500,88 @@
 				"legacyContracts/test/eval-virtual-environment-schemas.test.ts/tool_schema('eval:*') virtual entries document every error code the source raises"
 			],
 			"reason": "senpi#3003: tool_schema(\"eval:environments\") now documents packages.install(manager, requirements, {timeout?}) — its signature, the per-language managers (pip; bun/npm), the receipt fields, cancellation by stop and the environment_install_timeout code — and the virtual-schema contract test gains a two-way emitted-vs-documented code check plus the packages.install assertions. No prompt, description, snippet, guidelines or input-schema changes."
+		},
+		"senpi#2995": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/group-signal-notice.js",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given   kill -TERM -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given PG=$(ps -o pgid= -p $W | tr -d ' '); kill -TERM -- -$PG when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given a ps that cannot be spawned when the agent group is read then the lookup returns nothing instead of throwing",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given bash -lc 'kill -KILL -- -$GROUP' when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"killall bun stops every bun\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"run kill -9 on the stuck pid\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo \"use kill -9 1234 if needed\" when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given echo killed -- -1 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given for p in 1; do kill -- -$p; done when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given git log --grep kill foo -1 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given grep -c killall notes.txt when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given if true; then kill -- -5; fi when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill $PID; head -5 log.txt when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -- -$$ when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -- -1234 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -0 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -9 -1234 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -9 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM $PID when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM -$(cat /tmp/job.pgid) when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -TERM 1234 -5678 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -l when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill -s TERM -${PG} when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given kill 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given killall bun when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given no readable process group when the notice is built then it still carries its tag",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given nohup kill -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill --pgroup 5 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill -g 77 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given pkill -g0 sleep when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sh -c 'killall -TERM node' when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given skill -9 1234 when scanned then it is not a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sudo -n kill -9 -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given sudo killall node when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given xargs kill -- -5 when scanned then it is a group signal",
+				"legacyContracts/test/group-signal-notice.test.ts/process-group signal detection (senpi#2995) Given { kill -- -5; } when scanned then it is a group signal",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a Bun.$ command that signals a process group when it runs then the cell gets the shared-group notice",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a Bun.spawn background job when the cell signals the job's process group then the agent is not in it and the job is gone",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a cell that promisifies child_process.exec when it runs then the result keeps stdout and stderr and the group-signal notice still fires",
+				"legacyContracts/test/js-kernel-cell-process-group-bun.test.ts/JavaScript kernel children start their own process group (senpi#2995) Given a node:child_process background job when the cell signals the job's process group then the agent is not in it and the job is gone"
+			],
+			"reason": "senpi#2995: the worker's shell capture imports the new group-signal-notice.js. It warns when a Bun.$, exec/execFile or synchronous-spawner command signals a process group, since those children stay in the agent's group. The listed contracts cover child process groups, the detector, the notice tag, a missing ps, and promisify(exec)."
+		},
+		"senpi#3016": {
+			"additions": [
+				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a Python interpreter that closed its stdin when the transport sends its init frame then start fails with the EPIPE and the host survives",
+				"legacyContracts/test/subprocess-stdin-epipe.test.ts/subprocess kernel stdin write failures (senpi#3016) Given a kernel child that closed its stdin when a frame is sent then the EPIPE is reported once through onError and the host survives"
+			],
+			"reason": "senpi#3016: a kernel child's stdin write failure (EPIPE) is reported once through onError, for the shared subprocess kernels and the Python transport, instead of an unhandled stream error ending the host. A send after exit is refused."
+		},
+		"senpi#3020": {
+			"additions": [
+				"legacyContracts/test/js-kernel-cell-orphan-group-bun.test.ts/JavaScript kernel retires a cell's orphaned grandchildren through their process group (senpi#3020) Given a Bun.spawn child whose grandchild was re-parented to init when the cell settles then the grandchild is gone and the agent is alive",
+				"legacyContracts/test/js-kernel-cell-orphan-group-bun.test.ts/JavaScript kernel retires a cell's orphaned grandchildren through their process group (senpi#3020) Given a node:child_process child whose grandchild was re-parented to init when the cell settles then the grandchild is gone and the agent is alive",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given a cell child's live group when groups are retired then it gets SIGTERM and then SIGKILL",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given a recorded leader that exited and a live process now holding its pid when groups are retired then that group is left alone",
+				"legacyContracts/test/process-group-retire.test.ts/cell process-group retirement (senpi#3020) Given the agent's own process group in the list when groups are retired then it is never signalled"
+			],
+			"reason": "senpi#3020: at cell retirement every process group the kernel gave a cell child is signalled, so a grandchild re-parented to init is stopped. The agent's own group, and a group whose exited leader's pid is held by a live process again, are never signalled."
+		},
+		"senpi#3005": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/kernels/shared/bun-ffi.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/bun-ffi.ts"
+			],
+			"reason": "The shared isBunFfi/loadBunFfi guard module replaces the two getBuiltinModule('bun:ffi') casts in process-cpu.ts and process-group-cpu.ts; no behavior change."
+		},
+		"senpi#3025": {
+			"additions": [
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) passes a head that recovers and runs every queued cell under the ceiling, although the base ratio is ~20x",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that leaves a queued cell unrun",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head that runs a queued cell twice",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head whose median wall time exceeds the ceiling",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) keeps the base-ratio gate for runtimes without a budget",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) fails a head whose median cpu exceeds the ceiling while wall stays under it",
+				"legacyContracts/test/bench/head-budget.test.ts/crash-queue-100 absolute head budget (rb, jl) tests the wall ceiling through --inject-slow, keeping the recorded observations"
+			],
+			"reason": "senpi#3025: the bench judges crash-queue-100 on rb and jl by an absolute head budget (all 100 queued cells run once after one replacement, within a median-wall ceiling), because their base never recovered from the crash and the head/base ratio compares a failure path with the real work. The listed contracts are the new comparator tests."
 		}
 	}
 }

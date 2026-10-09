@@ -1,4 +1,5 @@
 import { resolvePath } from "../utils/paths.ts";
+import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import { type RepositoryIdentity, readRepositoryIdentity } from "./repository-identity.ts";
 import { classifySessionRepository, readSessionCwd, rebindSessionFile } from "./session-rebind.ts";
 
@@ -33,7 +34,9 @@ function sessionCwdOf(sessionPath: string): string | undefined {
 export async function resolveResumeTarget(choice: ResumeTargetChoice): Promise<ResumeTarget> {
 	const unchanged: ResumeTarget = { path: choice.sessionPath, rebound: false };
 	const sessionCwd = sessionCwdOf(choice.sessionPath);
-	if (sessionCwd === undefined || resolvePath(sessionCwd) === resolvePath(choice.cwd)) return unchanged;
+	// A session whose cwd the OmO desktop moved here is this directory's own session, not one to rebind (senpi#2990).
+	if (sessionCwd === undefined || resolvePath(resolveMovedPath(sessionCwd)) === resolvePath(choice.cwd))
+		return unchanged;
 	const match = await classifySessionRepository(
 		choice.sessionPath,
 		sessionCwd,

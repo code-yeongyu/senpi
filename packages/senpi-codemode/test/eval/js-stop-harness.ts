@@ -1,7 +1,6 @@
 // Shared helpers for the JS kernel stop contracts: a kernel on a spawn-logging worker, a cell that has provably
 // started, a server that never answers, and the checks that a stop kept the VM and ended the stopped cell's work.
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { afterEach, expect } from "vitest";
 import { JavaScriptKernel } from "../../src/kernels/js/context-manager.ts";
 
@@ -79,8 +78,10 @@ export async function silentServer(): Promise<{
 	});
 	servers.add(server);
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	if (typeof address !== "object" || address === null) throw new Error("the probe server is not bound");
 	return {
-		url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/`,
+		url: `http://127.0.0.1:${address.port}/`,
 		requested: requested.promise,
 		aborted: aborted.promise,
 	};

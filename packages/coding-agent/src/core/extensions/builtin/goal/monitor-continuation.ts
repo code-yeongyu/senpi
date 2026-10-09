@@ -159,8 +159,9 @@ export class MonitorAwareGoalContinuation {
 			switch (immediateVerdict.reason) {
 				case "not-eligible":
 				case "single-flight":
-				case "stale":
 					return goal;
+				case "stale":
+				case "context-overflow":
 				case "cap":
 				case "repetition":
 				case "length-exhausted":

@@ -115,7 +115,7 @@ class Execution {
 	private finished = false;
 	// senpi-change begin: output streaming
 	private readonly stream: StreamOptions | undefined;
-	private readonly credits: Int32Array | undefined;
+	private readonly credits: Int32Array<SharedArrayBuffer> | undefined;
 	private frameChain: Promise<void> = Promise.resolve();
 	private frames = 0;
 	private inFlightBytes = 0;
@@ -188,7 +188,7 @@ class Execution {
 			// senpi-change begin: output streaming and builtin policy
 			...(this.credits === undefined || this.stream === undefined
 				? {}
-				: { stream: { credits: this.credits.buffer as SharedArrayBuffer, frameBytes: this.stream.frameBytes } }),
+				: { stream: { credits: this.credits.buffer, frameBytes: this.stream.frameBytes } }),
 			storePolicy: options.storePolicy,
 			// senpi-change end
 		};

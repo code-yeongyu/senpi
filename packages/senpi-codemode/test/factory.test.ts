@@ -2,6 +2,16 @@ import type { ExtensionAPI } from "@code-yeongyu/senpi";
 import { describe, expect, it } from "vitest";
 import senpiCodemode from "../src/index.ts";
 
+function isExtensionApi(value: unknown): value is ExtensionAPI {
+	if (typeof value !== "object" || value === null) return false;
+	for (const key of ["registerTool", "registerRemovedToolHint", "on"] as const) {
+		if (!(key in value)) return false;
+		const member: unknown = Object.getOwnPropertyDescriptor(value, key)?.value;
+		if (typeof member !== "function") return false;
+	}
+	return true;
+}
+
 describe("senpi-codemode extension factory", () => {
 	it("registers eval during factory setup", () => {
 		const registeredTools: string[] = [];
@@ -14,7 +24,8 @@ describe("senpi-codemode extension factory", () => {
 			on(event: string) {
 				events.push(event);
 			},
-		} as unknown as ExtensionAPI;
+		};
+		if (!isExtensionApi(pi)) throw new Error("the ExtensionAPI surface the factory uses changed");
 
 		expect(() => senpiCodemode(pi)).not.toThrow();
 		expect(registeredTools).toEqual(["eval"]);

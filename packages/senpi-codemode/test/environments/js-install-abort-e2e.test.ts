@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -9,6 +8,12 @@ import { readActiveRevision } from "../../src/environments/revision-store.ts";
 import { hasCommand, packFixture, session, textOf } from "./js-magic-session.ts";
 
 const probeSource = 'export const probe = () => "ok";\n';
+
+function listeningPort(address: ReturnType<ReturnType<typeof createServer>["address"]>): number {
+	if (typeof address !== "object" || address === null || !("port" in address) || typeof address.port !== "number")
+		throw new Error(`expected a bound TCP address, got ${JSON.stringify(address)}`);
+	return address.port;
+}
 
 describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript install that is stopped part way", () => {
 	it("When the cell is cancelled once the installer has started, then nothing is published, the project manifest is unchanged and the kernel answers the next cell", async () => {
@@ -88,7 +93,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript in
 			requested.resolve();
 		});
 		await new Promise<void>((resolve) => registry.listen(0, "127.0.0.1", resolve));
-		const { port } = registry.address() as AddressInfo;
+		const port = listeningPort(registry.address());
 		try {
 			await run(
 				`import { existsSync } from "node:fs";\nconst crashTimer = setInterval(() => { if (existsSync(${JSON.stringify(marker)})) { clearInterval(crashTimer); throw new Error("stray timer"); } }, 5);\n"armed"`,
@@ -105,7 +110,8 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript in
 
 			expect(stopped).toBe(true);
 			expect(result?.details).toHaveProperty("isError", true);
-			expect(textOf(result as NonNullable<typeof result>)).toContain("JavaScript worker crashed: stray timer");
+			if (result === undefined) throw new Error("the install cell never settled");
+			expect(textOf(result)).toContain("JavaScript worker crashed: stray timer");
 			expect(await readActiveRevision(base)).toBeUndefined();
 			expect(existsSync(base) ? readdirSync(base).filter((name) => /^rev-\d+$/.test(name)) : []).toEqual([]);
 		} finally {
@@ -123,7 +129,7 @@ describe.skipIf(!hasCommand("bun") || !hasCommand("npm"))("Given a JavaScript in
 			requested.resolve();
 		});
 		await new Promise<void>((resolve) => registry.listen(0, "127.0.0.1", resolve));
-		const { port } = registry.address() as AddressInfo;
+		const port = listeningPort(registry.address());
 		const kill = process.kill.bind(process);
 		// macOS answers EPERM for a process group whose leader already exited.
 		const groupKill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {

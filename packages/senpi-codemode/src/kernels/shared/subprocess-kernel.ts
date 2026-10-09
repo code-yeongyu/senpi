@@ -1,3 +1,4 @@
+// allow: SIZE_OK — subprocess protocol, FIFO ownership, retirement, and replacement form one serialized state machine.
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { decodeBridgeFrame, encodeBridgeFrame, isKernelToHostMessage } from "../../bridge/protocol.ts";
 import type { KernelInterruptHandle, PendingCell } from "../../tool/types.ts";
@@ -7,6 +8,7 @@ import { applySessionEnvironment } from "../session-env.ts";
 import { describeExit } from "./kernel-death.ts";
 import { KernelMemoryHost } from "./kernel-memory-host.ts";
 import type { KernelResult, KernelRunInput, SubprocessKernelOptions, ToolCallMessage } from "./subprocess-contract.ts";
+import { SubprocessMemoryGlobals } from "./subprocess-memory-globals.ts";
 import { type SubprocessLike, SubprocessProcess, type SubprocessSpawn, spawnSubprocess } from "./subprocess-process.ts";
 import { SubprocessRunQueue } from "./subprocess-queue.ts";
 import {
@@ -39,6 +41,7 @@ export class SubprocessKernel {
 	private readonly onMessage?: (message: KernelToHostMessage) => void;
 	private readonly runs = new SubprocessRunQueue();
 	private readonly memory: KernelMemoryHost | null;
+	private readonly globals = new SubprocessMemoryGlobals();
 	private process: SubprocessProcess | null = null;
 	private processReady = false;
 	private startup: SubprocessStartupWatchdog | null = null;
@@ -90,8 +93,10 @@ export class SubprocessKernel {
 			this.runs.settleAll(new CellInterruptedError(reason));
 			return { stateRetained: Promise.resolve(true) };
 		}
+		if (this.globals.completeWithoutGlobals()) return { stateRetained: Promise.resolve(true) };
 		const process = this.process;
 		process?.retire();
+		this.globals.reset();
 		this.runs.clearToolCalls();
 		const run = this.runs.active;
 		if (!run) return { stateRetained: Promise.resolve(true) };
@@ -126,6 +131,7 @@ export class SubprocessKernel {
 
 	async reset(): Promise<void> {
 		if (this.closed) throw new KernelClosedError();
+		this.globals.reset();
 		this.settleAll(new KernelResetError());
 		this.runs.clearToolCalls();
 		await this.restartProcess(this.process);
@@ -135,6 +141,7 @@ export class SubprocessKernel {
 	async close(): Promise<void> {
 		const wasClosed = this.closed;
 		this.closed = true;
+		this.globals.reset();
 		this.startup?.stop();
 		if (!wasClosed) {
 			this.settleAll(new KernelClosingError());
@@ -175,6 +182,7 @@ export class SubprocessKernel {
 		if (this.runs.active !== run || run.settled) return;
 		const process = this.process;
 		process?.retire();
+		this.globals.reset();
 		this.runs.clearToolCalls();
 		this.runs.releaseActive(run);
 		this.runs.settle(run, timeoutResult(run, timeoutMs));
@@ -199,6 +207,7 @@ export class SubprocessKernel {
 			},
 		});
 		this.process = process;
+		this.globals.reset();
 		this.processReady = false;
 		this.startup?.stop();
 		const startup = this.options.startup;
@@ -237,6 +246,7 @@ export class SubprocessKernel {
 		if (!this.accepts(process)) return;
 		if (!this.processReady) this.startup?.observe(message);
 		if (message.type === "ready") {
+			this.globals.reset(message.memoryGlobals === true);
 			this.startup?.stop();
 			this.processReady = true;
 			this.runs.handleMessage(message, this.onMessage);
@@ -248,9 +258,23 @@ export class SubprocessKernel {
 			this.failClosed(new KernelStartupError(message.error.message));
 			return;
 		}
-		const ownResult = message.type === "result" && this.runs.active?.input.cellId === message.cellId;
-		const settled = ownResult && this.memory ? this.memory.annotate(message, process.child.pid) : message;
-		if (!this.runs.handleMessage(settled, this.onMessage)) return;
+		const run = this.runs.active;
+		if (message.type === "memory-globals-result") {
+			if (this.memory) this.globals.reply({ process, run }, message, this.memory);
+			return;
+		}
+		if (message.type === "result" && run?.input.cellId === message.cellId && this.memory) {
+			this.globals.request({ process, run, result: message }, this.memory, (result) => {
+				if (!this.accepts(process) || this.runs.active !== run || run.settled) return;
+				this.settleMessage(result);
+			});
+			return;
+		}
+		this.settleMessage(message);
+	}
+
+	private settleMessage(message: KernelToHostMessage): void {
+		if (!this.runs.handleMessage(message, this.onMessage)) return;
 		this.pumpRuns();
 		this.recycleOverCeilingWhenIdle();
 	}
@@ -270,6 +294,7 @@ export class SubprocessKernel {
 			return;
 		}
 		this.process = null;
+		this.globals.reset();
 		this.processReady = false;
 		const error = new KernelExitedError(signal ?? code ?? "unknown");
 		if (this.options.onDeath) this.die(error, describeExit(code, signal), this.options.onDeath);
@@ -362,6 +387,7 @@ export class SubprocessKernel {
 
 	private failClosed(error: Error): void {
 		this.startup?.stop();
+		this.globals.reset();
 		const process = this.process;
 		this.failure = error;
 		this.closed = true;

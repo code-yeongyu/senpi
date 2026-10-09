@@ -4,7 +4,10 @@ import { killWindowsTree } from "../js/windows-tree-kill-host.ts";
 
 export interface SubprocessLike {
 	readonly pid?: number;
-	readonly stdin: { write(chunk: string): unknown };
+	readonly stdin: {
+		write(chunk: string): unknown;
+		on?(event: "error", listener: (error: Error) => void): unknown;
+	};
 	readonly stdout: NodeJS.ReadableStream;
 	readonly stderr: NodeJS.ReadableStream;
 	on(event: "error", listener: (error: Error) => void): this;
@@ -47,6 +50,7 @@ export class SubprocessProcess {
 	private readonly stdoutReader: ReadlineInterface;
 	private readonly stderrListener: (chunk: string | Buffer) => void;
 	private readonly errorListener: (error: Error) => void;
+	private readonly stdinErrorListener: (error: Error) => void;
 	private exited = false;
 	private retiring = false;
 	private outputDetached = false;
@@ -69,8 +73,16 @@ export class SubprocessProcess {
 		this.stdoutReader.on("line", (line) => {
 			if (!this.retiring) this.handlers.onLine(this, `${line}\n`);
 		});
+		// senpi#3016: a frame written while the child is dying fails on the stdin stream (EPIPE), which emits there
+		// and not on the ChildProcess. Unhandled, it is a process-level error that can end the host; once the child is
+		// gone or being retired the write failure carries no news, otherwise it is this process's error.
+		this.stdinErrorListener = (error) => {
+			if (this.exited || this.retiring) return;
+			this.errorListener(error);
+		};
 		child.stderr.on("data", this.stderrListener);
 		child.on("error", this.errorListener);
+		child.stdin.on?.("error", this.stdinErrorListener);
 		child.once("exit", (code, signal) => {
 			this.exited = true;
 			this.detachOutput();
@@ -85,7 +97,7 @@ export class SubprocessProcess {
 	}
 
 	send(frame: string): boolean {
-		if (this.retiring) return false;
+		if (this.retiring || this.exited) return false;
 		this.child.stdin.write(frame);
 		return true;
 	}

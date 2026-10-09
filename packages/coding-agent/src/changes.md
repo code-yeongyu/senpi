@@ -1,3 +1,21 @@
+## 2026-10-09 - `--session <id>` opens a session recorded under a folder the OmO desktop moved here (senpi#2990)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: in `createSessionManager`, a `--session <id>` match found in another project (the `global` branch) whose non-empty recorded cwd `resolveMovedPath` maps to the current cwd opens directly instead of offering or printing the cross-project rebind/fork choice. `--continue` without a session dir first asks `movedHereSessionToContinue` (`core/moved-sessions.ts`) for a session the OmO desktop moved here that is newer, by file mtime, than the folder's own newest, so the session used last wins as it already does with a shared session dir. That lookup reads no git identity and lists only dirs whose recorded path moved here. The moved-repository rebind offer, which does both, still runs only when the folder has neither. `SessionManager.open` then maps the cwd; the file is not rewritten.
+
+### Why
+
+After the desktop moves its data home, a session recorded in the old folder sits in that folder's default session dir, so `--session <id>` from the new folder only finds it in the global search. It is the same folder's session, and rebinding or forking it would rewrite or copy a file the desktop expects to stay as it is.
+
+### Why an extension could not handle it
+
+Session selection runs in `main.ts` before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the start of the `case "global"` block under `if (parsed.session)` and the `if (parsed.continue)` block in `createSessionManager`.
+
 ## 2026-10-08 - Interactive startup warns about live session holders (senpi#2951)
 
 ### What changed

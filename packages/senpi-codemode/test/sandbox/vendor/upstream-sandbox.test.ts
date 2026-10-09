@@ -115,7 +115,9 @@ describe("script execution", () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.output).toEqual([]);
-		const errors = result.value as string[];
+		if (!Array.isArray(result.value) || !result.value.every((entry) => typeof entry === "string"))
+			throw new Error(`expected an array of error strings, got ${JSON.stringify(result.value)}`);
+		const errors = result.value;
 		expect(errors[0]).toMatch(/^TypeError: .*circular/);
 		expect(errors.slice(1)).toEqual([
 			"TypeError: image expects a non-empty image URL string, an object with image_url, or a raw MCP image block",
@@ -224,7 +226,11 @@ describe("tools", () => {
 				name: "add",
 				execute: (args) => {
 					seen.push(args);
-					const { a, b } = args as { a: number; b: number };
+					if (typeof args !== "object" || args === null)
+						throw new Error(`add expected an args object, got ${JSON.stringify(args)}`);
+					const { a, b } = Object.fromEntries(Object.entries(args));
+					if (typeof a !== "number" || typeof b !== "number")
+						throw new Error(`add expected numeric a and b, got ${JSON.stringify(args)}`);
 					return { sum: a + b };
 				},
 			},

@@ -16,6 +16,7 @@ include("prelude.jl")
 const senpi_connection = Dict{String, Any}()
 const senpi_write_lock = ReentrantLock()
 global senpi_current_cell = nothing
+global senpi_memory_cell = nothing
 
 function senpi_escape(text::AbstractString)
     out = IOBuffer()
@@ -290,9 +291,7 @@ function senpi_set_connection(value)
     end
 end
 
-const senpi_memory = Ref{Any}(nothing)
-
-const SENPI_MEMORY_INTERNALS = Set([:senpi_current_cell, :senpi_memory, :senpi_connection, :senpi_frame_io, :senpi_stdout_capture, :senpi_stderr_capture, :senpi_protocol_stdin])
+const SENPI_MEMORY_INTERNALS = Set([:senpi_current_cell, :senpi_connection, :senpi_frame_io, :senpi_stdout_capture, :senpi_stderr_capture, :senpi_protocol_stdin])
 
 const SENPI_SIZER_SAMPLE = 1_000
 const SENPI_SIZER_NODE_BUDGET = 5_000
@@ -421,21 +420,6 @@ function senpi_largest_globals(limit::Int)
     end
 end
 
-function senpi_memory_report()
-    try
-        senpi_memory[] === nothing && return nothing
-        # The host reads the interpreter's current footprint and decides on the notice; the runner only
-        # names its largest globals, with a bounded walk, so a cell never pays for an unbounded scan.
-        named = senpi_largest_globals(5)
-        # The host replaces liveBytes with the interpreter footprint it reads itself; only globals is used.
-        report = Dict{String, Any}("liveBytes" => 0, "measure" => "footprint")
-        isempty(named) || (report["globals"] = named)
-        report
-    catch
-        nothing
-    end
-end
-
 function senpi_run_cell(message)
     cell_id = string(get(message, "cellId", ""))
     code = string(get(message, "code", ""))
@@ -452,13 +436,12 @@ function senpi_run_cell(message)
         yield()
         frame = Dict{String, Any}("type" => "result", "cellId" => cell_id, "ok" => true, "durationMs" => round(Int, (time() - started) * 1000))
         value !== nothing && senpi_should_display_result(parsed) && (frame["valueRepr"] = senpi_json(value))
-        memory = senpi_memory_report()
-        memory !== nothing && (frame["memory"] = memory)
         senpi_emit(frame)
     catch error
         senpi_emit(Dict("type" => "result", "cellId" => cell_id, "ok" => false, "error" => senpi_error(error), "durationMs" => round(Int, (time() - started) * 1000)))
     finally
         global senpi_current_cell = nothing
+        global senpi_memory_cell = cell_id
     end
 end
 
@@ -472,10 +455,16 @@ while !eof(SENPI_ORIGINAL_STDIN)
         if kind == "init"
             senpi_emit(Dict("type" => "status", "event" => Dict("op" => "kernel-startup", "stage" => "host-init")))
             senpi_set_connection(get(message, "connection", nothing))
-            senpi_memory[] = get(message, "memory", nothing)
-            senpi_emit(Dict("type" => "ready"))
+            senpi_emit(Dict("type" => "ready", "memoryGlobals" => true))
         elseif kind == "run"
+            global senpi_memory_cell = nothing
             senpi_run_cell(message)
+        elseif kind == "memory-globals"
+            cell_id = get(message, "cellId", nothing)
+            if cell_id == senpi_memory_cell && senpi_current_cell === nothing
+                senpi_emit(Dict("type" => "memory-globals-result", "cellId" => cell_id, "globals" => senpi_largest_globals(5)))
+                global senpi_memory_cell = nothing
+            end
         elseif kind == "close"
             senpi_emit(Dict("type" => "closed"))
             break

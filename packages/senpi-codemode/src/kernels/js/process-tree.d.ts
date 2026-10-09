@@ -22,3 +22,14 @@ export function collectDescendants(table: ProcessTable, roots: readonly number[]
 export function ownedRoots(table: ProcessTable, parentPid: number, roots: readonly number[]): number[];
 
 export function terminateProcessTrees(roots: readonly number[], options: TerminateProcessTreesOptions): Promise<void>;
+export interface CellProcessGroup {
+	readonly pgid: number;
+	readonly leaderExited: boolean;
+}
+export interface TerminateProcessGroupsOptions {
+	readonly graceMs: number;
+}
+export function terminateProcessGroups(
+	groups: readonly CellProcessGroup[],
+	options: TerminateProcessGroupsOptions,
+): Promise<void>;

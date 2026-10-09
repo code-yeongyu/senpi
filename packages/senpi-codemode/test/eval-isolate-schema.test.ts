@@ -5,6 +5,35 @@ import { createEvalInputSchema } from "../src/tool/types.ts";
 const allLanguages = { js: true, py: true, rb: true, jl: true };
 const run = { language: "js", code: "1", summary: "s" };
 
+type SchemaShape = {
+	readonly properties: Record<string, unknown>;
+	readonly anyOf?: readonly { readonly properties?: Record<string, unknown> }[];
+};
+
+function recordOf(value: unknown, what: string): Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value))
+		throw new Error(`expected ${what} to be an object, got ${JSON.stringify(value)}`);
+	return Object.fromEntries(Object.entries(value));
+}
+
+function isSchemaShape(schema: unknown): schema is SchemaShape {
+	if (typeof schema !== "object" || schema === null) return false;
+	if (!("properties" in schema)) return false;
+	try {
+		recordOf(schema.properties, "schema.properties");
+	} catch {
+		return false;
+	}
+	if (!("anyOf" in schema) || schema.anyOf === undefined) return true;
+	return Array.isArray(schema.anyOf);
+}
+
+function schemaShape(schema: unknown): SchemaShape {
+	if (!isSchemaShape(schema))
+		throw new Error(`expected a JSON schema object with properties, got ${JSON.stringify(schema)}`);
+	return schema;
+}
+
 describe("Given sandbox cells are turned off", () => {
 	it("When the eval schema is built, then it is byte-identical to the schema built with no sandbox option", () => {
 		const withoutOption = JSON.stringify(createEvalInputSchema(allLanguages));
@@ -27,15 +56,12 @@ describe("Given sandbox cells are turned off", () => {
 
 describe("Given sandbox cells are turned on", () => {
 	it("When the eval schema is built, then it adds only the optional isolate boolean beside today's fields", () => {
-		const base = createEvalInputSchema(allLanguages) as unknown as { properties: Record<string, unknown> };
-		const enabled = createEvalInputSchema(allLanguages, undefined, { sandbox: true }) as unknown as {
-			properties: Record<string, unknown>;
-			anyOf: { properties?: Record<string, unknown> }[];
-		};
+		const base = schemaShape(createEvalInputSchema(allLanguages));
+		const enabled = schemaShape(createEvalInputSchema(allLanguages, undefined, { sandbox: true }));
 
 		expect(Object.keys(enabled.properties).filter((key) => !(key in base.properties))).toEqual(["isolate"]);
 		expect(enabled.properties.isolate).toMatchObject({ type: "boolean" });
-		expect(enabled.anyOf[0]?.properties).toHaveProperty("isolate");
+		expect(enabled.anyOf?.[0]?.properties).toHaveProperty("isolate");
 		const { isolate: _isolate, ...rest } = enabled.properties;
 		expect(JSON.stringify(rest)).toBe(JSON.stringify(base.properties));
 	});

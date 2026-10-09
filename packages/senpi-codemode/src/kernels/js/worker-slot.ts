@@ -4,7 +4,6 @@ import type { WorkerLike } from "./inline-worker.ts";
 import { retireWorker, type WorkerRetirement } from "./interrupt-bounds.ts";
 import type { JavaScriptKernelMode } from "./kernel-contract.ts";
 import type { JavaScriptKernelOptions } from "./local-module-loader.ts";
-import type { JavaScriptProcessWorker } from "./process-worker.ts";
 import { KernelWebViewClients } from "./webview-host.ts";
 import { WorkerStartupCancelledError } from "./worker-host.ts";
 import { startWorkerWithInlineFallback } from "./worker-startup.ts";
@@ -38,7 +37,7 @@ export class WorkerSlot {
 
 	get processPid(): number | undefined {
 		const worker = this.#worker;
-		if (worker?.mode === "process") return (worker as JavaScriptProcessWorker).pid;
+		if (worker?.mode === "process") return worker.pid;
 		return this.#lastProcessPid;
 	}
 
@@ -113,7 +112,7 @@ export class WorkerSlot {
 	#publish(worker: WorkerLike, generation: number): void {
 		if (!this.#listeners.isOpen() || generation !== this.#generation) throw new WorkerStartupCancelledError();
 		this.#worker = worker;
-		if (worker.mode === "process") this.#lastProcessPid = (worker as JavaScriptProcessWorker).pid;
+		if (worker.mode === "process") this.#lastProcessPid = worker.pid;
 		const webViews = new KernelWebViewClients((message, transfer) => worker.postMessage(message, transfer));
 		this.#webViews = webViews;
 		worker.onMessage((message) => {

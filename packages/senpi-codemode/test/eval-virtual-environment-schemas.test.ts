@@ -39,6 +39,14 @@ function emittedCodes(): Set<string> {
 	return codes;
 }
 
+function propertiesOf(parameters: unknown): Record<string, unknown> {
+	if (typeof parameters !== "object" || parameters === null || !("properties" in parameters))
+		throw new Error(`expected parameters with properties, got ${JSON.stringify(parameters)}`);
+	const properties: unknown = parameters.properties;
+	if (typeof properties !== "object" || properties === null) throw new Error("parameters.properties is not an object");
+	return Object.fromEntries(Object.entries(properties));
+}
+
 function entry(name: string): { readonly name: string; readonly description: string; readonly parameters: unknown } {
 	const found = virtualEvalSchema(name);
 	if (found === undefined || !("name" in found) || found.description === undefined)
@@ -60,7 +68,7 @@ describe("tool_schema('eval:*') virtual entries", () => {
 		for (const text of ["%pip install", "%bun add", "%npm add", "%environment managed | project", "%load", "8 MiB"]) {
 			expect(description).toContain(text);
 		}
-		expect(Object.keys((parameters as { properties: object }).properties)).toEqual([
+		expect(Object.keys(propertiesOf(parameters))).toEqual([
 			"%pip",
 			"%bun",
 			"%npm",
@@ -86,7 +94,7 @@ describe("tool_schema('eval:*') virtual entries", () => {
 		]) {
 			expect(description).toContain(text);
 		}
-		const properties = (parameters as { properties: Record<string, unknown> }).properties;
+		const properties = propertiesOf(parameters);
 		expect(properties["packages.install"]).toEqual({
 			description: "js and py: packages.install(manager, requirements, {timeout?}) (py: timeout=...)",
 		});

@@ -79,6 +79,14 @@ function loaderPrelude(context: RuntimeModuleContext): string {
 		"  const specifier = String(source);",
 		"  const kernelBun = globalThis[Symbol.for('senpi.kernel.bun')];",
 		"  if (specifier === 'bun' && kernelBun) return { ...(await import('bun')), WebView: kernelBun.WebView, default: kernelBun };",
+		// Under Bun a cell's named import (`import { spawn } from 'node:child_process'`) binds the builtin's original
+		// export even after the worker patched the module object (worker-cwd.js), so the session cwd and the cell
+		// children's own process group (senpi#2995) were skipped. The patched module objects are served instead.
+		"  const patched = /^(?:node:)?(child_process|fs|fs\\/promises|path)$/.exec(specifier);",
+		"  if (patched && typeof process.getBuiltinModule === 'function') {",
+		"    const builtin = process.getBuiltinModule('node:' + patched[1]);",
+		"    if (builtin) return { ...builtin, default: builtin };",
+		"  }",
 		"  const match = /^([a-z][a-z0-9+.-]*):\\/\\/(.*)$/i.exec(specifier);",
 		"  let target = specifier;",
 		"  if (match) {",

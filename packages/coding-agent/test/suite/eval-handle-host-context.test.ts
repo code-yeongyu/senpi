@@ -23,7 +23,9 @@ const actions: ExtensionActions = {
 	setSessionName: () => {},
 	getSessionName: () => undefined,
 	setLabel: () => {},
-	executeTool: async <TDetails = unknown>() => ({ content: [], details: undefined as TDetails }),
+	executeTool: async () => {
+		throw new Error("executeTool is not used by this test");
+	},
 	getActiveTools: () => [],
 	getAllTools: () => [],
 	getSettings: () => ({}),

@@ -349,14 +349,12 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			refreshGoalUiBestEffort(ctx, null);
 			return;
 		}
-		if (continuedGoal.status === goal.status) return;
-		if (continuedGoal.status === "active") beginAgentGoalAccounting(continuedGoal);
-		else clearAgentGoalAccounting();
-		refreshGoalUiBestEffort(ctx, continuedGoal);
+		if (continuedGoal === goal) return;
+		syncContinuationGoal(ctx, continuedGoal);
 	}
 
 	function beginAgentGoalAccounting(goal: Goal): void {
-		if (goal.status !== "active") return;
+		if (goal.status !== "active" || goal.continuationStoppedAt !== undefined) return;
 		if (agentGoalAccounting?.goalId === goal.id) return;
 		turnUsage.discardPending();
 		agentGoalAccounting = { goalId: goal.id, measuredFromMilliseconds: Date.now() };
@@ -391,7 +389,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	}
 
 	function syncContinuationGoal(ctx: ExtensionContext, goal: Goal | null): void {
-		if (goal?.status === "active") beginAgentGoalAccounting(goal);
+		if (goal?.status === "active" && goal.continuationStoppedAt === undefined) beginAgentGoalAccounting(goal);
 		else clearAgentGoalAccounting();
 		refreshGoalUiBestEffort(ctx, goal);
 	}

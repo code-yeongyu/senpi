@@ -8,9 +8,9 @@
  *   Windows has no process groups; this is the interpreter itself when it is launched directly.
  * - anything else, or Windows under Node: `undefined`, and the caller treats the CPU as unknown.
  */
+import { type BunFfi, loadBunFfi } from "./bun-ffi.ts";
 import { readProcessGroupCpuTime } from "./process-group-cpu.ts";
 
-type BunFfi = typeof import("bun:ffi");
 type CpuReader = (pid: number) => bigint | undefined;
 
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
@@ -26,7 +26,7 @@ export function readKernelCpuTime(pid: number): bigint | undefined {
 }
 
 function createWindowsReader(): CpuReader | undefined {
-	const ffi = process.getBuiltinModule("bun:ffi") as BunFfi | undefined;
+	const ffi = loadBunFfi();
 	if (ffi === undefined) return undefined;
 	try {
 		return bindGetProcessTimes(ffi);
@@ -37,7 +37,11 @@ function createWindowsReader(): CpuReader | undefined {
 }
 
 function bindGetProcessTimes({ dlopen, FFIType, ptr }: BunFfi): CpuReader {
-	const library = dlopen("kernel32.dll", {
+	const library = dlopen<{
+		OpenProcess: (access: number, inheritHandle: number, pid: number) => number | null;
+		GetProcessTimes: (handle: number, create: number, exit: number, kernel: number, user: number) => number;
+		CloseHandle: (handle: number) => number;
+	}>("kernel32.dll", {
 		OpenProcess: { args: [FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.ptr },
 		GetProcessTimes: {
 			args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],

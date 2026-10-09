@@ -7,7 +7,8 @@ import { type CodemodeSessionManager, createCodemodeSessionManager } from "../sr
 import type { InterpreterAvailability } from "../src/interpreters/detect.ts";
 import { FakeChild } from "./py-kernel/fixtures.ts";
 
-const spawned = vi.hoisted(() => ({ queue: [] as unknown[], all: [] as unknown[] }));
+type SpawnedSlot = { queue: unknown[]; all: unknown[] };
+const spawned: SpawnedSlot = vi.hoisted((): SpawnedSlot => ({ queue: [], all: [] }));
 
 vi.mock("../src/kernels/py/process.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../src/kernels/py/process.ts")>();

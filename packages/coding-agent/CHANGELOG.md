@@ -11,9 +11,34 @@
 ### Fixed
 
 - Scope MCP status, logs, manager entries, prompt instructions and auth commands to the calling session's servers and credentials. Status reads without a session id return no data when multiple sessions are live ([#3011](https://github.com/code-yeongyu/senpi/pull/3011) by [@ferose](https://github.com/ferose)).
+
+### Removed
+
+## [2026.10.10-11] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- When a goal stops continuing because progress is stale, its elapsed timer now stops instead of running indefinitely. Goal guard denials and engine self-stops are persisted as `goal-continuation-stopped` and `engine-paused` entries and delivered to RPC clients; a user message or `/goal resume` resets the goal stop. Failures publishing these new entries no longer interrupt goal timer cleanup, todo processing, guard events or stream-rule stop announcements ([#3007](https://github.com/code-yeongyu/senpi/issues/3007)).
+
+- A scheduled prompt created in an OmO desktop thread before the desktop moved its data home now fires: the headless `--session` resume opens the session in the folder's new location instead of exiting with "Stored session working directory does not exist", and the job no longer ends in `failed/`. `--session <id>` and `--resume` find and open such a session from its new folder without offering a rebind, `--continue` continues it when it is the folder's most recently used session, and the resume picker lists it once. Only a folder the desktop's moved-folder record lists is mapped, and the session file is not rewritten ([#2990](https://github.com/code-yeongyu/senpi/issues/2990)).
+
 - A multi-session RPC host refuses open/attach and every new session-writing RPC when another live process outside its daemon family holds the file, with typed `session_held` and pid/cwd data. Both guarded host runtimes advertise the exact `session_held` protocol capability; classic bindings do not. Open rechecks after holder publication and rolls back raced admission; stale holders clear automatically. Own workers and predecessor generations preserve existing reservation retry/reclaim semantics. Already-admitted turns finish if a holder arrives mid-turn. Interactive startup and `/resume` warn, including advisory lookup failures, without aborting ([#2951](https://github.com/code-yeongyu/senpi/issues/2951)).
 
 - On Windows, stopping a command's process tree (a timed-out or cancelled bash command, hooks, shutdown) no longer uses `taskkill /T`, which could also kill an unrelated older process whose dead parent's pid the command now holds; the tree is computed from creation times and each process is ended by pid ([#2999](https://github.com/code-yeongyu/senpi/issues/2999)).
+
+- When the session shuts down while a response is still streaming (for example on SIGTERM), the turn_end boundary now says the session shut down during the turn instead of reporting that it could not resolve the persisted assistant entry ID ([#2995](https://github.com/code-yeongyu/senpi/issues/2995)).
+
+- When sessions that share one MCP service resolve different MCP configs (for example a main session and in-process sidecar sessions that load without extensions), one session's attach no longer makes every other session's MCP tools fail with "MCP session or server configuration was replaced.", no longer shuts down MCP servers another live session still declares, and no longer keeps running an MCP server that only a closed session declared ([#2597](https://github.com/code-yeongyu/senpi/issues/2597) by [@ferose](https://github.com/ferose)).
+
+- When sessions that share one MCP service differ in project trust, environment or agent directory, a session's skill-declared MCP servers now expand `${VAR}` values under its own trust and environment, and every MCP server spawns, re-authenticates and reports auth status with the credentials of a session that declares it, instead of those of whichever session attached last ([#2986](https://github.com/code-yeongyu/senpi/issues/2986) by [@ferose](https://github.com/ferose)).
+
+- A failed retirement of the Chrome a WebView used (for example when `taskkill` cannot run, or the CI readiness log cannot be written) no longer makes every later WebView launch and retirement in that process fail: the release that triggered it still fails with the error, CI's readiness log records it when it can be written, and the next launch and retirement run normally ([#2993](https://github.com/code-yeongyu/senpi/issues/2993)).
 
 ### Removed
 

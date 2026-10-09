@@ -38,7 +38,8 @@ class FakeKernel implements EvalKernel {
 	}
 }
 
-const harness = vi.hoisted(() => ({ starts: [] as (() => Promise<EvalKernel>)[] }));
+type StartsSlot = { starts: Array<() => Promise<EvalKernel>> };
+const harness: StartsSlot = vi.hoisted((): StartsSlot => ({ starts: [] }));
 
 vi.mock("../src/bridge/http-server.ts", () => ({
 	startBridgeServer: async (_options: BridgeServerOptions): Promise<BridgeServerHandle> => ({

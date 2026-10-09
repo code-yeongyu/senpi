@@ -19,6 +19,8 @@ export function resolveInlineWorkerEntryUrl(options: JavaScriptInlineWorkerEntry
 
 export interface WorkerLike {
 	readonly mode: JavaScriptKernelMode;
+	/** The child pid when `mode` is `"process"`; the slot reports it for orphan accounting after a crash. */
+	readonly pid?: number;
 	postMessage(message: HostToKernelMessage, transfer?: readonly MessagePort[]): void;
 	onMessage(handler: (message: KernelToHostMessage) => void): () => void;
 	onError(handler: (error: Error) => void): () => void;

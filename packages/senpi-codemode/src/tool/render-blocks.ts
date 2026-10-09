@@ -152,7 +152,7 @@ export function renderNow(context: CallRenderContext | ResultRenderContext): num
 	return typeof injected === "number" && Number.isFinite(injected) ? injected : Date.now();
 }
 
-export function isEvalRunInput(args: EvalToolRequest): args is EvalToolInput {
+export function isEvalRunInput(args: EvalToolRequest | Partial<EvalToolInput>): args is EvalToolInput {
 	return args.action === undefined || args.action === "run";
 }
 

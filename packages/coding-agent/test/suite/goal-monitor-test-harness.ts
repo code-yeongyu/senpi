@@ -117,7 +117,7 @@ export function createGoalStatusHarness(): GoalStatusHarness {
 	return { updates, setStatus, [statusWaiters]: waiters };
 }
 
-export function createGoalHarness(): GoalHarness {
+export function createGoalHarness(appendEntry?: ExtensionAPI["appendEntry"]): GoalHarness {
 	const tools = new Map<string, AnyTool>();
 	const handlers = new Map<string, GoalHandler[]>();
 	const messages = createSentMessageHarness();
@@ -127,7 +127,7 @@ export function createGoalHarness(): GoalHarness {
 		registerTool: (tool: AnyTool) => tools.set(tool.name, tool),
 		registerCommand: () => {},
 		registerEntryRenderer: () => {},
-		appendEntry: (customType: string, data?: unknown) => entries.push({ customType, data }),
+		appendEntry: appendEntry ?? ((customType: string, data?: unknown) => entries.push({ customType, data })),
 		on: (event: string, handler: GoalHandler) => {
 			const registered = handlers.get(event) ?? [];
 			registered.push(handler);

@@ -3,6 +3,7 @@
  * log ratios, and an A/A-calibrated threshold per row capped at 0.05 for CPU, wall and p95. Pure: no I/O, no clocks.
  */
 
+import { type HeadBudget, headBudgetFor, headBudgetViolations, type Observation } from "./bench-head-budget.ts";
 import { median, trimmedMean } from "./bench-stats.ts";
 import {
 	type BandScope,
@@ -25,6 +26,7 @@ export interface Rep {
 	readonly cpuMs: number;
 	readonly wallMs: number;
 	readonly p95Ms?: number;
+	readonly observations?: Readonly<Record<string, Observation>>;
 }
 
 /** Repetitions of both sides of one block, index-aligned: rep i of `first` ran adjacent to rep i of `second`. */
@@ -54,6 +56,8 @@ export interface RuntimeStatus {
 }
 
 export interface BenchInput {
+	/** Rows judged on the head alone; defaults to HEAD_BUDGETS. */
+	readonly headBudgets?: readonly HeadBudget[];
 	readonly runtimes: readonly RuntimeStatus[];
 	readonly blockLoads: readonly number[];
 	readonly reps: number;
@@ -75,6 +79,13 @@ export interface SeriesResult {
 	readonly ratio: number;
 	readonly medianPairedRatio: number;
 	readonly verdict: RowVerdict;
+	/** Set when the row is judged by an absolute head budget instead of the base ratio. */
+	readonly headBudget?: {
+		readonly maxMedianWallMs: number;
+		readonly maxMedianCpuMs: number;
+		readonly reason: string;
+		readonly violations: readonly string[];
+	};
 }
 
 export interface Decision {
@@ -151,6 +162,25 @@ function judge(row: Row, band: number): SeriesResult {
 	};
 }
 
+/** The head side of every comparison block, in order. */
+function headReps(series: Series): Rep[] {
+	return series.comparison.flatMap((block) => [...block.second]);
+}
+
+function judgeHeadBudget(judged: SeriesResult, series: Series, budget: HeadBudget): SeriesResult {
+	const violations = headBudgetViolations(budget, headReps(series), judged.metric);
+	return {
+		...judged,
+		verdict: violations.length === 0 ? "PASS" : "FAIL",
+		headBudget: {
+			maxMedianWallMs: budget.maxMedianWallMs,
+			maxMedianCpuMs: budget.maxMedianCpuMs,
+			reason: budget.reason,
+			violations,
+		},
+	};
+}
+
 function percent(value: number): string {
 	return Number.isFinite(value) ? value.toFixed(3) : String(value);
 }
@@ -176,9 +206,11 @@ export function decide(input: BenchInput): Decision {
 		})),
 	);
 	const sharedBand = globalNoiseBand(rows.map((row) => row.calibration));
-	const results = rows.map((row) =>
-		judge(row, bandScope === "global" ? sharedBand : rowNoiseBand(row.calibration)),
-	);
+	const results = rows.map((row) => {
+		const judged = judge(row, bandScope === "global" ? sharedBand : rowNoiseBand(row.calibration));
+		const budget = headBudgetFor(row.series.scenario, row.series.runtimeId, input.headBudgets);
+		return budget === undefined ? judged : judgeHeadBudget(judged, row.series, budget);
+	});
 	const invalid = invalidations(input);
 	if (rows.length === 0) invalid.push("no A/A calibration ratios were measured");
 	const base = { bandScope, results, skipped };
@@ -190,9 +222,10 @@ export function decide(input: BenchInput): Decision {
 		return {
 			exitCode: 1,
 			verdict: "FAIL",
-			lines: failed.map(
-				(result) =>
-					`FAIL: ${named(result)}: paired ${result.metric} ratio ${result.ratio.toFixed(2)} > 1.00 + band ${percent(result.band)}`,
+			lines: failed.map((result) =>
+				result.headBudget === undefined
+					? `FAIL: ${named(result)}: paired ${result.metric} ratio ${result.ratio.toFixed(2)} > 1.00 + band ${percent(result.band)}`
+					: `FAIL: ${named(result)}: ${result.metric} head budget missed: ${result.headBudget.violations.join("; ")}`,
 			),
 			...base,
 		};
