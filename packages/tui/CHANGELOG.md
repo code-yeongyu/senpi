@@ -6,6 +6,8 @@
 
 ### Added
 
+- `writeTerminalSequence(data)` writes an intentional terminal control sequence through the active `ProcessTerminal` even while its external-stdout guard hides stray output.
+
 ### Changed
 
 ### Fixed

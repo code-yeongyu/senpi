@@ -21,7 +21,18 @@ const mocks = vi.hoisted(() => ({
 		>(),
 	platform: vi.fn<() => NodeJS.Platform>(),
 }));
-vi.mock("@earendil-works/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
+vi.mock("@earendil-works/pi-tui", async () => {
+	// The real DCS wrapper and terminal writer produce the asserted bytes on stdout.
+	const actual = await vi.importActual<{
+		wrapTmuxPassthrough: (sequence: string) => string;
+		writeTerminalSequence: (data: string) => void;
+	}>("@earendil-works/pi-tui");
+	return {
+		getNativeClipboard: mocks.getNativeClipboard,
+		wrapTmuxPassthrough: actual.wrapTmuxPassthrough,
+		writeTerminalSequence: actual.writeTerminalSequence,
+	};
+});
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: mocks.command }));
 vi.mock("node:os", async () => ({
 	...(await vi.importActual<typeof OsModule>("node:os")),
@@ -42,6 +53,8 @@ beforeEach(() => {
 		"WT_SESSION",
 		"WSL_DISTRO_NAME",
 		"WSLENV",
+		"TMUX",
+		"TMUX_PANE",
 	])
 		vi.stubEnv(name, "");
 	mocks.platform.mockReturnValue("darwin");
@@ -53,7 +66,7 @@ beforeEach(() => {
 	originalWrite = process.stdout.write.bind(process.stdout);
 	process.stdout.write = ((...args: Parameters<typeof process.stdout.write>) => {
 		const [chunk] = args;
-		if (typeof chunk === "string" && chunk.startsWith("\x1b]52;c;")) {
+		if (typeof chunk === "string" && (chunk.startsWith("\x1b]52;c;") || chunk.startsWith("\x1bPtmux;"))) {
 			osc52Writes.push(chunk);
 			return true;
 		}
@@ -142,6 +155,38 @@ describe("copyToClipboard", () => {
 		expect(osc52Writes).toHaveLength(1);
 		expect(mocks.command).not.toHaveBeenCalled();
 	});
+	test("remote tmux copy wraps OSC 52 in DCS passthrough", async () => {
+		vi.stubEnv("SSH_CONNECTION", "client server");
+		vi.stubEnv("TMUX", "/tmp/tmux-1000/default,1,0");
+		vi.stubEnv("TMUX_PANE", "%7");
+		mocks.command.mockImplementation(async (name) => (name === "tmux" ? Buffer.from("on\n") : Buffer.alloc(0)));
+		await copyToClipboard("hello");
+		expect(osc52Writes).toEqual(["\x1bPtmux;\x1b\x1b]52;c;aGVsbG8=\x07\x1b\\"]);
+		expect(mocks.command).toHaveBeenCalledExactlyOnceWith(
+			"tmux",
+			["display-message", "-p", "-t", "%7", "#{allow-passthrough}"],
+			{ timeoutMs: 250 },
+		);
+	});
+	test.each(["off\n", undefined])(
+		"remote tmux copy keeps raw OSC 52 when the passthrough probe returns %j",
+		async (probe) => {
+			vi.stubEnv("SSH_CONNECTION", "client server");
+			vi.stubEnv("TMUX", "/tmp/tmux-1000/default,1,0");
+			mocks.command.mockImplementation(async (name) =>
+				name === "tmux" ? (probe === undefined ? undefined : Buffer.from(probe)) : Buffer.alloc(0),
+			);
+			await copyToClipboard("hello");
+			expect(osc52Writes).toEqual(["\x1b]52;c;aGVsbG8=\x07"]);
+			expect(mocks.command).toHaveBeenCalledExactlyOnceWith(
+				"tmux",
+				["display-message", "-p", "#{allow-passthrough}"],
+				{
+					timeoutMs: 250,
+				},
+			);
+		},
+	);
 	test("a rejected native write falls back to pbcopy", async () => {
 		mocks.clipboard.setText.mockRejectedValue(new Error("native failed"));
 		await copyToClipboard("hello");

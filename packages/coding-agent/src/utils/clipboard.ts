@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { getNativeClipboard } from "@earendil-works/pi-tui";
+import { getNativeClipboard, wrapTmuxPassthrough, writeTerminalSequence } from "@earendil-works/pi-tui";
 import { runClipboardCommand } from "./clipboard-command.ts";
 import { isWSL } from "./wsl.ts";
 
@@ -12,12 +12,29 @@ function isRemoteSession(env: NodeJS.ProcessEnv): boolean {
 	return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.MOSH_CONNECTION);
 }
 
-function emitOsc52(text: string): boolean {
+async function tmuxAllowsPassthrough(env: NodeJS.ProcessEnv): Promise<boolean> {
+	if (!env.TMUX) return false;
+
+	const args = ["display-message", "-p"];
+	const pane = env.TMUX_PANE;
+	if (pane && /^%\d+$/.test(pane)) {
+		args.push("-t", pane);
+	}
+	args.push("#{allow-passthrough}");
+
+	// A failed or timed-out probe resolves undefined and keeps the raw sequence.
+	const value = (await runClipboardCommand("tmux", args, { timeoutMs: 250 }))?.toString("utf8").trim().toLowerCase();
+	return value === "1" || value === "on" || value === "all";
+}
+
+async function emitOsc52(text: string, env: NodeJS.ProcessEnv): Promise<boolean> {
 	const encoded = Buffer.from(text).toString("base64");
 	if (encoded.length > MAX_OSC52_ENCODED_LENGTH) {
 		return false;
 	}
-	process.stdout.write(`\x1b]52;c;${encoded}\x07`);
+	const sequence = `\x1b]52;c;${encoded}\x07`;
+	// The interactive TUI hides plain stdout writes; this one must reach the terminal.
+	writeTerminalSequence((await tmuxAllowsPassthrough(env)) ? wrapTmuxPassthrough(sequence) : sequence);
 	return true;
 }
 
@@ -115,7 +132,7 @@ export async function copyToClipboard(text: string): Promise<void> {
 	let osc52Emitted = false;
 	if (!copied && p === "linux" && isWSL(env)) {
 		// Windows Terminal supports OSC 52; prefer it over the slower PowerShell round trip.
-		if (env.WT_SESSION) osc52Emitted = emitOsc52(text);
+		if (env.WT_SESSION) osc52Emitted = await emitOsc52(text, env);
 		copied = osc52Emitted || (await copyViaWindowsClipboard(text));
 	}
 	// OSC 52 cannot be verified, so a desktop session with a display reports the failure
@@ -124,7 +141,7 @@ export async function copyToClipboard(text: string): Promise<void> {
 	const headless = p === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERMUX_VERSION;
 	let oversized = false;
 	if (!osc52Emitted && (isRemoteSession(env) || (!copied && headless))) {
-		if (emitOsc52(text)) copied = true;
+		if (await emitOsc52(text, env)) copied = true;
 		else oversized = true;
 	}
 	if (copied) return;
