@@ -758,6 +758,104 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 	});
 });
 
+describe("senpi#3001: a session's MCP status counts a shared connection only with its own credentials", () => {
+	it("lists a peer's declared server with none of the live connection's catalog, server info or status", async () => {
+		// Given: two sessions declare the same bearer http server with different tokens. The peer attaches first, then the
+		// alpha session attaches last, so the live connection carries alpha's credentials.
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_3001_TOKEN", lifecycle: "eager" },
+		});
+		const service = getMcpService();
+		const attachWithToken = (pi: CapturingPi, sessionId: string, token: string) =>
+			service.attachSession(
+				{ type: "session_start", reason: "startup" },
+				{
+					cwd: root.cwd,
+					isProjectTrusted: () => true,
+					mode: "app-server",
+					sessionManager: { getEntries: () => [], getSessionId: () => sessionId },
+				},
+				pi,
+				{ agentDir: root.agentDir, env: { SENPI_3001_TOKEN: token } },
+			);
+		await attachWithToken(capturingPi(), "bravo", "bravo-token");
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		const alphaPi = capturingPi();
+		await attachWithToken(alphaPi, "alpha", "alpha-token");
+		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+
+		// When: each session reads its own MCP status.
+		const alpha = await service.refreshWireStatusSnapshot("alpha");
+		const bravo = await service.refreshWireStatusSnapshot("bravo");
+
+		// Then: alpha sees its live connection, and bravo lists its own declaration with none of alpha's catalog, server
+		// info or connected status.
+		const alphaFx = alpha.servers.find((server) => server.name === "fx");
+		const bravoFx = bravo.servers.find((server) => server.name === "fx");
+		expect(alphaFx).toMatchObject({
+			status: "connected",
+			serverInfo: { name: "sharing-fixture" },
+			authStatus: "bearerToken",
+		});
+		expect(alphaFx?.tools.map((tool) => tool.name)).toEqual(["echo"]);
+		expect(bravoFx).toMatchObject({
+			serverInfo: null,
+			tools: [],
+			resources: [],
+			resourceTemplates: [],
+			authStatus: "bearerToken",
+		});
+		expect(bravoFx?.status).not.toBe("connected");
+	});
+});
+
+describe("senpi#3001: a dispose that lands while a sync is stopping a connection", () => {
+	it("creates no connection once a dispose lands during the sync's teardown", async () => {
+		// Given: one session on a bearer http server, connected with its token.
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_3001_TOKEN", lifecycle: "eager" },
+		});
+		const service = getMcpService();
+		const env: Record<string, string> = { SENPI_3001_TOKEN: "one" };
+		const alphaPi = capturingPi();
+		await service.attachSession(
+			{ type: "session_start", reason: "startup" },
+			{ cwd: root.cwd, isProjectTrusted: () => true },
+			alphaPi,
+			{ agentDir: root.agentDir, env },
+		);
+		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		const stale = service.getConnection("fx");
+		if (stale === undefined) throw new Error("fx never connected");
+
+		// When: the token rotates, so the sync stops the stale connection. Its stop is the signal: the dispose lands from
+		// inside that stop, before the sync's await on the teardown resolves.
+		let disposing: Promise<void> | undefined;
+		let connectsAtDispose = -1;
+		const unsubscribe = stale.onStateChange((event) => {
+			if (event.state !== "disabled") return;
+			unsubscribe();
+			connectsAtDispose = fixture.connects;
+			disposing = service.dispose("quit");
+		});
+		env.SENPI_3001_TOKEN = "two";
+		await service.reconnectServer("fx");
+		expect(disposing).toBeDefined();
+		await disposing;
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+
+		// Then: the closed service holds no connection, and the sync created no server after the dispose.
+		expect(service.getSnapshot()).toMatchObject({ disposed: true, connectionCount: 0 });
+		expect(fixture.connects).toBe(connectsAtDispose);
+	});
+});
+
 /** The shared `fx` for every session, plus `extra` declared only by the project at `root.cwd`; returns a peer project. */
 function configureExtraForRootProject(): TestRoot {
 	configureServer();
