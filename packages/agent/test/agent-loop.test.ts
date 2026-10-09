@@ -2166,6 +2166,67 @@ describe("agentLoop with AgentMessage", () => {
 		expect(ordering.slice(-3)).toEqual(["message_end:toolResult", "finishTurn", "turn_end"]);
 	});
 
+	// senpi#3029: consumers key persisted entries by the message_end object, so a normalized copy loses its entry.
+	it.each([
+		{
+			label: "a stop response with a pending tool call",
+			response: () =>
+				createAssistantMessage([{ type: "toolCall", id: "tool-1", name: "echo", arguments: {} }], "stop"),
+			normalized: "toolUse",
+		},
+		{
+			label: "a toolUse response without a tool call",
+			response: () => createAssistantMessage([{ type: "text", text: "done" }], "toolUse"),
+			normalized: "stop",
+		},
+	] as const)(
+		"emits $label on message_end already normalized and hands that object to finishTurn and turn_end",
+		async ({ response, normalized }) => {
+			const tool: AgentTool = {
+				name: "echo",
+				label: "Echo",
+				description: "Echo tool",
+				parameters: Type.Object({}),
+				async execute() {
+					return { content: [{ type: "text", text: "ok" }], details: {} };
+				},
+			};
+			const ended: AssistantMessage[] = [];
+			const finished: AssistantMessage[] = [];
+			const turnEnded: AgentMessage[] = [];
+			let providerCalls = 0;
+			await runAgentLoop(
+				[createUserMessage("run")],
+				{ messages: [], tools: [tool] },
+				{
+					model: createModel(),
+					convertToLlm: identityConverter,
+					finishTurn: ({ message }) => {
+						finished.push(message);
+					},
+				},
+				(event) => {
+					if (event.type === "message_end" && event.message.role === "assistant") ended.push(event.message);
+					if (event.type === "turn_end") turnEnded.push(event.message);
+				},
+				undefined,
+				() => {
+					const message =
+						providerCalls++ === 0 ? response() : createAssistantMessage([{ type: "text", text: "end" }]);
+					const stream = new MockAssistantStream();
+					queueMicrotask(() =>
+						stream.push({ type: "done", reason: message.stopReason, message } as AssistantMessageEvent),
+					);
+					return stream;
+				},
+			);
+
+			expect(ended[0]?.stopReason).toBe(normalized);
+			expect(finished[0]).toBe(ended[0]);
+			expect(turnEnded[0]).toBe(ended[0]);
+		},
+	);
+
 	it.each(["error", "aborted"] as const)(
 		"runs finishTurn for a %s assistant before turn_end without changing the hard exit",
 		async (reason) => {

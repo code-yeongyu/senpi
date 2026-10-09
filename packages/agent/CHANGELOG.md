@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- The agent loop settles a response's stop reason before `message_end`, so `finishTurn` and `turn_end` receive the persisted message object instead of a copy; a provider that ended with `stop` while tool calls were pending, or with `toolUse` and no tool call, no longer makes `turn_end` report "could not resolve the persisted assistant entry ID" and skip its handlers ([#3029](https://github.com/code-yeongyu/senpi/issues/3029)).
 - On Windows, `NodeExecutionEnv` stops a command's process tree without `taskkill /T`: the tree is computed from creation times and each process is ended by pid, so an older, unrelated process holding a recycled parent pid is never killed ([#2999](https://github.com/code-yeongyu/senpi/issues/2999)).
 
 ### Removed
