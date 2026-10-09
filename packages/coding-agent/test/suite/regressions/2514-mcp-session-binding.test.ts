@@ -1368,3 +1368,30 @@ describe("senpi#3001: a session sees only its own MCP servers in its status, sna
 		REGISTRATION_TIMEOUT_MS * 3,
 	);
 });
+
+describe("senpi#3001: /mcp auth commands reach only a server the session declares", () => {
+	it(
+		"refuses a peer's /mcp logout of a server only the first session declares",
+		async () => {
+			// Given: two live sessions; only the first declares `extra`, which is connected.
+			const { bravo } = await twoInstructedSessions();
+			const extra = getMcpService().getConnection("extra");
+			if (extra === undefined) throw new Error("extra never connected");
+			const generation = extra.generation;
+			const ui = createUi();
+			const runner = bravo.getExtensionRunner();
+			runner.setUIContext(ui);
+
+			// When: the peer runs `/mcp logout extra`.
+			await runner.getCommand("mcp")?.handler("logout extra", runner.createCommandContext());
+
+			// Then: it is refused as unknown, logs nothing out, and leaves the first session's connection untouched.
+			expect(ui.notifications).toContainEqual({ message: "Unknown MCP server: extra", type: "error" });
+			expect(JSON.stringify(ui.notifications)).not.toContain("logged out");
+			expect(JSON.stringify(bravo.sessionManager.getEntries())).not.toContain("logged out");
+			expect(getMcpService().getConnection("extra")).toBe(extra);
+			expect(extra.generation).toBe(generation);
+		},
+		REGISTRATION_TIMEOUT_MS * 3,
+	);
+});
