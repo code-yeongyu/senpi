@@ -619,9 +619,15 @@ export class McpService {
 			.map((name) => this.#serverSnapshot(name, this.#config?.servers[name], this.#entryForName(name)));
 	}
 
-	getLogLines(name: string, maxLines: number): string[] {
-		const key = this.#connectionKeysByName.get(name);
-		const lines = key === undefined ? [] : (this.#connections.get(key)?.logger.getRingBuffer() ?? []);
+	/**
+	 * The last `maxLines` log lines of `name`'s connection. With `pi`, only of a connection the session `pi` resolves to
+	 * (see `#viewerFor`) holds with its own credentials, even stale ones (senpi#3001); without it, the shared one's.
+	 */
+	getLogLines(name: string, maxLines: number, pi?: object): string[] {
+		const viewer = pi === undefined ? undefined : this.#viewerFor(pi);
+		if (viewer === null) return [];
+		const entry = viewer === undefined ? this.#entryForName(name) : this.#sameCredentialEntry(viewer, name);
+		const lines = entry?.logger.getRingBuffer() ?? [];
 		return lines.slice(Math.max(0, lines.length - maxLines));
 	}
 

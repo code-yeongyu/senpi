@@ -256,11 +256,11 @@ describe("MCP manager structured dispatch", () => {
 		{ name: "space server", args: "logs 'space server'" },
 	])("preserves existing CLI parsing when given $args", async ({ name, args }) => {
 		// Given: a real registered command with a known server.
-		const { service, harness } = await setup(name, true);
+		const { service, harness, pi } = await setup(name, true);
 		const logs = vi.spyOn(service, "getLogLines");
 		// When: a textual subcommand uses the existing quoting/escaping syntax.
 		await harness.session.prompt(`/mcp ${args}`);
 		// Then: parsing still resolves the same server identity.
-		expect(logs).toHaveBeenCalledExactlyOnceWith(name, 20);
+		expect(logs).toHaveBeenCalledExactlyOnceWith(name, 20, pi);
 	});
 });

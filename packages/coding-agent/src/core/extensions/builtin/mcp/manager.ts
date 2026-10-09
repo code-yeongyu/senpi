@@ -118,7 +118,7 @@ async function manage(
 					);
 					await showText(view, `Details of ${name}`, formatMcpStatus("", rows).trim());
 				} else if (action === "logs") {
-					await showText(view, `Logs of ${name}`, service.getLogLines(name, 20).join("\n") || "(empty)");
+					await showText(view, `Logs of ${name}`, service.getLogLines(name, 20, pi).join("\n") || "(empty)");
 				} else if (action === "tools") {
 					const connection = service.getConnection(name, pi);
 					if (connection?.state !== "connected") continue;

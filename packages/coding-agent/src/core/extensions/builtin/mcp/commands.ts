@@ -190,7 +190,7 @@ async function testServer(
 
 function showLogs(name: string, ctx: ExtensionCommandContext, pi: object, service: McpCommandService): void {
 	if (!ensureKnown(name, ctx, pi, service)) return;
-	const lines = service.getLogLines(name, 20);
+	const lines = service.getLogLines(name, 20, pi);
 	ctx.ui.notify(lines.length === 0 ? `MCP logs for ${name}: (empty)` : lines.join("\n"));
 }
 

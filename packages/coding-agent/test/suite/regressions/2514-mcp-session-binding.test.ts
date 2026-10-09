@@ -1584,3 +1584,21 @@ describe("senpi#3001: a status refresh that names no session", () => {
 		expect(notified).toEqual(["alpha"]);
 	});
 });
+
+describe("senpi#3001: a session reads a shared connection's log only with its own credentials", () => {
+	it("gives a peer with other credentials none of the live connection's log lines", async () => {
+		// Given: two sessions declare `fx` with different tokens, and the live connection, which has logged, carries the
+		// alpha session's.
+		const { alphaPi, bravoPi } = await twoTokenSessions();
+		const service = getMcpService();
+		expect(service.getLogLines("fx", 20).length).toBeGreaterThan(0);
+
+		// When: each session reads the log of `fx`.
+		const alpha = service.getLogLines("fx", 20, alphaPi);
+		const bravo = service.getLogLines("fx", 20, bravoPi);
+
+		// Then: only the session whose credentials the connection holds reads it.
+		expect(alpha).toEqual(service.getLogLines("fx", 20));
+		expect(bravo).toEqual([]);
+	});
+});
