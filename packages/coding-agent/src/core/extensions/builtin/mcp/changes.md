@@ -1,3 +1,26 @@
+## 2026-10-09 - Per-session MCP server snapshots, instructions and session-less status (senpi#3001)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: the process-wide `#latestWireStatus` is gone. A wire-status refresh or read that names no session resolves to the sole live binding, and to none (`{ servers: [] }`) while two or more are live. A capture stores under the owner's session id, or, for an owner with none, in a `WeakMap` keyed by that owner, so only that session can read it, and only while it is the sole live one. The change listener now receives that resolved session id.
+- `service.ts`: `getServerSnapshots(pi?)` and `getServerExposureStatus(name, pi?)` resolve a viewer (`#viewerFor`): `pi`'s own binding, else the sole live binding, else nothing. They list only the servers the viewer's own config declares, with its own settings. They attach the shared connection only when the viewer's credentials resolve it (`resolvesSameCredentials`, which the wire status also uses through `#sameCredentialEntry`). With no live binding the merged config and every connection are listed, as before. A `pi` the service never bound resolves like a caller with no session.
+- `service.ts`: `getConnection(name, pi?)` and `getCachedInstructions(name, pi?)` with `pi` return only a connection that session is offered (`offersConnection`). Without `pi` they keep returning the shared connection for process-level callers.
+- `service.ts`, `instructions.ts`, `index.ts`: the MCP instructions block is stored on each session binding instead of in one process-wide string. A re-attach keeps the previous block. `refreshMcpInstructionsForSession`, `injectMcpInstructions`, `setMcpInstructions` and `getMcpInstructions` take the session's `pi`, and the block is built from that session's own snapshots and offered connections. A raced connect refreshes the block in every live session offered the new connection. The stale-credential refresh in `getMcpInstructions` rebuilds only the calling session's block.
+- `commands.ts`, `manager.ts`: `/mcp` status, `ensureKnown`, `test` and the manager pass the command's `pi` to `getServerSnapshots`, `getServerExposureStatus` and `getConnection`.
+- Still process-wide: the elicitation UI provider (one per service, set by the last `before_agent_start`), because a shared connection's elicitation request does not say which session's call raised it. Also `getLogLines`, `reconnectServer` and `recordCall`, which act on the one shared connection per server name: `/mcp` reaches them only for a server the session declares, and the auth flow must reconnect a connection whose credentials went stale. Also `getAuthTarget` and `getServerAuthStatus`, which read the merged config.
+
+### Why
+
+- After senpi#2597 and senpi#2986 fenced each session's tools, trust, credentials and wire status, three surfaces still read process-wide state. A session-less status read returned the status of the session that captured last. The `/mcp` status and manager listed every live session's servers and connections. And every session's system prompt carried one instructions block, built from all of them, so a peer's server instructions reached a session that never declared that server.
+
+### Why an extension could not handle it
+
+- The snapshots, the bindings and the instructions block are private state of the MCP builtin's shared service, and the system-prompt injection and `/mcp` command belong to the builtin itself.
+
+### Expected merge conflict zones
+
+- `McpSessionBinding`, `#bind`, `#viewerFor`, `getConnection`, `getServerSnapshots`, `getServerExposureStatus`, `getWireStatusSnapshot`, `#statusOwner`, `#captureWireStatus`, `#captureWireStatusServer`, `#sameCredentialEntry`, `setMcpInstructions`, `getMcpInstructions`, `getCachedInstructions`, `dispose` and the raced-connect callback in `#syncFromConfig` in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`. Also the exported functions of `instructions.ts`, the attach and `before_agent_start` handlers in `index.ts`, the status and `ensureKnown` helpers in `commands.ts`, and `manage` in `manager.ts`.
+
 ## 2026-10-08 - Resolve and spawn each session's MCP servers with its own trust, env and agent dir (senpi#2986)
 
 ### What changed

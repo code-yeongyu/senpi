@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- When sessions share one MCP service, a session's `/mcp` status and manager, its MCP server instructions in the system prompt, and its server snapshots now list only the MCP servers that session declares, with only the connections its own credentials resolve. A caller that names no session gets no session's MCP status while two or more sessions are live, instead of the status of whichever session captured last ([#3001](https://github.com/code-yeongyu/senpi/issues/3001) by [@ferose](https://github.com/ferose)).
+
 ### Removed
 
 ## [2026.10.10-10] - 2026-10-09
