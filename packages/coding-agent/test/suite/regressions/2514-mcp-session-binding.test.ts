@@ -1412,3 +1412,49 @@ describe("senpi#3001: a session handle the service has not bound sees no peer's 
 		expect(service.getConnection("extra")).toBeDefined();
 	});
 });
+
+const INST_TOOL = "mcp_inst_tool_1";
+const ALPHA_INST = "Follow the first session configuration of the inst server.";
+const BRAVO_INST = "Follow the peer configuration of the inst server.";
+
+/** A live session whose own extensions declare `inst` with these server instructions, each text its own config hash. */
+async function openInstSession(instructions: string): Promise<Harness> {
+	const harness = await openSession(
+		await mcpExtensions((pi) => {
+			const fixture = stdioFixtureCommand();
+			pi.registerMcpServer("inst", {
+				type: "stdio",
+				command: fixture.command,
+				args: [...fixture.args, "--tools", "1", "--instructions", instructions],
+				exposure: "search",
+				lifecycle: "eager",
+			});
+		}),
+	);
+	await untilToolRegistered(harness, INST_TOOL);
+	await getMcpService().whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+	return harness;
+}
+
+describe("senpi#3001: a raced connect rebuilds the instructions of every live session", () => {
+	it(
+		"drops a server's instructions from a session whose connection a peer's config replaced",
+		async () => {
+			// Given: the first session declares `inst` and is instructed by it.
+			setConfig(root, {});
+			const alpha = await openInstSession(ALPHA_INST);
+			expect(await systemPromptOf(alpha)).toContain(ALPHA_INST);
+
+			// When: a peer declaring `inst` with another config attaches last, so its connection replaces the first's.
+			const bravo = await openInstSession(BRAVO_INST);
+
+			// Then: the first session's next turn carries no instructions from a connection it no longer has, nor the
+			// peer's; the peer's turn carries its own.
+			const alphaPrompt = await systemPromptOf(alpha);
+			expect(alphaPrompt).not.toContain(ALPHA_INST);
+			expect(alphaPrompt).not.toContain(BRAVO_INST);
+			expect(await systemPromptOf(bravo)).toContain(BRAVO_INST);
+		},
+		REGISTRATION_TIMEOUT_MS * 3,
+	);
+});

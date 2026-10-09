@@ -800,11 +800,11 @@ export class McpService {
 							}
 							// The session instructions block was likewise captured at attach
 							// time, before this server connected; rebuild it so the first
-							// turn carries this server's instructions after a raced connect,
-							// in each session offered this connection and no other.
-							for (const live of this.#liveBindings()) {
-								if (offersConnection(live, entry)) refreshMcpInstructionsForSession(this, live.pi);
-							}
+							// turn carries this server's instructions after a raced connect.
+							// Every live session rebuilds, since each block reads only its own
+							// offers: a session whose connection this one replaced must drop
+							// that server's instructions too (senpi#3001).
+							for (const live of this.#liveBindings()) refreshMcpInstructionsForSession(this, live.pi);
 							if (failures.length > 0) {
 								throw new AggregateError(
 									failures,
