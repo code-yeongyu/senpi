@@ -10,7 +10,7 @@ import {
 import { SessionManager } from "../../src/core/session-manager.ts";
 
 /**
- * Issue #650: on gpt-5.6 (openai-codex) a wedged blocking compaction burned
+ * Issue #650: on gpt-5.6 (chatgpt-subscription) a wedged blocking compaction burned
  * ~13.5M billed tokens across dozens of sequential summarization attempts.
  * The provider rejected an oversized summarization request that senpi's
  * estimator believed fit (provider-side input includes replayed reasoning

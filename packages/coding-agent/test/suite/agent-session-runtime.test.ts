@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -207,6 +207,39 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(outgoingEntries.map((entry) => entry.message.role)).toEqual(["user", "assistant", "toolResult"]);
 	});
 
+	it("preserves an existing session when importing a file with the same name", async () => {
+		const { runtime, tempDir } = await createRuntimeForTest(() => {});
+		const sessionDir = runtime.session.sessionManager.getSessionDir();
+		const importDir = join(tempDir, "import");
+		const filename = "collision.jsonl";
+		const storedPath = join(sessionDir, filename);
+		const importPath = join(importDir, filename);
+		const storedSession = `${JSON.stringify({
+			type: "session",
+			version: 3,
+			id: "stored",
+			timestamp: new Date().toISOString(),
+			cwd: tempDir,
+		})}\n`;
+		const importedSession = `${JSON.stringify({
+			type: "session",
+			version: 3,
+			id: "imported",
+			timestamp: new Date().toISOString(),
+			cwd: tempDir,
+		})}\n`;
+		mkdirSync(sessionDir, { recursive: true });
+		mkdirSync(importDir, { recursive: true });
+		writeFileSync(storedPath, storedSession);
+		writeFileSync(importPath, importedSession);
+
+		await runtime.importFromJsonl(importPath);
+
+		expect(readFileSync(storedPath, "utf8")).toBe(storedSession);
+		expect(runtime.session.sessionFile).not.toBe(storedPath);
+		expect(readFileSync(runtime.session.sessionFile!, "utf8")).toContain('"id":"imported"');
+	});
+
 	it("emits session_before_switch and session_start for new and resume flows", async () => {
 		const events: RecordedSessionEvent[] = [];
 		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
@@ -236,7 +269,13 @@ describe("AgentSessionRuntime characterization", () => {
 		const secondSessionFile = runtime.session.sessionFile;
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "new", targetSessionFile: undefined },
-			{ type: "session_shutdown", reason: "new", targetSessionFile: secondSessionFile },
+			// The host hands each session_shutdown handler its own budget signal.
+			{
+				type: "session_shutdown",
+				reason: "new",
+				targetSessionFile: secondSessionFile,
+				signal: expect.any(AbortSignal),
+			},
 			{ type: "session_start", reason: "new", previousSessionFile: originalSessionFile },
 		]);
 
@@ -247,7 +286,12 @@ describe("AgentSessionRuntime characterization", () => {
 		await runtime.session.bindExtensions({});
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "resume", targetSessionFile: originalSessionFile },
-			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
+			{
+				type: "session_shutdown",
+				reason: "resume",
+				targetSessionFile: originalSessionFile,
+				signal: expect.any(AbortSignal),
+			},
 			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
 		]);
 	});
@@ -317,7 +361,12 @@ describe("AgentSessionRuntime characterization", () => {
 		await runtime.session.bindExtensions({});
 		expect(events).toEqual([
 			{ type: "session_before_fork", entryId: userMessage.entryId, position: "before" },
-			{ type: "session_shutdown", reason: "fork", targetSessionFile: runtime.session.sessionFile },
+			{
+				type: "session_shutdown",
+				reason: "fork",
+				targetSessionFile: runtime.session.sessionFile,
+				signal: expect.any(AbortSignal),
+			},
 			{ type: "session_start", reason: "fork", previousSessionFile },
 		]);
 		const sessionFileName = parse(runtime.session.sessionFile!).name;
@@ -345,7 +394,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(leafId).toBeTruthy();
 
 		await expect(runtime.fork(leafId!, { position: "at" })).rejects.toThrow(
-			"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
+			"This session has not been saved yet. Send a message before cloning or forking it.",
 		);
 	});
 

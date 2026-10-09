@@ -111,7 +111,8 @@ export default function (pi: ExtensionAPI) {
 						);
 						return null;
 					}
-					const commandLine = `code -g ${quoteCmdArg(path)}`;
+					// VS Code's --goto parser rejects drive-letter paths (and still exits 0), so pass a plain file argument.
+					const commandLine = `code ${quoteCmdArg(path)}`;
 					return pi.exec("cmd", ["/d", "/s", "/c", commandLine], { cwd: ctx.cwd });
 				}
 				return pi.exec("code", ["-g", path], { cwd: ctx.cwd });
@@ -121,12 +122,14 @@ export default function (pi: ExtensionAPI) {
 				try {
 					const openResult = await openWithCode(file.path);
 					if (!openResult) return;
+					const openStderr = openResult.stderr.trim();
 					if (openResult.code !== 0) {
-						const openStderr = openResult.stderr.trim();
 						ctx.ui.notify(
 							`Failed to open ${file.path} (exit ${openResult.code})${openStderr ? `: ${openStderr}` : ""}`,
 							"error",
 						);
+					} else if (openStderr) {
+						ctx.ui.notify(`code reported a problem opening ${file.path}: ${openStderr}`, "warning");
 					}
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);

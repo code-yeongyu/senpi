@@ -1,12 +1,15 @@
-import type {
-	Context,
-	ImageContent,
-	Message,
-	Model,
-	SimpleStreamOptions,
-	TextContent,
-	ThinkingBudgets,
-	Transport,
+import {
+	type ImageContent,
+	type Message,
+	type Model,
+	type ProviderDiagnostic,
+	readProviderDiagnostic,
+	type SimpleStreamOptions,
+	sanitizeProviderDiagnostic,
+	type TextContent,
+	type ThinkingBudgets,
+	type TranscriptContext,
+	type Transport,
 } from "@earendil-works/pi-ai";
 import {
 	buildProviderContext as buildProviderContextFromAgentContext,
@@ -25,11 +28,13 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	AgentTurnDecision,
 	BeforeToolCallContext,
 	BeforeToolCallResult,
+	FinishTurn,
 	PrepareNextTurnContext,
+	PrepareRequest,
 	QueueMode,
-	ShouldStopAfterTurnContext,
 	StreamFn,
 	ThinkingLevel,
 	ToolExecutionMode,
@@ -39,7 +44,11 @@ export type { QueueMode } from "./types.ts";
 
 function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
 	return messages.filter(
-		(message) => message.role === "user" || message.role === "assistant" || message.role === "toolResult",
+		(message) =>
+			message.role === "system" ||
+			message.role === "user" ||
+			message.role === "assistant" ||
+			message.role === "toolResult",
 	);
 }
 
@@ -65,16 +74,26 @@ const DEFAULT_MODEL = {
 	maxTokens: 0,
 } satisfies Model<any>;
 
-type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "pendingToolCalls" | "errorMessage"> & {
+type MutableAgentState = Omit<
+	AgentState,
+	"isStreaming" | "streamingMessage" | "pendingToolCalls" | "errorMessage" | "providerDiagnostic"
+> & {
 	isStreaming: boolean;
 	streamingMessage?: AgentMessage;
 	pendingToolCalls: Set<string>;
 	errorMessage?: string;
+	providerDiagnostic?: ProviderDiagnostic;
 };
 
-function createMutableAgentState(
-	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>,
-): MutableAgentState {
+/**
+ * Initial state for {@link Agent}. Fork: `systemPrompt` and `tools` stay the agent's own state and are folded
+ * into the leading system message per request by `buildProviderContext`; they are not copied into `messages`.
+ */
+export type AgentInitialState = Partial<
+	Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage" | "providerDiagnostic">
+>;
+
+function createMutableAgentState(initialState?: AgentInitialState): MutableAgentState {
 	let tools = initialState?.tools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
 
@@ -95,25 +114,29 @@ function createMutableAgentState(
 		set messages(nextMessages: AgentMessage[]) {
 			messages = nextMessages.slice();
 		},
+		declaredTools: initialState?.declaredTools?.slice(),
 		isStreaming: false,
 		streamingMessage: undefined,
 		pendingToolCalls: new Set<string>(),
 		errorMessage: undefined,
+		providerDiagnostic: undefined,
 	};
 }
 
 /** Options for constructing an {@link Agent}. */
 export interface AgentOptions {
-	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>;
+	initialState?: AgentInitialState;
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
 	streamFn: StreamFn;
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	onPayload?: SimpleStreamOptions["onPayload"];
 	onResponse?: SimpleStreamOptions["onResponse"];
+	onProviderStreamEvent?: SimpleStreamOptions["onProviderStreamEvent"];
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
-	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext, signal?: AbortSignal) => boolean | Promise<boolean>;
+	finishTurn?: FinishTurn;
+	prepareRequest?: PrepareRequest;
 	prepareNextTurn?: (
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
@@ -146,6 +169,13 @@ export interface AgentContinuationOptions {
 	streamStartTimeoutMs?: number;
 }
 
+const LLM_ROLES: ReadonlySet<string> = new Set(["user", "assistant", "toolResult", "system"]);
+
+/** A queued message with an app-defined role (monitor, task or background-command notices). */
+function isBackgroundNotice(message: AgentMessage): boolean {
+	return !LLM_ROLES.has(message.role);
+}
+
 class PendingMessageQueue {
 	private messages: AgentMessage[] = [];
 	private clearGeneration = 0;
@@ -167,19 +197,25 @@ class PendingMessageQueue {
 		return this.clearGeneration;
 	}
 
-	drain(): AgentMessage[] {
-		if (this.mode === "all") {
-			const drained = this.messages.slice();
-			this.messages = [];
-			return drained;
-		}
-
+	/**
+	 * `one-at-a-time` gives each queued LLM message (user, assistant, tool result, system) its own
+	 * drain. Background notices (custom roles, such as monitor or task events) queued back to back
+	 * are one batch: a burst of events is answered by one turn instead of one turn per event.
+	 */
+	peek(): AgentMessage[] {
+		if (this.mode === "all") return this.messages.slice();
 		const first = this.messages[0];
-		if (!first) {
-			return [];
-		}
-		this.messages = this.messages.slice(1);
-		return [first];
+		if (!first) return [];
+		if (!isBackgroundNotice(first)) return [first];
+		let end = 1;
+		while (end < this.messages.length && isBackgroundNotice(this.messages[end]!)) end++;
+		return this.messages.slice(0, end);
+	}
+
+	drain(): AgentMessage[] {
+		const drained = this.peek();
+		this.messages = this.messages.slice(drained.length);
+		return drained;
 	}
 
 	prepend(messages: AgentMessage[]): void {
@@ -217,6 +253,7 @@ export class Agent {
 	public getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	public onPayload?: SimpleStreamOptions["onPayload"];
 	public onResponse?: SimpleStreamOptions["onResponse"];
+	public onProviderStreamEvent?: SimpleStreamOptions["onProviderStreamEvent"];
 	public beforeToolCall?: (
 		context: BeforeToolCallContext,
 		signal?: AbortSignal,
@@ -225,10 +262,8 @@ export class Agent {
 		context: AfterToolCallContext,
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
-	public shouldStopAfterTurn?: (
-		context: ShouldStopAfterTurnContext,
-		signal?: AbortSignal,
-	) => boolean | Promise<boolean>;
+	public finishTurn?: FinishTurn;
+	public prepareRequest?: PrepareRequest;
 	public prepareNextTurn?: (
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
@@ -259,10 +294,10 @@ export class Agent {
 	/** Cursor exec-channel tool handlers; see {@link AgentLoopConfig.cursorExecHandlers}. */
 	public cursorExecHandlers?: AgentLoopConfig["cursorExecHandlers"];
 
-	async buildProviderContext(context: AgentContext, signal?: AbortSignal): Promise<Context> {
+	async buildProviderContext(context: AgentContext, signal?: AbortSignal): Promise<TranscriptContext> {
 		return buildProviderContextFromAgentContext(
 			context,
-			{ convertToLlm: this.convertToLlm, transformContext: this.transformContext },
+			{ convertToLlm: this.convertToLlm, transformContext: this.transformContext, model: this._state.model },
 			signal,
 		);
 	}
@@ -277,9 +312,11 @@ export class Agent {
 		this.getApiKey = runtimeOptions.getApiKey;
 		this.onPayload = runtimeOptions.onPayload;
 		this.onResponse = runtimeOptions.onResponse;
+		this.onProviderStreamEvent = runtimeOptions.onProviderStreamEvent;
 		this.beforeToolCall = runtimeOptions.beforeToolCall;
 		this.afterToolCall = runtimeOptions.afterToolCall;
-		this.shouldStopAfterTurn = runtimeOptions.shouldStopAfterTurn;
+		this.finishTurn = runtimeOptions.finishTurn;
+		this.prepareRequest = runtimeOptions.prepareRequest;
 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
 		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
@@ -370,6 +407,12 @@ export class Agent {
 		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 
+	/** Preview the messages selected for the next turn without consuming them. */
+	peekQueuedMessages(): AgentMessage[] {
+		const steering = this.steeringQueue.peek();
+		return steering.length > 0 ? steering : this.followUpQueue.peek();
+	}
+
 	/** Active abort signal for the current run, if any. */
 	get signal(): AbortSignal | undefined {
 		return this.activeRun?.abortController.signal;
@@ -401,7 +444,10 @@ export class Agent {
 		return this.activeRun?.promise ?? Promise.resolve();
 	}
 
-	/** Clear transcript state, runtime state, and queued messages. */
+	/**
+	 * Clear transcript state, runtime state, and queued messages. Fork: the prompt/tool baseline is agent state
+	 * (`systemPrompt`, `tools`), so transcript system messages are conversation content and are cleared too.
+	 */
 	reset(): void {
 		if (this.activeRun) {
 			throw new Error("Agent is already processing. Wait for completion before resetting.");
@@ -412,6 +458,7 @@ export class Agent {
 		this._state.streamingMessage = undefined;
 		this._state.pendingToolCalls = new Set<string>();
 		this._state.errorMessage = undefined;
+		this._state.providerDiagnostic = undefined;
 		this.clearFollowUpQueue();
 		this.clearSteeringQueue();
 	}
@@ -477,7 +524,7 @@ export class Agent {
 		}
 
 		const lastMessage = this._state.messages[this._state.messages.length - 1];
-		if (!lastMessage) {
+		if (!lastMessage || this._state.messages.every((message) => message.role === "system")) {
 			throw new Error("No messages to continue from");
 		}
 
@@ -567,6 +614,7 @@ export class Agent {
 			systemPrompt: this._state.systemPrompt,
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
+			...(this._state.declaredTools ? { declaredTools: this._state.declaredTools.slice() } : {}),
 		};
 	}
 
@@ -580,7 +628,7 @@ export class Agent {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
-		const shouldStopAfterTurn = this.shouldStopAfterTurn;
+		const finishTurn = this.finishTurn;
 		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
 			model: this._state.model,
@@ -589,6 +637,7 @@ export class Agent {
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,
 			onResponse: this.onResponse,
+			onProviderStreamEvent: this.onProviderStreamEvent,
 			transport: this.transport,
 			thinkingBudgets: this.thinkingBudgets,
 			timeoutMs: this.timeoutMs,
@@ -603,9 +652,16 @@ export class Agent {
 			resolveUnknownToolCall: this.resolveUnknownToolCall,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
-			shouldStopAfterTurn: shouldStopAfterTurn
-				? async (context) => await shouldStopAfterTurn(context, this.signal)
+			// `{ action: "end" }` ends the run without polling queues, so the fork's post-run queue drain is
+			// suppressed for this run as well: queued input stays for its owner.
+			finishTurn: finishTurn
+				? async (turn, signal): Promise<AgentTurnDecision | undefined> => {
+						const decision = (await finishTurn(turn, signal)) ?? undefined;
+						if (decision?.action === "end") this.suppressQueuedMessageDrain();
+						return decision;
+					}
 				: undefined,
+			prepareRequest: this.prepareRequest,
 			prepareNextTurn:
 				this.prepareNextTurnWithContext || this.prepareNextTurn
 					? async (context) => {
@@ -657,6 +713,7 @@ export class Agent {
 		this._state.isStreaming = true;
 		this._state.streamingMessage = undefined;
 		this._state.errorMessage = undefined;
+		this._state.providerDiagnostic = undefined;
 
 		try {
 			await executor(abortController.signal);
@@ -716,6 +773,7 @@ export class Agent {
 	}
 
 	private async handleRunFailure(error: unknown, aborted: boolean): Promise<void> {
+		const providerDiagnostic = aborted ? undefined : readProviderDiagnostic(error);
 		const failureMessage = {
 			role: "assistant",
 			content: [{ type: "text", text: "" }],
@@ -725,6 +783,7 @@ export class Agent {
 			usage: EMPTY_USAGE,
 			stopReason: aborted ? "aborted" : "error",
 			errorMessage: error instanceof Error ? error.message : String(error),
+			...(providerDiagnostic === undefined ? {} : { providerDiagnostic }),
 			...(error instanceof ProviderRetryWatchdogAbortError ? { abortSource: "provider" as const } : {}),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
@@ -781,6 +840,7 @@ export class Agent {
 			case "turn_end":
 				if (event.message.role === "assistant" && event.message.errorMessage) {
 					this._state.errorMessage = event.message.errorMessage;
+					this._state.providerDiagnostic = sanitizeProviderDiagnostic(event.message.providerDiagnostic);
 				}
 				break;
 

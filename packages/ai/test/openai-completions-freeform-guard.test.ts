@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { streamOpenAICompletions } from "../src/providers/openai-completions.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 describe("openai completions freeform guard", () => {
 	it("rejects freeform tools before serializing chat-completions function tools", async () => {
 		// given
@@ -34,7 +36,7 @@ describe("openai completions freeform guard", () => {
 		};
 
 		// when
-		const stream = streamOpenAICompletions(model, context, {
+		const stream = streamOpenAICompletions(model, normalizeContext(context), {
 			apiKey: "test-key",
 			onPayload() {
 				throw new Error("freeform guard did not run before payload inspection");

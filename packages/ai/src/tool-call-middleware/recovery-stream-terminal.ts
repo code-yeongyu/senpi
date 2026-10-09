@@ -1,8 +1,18 @@
 import type { AssistantMessage, AssistantMessageEventStream, StopReason } from "../types.ts";
+import { parseServerFallbackReceipt, SERVER_FALLBACK_ABORTED_DIAGNOSTIC } from "../utils/server-fallback-receipt.ts";
 import type { StreamMessageProjection } from "./stream-wrapper-shared.ts";
 
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function discardSupersededTools(message: AssistantMessage): boolean {
+	const boundary = message.content.findLastIndex(
+		(block) => block.type === "providerNative" && parseServerFallbackReceipt(block.raw) !== undefined,
+	);
+	if (boundary < 0) return false;
+	message.content = message.content.filter((block, index) => index > boundary || block.type !== "toolCall");
+	return true;
 }
 
 /** Emits one terminal event after recovery projection state has been flushed. */
@@ -23,8 +33,10 @@ export class RecoveryStreamTerminal {
 		if (this.emitted) return;
 		projection.finalizeDanglingToolCalls();
 		const message = projection.finalize(source, sawToolCall);
-		const recovered = sawToolCall || message.content.some((block) => block.type === "toolCall");
+		const superseded = discardSupersededTools(message);
+		const recovered = (!superseded && sawToolCall) || message.content.some((block) => block.type === "toolCall");
 		const finalReason = recovered && (reason === "stop" || reason === "length") ? "toolUse" : reason;
+		message.stopReason = finalReason;
 		this.emit({ type: "done", reason: finalReason, message });
 	}
 
@@ -35,6 +47,11 @@ export class RecoveryStreamTerminal {
 		reason: Extract<StopReason, "aborted" | "error">,
 	): void {
 		if (this.emitted) return;
+		if (source.diagnostics?.some((entry) => entry.type === SERVER_FALLBACK_ABORTED_DIAGNOSTIC)) {
+			this.emit({ type: "error", reason, error: source });
+			return;
+		}
+		discardSupersededTools(projection.message);
 		projection.finalizeDanglingToolCalls();
 		const message = projection.finalize(source, sawToolCall);
 		if (reason === "aborted") {

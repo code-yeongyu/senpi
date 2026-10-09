@@ -75,6 +75,8 @@ describe("Anthropic native tool-search model gate", () => {
 		["claude-sonnet-4-5-20250929", true],
 		["claude-opus-4-1", false],
 		["claude-haiku-4-5-20251001", false],
+		// Listed by Anthropic but off until a live probe (senpi#2914); keep in sync with pi-ai supportsToolReferences.
+		["claude-haiku-5-5", false],
 		["claude-3-5-sonnet-20241022", false],
 	])("resolves %s to %s per Anthropic's compatibility table", (id, supported) => {
 		// given a first-party Anthropic model id

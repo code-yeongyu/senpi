@@ -43,6 +43,7 @@ function createRunner(): FakeRunner {
 		registerTool: (tool: ToolLike) => {
 			tools.set(tool.name, tool);
 		},
+		registerMessageRenderer: () => {},
 		on: (eventType: string, handler: Handler) => {
 			const existing = handlers.get(eventType) ?? [];
 			existing.push(handler);

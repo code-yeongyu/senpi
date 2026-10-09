@@ -1,41 +1,90 @@
-import type { Api, Model, ProviderEnv } from "@earendil-works/pi-ai";
-import { resolvePromptCacheTtlSeconds } from "@earendil-works/pi-ai";
+import type { Api, Model, PromptCacheLifetime, ProviderEnv } from "@earendil-works/pi-ai";
+import { resolvePromptCacheLifetime } from "@earendil-works/pi-ai";
 import type { TokenUsageSnapshot } from "./types.ts";
 
 /** Custom session-entry type carrying the cache-warm continuation story. */
 export const GOAL_CACHE_WARMUP_ENTRY_TYPE = "goal-cache-warmup";
 
+/**
+ * Accounting fallback for a monitor continuation whose scheduled delay is no
+ * longer known (a held timer restored across a reload). It is deliberately NOT
+ * the armed delay: while a wake source is live the monitor arms the configured
+ * backstop below, never a timer derived from the cache-safe wait.
+ */
 export const GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS = 240_000;
+/**
+ * Default `promptCache.goalBackstopMaxSeconds` (settings-manager.ts) expressed in ms:
+ * the 5-minute Anthropic prompt-cache TTL minus the 30s safety buffer, so the
+ * periodic re-check lands inside the cache.
+ */
+export const GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS = 270_000;
+/**
+ * Backstop used instead of the 270s default when the active model's prompt cache is best-effort
+ * (for example direct DeepSeek, code-yeongyu/senpi#831): there is no TTL for the re-check to land
+ * inside, so the goal only needs the long liveness re-check, not a cache-preservation wake.
+ */
+export const GOAL_MONITOR_BEST_EFFORT_BACKSTOP_SECONDS = 3570;
 const GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS = 1_000;
 const GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS = 3_600_000;
 
-export function resolveGoalMonitorContinuationDelayMs(
-	cacheSafeWaitSeconds: number | undefined,
-	goalBackstopMaxSeconds?: number,
-): number {
-	if (
-		typeof cacheSafeWaitSeconds !== "number" ||
-		!Number.isFinite(cacheSafeWaitSeconds) ||
-		cacheSafeWaitSeconds <= 0
-	) {
-		return GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS;
-	}
-	const configuredCeilingMs =
+/**
+ * Delay of the goal-monitor backstop, in milliseconds.
+ *
+ * A live wake source normally resumes the goal when it delivers (the drain
+ * fire), but a wake source can be misconfigured - a filter that never matches,
+ * a stream that never ends - so the backstop is the floor underneath it: the
+ * goal re-checks at least this often instead of trusting the source for an
+ * hour. It is configured, never derived from the prompt-cache safe wait, through
+ * `promptCache.goalBackstopMaxSeconds`; a missing, non-finite, or non-positive
+ * setting falls back to the 270s default, and the result is clamped into
+ * [1s, 1h].
+ */
+export function resolveGoalMonitorContinuationDelayMs(goalBackstopMaxSeconds: number | undefined): number {
+	const configuredMs =
 		typeof goalBackstopMaxSeconds === "number" &&
 		Number.isFinite(goalBackstopMaxSeconds) &&
 		goalBackstopMaxSeconds > 0
-			? Math.min(goalBackstopMaxSeconds * 1000, GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS)
-			: GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS;
-	return Math.max(GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS, Math.min(cacheSafeWaitSeconds * 1000, configuredCeilingMs));
+			? goalBackstopMaxSeconds * 1000
+			: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS;
+	return Math.max(
+		GOAL_MONITOR_CONTINUATION_MIN_DELAY_MS,
+		Math.min(configuredMs, GOAL_MONITOR_CONTINUATION_HARD_CEILING_MS),
+	);
+}
+
+/**
+ * Backstop ceiling in seconds for the active model's cache lifetime. The built-in 270s default exists
+ * to land the re-check inside a 5-minute TTL; a best-effort cache has no TTL, so an unconfigured
+ * backstop becomes the long liveness re-check. The settings getter reports an unset value as the
+ * 270s default, so a value equal to it is treated as the default.
+ */
+export function resolveGoalBackstopMaxSecondsForCache(
+	goalBackstopMaxSeconds: number | undefined,
+	lifetime: PromptCacheLifetime | undefined,
+): number | undefined {
+	if (lifetime?.kind !== "best-effort") return goalBackstopMaxSeconds;
+	const isDefault =
+		goalBackstopMaxSeconds === undefined || goalBackstopMaxSeconds * 1000 === GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS;
+	return isDefault ? GOAL_MONITOR_BEST_EFFORT_BACKSTOP_SECONDS : goalBackstopMaxSeconds;
+}
+
+/** Prompt-cache lifetime of the active model, from the provider's documented cache contract. */
+export function resolveGoalPromptCacheLifetime(
+	model: Model<Api> | undefined,
+	env: NodeJS.ProcessEnv,
+): PromptCacheLifetime | undefined {
+	return model === undefined ? undefined : resolvePromptCacheLifetime(model, toProviderEnv(env));
 }
 
 /** Cache context captured when a monitor-wait continuation is scheduled. */
 export interface GoalCacheWarmMetrics {
-	/** Prompt-cache TTL of the active model in seconds, when known. */
+	/** Prompt-cache TTL of the active model in seconds, when the provider documents one. */
 	readonly ttlSeconds?: number;
-	/** Tokens sitting warm in the provider prompt cache after the last turn. */
+	/** Set when the provider caches automatically with no expiry contract; no TTL or savings are claimed. */
+	readonly cacheLifetime?: "best-effort";
+	/** Cumulative cache-read/write tokens reported across the prior agent run's requests, not unique context size. */
 	readonly cachedTokens: number;
-	/** Estimated USD saved by re-reading those tokens from cache instead of paying a cold input read. */
+	/** Hypothetical read discount at current model prices if the same token volume is reused from cache. */
 	readonly estimatedSavedUsd?: number;
 }
 
@@ -57,6 +106,8 @@ export interface GoalCacheWarmupEntryData {
 	readonly dueAtMs?: number;
 	/** Actual wait in milliseconds; present on the `resumed` phase only. */
 	readonly waitedMs?: number;
+	/** Actual resumption trigger; absent on legacy entries whose cause was not recorded. */
+	readonly wakeCause?: "timer" | "sources-drained";
 	/** Backward-compatible field containing the total active wake-source count. */
 	readonly activeMonitorCount: number;
 	/** Full source-keyed snapshot; absent on entries written before wake sources were generalized. */
@@ -97,7 +148,11 @@ export function estimateCacheWarmMetrics(
 	lastTurnUsage: Pick<TokenUsageSnapshot, "cacheRead" | "cacheWrite"> | undefined,
 ): GoalCacheWarmMetrics | undefined {
 	const cachedTokens = clampTokens(lastTurnUsage?.cacheRead) + clampTokens(lastTurnUsage?.cacheWrite);
-	const ttlSeconds = model === undefined ? undefined : resolvePromptCacheTtlSeconds(model, toProviderEnv(env));
+	const lifetime = resolveGoalPromptCacheLifetime(model, env);
+	if (lifetime?.kind === "best-effort") {
+		return cachedTokens === 0 ? undefined : { cachedTokens, cacheLifetime: "best-effort" };
+	}
+	const ttlSeconds = lifetime?.kind === "ttl" ? lifetime.ttlSeconds : undefined;
 	if (ttlSeconds === undefined && cachedTokens === 0) return undefined;
 	const estimatedSavedUsd =
 		model !== undefined && cachedTokens > 0

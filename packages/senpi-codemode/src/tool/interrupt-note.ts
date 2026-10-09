@@ -1,4 +1,4 @@
-import type { EvalLanguage } from "./types.ts";
+import type { EvalLanguage, KernelInterruptHandle } from "./types.ts";
 
 const TIMEOUT_STATE_GRACE_MS = 5_500;
 
@@ -13,28 +13,37 @@ function fallbackTimeoutMessage(base: string): string {
  */
 export async function describeTimeoutState(
 	error: Error,
-	execution: { readonly interruptStateRetained: Promise<boolean> | undefined },
+	execution: { readonly interruptHandle: Promise<KernelInterruptHandle> | undefined },
 ): Promise<Error> {
-	const outcome = execution.interruptStateRetained;
-	if (outcome === undefined) {
+	const pending = execution.interruptHandle;
+	if (pending === undefined) {
 		error.message = fallbackTimeoutMessage(error.message);
 		return error;
 	}
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const retained = await Promise.race([
-		outcome,
-		new Promise<boolean | undefined>((resolve) => {
-			timer = setTimeout(() => resolve(undefined), TIMEOUT_STATE_GRACE_MS);
-		}),
-	]).finally(() => {
-		if (timer !== undefined) clearTimeout(timer);
-	});
-	if (retained === undefined) error.message = fallbackTimeoutMessage(error.message);
-	else if (retained)
-		error.message = `${error.message} The kernel remains running; its existing variables are preserved.`;
-	else
-		error.message = `${error.message} The kernel was unresponsive and restarted; variables from earlier cells are lost.`;
+	const outcome = await withinGrace(
+		pending.then(async (handle) => ({ retained: await handle.stateRetained, note: handle.note })),
+		TIMEOUT_STATE_GRACE_MS,
+	);
+	if (outcome === undefined) error.message = fallbackTimeoutMessage(error.message);
+	else if (outcome.retained)
+		error.message = `${error.message} The kernel was not restarted; variables from earlier cells are kept.`;
+	else error.message = `${error.message} The kernel was restarted; variables from earlier cells are lost.`;
+	if (outcome?.note !== undefined) error.message = `${error.message} ${outcome.note.trim()}`;
 	return error;
+}
+
+async function withinGrace<T>(operation: Promise<T>, graceMs: number): Promise<T | undefined> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			operation,
+			new Promise<undefined>((resolve) => {
+				timer = setTimeout(() => resolve(undefined), graceMs);
+			}),
+		]);
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+	}
 }
 
 const LANGUAGE_LABEL: Record<EvalLanguage, string> = {
@@ -53,6 +62,10 @@ const LANGUAGE_LABEL: Record<EvalLanguage, string> = {
 export function interruptionStateNote(language: EvalLanguage, stateRetained: boolean | undefined): string | undefined {
 	if (stateRetained === undefined) return undefined;
 	const label = LANGUAGE_LABEL[language];
-	if (stateRetained) return `${label} was interrupted and remains running; its existing variables are preserved.`;
-	return `${label} was unresponsive to interrupt and was restarted; variables from earlier cells are lost.`;
+	if (stateRetained) return `The ${label} was not restarted; variables from earlier cells are kept.`;
+	return `The ${label} was restarted; variables from earlier cells are lost.`;
+}
+
+export function unknownInterruptionStateNote(language: EvalLanguage): string {
+	return `${LANGUAGE_LABEL[language]} interrupt outcome is unknown; re-establish any variables the next cell needs.`;
 }

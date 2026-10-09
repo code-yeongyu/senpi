@@ -1,6 +1,7 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
 import { readSessionSummary, type SessionSummary } from "./session-summary.ts";
+import { forgetSessionSummaryIndexSnapshots } from "./session-summary-index.ts";
 import { type FileStamp, SessionSummaryLru } from "./session-summary-lru.ts";
 
 /**
@@ -27,11 +28,23 @@ export type CachedSessionSummary = {
 	readonly mtime: Date;
 };
 
+/**
+ * A second cache level consulted on an in-memory miss, such as the persistent
+ * per-directory summary index. `record` receives every summary served from
+ * memory or streamed, so the store can persist what it lacks.
+ */
+export type SessionSummaryStore = {
+	lookup(filePath: string, stamp: FileStamp): Promise<SessionSummary | undefined>;
+	record(filePath: string, stamp: FileStamp, summary: SessionSummary): void;
+};
+
 /** Process-local summary cache, bounded by entry count and retained text bytes. */
 const cache = new SessionSummaryLru({
 	maxEntries: SESSION_SUMMARY_CACHE_LIMIT,
 	maxTextBytes: SESSION_SUMMARY_CACHE_MAX_TEXT_BYTES,
 });
+
+let streamedSummaries = 0;
 
 function stampsMatch(left: FileStamp, right: FileStamp): boolean {
 	return left.size === right.size && left.mtimeMs === right.mtimeMs;
@@ -45,9 +58,13 @@ function stampsMatch(left: FileStamp, right: FileStamp): boolean {
  * sessions directory costs one `stat` per file. A file that cannot be stat'ed or
  * read drops its cache entry, so a truncated or replaced file is never served
  * from stale bytes. A summary too large for the cache's byte budget is returned
- * to the caller without being retained.
+ * to the caller without being retained. On a miss, `store` is consulted before
+ * the file is streamed.
  */
-export async function readCachedSessionSummary(filePath: string): Promise<CachedSessionSummary | null> {
+export async function readCachedSessionSummary(
+	filePath: string,
+	store?: SessionSummaryStore,
+): Promise<CachedSessionSummary | null> {
 	const key = resolve(filePath);
 
 	let stamp: FileStamp;
@@ -64,9 +81,17 @@ export async function readCachedSessionSummary(filePath: string): Promise<Cached
 
 	const cached = cache.get(key);
 	if (cached && stampsMatch(cached.stamp, stamp)) {
+		store?.record(filePath, stamp, cached.summary);
 		return { summary: cached.summary, mtime: cached.mtime };
 	}
 
+	const stored = await store?.lookup(filePath, stamp);
+	if (stored) {
+		cache.retain(key, { stamp, summary: stored, mtime });
+		return { summary: stored, mtime };
+	}
+
+	streamedSummaries++;
 	const summary = await readSessionSummary(filePath);
 	if (!summary) {
 		cache.drop(key);
@@ -74,12 +99,19 @@ export async function readCachedSessionSummary(filePath: string): Promise<Cached
 	}
 
 	cache.retain(key, { stamp, summary, mtime });
+	store?.record(filePath, stamp, summary);
 	return { summary, mtime };
 }
 
-/** Drop every cached summary. Test-only seam for cold-read assertions. */
+/** Session files streamed since process start. Test-only seam for index-hit assertions. */
+export function sessionSummaryStreamCount(): number {
+	return streamedSummaries;
+}
+
+/** Drop every cached summary and index snapshot. Test-only seam for cold-read assertions. */
 export function clearSessionSummaryCache(): void {
 	cache.clear();
+	forgetSessionSummaryIndexSnapshots();
 }
 
 /** Number of cached summaries. Test-only seam for eviction assertions. */

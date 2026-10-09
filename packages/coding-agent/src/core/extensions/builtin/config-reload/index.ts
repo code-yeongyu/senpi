@@ -6,6 +6,7 @@ import { resolvePath } from "../../../../utils/paths.ts";
 import { ModelConfig } from "../../../model-config.ts";
 import { parseSettingsJson, type Settings, SettingsManager, wasSelfWrite } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "../../types.ts";
+import { type ActiveTarget, groupChangedPaths } from "./change-groups.ts";
 import { isLoadableExtensionEntry, isScannableExtensionDirectory } from "./extension-watch-scope.ts";
 import { excludeGeneratedExtensionShims } from "./generated-shim-filter.ts";
 import { type ConfigReloadLogger, createConfigReloadLogger } from "./log.ts";
@@ -31,6 +32,7 @@ import {
 	refreshSettingsContentSnapshots,
 	updateSettingsContentSnapshot,
 } from "./routine-settings.ts";
+import { bindSessionScopedCallback } from "./session-scoped-callback.ts";
 import {
 	ConfigReloadWatchEngine,
 	createFsWatchEventSource,
@@ -41,9 +43,15 @@ import {
 } from "./watch-engine.ts";
 
 const BUILTIN_REGISTRATION_ID = "builtin";
-const DEFAULT_DEBOUNCE_MS = 200;
+export const DEFAULT_DEBOUNCE_MS = 200;
 const COMPACTION_RECHECK_MS = 250;
 const VETO_RECHECK_MS = 1000;
+// After the first few 1 s rechecks a still-vetoed reload (e.g. long-running subagents) backs off;
+// agent_end/agent_settled still flush it immediately when the session goes idle.
+const VETO_RECHECK_FAST_ATTEMPTS = 5;
+const VETO_RECHECK_MAX_MS = 30_000;
+// A reload that only ever re-triggers itself from the post-reload comparison stops here (#2878).
+const MAX_HANDOFF_RELOADS = 3;
 const CONFIG_FILE_NAMES = ["settings.jsonc", "settings.json", "models.json", "keybindings.json"] as const;
 
 /**
@@ -85,19 +93,18 @@ type ResolvedConfigReloadSettings = {
 
 type WatchTargetInput = Omit<WatchTarget, "id">;
 
-type ActiveTarget = {
-	readonly registrationId: string;
-	readonly target: WatchTarget;
-	/** Presence targets rebuild the watcher set once this missing path appears. */
-	readonly rearmOnCreation?: string;
-};
-
 type PendingChange = {
 	readonly registrationId: string;
 	readonly paths: Set<string>;
 };
 
+type HandoffChain = {
+	/** Consecutive reloads requested only by a post-reload comparison; 0 for a watcher-detected change. */
+	readonly count: number;
+};
+
 type ReloadHandoff = {
+	readonly chain: HandoffChain;
 	readonly hashesAtRequest: ReadonlyMap<string, string>;
 	readonly settingsContentsAtRequest: ReadonlyMap<string, string>;
 	readonly requestedAt: number;
@@ -124,16 +131,6 @@ export class ConfigReloadHandoffRegistry<T> {
 }
 
 const reloadHandoffs = new ConfigReloadHandoffRegistry<ReloadHandoff>();
-
-function bindExternalCallback<TArgs extends unknown[], TResult>(
-	callback: (...args: TArgs) => TResult,
-): (...args: TArgs) => TResult {
-	try {
-		return bindToProviderScope(callback);
-	} catch {
-		return callback;
-	}
-}
 
 export interface ConfigReloadExtensionOptions {
 	readonly agentDir?: string;
@@ -173,20 +170,24 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	let activeTargets: ActiveTarget[] = [];
 	let currentContext: ExtensionContext | undefined;
 	let started = false;
+	const watcherClosures: Array<Promise<PromiseSettledResult<void>[]>> = [];
 	let reloadInFlight = false;
 	let deferredNoticeShown = false;
 	let unavailableReloadLogged = false;
 	let compactionRecheck: ReturnType<typeof setTimeout> | undefined;
 	let vetoRecheck: ReturnType<typeof setTimeout> | undefined;
+	let vetoRecheckAttempts = 0;
 	const vetoDeferral = new ReloadVetoDeferral();
+	let nextReloadChain: HandoffChain | undefined;
+	/** Handoff paths an extension watched before the reload and has not re-registered yet. */
+	const awaitingRegistration = new Map<string, string>();
+	let awaitingHandoff: ReloadHandoff | undefined;
 	let changeChain: Promise<void> = Promise.resolve();
 
-	// The engine goes inert the moment close() is called; its unsubscribe loop can
-	// take seconds per watcher, and session_shutdown is awaited by the reload flow.
+	// Cancel registrations synchronously; session_shutdown joins every disposer.
 	const closeWatchers = (): void => {
-		engine?.close().catch((error: unknown) => {
-			logger.error("watcher_error", { path: "watcher teardown", message: errorMessage(error) });
-		});
+		if (!engine) return;
+		watcherClosures.push(Promise.allSettled([engine.close()]));
 		engine = undefined;
 		activeTargets = [];
 	};
@@ -246,6 +247,7 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		logger.info("registration_added", { id: payload.id });
 		if (started && currentContext) {
 			rebuildWatchers(currentContext);
+			settleAwaitingRegistration(currentContext);
 		}
 	};
 
@@ -261,36 +263,43 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	};
 
 	const processChange = async (change: RealChange): Promise<void> => {
-		if (reloadInFlight || !currentContext) return;
+		if (reloadInFlight || !currentContext || !started) return;
+		const changeContext = currentContext;
 		// Suppression state (self-write consumption, routine-diff base) is per path,
 		// so it must be resolved before grouping: a path watched by several
 		// registrations would otherwise be classified once per group and reach the
 		// reload flow through the later group.
-		const watchedPaths = excludeSelfWrites(
-			change.changedPaths,
-			engine,
-			agentDir,
-			currentContext.cwd,
-			logger,
-			settingsContents,
-		);
-		const significantPaths = excludeRoutineOnlySettingsChanges(
-			watchedPaths,
-			settingsContents,
-			agentDir,
-			currentContext.cwd,
-			logger,
-		);
-		const configPaths = excludeGeneratedExtensionShims(significantPaths, agentDir);
-		for (const path of significantPaths) {
-			if (!configPaths.includes(path)) logger.debug("generated_shim_change_suppressed", { path });
+		const suppress = (paths: readonly string[], context: ExtensionContext): string[] => {
+			const watchedPaths = excludeSelfWrites(paths, engine, agentDir, context.cwd, logger, settingsContents);
+			const significantPaths = excludeRoutineOnlySettingsChanges(
+				watchedPaths,
+				settingsContents,
+				agentDir,
+				context.cwd,
+				logger,
+			);
+			const kept = excludeGeneratedExtensionShims(significantPaths, agentDir);
+			for (const path of significantPaths) {
+				if (!kept.includes(path)) logger.debug("generated_shim_change_suppressed", { path });
+			}
+			return kept;
+		};
+		const configPaths = suppress(change.changedPaths, currentContext);
+		// Rebuilding recomputes the targets, so record which created paths were presence containers first.
+		const rearmedContainers = change.created
+			.map((path) => resolve(path))
+			.filter((path) => activeTargets.some((target) => target.rearmOnCreation === path));
+		if (rearmedContainers.length > 0) {
+			const previous = engine?.getBaselineSnapshot() ?? new Map<string, string>();
+			rebuildWatchers(currentContext);
+			const current = engine?.getBaselineSnapshot() ?? new Map<string, string>();
+			// Files discovered by the rearm pass through the same self-write, routine and shim filters.
+			configPaths.push(...suppress(compareSnapshots(previous, current), currentContext));
 		}
-		const groups = groupChangedPaths(configPaths, activeTargets);
-		const rearmDirectoryWatch = change.created.some((path) =>
-			activeTargets.some((target) => target.rearmOnCreation === resolve(path)),
-		);
+		const groups = groupChangedPaths(configPaths, activeTargets, rearmedContainers);
 		for (const [registrationId, paths] of groups) {
 			const errors = await validateChangedPaths(registrationId, paths, registrations, agentDir, currentContext.cwd);
+			if (!started || currentContext !== changeContext) return;
 			if (errors.length > 0) {
 				rejectChange(currentContext, registrationId, paths, errors, logger, pi);
 				continue;
@@ -305,7 +314,6 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			});
 			logger.info("change_detected", { registrationId, paths, deferred });
 		}
-		if (rearmDirectoryWatch) rebuildWatchers(currentContext);
 		await flushPending();
 	};
 
@@ -319,11 +327,18 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	};
 
 	const rebuildWatchers = (ctx: ExtensionContext): void => {
+		if (!started || currentContext !== ctx) return;
 		closeWatchers();
 		clearCompactionRecheck();
 		const settingsManager = SettingsManager.create(ctx.cwd, agentDir, { projectTrusted: ctx.isProjectTrusted() });
 		const settings = resolveConfigReloadSettings(settingsManager);
-		if (!settings.enabled || ctx.mode === "print" || ctx.mode === "json") {
+		// Nonpersistent RPC probes need a configuration snapshot, not live OS watches.
+		if (
+			!settings.enabled ||
+			ctx.mode === "print" ||
+			ctx.mode === "json" ||
+			(ctx.mode === "rpc" && ctx.sessionManager.getSessionFile() === undefined)
+		) {
 			pi.events.emit(CONFIG_WATCH_READY, { enabled: false });
 			return;
 		}
@@ -342,8 +357,11 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 			debounceMs: settings.debounceMs,
 			clock: options.clock,
 			hashFile: options.hashFile,
-			onRealChange: bindExternalCallback(enqueueChange),
-			onError: bindExternalCallback((error, path) => {
+			onRealChange: bindSessionScopedCallback((change: RealChange) => {
+				nextReloadChain = undefined;
+				enqueueChange(change);
+			}),
+			onError: bindSessionScopedCallback((error, path) => {
 				logger.error("watcher_error", { path, message: errorMessage(error) });
 			}),
 		});
@@ -375,27 +393,32 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		// instead of re-notifying "Hot-reloading:" plus the veto warning forever.
 		if (ctx.checkReloadVeto) {
 			const veto = await ctx.checkReloadVeto();
-			if (currentContext !== ctx || reloadInFlight || pending.size === 0) return;
+			if (currentContext !== ctx || reloadInFlight || pending.size === 0 || !canRequestReload(ctx)) return;
 			if (veto.cancelled) {
 				const notice = vetoDeferral.defer(veto.reason);
-				if (notice) ctx.ui.notify(notice, "info");
-				logger.info("reload_deferred", { reason: veto.reason ?? "extension veto" });
+				if (notice) {
+					ctx.ui.notify(notice, "info");
+					logger.info("reload_deferred", { reason: veto.reason ?? "extension veto" });
+				}
 				armVetoRecheck();
 				return;
 			}
 		}
 		clearVetoRecheck();
+		vetoRecheckAttempts = 0;
 		vetoDeferral.reset();
 
 		const changes = pendingChanges(pending);
 		const paths = uniquePaths(changes.flatMap((change) => change.paths));
 		reloadInFlight = true;
 		reloadHandoffs.set(handoffKey(ctx), {
+			chain: nextReloadChain ?? { count: 0 },
 			hashesAtRequest: engine?.getBaselineSnapshot() ?? new Map<string, string>(),
 			settingsContentsAtRequest: new Map(settingsContents),
 			requestedAt: Date.now(),
 			changes,
 		});
+		nextReloadChain = undefined;
 		ctx.ui.notify(`Hot-reloading: ${formatPaths(paths)}`, "info");
 		logger.info("reload_requested", { reason: "config changed", paths });
 
@@ -423,10 +446,56 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	const armVetoRecheck = (): void => {
 		if (vetoRecheck !== undefined) return;
 		const clock = options.clock ?? defaultClock;
+		const backoffStep = vetoRecheckAttempts - VETO_RECHECK_FAST_ATTEMPTS + 1;
+		const delay =
+			backoffStep <= 0 ? VETO_RECHECK_MS : Math.min(VETO_RECHECK_MAX_MS, VETO_RECHECK_MS * 2 ** backoffStep);
+		vetoRecheckAttempts++;
 		vetoRecheck = clock.setTimeout(() => {
 			vetoRecheck = undefined;
 			void flushPending();
-		}, VETO_RECHECK_MS);
+		}, delay);
+	};
+
+	/**
+	 * Queue a change the post-reload comparison found. A comparison-only chain (each reload
+	 * triggered solely by the previous reload's comparison) stops after MAX_HANDOFF_RELOADS
+	 * consecutive reloads however slow each one is, so a path that always looks changed cannot loop forever.
+	 */
+	const enqueueHandoffChange = async (
+		handoff: ReloadHandoff,
+		changedPaths: readonly string[],
+		ctx: ExtensionContext,
+	): Promise<void> => {
+		if (changedPaths.length === 0) return;
+		const chain: HandoffChain = { count: handoff.chain.count + 1 };
+		if (chain.count > MAX_HANDOFF_RELOADS) {
+			logger.warn("reload_loop_stopped", { paths: changedPaths, reloads: handoff.chain.count });
+			ctx.ui.notify(
+				`Hot-reload stopped: ${formatPaths(changedPaths)} still looked changed after ${handoff.chain.count} reloads in a row. Edit the file again or run /reload to retry.`,
+				"warning",
+			);
+			return;
+		}
+		settingsContents.clear();
+		for (const [path, content] of handoff.settingsContentsAtRequest) settingsContents.set(path, content);
+		nextReloadChain = chain;
+		enqueueChange({ changedPaths: [...changedPaths], created: [], deleted: [] });
+		await changeChain;
+	};
+
+	/** Compare handoff paths whose extension re-registered them after session_start (#2878). */
+	const settleAwaitingRegistration = (ctx: ExtensionContext): void => {
+		const handoff = awaitingHandoff;
+		if (!handoff || awaitingRegistration.size === 0) return;
+		const current = engine?.getBaselineSnapshot() ?? new Map<string, string>();
+		const changed: string[] = [];
+		for (const [path, hash] of awaitingRegistration) {
+			if (!current.has(path)) continue;
+			awaitingRegistration.delete(path);
+			if (current.get(path) !== hash) changed.push(path);
+		}
+		if (awaitingRegistration.size === 0) awaitingHandoff = undefined;
+		void enqueueHandoffChange(handoff, changed.sort(), ctx);
 	};
 
 	const processReloadHandoff = async (event: SessionStartEvent, ctx: ExtensionContext): Promise<void> => {
@@ -443,13 +512,15 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		ctx.ui.notify(`Hot-reloaded: ${formatPaths(paths)}`, "info");
 		logger.info("reload_completed", { durationMs: Math.max(0, Date.now() - handoff.requestedAt) });
 
-		const changedPaths = compareSnapshots(handoff.hashesAtRequest, engine?.getBaselineSnapshot() ?? new Map());
-		if (changedPaths.length > 0) {
-			settingsContents.clear();
-			for (const [path, content] of handoff.settingsContentsAtRequest) settingsContents.set(path, content);
-			enqueueChange({ changedPaths, created: [], deleted: [] });
-			await changeChain;
-		}
+		// Extensions re-register their watch targets after this session_start handler, so a path
+		// missing from the new baseline but still on disk is awaited, not reported as changed (#2878).
+		const { changed, awaiting } = compareHandoffSnapshots(
+			handoff.hashesAtRequest,
+			engine?.getBaselineSnapshot() ?? new Map(),
+		);
+		for (const [path, hash] of awaiting) awaitingRegistration.set(path, hash);
+		awaitingHandoff = awaiting.size > 0 ? handoff : undefined;
+		await enqueueHandoffChange(handoff, changed, ctx);
 	};
 
 	eventUnsubscribes.push(pi.events.on(CONFIG_WATCH_REGISTER, handleRegistration));
@@ -458,15 +529,19 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 	pi.on("session_start", async (event, ctx) => {
 		started = true;
 		currentContext = ctx;
+		awaitingRegistration.clear();
+		awaitingHandoff = undefined;
 		rebuildWatchers(ctx);
 		await processReloadHandoff(event, ctx);
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
+		if (!started) return;
 		currentContext = ctx;
 		await flushPending();
 	});
 	pi.on("agent_settled", async (_event, ctx) => {
+		if (!started) return;
 		currentContext = ctx;
 		await flushPending();
 	});
@@ -474,17 +549,24 @@ export function configReloadExtension(pi: ExtensionAPI, options: ConfigReloadExt
 		if (currentContext) rebuildWatchers(currentContext);
 		return { trusted: "undecided" };
 	});
-	pi.on("session_shutdown", (event) => {
+	pi.on("session_shutdown", async (event) => {
 		const closingContext = currentContext;
 		started = false;
 		currentContext = undefined;
 		closeWatchers();
 		clearCompactionRecheck();
 		clearVetoRecheck();
+		vetoRecheckAttempts = 0;
 		vetoDeferral.reset();
 		cleanupEventListeners();
 		pending.clear();
+		awaitingRegistration.clear();
+		awaitingHandoff = undefined;
+		nextReloadChain = undefined;
 		if (event.reason !== "reload" && closingContext) reloadHandoffs.delete(handoffKey(closingContext));
+		const results = (await Promise.all(watcherClosures.splice(0))).flat();
+		const errors = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+		if (errors.length > 0) throw new AggregateError(errors, "Config watcher shutdown failed");
 	});
 
 	function canRequestReload(ctx: ExtensionContext): boolean {
@@ -753,39 +835,6 @@ function literalFilterNames(filterGlobs: readonly string[] | undefined): string[
 	return literalNames.length > 0 ? literalNames : undefined;
 }
 
-function groupChangedPaths(paths: readonly string[], targets: readonly ActiveTarget[]): Map<string, string[]> {
-	const groups = new Map<string, string[]>();
-	for (const path of paths) {
-		let matched = false;
-		for (const activeTarget of targets) {
-			if (!targetMatchesPath(activeTarget.target, path)) continue;
-			const group = groups.get(activeTarget.registrationId) ?? [];
-			if (!group.includes(path)) group.push(path);
-			groups.set(activeTarget.registrationId, group);
-			matched = true;
-		}
-		if (!matched) {
-			const group = groups.get(BUILTIN_REGISTRATION_ID) ?? [];
-			group.push(path);
-			groups.set(BUILTIN_REGISTRATION_ID, group);
-		}
-	}
-	return groups;
-}
-
-function targetMatchesPath(target: WatchTarget, path: string): boolean {
-	const relativePath = relative(resolve(target.path), resolve(path));
-	if (relativePath === ".." || relativePath.startsWith(`..${sep}`)) return false;
-	if (target.kind === "dir" && relativePath.includes(sep)) return false;
-	if (
-		target.allowList &&
-		!target.allowList.some((allowed) => relativePath === allowed || relativePath.startsWith(`${allowed}${sep}`))
-	) {
-		return false;
-	}
-	return target.filter?.(relativePath) ?? true;
-}
-
 function excludeSelfWrites(
 	paths: readonly string[],
 	engine: ConfigReloadWatchEngine | undefined,
@@ -934,6 +983,23 @@ function pendingChanges(pending: ReadonlyMap<string, PendingChange>): Array<{
 		registrationId: change.registrationId,
 		paths: [...change.paths].sort(),
 	}));
+}
+
+function compareHandoffSnapshots(
+	previousHashes: ReadonlyMap<string, string>,
+	next: ReadonlyMap<string, string>,
+): { readonly changed: string[]; readonly awaiting: ReadonlyMap<string, string> } {
+	const changed = new Set<string>();
+	const awaiting = new Map<string, string>();
+	for (const [path, hash] of next) {
+		if (previousHashes.get(path) !== hash) changed.add(path);
+	}
+	for (const [path, hash] of previousHashes) {
+		if (next.has(path)) continue;
+		if (existsSync(path)) awaiting.set(path, hash);
+		else changed.add(path);
+	}
+	return { changed: [...changed].sort(), awaiting };
 }
 
 function compareSnapshots(previous: ReadonlyMap<string, string>, next: ReadonlyMap<string, string>): string[] {

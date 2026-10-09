@@ -3,6 +3,7 @@ const SYMBOLS: Readonly<Record<string, string>> = {
 	"\\alpha": "α",
 	"\\approx": "≈",
 	"\\beta": "β",
+	"\\bowtie": "⋈",
 	"\\cdot": "·",
 	"\\chi": "χ",
 	"\\Delta": "Δ",
@@ -13,6 +14,7 @@ const SYMBOLS: Readonly<Record<string, string>> = {
 	"\\eta": "η",
 	"\\exists": "∃",
 	"\\forall": "∀",
+	"\\fullouterjoin": "⟗",
 	"\\Gamma": "Γ",
 	"\\gamma": "γ",
 	"\\ge": "≥",
@@ -21,13 +23,16 @@ const SYMBOLS: Readonly<Record<string, string>> = {
 	"\\infty": "∞",
 	"\\int": "∫",
 	"\\iota": "ι",
+	"\\Join": "⋈",
 	"\\kappa": "κ",
 	"\\Lambda": "Λ",
 	"\\lambda": "λ",
 	"\\le": "≤",
 	"\\leftarrow": "←",
+	"\\leftouterjoin": "⟕",
 	"\\leftrightarrow": "↔",
 	"\\leq": "≤",
+	"\\ltimes": "⋉",
 	"\\mu": "μ",
 	"\\nabla": "∇",
 	"\\ne": "≠",
@@ -49,6 +54,8 @@ const SYMBOLS: Readonly<Record<string, string>> = {
 	"\\psi": "ψ",
 	"\\rho": "ρ",
 	"\\rightarrow": "→",
+	"\\rightouterjoin": "⟖",
+	"\\rtimes": "⋊",
 	"\\Sigma": "Σ",
 	"\\sigma": "σ",
 	"\\sim": "∼",
@@ -130,6 +137,7 @@ const MAX_FORMULA_LENGTH = 4096;
 const MAX_NESTING_DEPTH = 64;
 const LEADING_COMBINING_MARK_REGEX = /^\p{Mark}/u;
 const STYLE_COMMANDS = new Set(["\\mathrm", "\\mathbf", "\\mathit", "\\text", "\\operatorname"]);
+const FONT_SWITCH_COMMANDS = new Set(["\\bf", "\\cal", "\\it", "\\rm", "\\sf", "\\sl", "\\tt"]);
 
 const scriptText = (text: string, alphabet: Readonly<Record<string, string>>): string | undefined => {
 	let output = "";
@@ -210,6 +218,10 @@ class LatexParser {
 		const command = `\\${this.input.slice(start, this.index)}`;
 		const symbol = SYMBOLS[command];
 		if (symbol !== undefined) return symbol;
+		if (FONT_SWITCH_COMMANDS.has(command)) {
+			this.skipSpaces();
+			return "";
+		}
 		if (STYLE_COMMANDS.has(command)) {
 			this.skipSpaces();
 			return this.input[this.index] === "{" ? this.parseGroup(depth) : command;

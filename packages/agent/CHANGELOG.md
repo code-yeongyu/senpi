@@ -12,6 +12,1100 @@
 
 ### Removed
 
+## [2026.10.10-11] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- On Windows, `NodeExecutionEnv` stops a command's process tree without `taskkill /T`: the tree is computed from creation times and each process is ended by pid, so an older, unrelated process holding a recycled parent pid is never killed ([#2999](https://github.com/code-yeongyu/senpi/issues/2999)).
+
+### Removed
+
+## [2026.10.10-10] - 2026-10-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-9] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-8] - 2026-10-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Terminal assistant messages preserve a structural retry diagnostic when request preparation fails on transient OAuth refresh ([#2893](https://github.com/code-yeongyu/senpi/issues/2893)).
+
+### Removed
+
+## [2026.10.10-6] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-5] - 2026-10-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-4] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-3] - 2026-10-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10-2] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.10] - 2026-10-05
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.9] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.8] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.7] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.6] - 2026-10-04
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.5] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.4] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.3] - 2026-10-03
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.2] - 2026-10-02
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- In `one-at-a-time` follow-up and steering modes, consecutive queued non-user messages (custom notices) are delivered together in one turn; user messages are still delivered one per turn and in order ([#2508](https://github.com/code-yeongyu/senpi/issues/2508)).
+
+### Removed
+
+## [2026.10.1-3] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1-2] - 2026-10-01
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.1] - 2026-10-01
+
+### Breaking Changes
+
+- Removed the inherited `AgentOptions.shouldStopAfterTurn` and `AgentLoopConfig.shouldStopAfterTurn`. Use `finishTurn` and return `{ action: "end" }` to stop after the completed turn. `finishTurn` runs after the assistant message and every tool result are finalized and before `turn_end`, and its decision applies after `turn_end`. It also runs for error and aborted responses, which stay hard exits, so guard them to keep the old normal-response-only behavior:
+
+  ```ts
+  finishTurn: async (turn, signal) => {
+    if (turn.message.stopReason === "error" || turn.message.stopReason === "aborted") return;
+    return (await shouldStop(turn, signal)) ? { action: "end" } : undefined;
+  },
+  ```
+
+- The inherited `StreamFn` now receives the branded `TranscriptContext` instead of `Context`, so custom stream functions find the system prompt as the leading system message of `context.messages` (read it with `getCurrentSystemPrompt()`) because there is no `systemPrompt` field.
+
+### Added
+
+- Added the inherited `prepareRequest` hook, which runs before every provider request, including the first. Return `{ context: { ...context, messages: persistedMessages } }` to install canonical context after already-selected input is emitted, without another queue poll.
+
+- Added the inherited `finishTurn` hook. Return `{ action: "end" }` to end a normal run after `turn_end`, `undefined` to keep normal scheduling, or `{ action: "continue" }` to make sure one more provider request happens.
+
+- Added the inherited `Agent.peekQueuedMessages()`, which previews the next queue-selected batch without consuming it.
+
+- Added the inherited `onProviderStreamEvent` agent option, passed to provider streams so callers can observe parsed provider events before normalization ([#9784](https://github.com/earendil-works/pi/issues/9784), [#9901](https://github.com/earendil-works/pi/pull/9901) by [@davidbrai](https://github.com/davidbrai)).
+
+- The agent loop records the requested thinking level as `thinkingLevel` on each assistant message (inherited).
+
+### Changed
+
+### Fixed
+
+- Fixed inherited harness reads misclassifying text files that begin with `GIF` as images ([#9755](https://github.com/earendil-works/pi/issues/9755)).
+
+### Removed
+
+## [2026.9.30] - 2026-09-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-5] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Published Node bundles now load their embedded JavaScript tree-sitter grammar for structural reads instead of silently falling back to the heuristic folder. ([#2032](https://github.com/code-yeongyu/senpi/issues/2032))
+
+### Removed
+
+## [2026.9.29-4] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-3] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29-2] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.29] - 2026-09-29
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-7] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-6] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-5] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-4] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-3] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28-2] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.28] - 2026-09-28
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-4] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-3] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+- `AgentState.providerDiagnostic` mirrors the structured provider failure family of the turn that set `errorMessage`, and terminal failure messages synthesized from a thrown provider error keep the diagnostic its adapter attached. ([#2197](https://github.com/code-yeongyu/senpi/issues/2197))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27-2] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.27] - 2026-09-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.26] - 2026-09-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.25] - 2026-09-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.24-3] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.24-2] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+- `AgentState.declaredTools` / `AgentContext.declaredTools`: a superset of the active tools to declare to models that accept an allowed-tools restriction. The provider receives the declared tools plus `activeToolNames`; calls still resolve against the active tools only. ([#2095](https://github.com/code-yeongyu/senpi/issues/2095))
+
+### Changed
+
+### Fixed
+
+- Tool-call name correction is more lenient about case and namespaces. A call resolves to the single matching registered tool when it differs only by a recased full name (`MCP__srv__tool` for `mcp__srv__Tool`), a namespace whose id contains underscores (`mcp__my_server__Memory` for `memory`), or a missing namespace the registered tool carries (`create_issue` for `mcp_github_create_issue`). Names that match more than one tool still fail. ([#2111](https://github.com/code-yeongyu/senpi/issues/2111))
+- A tool call whose `mcp__<id>__` gateway namespace prefix is capitalized, such as `Mcp__686f__Eval` or `MCP__686f__Eval`, now resolves to the unique registered tool the same way `mcp__686f__Eval` does, instead of failing with `Tool <name> not found`. Replayed native tool-search references with a capitalized prefix fold onto the request's tools the same way. ([#2104](https://github.com/code-yeongyu/senpi/issues/2104))
+
+### Removed
+
+## [2026.9.24] - 2026-09-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-5] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `tool_execution_start` names the tool a call resolves to, matching `tool_execution_end` and the tool result, and the `[auto-corrected]` tool-name notice is a model-only text part. ([#2064](https://github.com/code-yeongyu/senpi/issues/2064))
+
+### Removed
+
+## [2026.9.23-4] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-3] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.23-2] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool call whose name differs from a registered tool only by a `mcp__<id>__` gateway namespace, letter case, or `-`/`_` separators now runs that tool when exactly one tool matches, instead of failing with `Tool <name> not found`. Hooks, events and the tool result carry the registered name, and the result starts with an `[auto-corrected]` note. Ambiguous names still fail. ([#2025](https://github.com/code-yeongyu/senpi/issues/2025))
+
+### Removed
+
+## [2026.9.23] - 2026-09-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-4] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-3] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.22-2] - 2026-09-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Preparing a tool call's arguments no longer rewrites the assistant message the model actually produced. Shims that normalize in place — the `eval` run summary clamp and the `edit` tool's `edits` coercion — now run against a detached copy. On the `claude-sdk-oauth` lane this removes the dominant cause of `Session continuity lost - resent the full conversation (assistant_rewritten)`, where a clamped summary made an otherwise unchanged turn look rewritten and forced a full-history re-send. ([#1472](https://github.com/code-yeongyu/senpi/issues/1472))
+
+### Removed
+
+## [2026.9.22] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.21-2] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the test runner to Vitest 5.0.1 and V8 coverage to @vitest/coverage-v8 5.0.1, and migrated session timing benchmarks to the new benchmark API. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+
+### Fixed
+
+### Removed
+
+## [2026.9.21] - 2026-09-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Updated the bundled dependencies: typebox 1.3.27 -> 1.3.34, ignore 7.0.8 -> 7.0.9 and yaml 2.9.0 -> 2.9.1. ([#1895](https://github.com/code-yeongyu/senpi/issues/1895))
+
+### Fixed
+
+### Removed
+
+## [2026.9.20] - 2026-09-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.19-2] - 2026-09-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.19] - 2026-09-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-6] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-5] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-4] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-3] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18-2] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.18] - 2026-09-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.17-4] - 2026-09-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.17-3] - 2026-09-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.17-2] - 2026-09-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.17] - 2026-09-17
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.16-3] - 2026-09-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.16-2] - 2026-09-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.16] - 2026-09-16
+
+### Breaking Changes
+
+### Added
+
+- Added structural read folders and a segmented read view, exported as `selectedReadFolder`, `createDefaultReadSummary`, `createSegmentedReadView` and the `ReadFolder` type. A folder is a pure, synchronous lexer over TS/JS/JSON that marks foldable interiors (bodies of four or more lines, comments of six or more) and refuses any fold that overlaps a declaration header: class heritage, decorators, parameter lists, return types, arrow-return object types, computed member names, destructuring targets and nested declaration headers stay visible, and class bodies made only of fields, static blocks or accessors are never folded. Ambiguous lexical input (unproved type-operator or angle syntax, unclosed literals, unicode-set regexes) yields `parse_failure` instead of a partial fold. The view keeps exact source slices, inserts an ellipsis line per elision and lists numeric `offset`/`limit` rereads in its footer; it unfolds breadth-first until 50 source lines are visible and returns `no_summary` for inputs under 100 lines, oversized skeletons or views with no byte saving. No parser runtime, WASM or subprocess is added ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+
+### Changed
+
+- Default `read` calls on eligible `.json` files now return the structural view. TypeScript and JavaScript stay raw: the measured candidate missed the required median saving for both, so only JSON is selected in the frozen `READ_FOLDER_SELECTION`. Explicit `offset`/`limit` requests, truncated input, markdown and `.txt` keep the verbatim path. `createReadTool()` with no options uses `selectedReadFolder`; passing an options object without `folder` reads raw, and a custom folder can be injected. The tool also honors an abort that arrives while the file bytes are being read ([#1639](https://github.com/code-yeongyu/senpi/issues/1639)).
+
+### Fixed
+
+- The empty-assistant recovery wrapper (`withEmptyAssistantRecovery`) no longer withholds a wrapped model's thinking until its first visible text or tool call. The attempt now starts forwarding on the first meaningful content event (a non-blank `thinking_delta`, a visible `text_delta`, `toolcall_start`, or a `text_end`/`thinking_end` with content), so reasoning streams live and the assistant `message_start` reaches subscribers when the provider's `start` event does. The Kimi XTML lane is the one exception: its thinking channel is where misrouted text tool calls land and `recoverKimiXtmlThinking` only rewrites the finished message, so a leaked protocol fragment forwarded live could not be retracted; that lane keeps the buffered contract. An attempt that never forwarded anything keeps the existing silent retry and bounded "twice" errors. An attempt that had already forwarded reasoning and then stopped empty (or reported `tool_use` without a tool call) is no longer replayed inside the stream; it ends as a retryable `error` that keeps the streamed content and carries the `empty_assistant_response_recovery` / `empty_tool_use_response_recovery` diagnostic with `{ retries: 0, forwarded: true }`, and the session's turn retry re-requests it ([#1733](https://github.com/code-yeongyu/senpi/issues/1733)).
+
+### Removed
+
+## [2026.9.15-2] - 2026-09-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.15] - 2026-09-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.13-2] - 2026-09-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `convertToLlm` still drops failed assistant turns, but `dropFailedAssistantTurns` is imported from `@earendil-works/pi-ai/utils/drop-failed-assistant-turns` so the `./harness/session` entry stays off the AI barrel.
+
+### Removed
+
+## [2026.9.13] - 2026-09-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.12-3] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+- Removed the withdrawn manual-drive configuration, action inspection methods, action outcomes, and snapshot action field from `AgentHarness`; the harness now runs on upstream's runtime/drive generation.
+
+## [2026.9.12-2] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.12] - 2026-09-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.11] - 2026-09-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.10-2] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.10] - 2026-09-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A tool result returned with `isError: true` is now treated as a tool error: `tool_execution_end.isError` and the `toolResult` message carry the flag while `content` and `details` stay intact, so structured failures (team, memory, terminal tools) render and report as failures instead of successes. `AgentToolResult` declares the optional `isError` field.
+
+### Removed
+
+## [2026.9.9-2] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.9] - 2026-09-09
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.8] - 2026-09-08
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Recover a provider response that reports the `tool_use` stop reason while carrying no tool-call block. The turn is retried once on models that already use stream recovery, and the contradictory terminal state is demoted to a coherent stop for every model, so a lost tool call no longer ends the turn silently.
+
+### Removed
+
+## [2026.9.7-2] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.7] - 2026-09-07
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.9.6] - 2026-09-06
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.9.5-3] - 2026-09-05
 
 ### Breaking Changes

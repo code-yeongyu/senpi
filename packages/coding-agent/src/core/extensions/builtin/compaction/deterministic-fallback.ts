@@ -1,5 +1,11 @@
+import { stripTurnRetrySuppressionPrefix } from "@earendil-works/pi-ai";
 import { type CompactionPreparation, type CompactionResult, estimateTokens } from "../../../compaction/index.ts";
-import { StreamDurationBudgetError, StreamIdleTimeoutError } from "../../../compaction/stream-watchdog.ts";
+import {
+	StreamDurationBudgetError,
+	StreamIdleTimeoutError,
+	SummarizationTotalBudgetError,
+} from "../../../compaction/stream-watchdog.ts";
+import { CredentialFailoverError, TURN_RETRY_SUPPRESSION_PREFIX } from "../../../credential-pool/failover.ts";
 import { filterContextExcludedMessages } from "../../../messages.ts";
 import {
 	buildSessionContext,
@@ -7,6 +13,7 @@ import {
 	getSessionContextEntryId,
 	type SessionEntry,
 } from "../../../session-manager.ts";
+import { markFailedTurnFragments } from "./fallback-failed-turn-normalization.ts";
 import { SummarizationOverflowExhaustedError } from "./overflow-retry.ts";
 import { resolveEffectiveReserveTokens } from "./policy.ts";
 import { hasUnsafeRetainedContent } from "./retained-message-safety.ts";
@@ -15,6 +22,7 @@ import { capUtf8Bytes } from "./task-intent.ts";
 
 export type RequiredCompactionFallbackFailure =
 	| "summarization-timeout"
+	| "summarization-provider-failure"
 	| "upstream-stream-truncated"
 	| "summarization-overflow-exhausted"
 	| "summarization-empty-summary";
@@ -37,13 +45,62 @@ interface DeterministicFallbackDetails {
 	origin: "required-compaction-recovery";
 	failureKind: RequiredCompactionFallbackFailure;
 	taskIntent?: string;
-	retainedSuffix?: "prepared" | "latest-user-turn" | "earlier-safe-boundary";
+	retainedSuffix?: "prepared" | "latest-user-turn" | "earlier-safe-boundary" | "later-safe-boundary";
 }
 
 export interface DeterministicFallbackDiagnostic {
 	rejectionReason?: DeterministicFallbackRejectionReason;
+	candidateRejections?: Array<{
+		firstKeptEntryId: string;
+		rejectionReason: DeterministicFallbackRejectionReason;
+		estimatedTokens?: number;
+		unsafeMessageIndex?: number;
+		unsafeEntryId?: string;
+		unsafeMessageRole?: string;
+	}>;
 	candidatesChecked?: number;
 	budgetExceeded?: boolean;
+	contextWindow?: number;
+	reserveTokens?: number;
+	budgetTokens?: number;
+}
+
+export function formatRequiredCompactionFallbackRejection(diagnostics: DeterministicFallbackDiagnostic): string {
+	const candidate = diagnostics.candidateRejections?.at(-1);
+	const reason = diagnostics.rejectionReason ?? "context-reconstruction-failed";
+	const recovery: Record<DeterministicFallbackRejectionReason, string> = {
+		"retained-token-budget-exceeded":
+			"The retained turn exceeds the usable context. Select a model with a larger context and run /compact, or start a new session with an explicit checkpoint.",
+		"atomic-tool-chain-cut":
+			"The retained tool calls and results do not form complete pairs. Finish the pending tool operation before /compact; if the transcript is damaged, start a new session with an explicit checkpoint.",
+		"unsafe-retained-content":
+			"The retained message cannot be replayed safely. Inspect the identified entry; start a new session with an explicit checkpoint if it cannot be repaired.",
+		"missing-preparation-boundary":
+			"The prepared boundary is absent from the branch. Reload the session and run /compact.",
+		"context-reconstruction-failed":
+			"The retained context could not be reconstructed. Reload the session and run /compact.",
+	};
+	const diagnostic = {
+		rejectionReason: reason,
+		contextWindow: diagnostics.contextWindow,
+		reserveTokens: diagnostics.reserveTokens,
+		budgetTokens: diagnostics.budgetTokens,
+		budgetExceeded: diagnostics.budgetExceeded ?? false,
+		candidatesChecked: diagnostics.candidatesChecked ?? 0,
+		...(candidate
+			? {
+					candidate: {
+						...candidate,
+						firstKeptEntryId: capUtf8Bytes(candidate.firstKeptEntryId, 128),
+						...(candidate.unsafeEntryId ? { unsafeEntryId: capUtf8Bytes(candidate.unsafeEntryId, 128) } : {}),
+						...(candidate.unsafeMessageRole
+							? { unsafeMessageRole: capUtf8Bytes(candidate.unsafeMessageRole, 32) }
+							: {}),
+					},
+				}
+			: {}),
+	};
+	return `deterministic compaction fallback could not retain a safe suffix\n${JSON.stringify(diagnostic)}\n${recovery[reason]} The original transcript has not been changed.`;
 }
 
 const NON_VISIBLE_USER_TEXT = /[\p{White_Space}\p{Default_Ignorable_Code_Point}]/gu;
@@ -53,7 +110,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function hasMeaningfulUserText(entry: SessionEntry): boolean {
-	if (entry.type !== "message" || !isRecord(entry.message) || entry.message.role !== "user") return false;
+	if (entry.type !== "message" || typeof entry.message !== "object" || entry.message === null) return false;
+	if (entry.message.role !== "user") return false;
 	const content = entry.message.content;
 	const hasVisibleText = (text: unknown): boolean =>
 		typeof text === "string" && text.normalize("NFKC").replace(NON_VISIBLE_USER_TEXT, "").length > 0;
@@ -90,10 +148,40 @@ function isSafeBoundedValue(value: unknown, seen = new Set<object>(), depth = 0)
 	return true;
 }
 
+/**
+ * A provider or credential fault that ended the summary stream with no usable
+ * summary and no cheaper recovery left.
+ *
+ * Credential rotation rethrows EVERY terminal outcome as `CredentialFailoverError`,
+ * and once any event past `start` reached the caller it prepends the
+ * `senpi:no-turn-retry:` marker so the session layer never replays a partially
+ * delivered turn. That marker also disables session retry and model fallback, so
+ * before #1741 such an error left required compaction with no recovery at all:
+ * it applied no summary, authorized no fallback, and repeated identically on the
+ * next prompt because the context stayed above the threshold. Single-key
+ * providers have no rotation wrapper and surface the same outage as a
+ * non-transient `SummaryRequestError`, so the authorization keys on the outcome
+ * ("the summary stream is dead") rather than on the marker alone.
+ *
+ * Deliberately NOT authorized: user aborts (they resolve `undefined` upstream),
+ * policy refusals (reducing context would not make the model comply), missing
+ * credentials (a configuration fault with an actionable message), and ordinary
+ * bugs - destructive context reduction must never be a bug's recovery path.
+ */
+function isTerminalSummarizationProviderFailure(error: unknown): boolean {
+	if (error instanceof CredentialFailoverError) return true;
+	if (error instanceof Error && error.message.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return true;
+	return error instanceof SummaryRequestError && !error.transient && !error.refused && error.failureKind === undefined;
+}
+
 export function classifyRequiredCompactionFallbackFailure(
 	error: unknown,
 ): RequiredCompactionFallbackFailure | undefined {
-	if (error instanceof StreamDurationBudgetError || error instanceof StreamIdleTimeoutError) {
+	if (
+		error instanceof StreamDurationBudgetError ||
+		error instanceof StreamIdleTimeoutError ||
+		error instanceof SummarizationTotalBudgetError
+	) {
 		return "summarization-timeout";
 	}
 	if (error instanceof SummaryRequestError && error.transient && error.failureKind === "upstream-stream-truncated") {
@@ -105,7 +193,40 @@ export function classifyRequiredCompactionFallbackFailure(
 	if (error instanceof SummaryGenerationError && error.kind === "empty-summary") {
 		return "summarization-empty-summary";
 	}
+	if (isTerminalSummarizationProviderFailure(error)) {
+		return "summarization-provider-failure";
+	}
 	return undefined;
+}
+
+export { stripTurnRetrySuppressionPrefix };
+
+const FALLBACK_FAILURE_CAUSE: Record<RequiredCompactionFallbackFailure, string> = {
+	"summarization-timeout": "the summary stream ran out of its time budget",
+	"summarization-provider-failure": "the provider ended the summary stream with an error",
+	"upstream-stream-truncated": "the provider truncated the summary stream",
+	"summarization-overflow-exhausted": "the summary input stayed over the provider's context limit",
+	"summarization-empty-summary": "the provider returned no summary text",
+};
+
+/**
+ * What the user is told when a required compaction recovered through the
+ * deterministic checkpoint. States the outcome plainly and never carries the
+ * internal retry-suppression marker.
+ */
+export function formatRequiredCompactionFallbackNotice(
+	failureKind: RequiredCompactionFallbackFailure,
+	cause?: unknown,
+): string {
+	const detail = cause instanceof Error ? stripTurnRetrySuppressionPrefix(cause.message).trim() : "";
+	return [
+		`Compaction could not complete a provider summary: ${FALLBACK_FAILURE_CAUSE[failureKind]}.`,
+		"A deterministic checkpoint was applied and older transcript detail was dropped, so it is safe to continue.",
+		detail ? `Provider reported: ${capUtf8Bytes(detail, 512)}.` : "",
+		"Run /compact on a different model for a richer summary.",
+	]
+		.filter((part) => part.length > 0)
+		.join(" ");
 }
 
 export function createRequiredCompactionFallback(
@@ -116,9 +237,18 @@ export function createRequiredCompactionFallback(
 	branchEntries: SessionEntry[] = [],
 	diagnostics?: DeterministicFallbackDiagnostic,
 ): CompactionResult<DeterministicFallbackDetails> | undefined {
+	const reserveTokens = resolveEffectiveReserveTokens(contextWindow, preparation.settings);
+	const budget = contextWindow - reserveTokens;
 	const preparedBoundaryIndex = branchEntries.findIndex((entry) => entry.id === preparation.firstKeptEntryId);
 	if (!preparation.firstKeptEntryId || preparedBoundaryIndex === -1) {
-		if (diagnostics) diagnostics.rejectionReason = "missing-preparation-boundary";
+		if (diagnostics) {
+			Object.assign(diagnostics, {
+				rejectionReason: "missing-preparation-boundary",
+				contextWindow,
+				reserveTokens,
+				budgetTokens: budget,
+			});
+		}
 		return undefined;
 	}
 
@@ -149,6 +279,7 @@ export function createRequiredCompactionFallback(
 		...(taskIntent ? { taskIntent } : {}),
 	};
 	let candidateCount = 0;
+	let sawUnsafeRetainedContent = false;
 
 	const syntheticCompaction: CompactionEntry = {
 		type: "compaction",
@@ -168,9 +299,23 @@ export function createRequiredCompactionFallback(
 			buildSessionContext([...branchEntries, syntheticCompaction]).messages,
 		);
 	} catch {
-		if (diagnostics) diagnostics.rejectionReason = "context-reconstruction-failed";
+		if (diagnostics) {
+			Object.assign(diagnostics, {
+				rejectionReason: "context-reconstruction-failed",
+				contextWindow,
+				reserveTokens,
+				budgetTokens: budget,
+			});
+		}
 		return undefined;
 	}
+
+	// Evaluate the candidate the provider would actually receive: `convertToLlm`
+	// drops failed/aborted assistant turns (and their orphaned tool results) before
+	// every request, so their dangling toolCall blocks are neither incomplete calls
+	// nor retained tokens here. Raw session history stays untouched - this mask is
+	// local to the fallback projection (code-yeongyu/oh-my-openagent#7921).
+	const droppedByFailedTurnNormalization = markFailedTurnFragments(projectedMessages);
 
 	const messageIndexesByEntryId = new Map<string, number>();
 	for (const [index, message] of projectedMessages.entries()) {
@@ -179,27 +324,51 @@ export function createRequiredCompactionFallback(
 	}
 	const summaryIndex = messageIndexesByEntryId.get(syntheticCompaction.id);
 	const unsafeSuffix = new Array(projectedMessages.length + 1).fill(false);
+	const unsafeIndexSuffix = new Int32Array(projectedMessages.length + 1).fill(-1);
 	const tokenSuffix = new Array(projectedMessages.length + 1).fill(0);
-	const toolCalls = new Map<string, { indexes: number[]; incomplete: boolean }>();
+	const toolCalls = new Map<string, { indexes: number[]; newestIncomplete: boolean }>();
 	const toolResults = new Map<string, number[]>();
 	for (let index = projectedMessages.length - 1; index >= 0; index--) {
 		const message = projectedMessages[index];
 		tokenSuffix[index] = tokenSuffix[index + 1];
+		unsafeIndexSuffix[index] = unsafeIndexSuffix[index + 1];
+		if (droppedByFailedTurnNormalization[index]) {
+			unsafeSuffix[index] = unsafeSuffix[index + 1];
+			continue;
+		}
 		let messageUnsafe = false;
 		let serialized: string | undefined;
 		try {
 			messageUnsafe = hasUnsafeRetainedContent([message]);
-			serialized = isSafeBoundedValue(message) ? JSON.stringify(message) : undefined;
+			const bounded = isSafeBoundedValue(message);
+			messageUnsafe ||= !bounded;
+			let imageTokens = 0;
+			if (!messageUnsafe && message.role === "toolResult") {
+				const content = message.content.map((block) => {
+					if (block.type !== "image") return block;
+					imageTokens += estimateTokens({ ...message, content: [block] });
+					return { ...block, data: "" };
+				});
+				serialized = JSON.stringify({ ...message, content });
+			} else {
+				serialized = bounded ? JSON.stringify(message) : undefined;
+			}
+			// Apply the shared weighted chars/4 estimator to the envelope too.
+			// Storage bytes are not tokens; opaque text and image costs still count.
 			tokenSuffix[index] +=
 				serialized === undefined
 					? Number.POSITIVE_INFINITY
-					: Math.max(estimateTokens(message), Buffer.byteLength(serialized));
+					: Math.max(
+							estimateTokens(message),
+							estimateTokens({ role: "user", content: serialized, timestamp: 0 }) + imageTokens,
+						);
 		} catch {
 			messageUnsafe = true;
 			tokenSuffix[index] = Number.POSITIVE_INFINITY;
 		}
 		unsafeSuffix[index] = unsafeSuffix[index + 1] || messageUnsafe;
-		if (!isRecord(message)) continue;
+		if (messageUnsafe) unsafeIndexSuffix[index] = index;
+		if (typeof message !== "object" || message === null) continue;
 		if (message.role === "toolResult" && typeof message.toolCallId === "string") {
 			const indexes = toolResults.get(message.toolCallId) ?? [];
 			indexes.push(index);
@@ -207,9 +376,8 @@ export function createRequiredCompactionFallback(
 		} else if (message.role === "assistant" && Array.isArray(message.content)) {
 			for (const block of message.content) {
 				if (!isRecord(block) || block.type !== "toolCall" || typeof block.id !== "string") continue;
-				const call = toolCalls.get(block.id) ?? { indexes: [], incomplete: false };
+				const call = toolCalls.get(block.id) ?? { indexes: [], newestIncomplete: block.incomplete === true };
 				call.indexes.push(index);
-				call.incomplete ||= block.incomplete === true;
 				toolCalls.set(block.id, call);
 			}
 		}
@@ -224,15 +392,20 @@ export function createRequiredCompactionFallback(
 	};
 	for (const [id, call] of toolCalls) {
 		const results = toolResults.get(id) ?? [];
-		if (call.indexes.length !== 1 || results.length !== 1) {
+		if (results.length === 0) {
 			markInvalidRange(0, Math.max(call.indexes[0] ?? -1, results[0] ?? -1) + 1);
 			continue;
 		}
 		const callIndex = call.indexes[0];
 		const resultIndex = results[0];
-		if (call.incomplete) markInvalidRange(0, Math.max(callIndex, resultIndex) + 1);
-		else if (callIndex < resultIndex) markInvalidRange(callIndex + 1, resultIndex + 1);
-		else markInvalidRange(0, Math.max(callIndex, resultIndex) + 1);
+		// Indexes are newest-first. Older duplicate IDs matter only while retained;
+		// dropping an entire historical pair leaves the newest pair valid.
+		markInvalidRange(0, Math.max(call.indexes[1] ?? -1, results[1] ?? -1) + 1);
+		if (call.newestIncomplete || callIndex >= resultIndex) {
+			markInvalidRange(0, Math.max(callIndex, resultIndex) + 1);
+		} else {
+			markInvalidRange(callIndex + 1, resultIndex + 1);
+		}
 	}
 	for (const [id, results] of toolResults) {
 		if (toolCalls.has(id)) continue;
@@ -251,6 +424,23 @@ export function createRequiredCompactionFallback(
 	): CompactionResult<DeterministicFallbackDetails> | undefined => {
 		candidateCount++;
 		const details = { ...baseDetails, retainedSuffix };
+		const reject = (
+			rejectionReason: DeterministicFallbackRejectionReason,
+			detail: Omit<
+				NonNullable<DeterministicFallbackDiagnostic["candidateRejections"]>[number],
+				"firstKeptEntryId" | "rejectionReason"
+			> = {},
+		): undefined => {
+			if (diagnostics) {
+				diagnostics.rejectionReason = rejectionReason;
+				diagnostics.contextWindow = contextWindow;
+				diagnostics.reserveTokens = reserveTokens;
+				diagnostics.budgetTokens = budget;
+				diagnostics.candidateRejections ??= [];
+				diagnostics.candidateRejections.push({ firstKeptEntryId, rejectionReason, ...detail });
+			}
+			return undefined;
+		};
 		const result: CompactionResult<DeterministicFallbackDetails> = {
 			summary,
 			firstKeptEntryId,
@@ -258,36 +448,36 @@ export function createRequiredCompactionFallback(
 			details,
 		};
 		const startIndex = messageIndexesByEntryId.get(firstKeptEntryId);
-		if (startIndex === undefined) {
-			if (diagnostics) diagnostics.rejectionReason = "context-reconstruction-failed";
-			return undefined;
-		}
+		if (startIndex === undefined) return reject("context-reconstruction-failed");
 		const retainedStart = Math.min(startIndex, projectedMessages.length);
 		if (unsafeSuffix[retainedStart]) {
-			if (diagnostics) diagnostics.rejectionReason = "unsafe-retained-content";
-			return undefined;
+			sawUnsafeRetainedContent = true;
+			const unsafeMessageIndex = unsafeIndexSuffix[retainedStart];
+			const unsafeMessage = projectedMessages[unsafeMessageIndex];
+			return reject("unsafe-retained-content", {
+				unsafeMessageIndex,
+				unsafeEntryId: getSessionContextEntryId(unsafeMessage),
+				unsafeMessageRole: unsafeMessage.role,
+			});
 		}
-		if (!toolChainValidAt[retainedStart]) {
-			if (diagnostics) diagnostics.rejectionReason = "atomic-tool-chain-cut";
-			return undefined;
-		}
+		if (!toolChainValidAt[retainedStart]) return reject("atomic-tool-chain-cut");
 		// The hard-limit valve reserves the scaled budget, so accepting against the raw
 		// configured reserve would admit a context that valve immediately compacts again.
-		const budget = contextWindow - resolveEffectiveReserveTokens(contextWindow, preparation.settings);
 		const summaryTokens =
 			summaryIndex === undefined
 				? Number.POSITIVE_INFINITY
 				: Math.max(
 						estimateTokens(projectedMessages[summaryIndex]),
-						Buffer.byteLength(JSON.stringify(projectedMessages[summaryIndex])),
+						estimateTokens({
+							role: "user",
+							content: JSON.stringify(projectedMessages[summaryIndex]),
+							timestamp: 0,
+						}),
 					);
 		const retainedTokens = (tokenSuffix[retainedStart] ?? Number.POSITIVE_INFINITY) + summaryTokens;
 		if (retainedTokens > budget) {
-			if (diagnostics) {
-				diagnostics.rejectionReason = "retained-token-budget-exceeded";
-				diagnostics.budgetExceeded = true;
-			}
-			return undefined;
+			if (diagnostics) diagnostics.budgetExceeded = true;
+			return reject("retained-token-budget-exceeded", { estimatedTokens: retainedTokens });
 		}
 		return { ...result, estimatedTokensAfter: retainedTokens };
 	};
@@ -321,7 +511,35 @@ export function createRequiredCompactionFallback(
 			if (diagnostics) diagnostics.candidatesChecked = candidateCount;
 			return latestUser;
 		}
+		// A steering user message can occur inside a tool chain. Keep that request
+		// and walk back to its declaring assistant instead of orphaning the result.
+		for (let earlierIndex = index - 1; earlierIndex > preparedBoundaryIndex; earlierIndex--) {
+			const earlierEntry = branchEntries[earlierIndex];
+			if (earlierEntry.type === "compaction") break;
+			const earlier = projectCandidate(earlierEntry.id, "earlier-safe-boundary");
+			if (earlier) {
+				if (diagnostics) diagnostics.candidatesChecked = candidateCount;
+				return earlier;
+			}
+		}
 		break;
+	}
+
+	// A split turn can contain an unsafe persisted tool payload after the
+	// prepared boundary and no later user message. Advance to the earliest safe
+	// suffix rather than retaining that payload forever. `projectCandidate`
+	// still rejects orphaned tool results, incomplete call chains, unsafe
+	// content, and over-budget suffixes.
+	if (sawUnsafeRetainedContent) {
+		for (let index = preparedBoundaryIndex + 1; index < branchEntries.length; index++) {
+			const entry = branchEntries[index];
+			if (entry.type === "compaction") continue;
+			const laterSafe = projectCandidate(entry.id, "later-safe-boundary");
+			if (laterSafe) {
+				if (diagnostics) diagnostics.candidatesChecked = candidateCount;
+				return laterSafe;
+			}
+		}
 	}
 
 	if (diagnostics) diagnostics.candidatesChecked = candidateCount;

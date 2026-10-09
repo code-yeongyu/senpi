@@ -1,4 +1,4 @@
-import { Box, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
 import type { CompactionSummaryMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
@@ -45,6 +45,11 @@ export class CompactionSummaryMessageComponent extends Box {
 		this.updateDisplay();
 	}
 
+	/** Rendered entirely by children that this class rebuilds on every state change. */
+	override getRenderRevision(): number | undefined {
+		return this.childRenderRevision();
+	}
+
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
 		this.updateDisplay();
@@ -57,24 +62,25 @@ export class CompactionSummaryMessageComponent extends Box {
 
 	private updateDisplay(): void {
 		this.clear();
+		const content = new Container();
 
 		const tokenStr = this.message.tokensBefore.toLocaleString();
 		const details = formatCompactionDetails(this.message.details);
 		const label = theme.fg("customMessageLabel", `\x1b[1m[compaction]\x1b[22m`);
-		this.addChild(new Text(label, 0, 0));
-		this.addChild(new Spacer(1));
+		content.addChild(new Text(label, 0, 0));
+		content.addChild(new Spacer(1));
 
 		if (this.expanded) {
 			const detailLine = details ? `\n${details}\n\n` : "\n\n";
 			const header = `**Compacted from ${tokenStr} tokens**${detailLine}`;
-			this.addChild(
+			content.addChild(
 				new Markdown(header + sanitizeCompactionSummary(this.message.summary), 0, 0, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),
 				}),
 			);
 		} else {
 			const prefix = details ? `${details}; ` : "";
-			this.addChild(
+			content.addChild(
 				new Text(
 					theme.fg("customMessageText", `${prefix}compacted from ${tokenStr} tokens (`) +
 						theme.fg("dim", keyText("app.tools.expand")) +
@@ -84,5 +90,13 @@ export class CompactionSummaryMessageComponent extends Box {
 				),
 			);
 		}
+
+		this.addChild(
+			new MouseRegion(content, (event) => {
+				if (event.type !== "click" || event.button !== "left") return undefined;
+				this.setExpanded(!this.expanded);
+				return { handled: true };
+			}),
+		);
 	}
 }

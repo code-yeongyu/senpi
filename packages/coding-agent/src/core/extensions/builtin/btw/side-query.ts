@@ -1,10 +1,10 @@
 import type {
+	AssistantMessageEventStream,
 	Context,
 	Message,
 	Model,
 	ProviderHeaders,
 	SimpleStreamOptions,
-	StreamFunction,
 	ThinkingLevel,
 } from "@earendil-works/pi-ai/compat";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
@@ -93,7 +93,8 @@ export interface SideQueryDeps {
 	auth: SideQueryAuth;
 	sessionId: string;
 	thinkingLevel?: ThinkingLevel;
-	streamFn?: StreamFunction;
+	/** Public (untranscribed) stream shape: the session model runtime normalizes the context itself. */
+	streamFn?: (model: Model<any>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	establishmentTimeoutMs?: number;
 }
 

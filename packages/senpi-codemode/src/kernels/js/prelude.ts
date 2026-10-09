@@ -7,9 +7,11 @@ export const JAVASCRIPT_KERNEL_PRELUDE = [
 	"read(path, options?): read UTF-8 text; plain paths use cwd and local:// uses the session local root.",
 	"write(path, content): write UTF-8 or binary data and return the resolved path.",
 	"tool.<name>(args): request a host tool call through the bridge; resolves to { text, images?, details?, hasError? }.",
+	"tool(fn, metadata?): register a named JavaScript function as a fenced kernel tool for in-process children.",
 	"completion(prompt, options?): request a host completion bridge call.",
 	"output(...ids, options?): retrieve task output through the reserved output bridge.",
-	"agent(prompt, options?): delegate work through the reserved agent bridge.",
+	'agent(prompt, options?): delegate work; isolated/apply/merge need a host that supports isolation, otherwise a warning. merge: "patch"/"branch" (false/true aliases). Unapplied foreground changes throw with recovery instructions. Handles return immediately; await the completion notification or read task_output for the isolation result.',
+	"workpool(agent, name, options?): await a host-owned pool adapter with pool_id, push, close, inspect, and cancel; options only accept mode.",
 	"parallel(thunks): run async thunks through the configured bounded pool; preserves order and rethrows the lowest-index error after all settle.",
 	"pipeline(items, ...stages): map items through staged async transforms with a barrier between stages.",
 ].join("\n");

@@ -76,6 +76,18 @@ describe("Claude Fable 5.1 prompt preset", () => {
 		}
 	});
 
+	it("routes user questions through ask_user_question when it is available", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-fable-5-1", "anthropic");
+
+		const preset = resolvePreset(model, settings);
+
+		expect(preset?.prompt).toContain("ask_user_question");
+		expect(preset?.prompt).toContain(
+			"ask after doing everything that does not depend on the answer, through ask_user_question when it is available",
+		);
+	});
+
 	it("allows settings.json to force claude-fable-5-1 regardless of model id", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "claude-fable-5-1" };

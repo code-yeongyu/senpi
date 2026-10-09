@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentToolResult, ExtensionContext } from "@code-yeongyu/senpi";
+import type { AgentToolResult, ExtensionContext, ExtensionToolContext } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it } from "vitest";
 import type { KernelToHostMessage } from "../src/bridge/protocol.ts";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
@@ -85,9 +85,10 @@ async function sessionCwd(): Promise<string> {
 	return cwd;
 }
 
-function wiringContext(cwd: string): ExtensionContext {
+function wiringContext(cwd: string): ExtensionToolContext {
 	const base = fakeExtensionContext();
 	const sessionManager = Object.create(null);
+	sessionManager.getSessionId = (): string => "wiring-test-session";
 	sessionManager.getSessionFile = (): string => join(artifactsRoot, `${crypto.randomUUID()}.jsonl`);
 	return { ...base, cwd, sessionManager };
 }
@@ -117,7 +118,10 @@ describe("eval execution host wiring", () => {
 
 		await tool.execute("wired-cell", { language: "js", code: "42", summary: "wired" }, undefined, undefined, ctx);
 
-		expect(rpcEmissions).toEqual([
+		// The rpc channel also carries wake_source_state transitions; the settle
+		// payload itself must be published exactly once, at metadata detail.
+		const settleEmissions = rpcEmissions.filter((emission) => emission.name === EVAL_EXECUTION_EVENT);
+		expect(settleEmissions).toEqual([
 			{
 				name: EVAL_EXECUTION_EVENT,
 				data: expect.objectContaining({
@@ -127,7 +131,7 @@ describe("eval execution host wiring", () => {
 				}),
 			},
 		]);
-		expect(rpcEmissions[0]?.data).not.toEqual(
+		expect(settleEmissions[0]?.data).not.toEqual(
 			expect.objectContaining({
 				error: expect.anything(),
 				toolCalls: [expect.objectContaining({ args: expect.anything() })],

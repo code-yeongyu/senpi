@@ -1,146 +1,42 @@
 /**
- * The terminal manifest's read side and restore orchestrator: the strict fail-closed
- * parse every persisted manifest must survive, plus `restoreTerminalState`, which
- * replays the manifest after a restart. Each monitor is classified by its durability
- * class and handed to that class's handler; ephemeral monitors and background sessions
- * are always lost, and an expired watch never reaches its handler. Both durable
- * handler slots ship as stubs reporting `lost` — later phases plug the real ones in.
+ * The restore orchestrator: `restoreTerminalState` replays the manifest after a restart. Every
+ * monitor is classified up front (expired, ephemeral with or without time left, durable) and the
+ * durable and still-live ephemeral ones are handed to their kind's handler, all concurrently.
+ * The result carries per-monitor outcomes and reasons, background sessions told apart as still
+ * running or exited, and an upper bound on how long the session was detached.
  */
 
-import { InvalidSidecarStoreError, type SidecarStore, type SidecarStoreRef } from "../../../session-sidecar-store.ts";
-import {
-	type ManifestBackgroundSession,
-	type ManifestMonitor,
-	TERMINAL_MANIFEST_VERSION,
-	type TerminalManifest,
-	type TerminalManifestCheckpoint,
-} from "./terminal-manifest.ts";
+import type { SidecarStore } from "../../../session-sidecar-store.ts";
+import { confirmOwner } from "./orphan-reaper.ts";
+import type { ChildProcessIdentity } from "./process-identity.ts";
+import { sessionActivityBeforeMs } from "./session-activity.ts";
+import type { ManifestBackgroundSession, ManifestMonitor, TerminalManifest } from "./terminal-manifest.ts";
 
-export class InvalidTerminalManifestError extends InvalidSidecarStoreError {
-	constructor(message: string, options?: { cause?: unknown }) {
-		super(message, options);
-		this.name = "InvalidTerminalManifestError";
-	}
-}
+export { InvalidTerminalManifestError, parseTerminalManifest } from "./terminal-manifest-parse.ts";
 
-type Raw = Record<string, unknown>;
-
-const RUNTIME_KINDS = ["command", "file"] as const;
-const DURABILITY_CLASSES = ["ephemeral", "restartable-command", "checkpointed-file"] as const;
-const FILE_EVENTS = ["create", "modify"] as const;
-const isStr = (value: unknown): value is string => typeof value === "string" && value.length > 0;
-const isNum = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
-const isBool = (value: unknown): value is boolean => typeof value === "boolean";
-const isObj = (value: unknown): value is Raw => typeof value === "object" && value !== null && !Array.isArray(value);
-
-function invalid(message: string): never {
-	throw new InvalidTerminalManifestError(`terminal manifest is invalid: ${message}`);
-}
-
-function str(raw: Raw, field: string): string {
-	if (!isStr(raw[field])) invalid(`field ${field} must be a non-empty string`);
-	return raw[field];
-}
-
-function num(raw: Raw, field: string): number {
-	if (!isNum(raw[field])) invalid(`field ${field} must be a finite number`);
-	return raw[field];
-}
-
-function digest(raw: Raw, field: string): string {
-	if (typeof raw[field] !== "string") invalid(`field ${field} must be a string`);
-	return raw[field];
-}
-
-function bool(raw: Raw, field: string): boolean {
-	if (!isBool(raw[field])) invalid(`field ${field} must be a boolean`);
-	return raw[field];
-}
-
-function opt<T>(raw: Raw, field: string, required: (raw: Raw, field: string) => T): T | undefined {
-	return raw[field] === undefined ? undefined : required(raw, field);
-}
-
-function oneOf<T extends string>(values: readonly T[], raw: Raw, field: string): T {
-	const value = raw[field];
-	if (typeof value !== "string" || !values.includes(value as T))
-		invalid(`field ${field} must be one of: ${values.join(", ")}`);
-	return value as T;
-}
-
-function checkpoint(raw: unknown): TerminalManifestCheckpoint {
-	if (!isObj(raw)) invalid("field lastCheckpoint must be an object");
-	return {
-		dev: num(raw, "dev"),
-		ino: num(raw, "ino"),
-		size: num(raw, "size"),
-		mtimeMs: num(raw, "mtimeMs"),
-		// A checkpoint without a digest cannot detect a same-size, same-mtime rewrite, so the field is
-		// required — but an absent file legitimately checkpoints an empty digest, so "" is valid.
-		digest: digest(raw, "digest"),
-		present: bool(raw, "present"),
-	};
-}
-
-function fireWindow(raw: unknown): { startMs: number; count: number } {
-	if (!isObj(raw)) invalid("field fireWindow must be an object");
-	return { startMs: num(raw, "startMs"), count: num(raw, "count") };
-}
-
-function parseMonitor(entry: unknown): ManifestMonitor {
-	if (!isObj(entry)) invalid("a monitor entry must be an object");
-	return {
-		monitorId: str(entry, "monitorId"),
-		sessionId: str(entry, "sessionId"),
-		description: str(entry, "description"),
-		runtimeKind: oneOf(RUNTIME_KINDS, entry, "runtimeKind"),
-		durabilityClass: oneOf(DURABILITY_CLASSES, entry, "durabilityClass"),
-		command: opt(entry, "command", str),
-		path: opt(entry, "path", str),
-		event: opt(entry, "event", (raw, field) => oneOf(FILE_EVENTS, raw, field)),
-		filter: opt(entry, "filter", str),
-		cwd: opt(entry, "cwd", str),
-		approvedParent: opt(entry, "approvedParent", str),
-		createdAt: num(entry, "createdAt"),
-		expiresAt: entry.expiresAt === undefined || entry.expiresAt === null ? null : num(entry, "expiresAt"),
-		persistent: bool(entry, "persistent"),
-		suspended: bool(entry, "suspended"),
-		lastCheckpoint: entry.lastCheckpoint === null ? null : checkpoint(entry.lastCheckpoint),
-		deliveryPaused: bool(entry, "deliveryPaused"),
-		// Unknown keys are ignored by this field-by-field parse, so a manifest written before
-		// `wakeCount` was dropped still reads back cleanly; no version bump is needed.
-		fireWindow: fireWindow(entry.fireWindow),
-	};
-}
-
-function parseBackgroundSession(entry: unknown): ManifestBackgroundSession {
-	if (!isObj(entry)) invalid("a background session entry must be an object");
-	return { id: str(entry, "id"), command: str(entry, "command"), startedAtMs: num(entry, "startedAtMs") };
-}
-
-/** Strict fail-closed domain parse; the sidecar store has already checked version and session. */
-export function parseTerminalManifest(raw: unknown, ref: SidecarStoreRef): TerminalManifest {
-	if (!isObj(raw)) invalid("the payload must be an object");
-	if (!Array.isArray(raw.monitors)) invalid("field monitors must be an array");
-	if (!Array.isArray(raw.backgroundSessions)) invalid("field backgroundSessions must be an array");
-	return {
-		version: TERMINAL_MANIFEST_VERSION,
-		sessionId: ref.sessionId,
-		monitors: raw.monitors.map(parseMonitor),
-		backgroundSessions: raw.backgroundSessions.map(parseBackgroundSession),
-		updatedAt: num(raw, "updatedAt"),
-	};
-}
-
-export type RestoreOutcome = "restored" | "lost" | "muted" | "attachedElsewhere";
+export type RestoreOutcome = "restored" | "lost" | "muted" | "completed" | "attachedElsewhere";
 
 export interface RestoreHandlerResult {
 	readonly outcome: RestoreOutcome;
-	/** Why a durable monitor could not be restored; diagnostic only, never part of the digest counts. */
+	/** Why a monitor could not come back (or what its restore did), shown per monitor in the digest. */
 	readonly reason?: string;
+	/** The watcher a crash left running: killed before the respawn, or left alone when unverifiable. */
+	readonly orphan?: { readonly pid: number; readonly action: "killed" | "unverified" };
+	/** The re-spawned process, so the manifest can find it after the next crash. */
+	readonly runtime?: ChildProcessIdentity;
 }
 
-export type RestoreHandler = (monitor: ManifestMonitor) => RestoreHandlerResult | Promise<RestoreHandlerResult>;
+export interface RestoreContext {
+	/** Upper bound on how long the session was detached (never an exact gap). */
+	readonly downtimeMs: number;
+	/** Time left for an ephemeral watch whose deadline has not passed; undefined for durable ones. */
+	readonly remainingMs?: number;
+}
+
+export type RestoreHandler = (
+	monitor: ManifestMonitor,
+	context: RestoreContext,
+) => RestoreHandlerResult | Promise<RestoreHandlerResult>;
 
 export interface RestoreHandlers {
 	readonly "restartable-command": RestoreHandler;
@@ -168,60 +64,136 @@ export function reapplyPersistedMute(
 	return "muted";
 }
 
-/** Stub durability handlers: every durable monitor is reported lost until later phases land. */
+/** Stub handlers: every monitor is reported lost until a caller plugs the real ones in. */
 export const stubRestoreHandlers: RestoreHandlers = {
-	"restartable-command": () => ({ outcome: "lost" }),
-	"checkpointed-file": () => ({ outcome: "lost" }),
+	"restartable-command": () => ({ outcome: "lost", reason: "no restore handler" }),
+	"checkpointed-file": () => ({ outcome: "lost", reason: "no restore handler" }),
 };
+
+export type MonitorRestoreOutcome = RestoreOutcome | "expired";
+
+export interface MonitorRestoreResult {
+	readonly monitorId: string;
+	readonly description: string;
+	readonly kind: ManifestMonitor["runtimeKind"];
+	readonly outcome: MonitorRestoreOutcome;
+	readonly command?: string;
+	readonly path?: string;
+	readonly reason?: string;
+	readonly orphan?: RestoreHandlerResult["orphan"];
+}
+
+export interface BackgroundRestoreResult {
+	readonly id: string;
+	readonly command: string;
+	readonly outcome: "running" | "exited";
+	readonly pid?: number;
+}
 
 export interface RestoreDigest {
 	restored: number;
 	lost: number;
 	expired: number;
 	muted: number;
+	completed: number;
 	attachedElsewhere: number;
 	storeError: boolean;
+	readonly results: readonly MonitorRestoreResult[];
+	readonly backgroundSessions: readonly BackgroundRestoreResult[];
+	/** Upper bound on how long the session was detached; 0 when nothing was persisted. */
+	readonly downtimeMs: number;
 }
 
 export interface RestoreTerminalStateOptions {
 	readonly manifest: SidecarStore<TerminalManifest>;
 	readonly handlers?: Partial<RestoreHandlers>;
 	readonly now?: () => number;
+	/** The session transcript; its last entry written before this process started bounds the downtime. */
+	readonly sessionFile?: string;
+	readonly processStartedAtMs?: number;
+	readonly isBackgroundAlive?: (session: ManifestBackgroundSession) => Promise<boolean>;
 }
 
-export async function restoreTerminalState(options: RestoreTerminalStateOptions): Promise<RestoreDigest> {
-	const digest: RestoreDigest = {
+function emptyDigest(): RestoreDigest {
+	return {
 		restored: 0,
 		lost: 0,
 		expired: 0,
 		muted: 0,
+		completed: 0,
 		attachedElsewhere: 0,
 		storeError: false,
+		results: [],
+		backgroundSessions: [],
+		downtimeMs: 0,
 	};
+}
+
+async function defaultBackgroundAlive(session: ManifestBackgroundSession): Promise<boolean> {
+	if (session.runtime === undefined) return false;
+	return (await confirmOwner(session.runtime, undefined)) === "confirmed";
+}
+
+function resultFor(monitor: ManifestMonitor, outcome: MonitorRestoreOutcome, handled?: RestoreHandlerResult) {
+	return {
+		monitorId: monitor.monitorId,
+		description: monitor.description,
+		kind: monitor.runtimeKind,
+		outcome,
+		...(monitor.command !== undefined ? { command: monitor.command } : {}),
+		...(monitor.path !== undefined ? { path: monitor.path } : {}),
+		...(handled?.reason !== undefined ? { reason: handled.reason } : {}),
+		...(handled?.orphan !== undefined ? { orphan: handled.orphan } : {}),
+	} satisfies MonitorRestoreResult;
+}
+
+export async function restoreTerminalState(options: RestoreTerminalStateOptions): Promise<RestoreDigest> {
 	let state: TerminalManifest | null;
 	try {
 		state = await options.manifest.read();
 	} catch {
 		// Fail closed: a corrupt or foreign manifest restores nothing and reports the store error.
-		return { ...digest, storeError: true };
+		return { ...emptyDigest(), storeError: true };
 	}
-	if (state === null) return digest;
+	if (state === null) return emptyDigest();
 	const now = (options.now ?? Date.now)();
+	const lastSeen = Math.max(
+		state.updatedAt,
+		(await sessionActivityBeforeMs(options.sessionFile, options.processStartedAtMs ?? now)) ?? 0,
+	);
+	const downtimeMs = Math.max(0, now - lastSeen);
 	const handlers: RestoreHandlers = { ...stubRestoreHandlers, ...options.handlers };
-	for (const monitor of state.monitors) {
-		// At the deadline the entry is already expired: the handler must not see it at all.
-		if (monitor.expiresAt !== null && monitor.expiresAt <= now) {
-			digest.expired += 1;
-			continue;
-		}
-		if (monitor.durabilityClass === "ephemeral") {
-			digest.lost += 1;
-			continue;
-		}
-		const outcome = (await handlers[monitor.durabilityClass](monitor)).outcome;
-		digest[outcome] += 1;
-	}
-	// Background sessions carry no durable identity: every one of them is lost.
-	digest.lost += state.backgroundSessions.length;
+
+	const results = await Promise.all(
+		state.monitors.map(async (monitor): Promise<MonitorRestoreResult> => {
+			// At the deadline the entry is already expired: the handler must not see it at all.
+			if (monitor.expiresAt !== null && monitor.expiresAt <= now) return resultFor(monitor, "expired");
+			if (monitor.durabilityClass === "ephemeral") {
+				if (monitor.deadlineMs === undefined || monitor.deadlineMs <= now) {
+					return resultFor(monitor, "lost", { outcome: "lost", reason: "deadline passed while detached" });
+				}
+				const handler =
+					monitor.runtimeKind === "file" ? handlers["checkpointed-file"] : handlers["restartable-command"];
+				const handled = await handler(monitor, { downtimeMs, remainingMs: monitor.deadlineMs - now });
+				return resultFor(monitor, handled.outcome, handled);
+			}
+			const handled = await handlers[monitor.durabilityClass](monitor, { downtimeMs });
+			return resultFor(monitor, handled.outcome, handled);
+		}),
+	);
+
+	const isAlive = options.isBackgroundAlive ?? defaultBackgroundAlive;
+	const backgroundSessions = await Promise.all(
+		state.backgroundSessions.map(async (session): Promise<BackgroundRestoreResult> => {
+			if (session.runtime !== undefined && (await isAlive(session))) {
+				return { id: session.id, command: session.command, outcome: "running", pid: session.runtime.pid };
+			}
+			return { id: session.id, command: session.command, outcome: "exited" };
+		}),
+	);
+
+	const digest = { ...emptyDigest(), results, backgroundSessions, downtimeMs };
+	for (const result of results) digest[result.outcome] += 1;
+	digest.lost += backgroundSessions.length;
 	return digest;
 }

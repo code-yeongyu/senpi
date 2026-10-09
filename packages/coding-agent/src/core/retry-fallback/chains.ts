@@ -43,10 +43,26 @@ function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
 			typeof registry.hasConfiguredAuth === "function"
 				? (model) => registry.hasConfiguredAuth?.(model) === true
 				: undefined,
-		isFallbackEligible:
-			typeof registry.isFallbackEligible === "function"
-				? (model) => registry.isFallbackEligible?.(model) !== false
-				: undefined,
+		isFallbackEligible: typeof registry.isFallbackEligible === "function" ? memoizedEligibility(registry) : undefined,
+	};
+}
+
+/**
+ * Eligibility is a provider's switch (`fallbackEligible`), read from settings on disk; one
+ * canonicalization pass used to ask it once per catalog model, a 150-450 ms stall on the first
+ * fallback check of a session. Settings cannot change within one synchronous pass, so each
+ * provider is asked once per pass.
+ */
+function memoizedEligibility(registry: {
+	isFallbackEligible?(model: Model<Api>): boolean;
+}): (model: Model<Api>) => boolean {
+	const known = new Map<string, boolean>();
+	return (model) => {
+		const cached = known.get(model.provider);
+		if (cached !== undefined) return cached;
+		const eligible = registry.isFallbackEligible?.(model) !== false;
+		known.set(model.provider, eligible);
+		return eligible;
 	};
 }
 

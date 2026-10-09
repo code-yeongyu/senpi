@@ -52,7 +52,11 @@ type RenderSessionContextThis = {
 		getShowCacheMissNotices(): boolean;
 	};
 	sessionManager: { getCwd(): string; getEntries(): SessionEntry[] };
-	session: { retryAttempt: number; modelRegistry: { find(provider: string, modelId: string): undefined } };
+	session: {
+		retryAttempt: number;
+		modelRegistry: { find(provider: string, modelId: string): undefined };
+		resolveToolCallName(requested: string): string;
+	};
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
 	chrome: undefined;
@@ -89,7 +93,11 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 			getShowCacheMissNotices: () => false,
 		},
 		sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
-		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
+		session: {
+			retryAttempt: 0,
+			modelRegistry: { find: () => undefined },
+			resolveToolCallName: (requested: string) => requested,
+		},
 		toolOutputExpanded: false,
 		isInitialized: true,
 		// Classic chrome: renderSessionItems builds tool components through the

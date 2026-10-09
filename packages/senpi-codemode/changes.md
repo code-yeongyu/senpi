@@ -1,5 +1,1217 @@
 # senpi-codemode fork changes
 
+## 2026-10-09 - Reduce Python per-cell queue and capture bookkeeping (senpi#3034)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: the control-reader/main FIFO uses `queue.SimpleQueue` instead of `queue.Queue`; cell and callback execution share one combined stdout/stderr capture scope, retaining both thread-local targets and inherited context variables.
+- `packages/senpi-codemode/test/py-kernel-bookkeeping.test.ts`, `packages/senpi-codemode/test/py-kernel-bookkeeping.py`: count actual FIFO operations, Python queue condition entries/notifications, capture setups and owner acquisition/release on successful and raised cells. The real reader finishes admission before dispatch so scheduler-dependent waits do not enter the count.
+- `packages/senpi-codemode/test/gate/allowlist.json`: add the new regression key under `senpi#3034`; the baseline remains unchanged.
+
+### Why
+
+- The FIFO only needs put/get. Per cell, two Python queue lock entries and two notifications disappear, and capture setups fall from two to one. The reader thread and owner token remain in place.
+
+### Why an extension could not handle it
+
+- Control-frame dispatch and interpreter output routing belong to the embedded Python kernel.
+
+### Expected merge conflict zones
+
+- Python stream capture and main-loop queue construction; no ownership, scope, cancellation or descriptor changes.
+
+## 2026-10-09 - Ruby and Julia globals diagnostics are requested only above host thresholds (senpi#3028)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/shared/kernel-memory-host.ts`: keep current-footprint accounting on every result, collect globals at or above either enabled notice/ceiling threshold regardless of notice hysteresis, and omit ordinary below-threshold result payloads.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts`: bound the read-only diagnostic request to five seconds and fence replies by interpreter, pending run, and cell identity.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts`, `packages/senpi-codemode/src/kernels/shared/subprocess-queue.ts`: retain FIFO ownership until diagnostics settle, settle an already-finished result without globals when stop arrives during that optional request, and clear the pending request on retirement.
+- `packages/senpi-codemode/src/bridge/memory-protocol.ts`, `packages/senpi-codemode/src/bridge/protocol.ts`: advertise runner support and validate the cell-owned globals request/reply.
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`, `packages/senpi-codemode/src/kernels/rb/runner.rb`: replace eager post-cell sizing and nested result serialization with a read-only request using the unchanged bounded sizers. Successful and raised cells both receive globals when their host-read footprint reaches a threshold.
+
+### Why
+
+- Every successful scalar cell previously walked all globals and serialized a memory payload even below the default 1024 MiB notice threshold. Work-count tests prove zero walks/payloads below threshold, and snapshots captured from main preserve above-threshold notices and sizing.
+
+### Why an extension could not handle it
+
+- Interpreter protocol, result settlement, footprint accounting, and kernel ownership belong to codemode itself.
+
+### Expected merge conflict zones
+
+- Shared subprocess result/retirement paths and Ruby/Julia runner dispatch; no peak-RSS gate, eval schema, or threshold changes.
+
+
+## 2026-10-04 - The pi codemode sandbox runtime is vendored with streaming output and a store policy (codemode plan node 18, part 1)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/`: seven files of @earendil-works/pi-codemode 1.0.1 from the upstream repository at tag v1.0.1:
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/host.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/worker.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/prelude-source.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/protocol.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/types.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/wasm.ts`
+  - `packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/identifier.ts`
+
+  They come with the upstream LICENSE and `VENDORED.md` (provenance, per-file SHA-256, local changes). Two opt-in host options sit in `// senpi-change` blocks: `output: "stream"` (frames under a credit window, delivered in order, nothing collected) and `builtins.store: "reject"` (store/load defined but stateless). The defaults are upstream's behaviour.
+- `packages/senpi-codemode/package.json`: `quickjs-wasi` 3.6.2, exact pin.
+
+### Why
+
+Isolated sandbox cells (node 18, part 2) need a sandbox host that streams large output without keeping it, which no published version does, and the published package carries only compiled `dist`, so the change has to live in source that ships with this package.
+
+### Why an extension could not handle it
+
+The change is inside the sandbox host and worker; an extension sees only the settled result.
+
+### Expected merge conflict zones
+
+- None: new files only. A future upstream sync re-applies the `senpi-change` blocks.
+
+
+## 2026-10-02 - Display images are validated before they are kept (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/image.ts`: an image `display()` payload is kept only when it is valid base64 with a PNG, JPEG (not JPEG-LS), GIF or WebP signature; line breaks are dropped, the detected type replaces the declared one, and invalid data is dropped with a `[display: image dropped — <reason>]` line in the output.
+
+### Why
+
+Upstream fixed the same defect in its codemode `image()` helper (d2931ad3d): providers reject a whole request on a bad image, and a kept image block is resent on every later turn, so one corrupted image broke the session. Providers also reject a declared type that does not match the bytes.
+
+### Why an extension could not handle it
+
+This is the eval extension's own output collector.
+
+### Expected merge conflict zones
+
+None from upstream (fork-only package).
+
+## 2026-09-30 - Self-contained eval action schemas (senpi#2240)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/types.ts`: each action branch declares its own properties. Runs require `language`, `code`, and `summary`, including when `action` is omitted. `list` requires only its action; `peek` and `stop` require `cell_id`.
+- `packages/senpi-codemode/test/eval-schema-required-fields.test.ts`: covers missing run fields, implicit runs, enabled languages, control calls, branch-local field declarations, provider schema conversions, and OpenAI strict-mode fallback.
+- `packages/senpi-codemode/scripts/qa-e2e-eval.ts`: expects incomplete runs to fail schema validation before execution. The README describes the action-specific requirements.
+
+### Why
+
+- With the issue's forced `tool_choice: "any"`, Mistral-hosted GLM 5.3 returned only `{"action":"run"}` with the constraint-only branches. Adding `required` without declaring the fields inside the branch still failed in a live reproduction. Self-contained branches let the provider generate complete calls.
+
+### Why an extension could not handle it
+
+- This package is the extension that owns the eval schema.
+
+### Expected merge conflict zones
+
+- LOW: `createEvalInputSchema` in `packages/senpi-codemode/src/tool/types.ts`.
+## 2026-10-02 - Detached-cell footer ticker retires on a stale context (senpi#2549)
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/stale-context.ts` (new): `isStaleExtensionContextError` matches the two messages the host retires a context with (replacement prefix and reload message), mirroring the host's `builtin/goal/stale-context.ts`. The host keeps that module internal to its builtins (the `@code-yeongyu/senpi` package does not export it) and older host versions predate the reload message, so codemode carries the two messages locally for compatibility.
+- `packages/senpi-codemode/src/extension/eval-status-ticker.ts`: `tick()` catches that error, stops the ticker and returns `false`; `sync()` does not re-arm after a stale immediate render; the next live `sync()` re-arms. Other render errors are rethrown.
+- Tests: `test/eval-status-ticker-stale-context.test.ts` (retire on both messages, re-arm, no re-arm on a stale first render, non-stale error surfaces) and `test/eval-status-wiring-stale-context.test.ts` (a reload, new session and switch while a detached cell ticks: no throw, and the next session's cell renders and advances).
+
+### Why
+
+- The render reads the captured `activeContext`, whose `ui` getter throws once its session is retired, from inside the 1 s interval callback, which ended the process (senpi#2549).
+
+### Why an extension could not handle it
+
+- The ticker is codemode's own footer wiring.
+
+### Expected merge conflict zones
+
+- `eval-status-ticker.ts` `sync()`/`tick()`. Fork-only surface.
+## 2026-10-01 - Explicit state-loss notice for Stop during a native shell wait (senpi#2453)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js` and `packages/senpi-codemode/src/kernels/js/worker-shell-capture.d.ts` track active native promise waits without starting lazy commands.
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js` and `packages/senpi-codemode/src/kernels/js/worker-core.js` report shell-wait changes through the existing acknowledgement while interruption is in flight, including waits entered during cooperative grace.
+- `packages/senpi-codemode/src/kernels/js/run-queue.ts`, `packages/senpi-codemode/src/kernels/js/context-manager.ts`, and `packages/senpi-codemode/src/kernels/js/interrupt-bounds.ts` retain the cell-fenced shell-wait state and report cleared variables with Bun.spawn/bash guidance only on a forced restart.
+- Cooperative interrupts, successful cells, native shell interpretation, and the default eval prompt are unchanged.
+- Event-ordered real-kernel tests observe command connection and exit, cleared globals, retained non-shell globals, and successful native read paths.
+
+### Why
+
+- Lead decision A keeps native shell behavior while making forced-restart state loss explicit. Thanks to floweredao's investigation in senpi#2475. Native cancellation remains tracked in oven-sh/bun#11868.
+
+### Why an extension could not handle it
+
+- The kernel owns shell capture and the forced-restart outcome.
+
+### Expected merge conflict zones
+
+- JS shell capture, interrupt acknowledgements, and run settlement.
+
+## 2026-10-01 - Event-driven Python bootstrap with stage-specific hang detection (senpi#2452)
+
+### What changed
+
+- `src/kernels/py/prelude.py` emits bootstrap status frames before stdlib imports, runtime initialization, and the host init loop; `ready` remains the only admission event.
+- `src/kernels/py/startup.ts` owns a per-stage inactivity guard. The default 11 seconds is twice the measured fresh-cache Windows p99 of 5,220 ms, rounded up to a second (Actions run 36882163342, 30 samples). Only forward stage transitions refresh it.
+- `src/kernels/py/transport.ts` waits for that ready event and retains the stalled stage, interpreter stderr, and original error cause. `startupTimeoutMs` is now a per-stage override.
+- `src/kernels/py/kernel.ts` applies the measured default guard; `src/kernels/py/kernel-contract.ts` documents per-stage `startupTimeoutMs` and exposes the separate `onStartupProgress` observer.
+- Bootstrap control frames stay out of ordinary cell output and status-disabled sessions. The optional `onStartupProgress` diagnostic callback observes accepted stage transitions separately.
+- `test/py-kernel-startup.test.ts` covers progressing startup beyond the former total deadline, hung imports, and duplicate or unknown progress that cannot postpone a hang.
+- The direct prelude SIGINT regression subscribes to ready and running-cell display events without chunk-order assumptions or timing sleeps.
+- `scripts/qa-python-startup.ts` bounds its post-ready cell and records the error class separately, retaining a failing exit code for retirement failures.
+
+### Why
+
+- A healthy cold interpreter exceeded the five-second total readiness deadline on Windows; the host killed it before it could report ready. Warm starts passed.
+
+### Why an extension could not handle it
+
+- The interpreter bootstrap and child retirement belong to the Python transport.
+
+### Expected merge conflict zones
+
+- LOW: Python transport initialization and prelude imports; no prompt or eval schema changes.
+
+## 2026-10-01 - The bun-1-4 pointer names the cells that need the skill (senpi#2505)
+
+### What changed
+
+- `packages/senpi-codemode/src/prompt/eval-prompt-template.ts`: on a Bun kernel with the skill active, the runtime line says "Before a cell that installs a package, spawns a server or PTY, or starts a long run, read the bun-1-4 skill at <path> - its builtins replace the npm packages you would otherwise install" instead of "MUST READ the bun-1-4 skill at <path> before your first js cell - ...".
+- `packages/senpi-codemode/src/skill/bun-1-4/SKILL.md`: the frontmatter description opens with the same condition instead of "MUST READ before your first js eval cell".
+- `test/prompt.test.ts`, `test/eval-tool-prompt-runtime.test.ts`: assert the new sentence and that "before your first js cell" is gone; the no-skill and Node branches still assert the pointer is absent.
+
+### Why
+
+- Every GPT-6 Astra session paid one 8 KB skill read before its first cell, including cells that only read two files; a 2026-09-27 A/B found this read was the only skill read left once the catalog was removed. The condition now sits where the skill's content matters (dependency, server, PTY, long run).
+
+### Why an extension could not handle it
+
+- This is the eval tool's own description.
+
+### Expected merge conflict zones
+
+- `eval-prompt-template.ts` line 32; the skill frontmatter.
+
+## 2026-10-01 - Animate quiet running eval cells (senpi#2503)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/render.ts`: derive missing host spinner frames from the cell's render-time elapsed clock and repaint live cards every 100 ms. Keep the abandoned-row timeout at 60 seconds.
+
+### Why
+
+- Running eval cells otherwise stay on the first spinner frame while only elapsed time advances.
+
+### Why an extension could not handle it
+
+- The eval extension owns its renderer and live repaint ticker.
+
+### Expected merge conflict zones
+
+- LOW: live ticker constants and `cellHeader` in `src/tool/render.ts`.
+
+## 2026-09-29 - Eval return values reach the model whole, and every cut says so (senpi#2402)
+
+### What changed
+
+- `packages/senpi-codemode/src/output/streaming-output.ts`: `OutputSink.push` takes an optional `{ clampColumns: false }`; such a chunk skips the per-line `maxColumns` clamp (default 768 bytes) while still counting toward the byte and line budgets and the artifact spill.
+- `packages/senpi-codemode/src/tool/image.ts`, `src/tool/cell-runtime.ts`: the cell's return value (`valueRepr`) goes through the new `EvalOutputCollector.pushValue`, so a long single-line value is no longer clipped with a bare `…`. Printed output and error messages keep the clamp.
+- `packages/senpi-codemode/src/output/output-meta.ts`, `src/tool/cell-runtime.ts`: when the output was cut for any reason (column clamp, byte budget, line budget), the model-facing text ends with `[Output truncated: kept <kept> of <total> bytes. <detail>]` and `[Full output: <path>]`, built by the new `formatModelTruncationNotice`. Before, that meta and notice lived only in `details` for the TUI.
+- `packages/senpi-codemode/src/output/output-meta.ts`: `formatTruncationWarning` names a middle elision inside one line by its size (`47.2KB elided from the middle of a line`) instead of `Showing lines 1-2 and 2-2 of 2; 0 middle lines (47.2KB) elided`, since that text now reaches the model.
+- Test: `test/eval-result-truncation-notice.test.ts`.
+
+### Why
+
+- #2402: a ~2.9 KB single-line return value reached the model cut after 768 bytes with a bare ellipsis, no sizes and no path, on every provider lane; the full value was already spilled to a session artifact that the model was never told about.
+
+### Why an extension could not handle it
+
+- The output sink and the eval tool result are this package's own code.
+
+### Expected merge conflict zones
+
+- LOW: `OutputSink.push` and `#clampColumns` in `streaming-output.ts`, `CellResultBuilder.finalize` / `#finish` in `cell-runtime.ts`.
+
+## 2026-09-28 - Retired JS worker children are collected, not left as zombies (senpi#1962)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/context-manager.ts`, `kernel-contract.ts`, `src/extension/session-manager.ts`, `src/host-sdk.ts`: after `#retireWorkerChildren()` kills a retired worker's children it calls the new optional `collectOrphanedChildren` kernel option, which the session manager wires to `collectOrphanedChildren` from `@code-yeongyu/senpi` (exact-pid `waitpid(pid, WNOHANG)`, never `waitpid(-1)`).
+
+### Why
+
+- `worker.terminate()` destroys the exit watchers of every child the worker spawned, and the host only signalled those pids, so each one stayed a zombie for the life of the process (#1962).
+
+### Why an extension could not handle it
+
+- The worker lifecycle and its child tracking belong to this package's kernel.
+
+### Expected merge conflict zones
+
+- LOW: `#retireWorkerChildren` in `context-manager.ts` and the kernel options object in `session-manager.ts`.
+
+## 2026-09-28 - JavaScript kernel interrupt deadlines are injectable (senpi#2275)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/interrupt-bounds.ts`: `JavaScriptInterruptBounds` (`ackMs`, `graceMs`, `terminateDeadlineMs`) and `DEFAULT_INTERRUPT_BOUNDS`, built from the unchanged production constants (`INTERRUPT_ACK_MS` 500, `JS_INTERRUPT_GRACE_MS` 2000, `WORKER_TERMINATE_DEADLINE_MS` 3000).
+- `packages/senpi-codemode/src/kernels/js/kernel-contract.ts`, `context-manager.ts`, `worker-slot.ts`: optional `interruptBounds` on `JavaScriptKernelOptions`; the kernel passes it to `awaitCooperativeSettlement`, `retireWorker`, and `abandonedWorkerNote`. Absent, every deadline is the production default, so no shipped behavior changes.
+- Tests: `test/js-kernel-interrupt-bun.test.ts` and `test/js-kernel-cell-end-children-bun.test.ts` choose the stop path through the bounds and assert the path taken (abandoned-worker note, `stateRetained`, a fresh worker, the child's recorded `SIGKILL` exit signal) instead of wall-clock budgets.
+
+### Why
+
+- #2275: the Bun process-tree tests asserted elapsed-time budgets and depended on the 500 ms acknowledgement deadline, so on a loaded host the kernel correctly took the blocked-worker path and the cooperative assertions failed on `main`.
+
+### Why an extension could not handle it
+
+- The interrupt deadlines are private to the JavaScript kernel in this package; nothing outside it can choose them.
+
+### Expected merge conflict zones
+
+- LOW: the `#stopActive` settle/abandon branch of `context-manager.ts`, `WorkerSlot.retire`, and the `JavaScriptKernelOptions` interface (the memory lane added fields next to it).
+
+## 2026-09-28 - Python, Ruby, and Julia kernel memory: footprint report, collection, notice, ceiling restart (senpi#2261)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: `init` carries the memory thresholds; after each cell `run_cell` reads the process footprint in-process (darwin `proc_pid_rusage` `ri_phys_footprint`, Linux `/proc/self/status` `RssAnon`, win32 `K32GetProcessMemoryInfo` `PrivateUsage`, otherwise peak `ru_maxrss` flagged `approximate`), runs `gc.collect()` and glibc `malloc_trim(0)` under the same growth/notice/ceiling triggers as the JS worker (plus a rate-floored collection while the watermark stays live, the synchronous analog of the JS idle collection), names the five largest user globals when live memory reaches the notice or ceiling, and attaches `memory` to the result frame.
+- `packages/senpi-codemode/src/kernels/py/kernel.ts`, `kernel-contract.ts`, `transport.ts`: thresholds reach the prelude on `init`; results pass through the shared policy; an over-ceiling kernel is reset only once no cell is running or queued, and its next result is marked `recycled`.
+- `packages/senpi-codemode/src/kernels/shared/kernel-memory-host.ts` (new), `kernel-memory.ts`, `subprocess-kernel.ts`, `subprocess-contract.ts`, `src/kernels/rb/kernel.ts`, `src/kernels/jl/kernel.ts`: the host half of the ceiling protocol for process-backed kernels; Ruby and Julia results carry the interpreter footprint read by the host (`readProcessFootprint`) and restart over the ceiling; the notice advice per language (`del`, `= nil`, `= nothing`) comes from the policy.
+- `packages/senpi-codemode/src/bridge/memory-protocol.ts`: optional `approximate` on the memory report.
+- `packages/senpi-codemode/src/extension/session-manager.ts`: py/rb/jl kernels receive the resolved thresholds (and the footprint reader for rb/jl).
+
+### Why
+
+- #2261: only the JS kernel collected, reported, and capped its memory; a Python kernel holding gigabytes stayed silent until the machine ran out, and no kernel other than JS had a ceiling.
+
+### Why an extension could not handle it
+
+- The Python prelude, the kernel hosts, and the result frame belong to this package.
+
+### Expected merge conflict zones
+
+- MEDIUM: `run_cell` and the `init` handler in `prelude.py`, `#onResult`/`#spawn` in `py/kernel.ts`, `handleMessage`/`spawnProcess` in `subprocess-kernel.ts`, and `#createKernel` in `session-manager.ts`.
+
+## 2026-09-28 - JavaScript kernel memory: post-cell and idle collection, large-globals notice, ceiling restart (senpi#2261)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-memory.js`, `worker-heap.js`, `worker-global-sizes.js`, `worker-core.js`: the JS worker measures its own heap after each cell (Bun `bun:jsc` `heapSize()` after an eden collection; Node used heap plus external memory), runs a full collection when the heap grew past the watermark, crossed the notice line, or reached the ceiling, schedules an idle collection about a second after a cell that leaves at least the watermark live (cleared by the next `run`, `interrupt`, or `close`; delayed so collections take at most 1/20 of the time; only on Node and Bun before 1.4.3, whose own idle collections run in Workers since oven-sh/bun#43174 and #43681), and names the largest user globals when live memory reaches the notice line.
+- `packages/senpi-codemode/src/bridge/memory-protocol.ts`, `protocol.ts`, `reserved.ts`: optional `memory` thresholds on `init`, optional `memory` report on `result`, and the `memory-collected` status op for idle collections.
+- `packages/senpi-codemode/src/kernels/shared/kernel-memory.ts`, `src/kernels/js/context-manager.ts`, `kernel-contract.ts`, `worker-startup.ts`: a per-kernel policy decides the notice (25% growth hysteresis, re-armed below half the threshold) and the ceiling; the JS host restarts an over-ceiling kernel only once its queue is empty and marks the next result `recycled`.
+- `packages/senpi-codemode/src/config/memory-settings.ts`, `settings.ts`, `src/extension/session-manager.ts`: `memory.gcWatermarkMb` / `noticeMb` / `ceilingMb` settings with `SENPI_CODEMODE_MEMORY_*_MB` overrides.
+- `packages/senpi-codemode/src/tool/cell-runtime.ts`, `types.ts`, `detached-cell-notification.ts`, `src/prompt/eval-prompt.ts`: the notice is its own text content part plus `details.memory`; detached notifications say when the kernel restarts or was restarted; one prompt guideline sentence names the notice.
+
+### Why
+
+- A JS kernel's worker collected only under allocation pressure, so memory from dropped globals stayed resident until reset (2 GB footprint 60 s after deleting every global), and nothing told the model which globals held tens of gigabytes.
+
+### Why an extension could not handle it
+
+- The kernel worker, its bridge protocol, and the eval result belong to this package.
+
+### Expected merge conflict zones
+
+- MEDIUM: `worker-core.js` `runCell`/`onMessage`, the `result`/`init` schemas in `protocol.ts`, the result-settle path of `context-manager.ts`, and the `memory` settings object shared with the settled-cell cache budget.
+
+## 2026-09-28 - Kernel dispatcher no longer pins the first cell
+
+### What changed
+
+- `packages/senpi-codemode/src/extension/session-manager.ts`: the per-kernel message dispatcher passed to kernels is a bound method (`#dispatchTo`) instead of a closure created inside `getKernel`, and the manager exposes `releaseKernelListener(language, onMessage)` which identity-checks and deletes the per-cell listener from the rebind map.
+- `packages/senpi-codemode/src/extension/session-manager-proxy.ts`: the proxy forwards `releaseKernelListener` to the current generation's manager, best-effort like the rest of the proxy surface.
+- `packages/senpi-codemode/src/tool/types.ts`: `EvalKernelManager` gains the optional `releaseKernelListener` contract.
+- `packages/senpi-codemode/src/tool/run-eval-cell.ts`: each cell releases its kernel listener in the settle `finally` after the output flush; interpreter startup stderr still lands in the first cell because `getKernel` still registers the listener before kernel creation.
+- Tests: `test/session-manager-first-cell-pin.test.ts` (spawns Bun — JSC retains the closure environment, V8 does not), `test/session-manager-lifecycle.test.ts` (startup stderr routing, between-cells release, identity-checked stale release), `test/session-manager-proxy.test.ts` (release forwarding).
+
+### Why
+
+- The dispatcher closure captured the `getKernel` frame that created the kernel; under Bun/JSC that pinned the first cell's `onMessage` — its `CellHandler`, output buffers, and display images — for the whole kernel generation, and the rebind map kept the most recent settled cell's listener alive until the next cell or dispose (#2260).
+
+### Why an extension could not handle it
+
+- Kernel dispatch, listener rebinding, and cell settlement live in codemode's session manager and eval cell runtime.
+
+### Expected merge conflict zones
+
+- LOW: `getKernel`/dispose in `session-manager.ts`, the proxy kernel surface, the `EvalKernelManager` interface, and `executeCell`'s finally block in `run-eval-cell.ts` (the other eval-memory lanes touch nearby settlement code).
+
+## 2026-09-28 - Settled-cell snapshots are byte-bounded and drop delivered images
+## 2026-09-28 - Settled-cell snapshot images spill to disk under a byte budget
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/settled-image-spill.ts` (new): writes each settled-cell image as a raw base64 file under `<artifactsDir>/settled-images/`, keeps only a reference (path, mimeType, length) in memory, re-reads it on demand (a missing file becomes a one-line text note), deletes the oldest files beyond a disk byte budget (never the newest cell's), and removes the directory on clear.
+- `packages/senpi-codemode/src/tool/terminal-snapshot-store.ts`: the settled-cell LRU spills image payloads through the spill, rebuilds them on `get`, deletes a snapshot's files when it is evicted or replaced, tracks an estimated in-memory byte size (text and code/output as UTF-16, inline image base64, serialized `jsonOutputs`), and evicts beyond an in-memory byte budget as well as the 32-entry count cap (always keeping the newest). `list()` serves the in-memory snapshots without reading the disk.
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts`, `packages/senpi-codemode/src/tool/detached-cell-contract.ts`: `retainedResultsBytes` / `retainedImagesBytes` options; the spill is enabled when the manager has an `artifactsDir`.
+- `packages/senpi-codemode/src/config/memory-settings.ts` (new), `packages/senpi-codemode/src/config/settings.ts`, `packages/senpi-codemode/src/index.ts`: `memory.retainedResultsMb` (default 32, env `SENPI_CODEMODE_RETAINED_RESULTS_MB`) and `memory.retainedImagesMb` (default 256, env `SENPI_CODEMODE_RETAINED_IMAGES_MB`), 0 = count cap only, wired into the detached-cell managers.
+- Tests: `test/eval-settled-snapshot-budget.test.ts`, `test/eval-list-and-reset.test.ts`, `test/config.test.ts`. QA: `scripts/qa-settled-snapshot-retention.ts`.
+
+### Why
+
+- #2259: the 32 settled results kept their base64 images in the session heap for the session lifetime (measured +83 MB host heap after 40 image cells, up to ~768 MB at the per-cell image cap). `peek` must keep returning the full result, so the payload moves to disk instead of being dropped.
+
+### Why an extension could not handle it
+
+- The settled-cell store and the eval peek path belong to this package.
+
+### Expected merge conflict zones
+
+- LOW: the fork-only detached-cell manager, snapshot store, new spill module, and the settings memory block.
+
+## 2026-09-28 - Stable JS kernel prelude source URL (#2263)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js`: the loader/contribution prelude is evaluated under one stable source URL (`senpi:kernel-prelude`) instead of a per-cell `` `${cellId}:prelude` `` URL, so identical prelude text reuses the engine's eval code-cache entry instead of gaining one per cell. Tests: `test/js-kernel-prelude-source-url.test.ts` pins the shared URL via the `__senpi_import__` stack frame across two cells.
+
+### Why
+
+- Every JavaScript eval cell re-evaluated identical prelude text under a cell-unique source name, which defeated the eval code cache: ~2.6 KB of kernel heap per cell, plateauing at ~3.5 MB across 2,000 code-cache entries after ~1,000 cells (#2263).
+
+### Why an extension could not handle it
+
+- The prelude evaluation site is the kernel worker runtime owned by this package.
+
+### Expected merge conflict zones
+
+- LOW: the prelude eval site in `worker-runtime.js`; the eval-mem-fix memory lane extends the same file's run path.
+
+## 2026-09-28 - Live eval output updates stay proportional to the chunk
+
+### What changed
+
+- `packages/senpi-codemode/src/output/streaming-output-buffer.ts`: `TailBuffer` queues chunks and drops whole chunks that fall out of its window on append, trimming to the exact code-point boundary only when the window is read (same result as truncating after every append), so an append costs time and memory proportional to the chunk; a new `TailLineRing` keeps the last lines of a trailing byte window over a chunk stream in time proportional to the chunk.
+- `packages/senpi-codemode/src/output/streaming-output.ts`: re-exports `TailLineRing`.
+- `packages/senpi-codemode/src/tool/image.ts`: `EvalOutputOptions.onChunk` now receives the chunk itself instead of two whole-tail strings, and `EvalOutputCollector` exposes `cellTailText()` for the running cell state.
+- `packages/senpi-codemode/src/tool/cell-runtime.ts`: the live update text reads an eight-line `TailLineRing` instead of splitting the whole aggregate tail per chunk, and output-driven live updates are coalesced to one per 100 ms (leading update immediately, trailing update with the latest tail; the same cadence as the core bash tool's `BASH_UPDATE_THROTTLE_MS`). `state.output` is refreshed with each emitted update and by `liveResult()` (detached peek), and the final result is unchanged.
+- Tests: `test/output/tail-line-ring.test.ts` (byte-identical to the truncate-then-split reference over generated chunk sequences), `test/output/streaming-output.test.ts` (TailBuffer reference equivalence), `test/eval-cell-runtime-live-output.test.ts` (builder-level live-text equivalence per window, burst coalescing, `liveResult` current without waiting, no whole-output text reads while streaming); `test/eval-tool-output.test.ts` live-tail tests drive chunks one window apart with fake timers.
+
+### Why
+
+- Every output chunk rebuilt both retained tails and split the full aggregate tail to render a live preview, so a cell printing thousands of lines paid quadratic time and allocations (#2262). One update per chunk also produced tens of thousands of update objects carrying a fresh copy of the output tail, which raised the process memory peak whenever output streamed faster than consumers drained it.
+
+### Why an extension could not handle it
+
+- The output collector, the live update text, and the tail buffers belong to codemode.
+
+### Expected merge conflict zones
+
+- LOW: `streaming-output-buffer.ts`, the `onChunk` signature in `image.ts`, and the live-text block in `cell-runtime.ts`.
+
+## 2026-09-27 - Tool kernel preludes in the eval kernels
+
+### What changed
+
+- `packages/senpi-codemode`: installs each active tool's `kernelPrelude` in the JS and Python kernels before a cell (only when an export is missing), removes a deactivated tool's exports, and lists each prelude's documentation line in the eval prompt.
+
+### Why
+
+- Extension tools can offer eval globals with no codemode edit.
+
+### Why an extension could not handle it
+
+- The kernels and the eval prompt belong to codemode.
+
+### Expected merge conflict zones
+
+- LOW: the kernel prelude plan, the eval prompt helper list, and the eval tool options.
+
+## 2026-09-24 - Eval language errors list the enabled kernels
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `parseEvalRequest` takes the enabled language list; a missing or unknown `language` fails with `eval run requires language — one of` those tokens, not the full js/py/rb/jl set.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: execute passes the session's enabled languages into the parser so the teaching error matches the schema the model already sees.
+- Tests: `test/eval-request-language.test.ts` pins a js-only execute path and a py+js parse path. QA: `scripts/qa-e2e-eval.ts` expects `one of "js", "py"` on the default host.
+
+### Why
+
+- The published schema already enumerates only enabled kernels. The teaching error still listed Ruby and Julia, which are off by default, so a model that omitted `language` was told to retry with a kernel that would then fail as unsupported.
+
+### Why an extension could not handle it
+
+- The eval request parser belongs to this package.
+
+### Expected merge conflict zones
+
+- LOW: the fork-only eval parser, its tests, and the QA driver.
+
+## 2026-09-24 - Eval run schema and parser agree on required language/code
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/types.ts`: the `language` union and `code` field descriptions now state "REQUIRED for run" (the language description also explains per-kernel persistent state). Both stay optional in the wire schema because the control actions (`peek`, `stop`, `list`) share it — the same treatment `summary` already had.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: a run with a missing or unknown `language` now fails with `eval run requires language — one of "js", "py", "rb", "jl"`, and a run without `code` fails with `eval run requires code — the cell body to execute, verbatim`, replacing the bare `eval run requires language` / `eval run requires code`.
+- Tests: `test/eval-request-language.test.ts` pins the actionable parse errors, the schema descriptions, and the tool-execute error path. QA: `scripts/qa-e2e-eval.ts` drives the omitted-language call through a real session and asserts the actionable error.
+
+### Why
+
+- The published schema marked `language` (and `code`) optional with no description, so models omitted them and burned a round trip on an opaque TypeError. No default or last-used kernel exists, and py+js are both enabled by default, so guessing a default kernel could run the cell in the wrong interpreter — a surprising failure that still spends a kernel run. An explicit schema contract plus an actionable error is the root fix and matches the existing `summary` treatment.
+
+### Why an extension could not handle it
+
+- The eval tool's schema and request parser belong to this package.
+
+### Expected merge conflict zones
+
+- LOW: the fork-only eval schema/parser, its tests, and the QA driver.
+
+## 2026-09-24 - Python preview ruff timeout follows the formatter budget (#2076 follow-up)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/display-python.ts` passes the ruff timeout (the formatter budget minus one second) as the formatter script's first argument; `display-python-script.ts` uses it instead of a fixed `timeout=4`.
+- `test/eval-display-python.test.ts`: the fake-ruff tests share a `fakeRuff` helper with a 25 s budget and assert a marker file the fake writes, so a ruff that timed out can no longer pass the docstring-rejection test.
+
+### Why
+
+- The final gate review measured 3-13 s first-run latency for freshly written executables on macOS; the fixed 4 s timeout made the fake-ruff test fail there and let the docstring test pass without ruff running.
+
+### Why an extension could not handle it
+
+- The eval renderer belongs to this package.
+
+### Expected merge conflict zones
+
+- LOW: the Python display modules only.
+
+## 2026-09-24 - Eval preview equivalence guards (#2076 follow-up)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/display-js-layout.ts`: the long-array break rewrites only the whitespace in each gap, so the parentheses of a parenthesized element (`[(a, 1), (b, 2)]`) stay.
+- `packages/senpi-codemode/src/tool/display-js.ts`: besides the character guard, the preview must re-parse to the same program as the cell (positions, raw spellings, and parenthesization flags ignored; comments compared), otherwise the cell is shown as sent.
+- `packages/senpi-codemode/src/tool/display-python-script.ts`: `same_tokens` becomes `equivalent`: a formatter result is kept only when `ast.dump` of it equals the source's and its string, number, f-string, and comment tokens have the same text. Rejects docstring normalization and `ast.unparse` output that is not valid Python (`1 .real`).
+- `packages/senpi-codemode/src/tool/display-python.ts`: a rejected formatter promise settles as "no formatted cell" instead of an unhandled rejection.
+- Tests: `test/eval-display-fixtures.ts` gains the parenthesized-element array; `test/eval-display-python.test.ts` gains a fake ruff that rewrites a docstring and the `1 .real` cell.
+
+### Why
+
+- A post-merge gate review of #2078 reproduced both cases: the character guard ignored `()` and Python whitespace inside strings, so a preview with a different meaning passed.
+
+### Why an extension could not handle it
+
+- The eval renderer belongs to this package.
+
+### Expected merge conflict zones
+
+- LOW: the display modules only.
+
+## 2026-09-24 - Bun-laid-out JS previews and interpreter-formatted Python previews (#2076)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/display-code.ts`: `displayCode(code, language, onFormatted?)` dispatches dense cells (a line over 100 characters) per language. JavaScript is laid out only when the renderer runs on Bun (`process.versions.bun` plus a constructible `Bun.Transpiler`); on Node it is shown as sent. Python goes to the user's interpreter in the background. Ruby and Julia are shown as sent. The #2050 Babel line breaker is removed.
+- `packages/senpi-codemode/src/tool/display-js.ts`, `display-js-mask.ts`, `display-js-layout.ts`, `display-js-ast.ts` (new): every literal, template, tagged template, identifier (one placeholder per spelling so labels resolve), private name, and directive is swapped for a placeholder, statement-level comments become placeholder statements, `Bun.Transpiler` lays the masked cell out (unwrapped for module syntax, inside an async function for top-level `return`), and the source text is substituted back with exact occurrence counts. Trailing line comments return to their statement's line, `for` headers print as `for (a; b; c)` / `for (;;)`, and one-line arrays over 60 characters still break one element per line. A comment inside an expression, a Bun parse failure, a count mismatch, or any non-layout character difference shows the cell as sent.
+- `packages/senpi-codemode/src/tool/display-python.ts`, `display-python-script.ts` (new): the interpreter the py kernel detection finds (`python3`, `python`, `py -3`) runs a formatter script with the cell on stdin: ruff (PATH or the `ruff` package, `quote-style = 'preserve'`), then black (`string_normalization=False`), then `ast.unparse` over a cell whose strings, f-strings, and numbers are masked, only when it has no comments. A result that differs from the source beyond layout is discarded. Results are cached; at most two formatter processes run at once, each with a 5 s timeout.
+- `packages/senpi-codemode/src/tool/code-preview.ts` (new, moved out of `render.ts`): `highlightedCode` passes the repaint callback. `render.ts` threads `context.invalidate` as `RenderEnvironment.repaint` for complete call args and results; the no-theme call frame passes it to `displayCode` the same way.
+- `packages/senpi-codemode/AGENTS.md`: the "No Bun-only APIs" invariant now allows them only behind runtime detection with a correct Node path, and records the display-only fidelity rule.
+- Tests: `test/eval-display-code.test.ts` (Node: cells shown as sent), `test/eval-display-code-bun.test.ts` (spawns `bun` for the layout and fidelity battery plus the rendered frame), `test/eval-display-python.test.ts` (real `python3`: ast layout, fallbacks, a fake ruff on PATH, repaint wiring), fixtures in `test/eval-display-fixtures.ts`.
+
+### Why
+
+- The #2050 preview only split lines, so dense cells kept minified spacing. The renderer runs on Bun in the compiled distribution, and Bun ships a printer; a raw `Bun.Transpiler` round trip is not faithful (it rewrites `"a\nb"` into a multi-line template, `0xff` into `255`, emoji into escapes, folds `typeof undefined`, and drops comments and directives), hence the masking. Python has no printer in the host runtime, so the user's own interpreter and formatters are borrowed when present.
+
+### Why an extension could not handle it
+
+- The eval renderer belongs to this package.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/tool/render.ts` imports, `RenderEnvironment`, the call and result `environment` literals, and the no-theme call frame; the display modules are new.
+
+## 2026-09-23 - Readable preview for dense JS eval cells (#2050)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/display-code.ts` (new): `displayCode(code, language)` reformats a JS cell with a line longer than 100 characters. It parses with `@babel/parser` (top-level `await`/`return` allowed, as in the kernel) and turns the whitespace, comma, and comment regions between statements, inside non-empty blocks, and between the elements of a one-line array longer than 60 characters into indented line breaks. Every other character is copied verbatim. Parse failures, non-JS languages, and non-dense code return the input unchanged; results are memoized (64 entries).
+- `packages/senpi-codemode/src/tool/render.ts`: `highlightedCode` and the no-theme call frame preview `displayCode(...)` instead of the raw cell.
+- `packages/senpi-codemode/test/eval-display-code.test.ts`: the dense cell shape from the report, top-level `await`/`return`, comments, identity cases, and the rendered cell frame.
+
+### Why
+
+- Models often send a cell as one line of semicolon-joined statements, and the preview hard-wrapped it into an unreadable block. Reformatting only at display time keeps the tool arguments byte-identical (senpi#1472). Babel works under Node (the package's Node 24 target and Vitest) and Bun, and it keeps comments, which `Bun.Transpiler` would drop.
+
+### Why an extension could not handle it
+
+- The eval renderer belongs to this package.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/tool/render.ts` `highlightedCode` and the no-theme branch of `renderEvalCall`; `display-code.ts` is new.
+
+## 2026-09-23 - Uncapped, purpose-framed eval summary (#2050)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/types.ts`: the `summary` field loses `maxLength` and `EVAL_SUMMARY_MAX_LENGTH`; its description drops the language-specific example and the truncation claim and asks for one line, in the language the user writes in, that is a progress update saying what the agent is doing and why rather than a label for the code. A literal English template ("Working on <task> to <purpose>") was tried and rejected: a real model copied the English words into a Korean summary.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `clampEvalSummary` becomes `normalizeEvalSummary` (trim, whitespace collapse, blank -> absent; no truncation). The teaching error uses the same framing. `eval-tool.ts` `prepareArguments` and the render-time `displaySummary` call it.
+- `packages/senpi-codemode/src/tool/render.ts`: `summaryVisualLines`/`summaryBlock` show the first `SUMMARY_PREVIEW_LINES` (3) wrapped lines of a collapsed summary with a trailing ellipsis and the whole summary when expanded, in the cell frame, the no-theme call frame, and the plain result frame.
+- Tests: `packages/senpi-codemode/test/eval-request-summary.test.ts` and `packages/senpi-codemode/test/eval-render-summary.test.ts` (renamed from `eval-render-summary-clamp.test.ts`) pin the uncapped contract and the display bound; the coding-agent #1472 regressions exercise whitespace normalization, the preparation difference that remains.
+
+### Why
+
+- "WHAT this cell does" produced labels for the code block rather than a statement of the work in progress and its purpose, and the 80-character cap cut the purpose clause. The language-specific example is redundant with "the language the user writes in".
+- The display bound keeps the src/tool rule that rendered output is capped, without capping what the model may write.
+
+### Why an extension could not handle it
+
+- The schema, request parser, and renderer are this package's own eval tool.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/tool/types.ts` summary field, `packages/senpi-codemode/src/tool/eval-request.ts` summary normalization, `packages/senpi-codemode/src/tool/render.ts` summary rendering.
+
+## 2026-09-23 - Bound interpreter test concurrency in CI (#2039)
+
+### What changed
+
+- `packages/senpi-codemode/vitest.config.ts` limits CI and GitHub Actions to two fork workers, matching the existing coding-agent suite.
+- `test/ci-worker-policy.test.ts` imports the actual configuration in isolated processes and verifies both CI signals, unchanged assertion deadlines, and unchanged local defaults.
+
+### Why
+
+- Real interpreter tests can each spawn several child runtimes. The default four-core scheduler ran three interpreter test files concurrently; the explicit bound reduces simultaneous runtime startup without increasing any timeout or skipping assertions.
+- The reported Julia timeout was not reproduced in isolated macOS or Linux checks. This is concurrency hardening, not a claim that its exact historical delay was identified.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/vitest.config.ts` owns the test runner's worker pool, outside the runtime extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/vitest.config.ts`, the `test` options; the regression is a new file.
+
+## 2026-09-21 - Remove write-only Python prelude session state
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: remove the unused `SESSION_ID` initializer, global declaration and init-frame assignment.
+
+### Why
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: the internal variable had no readers in the package or its tests and was not exposed in the cell namespace. The init frame and `PI_SESSION_ID` environment contract remain unchanged.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: the write-only state belongs to the embedded runner, so its removal is internal to that asset.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/kernels/py/prelude.py`, module globals and the init branch of `handle`.
+
+
+## 2026-09-21 - Busy py kernel retires when its host died before boot finished (senpi#1659)
+
+### What changed
+
+- `src/kernels/py/prelude.py` starts a `senpi-named-parent-watch` daemon thread when `SENPI_PY_KERNEL_PARENT_PID` is set: every 500 ms it checks `os.kill(pid, 0)` and calls `_terminate_process_group()` on `ProcessLookupError`, closing the gap where the host died before the interpreter captured its baseline ppid (`getppid()` already returns the posthumous value, so the existing ppid watch sees no transition).
+- `src/kernels/py/process.ts` `defaultSpawn` passes its own pid via `SENPI_PY_KERNEL_PARENT_PID` on non-Windows platforms; Windows spawns non-detached, so host-loss semantics differ there and the env var is not set.
+- `test/py-kernel-parent-watchdog.test.ts` drives the kernel through the production `defaultSpawn` under a throwaway parent: a busy kernel retires within 3 s of host death and an idle kernel still retires on stdin EOF (skipped on win32 / when no python3 is present).
+
+### Why
+
+A detached py kernel whose host died before the prelude captured its baseline ppid never notices the loss: a busy cell never returns to the stdin loop, `getppid()` never transitions, and the orphan sleeps under init for days (senpi#1659) — a slow resource leak on long-lived hosts.
+
+### Why an extension could not handle it
+
+The host pid must be present in the kernel's environment at spawn time and the watchdog must run inside the kernel process itself; a host-side extension cannot inject a parent-death signal into an already-spawned detached interpreter, and the ppid it could observe is already posthumous at boot.
+
+### Expected merge conflict zones
+
+- LOW: `src/kernels/py/prelude.py` (`_watch_parent`/`_start_parent_watch` region), `src/kernels/py/process.ts` (`defaultSpawn`), `test/py-kernel-parent-watchdog.test.ts` (new file).
+
+## 2026-09-21 - Forward agent isolation options to capable task hosts (senpi#1910)
+
+### What changed
+
+- `src/bridges/agent-bridge.ts` probes the configured task schema once per bridge via the existing host catalog, forwards advertised `isolated`/`apply`/`merge` options, normalizes boolean merge aliases, and preserves the unsupported-host warning. Foreground unapplied isolation raises `AgentIsolationNotAppliedError` with recovery fields; host isolation metadata is preserved, including on immediate handles.
+- `src/bridges/reserved-dispatch.ts` passes the same catalog used by `tool_schema()` to the agent bridge for JS and HTTP transports.
+- `src/kernels/js/worker-runtime.js`, `src/kernels/py/prelude.py`, `src/kernels/rb/prelude.rb`, and `src/kernels/jl/prelude.jl` preserve optional handle isolation details; Python no longer coerces string merge modes to booleans.
+- `src/kernels/js/prelude.ts`, the Python/Ruby/Julia prelude docs, `src/prompt/eval-prompt-template.ts`, and `README.md` document capability gating, merge aliases, foreground errors, and waiting for background completion.
+- `test/agent-bridge.test.ts` and `test/workpool-prelude.test.ts` cover bridge contracts and real-language transports; the existing prompt snapshot follows the updated shipped helper documentation.
+
+### Why
+
+- Capable task engines must receive the requested isolation controls instead of silently dropping them; unapplied foreground changes must not appear successful.
+
+### Why an extension could not handle it
+
+- This extension owns the reserved agent bridge and language adapters. Isolation execution remains entirely in the host task engine; no orchestration dependency or task-handle schema change is introduced.
+
+### Expected merge conflict zones
+
+- LOW: agent option/result mapping, reserved dispatch catalog forwarding, and the four language helper adapters and docs.
+
+## 2026-09-21 - Configurable detached capacity and multi-job QA (senpi#1908)
+
+### What changed
+
+- `src/config/settings.ts` accepts the numeric `maxDetachedCells` setting (default 15) and resolves `SENPI_CODEMODE_MAX_DETACHED_CELLS` with the run-budget parser. `src/index.ts` and `src/tool/eval-tool.ts` share that resolver; the manager's cap also supplies `buildEvalPrompt`.
+- README and package/kernel/tool guides describe queued same-language execution on one kernel, the global cap, `list`, and `eval_kernel_busy_reset_refused`.
+- `test/config.test.ts` and `test/extension.test.ts` exercise file/default/environment admission and registration; `scripts/qa/eval-multi-job.ts` records a real session with JS/Python barriers, queued cancellation, reset refusal, completion notices and cleanup.
+- `src/tool/eval-kernel-reset-refused-error.ts` includes its stable code in the refusal message, preserving the identifier when the session serializes thrown errors as text.
+
+### Why
+
+- File and environment settings must control both the advertised cap and actual admission after registration.
+
+### Why an extension could not handle it
+
+- This extension owns settings resolution, manager construction, and the eval prompt.
+
+### Expected merge conflict zones
+
+- LOW: settings schema/resolvers, manager creation, and README settings table.
+
+## 2026-09-21 - Eval list and busy-kernel reset refusal (senpi#1908)
+
+### What changed
+
+- `src/tool/{types,eval-request,eval-tool,eval-tool-options,detached-eval-result,render}.ts` accept and render list controls with typed, cross-language live/recent metadata, without touching notifications. Peek/stop schema validation requires a nonempty cell id.
+- `src/tool/{detached-cell-contract,detached-cell-snapshot}.ts` retain submission timestamps and reset-refusal error codes in terminal snapshots.
+- `src/tool/{run-eval-cell,eval-kernel-reset-refused-error}.ts` reject busy-language resets, excluding the requesting queued cell, without resetting or stopping existing work.
+- `src/prompt/eval-prompt-template.ts`, its shipped-copy snapshot, and README explain list observation and reset refusal. `test/eval-list-and-reset.test.ts` covers schema, execution, listing, notification preservation, reset refusal and recovery.
+
+### Why
+
+- Callers need a session-wide view of eval work and must not erase state used by another live cell.
+
+### Why an extension could not handle it
+
+- This extension owns the schema, cell registry, reset boundary, and renderer.
+
+### Expected merge conflict zones
+
+- MEDIUM: eval tool schema/execute overloads, detached snapshots/results, reset boundary, and prompt sentence.
+
+## 2026-09-21 - Foreground capacity window and queued eval guidance (senpi#1908)
+
+### What changed
+
+- `src/tool/run-eval-cell.ts`, `cell-execution.ts`, and `src/timeouts/idle-timeout.ts` re-arm one submission-bound foreground wait after a refused detach. Bridge pauses cannot extend that deadline; shorter at-cap cells complete normally.
+- `src/tool/detached-eval-result.ts`, `detached-cell-manager.ts`, and `types.ts` return a typed capacity cancellation, preserve queued-detached status, and report live-cell counts and queue predecessors. `cell-runtime.ts` emits queued progress.
+- `src/tool/eval-tool.ts`, `src/prompt/{eval-prompt,eval-prompt-template}.ts`, and `src/extension/eval-status.ts` thread the configured cap into model guidance and show a queued marker rather than a fabricated elapsed time. README and the eval prompt snapshot follow the new contract.
+- `test/eval-detach.test.ts`, `eval-steering-detach.test.ts`, and `eval-status-queued.test.ts` cover FIFO notifications, the 30/45/60-second cap window, targeted cancellation, bridge pauses, acquisition, and steering without cancellation.
+
+### Why
+
+- Reaching background capacity must neither reject short work nor block the turn beyond its foreground window. Queued work needs clear non-retry guidance and must not look like executing work.
+
+### Why an extension could not handle it
+
+- This extension owns foreground execution, watchdog cleanup, detached settlement, and the model-facing tool contract.
+
+### Expected merge conflict zones
+
+- MEDIUM: run-eval-cell, CellExecution watchdog, detached result conversion, eval prompt sentence and snapshot.
+
+## 2026-09-21 - Capped detached set and queued kernel admission (senpi#1908)
+
+### What changed
+
+- `src/tool/detached-cell-{manager,contract,state,snapshot,status}.ts`, `managed-cell.ts`, and `terminal-snapshot-store.ts` track queued/running execution separately from detachment, cap detached cells globally, list live/recent cells, and dequeue queued stops without interrupting active work.
+- `src/tool/{eval-tool,eval-tool-options,run-eval-cell,cell-runtime,detached-eval-result,eval-execution-event,types,render}.ts` admit same-language work, bind per-run callbacks, start budgets on kernel activation, expose `queued_ms` and queue predecessors, and render queued state.
+- `src/config/settings.ts`, `src/index.ts`, `src/extension/eval-status.ts`, and `src/prompt/eval-prompt-template.ts` wire the default-15 cap and document submission-time hard limits versus execution-time budgets.
+
+### Why
+
+- Detached cells must not reject subsequent same-language work or consume its budget while it waits. Cell-specific callbacks prevent a later submission from stealing earlier output.
+
+### Why an extension could not handle it
+
+- The extension owns this cell state machine, kernel admission boundary, and renderer contract.
+
+### Expected merge conflict zones
+
+- MEDIUM: detached-cell manager, run-eval-cell, result/status rendering, and deadline fixtures.
+
+## 2026-09-17 - Reject cell declarations that would replace kernel globals (senpi#1784)
+
+### What changed
+
+- `src/kernels/js/worker-shadow-guard.js` (new) lazily snapshots `globalThis` own names at the first guard call — the first cell's transform, when prelude globals exist but no cell-created global does — and reports the first binding that would replace a protected global.
+- `src/kernels/js/worker-indirect-eval.js` calls the guard from `rewriteDeclaration` before emitting `globalThis[...]` assignments; a colliding top-level `const`/`let`/`var` (plain or destructured) now fails the cell with an error naming the identifier, the rename remedy, and the explicit `globalThis.<name>` escape hatch.
+- `test/kernel-js-persistence.test.ts` covers plain/let/var/destructured rejection, native-global survival in the next cell, prelude-global protection, re-declaration of cell-created globals, and explicit `globalThis` assignments staying untouched.
+- `scripts/qa-js-shadow-guard.ts` (new) drives the real kernel end to end: guard error text, native-global survival, destructured rejection, and re-declaration.
+
+### Why
+
+- Hoisting a declaration named after an existing global (`const fetch = ...`, `const [fetch] = ...`) silently replaced the platform or prelude global for every later cell; sessions wedged with confusing TypeErrors far from the cause and only a kernel reset recovered. The guard rejects the declaration before execution, so the failure is loud, local, and actionable.
+
+## 2026-09-16 - Bind kernel-tools types to the host declaration (senpi#1731)
+
+### What changed
+
+- `src/kernels/js/kernel-tools-types.ts` aliases `KernelToolsInvokeOptions` / `KernelToolsInvokeScope` / `KernelToolsHostScope` from `@code-yeongyu/senpi`'s `KernelToolInvokeOptions` / `KernelToolInvokeScope`, types `KernelToolsCapability` as `ExtensionKernelTools`, and `KERNEL_TOOLS_CAPABILITIES satisfies ExtensionKernelTools["capabilities"]`.
+- `src/tool/run-eval-cell.ts` types the cell capability object with `satisfies ExtensionKernelTools`.
+
+### Why
+
+- Coding-agent owns the public `ExtensionContext.kernelTools` declaration; this package implements it. Importing the host types here is the drift check (#1731).
+
+### Why an extension could not handle it
+
+- The capability object is constructed by the codemode kernel and published onto the host `kernelToolsStorage`; only this package can bind that object to the host type.
+
+### Expected merge conflict zones
+
+- LOW: `src/kernels/js/kernel-tools-types.ts`, `src/tool/run-eval-cell.ts`.
+
+## 2026-09-16 - Call-scoped host-tool policy for kernel-tool invoke (#1731)
+
+### What changed
+
+- `src/kernels/js/kernel-tools-types.ts` adds `KernelToolsInvokeScope`/`KernelToolsHostScope`/`KernelToolsInvokeOptions`, the `KERNEL_TOOLS_CAPABILITIES` marker (`invokeScope: true`) and widens `KernelToolsCapability.invoke` to `(request, options?: AbortSignal | KernelToolsInvokeOptions)`.
+- `src/kernels/js/kernel-tools-host.ts` normalizes the second argument, copies the caller's lists onto the `kernel-tool-invoke` frame only when the call names host tools, and rebuilds the typed refusal (`kernel_tool_host_denied` plus its `details`) from the reply.
+- `src/bridge/kernel-tools-protocol.ts` carries the optional `scope` on `kernel-tool-invoke` and the optional `details` payload on kernel-tool errors.
+- `src/kernels/js/kernel-tools-scope.js` holds the policy (deny wins, allow list refuses everything it does not name, malformed list fails closed) and the refusal factory; `src/kernels/js/kernel-tools-pump.js` puts the scope in the call-scoped bridge store and serializes `details`; `src/kernels/js/worker-core.js` refuses a scoped nested host call before it reaches the bridge.
+- `src/tool/run-eval-cell.ts` publishes `capabilities` on the cell's capability object and forwards the options through `JavaScriptKernel.invokeKernelTool`.
+
+### Why
+
+- A consumer granting a parent's kernel tool to a child with a narrower tool policy had only two options: refuse the grant, or let the closure's nested `tool.<host>()` calls run with the parent's full permissions (#1731). The scope is per call, so the parent's own cells and queue are untouched.
+
+### Why an extension could not handle it
+
+- The refusal must happen inside the JS worker's call-scoped bridge context, between the closure and the host bridge, which only the codemode kernel owns.
+
+### Expected merge conflict zones
+
+- LOW: `src/kernels/js/kernel-tools-*`, `src/bridge/kernel-tools-protocol.ts`, `src/tool/run-eval-cell.ts`.
+
+## 2026-09-16 - Kernel-tool capability on the worker tool-call path (#1754)
+
+### What changed
+
+- `src/tool/run-eval-cell.ts` computes the cell's `kernelTools` capability before the handler exists and passes it into `CellHandler` through `CellBridgeRuntime`.
+- `src/tool/cell-handler.ts` enters `kernelToolsStorage.run(kernelTools, ...)` around each `tool-call` dispatch (reserved `agent()`/`output()` bridges, completion, and ordinary host tools), so `ExtensionContext.kernelTools` resolves for exactly the duration of every host tool call a live JS cell makes.
+
+### Why
+
+- The kernel's message callback fires from the worker's own message loop, outside the `kernelToolsStorage.run` scope that only wrapped the awaited run chain, so every host tool dispatched by a running cell saw an empty store and refused kernel-tool grants with `tools_unavailable` (#1754); the capability from #1647 was unreachable in the shipped product.
+
+### Why an extension could not handle it
+
+- The dispatch boundary between the JS worker's message loop and the host tool runtime is owned by the codemode cell handler.
+
+### Expected merge conflict zones
+
+- LOW: `src/tool/cell-handler.ts`, `src/tool/run-eval-cell.ts`.
+
+## 2026-09-16 - Live host and foreign kernel-tool name collisions (#1647)
+
+### What changed
+
+- Session manager passes live `hostToolNames` / `foreignLanguageNames` providers into the JS kernel. Foreign names come from `listKernelToolNames()` on the other kernels of the same session (py/rb/jl).
+- Worker init still carries optional name arrays. The host re-resolves providers on worker start and before each cell via `kernel-tools-names`, so MCP attach after kernel start collides at `tool()`.
+- py/rb/jl kernels expose `listKernelToolNames()` (currently empty) as the source of truth for cross-language collisions.
+
+### Why
+
+- Host names were a one-shot `listTools()` snapshot, and `foreignLanguageNames` never left session-manager, so production JS `tool()` missed Python-side names and tools attached after worker start.
+
+### Why an extension could not handle it
+
+- Collision sets live in the worker registry and session kernel map.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/extension/session-manager.ts`, `src/kernels/js/worker-startup.ts`, `src/kernels/js/context-manager.ts`, `src/bridge/kernel-tools-protocol.ts`.
+
+## 2026-09-16 - Fail-closed JS kernel-tool parser and nested interrupt (#1647)
+
+### What changed
+
+- `src/kernels/js/kernel-tools-parse.js` is the only parser (Babel `.ts` copy removed). It accepts `function name(` / `async function name(` with IdentifierName parameters, including unicode and arrow-containing bodies, and rejects trailing commas, defaults, rest, destructuring, arrows, generators, and classes.
+- Worker init carries `hostToolNames` / `foreignLanguageNames` into `createKernelToolRegistry`. JS names that would require MCP mangling are rejected rather than rewritten.
+- Parent interrupt aborts nested kernel-tool waits with `kernel_tool_stale` so the host waiter settles once.
+- py/rb/jl kernels expose describe/invoke that return `tools_unavailable`.
+
+### Why
+
+- Unit tests locked the unused Babel parser while the worker guessed trailing commas, over-rejected `=>` in bodies, skipped live collision rules, and hung nested invokes across interrupt.
+
+### Why an extension could not handle it
+
+- Worker parser, init protocol, and nested pending maps are kernel internals.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/kernels/js/kernel-tools-parse.js`, `src/kernels/js/worker-core.js`, `src/kernels/js/worker-runtime.js`, `src/bridge/protocol.ts`.
+
+## 2026-09-16 - Reentrant JS kernel tool pump (#1647)
+
+### What changed
+
+- Host/worker protocol adds correlated kernel-tool describe/invoke/cancel/reply frames serviced off the top-level run queue.
+- Nested invokes use a call-scoped pending-reply map so `read()` inside a parent tool cannot deadlock behind `agent()`.
+- Recursive `agent()`/`workpool()` from a kernel tool returns `kernel_tool_recursion`; reset/kill rejects waiters with `kernel_tool_stale`.
+- `scripts/qa/omp-item6.ts` event-gates parent-awaits-child and reset/recursion cases.
+
+### Why
+
+- A parent JS cell awaiting a child must keep pumping nested host bridges without a second top-level eval.
+
+### Why an extension could not handle it
+
+- Worker message dispatch and run-queue ownership are kernel internals.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/kernels/js/worker-core.js`, `src/kernels/js/context-manager.ts`, `src/bridge/protocol.ts`.
+
+## 2026-09-16 - Fenced JS kernel tool descriptors (#1647)
+
+### What changed
+
+- `src/kernels/js/kernel-tools-*.js` parse named functions, apply MCP naming rules, and fence descriptors by generation/revision.
+- `tool(fn, metadata?)` is callable in the JS worker while `tool.<name>()` host calls remain.
+- `src/bridges/agent-bridge.ts` accepts and forwards `tools: string[]`.
+- Bridge protocol schemas include kernel-tool describe/invoke frames; production invoke pumping is not enabled yet.
+- `vitest.config.ts` merges workspace source aliases from `vitest.base.ts` so Node-hosted Vitest can load agent-bridge tests without package dist.
+
+### Why
+
+- In-process children need live, fenced parent JS functions without persisting closures or colliding with host/reserved names.
+
+### Why an extension could not handle it
+
+- Kernel globals, bridge frames, and agent argument forwarding are owned by codemode.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/bridge/protocol.ts` host/kernel unions, `src/kernels/js/worker-runtime.js` `tool` global, `src/bridges/agent-bridge.ts` argument schema.
+
+## 2026-09-16 - Workpool aggregate QA and reset retention (#1646)
+
+### What changed
+
+- `src/bridges/agent-bridge.ts` sets `additionalProperties: true` on the task-handle schema so extra producer fields match the frozen contract.
+- `scripts/qa/omp-item2-plugin.mjs` subscribes to `senpi-task.workpool-aggregate` on the parent session JSONL before close and asserts `pool_id`, keyed results in input order, and no `yield_unavailable`.
+
+### Why
+
+- Happy QA hardcoded `aggregateVerified: false` and could not certify a working O2 producer; kernel-reset tests inspected a canned fixture ID that could not observe a dropped engine pool.
+
+### Why an extension could not handle it
+
+- Task-handle validation and the checked-in workpool QA runner are owned by codemode; an extension cannot change the consumer schema or the ship-gate assertion.
+
+### Expected merge conflict zones
+
+- LOW: `agent-bridge.ts` schema options and `scripts/qa/omp-item2-plugin.mjs` aggregate extraction.
+
+## 2026-09-13 - Typed task handles and host workpool sugar (#1646)
+
+### What changed
+
+- `src/bridges/agent-bridge.ts` validates structural `task_id`/`run_epoch` details and removes all final-handle prose fallback. Background failures raise `invalid_task_handle`; foreground text/schema behavior is unchanged.
+- The JS/Python/Ruby/Julia preludes forward `workpool` create/push/close/inspect/cancel through the existing host-tool surface and retain only an opaque pool ID. Task handles retain the host epoch in every language.
+- `src/bridge/http-server.ts`, `src/tool/cell-handler.ts`, and the kernel error transports preserve typed error codes. Missing workpool hosts produce `workpool_unavailable`.
+- The eval helper documentation describes engine ownership and explicit close; `scripts/qa/omp-item2.ts` exercises all kernels and the separately built local O2 plugin without paid calls.
+
+### Why
+
+- Multiple task IDs in prose must not bind the wrong task, and kernel reset must not become the owner of engine work. A convenience adapter cannot select a worker default or emulate missing aggregate support.
+
+### Why an extension could not handle it
+
+- These bridge result boundaries and embedded prelude globals are owned by codemode. The engine itself remains an external host tool; no orchestration package is imported by product code.
+
+### Expected merge conflict zones
+
+- LOW: agent result validation, prelude helper installation, typed error forwarding, and helper documentation. No kernel scheduler, reserved bridge, task polling, or isolation changes.
+
+## 2026-09-15 - Static detached cards and self-stopping live ticker (#1696)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/render.ts` narrows `isLiveCellStatus` to `pending`/`running`, so detached cell cards render static (frozen elapsed time) instead of arming the 1 Hz repaint ticker forever.
+- `PlainTextComponent` gains an idle guard: the ticker counts ticks since the last `render()` and stops itself after 60 (a live row repaints every tick, so 60 renderless ticks means the row was dropped by a transcript rebuild or session switch); the next `render()` rearms it.
+
+### Why
+
+- Detached snapshot cards never receive a terminal re-render, so their 1 Hz tickers ran for the session lifetime; rows dropped by transcript rebuilds had no dispose path and accumulated intervals. Measured idle sessions burned 2-8% CPU each on leaked repaint timers.
+
+### Why an extension could not handle it
+
+- The ticker is an internal component lifetime decision; extensions see neither the render component contract nor the host's row-replacement cycle.
+
+### Expected merge conflict zones
+
+- LOW: `render.ts` ticker block and `isLiveCellStatus`. Rendered output for pending/running/terminal cards is unchanged; detached cards keep their icon and label with a frozen elapsed value.
+
+## 2026-09-15 - Bound eval-cell, tool-call, and display retention (#1695)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts` moves settled cells out of the live registry into a 32-entry terminal snapshot LRU (`terminal-snapshot-store.ts`), keeping `peek`/`stop`/`waitForTerminal` answerable for recent cells while `dispose` clears both maps; the managed-cell factory moved to `managed-cell.ts`.
+- `packages/senpi-codemode/src/kernels/js/context-manager.ts` caps the pull-API pending tool-call queue at 256 (drop-oldest) and clears it on interrupt/reset/close/crash, mirroring the subprocess kernel; `packages/senpi-codemode/src/kernels/shared/subprocess-queue.ts` gains the same cap.
+- `packages/senpi-codemode/src/tool/image.ts` caps per-cell display buffers (8 images, 24 MB base64, 64 JSON outputs) with elision counters and a sink note; resize and result marshalling split into `image-resize.ts` and `tool-result-marshal.ts`.
+
+### Why
+
+- Long-lived sessions retained every settled cell (result + closures), every unconsumed tool-call message (full tool arguments), and every display payload for the session lifetime, growing idle session heaps to multiple GB.
+
+### Why an extension could not handle it
+
+- The live-cell registry, kernel message queues, and the per-cell output collector are all internal ownership boundaries; no extension hook sees settled cells, kernel bridge frames, or display messages before retention.
+
+### Expected merge conflict zones
+
+- LOW: `detached-cell-manager.ts` settlement and lookup paths; `context-manager.ts` tool-call branch and lifecycle teardown; `image.ts` display collection. Behavior of active cells, the pull-based `nextToolCall` contract within its 256-message budget, and display ordering under the caps is unchanged.
+
+## 2026-09-13 - Session cwd and authoritative goal-store environment (#1663)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/session-env.ts` adds `PI_SESSION_CWD` and optional `PI_GOAL_STORE_FILE` from the extension context, clearing inherited values before applying the active session. The shared subprocess environment carries both to Python, Ruby, and Julia.
+- `packages/senpi-codemode/src/kernels/js/worker-core.js` mirrors both keys in its worker-init clearing list, including the isolated inline fallback and children spawned by cells.
+
+### Why
+
+- A kernel's process cwd or session JSONL path cannot identify the authoritative goal store for an overridden session directory or an in-memory session. Consumers need host-resolved values, and an omitted optional value must never expose a stale parent session's path.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/kernels/session-env.ts` owns the environment contract at interpreter creation; `packages/senpi-codemode/src/kernels/js/worker-core.js` owns the separate worker environment before cells or their imports run. Consumer extensions cannot sanitize either boundary themselves.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/kernels/session-env.ts` key list, structural context slice, and resolver; `packages/senpi-codemode/src/kernels/js/worker-core.js` mirrored key list. Runtime factory plumbing is unchanged because it already passes the context.
+
+### Tests
+
+- `test/session-env.test.ts`: resolution, optional omission, inherited-value clearing.
+- `test/js-kernel-session-env.test.ts`: worker/inline cells and children, inherited-value clearing.
+- `test/py-kernel-session-env.test.ts`: subprocess sanitization and live Python/child values.
+- `test/extension-session-env.test.ts`: session-start forwarding and exact environment snapshots.
+
+## 2026-09-13 - Steering detaches eligible foreground evaluations (#1637)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/run-eval-cell.ts` subscribes to the invocation's steering-only signal before acquiring a kernel, checks queued steering at readiness, and reuses the idle watchdog's successful detach transition. Failed steering admission preserves the foreground wait without cancellation. The listener is removed when the foreground call returns or rejects.
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts` refuses a detach when its language already has a detached owner, preserving the existing one-slot limit at the transition itself.
+
+### Why
+
+- Queued steering should release the interactive turn without killing computation or in-flight bridge work. Boot-time steering must not be lost, and a colliding detach must not replace another cell's ownership.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/tool/run-eval-cell.ts` owns the foreground wait and cancellation separation; `packages/senpi-codemode/src/tool/detached-cell-manager.ts` owns atomic detached admission. Neither transition is replaceable from a consumer extension.
+
+### Expected merge conflict zones
+
+- LOW: `packages/senpi-codemode/src/tool/run-eval-cell.ts` around idle detachment, kernel readiness, and foreground settlement.
+- LOW: `packages/senpi-codemode/src/tool/detached-cell-manager.ts` around `detach()` admission. No kernel queue, capacity setting, or deadline duration changes.
+
+## 2026-09-11 - Column-capped eval output keeps a recovery artifact
+
+### What changed
+
+- `src/output/streaming-output-buffer.ts` and
+  `src/output/streaming-output.ts`: raw output now starts the existing spill
+  artifact when the per-line column cap drops bytes, even if the total output
+  has not crossed the spill threshold.
+- `src/prompt/eval-prompt-template.ts`: large text guidance now directs eval
+  callers to bounded chunks or offset-based file reads and treats truncation
+  notices as incomplete output.
+- `test/output/streaming-output.test.ts`: column-cap truncation proves that the
+  preview remains bounded while the artifact contains the complete raw stream.
+
+### Why
+
+- A long `console.log` line can be truncated by the output column cap before
+  the spill threshold. Without an artifact, the model has no reliable way to
+  recover the omitted bytes.
+
+### Why an extension could not handle it
+
+- The column cap and raw-stream mirroring are owned by `OutputSink` before the
+  eval tool result and notice are built; an external extension cannot recover
+  bytes that the sink never writes.
+
+### Expected merge conflict zones
+
+- LOW in `src/output/streaming-output.ts` around `push()` and `#mirrorRaw()`.
+- LOW in `src/prompt/eval-prompt-template.ts` and
+  `test/output/streaming-output.test.ts`.
+
+## 2026-09-10 - Every eval cell gets a run budget; `timeout` is that budget
+
+### What changed
+
+- New `src/timeouts/run-budget.ts` (`RunBudget`): a pausable, cumulative watchdog over a cell's own execution time. Unlike `IdleTimeout` it does not restart after each host tool call; it charges only un-parked time (nested pause depth), fires once with a `TimeoutError` naming the budget, and is disposable.
+- New `src/tool/cell-deadlines.ts` (`CellDeadlines`): the wall-clock hard limit timer moved here out of `detached-cell-manager.ts`, next to the run budget; first expiry wins and disarms the other. `EvalDetachedCellManager` creates one per cell at `create()` (hard limit = `max(hardLimitSeconds, timeout)`, run budget = `timeout ?? runBudgetSeconds`), exposes `pause(cell)`/`resume(cell)`, and routes both expiries through the existing foreground (`onKill` -> `CellExecution.cancel`) and detached (`#cancel` -> `kernel.interrupt`) paths. The snapshot carries `runBudgetSeconds` when the budget killed the cell and the completion notification says so.
+- `src/config/settings.ts`: `runBudgetSeconds` (default 300, `SENPI_CODEMODE_RUN_BUDGET_SECONDS`, `resolveRunBudgetSeconds`); the three env resolvers share one parser.
+- `src/tool/run-eval-cell.ts` (split out of `eval-tool.ts`, which sat at 258 pure LOC) and `cell-execution.ts`: the idle watchdog is now optional and only interactive calls get one, with `timeoutMs = min(cellTimeoutSeconds, foregroundWindowSeconds)`; `timeout` no longer feeds it. `timeout-pause`/`timeout-resume` status frames are forwarded to the manager as well as the idle watchdog.
+- `src/tool/types.ts`: the `timeout` and `on_timeout` descriptions are rendered from `EvalDeadlineSeconds` (run budget, effective detach point, hard limit) so a settings or env override shows in the tool contract. `src/prompt/eval-prompt-template.ts` (template split out of `eval-prompt.ts`) states the run budget and the kernel-loss cost of a kill; `index.ts` threads `runBudgetSeconds` into both tool registrations and both cell managers.
+
+### Why
+
+- A detached js cell had no bound on its own work short of the 1800s bash-parity hard limit, while one running cell blocks its whole language kernel and a killed js cell that cannot settle (a pending `Bun.$`, a sync call) restarts the worker with every global lost. Observed 2026-09-10: two `find` walks over a 450-node_modules volume held the js kernel for 10.5 minutes, then the same mistake in the py kernel; the model had no number to reason against because the schema named none. Five minutes of own execution time is the default now, host tool calls are exempt so `agent()` DAG cells keep working, and the contract is in the schema.
+- `timeout` carried two meanings (detach budget capped at the window, plus a hard-limit raise) that matched neither bash nor the model's intent ("let it run this long"). It is now one thing: the cell's run budget, bash's kill-deadline reading.
+- Print/json calls used to die at a 30s idle watchdog; they are now bounded by the same run budget as interactive cells, so a `timeout` means the same thing in every mode.
+
+### Tests
+
+- `test/run-budget.test.ts`: cumulative accounting, parked time not charged, nested pauses, orphan resume, dispose, single fire.
+- `test/eval-run-budget.test.ts`: detached kill and notification, parked survival with resumed counting, hard limit while parked, explicit `timeout` both directions, detach at the idle budget with a larger `timeout`, print-mode kill by the budget, kernel status frames freezing the budget, in-budget completion.
+- `test/eval-schema-deadlines.test.ts`: configured numbers reach the schema descriptions and the eval description.
+- Contract updates: `eval-detach` (print mode), `eval-foreground-window` (window caps the idle budget), `eval-hard-limit` (explicit timeout raise measured on a parked cell), `eval-tool-timeout-state` / `eval-bridge-finalization` / `eval-tool-interrupt` (budget message), `config`, `interpreter`, `extension`, prompt snapshot.
+
+## 2026-09-09 - Eval description teaches cell mechanics; routing moved to the presets
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: every dialect block (`<eval_first_batching>`, `<gpt_eval_dialect>`, codex, kimi, default) drops the "default execution surface / one cell per multi-call step / never a chain / return ONLY distilled facts" wording and keeps mechanics: batch a step's independent calls in one cell with `parallel(thunks)`, write real code around them, keep every failed or missing item in the result verbatim, re-read truncated output before deciding, and (with monitor) start long-running work through `tool.monitor`. `BATCHING_GUIDELINES` are one-line pointers without capitals. The routing decision (what is batched, what runs one at a time and is observed) now lives once, in the model's preset.
+- `test/prompt.test.ts`: the guideline equality uses the new default line; dialect markers are checked by tag and by shape (no all-caps words of five or more letters in the Kimi instruction, no `NEVER` in the default instruction) instead of pinned slogans.
+
+### Why
+
+- The same instruction rendered in three homes per session (tool description, preset rule, system guideline). Prompt-engineering skill: one home per rule; the description is the right home for mechanics because it renders for every model, the preset for routing because that wording is per model. Distilled-only returns hid the detail the next step needed in 14% of sampled cells (2026-09-09 census), so the description now names the failure-verbatim rule instead of "return ONLY distilled facts". o200k: default 1396 -> 1278, claude 1390 -> 1291, kimi 1397 -> 1277, codex/gpt 1325 -> 1321.
+
+## 2026-09-07 - Bun.spawnSync inherits the pinned session environment
+
+### What changed
+
+- `src/kernels/js/worker-shell-capture.js` wraps `Bun.spawnSync` under the same environment pin gate as `Bun.spawn`: when a session environment was applied and the call passes no explicit `env`, the worker's `process.env` view is injected (array and object call forms); explicit `env` is left untouched and the original is restored on uninstall.
+
+### Why
+
+- Measured on Bun 1.4.0: a Worker's `process.env` writes are visible to `Bun. and `node:child_process` but not to `Bun.spawn`/`Bun.spawnSync` without an explicit `env`, which inherit the OS environ. The 2026-09-07 session-environment change covered `Bun.spawn` only, so a cell using `Bun.spawnSync` could still route per-session tooling (e.g. the omo ulw-loop toolkit keyed on `PI_SESSION_ID`) to the wrong scope.
+
+### Tests
+
+- `test/js-kernel-shell-capture.test.ts`: pinned / explicit-env / object-form `spawnSync` cases and a no-session pass-through plus restore case (fake Bun records `spawnSync` calls).
+- `test/js-kernel-session-env.test.ts`: the worker + inline matrix runs a real `Bun.spawnSync` child when the cell runtime is Bun.
+
+
+## 2026-09-07 - Eval kernels carry the session environment
+
+### What changed
+
+- New `src/kernels/session-env.ts` resolves the per-session `PI_*` environment (`PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`) from the extension session context and merges it over the inherited environment with the bash tool's delete-then-set semantics.
+- `runtime-factory` resolves the environment at session start and threads it through `CreateCodemodeSessionManagerOptions.sessionEnv` into every kernel: the JS worker applies it to its own `process.env` at worker init (so `env()`, `process.env`, `Bun.$`, `Bun.spawn`, and `child_process` children all see it), and the py/rb/jl interpreters spawn with it merged into their environment (so `os.environ` and their children see it). Restarted or reset interpreters re-apply it because it is a kernel option, not a one-shot spawn side effect.
+- Under Bun a `delete process.env.X` does not unsetenv, so `worker-shell-capture.js` additionally pins the worker's environment view (`$.env` seed plus explicit `env` on captured `Bun.spawn` calls without one) whenever the session environment deleted inherited keys; without this, children would still see deleted `PI_*` values in the OS environment.
+
+### Why
+
+- A child spawned from an eval cell saw no `PI_SESSION_ID`, so `omo-agent-toolkit ulw-loop` invoked from a cell resolved the cwd-global state instead of the active session — a real data-corruption path. The contract is that a child spawned from eval sees the same session environment a child spawned from the `bash` tool sees; the core exposes no importable helper for that set (its bash implementation is private and the host package is a type-only dependency here), so the five-key contract is mirrored in one documented helper.
+
+## 2026-09-07 - Fail clearly when compiled codemode assets are missing
+
+### What changed
+
+- Kernel runtime asset resolution now rejects Bun virtual paths and reports the missing codemode sidecar beside the executable, while skill contribution resolution remains non-throwing.
+
+### Why
+
+- Compiled binaries cannot pass embedded `/$bunfs` paths to workers or subprocesses; the actionable error identifies the expected sidecar asset and deployment fix.
+
+
+## 2026-09-06 - Bun eval description steers away from Bun.spawnSync
+
+### What changed
+
+- `src/prompt/eval-prompt.ts`: the Bun runtime sentence gains one instruction after the WebView
+  clause: "Shell out through `Bun.$` or `Bun.spawn`, never `Bun.spawnSync`: a synchronous child blocks
+  the worker, so a stop or timeout then loses every variable."
+
+### Why
+
+- Session audit (#1403): models wrapped shell commands in `Bun.spawnSync` inside cells; a worker blocked
+  in a synchronous call cannot honour `interrupt`, so the stop that #1406 made bounded still has to
+  replace the worker and drop its globals. The model cannot derive the worker-thread limit; the async
+  forms settle cooperatively and keep the kernel.
+
+### Why an extension could not handle it
+
+- Prompt text owned by this package; no runtime behavior changed.
+
+### Expected merge conflict zones
+
+- LOW: fork-only description text.
+
+## 2026-09-06 - JS kernel: cooperative interrupt, bounded stop, stdin isolation (#1403)
+
+### What changed
+
+- `src/kernels/js/worker-core.js`: handles the `interrupt` bridge message. It emits an
+  `interrupt-ack` status at once, rejects every pending bridge `tool.*` call and any later call from
+  the same cell with `CellInterruptedError` (`JS cell interrupted: <reason>`), and asks the runtime to
+  kill the cell's children, so a cell parked on a bridge call or a spawned child settles without
+  losing the worker.
+- `src/kernels/js/worker-runtime.js`: tracks `Bun.spawn` children created during the active cell
+  (forgotten when they exit or the cell ends) and kills the live ones on `interrupt()`.
+- `src/kernels/js/worker-shell-capture.js` (+ `.d.ts`): while a cell is active every `Bun.$`
+  template is framed as `true | (\n<template>\n)` so no command inherits the host's terminal as
+  stdin; `Bun.spawn` children are reported through the new optional `onChild` hook.
+- `src/kernels/js/context-manager.ts`: `interrupt()` and the kernel timeout go through
+  `#stopActive` - post `interrupt`, wait for the ack (`INTERRUPT_ACK_MS`) and then the settlement
+  grace (`JS_INTERRUPT_GRACE_MS`), and only replace the worker when the cell stays unsettled;
+  the host-composed result (`interruptResult`) wins over the worker's own error text; a worker
+  abandoned at the termination deadline gets a stderr note into the cell output. The worker
+  generation moved to `src/kernels/js/worker-slot.ts` (startup with inline fallback, message
+  fencing, bounded retirement) and the startup sequence to `src/kernels/js/worker-startup.ts`
+  (also the new home of `resolveJsWorkerEntryUrl`, re-exported from `context-manager.ts`).
+- `src/kernels/js/interrupt-bounds.ts`: `awaitCooperativeSettlement`, `retireWorker` (bounded by
+  `WORKER_TERMINATE_DEADLINE_MS`), `abandonedWorkerNote`.
+- `src/kernels/js/run-queue.ts`: pending runs carry `settlement`, `interruptResult`,
+  `interruptAck`, `settledByWorker`; `settleAll` prefers the in-flight interrupt result.
+- `src/bridge/reserved.ts`: `INTERRUPT_ACK_OP`.
+- `src/tool/detached-cell-manager.ts`: `stop` and the hard limit cancel through `#cancel`, which
+  parks the completion notification (`interruptOutcome`) until the kernel reported whether state
+  survived and keeps the handle's `note`; the public snapshot/notifier/options interfaces moved to
+  `src/tool/detached-cell-contract.ts` (re-exported) and the status/wake-source projections to
+  `src/tool/detached-cell-status.ts`; `src/tool/detached-notification-queue.ts` awaits async
+  snapshots; `src/tool/detached-cell-snapshot.ts` and `src/tool/detached-eval-result.ts` carry
+  `interruptNote` into the stop result.
+- `src/tool/cell-execution.ts` + `src/tool/interrupt-note.ts`: the foreground timeout path keeps the
+  whole interrupt handle (`interruptHandle`) so `describeTimeoutState` can wait for a bounded stop
+  and append the kernel's note; `src/tool/types.ts` adds the optional `note` to
+  `KernelInterruptHandle`.
+- `src/tool/detached-cell-notification.ts`: the state note comes from `interruptionStateNote` /
+  `unknownInterruptionStateNote` (`src/tool/interrupt-note.ts`) instead of a per-language constant.
+
+### Why
+
+- Audit of 30k eval calls (#1403): `stop` on a worker blocked in `Bun.spawnSync` hung the tool call
+  (51 min in production) because `worker.terminate()` had no deadline; `Bun.$` inherited the TUI's
+  stdin so `cat`, ssh/git prompts, and keychain dialogs blocked cells forever; every interrupt or
+  timeout wiped the VM and the note claimed the worker was "unresponsive" without ever asking it.
+  Python already preserves state on SIGINT; JavaScript now matches it where the cell can settle and
+  tells the truth where it cannot.
+
+### Why an extension could not handle it
+
+- Interrupt delivery, worker lifecycle, and the shell wrapper live inside the kernel package's
+  worker protocol; no extension can reach the worker thread or the run queue.
+
+### Expected merge conflict zones
+
+- MEDIUM: `src/kernels/js/context-manager.ts` was split; an upstream change to worker startup or
+  interrupt lands in `worker-slot.ts` / `worker-startup.ts` / `interrupt-bounds.ts` now.
+- LOW: `worker-core.js`, `worker-runtime.js`, `worker-shell-capture.js`, `detached-cell-*.ts`.
+
+## 2026-09-05 - Explain eval's run-only language requirement
+
+- The live and exported eval schemas describe `language` as required for runs,
+  with no default kernel, while keeping it optional for `peek` and `stop`.
+- Request parsing distinguishes an omitted language from an unsupported value
+  and lists the supported language identifiers for invalid values.
+- The README documents explicit language selection for runs and language-free
+  `peek`/`stop` requests.
+- Regression: `test/eval-request-language.test.ts` covers distinct diagnostics,
+  omitted run languages, and language-free control requests. Fixes #1395.
+
 ## 2026-09-05 - GPT eval dialect routes waits through tool.monitor
 
 ### What changed
@@ -590,3 +1802,49 @@ Detach and settlement ownership lives inside `EvalDetachedCellManager`, and only
 - Tests: `test/eval-status.test.ts` (formatter), new `eval detached cell status
   emissions` block in `test/eval-detach.test.ts` (manager contract), and
   `test/eval-status-wiring.test.ts` (extension → footer wiring through session_start).
+
+## wake_source_state reaches the rpc channel
+
+`emitWakeSourceState` in `src/index.ts` publishes on `pi.rpc` before `pi.events`, mirroring
+`onCellSettled`. Out-of-process consumers (rpc mode with `extension_events`) now receive the
+live-cell transitions; `test/eval-wake-source.test.ts` pins the rpc case and the wiring test
+filters the settle payload instead of asserting an rpc-channel exact list. (#1943)
+
+
+## 2026-09-23 — Hide eval artifact and truncation renderer warnings
+
+### What changed
+
+`packages/senpi-codemode/src/tool/render.ts`: Remove both renderer-owned artifact/truncation warning paths and omit model-only text from the fallback. Stop pattern-based footer stripping from ordinary output. The existing artifactNotice and formatTruncationWarning helpers do not attach text to model results, so eval model text and grouping stay unchanged.
+
+### Why
+
+Eval bookkeeping should not be duplicated in visible cards or cause ordinary user output to be stripped by resemblance.
+
+### Why an extension could not handle it
+
+These card builders own the rendered details and cannot be corrected by an external extension.
+
+### Expected merge conflict zones
+
+Detailed eval cells and fallback result blocks; no collector, output grouping, or model content changes.
+
+- Covered production paths: `packages/senpi-codemode/src/tool/render.ts`.
+
+## Eval kernels see the session's browser engine (2026-10-03)
+
+### What changed
+
+- `src/kernels/session-env.ts`, `src/kernels/js/worker-core.js`: `OMO_BROWSER_ENGINE` joins the session environment keys. A kernel gets the value of its own session (when the session chose one) and a value inherited from the host process is cleared for a session that chose none, in the cell and in every child it spawns.
+
+### Why
+
+`open_session.browserEngine` is per session (senpi#2611); an eval cell's `process.env` is the one place a skill reads it from.
+
+### Why an extension could not handle it
+
+The kernel environment is applied by the kernel worker before any cell runs.
+
+### Expected merge conflict zones
+
+`SESSION_ENVIRONMENT_KEYS` in both `session-env.ts` and the mirror list in `worker-core.js`.

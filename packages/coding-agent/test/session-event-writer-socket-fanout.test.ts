@@ -216,6 +216,7 @@ describe("SessionEventWriter socket fan-out under a stalled reader", () => {
 		// serving (records and command responses alike).
 		expect(connection.writes.at(-1)).toBe('{"type":"overflow","error":"overflow, resync required"}\n');
 		expect(connection.closed).toBe(1);
-		expect(writer.hasCapableConnection("rpc-1")).toBe(false);
+		writer.setConnectionCapabilities("socket-1", ["extension_events"]);
+		expect(writer.hasRegisteredConnectionCapabilities("socket-1")).toBe(false);
 	});
 });

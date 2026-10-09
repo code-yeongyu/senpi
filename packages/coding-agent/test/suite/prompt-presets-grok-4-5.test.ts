@@ -22,6 +22,9 @@ function createModel(id: string, provider: string, api: Api = "openai-responses"
 	};
 }
 
+// apply_patch is gated to GPT ids, so a real Grok session carries edit/write instead.
+const GROK_SESSION_TOOLS = ["read", "bash", "grep", "edit", "write"];
+
 function hasGrok45CatalogSignal(model: Model<Api>): boolean {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
 	// Keep in sync with presets.ts hasGrok45Signal — colon provider sep + compact grok45.
@@ -52,7 +55,7 @@ describe("Grok 4.5 prompt preset", () => {
 		const model = createModel(modelId, "xai", "openai-responses");
 
 		// when
-		const preset = resolvePreset(model, settings);
+		const preset = resolvePreset(model, settings, { selectedTools: [...GROK_SESSION_TOOLS] });
 
 		// then
 		expect(preset?.name).toBe("grok-4.5");
@@ -61,7 +64,10 @@ describe("Grok 4.5 prompt preset", () => {
 		// with --model gpt-5.6*, not by restating the doctrine in the CEO
 		// prompt itself.
 		// Shared sections are reused, not duplicated.
-		expect(preset?.prompt).toContain("apply_patch");
+		expect(preset?.prompt).toContain("## File operations");
+		// #1968: this preset used to demand apply_patch, which Grok can never activate.
+		expect(preset?.prompt).not.toContain("apply_patch");
+		expect(preset?.prompt).toContain("Use `edit` and `write` for ALL file edits");
 		// Routing-line discipline preserved.
 		// The full corePrompt is substantially larger than the old tuningSection.
 		// Must NOT name a nonexistent task/subagent tool (senpi has no such tool).
@@ -115,5 +121,19 @@ describe("Grok 4.5 prompt preset", () => {
 			]),
 		);
 		expect(misses).toEqual([]);
+	});
+});
+
+describe("Devin SWE-2 prompt preset", () => {
+	it.each(["swe-2-medium", "swe-2-high", "swe-2-max", "devin/swe-2-medium", "devin/swe-2-high"])(
+		"resolves %s to K3",
+		(id) => {
+			const preset = resolvePreset(createModel(id, "devin"), { promptPreset: "auto" });
+			expect(preset?.name).toBe("kimi-k3");
+		},
+	);
+
+	it.each(["swe-2", "swe-2-low", "swe-2-high-lite"])("does not route the unserved %s id", (id) => {
+		expect(resolvePreset(createModel(id, "devin"), { promptPreset: "auto" })?.name).not.toBe("kimi-k3");
 	});
 });

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { parsePatch } from "diff";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApplyPatchTool } from "../../src/core/extensions/builtin/gpt-apply-patch/tool.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { EventProjector } from "../../src/modes/app-server/threads/projection.ts";
 import { fileChangeProjection } from "../../src/modes/app-server/threads/projection-file-changes.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -17,7 +18,13 @@ async function createApplyPatchHarness(): Promise<Harness> {
 
 async function executeApplyPatch(harness: Harness, input: string) {
 	const tool = createApplyPatchTool();
-	return tool.execute("apply-call", { input }, undefined, undefined, harness.session.extensionRunner.createContext());
+	return tool.execute(
+		"apply-call",
+		{ input },
+		undefined,
+		undefined,
+		harness.session.extensionRunner.createContext() as ExtensionToolContext,
+	);
 }
 
 function valueAt(value: unknown, key: string): unknown {

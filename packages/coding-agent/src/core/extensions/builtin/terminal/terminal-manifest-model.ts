@@ -5,6 +5,7 @@
  */
 
 import type { SessionManager } from "../../../session-manager.ts";
+import type { ChildProcessIdentity } from "./process-identity.ts";
 
 export const TERMINAL_MANIFEST_VERSION = 1;
 /** Minimum debounce for checkpoint writes; a burst inside this window collapses to one write. */
@@ -50,12 +51,17 @@ export interface ManifestMonitor {
 	readonly lastCheckpoint: TerminalManifestCheckpoint | null;
 	readonly deliveryPaused: boolean;
 	readonly fireWindow: { startMs: number; count: number };
+	/** The child process a restore must recognise (and stop) before re-spawning; absent on v1 entries. */
+	readonly runtime?: ChildProcessIdentity;
+	/** Absolute runtime deadline of an ephemeral watch, so a restore can hand back the time left. */
+	readonly deadlineMs?: number;
 }
 
 export interface ManifestBackgroundSession {
 	readonly id: string;
 	readonly command: string;
 	readonly startedAtMs: number;
+	readonly runtime?: ChildProcessIdentity;
 }
 
 export interface TerminalManifest {
@@ -92,4 +98,6 @@ export type MonitorSpec = CommandMonitorSpec | FileMonitorSpec;
 export interface MonitorRegistration {
 	readonly monitorId: string;
 	readonly spec: MonitorSpec;
+	readonly runtime?: ChildProcessIdentity;
+	readonly deadlineMs?: number;
 }

@@ -1,0 +1,9 @@
+# Malformed fragment
+
+Nested **bold *emphasis*** & 🌍 &lt;literal&gt;
+
+Left **cell**
+
+Right   cell
+
+Final paragraph with enough content to select this fragment.

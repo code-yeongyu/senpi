@@ -1,8 +1,8 @@
+import { TURN_RETRY_SUPPRESSION_PREFIX } from "../../utils/provider-failure-description.ts";
 import { classifyPoolFailure, type PoolFailureClassification } from "./classify.ts";
 import type { SelectableSlot } from "./select.ts";
 
-/** Must stay byte-identical to the claude-sdk-oauth marker AgentSession already honors. */
-export const TURN_RETRY_SUPPRESSION_PREFIX = "senpi:no-turn-retry:";
+export { TURN_RETRY_SUPPRESSION_PREFIX };
 export const DEFAULT_SLOT_BLOCK_MS = 60_000;
 export const MAX_SLOT_BLOCK_MS = 48 * 60 * 60 * 1_000;
 

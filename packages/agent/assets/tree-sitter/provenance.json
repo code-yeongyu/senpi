@@ -1,0 +1,22 @@
+{
+	"note": "Vendored WebAssembly artifacts for the structural read fold-boundary engine (#1685). Shipped grammars are limited to languages the frozen read selection binds to `wasm`; every other evaluated grammar is resolved from the pinned measurement dependency at bake-off time only.",
+	"runtime": {
+		"file": "web-tree-sitter.wasm",
+		"package": "web-tree-sitter",
+		"version": "0.27.0",
+		"source": "web-tree-sitter.wasm",
+		"license": "MIT",
+		"sha256": "c03bccdc3b448a32848f5ae327e209c982bbb0840d43eec8bc2d5759544a1ed3"
+	},
+	"grammars": [
+		{
+			"language": "js",
+			"file": "javascript.wasm",
+			"package": "@vscode/tree-sitter-wasm",
+			"version": "0.3.1",
+			"source": "wasm/tree-sitter-javascript.wasm",
+			"license": "MIT",
+			"sha256": "5fb488d0cabb4775a594bab85682de5ad6ce83c0d6ac997a9f82dd084d571240"
+		}
+	]
+}

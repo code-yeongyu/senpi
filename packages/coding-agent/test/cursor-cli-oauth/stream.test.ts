@@ -9,6 +9,7 @@ import {
 	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
 	type Context,
+	fauxAssistantMessage,
 	InMemoryCredentialStore,
 	type Model,
 } from "@earendil-works/pi-ai";
@@ -26,6 +27,7 @@ import {
 	CURSOR_CLI_OAUTH_PROVIDER_ID,
 	type CursorCliStreamDeps,
 	streamCursorCliOauth,
+	turnPrompt,
 } from "../../src/core/extensions/builtin/cursor-cli-oauth/stream.ts";
 
 const TEST_DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -240,6 +242,41 @@ function invocation(dump: string): { argv: string[]; env: Record<string, string>
 afterEach(() => {
 	delete process.env.SENPI_CURSOR_CLI_OAUTH_EXECUTABLE;
 	for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+describe("turnPrompt (senpi#2139)", () => {
+	it("keeps the user's request when a hidden reminder follows it in the same turn", () => {
+		// given: the request, then a hidden extension message that reaches providers as a user message
+		const request = "add retries to fetchUser";
+		const reminder = "<system-reminder>Plan first.</system-reminder>";
+		const turn: Context = {
+			messages: [
+				{ role: "user", content: request, timestamp: NOW },
+				{ role: "user", content: [{ type: "text", text: reminder }], timestamp: NOW },
+			],
+		};
+
+		// when
+		const prompt = turnPrompt(turn);
+
+		// then
+		expect(prompt.startsWith(request)).toBe(true);
+		expect(prompt.endsWith(reminder)).toBe(true);
+	});
+
+	it("sends only the current turn's user messages, not earlier turns", () => {
+		// given: an earlier exchange, then this turn's request
+		const turn: Context = {
+			messages: [
+				{ role: "user", content: "earlier ask", timestamp: NOW },
+				fauxAssistantMessage("earlier answer"),
+				{ role: "user", content: "this ask", timestamp: NOW },
+			],
+		};
+
+		// when/then
+		expect(turnPrompt(turn)).toBe("this ask");
+	});
 });
 
 describe("cursor-cli-oauth stream mapping", () => {

@@ -1,5 +1,125 @@
 # config-reload Extension Changes
 
+## 2026-10-09 - Concurrent log rotation never disables a log sink (senpi#2976)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/log.ts`: rotates through `rotateLogIfNeeded`; a failed write returns `{ written: false, disabled: true }` and retries after `LOG_SINK_RETRY_MS` instead of disabling the logger for the process lifetime.
+
+### Why
+
+- Several processes share one agent dir (engine host, CLI, desktop host). Rotation was a non-atomic stat, remove `.1`, rename: when two crossed the cap together, the loser's rename threw ENOENT and its sink stayed disabled for the rest of the process, and the remove step could delete a generation another process had just rotated. A four-process burst dropped hundreds of lines per losing process. Rotation now goes through `core/log-file-rotation.ts` (an exclusive lock file and a size re-check under it), a lost race keeps appending, a failed sink retries after `LOG_SINK_RETRY_MS` (5 s), and the mode is set on the open descriptor.
+
+### Why an extension could not handle it
+
+- This is the builtin extension's own log writer.
+
+### Expected merge conflict zones
+
+- LOW: `createConfigReloadLogger` and `writeLine` in `config-reload/log.ts`.
+
+## 2026-10-08 - Stop the post-reload handoff from re-triggering reloads (#2878)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`: the post-reload handoff comparison (`compareHandoffSnapshots`) no longer counts a path that is missing from the new watcher baseline but still on disk as changed. Such a path belongs to an extension whose watch registration arrives after `session_start`; it is held in `awaitingRegistration` and compared against its pre-reload hash once that registration rebuilds the watchers (`settleAwaitingRegistration`). A deleted path still counts as changed.
+- Reloads triggered only by the handoff comparison carry a chain counter; after `MAX_HANDOFF_RELOADS` (3) consecutive such reloads the chain stops, with no time window, so a slow cycle (for example one held back by running subagents) cannot restart it, logs `reload_loop_stopped` at warn level and shows a notice instead of reloading again. A watcher-detected change resets the chain.
+- The extension-veto recheck keeps its 1 s cadence for the first five attempts, then backs off exponentially to at most 30 s; `agent_end` and `agent_settled` still flush immediately. `reload_deferred` is logged once per veto reason instead of on every recheck.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/log.ts`: new `reload_loop_stopped` event with `paths` and `reloads`.
+
+### Why
+
+- Extensions (omo) re-register their config-watch targets after the config-reload `session_start` handler. The handoff compared the pre-reload baseline, which held those targets, with a baseline that did not yet, so an untouched extension-only file always looked changed and every reload queued the next one (#2878). One session reloaded every ~14 s for over an hour and reached ~20 GB physical footprint.
+- A session with long-running subagents rechecked a vetoed reload, and logged `reload_deferred`, once per second for as long as the subagents ran (thousands of lines per session in `config-reload.log`).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` owns the reload handoff, the watcher baseline and the veto recheck clock.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` `processReloadHandoff`, `handleRegistration`, `flushPending`, `armVetoRecheck`; `log.ts` event union.
+
+## 2026-10-01 - Ignore runtime-only project directory creation and preserve request admission
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`: rechecks the live idle, pending-message, and compaction state after awaiting extension reload vetoes.
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/change-groups.ts`: separates presence-watch rearming from a real configuration change. Newly discovered files still request a reload; creating only the project configuration container does not.
+- Files discovered by that rearm pass through the same self-write, routine-settings and generated-shim filters as the event's own paths.
+
+### Why
+
+- The first prompt can begin while a reload veto handler is pending. The previous idle snapshot then allowed configuration reload to retire the generation during that prompt (oh-my-openagent#9365).
+- Desktop task projections created an otherwise configuration-free project directory while the first request was starting (oh-my-openagent#9363). Directory discovery must not reload extensions merely because task runtime state appeared there.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts` owns pending configuration changes and the decision to request their reload.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts`, `flushPending`, watcher rearming, and extracted change grouping.
+
+## 2026-09-21 - Share one recursive FS-watch worker across sessions (#1794)
+
+### What changed
+
+- `watch-event-source.ts` hoists the recursive watch worker, its subscription table, and the subscription id counter from per-source closure state into a process-wide registry keyed by the worker-factory identity. The default factory resolves to a single entry, so every `createFsWatchEventSource()` without an injected factory — one per config-reload extension instance, i.e. one per session — shares one `node:worker_threads` Worker instead of each constructing its own.
+- Subscriptions carry their owning source's `onError`, so message-kind errors and worker-death fan-out still reach the right handler while the worker is shared. Id-routed dispatch, crash replacement, and last-unsubscribe termination semantics are unchanged, now process-wide per factory key.
+- New `resetFsWatchWorkersForTests()` export terminates live workers best-effort and clears the registry for test isolation.
+
+### Why
+
+- The shared in-process RPC host loads one config-reload instance per session and every session added one watch thread and a few MB (1,023 threads at 1,000 sessions — #1794). The watched directories are identical per host, so N workers were N-1 redundant.
+
+### Why an extension could not handle it
+
+- The event source and its worker lifecycle are internal to this builtin; no extension API controls worker construction.
+
+### Expected merge conflict zones
+
+- MEDIUM: `watch-event-source.ts` worker registry and `createFsWatchEventSource` body. Tests extended in `test/suite/config-reload-worker-shutdown.test.ts` and `test/rpc-multi-session-isolation.test.ts`.
+
+## 2026-09-14 - Join watcher disposal and skip nonpersistent RPC probes (#1656)
+
+### What changed
+
+- Watch-worker registration checks a shared cancellation flag before and after `fs.watch`, so a shutdown that wins the post-load/pre-registration interleaving never retains a native watcher.
+- `ConfigReloadWatchEngine.close()` cancels synchronously and joins returned disposers; repeated close shares that join and surfaces `AggregateError` if any disposer fails.
+- `session_shutdown` awaits those joins. Nonpersistent RPC sessions (`getSessionFile() === undefined`) do not start OS watches.
+
+### Why
+
+- Fire-and-forget unsubscribe during exit left FSEvents streams running into process teardown (`pthread_join` hang). Snapshot-only RPC probes never needed live watches.
+
+### Why an extension could not handle it
+
+- The event source and watch engine are internal to this builtin; process shutdown must observe their disposal.
+
+### Expected merge conflict zones
+
+- MEDIUM: `watch-event-source.ts` worker source and unsubscribe join; `watch-engine.ts` `close()`; `index.ts` `session_shutdown` / `rebuildWatchers`.
+
+## 2026-09-11 - Keep per-source changelog acknowledgements routine (senpi#1583)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/config-reload/routine-settings.ts`: classifies `changelogSeen` as routine settings during reload filtering.
+
+### Why
+
+- Acknowledging a changelog must not trigger a substantive configuration reload or cascade across sessions.
+
+### Why an extension could not handle it
+
+- The routine-setting classification is internal to the builtin reload diff before extension callbacks run.
+
+### Expected merge conflict zones
+
+- LOW: the routine settings key set.
+
+
 ## Offload non-recursive watch creation to the worker (2026-09-02)
 
 ### What changed

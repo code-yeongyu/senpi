@@ -8,8 +8,15 @@ export interface PromptCacheKeepAliveSettings {
 export interface PromptCacheSettings {
 	cacheAwareTimeouts?: boolean; // default: true (size foreground tool waits by the model's prompt-cache TTL)
 	safetyBufferSeconds?: number; // default: 30 (headroom subtracted from the cache TTL)
-	goalBackstopMaxSeconds?: number; // default: 3570 (maximum Goal monitor continuation backstop)
+	goalBackstopMaxSeconds?: number; // default: 270 (Goal monitor re-check backstop while wake sources are live; 5m TTL - 30s buffer)
 	keepAlive?: PromptCacheKeepAliveSettings;
+}
+
+export type TodoFirstTurnPlan = "force" | "remind" | "off";
+
+export interface TodoSettings {
+	firstTurnPlan?: TodoFirstTurnPlan; // default: "force" (first prompt of a session gets a hidden plan reminder; "force" also names the todo tool in tool_choice where the provider allows it)
+	turnEndBackstop?: boolean; // default: true (a main-session turn that ends text-only with open todo tasks and no active goal gets a hidden nudge, at most two per chain)
 }
 
 export interface ImageSettings {
@@ -21,6 +28,16 @@ export interface ImageSettings {
 export interface LookAtSettings {
 	enabled?: boolean; // default: true
 	models?: string[]; // default: undefined (use the default look-at chain)
+}
+
+export const ASK_USER_DEFAULT_TIMEOUT_MINUTES = 30;
+export const ASK_USER_MIN_TIMEOUT_MINUTES = 1;
+export const ASK_USER_MAX_TIMEOUT_MINUTES = 120;
+
+export interface AskUserSettings {
+	enabled?: boolean; // default: true
+	bell?: boolean; // default: true; ring once for a newly displayed question
+	timeoutMinutes?: number; // default: 30, clamped to 1-120 when read
 }
 
 export interface ThinkingBudgetsSettings {
@@ -38,5 +55,9 @@ export interface MarkdownSettings {
 }
 
 export interface OpenAISettings {
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
+}
+
+export interface ProviderConcurrencySettings {
+	maxConcurrency?: number; // default: unlimited; 0 disables the cap
 }

@@ -6,9 +6,15 @@
  * - `senpi --mode json "prompt"` - JSON event stream
  */
 
-import type { ImageContent } from "@earendil-works/pi-ai";
+import {
+	describeProviderFailureForUser,
+	type ImageContent,
+	stripTurnRetrySuppressionPrefix,
+} from "@earendil-works/pi-ai";
+import { REQUIRED_COMPACTION_ERROR_MESSAGE } from "../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
+import { usageLimitCause } from "../core/retry-fallback/usage-limit.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 import { toJsonEvent } from "./json-event.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "./provider-native-rendering.ts";
@@ -89,8 +95,25 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 						customInstructions: navigateOptions?.customInstructions,
 						replaceInstructions: navigateOptions?.replaceInstructions,
 						label: navigateOptions?.label,
+						expectedLeafId: navigateOptions?.expectedLeafId,
 					});
 					return { cancelled: result.cancelled };
+				},
+				editAssistantMessage: async (entryId, text, editOptions) => {
+					const result = await session.editAssistantMessage(entryId, text, {
+						summarize: editOptions?.summarize,
+						customInstructions: editOptions?.customInstructions,
+						expectedLeafId: editOptions?.expectedLeafId,
+					});
+					return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
+				},
+				editUserMessage: async (entryId, text, editOptions) => {
+					const result = await session.editUserMessage(entryId, text, {
+						summarize: editOptions?.summarize,
+						customInstructions: editOptions?.customInstructions,
+						expectedLeafId: editOptions?.expectedLeafId,
+					});
+					return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
 				},
 				switchSession: async (sessionPath, switchOptions) => {
 					return runtimeHost.switchSession(sessionPath, switchOptions);
@@ -108,11 +131,14 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		unsubscribeBackpressure?.();
 		unsubscribe = session.subscribe((event) => {
 			if (event.type === "retry_fallback_applied") {
-				console.error(`Model fallback: ${event.from} -> ${event.to} (${event.reason})`);
+				console.error(
+					`Model fallback: ${event.from} -> ${event.to} (${usageLimitCause(event.from, event.limit) ?? event.reason})`,
+				);
 			} else if (event.type === "retry_fallback_exhausted") {
 				console.error(`Model fallback exhausted: ${event.chainKey} (${event.lastError})`);
 			} else if (event.type === "retry_fallback_reverted") {
-				console.error(`Model fallback reverted: ${event.from} -> ${event.to}`);
+				const cause = event.cause === "fallback-unusable" ? ` (${event.from} cannot serve right now)` : "";
+				console.error(`Model fallback reverted: ${event.from} -> ${event.to}${cause}`);
 			}
 			if (mode === "json") {
 				writeRawStdout(`${JSON.stringify(toJsonEvent(event))}\n`);
@@ -144,6 +170,21 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			await session.prompt(message, { sessionTitlePrompt: false });
 		}
 
+		await session.waitForSettledSessionWork();
+
+		if (mode === "json") {
+			// A JSON consumer reads the events, but a parent agent that only checks the exit code must not take a
+			// run that ran out of context for an empty success (senpi#2925). Other error stops keep exit 0 here.
+			const lastMessage = session.state.messages.findLast((message) => message.role === "assistant");
+			if (
+				lastMessage?.role === "assistant" &&
+				lastMessage.stopReason === "error" &&
+				lastMessage.errorMessage === REQUIRED_COMPACTION_ERROR_MESSAGE
+			) {
+				exitCode = 1;
+			}
+		}
+
 		if (mode === "text") {
 			const state = session.state;
 			const lastMessage = state.messages.findLast((message) => message.role === "assistant");
@@ -151,7 +192,14 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			if (lastMessage?.role === "assistant") {
 				const assistantMsg = lastMessage;
 				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
-					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
+					// A provider-stream stall or transport drop keeps the classifier wording
+					// on the message; stderr gets the plain-language version instead.
+					const described = describeProviderFailureForUser(assistantMsg.errorMessage);
+					console.error(
+						described ??
+							(stripTurnRetrySuppressionPrefix(assistantMsg.errorMessage ?? "") ||
+								`Request ${assistantMsg.stopReason}`),
+					);
 					exitCode = 1;
 				} else {
 					for (const content of assistantMsg.content) {
@@ -166,7 +214,6 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			}
 		}
 
-		await session.waitForSettledSessionWork();
 		return exitCode;
 	} catch (error: unknown) {
 		console.error(error instanceof Error ? error.message : String(error));

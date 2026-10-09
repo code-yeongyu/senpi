@@ -19,7 +19,7 @@ upstream.json  Accepted upstream baseline recorded by merges (read by scripts)
 
 | Task | Path |
 |---|---|
-| CI parity for local checks | `workflows/ci.yml` (Node 24, `bun install --frozen-lockfile --ignore-scripts`, fan-in job named exactly `Check and test`) |
+| CI parity for local checks | `workflows/ci.yml` (Node 24, `npm ci --ignore-scripts`, bun 1.4.2 pinned through `oven-sh/setup-bun` in the jobs that run bun, fan-in job named exactly `Check and test`) |
 | npm publish path | `workflows/publish-npm.yml` (the ONLY publisher; triggered after release tag) |
 | Binary/native builds | `workflows/build-binaries.yml`, `workflows/native-prebuilds.yml` |
 | PR changelog gate | `workflows/changelog-gate.yml` (drives `scripts/check-pr-changelog.mjs`) |
@@ -30,7 +30,7 @@ upstream.json  Accepted upstream baseline recorded by merges (read by scripts)
 ## CONVENTIONS
 
 - GitHub Actions are pinned by full commit SHA (e.g. `actions/checkout@df4cb1c0...`); never reference floating tags.
-- Workflows install with `bun install --frozen-lockfile --ignore-scripts` and run root `bun run check`/`bun run test`.
+- Workflows install with `npm ci --ignore-scripts` and run the root scripts through npm (`npm run check`, `npm run build`, `npm run test:scripts`); `test-workspaces` also runs `bun run test:scripts` under pinned bun 1.4.2 to prove the bun path of the root scripts and runs the workspace suites through `scripts/run-workspaces.mjs`; `rpc-windows` runs its suites through `bunx vitest`.
 - The release driver emits a final stdout status line: `RELEASE_DECISION: RELEASE | SKIP | FAILED`.
   The merge agent emits `MERGE_RESULT: CLEAN_PR_READY | NO_RELEASE_NEEDED | CONFLICTS | QA_FAILED | AGENT_FAILED`.
 - Release runs only after the upstream PR is merge-committed into `main`, a fresh `/cl`

@@ -2,18 +2,24 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { isValidThinkingLevel } from "../../cli/args.ts";
 
 /**
- * Providers that never receive a bare selector. OpenRouter re-publishes other
+ * Providers that never receive a bare selector. Gateways re-publish other
  * vendors' catalogs under namespaced ids, so family expansion would silently
  * route a shipped default through a third-party reseller the user never chose.
- * An explicit `openrouter/...` selector the user wrote is unaffected.
+ * An explicit provider-qualified selector the user wrote is unaffected.
  */
-const BARE_EXPANSION_DENYLIST: ReadonlySet<string> = new Set(["cursor", "openrouter", "openrouter-images"]);
+const BARE_EXPANSION_DENYLIST: ReadonlySet<string> = new Set([
+	"cursor",
+	"openrouter",
+	"openrouter-images",
+	"opengateway",
+	"vercel-ai-gateway",
+]);
 
 /**
  * Deterministic tie-break inside one auth tier. Earlier wins. Providers absent
  * from the table sort after every listed one, alphabetically.
  */
-const PROVIDER_PRECEDENCE: readonly string[] = ["claude-sdk-oauth", "anthropic", "kimi-coding"];
+const PROVIDER_PRECEDENCE: readonly string[] = ["anthropic-subscription", "anthropic", "kimi-coding"];
 
 export interface BareSelectorParts {
 	/** Model id without a provider prefix, e.g. `claude-opus-5`. */
@@ -125,8 +131,9 @@ export function rankFamilyModels(
 	const byProvider = new Map<string, Model<Api>[]>();
 	for (const model of models) {
 		if (BARE_EXPANSION_DENYLIST.has(model.provider.toLowerCase())) continue;
-		if (tiers.isFallbackEligible?.(model) === false) continue;
+		// Family first: eligibility reads provider settings from disk, and only family members need it.
 		if (!matchesFamily(model, family)) continue;
+		if (tiers.isFallbackEligible?.(model) === false) continue;
 		const bucket = byProvider.get(model.provider);
 		if (bucket) bucket.push(model);
 		else byProvider.set(model.provider, [model]);

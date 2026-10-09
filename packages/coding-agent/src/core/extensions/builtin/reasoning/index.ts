@@ -76,8 +76,8 @@ function clampToNonOff(level: ThinkingLevel, capability: ReasoningCapability): T
 
 /**
  * Level to restore when reasoning is switched back on: this model's durable last non-off level,
- * else a legacy non-off effective memory, else the global default when that is not "off", else
- * medium — always clamped to what the model supports.
+ * else a legacy non-off effective memory, else the model's own non-off default (senpi#2196), else
+ * the global default when that is not "off", else medium — always clamped to what the model supports.
  */
 function resolvePreferredOnLevel(
 	ctx: ExtensionCommandContext,
@@ -88,7 +88,12 @@ function resolvePreferredOnLevel(
 	const lastOnLevel = settingsManager.getModelLastOnThinkingLevel(model.provider, model.id);
 	const remembered = settingsManager.getModelThinkingLevel(model.provider, model.id);
 	const globalDefault = settingsManager.getDefaultThinkingLevel();
-	const preferred = lastOnLevel ?? nonOff(remembered) ?? nonOff(globalDefault) ?? DEFAULT_ON_LEVEL;
+	const preferred =
+		lastOnLevel ??
+		nonOff(remembered) ??
+		nonOff(model.defaultThinkingLevel) ??
+		nonOff(globalDefault) ??
+		DEFAULT_ON_LEVEL;
 	return clampToNonOff(preferred, capability);
 }
 
@@ -121,6 +126,7 @@ export default function reasoningExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("reasoning", {
 		description: "Show or toggle reasoning for the current model",
 		argumentHint: "[on|off]",
+		requiresArguments: false,
 		getArgumentCompletions: (prefix) => toCompletions(REASONING_ARGUMENTS, prefix),
 		handler: async (args, ctx) => {
 			const model = ctx.model;
@@ -196,6 +202,7 @@ export default function reasoningExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("efforts", {
 		description: "Show or set the reasoning effort for the current model",
 		argumentHint: "[minimal|low|medium|high|xhigh|max]",
+		requiresArguments: false,
 		getArgumentCompletions: (prefix) => {
 			// Only a graded model has an effort ladder worth completing.
 			const capability = currentModel ? classifyReasoningCapability(currentModel) : undefined;

@@ -96,6 +96,44 @@ describe("LoginDialogComponent OAuth prompts", () => {
 		expect(output).toContain("Enter API key:");
 	});
 
+	test("does not paint two live inputs when a later prompt starts before the first is submitted", () => {
+		const dialog = createDialog();
+
+		dialog.showAuth("https://example.invalid/login");
+		void dialog.showManualInput(
+			"Complete login in your browser, or paste the authorization code / redirect URL here:",
+		);
+		dialog.showProgress("Exchanging authorization code for tokens...");
+		void dialog.showPrompt("Name for this account (existing: default)", "account-2");
+		dialog.handleInput("jgplabs");
+
+		const lines = renderDialog(dialog);
+		const output = lines.join("\n");
+		expect(output).toContain("https://example.invalid/login");
+		expect(output).toContain("Exchanging authorization code for tokens...");
+		expect(output).toContain("Name for this account (existing: default)");
+		// Exactly ONE live input row renders the typed value. The pre-fix bug
+		// mounted the single Input widget twice, painting `> jgplabs` twice; the
+		// assertion has to catch that shape, not merely count bare `>` rows.
+		expect(countRenderedValue(lines, "jgplabs")).toBe(1);
+		expect(lines.filter((line) => line.trim().startsWith(">")).length).toBe(1);
+	});
+
+	test("an interleaved waiting step leaves exactly one live hint row", () => {
+		const dialog = createDialog();
+
+		void dialog.showManualInput("Paste callback URL:");
+		dialog.showWaiting("Waiting for device confirmation...");
+		void dialog.showPrompt("Choose a name:");
+
+		const lines = renderDialog(dialog);
+		const hintLines = lines.filter((line) => /^\([^)]*to (?:cancel|close|submit)/.test(line.trim()));
+		// The waiting step's `(esc to cancel)` hint must be REPLACED by the prompt's
+		// `(esc to cancel, enter to submit)` hint, never painted beside it.
+		expect(hintLines.length).toBe(1);
+		expect(hintLines[0]).toContain("to submit");
+	});
+
 	test("keeps previous manual input stable when a later prompt is active", async () => {
 		const dialog = createDialog();
 

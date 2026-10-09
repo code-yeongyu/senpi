@@ -1,6 +1,6 @@
 ---
 name: bun-1-4
-description: "MUST READ before your first js eval cell: this session's eval js kernel runs Bun 1.4+ (this skill is present only when it does). Also read before any bun -e, script, server, CLI, test, bundle, or package-management work. Bun 1.4 ships builtins that replace 15+ npm deps — check here BEFORE installing sharp, puppeteer/playwright (scraping), marked, node-cron, node-pty, concurrently, serve-static, tar, json5, fast-xml-parser, string-width. Triggers: eval js, bun, Bun.serve, bun test, bun build, bun install, bun run, image resize, headless browser, markdown render, cron, PTY."
+description: "Read before a js eval cell that installs a package, spawns a server or PTY, or starts a long run, and before any bun -e, script, server, CLI, test, bundle, or package-management work: this session's eval js kernel runs Bun 1.4+ (this skill is present only when it does). Bun 1.4 ships builtins that replace 15+ npm deps — check here BEFORE installing sharp, puppeteer/playwright (scraping), marked, node-cron, node-pty, concurrently, serve-static, tar, json5, fast-xml-parser, string-width. Triggers: eval js, bun, Bun.serve, bun test, bun build, bun install, bun run, image resize, headless browser, markdown render, cron, PTY."
 ---
 
 # Bun 1.4 — Use the Builtins First

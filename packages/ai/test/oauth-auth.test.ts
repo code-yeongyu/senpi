@@ -1,16 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
+import { chatgptSubscriptionOAuth } from "../src/auth/oauth/chatgpt-subscription.ts";
 import { cursorOAuth } from "../src/auth/oauth/cursor.ts";
 import { githubCopilotOAuth } from "../src/auth/oauth/github-copilot.ts";
 import { kimiCodingOAuth } from "../src/auth/oauth/kimi-coding.ts";
-import { openaiCodexOAuth } from "../src/auth/oauth/openai-codex.ts";
+import { openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
 import { openRouterOAuth } from "../src/auth/oauth/openrouter.ts";
 import { xaiOAuth } from "../src/auth/oauth/xai.ts";
 import { createModels } from "../src/models.ts";
 import * as extensionOAuthCompatibility from "../src/oauth.ts";
 import { anthropicProvider } from "../src/providers/anthropic.ts";
 import { githubCopilotProvider } from "../src/providers/github-copilot.ts";
+import { openaiProvider } from "../src/providers/openai.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 
@@ -18,7 +20,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-describe.sequential("OAuthAuth adapters", () => {
+describe("OAuthAuth adapters", () => {
 	it("keeps the extension OAuth barrel free of built-in flow implementations", () => {
 		expect(extensionOAuthCompatibility).not.toHaveProperty("loginAnthropic");
 		expect(extensionOAuthCompatibility).not.toHaveProperty("anthropicOAuth");
@@ -31,7 +33,8 @@ describe.sequential("OAuthAuth adapters", () => {
 	it("identifies only subscription-backed OAuth flows as subscriptions", () => {
 		for (const oauth of [
 			anthropicOAuth,
-			openaiCodexOAuth,
+			chatgptSubscriptionOAuth,
+			openaiChatGPTOAuth,
 			githubCopilotOAuth,
 			kimiCodingOAuth,
 			xaiOAuth,
@@ -47,8 +50,15 @@ describe.sequential("OAuthAuth adapters", () => {
 		expect(auth).toEqual({ apiKey: "token" });
 	});
 
+	// Fork contract: `openai` stays API-key only; ChatGPT sign-in is the `chatgpt-subscription` provider.
+	it("OpenAI keeps API-key auth only", () => {
+		const provider = openaiProvider();
+		expect(provider.auth.apiKey).toBeDefined();
+		expect(provider.auth.oauth).toBeUndefined();
+	});
+
 	it("openai-codex toAuth derives the api key from the access token", async () => {
-		const auth = await openaiCodexOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
+		const auth = await chatgptSubscriptionOAuth.toAuth({ type: "oauth", access: "token", refresh: "r", expires: 0 });
 		expect(auth).toEqual({ apiKey: "token" });
 	});
 

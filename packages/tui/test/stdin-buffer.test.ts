@@ -6,6 +6,7 @@
  */
 
 import assert from "node:assert";
+import { once } from "node:events";
 import { beforeEach as nodeBeforeEach, describe as nodeDescribe, it as nodeIt } from "node:test";
 import { beforeEach as vitestBeforeEach, describe as vitestDescribe, it as vitestIt } from "vitest";
 import { matchesKey } from "../src/keys.ts";
@@ -153,14 +154,11 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35;20;5m"]);
 		});
 
-		it("should flush incomplete sequence after timeout", async () => {
-			processInput("\x1b[<35");
+		it("should flush an unowned incomplete CSI after timeout", async () => {
+			const emitted = once(buffer, "data", { signal: AbortSignal.timeout(1000) });
+			processInput("\x1b[35");
 			assert.deepStrictEqual(emittedSequences, []);
-
-			// Wait for timeout
-			await wait(15);
-
-			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
+			assert.deepStrictEqual(await emitted, ["\x1b[35"]);
 		});
 
 		it("should flush a lone ESC as Escape when CR arrives after the timeout", async () => {
@@ -451,11 +449,12 @@ describe("StdinBuffer", () => {
 	});
 
 	describe("Flush", () => {
-		it("should flush incomplete sequences", () => {
+		it("should retain owned mouse fragments on explicit flush (#1645)", () => {
 			processInput("\x1b[<35");
-			const flushed = buffer.flush();
-			assert.deepStrictEqual(flushed, ["\x1b[<35"]);
-			assert.strictEqual(buffer.getBuffer(), "");
+			assert.deepStrictEqual(buffer.flush(), []);
+			assert.strictEqual(buffer.getBuffer(), "\x1b[<35");
+			processInput(";20;5M");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[<35;20;5M"]);
 		});
 
 		it("should return empty array if nothing to flush", () => {
@@ -463,14 +462,11 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(flushed, []);
 		});
 
-		it("should emit flushed data via timeout", async () => {
-			processInput("\x1b[<35");
+		it("should emit unowned flushed data via timeout", async () => {
+			const emitted = once(buffer, "data", { signal: AbortSignal.timeout(1000) });
+			processInput("\x1b[35");
 			assert.deepStrictEqual(emittedSequences, []);
-
-			// Wait for timeout to flush
-			await wait(15);
-
-			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
+			assert.deepStrictEqual(await emitted, ["\x1b[35"]);
 		});
 	});
 
@@ -653,5 +649,155 @@ describe("StdinBuffer", () => {
 			processInput(Buffer.from([0x9b]));
 			assert.deepStrictEqual(emittedSequences, ["\x1b\u001b"]);
 		});
+	});
+});
+
+describe("StdinBuffer unbracketed paste bursts", () => {
+	let burst: StdinBuffer;
+	let burstData: string[];
+	let burstPastes: string[];
+	let now: number;
+
+	beforeEach(() => {
+		now = 1000;
+		burstData = [];
+		burstPastes = [];
+		burst = new StdinBuffer({ timeout: 10, burstWindowMs: 20, now: () => now });
+		burst.on("data", (sequence) => {
+			burstData.push(sequence);
+		});
+		burst.on("paste", (content) => {
+			burstPastes.push(content);
+		});
+	});
+
+	it("emits a one-chunk multiline burst as a single paste and submits nothing", () => {
+		burst.process("line1\nline2\nline3");
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\nline3"]);
+		assert.deepStrictEqual(burstData, []);
+	});
+
+	it("coalesces a burst split across chunks within the window into one block", () => {
+		burst.process("line1\nline2\n");
+		burst.process("line3\n");
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\n"]);
+		assert.deepStrictEqual(burstData, ["l", "i", "n", "e", "3"]);
+		burst.flush();
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\n", "\n"]);
+		assert.deepStrictEqual(burstData, ["l", "i", "n", "e", "3"]);
+	});
+
+	it("submits a keystroke-paced Enter immediately without holding", () => {
+		burst.process("a");
+		now += 1000;
+		burst.process("\n");
+		assert.deepStrictEqual(burstData, ["a", "\n"]);
+		assert.deepStrictEqual(burstPastes, []);
+	});
+
+	it("holds a burst-paced trailing newline until flush, then submits once", () => {
+		burst.process("a");
+		now += 5;
+		burst.process("b\n");
+		assert.deepStrictEqual(burstData, ["a", "b"]);
+		burst.flush();
+		assert.deepStrictEqual(burstData, ["a", "b", "\n"]);
+		assert.deepStrictEqual(burstPastes, []);
+	});
+
+	it("forwards a bare Enter read at once even right after other input", () => {
+		burst.process("\n");
+		burst.process("\r");
+		assert.deepStrictEqual(burstData, ["\n", "\r"]);
+		assert.deepStrictEqual(burstPastes, []);
+	});
+
+	it("emits a first-ever single-line input immediately", () => {
+		burst.process("solo\n");
+		assert.deepStrictEqual(burstData, ["s", "o", "l", "o", "\n"]);
+		assert.deepStrictEqual(burstPastes, []);
+	});
+
+	it("keeps a fast double Enter as two submits instead of a paste", () => {
+		burst.process("a");
+		burst.process("\n");
+		burst.process("\n");
+		assert.deepStrictEqual(burstPastes, []);
+		burst.flush();
+		assert.deepStrictEqual(burstData, ["a", "\n", "\n"]);
+	});
+
+	it("leaves bracketed pastes on the existing marker path", () => {
+		burst.process("\x1b[200~a\nb\x1b[201~");
+		assert.deepStrictEqual(burstPastes, ["a\nb"]);
+		assert.deepStrictEqual(burstData, []);
+	});
+
+	it("treats a one-chunk two-line paste as a paste instead of submitting its first line", () => {
+		burst.process("first\nsecond");
+		assert.deepStrictEqual(burstPastes, ["first\nsecond"]);
+		assert.deepStrictEqual(burstData, []);
+	});
+
+	it("keeps the newline that ends a paste split across reads inside the paste", () => {
+		burst.process("line1\nline2\n");
+		now += 5;
+		burst.process("line3\n");
+		burst.flush();
+		assert.deepStrictEqual(burstData, ["l", "i", "n", "e", "3"]);
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\n", "\n"]);
+	});
+
+	it("submits exactly once when a lone Enter follows a paste after a pause", () => {
+		burst.process("line1\nline2\nline3");
+		now += 1000;
+		burst.process("\r");
+		assert.deepStrictEqual(burstPastes, ["line1\nline2\nline3"]);
+		assert.deepStrictEqual(burstData, ["\r"]);
+	});
+
+	it("releases a held newline on time even when an empty read arrives while it is held", async () => {
+		const timed = new StdinBuffer({ timeout: 10, burstWindowMs: 20 });
+		const data: string[] = [];
+		const pastes: string[] = [];
+		timed.on("data", (sequence) => data.push(sequence));
+		timed.on("paste", (content) => pastes.push(content));
+		const released = new Promise<void>((resolve, reject) => {
+			const bound = setTimeout(() => reject(new Error("held newline was never released")), 2000);
+			timed.on("data", (sequence) => {
+				if (sequence === "\n") {
+					clearTimeout(bound);
+					resolve();
+				}
+			});
+		});
+		timed.process("a");
+		timed.process("b\n");
+		timed.process(Buffer.from([0xf0, 0x9f]));
+		await released;
+		assert.deepStrictEqual(data, ["a", "b", "\n"]);
+		assert.deepStrictEqual(pastes, []);
+		timed.destroy();
+	});
+
+	it("does not glue a newline held before an empty read into a later read's paste", () => {
+		burst.process("a");
+		now += 5;
+		burst.process("b\n");
+		burst.process(Buffer.from([0xf0, 0x9f]));
+		now += 1000;
+		burst.process(Buffer.from([0x98, 0x80, 0x0a, 0x78]));
+		assert.deepStrictEqual(burstData.slice(0, 3), ["a", "b", "\n"]);
+		assert.ok(
+			burstPastes.every((paste) => !paste.startsWith("\n")),
+			JSON.stringify(burstPastes),
+		);
+	});
+
+	it("treats CRLF and CR-only bursts like LF bursts", () => {
+		burst.process("l1\r\nl2\r\n");
+		assert.deepStrictEqual(burstPastes, ["l1\r\nl2\r\n"]);
+		burst.process("m1\rm2\r");
+		assert.deepStrictEqual(burstPastes, ["l1\r\nl2\r\n", "m1\rm2\r"]);
 	});
 });

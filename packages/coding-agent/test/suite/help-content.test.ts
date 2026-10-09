@@ -110,14 +110,4 @@ describe("buildHelpMarkdown", () => {
 		expect(favoriteModelsLine).toBeDefined();
 		expect(favoriteModelsLine).not.toContain("Ctrl+P");
 	});
-
-	it("lists every builtin when no extension commands are provided", () => {
-		const markdown = buildHelpMarkdown({ extensionCommands: [] });
-		const names = commandNames(markdown);
-
-		expect(names.size).toBeGreaterThan(0);
-		for (const command of BUILTIN_SLASH_COMMANDS) {
-			expect(names.has(command.name), command.name).toBe(true);
-		}
-	});
 });

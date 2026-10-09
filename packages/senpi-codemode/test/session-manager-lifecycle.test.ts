@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import type { ExtensionContext } from "@code-yeongyu/senpi";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeServerHandle, BridgeServerOptions } from "../src/bridge/http-server.ts";
@@ -39,6 +40,7 @@ class FakeKernel implements EvalKernel {
 		readonly ok: true;
 		readonly durationMs: number;
 	}> {
+		input.onStarted?.();
 		return { type: "result", cellId: input.cellId, ok: true, durationMs: 0 };
 	}
 
@@ -47,6 +49,14 @@ class FakeKernel implements EvalKernel {
 	}
 
 	deliverToolReply(): void {}
+
+	cancelQueued(): boolean {
+		return false;
+	}
+
+	queueSnapshot() {
+		return { activeCellId: null, queuedCellIds: [] };
+	}
 
 	async reset(): Promise<void> {}
 
@@ -256,6 +266,64 @@ describe("codemode session manager lifecycle", () => {
 		expect(receivedSignals[0]?.aborted).toBe(true);
 		expect(outcome?.status).toBe("rejected");
 	});
+
+	it("routes interpreter startup stderr to the cell whose getKernel created the kernel", async () => {
+		// Given: startup stderr races kernel creation, so it must land in the listener the
+		// creating call registered — the dispatcher keeps forwarding during creation (#2260).
+		const kernel = new FakeKernel();
+		let dispatch: ((message: KernelToHostMessage) => void) | undefined;
+		harness.startKernel = async (onMessage) => {
+			onMessage({ type: "text", stream: "stderr", data: "interpreter startup warning\n" });
+			dispatch = onMessage;
+			return kernel;
+		};
+		const manager = await createManager(managers);
+		const seen: string[] = [];
+
+		// When
+		await manager.getKernel("py", (message) => {
+			if (message.type === "text") seen.push(message.data);
+		});
+
+		// Then
+		expect(seen.join("")).toContain("interpreter startup warning");
+		expect(dispatch).toBeTypeOf("function");
+	});
+
+	it("drops between-cells messages for a released listener and keeps a newer listener bound", async () => {
+		// Given
+		const kernel = new FakeKernel();
+		let dispatch: ((message: KernelToHostMessage) => void) | undefined;
+		harness.startKernel = async (onMessage) => {
+			dispatch = onMessage;
+			return kernel;
+		};
+		const manager = await createManager(managers);
+		const seen1: string[] = [];
+		const onMessage1 = (message: KernelToHostMessage): void => {
+			if (message.type === "text") seen1.push(message.data);
+		};
+		await manager.getKernel("py", onMessage1);
+
+		// When: the cell settled and released its listener; a message arrives between cells.
+		manager.releaseKernelListener?.("py", onMessage1);
+		dispatch?.({ type: "text", stream: "stderr", data: "between cells\n" });
+
+		// Then: it must not reach the settled cell's handler.
+		expect(seen1.join("")).not.toContain("between cells");
+
+		// When: a newer cell registered, then the settled cell's stale release runs late.
+		const seen2: string[] = [];
+		await manager.getKernel("py", (message) => {
+			if (message.type === "text") seen2.push(message.data);
+		});
+		manager.releaseKernelListener?.("py", onMessage1);
+		dispatch?.({ type: "text", stream: "stderr", data: "after rebind\n" });
+
+		// Then: the identity check keeps the newer listener bound; the stale one sees nothing.
+		expect(seen2.join("")).toContain("after rebind");
+		expect(seen1.join("")).not.toContain("after rebind");
+	});
 });
 
 function deferred<T>() {
@@ -271,7 +339,8 @@ async function createManager(
 ): Promise<CodemodeSessionManager> {
 	const manager = await createCodemodeSessionManager({
 		sessionId: "session",
-		cwd: "/tmp",
+		// The manager checks that its session directory exists; /tmp is not guaranteed on Windows.
+		cwd: tmpdir(),
 		settings: defaultCodemodeSettings,
 		availability,
 		executeTool: async () => ({ content: [{ type: "text", text: "" }], details: {} }),

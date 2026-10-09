@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-agent-core",
-	"version": "2026.9.5-3",
+	"version": "2026.10.10-11",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -14,7 +14,27 @@
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
 		},
-		"./session/testing": {
+		"./harness/context": {
+			"types": "./dist/harness/context.d.ts",
+			"import": "./dist/harness/context.js"
+		},
+		"./experimental/pico3": {
+			"types": "./dist/harness/pico3/index.d.ts",
+			"import": "./dist/harness/pico3/index.js"
+		},
+		"./harness/env/nodejs": {
+			"types": "./dist/harness/env/nodejs.d.ts",
+			"import": "./dist/harness/env/nodejs.js"
+		},
+		"./harness/runtime/reducer": {
+			"types": "./dist/harness/runtime/reducer.d.ts",
+			"import": "./dist/harness/runtime/reducer.js"
+		},
+		"./harness/session": {
+			"types": "./dist/harness/session/index.d.ts",
+			"import": "./dist/harness/session/index.js"
+		},
+		"./harness/session/testing": {
 			"types": "./dist/harness/session/testing/index.d.ts",
 			"import": "./dist/harness/session/testing/index.js"
 		},
@@ -22,6 +42,8 @@
 	},
 	"files": [
 		"dist",
+		"!dist/**/*.map",
+		"assets",
 		"README.md"
 	],
 	"scripts": {
@@ -29,18 +51,24 @@
 		"generate-telemetry-docs": "node scripts/generate-telemetry-docs.ts",
 		"check:telemetry-docs": "node scripts/generate-telemetry-docs.ts --check",
 		"build": "tsc -p tsconfig.build.json",
+		"bench:session:timing": "vitest bench --config vitest.benchmark.config.ts",
+		"bench:session:memory": "tsx --tsconfig benchmark/tsconfig.json benchmark/session/loaded-footprint.ts",
+		"bench:session:allocations": "tsx --tsconfig benchmark/tsconfig.json benchmark/session/allocation-profile.ts",
 		"test": "vitest --run",
 		"test:harness": "vitest --run --config vitest.harness.config.ts",
+		"test:session:conformance": "vitest --run --config vitest.harness.config.ts test/harness/memory-conformance.test.ts",
 		"coverage:harness": "vitest --run --config vitest.harness.config.ts --coverage",
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^2026.9.5-3",
-		"@earendil-works/pi-telemetry": "^2026.9.5-3",
+		"@earendil-works/chord": "0.99.1",
+		"@earendil-works/pi-ai": "^2026.10.10-11",
+		"@earendil-works/pi-telemetry": "^2026.10.10-11",
 		"diff": "9.0.0",
-		"ignore": "7.0.6",
-		"typebox": "1.3.18",
-		"yaml": "2.9.0"
+		"ignore": "7.0.9",
+		"typebox": "1.3.34",
+		"web-tree-sitter": "0.27.0",
+		"yaml": "2.9.1"
 	},
 	"keywords": [
 		"ai",
@@ -60,10 +88,11 @@
 		"node": ">=24.0.0"
 	},
 	"devDependencies": {
-		"@types/node": "26.2.0",
-		"@vitest/coverage-v8": "4.1.11",
+		"@types/node": "26.6.2",
+		"@vscode/tree-sitter-wasm": "0.3.1",
+		"@vitest/coverage-v8": "5.0.1",
 		"typescript": "7.0.2",
-		"vitest": "4.1.11"
+		"vitest": "5.0.1"
 	},
 	"private": true
 }

@@ -1,4 +1,4 @@
-import { type ExecFileException, execFile, spawnSync } from "child_process";
+import { type ExecFileException, execFile } from "child_process";
 import { existsSync, type FSWatcher, readFileSync, type Stats, statSync, unwatchFile, watchFile } from "fs";
 import { dirname, join, resolve } from "path";
 import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.ts";
@@ -45,17 +45,6 @@ export function findGitPaths(cwd: string): GitPaths | null {
 		if (parent === dir) return null;
 		dir = parent;
 	}
-}
-
-/** Ask git for the current branch. Returns null on detached HEAD or if git is unavailable. */
-function resolveBranchWithGitSync(repoDir: string): string | null {
-	const result = spawnSync("git", ["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"], {
-		cwd: repoDir,
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "ignore"],
-	});
-	const branch = result.status === 0 ? result.stdout.trim() : "";
-	return branch || null;
 }
 
 /** Ask git for the current branch asynchronously. Returns null on detached HEAD or if git is unavailable. */
@@ -126,7 +115,13 @@ export class FooterDataProvider {
 	/** Current git branch, null if not in repo, "detached" if detached HEAD */
 	getGitBranch(): string | null {
 		if (this.cachedBranch === undefined) {
-			this.cachedBranch = this.resolveGitBranchSync();
+			const head = this.readBranchFromHead();
+			this.cachedBranch = head.branch;
+			// A reftable repo writes `ref: refs/heads/.invalid` into HEAD, so only git knows
+			// the branch. Asking it here would run a process on the caller's thread - on a
+			// shared RPC host that is every session's event loop - so the footer shows the
+			// provisional value and subscribers are notified when git answers.
+			if (head.needsGitProbe) void this.refreshGitBranchAsync();
 		}
 		return this.cachedBranch;
 	}
@@ -236,34 +231,23 @@ export class FooterDataProvider {
 		}
 	}
 
-	private resolveGitBranchSync(): string | null {
+	/** Branch as HEAD states it; `needsGitProbe` marks a reftable HEAD only git can resolve. */
+	private readBranchFromHead(): { branch: string | null; needsGitProbe: boolean } {
 		try {
-			if (!this.gitPaths) return null;
+			if (!this.gitPaths) return { branch: null, needsGitProbe: false };
 			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
-			if (content.startsWith("ref: refs/heads/")) {
-				const branch = content.slice(16);
-				return branch === ".invalid" ? (resolveBranchWithGitSync(this.gitPaths.repoDir) ?? "detached") : branch;
-			}
-			return "detached";
+			if (!content.startsWith("ref: refs/heads/")) return { branch: "detached", needsGitProbe: false };
+			const branch = content.slice(16);
+			return branch === ".invalid" ? { branch: "detached", needsGitProbe: true } : { branch, needsGitProbe: false };
 		} catch {
-			return null;
+			return { branch: null, needsGitProbe: false };
 		}
 	}
 
 	private async resolveGitBranchAsync(): Promise<string | null> {
-		try {
-			if (!this.gitPaths) return null;
-			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
-			if (content.startsWith("ref: refs/heads/")) {
-				const branch = content.slice(16);
-				return branch === ".invalid"
-					? ((await resolveBranchWithGitAsync(this.gitPaths.repoDir)) ?? "detached")
-					: branch;
-			}
-			return "detached";
-		} catch {
-			return null;
-		}
+		const head = this.readBranchFromHead();
+		if (!head.needsGitProbe || !this.gitPaths) return head.branch;
+		return (await resolveBranchWithGitAsync(this.gitPaths.repoDir)) ?? "detached";
 	}
 
 	private clearGitWatchers(): void {

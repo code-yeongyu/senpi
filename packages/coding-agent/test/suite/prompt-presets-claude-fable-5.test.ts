@@ -88,6 +88,18 @@ describe("Claude Fable 5 prompt preset", () => {
 		expect(preset?.name).toBe("claude-fable-5");
 	});
 
+	it("routes user questions through ask_user_question when it is available", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-fable-5", "anthropic");
+
+		const preset = resolvePreset(model, settings);
+
+		expect(preset?.prompt).toContain("ask_user_question");
+		expect(preset?.prompt).toContain(
+			"then ask, through ask_user_question when it is available (waitForAnswer true when the next step depends on the answer), and end the turn",
+		);
+	});
+
 	it("keeps every shared test-discipline rule after the dieted core rewrite", () => {
 		// given
 		const settings: PromptPresetSettings = { promptPreset: "auto" };

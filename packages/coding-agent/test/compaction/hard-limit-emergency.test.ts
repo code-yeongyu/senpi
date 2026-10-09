@@ -333,6 +333,7 @@ describe("compaction hard-limit emergency behavior", () => {
 				const context = createCompactionContext();
 				const event: BeforeAgentStartEvent = {
 					type: "before_agent_start",
+					trigger: "prompt",
 					prompt: "continue",
 					systemPrompt: "system",
 					systemPromptOptions: Object.create(null) as BeforeAgentStartEvent["systemPromptOptions"],

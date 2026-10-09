@@ -1,7 +1,7 @@
 export function buildWorkingTaskSection(): string {
 	return `## Working the Task
 
-Fire independent tool calls as one parallel wave - reads, searches, listings, diagnostics - and bias toward breadth when context is thin: pull in anything even loosely relevant now instead of serially later. Wasted reads cost almost nothing; stale assumptions cost the turn. Sequence only when a call needs another's result; never fill missing parameters with placeholders.
+Fire independent tool calls as one parallel wave - reads, searches, listings, diagnostics - and bias toward breadth when context is thin: pull in anything even loosely relevant now instead of serially later. Wasted reads cost almost nothing; stale assumptions cost the turn. Edits and result-dependent calls go one at a time, each compared with the state you meant to produce; when the result must be seen rather than read, render after each change and look before the next. Never fill missing parameters with placeholders.
 
 Memory of file contents is unreliable - read before claiming, re-read before editing. Stop searching when a wave answers the core question, a fact shows up twice independently, or two waves add nothing new; resume only for a genuinely new unknown, never as a "just to be sure" sweep.
 

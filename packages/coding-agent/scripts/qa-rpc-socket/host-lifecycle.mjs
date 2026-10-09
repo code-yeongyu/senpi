@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../../src/config.ts";
 import { processMatchesPidFile } from "../../src/modes/app-server/daemon/process.ts";
+import { readHostRegistration } from "../../src/modes/rpc/host-daemon-registration.ts";
 import { createHostDaemonPaths, ensureHost } from "../../src/modes/rpc/host-ensure.ts";
 import { HOST_COLD_START_ENV } from "../../src/modes/rpc/host-lifecycle.ts";
 import {
@@ -214,33 +215,35 @@ async function ensure(qa, { idleExitMs, hostArgs = [], env = {} }) {
 		socket: qa.socket,
 		agentDir: qa.agentDir,
 		policy: { idleExitMs },
+		hostArgs,
+		env: {
+			...hermeticEnv({
+				PI_OFFLINE: "1",
+				PI_TELEMETRY: "0",
+				SENPI_RUNTIME: "node",
+				SENPI_CODING_AGENT_DIR: qa.agentDir,
+				SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
+			}),
+			...env,
+		},
 		_test: {
 			readinessTimeoutMs: 60_000,
-			env: {
-				...hermeticEnv({
-					PI_OFFLINE: "1",
-					PI_TELEMETRY: "0",
-					SENPI_RUNTIME: "node",
-					SENPI_CODING_AGENT_DIR: qa.agentDir,
-					SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
-				}),
-				...env,
-			},
-			hostArgs,
 			spawn: {
 				command: process.execPath,
 				args: [join(here, "..", "..", "src", "modes", "rpc", "host-lifecycle.ts"), "--socket", qa.socket, ...hostArgs],
 			},
 		},
 	});
-	const paths = createHostDaemonPaths(qa.agentDir);
+	const paths = daemonPaths(qa);
 	const tracked = {
 		qa,
-		pidFile: JSON.parse(readFileSync(paths.pidFile, "utf8")),
+		pidFile: (await readHostRegistration(paths)).record,
 		pid: ensured.pid,
 		settings: JSON.parse(readFileSync(paths.settingsFile, "utf8")),
 	};
 	managedHosts.push(tracked);
+	// The scenarios model a host with no attached client and attach their own clients later.
+	ensured.release();
 	return tracked;
 }
 
@@ -256,20 +259,20 @@ async function stopHost(host) {
 }
 
 async function waitForHostExit(qa, pid) {
-	const paths = createHostDaemonPaths(qa.agentDir);
-	const pidFile = JSON.parse(readFileSync(paths.pidFile, "utf8"));
+	const paths = daemonPaths(qa);
+	const pidFile = (await readHostRegistration(paths)).record;
 	const deadline = Date.now() + 20_000;
 	while (Date.now() <= deadline) {
-		if (!(await processMatchesPidFile(pidFile)) && !existsSync(paths.pidFile)) return;
+		if (!(await processMatchesPidFile(pidFile)) && !existsSync(paths.pointerFile)) return;
 		await delay(100);
 	}
 	throw new Error(`host pid ${pid} did not idle-exit within 20s\n${readSupervisorStderr(qa)}`);
 }
 
 function assertStateRemoved(qa) {
-	const paths = createHostDaemonPaths(qa.agentDir);
+	const paths = daemonPaths(qa);
 	for (const [label, path] of [
-		["pidfile", paths.pidFile],
+		["pointer", paths.pointerFile],
 		["settings", paths.settingsFile],
 		["socket", qa.socket],
 	]) {
@@ -279,10 +282,15 @@ function assertStateRemoved(qa) {
 
 function readSupervisorStderr(qa) {
 	try {
-		return `[supervisor stderr]\n${readFileSync(createHostDaemonPaths(qa.agentDir).stderrLog, "utf8")}`;
+		return `[supervisor stderr]\n${readFileSync(daemonPaths(qa).stderrLog, "utf8")}`;
 	} catch {
 		return "[supervisor stderr unavailable]";
 	}
+}
+
+/** This endpoint's daemon directory: layout 2 keys the state by socket, not by agent directory. */
+function daemonPaths(qa) {
+	return createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
 }
 
 function protocolInfo(socketPath) {

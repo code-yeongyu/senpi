@@ -1,6 +1,6 @@
 {
 	"name": "@code-yeongyu/senpi-codemode",
-	"version": "2026.9.5-3",
+	"version": "2026.10.10-11",
 	"private": true,
 	"description": "Source-only senpi extension package for codemode evaluation tools",
 	"type": "module",
@@ -8,7 +8,8 @@
 	"types": "./src/index.ts",
 	"exports": {
 		".": "./src/index.ts",
-		"./package.json": "./package.json"
+		"./package.json": "./package.json",
+		"./executable-settings.json": "./src/config/executable-settings.json"
 	},
 	"files": [
 		"src",
@@ -17,6 +18,8 @@
 		"LICENSE"
 	],
 	"scripts": {
+		"gate": "bun scripts/gate-eval.ts",
+		"bench": "bun scripts/bench-eval.ts",
 		"test": "vitest run test/",
 		"clean": "node -e \"\"",
 		"build": "node -e \"\""
@@ -31,14 +34,15 @@
 	},
 	"dependencies": {
 		"@babel/parser": "8.0.4",
-		"@earendil-works/pi-ai": "^2026.9.5-3",
-		"typebox": "1.3.18"
+		"@earendil-works/pi-ai": "^2026.10.10-11",
+		"quickjs-wasi": "3.6.2",
+		"typebox": "1.3.34"
 	},
 	"peerDependencies": {
 		"@code-yeongyu/senpi": "*"
 	},
 	"devDependencies": {
-		"@code-yeongyu/senpi": "2026.9.5-3"
+		"@code-yeongyu/senpi": "2026.10.10-11"
 	},
 	"keywords": [
 		"senpi",

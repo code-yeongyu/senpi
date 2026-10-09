@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { readGoal, recordContinuationDelivered } from "../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
@@ -25,7 +27,9 @@ describe("goal state after a system-owned abort", () => {
 			const { tools, handlers, sent, events } = harness;
 			const ctx = await makeGoalContext(notices, "thread-system-abort-monitor");
 			await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
-			await tools.get("create_goal")?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx);
+			await tools
+				.get("create_goal")
+				?.execute("create", { objective: "Keep watching" }, undefined, undefined, ctx as ExtensionToolContext);
 			events.emit("terminal_monitor_state", { activeCount: 1 });
 			await events.flush();
 			await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
@@ -47,7 +51,11 @@ describe("goal state after a system-owned abort", () => {
 			expect(sent).toHaveLength(0);
 			expect(events.emitted).toContainEqual({
 				channel: "goal_continuation_scheduled",
-				data: expect.objectContaining({ activeMonitorCount: 1, delayMs: 240_000, iteration: 1 }),
+				data: expect.objectContaining({
+					activeMonitorCount: 1,
+					delayMs: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+					iteration: 1,
+				}),
 			});
 		},
 	);
@@ -59,7 +67,13 @@ describe("goal state after a system-owned abort", () => {
 		const ctx = await makeGoalContext(notices, "thread-system-error-no-monitor");
 		await tools
 			.get("create_goal")
-			?.execute("create", { objective: "Recover without a monitor" }, undefined, undefined, ctx);
+			?.execute(
+				"create",
+				{ objective: "Recover without a monitor" },
+				undefined,
+				undefined,
+				ctx as ExtensionToolContext,
+			);
 		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
 
 		await runGoalHandlers(
@@ -89,7 +103,13 @@ describe("goal state after a system-owned abort", () => {
 		const ctx = await makeGoalContext(notices, "thread-system-error-cap", { pendingMessages: false, status });
 		await tools
 			.get("create_goal")
-			?.execute("create", { objective: "Stop at the continuation cap" }, undefined, undefined, ctx);
+			?.execute(
+				"create",
+				{ objective: "Stop at the continuation cap" },
+				undefined,
+				undefined,
+				ctx as ExtensionToolContext,
+			);
 		const ref = goalStoreRef(ctx.sessionManager, ctx.cwd);
 		for (let attempt = 0; attempt < 8; attempt++) {
 			await recordContinuationDelivered(ref, `signature-${attempt}`);

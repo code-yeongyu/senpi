@@ -1,0 +1,16 @@
+{
+  "kind": "omo-desktop-moved",
+  "schemaVersion": 1,
+  "movedTo": "/home/user/.omo/desktop",
+  "homeId": "0199f0d4-0000-7000-8000-000000000000",
+  "movedAt": "2026-10-07T00:00:00.000Z",
+  "byVersion": "0.0.0-fixture",
+  "moved": [
+    "worktrees/app/w1",
+    "worktrees/app/w2",
+    "userdata/omo-sessions",
+    "userdata/senpi-sessions",
+    "dev/userdata/omo-sessions",
+    "dev/userdata/senpi-sessions"
+  ]
+}

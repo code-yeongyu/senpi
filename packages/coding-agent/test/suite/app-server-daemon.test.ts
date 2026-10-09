@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
-import { createServer, type Server } from "node:net";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	parseDaemonPidFile,
@@ -13,11 +13,10 @@ import {
 	waitForStartTime,
 } from "../../src/modes/app-server/daemon/process.ts";
 import { createDaemonPaths, withDaemonStateLock } from "../../src/modes/app-server/daemon.ts";
-import { listenOnQaPort, type QaPort, qaPortsFrom } from "../helpers/qa-port.ts";
+import { listenOnQaPort } from "../helpers/qa-port.ts";
+import { closeServer, runDaemonCli, type StartedDaemon, startDaemonOnQaPort } from "./app-server-daemon-cli-harness.ts";
 
 const roots: string[] = [];
-const packageRoot = resolve(import.meta.dirname, "../..");
-const tsxCli = resolve(packageRoot, "../../node_modules/tsx/dist/cli.mjs");
 
 afterEach(async () => {
 	for (const root of roots.splice(0)) {
@@ -33,9 +32,9 @@ describe("app-server daemon state", () => {
 
 		// When: the parsed records are compared with a process start-time reader.
 		const matches = valid ? await processMatchesPidFile(valid, async () => "Mon Jul  2 10:00:00 2026") : false;
-		const stale = valid ? await processMatchesPidFile(valid, async () => "Mon Jul  2 10:00:01 2026") : true;
+		const stale = valid ? await processMatchesPidFile(valid, async () => "Mon Jul  2 10:00:04 2026") : true;
 
-		// Then: only the valid pidfile with the exact process start time is accepted.
+		// Then: the valid pidfile matches, and a start beyond the shared tolerance does not.
 		expect(malformed).toBeUndefined();
 		expect(matches).toBe(true);
 		expect(stale).toBe(false);
@@ -132,7 +131,7 @@ describe("app-server daemon state", () => {
 	}, 15_000);
 });
 
-describe.sequential("app-server daemon CLI", () => {
+describe("app-server daemon CLI", () => {
 	it("starts, reports status, attaches idempotently, and stops a managed daemon", async () => {
 		// Given: a scratch agent directory and a non-default loopback port.
 		const root = await scratchRoot("senpi-daemon-cli-");
@@ -157,7 +156,7 @@ describe.sequential("app-server daemon CLI", () => {
 			expect(typeof started.json.pid).toBe("number");
 			expect(pidFile?.pid).toBe(started.json.pid);
 			expect(pidMatches).toBe(true);
-			expect(settings).toEqual({ listen: { kind: "ws", url: listen, host: "127.0.0.1", port } });
+			expect(settings).toEqual({ listen: { kind: "ws", url: listen, host: "127.0.0.1", port }, extensions: [] });
 			expect(status.json).toMatchObject({ status: "running", pid: started.json.pid, listen });
 			expect(attached.json).toMatchObject({ status: "already-running", pid: started.json.pid, listen });
 			expect(stopped.json).toEqual({ status: "stopped" });
@@ -167,17 +166,6 @@ describe.sequential("app-server daemon CLI", () => {
 		}
 	}, 180_000);
 });
-
-type DaemonCliResult = {
-	readonly json: Record<string, unknown>;
-	readonly stderr: string;
-};
-
-type StartedDaemon = {
-	readonly listen: string;
-	readonly port: QaPort;
-	readonly started: DaemonCliResult;
-};
 
 function createDeferred<T>(): {
 	readonly promise: Promise<T>;
@@ -213,86 +201,6 @@ async function startDaemonAfterAddressInUse(agentDir: string): Promise<StartedDa
 	}
 }
 
-async function startDaemonOnQaPort(agentDir: string, preferredPort: QaPort = 18999): Promise<StartedDaemon> {
-	const failures: string[] = [];
-	for (const port of qaPortsFrom(preferredPort)) {
-		const listen = `ws://127.0.0.1:${port}`;
-		try {
-			const started = await runDaemonCli(agentDir, ["start", "--listen", listen]);
-			return { listen, port, started };
-		} catch (error: unknown) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (message.includes("EADDRINUSE") || message.includes("address already in use")) {
-				failures.push(`${port}:${message}`);
-				continue;
-			}
-			throw error;
-		}
-	}
-	throw new Error(`No free QA daemon port in ${qaPortsFrom().join(", ")} (${failures.join("; ")})`);
-}
-
-function closeServer(server: Server): Promise<void> {
-	return new Promise((resolveClose, rejectClose) => {
-		server.close((error) => {
-			if (error) {
-				rejectClose(error);
-				return;
-			}
-			resolveClose();
-		});
-	});
-}
-
-function runDaemonCli(agentDir: string, daemonArgs: readonly string[]): Promise<DaemonCliResult> {
-	return new Promise((resolveResult, reject) => {
-		const child = spawn(process.execPath, [tsxCli, "src/cli.ts", "app-server", "daemon", ...daemonArgs], {
-			cwd: packageRoot,
-			env: {
-				...process.env,
-				PI_OFFLINE: "1",
-				HOME: join(agentDir, "home"),
-				SENPI_CODING_AGENT_DIR: agentDir,
-				SENPI_CODING_AGENT_SESSION_DIR: join(agentDir, "sessions"),
-				XDG_CACHE_HOME: join(agentDir, "xdg-cache"),
-				XDG_CONFIG_HOME: join(agentDir, "xdg-config"),
-				XDG_DATA_HOME: join(agentDir, "xdg-data"),
-			},
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		let stdout = "";
-		let stderr = "";
-		const timeout = setTimeout(() => {
-			child.kill("SIGKILL");
-			const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
-			reject(new Error(`daemon command timed out: ${daemonArgs.join(" ")}${output ? `\n${output}` : ""}`));
-		}, 60_000);
-		child.stdout.on("data", (chunk) => {
-			stdout += chunk.toString("utf8");
-		});
-		child.stderr.on("data", (chunk) => {
-			stderr += chunk.toString("utf8");
-		});
-		child.once("error", (error) => {
-			clearTimeout(timeout);
-			reject(error);
-		});
-		child.once("close", (code) => {
-			clearTimeout(timeout);
-			if (code !== 0) {
-				const output = [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");
-				reject(new Error(`daemon command failed (${code}): ${daemonArgs.join(" ")}\n${output}`));
-				return;
-			}
-			const lines = stdout.trim().split("\n").filter(Boolean);
-			expect(lines).toHaveLength(1);
-			const parsed: unknown = JSON.parse(lines[0] ?? "");
-			expectRecord(parsed);
-			resolveResult({ json: parsed, stderr });
-		});
-	});
-}
-
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
 	return new Promise((resolveResult, rejectResult) => {
 		const timeout = setTimeout(() => rejectResult(new Error(message)), timeoutMs);
@@ -307,13 +215,4 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 			},
 		);
 	});
-}
-
-function expectRecord(value: unknown): asserts value is Record<string, unknown> {
-	expect(typeof value).toBe("object");
-	expect(value).not.toBeNull();
-	expect(Array.isArray(value)).toBe(false);
-	if (typeof value !== "object" || value === null || Array.isArray(value)) {
-		throw new Error("expected record");
-	}
 }

@@ -3,6 +3,10 @@
 Injects the default `timeout` into every `bash` call and appends the "Bash Tool Timeout Policy"
 section to the system prompt.
 
+## 2026-09-24 - Pin pi-bash-timeout 0.1.2, no port needed (senpi#2079)
+
+pi-bash-timeout 0.1.2 is a toolchain refresh with no `src/` change since 0.1.1; senpi's copy keeps its own defaults and prompt (entries below). Only `external-versions.json` changes.
+
 ## 2026-09-04 - Timeout policy stops restating the terminal waiting doctrine
 
 ### What changed

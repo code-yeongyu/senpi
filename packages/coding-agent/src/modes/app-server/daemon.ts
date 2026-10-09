@@ -1,5 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { mkdir, open, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "../../config.ts";
@@ -20,8 +19,9 @@ import {
 	readProcessStartTime,
 	stopValidatedPid,
 	waitForGone,
-	waitForStartTime,
 } from "./daemon/process.ts";
+import { type DaemonExit, type DaemonLaunchIntent, spawnDaemon } from "./daemon/spawn.ts";
+import { resolveAppServerExtensionPaths } from "./extension-paths.ts";
 import type { AppServerDaemonCommandOptions, AppServerListen } from "./index.ts";
 
 export interface DaemonPaths {
@@ -34,15 +34,6 @@ export interface DaemonPaths {
 }
 
 type DaemonOutput = Readonly<Record<string, string | number | undefined>>;
-
-type SpawnedDaemon = {
-	readonly pid: number;
-	readonly exited: Promise<DaemonExit>;
-};
-
-type DaemonExit =
-	| { readonly kind: "error"; readonly error: Error }
-	| { readonly kind: "exit"; readonly code: number | null; readonly signal: NodeJS.Signals | null };
 
 type DaemonReadiness =
 	| { readonly kind: "ready"; readonly version: string }
@@ -92,22 +83,28 @@ async function runLockedDaemonCommand(
 ): Promise<DaemonOutput> {
 	const settings = await readSettings(paths);
 	const listen = options.verb === "start" ? options.listen : (settings?.listen ?? options.listen);
+	const extensions = resolveAppServerExtensionPaths(options.extensions);
 	switch (options.verb) {
 		case "start":
-			return startDaemon(paths, listen);
+			return startDaemon(paths, { listen, extensions });
 		case "stop":
 			return stopDaemon(paths, listen);
 		case "status":
 			return statusDaemon(paths, listen);
 		case "restart": {
+			// Like the listener, a restart relaunches what was recorded; explicit extensions replace it.
 			const restartListen = settings?.listen ?? options.listen;
 			await stopDaemon(paths, restartListen);
-			return startDaemon(paths, restartListen);
+			return startDaemon(paths, {
+				listen: restartListen,
+				extensions: extensions.length > 0 ? extensions : (settings?.extensions ?? []),
+			});
 		}
 	}
 }
 
-async function startDaemon(paths: DaemonPaths, listen: AppServerListen): Promise<DaemonOutput> {
+async function startDaemon(paths: DaemonPaths, intent: DaemonLaunchIntent): Promise<DaemonOutput> {
+	const { listen } = intent;
 	const occupancy = await inspectAppServerListenOccupancy(paths, listen);
 	if (occupancy.kind === "app-server") {
 		const pidFile = await readPidFile(paths);
@@ -121,7 +118,7 @@ async function startDaemon(paths: DaemonPaths, listen: AppServerListen): Promise
 		if (lateProbe) return runningOutput("already-running", pidFile.pid, listen, lateProbe);
 		throw new Error(`managed daemon pid ${pidFile.pid} did not answer initialize`);
 	}
-	const spawned = await spawnDaemon(paths, listen);
+	const spawned = await spawnDaemon(paths, intent, resolveCliMainPath());
 	const readiness = await waitForDaemonReady(paths, listen, spawned.exited);
 	if (readiness.kind === "ready") {
 		return { status: "started", pid: spawned.pid, listen: listen.url };
@@ -168,102 +165,6 @@ async function statusDaemon(paths: DaemonPaths, listen: AppServerListen): Promis
 	return { status: "not-running" };
 }
 
-async function spawnDaemon(paths: DaemonPaths, listen: AppServerListen): Promise<SpawnedDaemon> {
-	const stderr = await open(paths.stderrLog, "w");
-	try {
-		const daemonExec = process.versions.bun
-			? process.env.npm_node_execpath && !/[/\\]bun(?:$|[/\\])/.test(process.env.npm_node_execpath)
-				? process.env.npm_node_execpath
-				: "/opt/homebrew/bin/node"
-			: process.execPath;
-		const child = spawn(
-			daemonExec,
-			[
-				...(process.versions.bun ? [] : process.execArgv),
-				resolveCliMainPath(),
-				"app-server",
-				"--listen",
-				listen.url,
-			],
-			{
-				detached: true,
-				windowsHide: true,
-				env: { ...process.env, SENPI_RUNTIME: "node" },
-				stdio: ["ignore", "ignore", stderr.fd],
-			},
-		);
-		const exited = observeDaemonExit(child);
-		const pid = child.pid;
-		if (pid === undefined) throw new Error("failed to spawn daemon process");
-		let startTime: string;
-		try {
-			const observed = await Promise.race([
-				waitForStartTime(pid, 10_000),
-				exited.then(() => {
-					throw new Error(`spawned daemon ${pid} exited before its start time could be read`);
-				}),
-			]);
-			// UNKNOWN identity on a live daemon means the probe was starved, not that startup failed.
-			// The per-attempt win32 probe budget is 1s, which a loaded runner exceeds every time, so
-			// take one unhurried read before treating an unreadable identity as a startup error.
-			const resolved =
-				observed ?? (await readProcessStartTime(pid, process.platform, 15_000).catch(() => undefined));
-			if (resolved === undefined) {
-				throw new Error(`spawned daemon ${pid} started but its process identity stayed unreadable`);
-			}
-			startTime = resolved;
-		} catch (error: unknown) {
-			// Keep the handle owned until registration succeeds. This terminates the
-			// exact child even when start-time acquisition fails, without a raw PID.
-			if (child.exitCode === null && child.signalCode === null) {
-				try {
-					child.kill("SIGTERM");
-				} catch {}
-				await Promise.race([exited, delay(2_000)]);
-				if (child.exitCode === null && child.signalCode === null) {
-					try {
-						child.kill("SIGKILL");
-					} catch {}
-				}
-			}
-			await cleanupState(paths, listen);
-			throw error;
-		}
-		try {
-			await writeFile(paths.pidFile, `${JSON.stringify({ pid, processStartTime: startTime })}\n`, { mode: 0o600 });
-			await writeFile(paths.settingsFile, `${JSON.stringify({ listen })}\n`, { mode: 0o600 });
-		} catch (error: unknown) {
-			// Registration is the ownership hand-off point. Until both files exist,
-			// retain the exact ChildProcess handle and terminate it on any write
-			// failure so a partial registration can never leave an unmanaged daemon.
-			if (child.exitCode === null && child.signalCode === null) {
-				try {
-					child.kill("SIGTERM");
-				} catch {}
-				await Promise.race([exited, delay(2_000)]);
-				if (child.exitCode === null && child.signalCode === null) {
-					try {
-						child.kill("SIGKILL");
-					} catch (killError: unknown) {
-						throw new Error(
-							`failed to terminate daemon after registration failure: ${killError instanceof Error ? killError.message : String(killError)}`,
-						);
-					}
-					if (!(await Promise.race([exited.then(() => true), delay(2_000).then(() => false)]))) {
-						throw new Error(`daemon ${pid} remained alive after SIGKILL during registration failure`);
-					}
-				}
-			}
-			await cleanupState(paths, { ...listen, ...(listen.kind === "unix" ? { path: undefined } : {}) });
-			throw error;
-		}
-		child.unref();
-		return { pid, exited };
-	} finally {
-		await stderr.close();
-	}
-}
-
 async function waitForDaemonReady(
 	paths: DaemonPaths,
 	listen: AppServerListen,
@@ -279,17 +180,6 @@ async function waitForDaemonReady(
 	} finally {
 		controller.abort();
 	}
-}
-
-function delay(ms: number): Promise<void> {
-	return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-}
-
-function observeDaemonExit(child: ChildProcess): Promise<DaemonExit> {
-	return new Promise((resolveExit) => {
-		child.once("error", (error) => resolveExit({ kind: "error", error }));
-		child.once("exit", (code, signal) => resolveExit({ kind: "exit", code, signal }));
-	});
 }
 
 function describeDaemonExit(exit: DaemonExit): string {

@@ -1,8 +1,14 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
-import { appendLoginSlot, mergeRefreshed, removeSlot } from "./auth/pool/slots.ts";
-import { type AuthResolutionOverrides, ModelsError, resolveProviderAuth } from "./auth/resolve.ts";
+import { appendLoginSlot, removeSlot } from "./auth/pool/slots.ts";
+import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
+import {
+	type AuthResolutionOverrides,
+	ModelsError,
+	providerNotConfiguredMessage,
+	resolveProviderAuth,
+} from "./auth/resolve.ts";
 import type {
 	AuthCheck,
 	AuthContext,
@@ -12,32 +18,67 @@ import type {
 	AuthType,
 	Credential,
 	CredentialStore,
+	LoginOptions,
 	ProviderAuth,
 } from "./auth/types.ts";
+import { builtinCatalogAdvertisesMax } from "./model-catalog.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
 import type {
+	AnyModel,
 	Api,
 	ApiStreamOptions,
+	AssistantImages,
 	AssistantMessage,
 	AssistantMessageEventStream,
+	ClassifierApi,
+	ClassifierContext,
+	ClassifierModel,
+	ClassifierOptions,
+	ClassifierResult,
 	Context,
 	DeferredCancelOptions,
 	DeferredFetchOptions,
 	DeferredHandle,
+	ImageApi,
+	ImageModel,
+	ImagesContext,
+	ImagesOptions,
 	Model,
 	ModelCostRates,
 	ModelThinkingLevel,
+	ModelType,
+	ModelTypeMap,
+	OpenAIResponsesCompat,
+	ProviderClassifier,
 	ProviderHeaders,
+	ProviderImages,
 	ProviderRequestOptions,
 	ProviderStreams,
 	SimpleStreamOptions,
 	ThinkingLevelMap,
+	TranscriptContext,
 	Usage,
 } from "./types.ts";
 import { operationSignal, raceWithAbortSignal } from "./utils/abort.ts";
+import {
+	assertChatModel,
+	assertClassifierModel,
+	assertImageModel,
+	classifierErrorResult,
+	getModelType,
+	imageErrorResult,
+	isModelType,
+} from "./utils/model-operations.ts";
 import type { RetryPolicyProfile } from "./utils/retry-profile/types.ts";
+import { normalizeContext } from "./utils/transcript.ts";
 
-export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
+export {
+	ModelsError,
+	type ModelsErrorCode,
+	PROVIDER_NOT_CONFIGURED_PREFIX,
+	providerNotConfiguredMessage,
+} from "./auth/resolve.ts";
+export { getModelType, isModelType } from "./utils/model-operations.ts";
 
 export interface ModelsPublication {
 	/** Provider-selected persisted catalog. Omit to leave storage unchanged; null deletes it. */
@@ -87,15 +128,34 @@ export type ModelsApiStreamOptions<TApi extends Api> = ApiStreamOptions<TApi> & 
 export type ModelsSimpleStreamOptions = SimpleStreamOptions & ModelsRequestTransforms;
 export type ModelsDeferredFetchOptions = DeferredFetchOptions & ModelsRequestTransforms;
 export type ModelsDeferredCancelOptions = DeferredCancelOptions & ModelsRequestTransforms;
+export type ModelsImagesOptions = ImagesOptions & ModelsRequestTransforms;
+export type ModelsClassifierOptions = ClassifierOptions & ModelsRequestTransforms;
+
+const KNOWN_MODEL_TYPES: Record<ModelType, true> = { chat: true, image: true, classifier: true };
+
+/** Models from stores and remote sources may have types that only newer versions know. */
+function hasKnownModelType(model: AnyModel): boolean {
+	return Object.hasOwn(KNOWN_MODEL_TYPES, getModelType(model));
+}
+
+/** Drops stored models whose type this version does not know. */
+function withKnownModelTypes(entry: ModelsStoreEntry): ModelsStoreEntry {
+	return { ...entry, models: entry.models.filter(hasKnownModelType) };
+}
+
+/** Any model a provider with chat APIs `TApi` can list. */
+type ProviderModel<TApi extends Api> = Model<TApi> | ImageModel<ImageApi> | ClassifierModel<ClassifierApi>;
 
 /**
  * A provider is the concrete runtime unit. It owns id/name/base metadata,
- * auth methods, model listing, and stream behavior.
+ * auth methods, model listing, and the operations its models support
+ * (streaming, image generation, classification).
  *
- * `TApi` lets concrete provider factories declare which APIs their models
+ * `TApi` lets concrete provider factories declare which chat APIs their models
  * use (e.g. `openaiProvider(): Provider<"openai-responses" | "openai-completions">`),
- * giving typed model lists to direct factory users. Inside a `Models`
- * collection providers are held as `Provider<Api>`.
+ * giving typed chat model lists to direct factory users. Other model types use
+ * their operation-specific API unions. Inside a `Models` collection providers
+ * are held as `Provider<Api>`.
  */
 export interface Provider<TApi extends Api = Api> {
 	readonly id: string;
@@ -116,12 +176,20 @@ export interface Provider<TApi extends Api = Api> {
 	readonly auth: ProviderAuth;
 
 	/**
-	 * Current known models, sync. Static providers return their catalog;
-	 * dynamic providers return the list as of the last `refreshModels()`
-	 * (empty before the first). Must not throw; `Models` treats a throwing
+	 * Current known chat models, sync. Static providers return their catalog;
+	 * dynamic providers return the list as of the last `refreshModels()` (empty
+	 * before the first). Must not throw; `Models` treats a throwing
 	 * implementation as having no models.
 	 */
 	getModels(): readonly Model<TApi>[];
+
+	/**
+	 * Current known models of every type, sync, with the same contract as
+	 * `getModels()`. Providers with only chat models may omit it; `Models` then
+	 * uses `getModels()`. Model ids are unique within each type; one upstream
+	 * model may have separate entries for different operations.
+	 */
+	getAllModels?(): readonly ProviderModel<TApi>[];
 
 	/**
 	 * Dynamic providers only: restore `context.stored` and optionally fetch a newer list using
@@ -133,46 +201,88 @@ export interface Provider<TApi extends Api = Api> {
 
 	/**
 	 * Optional provider policy for credential-specific model availability.
-	 * `getModels()` remains the complete synchronous catalog; `Models.getAvailable()`
+	 * `getModels()` remains the complete synchronous chat catalog; `Models.getAvailable()`
 	 * applies this filter after confirming that provider auth is configured.
 	 */
 	filterModels?(models: readonly Model<TApi>[], credential: Credential | undefined): readonly Model<TApi>[];
 
+	/**
+	 * Optional credential-specific availability policy across every model type.
+	 * Without it, `Models.getAllAvailable()` applies `filterModels` to chat models
+	 * and keeps every other model.
+	 */
+	filterAllModels?(
+		models: readonly ProviderModel<TApi>[],
+		credential: Credential | undefined,
+	): readonly ProviderModel<TApi>[];
+
+	/** Stream a normalized transcript. `Models` normalizes the caller's `Context` before dispatching here. */
 	stream<T extends TApi>(
 		model: Model<T>,
-		context: Context,
+		context: TranscriptContext,
 		options?: ApiStreamOptions<T>,
 	): AssistantMessageEventStream;
 
-	streamSimple(model: Model<TApi>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+	streamSimple(
+		model: Model<TApi>,
+		context: TranscriptContext,
+		options?: SimpleStreamOptions,
+	): AssistantMessageEventStream;
 	fetchDeferred?(
 		model: Model<TApi>,
 		handle: DeferredHandle,
 		options?: DeferredFetchOptions,
 	): AssistantMessageEventStream;
 	cancelDeferred?(model: Model<TApi>, handle: DeferredHandle, options?: DeferredCancelOptions): Promise<void>;
+
+	/** Present when the provider supports dedicated image models. Never rejects. */
+	generateImages?(
+		model: ImageModel<ImageApi>,
+		context: ImagesContext,
+		options?: ImagesOptions,
+	): Promise<AssistantImages>;
+
+	/** Present when the provider supports structured classifier models. Never rejects. */
+	classify?(
+		model: ClassifierModel<ClassifierApi>,
+		context: ClassifierContext,
+		options?: ClassifierOptions,
+	): Promise<ClassifierResult>;
 }
 
 /**
- * Runtime collection of providers plus auth application and stream
- * convenience. Providers own stream behavior; `Models` resolves auth and
+ * Runtime collection of providers plus auth application and request
+ * convenience. Providers own request behavior; `Models` resolves auth and
  * delegates each request to the provider that owns the model.
+ *
+ * Read accessors come in three flavors: the unqualified ones (`getModels`,
+ * `getModel`, `getAvailable`) return chat models, the `*OfType` accessors
+ * return one model type, and `getAllModels`/`getAllAvailable` return every type.
  */
 export interface Models {
 	getProviders(): readonly Provider[];
 	getProvider(id: string): Provider | undefined;
 
 	/**
-	 * Sync read of last-known models from one provider or all providers.
+	 * Sync read of last-known chat models from one provider or all providers.
 	 * Best-effort: a provider whose `getModels()` throws yields no models.
 	 */
 	getModels(provider?: string): readonly Model<Api>[];
 
 	/**
-	 * Sync runtime model lookup against last-known lists. Dynamic model lists
+	 * Sync runtime chat model lookup against last-known lists. Dynamic model lists
 	 * are typed as `Model<Api>`; narrow with the `hasApi()` type guard.
 	 */
 	getModel(provider: string, id: string): Model<Api> | undefined;
+
+	/** Sync read of last-known models of one type from one provider or all providers. */
+	getModelsOfType<TType extends ModelType>(type: TType, provider?: string): readonly ModelTypeMap[TType][];
+
+	/** Sync runtime lookup of a model of one type against last-known lists. */
+	getModelOfType<TType extends ModelType>(type: TType, provider: string, id: string): ModelTypeMap[TType] | undefined;
+
+	/** Sync read of last-known models of every type from one provider or all providers. */
+	getAllModels(provider?: string): readonly AnyModel[];
 
 	/**
 	 * Refresh selected configured dynamic providers concurrently (all when `providers` is omitted).
@@ -184,8 +294,18 @@ export interface Models {
 	/** Check whether a provider has complete auth configuration without refreshing OAuth. */
 	checkAuth(providerId: string, options?: AuthOperationOptions): Promise<AuthCheck | undefined>;
 
-	/** Return models whose providers have complete auth configuration. */
+	/** Return chat models whose providers have complete auth configuration. */
 	getAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly Model<Api>[]>;
+
+	/** Return models of one type whose providers have complete auth configuration. */
+	getAvailableOfType<TType extends ModelType>(
+		type: TType,
+		providerId?: string,
+		options?: AuthOperationOptions,
+	): Promise<readonly ModelTypeMap[TType][]>;
+
+	/** Return models of every type whose providers have complete auth configuration. */
+	getAllAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly AnyModel[]>;
 
 	/**
 	 * Resolve provider-scoped auth by provider id, or provider auth plus static
@@ -197,10 +317,10 @@ export interface Models {
 	 * surface rejections as stream errors.
 	 */
 	getAuth(providerId: string, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
-	getAuth(model: Model<Api>, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
+	getAuth(model: AnyModel, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
 
 	/** Run a provider-owned login flow and persist its returned credential. */
-	login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential>;
+	login(providerId: string, type: AuthType, interaction: AuthInteraction, options?: LoginOptions): Promise<Credential>;
 
 	/** Remove the stored credential for a provider. */
 	logout(providerId: string, options?: AuthOperationOptions & { slotId?: string }): Promise<void>;
@@ -219,12 +339,35 @@ export interface Models {
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream;
 	completeSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): Promise<AssistantMessage>;
+	streamDeferred(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: ModelsDeferredFetchOptions,
+	): AssistantMessageEventStream;
 	fetchDeferred(
 		model: Model<Api>,
 		handle: DeferredHandle,
 		options?: ModelsDeferredFetchOptions,
 	): Promise<AssistantMessage>;
 	cancelDeferred(model: Model<Api>, handle: DeferredHandle, options?: ModelsDeferredCancelOptions): Promise<void>;
+
+	/**
+	 * Generate images through the owning provider with auth resolved like
+	 * `stream()`. Never rejects: unknown providers, unconfigured auth, and
+	 * providers without `generateImages` return an error `AssistantImages`.
+	 */
+	generateImages(
+		model: ImageModel<ImageApi>,
+		context: ImagesContext,
+		options?: ModelsImagesOptions,
+	): Promise<AssistantImages>;
+
+	/** Classify structured state through the owning provider. Never rejects. */
+	classify(
+		model: ClassifierModel<ClassifierApi>,
+		context: ClassifierContext,
+		options?: ModelsClassifierOptions,
+	): Promise<ClassifierResult>;
 }
 
 export interface MutableModels extends Models {
@@ -318,8 +461,38 @@ class ModelsImpl implements MutableModels {
 		return models;
 	}
 
+	getAllModels(provider?: string): readonly AnyModel[] {
+		if (provider !== undefined) {
+			const entry = this.providers.get(provider);
+			if (!entry) return [];
+			try {
+				return entry.getAllModels?.() ?? entry.getModels();
+			} catch {
+				return [];
+			}
+		}
+
+		const models: AnyModel[] = [];
+		for (const entry of this.providers.values()) {
+			try {
+				models.push(...(entry.getAllModels?.() ?? entry.getModels()));
+			} catch {
+				// Best-effort: ill-behaved providers yield no models.
+			}
+		}
+		return models;
+	}
+
+	getModelsOfType<TType extends ModelType>(type: TType, provider?: string): readonly ModelTypeMap[TType][] {
+		return this.getAllModels(provider).filter((model): model is ModelTypeMap[TType] => isModelType(model, type));
+	}
+
 	getModel(provider: string, id: string): Model<Api> | undefined {
 		return this.getModels(provider).find((model) => model.id === id);
+	}
+
+	getModelOfType<TType extends ModelType>(type: TType, provider: string, id: string): ModelTypeMap[TType] | undefined {
+		return this.getModelsOfType(type, provider).find((model) => model.id === id);
 	}
 
 	private supersedeProviderRefresh(providerId: string): number {
@@ -380,7 +553,7 @@ class ModelsImpl implements MutableModels {
 		const stored = await this.modelsStore.read(provider.id, { signal });
 		await provider.refreshModels({
 			credential,
-			stored: stored ? structuredClone(stored) : undefined,
+			stored: stored ? withKnownModelTypes(structuredClone(stored)) : undefined,
 			publish: (publication) => this.publishProviderModels(provider.id, generation, signal, publication),
 			allowNetwork,
 			force: allowNetwork ? force : undefined,
@@ -417,7 +590,13 @@ class ModelsImpl implements MutableModels {
 					if (credentialError !== undefined) throw credentialError;
 					if (!allowNetwork || signal.aborted) return;
 
-					const credential = await this.resolveRefreshCredential(provider, storedCredential, signal);
+					const credential = await resolveRefreshCredential(
+						provider,
+						this.credentials,
+						this.authContext,
+						storedCredential,
+						signal,
+					);
 					if (!credential) return;
 					await this.runProviderRefreshPhase(provider, credential, true, options.force, generation, signal);
 				})();
@@ -448,36 +627,6 @@ class ModelsImpl implements MutableModels {
 		}
 
 		return { aborted: callerSignal.aborted, errors: new Map(errors) };
-	}
-
-	private async resolveRefreshCredential(
-		provider: Provider,
-		stored: Credential | undefined,
-		signal: AbortSignal,
-	): Promise<Credential | undefined> {
-		if (stored?.type === "oauth") {
-			const oauth = provider.auth.oauth;
-			if (!oauth) return undefined;
-			if (Date.now() < stored.expires) return stored;
-			if (signal.aborted) return undefined;
-			const post = await this.credentials.modify(
-				provider.id,
-				async (current) => {
-					if (current?.type !== "oauth" || Date.now() < current.expires) return undefined;
-					const refreshed = await oauth.refresh(current, signal);
-					return mergeRefreshed(current, refreshed);
-				},
-				{ signal },
-			);
-			return post?.type === "oauth" ? post : undefined;
-		}
-
-		const apiKey = provider.auth.apiKey;
-		if (!apiKey) return undefined;
-		const credential = stored?.type === "api_key" ? stored : undefined;
-		const result = await apiKey.resolve({ ctx: this.authContext, credential, signal });
-		if (!result) return undefined;
-		return { type: "api_key", key: result.auth.apiKey, env: result.env };
 	}
 
 	private async readCredential(providerId: string, signal: AbortSignal): Promise<Credential | undefined> {
@@ -518,7 +667,9 @@ class ModelsImpl implements MutableModels {
 				}
 			} else {
 				const resolution = await resolveProviderAuth(provider, this.credentials, this.authContext, { signal });
-				if (resolution) return { source: resolution.source, type: "api_key" };
+				if (resolution) {
+					return { source: resolution.source, type: "api_key", ...(resolution.ambient ? { ambient: true } : {}) };
+				}
 			}
 		}
 		if (!oauth?.check) return undefined;
@@ -540,21 +691,25 @@ class ModelsImpl implements MutableModels {
 		return raceWithAbortSignal(check, signal);
 	}
 
+	private async getAuthenticatedProviders(providerId: string | undefined, signal: AbortSignal) {
+		signal.throwIfAborted();
+		const providers = providerId
+			? [this.providers.get(providerId)].filter((entry) => entry !== undefined)
+			: this.getProviders();
+		const checks = await Promise.all(
+			providers.map(async (provider) => {
+				const credential = await this.readCredential(provider.id, signal);
+				return { provider, credential, auth: await this.checkProviderAuth(provider, credential, signal) };
+			}),
+		);
+		return checks.filter((entry) => entry.auth !== undefined);
+	}
+
 	getAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly Model<Api>[]> {
 		const signal = operationSignal(options?.signal);
 		const available = (async () => {
-			signal.throwIfAborted();
-			const providers = providerId
-				? [this.providers.get(providerId)].filter((entry) => entry !== undefined)
-				: this.getProviders();
-			const checks = await Promise.all(
-				providers.map(async (provider) => {
-					const credential = await this.readCredential(provider.id, signal);
-					return { provider, credential, auth: await this.checkProviderAuth(provider, credential, signal) };
-				}),
-			);
-			return checks.flatMap(({ provider, credential, auth }) => {
-				if (!auth) return [];
+			const providers = await this.getAuthenticatedProviders(providerId, signal);
+			return providers.flatMap(({ provider, credential }) => {
 				const models = provider.getModels();
 				return provider.filterModels?.(models, credential) ?? models;
 			});
@@ -562,10 +717,37 @@ class ModelsImpl implements MutableModels {
 		return raceWithAbortSignal(available, signal);
 	}
 
+	async getAvailableOfType<TType extends ModelType>(
+		type: TType,
+		providerId?: string,
+		options?: AuthOperationOptions,
+	): Promise<readonly ModelTypeMap[TType][]> {
+		return (await this.getAllAvailable(providerId, options)).filter((model): model is ModelTypeMap[TType] =>
+			isModelType(model, type),
+		);
+	}
+
+	getAllAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly AnyModel[]> {
+		const signal = operationSignal(options?.signal);
+		const available = (async () => {
+			const providers = await this.getAuthenticatedProviders(providerId, signal);
+			return providers.flatMap(({ provider, credential }) => {
+				const models = provider.getAllModels?.() ?? provider.getModels();
+				if (provider.filterAllModels) return provider.filterAllModels(models, credential);
+				if (!provider.filterModels) return models;
+				const availableChatIds = new Set(
+					provider.filterModels(provider.getModels(), credential).map((model) => model.id),
+				);
+				return models.filter((model) => !isModelType(model, "chat") || availableChatIds.has(model.id));
+			});
+		})();
+		return raceWithAbortSignal(available, signal);
+	}
+
 	getAuth(providerId: string, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
-	getAuth(model: Model<Api>, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
+	getAuth(model: AnyModel, overrides?: AuthResolutionOverrides): Promise<AuthResult | undefined>;
 	async getAuth(
-		providerOrModel: string | Model<Api>,
+		providerOrModel: string | AnyModel,
 		overrides?: AuthResolutionOverrides,
 	): Promise<AuthResult | undefined> {
 		const signal = operationSignal(overrides?.signal);
@@ -583,7 +765,12 @@ class ModelsImpl implements MutableModels {
 		};
 	}
 
-	async login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential> {
+	async login(
+		providerId: string,
+		type: AuthType,
+		interaction: AuthInteraction,
+		options?: LoginOptions,
+	): Promise<Credential> {
 		const signal = operationSignal(interaction.signal);
 		signal.throwIfAborted();
 		const provider = this.providers.get(providerId);
@@ -592,8 +779,11 @@ class ModelsImpl implements MutableModels {
 		if (!method?.login) {
 			throw new ModelsError("auth", `${provider.name} does not support ${type} login`);
 		}
-		const loginOperation: Promise<Credential> = method.login({ ...interaction, signal });
+		const { onAccountCommitted, ...providerInteraction } = interaction;
+		const loginOperation: Promise<Credential> = method.login({ ...providerInteraction, signal }, options);
 		const credential = await raceWithAbortSignal(loginOperation, signal);
+		let committedName: string | undefined;
+		let committedOrigin: "generated" | "provider" | undefined;
 		let mutationStarted = false;
 		let markMutationStarted: (() => void) | undefined;
 		const started = new Promise<void>((resolve) => {
@@ -604,7 +794,10 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return appendLoginSlot(current, credential);
+				return appendLoginSlot(current, credential, (name, origin) => {
+					committedName = name;
+					committedOrigin = origin;
+				});
 			},
 			{ signal },
 		);
@@ -632,6 +825,9 @@ class ModelsImpl implements MutableModels {
 			signal.throwIfAborted();
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
 		}
+		if (committedName !== undefined && committedOrigin !== undefined) {
+			onAccountCommitted?.({ providerId, name: committedName, origin: committedOrigin });
+		}
 		return credential;
 	}
 
@@ -656,7 +852,7 @@ class ModelsImpl implements MutableModels {
 		}
 	}
 
-	private requireProvider(model: Model<Api>): Provider {
+	private requireProvider(model: AnyModel): Provider {
 		const provider = this.providers.get(model.provider);
 		if (!provider) {
 			throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
@@ -664,12 +860,20 @@ class ModelsImpl implements MutableModels {
 		return provider;
 	}
 
-	private async applyAuth<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
-		model: Model<Api>,
+	private requireChatProvider(model: Model<Api>): Provider {
+		assertChatModel(model);
+		return this.requireProvider(model);
+	}
+
+	private async applyAuth<
+		TModel extends AnyModel,
+		TOptions extends ProviderRequestOptions<TModel> & ModelsRequestTransforms,
+	>(
+		model: TModel,
 		options: TOptions | undefined,
 	): Promise<{
-		requestModel: Model<Api>;
-		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions;
+		requestModel: TModel;
+		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
 	}> {
 		this.requireProvider(model);
 		const resolution = await this.getAuth(model, {
@@ -678,7 +882,7 @@ class ModelsImpl implements MutableModels {
 			signal: options?.signal,
 		});
 		if (!resolution) {
-			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
+			throw new ModelsError("auth", providerNotConfiguredMessage(model.provider));
 		}
 		const auth = resolution.auth;
 
@@ -687,10 +891,10 @@ class ModelsImpl implements MutableModels {
 		let headers = mergeHeaders(auth.headers, options?.headers);
 		if (options?.transformHeaders) headers = await options.transformHeaders(headers ?? {});
 		const env = resolution.env || options?.env ? { ...(resolution.env ?? {}), ...(options?.env ?? {}) } : undefined;
-		const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+		const requestModel: TModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
 		const { transformHeaders: _transformHeaders, ...providerOptions } = options ?? {};
 		const requestOptions = { ...providerOptions, apiKey, headers, env } as Omit<TOptions, "transformHeaders"> &
-			ProviderRequestOptions;
+			ProviderRequestOptions<TModel>;
 
 		return { requestModel, requestOptions };
 	}
@@ -700,13 +904,14 @@ class ModelsImpl implements MutableModels {
 		context: Context,
 		options?: ModelsApiStreamOptions<TApi>,
 	): AssistantMessageEventStream {
+		const transcript = normalizeContext(context);
 		return lazyStream(model, async () => {
-			const provider = this.requireProvider(model);
+			const provider = this.requireChatProvider(model);
 			const { requestModel, requestOptions } = await this.applyAuth(
 				model,
 				options as ModelsApiStreamOptions<Api> | undefined,
 			);
-			return provider.stream(requestModel as Model<TApi>, context, requestOptions as ApiStreamOptions<TApi>);
+			return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
 		});
 	}
 
@@ -719,10 +924,11 @@ class ModelsImpl implements MutableModels {
 	}
 
 	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
+		const transcript = normalizeContext(context);
 		return lazyStream(model, async () => {
-			const provider = this.requireProvider(model);
+			const provider = this.requireChatProvider(model);
 			const { requestModel, requestOptions } = await this.applyAuth(model, options);
-			return provider.streamSimple(requestModel, context, requestOptions as SimpleStreamOptions);
+			return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
 		});
 	}
 
@@ -734,19 +940,27 @@ class ModelsImpl implements MutableModels {
 		return this.streamSimple(model, context, options).result();
 	}
 
-	async fetchDeferred(
+	streamDeferred(
 		model: Model<Api>,
 		handle: DeferredHandle,
 		options?: ModelsDeferredFetchOptions,
-	): Promise<AssistantMessage> {
+	): AssistantMessageEventStream {
 		return lazyStream(model, async () => {
-			const provider = this.requireProvider(model);
+			const provider = this.requireChatProvider(model);
 			if (!provider.fetchDeferred) {
 				throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
 			}
 			const { requestModel, requestOptions } = await this.applyAuth(model, options);
 			return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
-		}).result();
+		});
+	}
+
+	async fetchDeferred(
+		model: Model<Api>,
+		handle: DeferredHandle,
+		options?: ModelsDeferredFetchOptions,
+	): Promise<AssistantMessage> {
+		return this.streamDeferred(model, handle, options).result();
 	}
 
 	async cancelDeferred(
@@ -754,12 +968,48 @@ class ModelsImpl implements MutableModels {
 		handle: DeferredHandle,
 		options?: ModelsDeferredCancelOptions,
 	): Promise<void> {
-		const provider = this.requireProvider(model);
+		const provider = this.requireChatProvider(model);
 		if (!provider.cancelDeferred) {
 			throw new ModelsError("provider", `Provider ${model.provider} does not support deferred responses`);
 		}
 		const { requestModel, requestOptions } = await this.applyAuth(model, options);
 		await provider.cancelDeferred(requestModel, handle, requestOptions);
+	}
+
+	async generateImages(
+		model: ImageModel<ImageApi>,
+		context: ImagesContext,
+		options?: ModelsImagesOptions,
+	): Promise<AssistantImages> {
+		try {
+			assertImageModel(model);
+			const provider = this.requireProvider(model);
+			if (!provider.generateImages) {
+				throw new ModelsError("provider", `Provider ${model.provider} does not support image generation`);
+			}
+			const { requestModel, requestOptions } = await this.applyAuth(model, options);
+			return await provider.generateImages(requestModel, context, requestOptions);
+		} catch (error) {
+			return imageErrorResult(model, error, options?.signal?.aborted);
+		}
+	}
+
+	async classify(
+		model: ClassifierModel<ClassifierApi>,
+		context: ClassifierContext,
+		options?: ModelsClassifierOptions,
+	): Promise<ClassifierResult> {
+		try {
+			assertClassifierModel(model);
+			const provider = this.requireProvider(model);
+			if (!provider.classify) {
+				throw new ModelsError("provider", `Provider ${model.provider} does not support classification`);
+			}
+			const { requestModel, requestOptions } = await this.applyAuth(model, options);
+			return await provider.classify(requestModel, context, requestOptions);
+		} catch (error) {
+			return classifierErrorResult(model, error, options?.signal?.aborted);
+		}
 	}
 }
 
@@ -777,44 +1027,79 @@ export interface CreateProviderOptions<TApi extends Api = Api> {
 	retryPolicy?: RetryPolicyProfile;
 	/** Required — every provider has auth semantics, even ambient/keyless ones. */
 	auth: ProviderAuth;
-	/** Static baseline model list (empty for purely dynamic providers). */
-	models: readonly Model<TApi>[];
-	/** Fetch a dynamic model overlay. createProvider restores and publishes it transactionally. */
-	fetchModels?: (context: RefreshModelsContext) => Promise<readonly Model<TApi>[]>;
 	/**
-	 * Optional transform applied to restored stored models before publication,
+	 * Static baseline models of every type (empty for purely dynamic providers).
+	 * Models without `type` are chat models.
+	 */
+	models: readonly ProviderModel<TApi>[];
+	/**
+	 * Fetch a dynamic model overlay of every type. createProvider restores and
+	 * publishes it transactionally and drops models of unknown types.
+	 */
+	fetchModels?: (context: RefreshModelsContext) => Promise<readonly ProviderModel<TApi>[]>;
+	/**
+	 * Optional transform applied to restored stored chat models before publication,
 	 * letting a provider migrate an old catalog shape without a network refresh.
-	 * A throwing transform publishes the stored list unchanged.
+	 * Non-chat models are published unchanged. A throwing transform publishes the
+	 * stored list unchanged.
 	 */
 	restoreModels?: (models: readonly Model<TApi>[]) => readonly Model<TApi>[];
+	/** Credential-specific chat model availability. See `Provider.filterModels`. */
 	filterModels?: (models: readonly Model<TApi>[], credential: Credential | undefined) => readonly Model<TApi>[];
-	/** Single implementation, or map keyed by `model.api` for mixed-API providers. */
-	api: ProviderStreams | Partial<Record<TApi, ProviderStreams>>;
+	/** Credential-specific availability across every model type. See `Provider.filterAllModels`. */
+	filterAllModels?: (
+		models: readonly ProviderModel<TApi>[],
+		credential: Credential | undefined,
+	) => readonly ProviderModel<TApi>[];
+	/**
+	 * Chat implementation: a single one for all chat models, or a map keyed by
+	 * `model.api` for mixed-API providers. Optional when `images` or
+	 * `classifiers` is given.
+	 */
+	api?: ProviderStreams | Partial<Record<TApi, ProviderStreams>>;
+	/** Image-generation implementations keyed by `model.api`. */
+	images?: Partial<Record<ImageApi, ProviderImages>>;
+	/** Classifier implementations keyed by `model.api`. */
+	classifiers?: Partial<Record<ClassifierApi, ProviderClassifier>>;
 }
 
 /**
  * Builds a provider from parts. Built-in provider factories and models.json
- * custom providers both go through this. A single `api` streams all models;
- * an `api` map dispatches on `model.api`, and a model whose api has no entry
- * produces a stream error.
+ * custom providers both go through this. A single `api` streams all chat
+ * models; an `api` map dispatches on `model.api`, and a model whose api has
+ * no entry produces a stream error. One-shot operation maps dispatch on
+ * `model.api` the same way. At least one concrete implementation across
+ * `api`/`images`/`classifiers` is required; empty maps are rejected.
  */
 export function createProvider<TApi extends Api = Api>(input: CreateProviderOptions<TApi>): Provider<TApi> {
+	const single =
+		input.api && typeof (input.api as ProviderStreams).stream === "function"
+			? (input.api as ProviderStreams)
+			: undefined;
+	const byApi = single || !input.api ? undefined : (input.api as Partial<Record<string, ProviderStreams>>);
+	const images = input.images as Partial<Record<string, ProviderImages>> | undefined;
+	const classifiers = input.classifiers as Partial<Record<string, ProviderClassifier>> | undefined;
+	const streams = single ? [single] : Object.values(byApi ?? {}).filter((entry) => entry !== undefined);
+	const imageImplementations = Object.values(images ?? {}).filter((entry) => entry !== undefined);
+	const classifierImplementations = Object.values(classifiers ?? {}).filter((entry) => entry !== undefined);
+	if (streams.length === 0 && imageImplementations.length === 0 && classifierImplementations.length === 0) {
+		throw new Error(`Provider ${input.id}: at least one of "api", "images", or "classifiers" is required.`);
+	}
+
 	const baselineModels = input.models;
-	let dynamicModels: readonly Model<TApi>[] = [];
+	let dynamicModels: readonly ProviderModel<TApi>[] = [];
 	const fetchModels = input.fetchModels;
-	const currentModels = (): readonly Model<TApi>[] => {
+	const currentModels = (): readonly ProviderModel<TApi>[] => {
 		const merged = [...baselineModels];
 		for (const model of dynamicModels) {
-			const index = merged.findIndex((entry) => entry.id === model.id);
+			const index = merged.findIndex(
+				(entry) => getModelType(entry) === getModelType(model) && entry.id === model.id,
+			);
 			if (index >= 0) merged[index] = model;
 			else merged.push(model);
 		}
 		return merged;
 	};
-	const single =
-		typeof (input.api as ProviderStreams).stream === "function" ? (input.api as ProviderStreams) : undefined;
-	const byApi = single ? undefined : (input.api as Partial<Record<string, ProviderStreams>>);
-
 	const apiFor = (model: Model<Api>): ProviderStreams | undefined => single ?? byApi?.[model.api];
 
 	const dispatch = (
@@ -837,16 +1122,19 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 		headers: input.headers,
 		retryPolicy: input.retryPolicy,
 		auth: input.auth,
-		getModels: currentModels,
+		getModels: () => currentModels().filter((model): model is Model<TApi> => isModelType(model, "chat")),
+		getAllModels: currentModels,
 		refreshModels: fetchModels
 			? async (context) => {
 					if (context.stored) {
 						let restored = context.stored.models
 							.filter((model) => model.provider === input.id)
-							.map((model) => model as Model<TApi>);
+							.map((model) => model as ProviderModel<TApi>);
 						if (input.restoreModels) {
 							try {
-								restored = [...input.restoreModels(restored)];
+								const chatModels = restored.filter((model) => isModelType(model, "chat")) as Model<TApi>[];
+								const otherModels = restored.filter((model) => !isModelType(model, "chat"));
+								restored = [...input.restoreModels(chatModels), ...otherModels];
 							} catch {
 								// The stored list is the last usable catalog; publish it unchanged.
 							}
@@ -862,8 +1150,10 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 						}
 					}
 					if (!context.allowNetwork || context.signal.aborted) return;
-					const refreshed = await fetchModels(context);
-					if (context.signal.aborted || refreshed.length === 0) return;
+					const fetched = await fetchModels(context);
+					if (context.signal.aborted) return;
+					const refreshed = fetched.filter(hasKnownModelType);
+					if (refreshed.length === 0) return;
 					await context.publish({
 						persist: { models: refreshed, checkedAt: Date.now() },
 						update: () => {
@@ -873,12 +1163,12 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 				}
 			: undefined,
 		filterModels: input.filterModels,
+		filterAllModels: input.filterAllModels,
 		stream: (model, context, options) => dispatch(model, (streams) => streams.stream(model, context, options)),
 		streamSimple: (model, context, options) =>
 			dispatch(model, (streams) => streams.streamSimple(model, context, options)),
 	};
 
-	const streams = single ? [single] : Object.values(byApi ?? {}).filter((entry) => entry !== undefined);
 	if (streams.some((entry) => entry.fetchDeferred !== undefined)) {
 		provider.fetchDeferred = (model, handle, options) =>
 			lazyStream(model, async () => {
@@ -904,6 +1194,33 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
 			await implementation.cancelDeferred(model, handle, options);
 		};
 	}
+	if (images && imageImplementations.length > 0) {
+		provider.generateImages = async (model, context, options) => {
+			const implementation = images[model.api];
+			if (!implementation) {
+				return imageErrorResult(
+					model,
+					new ModelsError(
+						"provider",
+						`Provider ${input.id} has no image generation implementation for "${model.api}"`,
+					),
+				);
+			}
+			return implementation.generateImages(model, context, options);
+		};
+	}
+	if (classifiers && classifierImplementations.length > 0) {
+		provider.classify = async (model, context, options) => {
+			const implementation = classifiers[model.api];
+			if (!implementation) {
+				return classifierErrorResult(
+					model,
+					new ModelsError("provider", `Provider ${input.id} has no classifier implementation for "${model.api}"`),
+				);
+			}
+			return implementation.classify(model, context, options);
+		};
+	}
 
 	return provider;
 }
@@ -917,12 +1234,14 @@ export function createProvider<TApi extends Api = Api>(input: CreateProviderOpti
  *   // model: Model<"anthropic-messages">, stream options fully typed
  * }
  * ```
+ *
+ * Non-chat models never match, even when their api id equals `api`.
  */
-export function hasApi<TApi extends Api>(model: Model<Api>, api: TApi): model is Model<TApi> {
-	return model.api === api;
+export function hasApi<TApi extends Api>(model: AnyModel, api: TApi): model is Model<TApi> {
+	return isModelType(model, "chat") && model.api === api;
 }
 
-export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage): Usage["cost"] {
+export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
 	const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 	let rates: ModelCostRates = model.cost;
 	let matchedThreshold = -1;
@@ -961,10 +1280,16 @@ const GPT_6_ASTRA_THINKING_LEVEL_MAP: ThinkingLevelMap = {
 	max: "max",
 };
 
+/** GPT-6 tiers that document no `none` effort, so a map-less row must not offer `off`. */
+const GPT_6_NO_NONE_EFFORT_MODEL_IDS = ["gpt-6-astra", "gpt-6.1-sol"];
+
 /** Infer documented OpenAI reasoning controls only when generated metadata is absent. */
 export function inferOpenAIThinkingLevelMap<TApi extends Api>(model: Model<TApi>): ThinkingLevelMap | undefined {
 	if (model.thinkingLevelMap !== undefined) return model.thinkingLevelMap;
-	if (OPENAI_THINKING_APIS.includes(model.api) && matchesModelFamily(model.id, "gpt-6-astra")) {
+	if (
+		OPENAI_THINKING_APIS.includes(model.api) &&
+		GPT_6_NO_NONE_EFFORT_MODEL_IDS.some((id) => matchesModelFamily(model.id, id))
+	) {
 		return GPT_6_ASTRA_THINKING_LEVEL_MAP;
 	}
 	return undefined;
@@ -1027,6 +1352,9 @@ const XHIGH_MODEL_IDS = [
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-6-astra",
+	"gpt-6.1-sol",
+	"gpt-6-sol",
+	"gpt-6-luna",
 	"deepseek-v4-pro",
 	"deepseek-v4-flash",
 	"opus-4-6",
@@ -1060,8 +1388,9 @@ function supportsXhighModelId(modelId: string): boolean {
 /**
  * Whether the model exposes the `max` tier.
  *
- * Mirrors {@link supportsXhigh}: an explicit `thinkingLevelMap` wins, and only map-less models
- * are inferred from the id.
+ * Discovery writes valid endpoint efforts as an authoritative `thinkingLevelMap`; unusable
+ * advertised efforts disable reasoning, while absent metadata leaves the model map-less. A map-less
+ * model then inherits max from an exact-id built-in catalog entry before the legacy id floors apply.
  */
 export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
 	const mapped = inferOpenAIThinkingLevelMap(model)?.max;
@@ -1069,6 +1398,22 @@ export function supportsMax<TApi extends Api>(model: Model<TApi>): boolean {
 	if (mapped !== undefined) return true;
 	if (model.thinkingLevelMap !== undefined) return false;
 	return supportsMaxModel(model);
+}
+
+const CONFIGURATION_UPDATE_APIS: readonly Api[] = [
+	"openai-responses",
+	"openai-codex-responses",
+	"azure-openai-responses",
+];
+
+/**
+ * Whether a mid-session reasoning-effort change is sent as a Responses `configuration_update`
+ * input item instead of a new top-level `reasoning.effort`, which discards the cached prefix.
+ * Only catalog metadata (`compat.supportsConfigurationUpdate`) opts a model in.
+ */
+export function supportsConfigurationUpdate<TApi extends Api>(model: Model<TApi>): boolean {
+	if (!CONFIGURATION_UPDATE_APIS.includes(model.api)) return false;
+	return (model.compat as OpenAIResponsesCompat | undefined)?.supportsConfigurationUpdate === true;
 }
 
 /** OpenAI-compatible APIs that accept a native `max` reasoning effort on the wire. */
@@ -1079,8 +1424,8 @@ const OPENAI_MAX_APIS: Api[] = [
 	"openai-completions",
 ];
 
-/** Model family that accepts native `max` effort on OpenAI-compatible APIs. */
-const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra"];
+/** Model families that accept native `max` effort on OpenAI-compatible APIs. */
+const OPENAI_MAX_MODEL_IDS = ["gpt-5.6-sol", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"];
 
 const MAX_MODEL_IDS = [
 	"opus-4-6",
@@ -1096,19 +1441,17 @@ const MAX_MODEL_IDS = [
 
 function supportsMaxModel<TApi extends Api>(model: Model<TApi>): boolean {
 	if (!model.reasoning) return false;
+	if (builtinCatalogAdvertisesMax(model.id)) return true;
 	if (OPENAI_MAX_APIS.includes(model.api) && OPENAI_MAX_MODEL_IDS.some((id) => matchesModelFamily(model.id, id)))
 		return true;
 	return MAX_MODEL_IDS.some((id) => matchesModelFamily(model.id, id));
 }
 
 /**
- * Check if two models are equal by comparing both their id and provider.
+ * Check if two models are equal by comparing their type, id, and provider.
  * Returns false if either model is null or undefined.
  */
-export function modelsAreEqual<TApi extends Api>(
-	a: Model<TApi> | null | undefined,
-	b: Model<TApi> | null | undefined,
-): boolean {
+export function modelsAreEqual(a: AnyModel | null | undefined, b: AnyModel | null | undefined): boolean {
 	if (!a || !b) return false;
-	return a.id === b.id && a.provider === b.provider;
+	return getModelType(a) === getModelType(b) && a.id === b.id && a.provider === b.provider;
 }

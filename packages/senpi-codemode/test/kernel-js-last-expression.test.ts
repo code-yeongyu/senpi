@@ -59,4 +59,67 @@ describe("JavaScript kernel last-expression capture", () => {
 			expect(run.result.ok).toBe(true);
 		});
 	});
+
+	it("captures the last expression when a nested function contains return", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(
+				kernel,
+				"const captureNestedReturn = (() => { return 1; })();\ncaptureNestedReturn + 41",
+			);
+
+			expect(parseJavaScriptResult(run.result)).toBe(42);
+		});
+	});
+
+	it("captures the last expression after a try/catch helper that returns", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(
+				kernel,
+				[
+					"const captureHelperReturn = async () => { try { return await Promise.resolve(21); } catch (error) { return -1; } };",
+					"(await captureHelperReturn()) * 2",
+				].join("\n"),
+			);
+
+			expect(parseJavaScriptResult(run.result)).toBe(42);
+		});
+	});
+
+	it("captures the last expression when return appears only inside a string or comment", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(
+				kernel,
+				'const captureReturnWord = "return"; // return here\ncaptureReturnWord.length',
+			);
+
+			expect(parseJavaScriptResult(run.result)).toBe(6);
+		});
+	});
+
+	it("treats a property named return as a plain member access", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(
+				kernel,
+				'const captureReturnProperty = { return: 1 };\ncaptureReturnProperty.return\n"ok"',
+			);
+
+			expect(parseJavaScriptResult(run.result)).toBe("ok");
+		});
+	});
+
+	it("keeps a genuine top-level return as the cell value", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(kernel, "if (true) return 42;\n0");
+
+			expect(parseJavaScriptResult(run.result)).toBe(42);
+		});
+	});
+
+	it("suppresses capture for a top-level return even when that return does not fire", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(kernel, 'if (false) return 1;\n"tail"');
+
+			expect(parseJavaScriptResult(run.result)).toBeUndefined();
+		});
+	});
 });

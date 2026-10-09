@@ -101,9 +101,13 @@ function collapseConstUnion(node: Record<string, unknown>): void {
  * so the root's own `properties` and `required` are merged with the branches'
  * rather than replaced by them.
  */
-function mergeRootObjectUnion(schema: Record<string, unknown>): Record<string, unknown> | undefined {
-	const branches = Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : undefined;
-	if (branches === undefined || branches.length === 0) return undefined;
+function mergeRootObjectUnion(
+	schema: Record<string, unknown>,
+	combiner?: (typeof COMBINER_KEYS)[number],
+): Record<string, unknown> | undefined {
+	const selected = combiner ?? (Array.isArray(schema.anyOf) ? "anyOf" : "oneOf");
+	const branches = schema[selected];
+	if (!Array.isArray(branches) || branches.length === 0) return undefined;
 	if (schema.properties !== undefined && !isJsonObject(schema.properties)) return undefined;
 	if (schema.required !== undefined && !Array.isArray(schema.required)) return undefined;
 
@@ -125,13 +129,12 @@ function mergeRootObjectUnion(schema: Record<string, unknown>): Record<string, u
 			properties[name] =
 				existing === undefined || JSON.stringify(existing) === JSON.stringify(propertySchema)
 					? propertySchema
-					: { anyOf: [existing, propertySchema] };
+					: { [selected === "allOf" ? "allOf" : "anyOf"]: [existing, propertySchema] };
 		}
 	}
 
-	// Only names required by EVERY branch stay required; a name required by one
-	// branch alone would reject payloads the union accepts. Root-level `required`
-	// applies to all branches, so it is unioned back in.
+	// Unions require only branch-common names; intersections require every branch's
+	// names. Root-level required always applies.
 	const rootRequired = Array.isArray(schema.required)
 		? schema.required.filter((name): name is string => typeof name === "string")
 		: [];
@@ -147,9 +150,15 @@ function mergeRootObjectUnion(schema: Record<string, unknown>): Record<string, u
 	const commonBranchRequired = firstBranchRequired
 		? [...firstBranchRequired].filter((name) => branchRequiredSets.every((names) => names.has(name)))
 		: [];
-	const required = [...new Set([...rootRequired, ...commonBranchRequired])];
+	const required = [
+		...new Set([
+			...rootRequired,
+			...(selected === "allOf" ? branchRequiredSets.flatMap((names) => [...names]) : commonBranchRequired),
+		]),
+	];
 
-	const { anyOf: _anyOf, oneOf: _oneOf, ...rest } = schema;
+	const rest = { ...schema };
+	for (const key of combiner ? [combiner] : ["anyOf", "oneOf"]) delete rest[key];
 	return {
 		...rest,
 		type: "object",
@@ -249,6 +258,21 @@ export function normalizeToolParametersForMoonshot(schema: Record<string, unknow
  */
 export function resolveRootObjectSchema(schema: Record<string, unknown>): Record<string, unknown> {
 	return mergeRootObjectUnion(structuredClone(schema)) ?? schema;
+}
+
+/** Bedrock Converse rejects root combiners, including allOf, even with an object type (#1947). */
+export function normalizeToolParametersForBedrock(schema: Record<string, unknown>): Record<string, unknown> {
+	let normalized = structuredClone(schema);
+	for (const combiner of COMBINER_KEYS) {
+		const branches = normalized[combiner];
+		if (Array.isArray(branches)) {
+			normalized[combiner] = branches.map((branch) =>
+				isJsonObject(branch) ? normalizeToolParametersForBedrock(branch) : branch,
+			);
+		}
+		normalized = mergeRootObjectUnion(normalized, combiner) ?? normalized;
+	}
+	return { type: "object", ...normalized };
 }
 
 function stripMoonshotAnnotations(node: unknown): Record<string, unknown> {

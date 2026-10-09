@@ -9,7 +9,23 @@ interface MonitorStateEvent {
 		readonly description: string;
 		readonly paused: boolean;
 		readonly startedAtMs: number;
+		readonly command: string | null;
+		readonly filter: string | null;
+		readonly persistent: boolean;
+		readonly deadlineMs: number | null;
+		readonly fireCount: number;
+		readonly lastFiredAtMs: number | null;
 	}>;
+}
+
+interface MonitorEndedEvent {
+	readonly id: string;
+	readonly description: string;
+	readonly startedAtMs: number;
+	readonly endedAtMs: number;
+	readonly reason: "exit" | "timeout" | "killed" | "disposed";
+	readonly exitCode: number | null;
+	readonly fireCount: number;
 }
 
 describe("terminal monitor liveness event", () => {
@@ -21,11 +37,15 @@ describe("terminal monitor liveness event", () => {
 
 	it("publishes active monitor counts when a monitor starts and settles", async () => {
 		const states: MonitorStateEvent[] = [];
+		const ended: MonitorEndedEvent[] = [];
 		const harness = await createHarness({
 			extensionFactories: [
 				registerTerminalExtension,
 				(pi) => {
 					pi.on("session_start", () => {
+						pi.events.on("terminal_monitor_ended", (data) => {
+							ended.push(data as MonitorEndedEvent);
+						});
 						pi.events.on("terminal_monitor_state", (data) => {
 							if (
 								typeof data === "object" &&
@@ -48,7 +68,7 @@ describe("terminal monitor liveness event", () => {
 		await harness.session.bindExtensions({});
 		const started = await harness.session.executeTool("monitor", {
 			description: "liveness test",
-			command: "sleep 30",
+			command: "cat",
 			persistent: true,
 		});
 		const bashId = String((started.details as { bash_id?: string } | undefined)?.bash_id ?? "");
@@ -63,6 +83,12 @@ describe("terminal monitor liveness event", () => {
 						description: "liveness test",
 						paused: false,
 						startedAtMs: expect.any(Number),
+						command: "cat",
+						filter: null,
+						persistent: true,
+						deadlineMs: null,
+						fireCount: 0,
+						lastFiredAtMs: null,
 					},
 				],
 			});
@@ -70,6 +96,13 @@ describe("terminal monitor liveness event", () => {
 			await harness.session.executeTool("kill_bash", { bash_id: bashId });
 		}
 		expect(states.at(-1)).toEqual({ activeCount: 0, monitors: [] });
+		expect(ended).toHaveLength(1);
+		expect(ended[0]).toMatchObject({
+			id: bashId,
+			description: "liveness test",
+			reason: "killed",
+			fireCount: 1,
+		});
 	});
 
 	it("emits terminal_monitor_state over pi.rpc.emit when a monitor starts", async () => {
@@ -86,7 +119,7 @@ describe("terminal monitor liveness event", () => {
 		try {
 			const started = await harness.session.executeTool("monitor", {
 				description: "rpc liveness test",
-				command: "sleep 30",
+				command: "cat",
 				persistent: true,
 			});
 			const bashId = String((started.details as { bash_id?: string } | undefined)?.bash_id ?? "");
@@ -103,6 +136,12 @@ describe("terminal monitor liveness event", () => {
 								description: "rpc liveness test",
 								paused: false,
 								startedAtMs: expect.any(Number),
+								command: "cat",
+								filter: null,
+								persistent: true,
+								deadlineMs: null,
+								fireCount: 0,
+								lastFiredAtMs: null,
 							},
 						],
 					},

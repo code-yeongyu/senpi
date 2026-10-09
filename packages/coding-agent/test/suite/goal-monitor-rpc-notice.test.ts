@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import {
 	createRpcConnectionHandler,
 	type RpcConnectionHandler,
@@ -80,14 +81,23 @@ describe("goal monitor scheduling notice over RPC", () => {
 		await runner.emit({ type: "agent_start" });
 		await runner.emit({ type: "agent_end", messages: [fauxAssistantMessage("clean stop")] });
 
-		expect(scheduleEvents).toEqual([expect.objectContaining({ delayMs: 240_000, dueAtMs: 240_000 })]);
+		expect(scheduleEvents).toEqual([
+			expect.objectContaining({
+				delayMs: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+				dueAtMs: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+			}),
+		]);
 		const records = rpcRecords(chunks);
 		expect(records).toContainEqual(
 			expect.objectContaining({
 				type: "entry_appended",
 				entry: expect.objectContaining({
 					customType: "goal-cache-warmup",
-					data: expect.objectContaining({ phase: "scheduled", dueAtMs: 240_000, iteration: 1 }),
+					data: expect.objectContaining({
+						phase: "scheduled",
+						dueAtMs: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+						iteration: 1,
+					}),
 				}),
 			}),
 		);

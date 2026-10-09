@@ -1,3 +1,59 @@
+## 2026-09-30 - Native images on ChatGPT subscriptions
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/gate.ts` enables native image generation for `openai-codex-responses` models on the official HTTPS `chatgpt.com` endpoint, honoring an explicit compatibility opt-out.
+- Existing payload arbitration replaces the client Images API tool with the native server tool; existing response parsing and file externalization are reused.
+- Added subscription endpoint and request-model transition regressions in `test/suite/chatgpt-image-generation.test.ts`.
+
+### Why
+
+- Subscription sessions previously fell through to an unrelated Images API gateway because the native gate accepted only `openai-responses`.
+
+### Why an extension could not handle it
+
+- The change is implemented in the existing builtin extension that owns native image-tool arbitration; no core change or second injector is needed.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/openai-image-gen/gate.ts` capability predicate.
+
+## 2026-09-10 - Native tool follows the Sunburst default
+
+### What changed
+
+- No code change here: `inject.ts` pins `model` to `DEFAULT_IMAGE_MODEL`, which moved back to `gpt-image-2.5-sunburst`, so the native `image_generation` server tool now requests the most capable model too.
+
+### Why
+
+- The client tool and the native server tool must not disagree about which model a session gets.
+
+### Why an extension could not handle it
+
+- The injected literal is owned by this builtin; a second injector would be stripped by the dedupe pass.
+
+### Expected merge conflict zones
+
+- LOW: none in this directory.
+
+## 2026-09-10 - Pin the native image_generation model
+
+### What changed
+
+- `inject.ts`: the injected server tool is `{ type: "image_generation", model: DEFAULT_IMAGE_MODEL }` instead of a bare `{ type: "image_generation" }`; dedupe and strip semantics are unchanged.
+
+### Why
+
+- The OpenAI Responses tool defaults `model` to `gpt-image-1` when omitted, so official-endpoint sessions rendered with a first-generation model while the client tool used 2.5.
+
+### Why an extension could not handle it
+
+- The injector is the single owner of the native tool entry; a second injector would be stripped by the dedupe pass.
+
+### Expected merge conflict zones
+
+- LOW: the single injected literal in `inject.ts`.
+
 # openai-image-gen builtin — changes
 
 ## message_end externalization of native image results (2026-08-11)

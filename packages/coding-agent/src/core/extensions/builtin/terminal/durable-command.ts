@@ -1,35 +1,58 @@
 /**
- * The `restartable-command` durability class: the restore handler that brings a persistent
- * command monitor back after a restart. It re-spawns the saved command EXACTLY ONCE, in the
- * saved working directory, with NO timeout (a persistent watch has no deadline), and
- * re-registers it under the SAVED `mon_` id so the stable handle the agent already knows
- * keeps resolving. Nothing the pre-restart PTY produced is replayed — no output is persisted
- * anywhere, so a restored watch starts from an empty buffer by construction.
+ * The `restartable-command` restore handler. It stops a verified crash-orphaned watcher first,
+ * re-spawns the saved command once in the saved cwd with the restore environment (stable id,
+ * state dir, restored flag, downtime bound), and only calls the watch restored if it is still
+ * running when the grace window closes: an immediate non-zero exit is lost with its exit code and
+ * first output line, an immediate zero exit is a completed one-shot gate. A persistent watch has
+ * no deadline; an ephemeral one gets exactly the time it had left. Nothing the pre-restart PTY
+ * produced is replayed.
  */
 
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { MonitorRegistry } from "./monitor-registry.ts";
-import { type RestoreHandler, type RestoreHandlerResult, reapplyPersistedMute } from "./restore.ts";
-import { DEFAULT_COLS, DEFAULT_ROWS } from "./shared.ts";
+import { ensureMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts";
+import { formatElapsedSeconds } from "./monitor-status.ts";
+import { type ReapResult, reapBeforeRespawn } from "./orphan-reaper.ts";
+import { sanitizeTerminalOutput } from "./output-format.ts";
+import type { ChildProcessIdentity } from "./process-identity.ts";
+import {
+	type RestoreContext,
+	type RestoreHandler,
+	type RestoreHandlerResult,
+	reapplyPersistedMute,
+} from "./restore.ts";
+import type { TerminalRuntimeSession } from "./runtime-session.ts";
+import {
+	DEFAULT_COLS,
+	DEFAULT_ROWS,
+	MONITOR_ENV_DOWNTIME_MS,
+	MONITOR_ENV_ID,
+	MONITOR_ENV_RESTORED,
+	MONITOR_ENV_STATE_DIR,
+	RESTORE_GRACE_MS,
+} from "./shared.ts";
 import type { ManifestMonitor } from "./terminal-manifest.ts";
 import type { TerminalToolContext } from "./tools/context.ts";
 import { spawnCommandSession } from "./tools/spawn.ts";
 
 export interface RestartableCommandDeps {
-	/** Spawn target: supplies the terminal manager, shell config, env and default geometry. */
 	readonly ctx: TerminalToolContext;
-	/** The live registry this generation owns; the restored watch is registered here. */
 	readonly registry: MonitorRegistry;
-	/** Seam for tests and future callers; defaults to the real PTY spawn. */
 	readonly spawn?: typeof spawnCommandSession;
-	/** Directory existence probe; defaults to a real stat of the saved cwd. */
 	readonly directoryExists?: (path: string) => Promise<boolean>;
-	/** Called after a successful restore with the stable id and its fresh runtime id. */
 	readonly onRestored?: (monitorId: string, runtimeId: string) => void;
+	readonly graceMs?: number;
+	readonly reapOrphan?: (runtime: ChildProcessIdentity, monitorId: string) => Promise<ReapResult>;
 }
 
-const LOST: RestoreHandlerResult = { outcome: "lost" };
+const MAX_REASON_OUTPUT_CHARS = 200;
+
+const lost = (reason: string, orphan?: RestoreHandlerResult["orphan"]): RestoreHandlerResult => ({
+	outcome: "lost",
+	reason,
+	...(orphan !== undefined ? { orphan } : {}),
+});
 
 async function defaultDirectoryExists(path: string): Promise<boolean> {
 	try {
@@ -53,59 +76,116 @@ function dimension(value: number | undefined, fallback: number): number {
 	return value !== undefined && Number.isFinite(value) && value >= 1 ? Math.trunc(value) : fallback;
 }
 
-/**
- * Decide whether a manifest entry is a restorable persistent command watch. Only the
- * command runtime kind qualifies, only when it was created `persistent: true` (a
- * non-persistent watch had a deadline and is deliberately not resurrected), and only
- * when it actually carries a command and an absolute cwd to spawn it in.
- */
-function restorable(monitor: ManifestMonitor): { command: string; cwd: string } | undefined {
-	if (monitor.runtimeKind !== "command" || !monitor.persistent) return undefined;
-	const { command, cwd } = monitor;
-	if (command === undefined || command.length === 0) return undefined;
-	if (cwd === undefined || !isAbsolute(cwd)) return undefined;
-	return { command, cwd };
+function exitsWithin(runtime: TerminalRuntimeSession, ms: number): Promise<boolean> {
+	if (runtime.exited) return Promise.resolve(true);
+	return new Promise((resolve) => {
+		const timer = setTimeout(() => {
+			unsubscribe();
+			resolve(false);
+		}, ms);
+		const unsubscribe = runtime.session.onExit(() => {
+			clearTimeout(timer);
+			resolve(true);
+		});
+	});
 }
 
-/**
- * Build the `restartable-command` restore handler. Every guard rejects BEFORE spawning, so a
- * rejected entry costs zero PTY sessions; a spawn failure is reported lost rather than thrown,
- * because restore must never fail the startup path for one unrecoverable watch.
- */
+function firstOutputLine(runtime: TerminalRuntimeSession): string {
+	const line = sanitizeTerminalOutput(runtime.fullOutput())
+		.split("\n")
+		.map((text) => text.trim())
+		.find((text) => text.length > 0);
+	return (line ?? "").slice(0, MAX_REASON_OUTPUT_CHARS);
+}
+
+function orphanOf(runtime: ChildProcessIdentity | undefined, reap: ReapResult | undefined) {
+	if (runtime === undefined || reap === undefined) return undefined;
+	if (reap.action === "killed") return { pid: runtime.pid, action: "killed" } as const;
+	if (reap.reason !== undefined) return { pid: runtime.pid, action: "unverified" } as const;
+	return undefined;
+}
+
+async function restoreEnvironment(
+	deps: RestartableCommandDeps,
+	monitor: ManifestMonitor,
+	context: RestoreContext,
+): Promise<Record<string, string>> {
+	const env: Record<string, string> = {
+		[MONITOR_ENV_ID]: monitor.monitorId,
+		[MONITOR_ENV_RESTORED]: "1",
+		[MONITOR_ENV_DOWNTIME_MS]: String(context.downtimeMs),
+	};
+	const terminalDir = terminalStateDir(deps.ctx.getSessionContext?.());
+	if (monitor.persistent && terminalDir !== undefined) {
+		env[MONITOR_ENV_STATE_DIR] = await ensureMonitorStateDir(terminalDir, monitor.monitorId);
+	}
+	return env;
+}
+
 export function createRestartableCommandHandler(deps: RestartableCommandDeps): RestoreHandler {
 	const spawn = deps.spawn ?? spawnCommandSession;
 	const directoryExists = deps.directoryExists ?? defaultDirectoryExists;
-	return async (monitor: ManifestMonitor): Promise<RestoreHandlerResult> => {
-		const target = restorable(monitor);
-		if (target === undefined) return LOST;
-		if (!(await directoryExists(target.cwd))) return LOST;
+	const reapOrphan = deps.reapOrphan ?? reapBeforeRespawn;
+	const graceMs = deps.graceMs ?? RESTORE_GRACE_MS;
+	return async (monitor: ManifestMonitor, context: RestoreContext): Promise<RestoreHandlerResult> => {
+		const ephemeralTimeLeft = monitor.persistent ? undefined : context.remainingMs;
+		if (monitor.runtimeKind !== "command" || (!monitor.persistent && ephemeralTimeLeft === undefined)) {
+			return lost("not a restorable command watch");
+		}
+		const { command, cwd } = monitor;
+		if (command === undefined || command.length === 0) return lost("no command was recorded");
+		if (cwd === undefined || !isAbsolute(cwd)) return lost("no absolute cwd was recorded");
+		if (!(await directoryExists(cwd))) return lost(`cwd no longer exists: ${cwd}`);
+
+		const reap = monitor.runtime === undefined ? undefined : await reapOrphan(monitor.runtime, monitor.monitorId);
+		const orphan = orphanOf(monitor.runtime, reap);
 
 		let spawned: Awaited<ReturnType<typeof spawnCommandSession>>;
 		try {
 			spawned = await spawn(deps.ctx, {
-				command: target.command,
+				command,
 				cols: dimension(deps.ctx.defaultCols, DEFAULT_COLS),
 				rows: dimension(deps.ctx.defaultRows, DEFAULT_ROWS),
-				cwd: target.cwd,
-				// Persistent watches carry no deadline: omit timeoutMs entirely.
+				cwd,
+				envOverrides: await restoreEnvironment(deps, monitor, context),
+				...(ephemeralTimeLeft !== undefined ? { timeoutMs: ephemeralTimeLeft } : {}),
 			});
-		} catch {
-			return LOST;
+		} catch (error) {
+			return lost(`spawn failed: ${error instanceof Error ? error.message : String(error)}`, orphan);
 		}
 
 		deps.registry.register({
 			id: spawned.id,
 			monitorId: monitor.monitorId,
 			description: monitor.description,
+			command,
+			persistent: monitor.persistent,
+			deadlineMs: ephemeralTimeLeft !== undefined ? Date.now() + ephemeralTimeLeft : null,
 			runtime: spawned.runtime,
 			filter: compileFilter(monitor.filter),
 			// The persisted deadline rides through verbatim; a restore never extends it.
 			...(monitor.expiresAt !== null ? { expiresAt: monitor.expiresAt } : {}),
 		});
 		deps.ctx.manager.bindMonitorId(monitor.monitorId, spawned.id);
+
+		const startedAt = Date.now();
+		if (await exitsWithin(spawned.runtime, graceMs)) {
+			const code = spawned.runtime.exitResult?.exitCode ?? null;
+			if (code === 0) return { outcome: "completed", ...(orphan !== undefined ? { orphan } : {}) };
+			const output = firstOutputLine(spawned.runtime);
+			const exit = code === null ? "exited" : `exited ${code}`;
+			return lost(`${exit} in ${Date.now() - startedAt}ms${output.length > 0 ? `: ${output}` : ""}`, orphan);
+		}
+
+		deps.registry.emitLine(
+			spawned.id,
+			`restored after up to ${formatElapsedSeconds(context.downtimeMs / 1000)} offline; the command started fresh`,
+		);
 		deps.onRestored?.(monitor.monitorId, spawned.id);
 		// A persisted mute is re-applied by the FRESH runtime id; the registry resolves
 		// records by runtime id only, so the mon_ id would silently no-op here.
-		return { outcome: reapplyPersistedMute(deps.registry, monitor, spawned.id) };
+		const outcome = reapplyPersistedMute(deps.registry, monitor, spawned.id);
+		const runtime = spawned.runtime.identity();
+		return { outcome, ...(orphan !== undefined ? { orphan } : {}), ...(runtime !== undefined ? { runtime } : {}) };
 	};
 }

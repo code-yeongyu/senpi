@@ -16,21 +16,24 @@ function evalDescription(options: { readonly runtimes?: EvalRuntimes; readonly b
 }
 
 describe("createEvalTool prompt runtime line", () => {
-	it("names the active bun-1-4 skill as MUST READ on a bun kernel", () => {
+	it("points at the active bun-1-4 skill for installs, servers and long runs on a bun kernel", () => {
 		const description = evalDescription({
 			runtimes: { js: { name: "bun", version: "1.4.0", path: "/usr/local/bin/bun" } },
 			bunSkillPath,
 		});
 
 		expect(description).toContain("JS runs in-process on Bun 1.4.0");
-		expect(description).toContain(`MUST READ the bun-1-4 skill at ${bunSkillPath}`);
+		expect(description).toContain(
+			`Before a cell that installs a package, spawns a server or PTY, or starts a long run, read the bun-1-4 skill at ${bunSkillPath}`,
+		);
+		expect(description).not.toContain("before your first js cell");
 	});
 
 	it("keeps the Bun line without a pointer when no skill is active", () => {
 		const description = evalDescription({ runtimes: { js: { name: "bun", version: "1.4.0" } } });
 
 		expect(description).toContain("JS runs in-process on Bun 1.4.0");
-		expect(description).not.toContain("MUST READ");
+		expect(description).not.toContain("bun-1-4 skill");
 	});
 
 	it("keeps the Node.js wording on a node kernel even when a skill path is supplied", () => {

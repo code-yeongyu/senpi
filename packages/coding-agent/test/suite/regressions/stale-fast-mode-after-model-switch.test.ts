@@ -5,7 +5,7 @@ import { buildRpcSessionState } from "../../../src/modes/rpc/connection-handler.
 import { createHarness, type Harness } from "../harness.ts";
 
 /**
- * Regression: the fast indicator is a display flag over a request field only the OpenAI Codex
+ * Regression: the fast indicator is a display flag over a request field only the ChatGPT Subscription
  * family accepts, so it must follow the model the session is actually on. Enabling fast and then
  * switching to a model that can never be served at the priority tier (Anthropic) used to leave the
  * session-level flag set, so `isFastModeActive()` — and with it the RPC state `fastMode` and the
@@ -15,7 +15,7 @@ import { createHarness, type Harness } from "../harness.ts";
  * Fast mode stays a session intent ACROSS Codex models (a sibling Codex model with no preference
  * of its own keeps it on); that contract is also pinned in `test/suite/service-tier-extension.test.ts`.
  */
-const CODEX_PROVIDER = "openai-codex";
+const CODEX_PROVIDER = "chatgpt-subscription";
 const CODEX_API = "openai-codex-responses";
 const FAST_PREFERENCE_MODEL_ID = "gpt-5.6-sol";
 const FAST_OFF_MODEL_ID = "gpt-5.5";

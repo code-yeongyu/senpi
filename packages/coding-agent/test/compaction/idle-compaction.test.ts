@@ -196,6 +196,7 @@ describe("proactive idle compaction (agent_end wiring)", () => {
 		await harness.beforeAgentStart(
 			{
 				type: "before_agent_start",
+				trigger: "prompt",
 				prompt: "next prompt",
 				systemPrompt: "TEST AGENT SYSTEM PROMPT",
 				systemPromptOptions: { cwd: process.cwd() },
@@ -285,6 +286,7 @@ const RETRY_ADVANCE_MS = 60_000;
 function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 	return {
 		type: "before_agent_start",
+		trigger: "prompt",
 		prompt: "next prompt",
 		systemPrompt: "TEST AGENT SYSTEM PROMPT",
 		systemPromptOptions: { cwd: process.cwd() },

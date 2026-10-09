@@ -42,12 +42,16 @@ export default function bashTimeoutExtension(pi: ExtensionAPI): void {
 		return resolveForegroundWindowSeconds(env);
 	};
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		const foregroundWindowSeconds = resolveWindow(ctx);
-		const prompt = buildBashTimeoutPrompt(
-			defaults,
-			foregroundWindowSeconds === undefined ? {} : { foregroundWindowSeconds },
-		);
-		return { systemPrompt: `${event.systemPrompt}${prompt}` };
-	});
+	pi.on(
+		"before_agent_start",
+		async (event, ctx) => {
+			const foregroundWindowSeconds = resolveWindow(ctx);
+			const prompt = buildBashTimeoutPrompt(
+				defaults,
+				foregroundWindowSeconds === undefined ? {} : { foregroundWindowSeconds },
+			);
+			return { systemPrompt: `${event.systemPrompt}${prompt}` };
+		},
+		{ previewSafe: true },
+	);
 }

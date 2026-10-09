@@ -22,9 +22,15 @@ export type TurnEngineSessionEvent = { readonly type: string };
 export interface TurnEngineSession {
 	prompt(
 		text: string,
-		options?: { readonly source?: "rpc"; readonly preflightResult?: (success: boolean) => void },
+		options?: {
+			readonly source?: "rpc";
+			readonly unknownCommandAsText?: boolean;
+			readonly preflightResult?: (success: boolean) => void;
+		},
 	): Promise<void>;
-	steer(text: string): Promise<void>;
+	// Steering carries the same input source as prompting: app-server input is
+	// client-driven RPC input, so extension `input` handlers observe "rpc".
+	steer(text: string, options?: { readonly source?: "rpc" }): Promise<void>;
 	abort(): Promise<void>;
 	subscribe(listener: (event: TurnEngineSessionEvent) => void): () => void;
 }

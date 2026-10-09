@@ -110,6 +110,12 @@ describe("FooterDataProvider reftable detection without usable fs.watch", () => 
 
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
+			// A reftable HEAD names no branch: the first read answers "detached" and asks git off the loop.
+			const primed = new Promise<void>((resolve) => {
+				branchResolutionDelivered = resolve;
+			});
+			expect(provider.getGitBranch()).toBe("detached");
+			await primed;
 			expect(provider.getGitBranch()).toBe("main");
 			resolvedBranch = "foo";
 			const onBranchChange = vi.fn();

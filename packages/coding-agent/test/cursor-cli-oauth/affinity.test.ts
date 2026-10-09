@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AccountSlot } from "../../src/core/extensions/builtin/claude-sdk-oauth/accounts.ts";
-import { rendezvousOrder as claudeRendezvousOrder } from "../../src/core/extensions/builtin/claude-sdk-oauth/affinity.ts";
+import type { AccountSlot } from "../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { rendezvousOrder as claudeRendezvousOrder } from "../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import {
 	AllCursorAccountsBlockedError,
 	type CursorAffinityAccountSlot,

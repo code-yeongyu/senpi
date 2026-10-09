@@ -17,6 +17,9 @@ describe("terminal monitor event delivery", () => {
 			customType: "senpi-monitor:notification",
 			content: expect.stringContaining("Monitor event(build): line-1\nline-2"),
 			display: false,
+			details: {
+				monitors: [{ id: "bash_1", description: "build", eventCount: 10, kinds: ["line"] }],
+			},
 		});
 		expect(sent[0]?.message.content).toContain("line-10");
 		expect(sent[0]?.options).toEqual({ triggerTurn: true, deliverAs: "steer" });

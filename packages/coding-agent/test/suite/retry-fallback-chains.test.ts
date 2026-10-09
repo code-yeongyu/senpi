@@ -162,6 +162,36 @@ describe("fallback chain selectors", () => {
 		expect(resolved.chains["*"]).toBeUndefined();
 	});
 
+	it("ships the fable family an opus-only ladder led by Opus 5.5 at max", () => {
+		const ladder = ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"];
+		const resolved = resolveRetryFallbackSettings(undefined);
+
+		expect(resolved.chains["claude-fable-5-1"]).toEqual(ladder);
+		expect(resolved.chains["claude-fable-5"]).toEqual(ladder);
+		expect(resolved.modelFallback).toBe(true);
+	});
+
+	it("ships Opus 5.5 its own same-family step-down ladder", () => {
+		const resolved = resolveRetryFallbackSettings(undefined);
+
+		expect(resolved.chains["claude-opus-5-5"]).toEqual([
+			"claude-opus-5:max",
+			"claude-opus-4-8:max",
+			"claude-opus-4-6:max",
+		]);
+	});
+
+	it("keeps every shipped rung inside the anthropic opus family", () => {
+		for (const entries of Object.values(DEFAULT_FALLBACK_CHAINS)) {
+			expect(entries.length).toBeGreaterThan(0);
+			for (const entry of entries) expect(entry.startsWith("claude-opus-")).toBe(true);
+		}
+	});
+
+	it("tombstones a shipped chain through canonicalization when the user empties it", () => {
+		expect(canonicalizeFallbackChains({ "claude-fable-5-1": [] }, models)).toEqual({});
+	});
+
 	it("prefers an exact thinking key, then the base key", () => {
 		const chains = {
 			"openai/gpt-5.4": ["anthropic/claude-sonnet-4-5"],
@@ -186,14 +216,14 @@ describe("fallback chain selectors", () => {
 describe("resolveRetryFallbackSettings chain defaults", () => {
 	const fableKey = "claude-fable-5";
 
-	it("keeps only the explicitly configured chain", () => {
+	it("keeps the shipped defaults beside an explicitly configured chain", () => {
 		const resolved = resolveRetryFallbackSettings({
 			fallbackChains: { "example-gateway/unrelated-model": ["example-gateway/unrelated-fallback:max"] },
 		});
 
 		expect(resolved.chains["example-gateway/unrelated-model"]).toEqual(["example-gateway/unrelated-fallback:max"]);
-		expect(resolved.chains[fableKey]).toBeUndefined();
-		expect(DEFAULT_FALLBACK_CHAINS).toEqual({});
+		expect(resolved.chains[fableKey]).toEqual(DEFAULT_FALLBACK_CHAINS[fableKey]);
+		expect(resolved.chains["claude-fable-5-1"]).toEqual(DEFAULT_FALLBACK_CHAINS["claude-fable-5-1"]);
 	});
 
 	it("replaces a colliding default outright and removes one set to an empty array", () => {

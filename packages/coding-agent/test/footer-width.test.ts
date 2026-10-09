@@ -61,6 +61,31 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
+	it("shows the physical model a virtual model routed to", () => {
+		const session = createFooterSession({
+			sessionName: "",
+			modelId: "auto",
+			reasoning: true,
+			thinkingLevel: "high",
+		});
+		Object.assign(session, { routedModel: { model: { id: "gpt-5.6-luna" }, thinkingLevel: "medium" } });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const statsLine = stripAnsi(footer.render(120)[0]);
+
+		expect(statsLine).toContain("auto:high \u2192 gpt-5.6-luna:medium");
+	});
+
+	it("updates usage totals after an entry is appended", () => {
+		const usage = { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } };
+		const session = createFooterSession({ sessionName: "", usage });
+		const footer = new FooterComponent(session, createFooterData(1));
+		expect(stripAnsi(footer.render(120)[0])).toContain("$0.500");
+
+		session.sessionManager.getEntries().push({ type: "message", message: { role: "assistant", usage } } as never);
+		expect(stripAnsi(footer.render(120)[0])).toContain("$1.000");
+	});
+
 	it("keeps the model label and context block visible at narrow widths", () => {
 		const width = 60;
 		const session = createFooterSession({

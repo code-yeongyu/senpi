@@ -2,7 +2,12 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { packageNameFromLockPath, registryMetadataError } from "./install-lock-utils.mjs";
+import {
+	detectJsonIndent,
+	packageNameFromLockPath,
+	registryMetadataError,
+	serializeLockfile,
+} from "./install-lock-utils.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const lockfilePath = resolve(repoRoot, "package-lock.json");
@@ -51,8 +56,9 @@ export async function hydrateLockRegistryMetadata(lockfile, options = {}) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
-	const lockfile = JSON.parse(readFileSync(lockfilePath, "utf8"));
+	const source = readFileSync(lockfilePath, "utf8");
+	const lockfile = JSON.parse(source);
 	await hydrateLockRegistryMetadata(lockfile);
-	writeFileSync(lockfilePath, `${JSON.stringify(lockfile, null, 2)}\n`);
+	writeFileSync(lockfilePath, serializeLockfile(lockfile, detectJsonIndent(source)));
 	console.log(`Hydrated registry metadata in ${lockfilePath}`);
 }

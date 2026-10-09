@@ -1,0 +1,181 @@
+name: OpenGateway catalog refresh
+
+# Keeps packages/ai/src/providers/data/opengateway.json current with the gateway
+# (senpi#2552). Daily it regenerates only the OpenGateway catalog, and when the
+# catalog changed it opens (or updates) one refresh PR with a per-model summary
+# and a CHANGELOG entry. It fails loudly when the gateway cannot be read, and when
+# a refresh PR has waited longer than MAX_STALE_DAYS, so a stale shipped catalog
+# is visible instead of silent. Pull requests that touch the pipeline run the
+# regeneration and summary in dry-run mode.
+
+on:
+  schedule:
+    - cron: '23 1 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/opengateway-catalog-refresh.yml'
+      - 'packages/ai/scripts/generate-models-opengateway.ts'
+      - 'packages/ai/scripts/opengateway-catalog-diff.ts'
+      - 'packages/ai/src/providers/opengateway-catalog.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opengateway-catalog-refresh-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+env:
+  REFRESH_BRANCH: automation/opengateway-catalog-refresh
+  MAX_STALE_DAYS: '14'
+
+jobs:
+  # Pull requests run PR-controlled code, so their dry-run gets a read-only token.
+  dry-run:
+    name: Dry-run the OpenGateway catalog refresh
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # --strict: a gateway, price-table, or models.dev outage fails this run instead of
+      # silently keeping yesterday's catalog.
+      - name: Regenerate the OpenGateway catalog
+        working-directory: packages/ai
+        run: npx tsx scripts/generate-models.ts --strict --providers opengateway
+
+      - name: Validate model data
+        working-directory: packages/ai
+        run: npx tsx scripts/check-model-data.ts
+
+      - name: Summarize catalog changes
+        id: summary
+        working-directory: packages/ai
+        run: |
+          set -euo pipefail
+          git show HEAD:packages/ai/src/providers/data/opengateway.json > "$RUNNER_TEMP/opengateway-before.json"
+          npx tsx scripts/opengateway-catalog-diff.ts \
+            --base "$RUNNER_TEMP/opengateway-before.json" \
+            --head src/providers/data/opengateway.json \
+            --markdown "$RUNNER_TEMP/opengateway-summary.md" \
+            --changelog CHANGELOG.md >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/opengateway-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+  refresh:
+    name: Regenerate the OpenGateway catalog
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # --strict: a gateway, price-table, or models.dev outage fails this run instead of
+      # silently keeping yesterday's catalog.
+      - name: Regenerate the OpenGateway catalog
+        working-directory: packages/ai
+        run: npx tsx scripts/generate-models.ts --strict --providers opengateway
+
+      - name: Validate model data
+        working-directory: packages/ai
+        run: npx tsx scripts/check-model-data.ts
+
+      - name: Summarize catalog changes
+        id: summary
+        working-directory: packages/ai
+        run: |
+          set -euo pipefail
+          git show HEAD:packages/ai/src/providers/data/opengateway.json > "$RUNNER_TEMP/opengateway-before.json"
+          npx tsx scripts/opengateway-catalog-diff.ts \
+            --base "$RUNNER_TEMP/opengateway-before.json" \
+            --head src/providers/data/opengateway.json \
+            --markdown "$RUNNER_TEMP/opengateway-summary.md" \
+            --changelog CHANGELOG.md >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/opengateway-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the refresh PR
+        env:
+          # A PAT is required: PRs pushed with GITHUB_TOKEN do not trigger the required CI checks.
+          GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
+          CHANGED: ${{ steps.summary.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "::error::UPSTREAM_AUTOMATION_TOKEN is required so the refresh PR runs CI."
+            exit 1
+          fi
+          open_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REFRESH_BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [[ "$CHANGED" != "true" ]]; then
+            if [[ -n "$open_pr" ]]; then
+              gh pr close "$open_pr" --repo "$GITHUB_REPOSITORY" --delete-branch \
+                --comment "The OpenGateway catalog on main matches the gateway again; closing this refresh."
+            fi
+            echo "OpenGateway catalog is current."
+            exit 0
+          fi
+          {
+            cat "$RUNNER_TEMP/opengateway-summary.md"
+            echo
+            echo "Generated by the scheduled OpenGateway catalog refresh (#2552) from the gateway's public model listing and price table, enriched with models.dev."
+          } > "$RUNNER_TEMP/opengateway-pr.md"
+          git config user.name "senpi-release-bot"
+          git config user.email "actions@github.com"
+          git checkout -B "$REFRESH_BRANCH"
+          git add packages/ai/src/providers/data/opengateway.json packages/ai/src/providers/data/.manifest.json packages/ai/CHANGELOG.md
+          git commit -m "fix(ai): refresh the OpenGateway model catalog"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${REFRESH_BRANCH}"
+          if [[ -n "$open_pr" ]]; then
+            gh pr edit "$open_pr" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/opengateway-pr.md"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$REFRESH_BRANCH" \
+              --title "fix(ai): refresh the OpenGateway model catalog" --body-file "$RUNNER_TEMP/opengateway-pr.md"
+          fi
+
+      - name: Fail when the shipped catalog has been stale too long
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          created="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REFRESH_BRANCH" --state open --json createdAt --jq '.[0].createdAt // empty')"
+          if [[ -z "$created" ]]; then
+            echo "No pending catalog refresh."
+            exit 0
+          fi
+          age_days=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 86400 ))
+          echo "The OpenGateway catalog refresh PR has waited ${age_days} day(s)."
+          if (( age_days > MAX_STALE_DAYS )); then
+            echo "::error::The shipped OpenGateway catalog has been stale for ${age_days} days (limit ${MAX_STALE_DAYS}); merge the open refresh PR."
+            exit 1
+          fi

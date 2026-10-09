@@ -1,4 +1,5 @@
-import { dropFailedAssistantTurns, type ImageContent, type Message, type TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import { dropFailedAssistantTurns } from "@earendil-works/pi-ai/utils/drop-failed-assistant-turns";
 import type { AgentMessage } from "../types.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
@@ -40,7 +41,7 @@ export interface CustomMessage<T = unknown> {
 export interface BranchSummaryMessage {
 	role: "branchSummary";
 	summary: string;
-	fromId: string;
+	fromId: string | null;
 	timestamp: number;
 }
 
@@ -81,7 +82,7 @@ export function bashExecutionToText(msg: BashExecutionMessage): string {
 
 export function createBranchSummaryMessage(
 	summary: string,
-	fromId: string,
+	fromId: string | null,
 	timestamp: string | number,
 ): BranchSummaryMessage {
 	return {
@@ -157,6 +158,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						],
 						timestamp: m.timestamp,
 					};
+				case "system":
 				case "user":
 				case "assistant":
 				case "toolResult":

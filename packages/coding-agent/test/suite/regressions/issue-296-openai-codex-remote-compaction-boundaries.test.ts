@@ -27,12 +27,12 @@ const CODEX_MODEL = {
 	id: "gpt-5.4-codex",
 	name: "GPT-5.4 Codex",
 	api: "openai-codex-responses",
-	provider: "openai-codex",
+	provider: "chatgpt-subscription",
 	baseUrl: "https://chatgpt.com/backend-api",
 } satisfies Model<"openai-codex-responses">;
 
-function compactedBranch(provider: "openai" | "openai-codex"): SessionEntry[] {
-	const isCodex = provider === "openai-codex";
+function compactedBranch(provider: "openai" | "chatgpt-subscription"): SessionEntry[] {
+	const isCodex = provider === "chatgpt-subscription";
 	return [
 		{
 			type: "message",
@@ -101,7 +101,7 @@ function codexToken(): string {
 describe("issue #296 remote compaction boundaries", () => {
 	it.each([
 		{ current: CODEX_MODEL, persistedProvider: "openai" as const },
-		{ current: OPENAI_MODEL, persistedProvider: "openai-codex" as const },
+		{ current: OPENAI_MODEL, persistedProvider: "chatgpt-subscription" as const },
 	])("does not replay $persistedProvider state through $current.provider", ({ current, persistedProvider }) => {
 		const rewritten = rewriteOpenAiPayloadWithRemoteCompaction(
 			{ model: current.id, input: [], stream: true },
@@ -124,7 +124,7 @@ describe("issue #296 remote compaction boundaries", () => {
 			getSystemPrompt: () => "Sensitive system prompt.",
 		};
 
-		const result = await runOpenAiRemoteCompaction(ctx, event(compactedBranch("openai-codex")), undefined, {
+		const result = await runOpenAiRemoteCompaction(ctx, event(compactedBranch("chatgpt-subscription")), undefined, {
 			fetch: async () => {
 				fetchCalls += 1;
 				return new Response("unexpected", { status: 500 });

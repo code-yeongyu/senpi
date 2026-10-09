@@ -9,6 +9,7 @@ Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.senpi
 - [Supported APIs](#supported-apis)
 - [Provider Configuration](#provider-configuration)
 - [Model Configuration](#model-configuration)
+- [Classifier Models](#classifier-models)
 - [Overriding Built-in Providers](#overriding-built-in-providers)
 - [Per-model Overrides](#per-model-overrides)
 - [Anthropic Messages Compatibility](#anthropic-messages-compatibility)
@@ -141,6 +142,10 @@ Set `api` at provider level (default for all models) or model level (override pe
 | `authHeader` | Set `true` to add `Authorization: Bearer <apiKey>` automatically |
 | `models` | Array of model configurations |
 | `modelOverrides` | Per-model overrides for built-in or extension-registered models on this provider |
+| `whitelist` | Model ids to keep; every other model of the provider is removed (see [Hiding Providers and Models](#hiding-providers-and-models)) |
+| `blacklist` | Model ids to remove from the provider |
+| `hideFreeModels` | Set `true` to remove every model of the provider whose input and output cost are both `0` |
+| `disabled` | Set `true` to remove the whole provider |
 
 For providers with `models`, non-built-in provider configs need `baseUrl` and an `api` value at either provider or model level. `apiKey` is not required to load the file: models become available when auth is configured through `/login`/`auth.json`, CLI `--api-key`, or provider `apiKey`. If no auth is configured, the models load but stay unavailable in `/model` and `--list-models`.
 
@@ -201,14 +206,18 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `id` | Yes | — | Model identifier (passed to the API) |
+| `upstreamModelId` | No | `id` | Request model id when this entry is a local alias |
+| `serviceTier` | No | omitted | OpenAI Responses tier: `auto`, `flex`, `priority`, or `ultrafast` |
 | `name` | No | `id` | Human-readable model label. Used for matching (`--model` patterns) and shown as secondary model detail text. |
 | `api` | No | provider's `api` | Override provider's API for this model |
 | `reasoning` | No | `false` | Supports extended thinking |
 | `thinkingLevelMap` | No | omitted | Maps senpi thinking levels to provider values and marks unsupported levels (see below) |
+| `defaultThinkingLevel` | No | omitted | Level a session starts at for this model when you have not chosen one for it (see below) |
 | `input` | No | `["text"]` | Input types: `["text"]` or `["text", "image"]` |
 | `contextWindow` | No | `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `samplingParams` | No | omitted | Sampling parameters merged verbatim into every request body (see below) |
+| `inputLimits` | No | omitted | Image resize profile and request limits (see [Image Input Limits](#image-input-limits)) |
 | `cost` | No | all zeros | Per-million-token rates with optional request-wide input pricing tiers |
 | `recoverTextToolCalls` | No | Claude ID default | Enables or disables recovery of leaked Claude XML tool calls from streamed assistant text. This is a top-level model field, not a `compat` field. |
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |
@@ -402,6 +411,72 @@ Example for a model where thinking cannot be disabled:
 
 Migration: older configs that used `compat.reasoningEffortMap` should move that mapping to model-level `thinkingLevelMap`. Use `null` for levels that should not appear in the UI.
 
+### Default Thinking Level
+
+`defaultThinkingLevel` names the level a session starts at on this model when you have not picked one for it yet. A level you chose for the model earlier (remembered per model) still wins; the model default wins over the global `defaultThinkingLevel` setting, which follows the last level you picked on any model. The value is clamped to the levels the model supports.
+
+### Discovering Models From an Endpoint
+
+`senpi models discover <provider>` fetches `<baseUrl>/models` once for an OpenAI-compatible provider defined in `models.json`, using the provider's configured key and headers, and adds every listed model to the provider's `models` array. Models the endpoint does not list are kept, and so is every field of a listed model except the three reasoning fields discovery owns (below). The previous file is saved next to it as `models.json.backup-<timestamp>`, and a rewrite that would not load is refused. Comments are not preserved in the rewritten file; the backup keeps them. The command prints the listing URL with any user info removed and query values shown as `<redacted>`.
+
+Some endpoints advertise the reasoning efforts each model accepts:
+
+```json
+{ "id": "some-model", "reasoning_efforts": [{ "value": "low" }, { "value": "high", "default": true }] }
+```
+
+When the provider sets `"compat": { "supportsReasoningEffort": true }`, discovery turns that list into the model's `thinkingLevelMap` and `defaultThinkingLevel`: `none`/`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` (case-insensitive) map to the senpi level of the same name, the endpoint's own spelling is what senpi sends, and every level the endpoint does not list is set to `null`. The example above becomes:
+
+```json
+{
+  "id": "some-model",
+  "reasoning": true,
+  "thinkingLevelMap": { "off": null, "minimal": null, "low": "low", "medium": null, "high": "high", "xhigh": null, "max": null },
+  "defaultThinkingLevel": "high"
+}
+```
+
+For a model whose entry advertises `reasoning_efforts`, discovery owns `reasoning`, `thinkingLevelMap`, and `defaultThinkingLevel`: it sets `reasoning` to `true` (overriding an explicit `false`), replaces the map, and replaces the default, removing a previous `defaultThinkingLevel` when the listing marks none. Values that name no senpi level are reported and not used; if none of the advertised values is usable, the model's reasoning controls are turned off (`reasoning: false`, no map, no default) instead of keeping an old map. A model whose entry has no `reasoning_efforts` field keeps its reasoning fields as they are. Without the compat flag, advertised efforts are ignored and only the model ids are added.
+
+### Image Input Limits
+
+Use `inputLimits.images.resize` to control how senpi encodes new image attachments, `read` results, and tool-result images before storing them in conversation history:
+
+```json
+{
+  "id": "vision-model",
+  "input": ["text", "image"],
+  "inputLimits": {
+    "images": {
+      "resize": {
+        "maxWidth": 1568,
+        "maxHeight": 1568,
+        "maxBytes": 524288,
+        "jpegQuality": 75
+      }
+    }
+  }
+}
+```
+
+`maxBytes` limits the base64-encoded payload. Omitted resize fields use conservative defaults of 2000 by 2000 pixels, 4.5 MiB encoded, and JPEG quality 80. Images are encoded once, so changing models does not rewrite historical images. A `modelOverrides` entry can set `inputLimits` for a built-in or extension model.
+
+## Classifier Models
+
+Classifier models do not chat. They answer typed questions about JSON state: pick one of several choices, answer yes or no, or give a score, each with probabilities. senpi includes TypeSafe's Jev model from these providers:
+
+| Provider | Model IDs | Authentication |
+|---|---|---|
+| `typesafe` | `jev-latest` | `TYPESAFE_API_KEY` |
+| `openrouter` | `typesafe/jev-1.13`, `~typesafe/jev-latest` | `OPENROUTER_API_KEY` or `/login` |
+| `cloudflare-workers-ai` | `typesafe/jev` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
+| `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
+| `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
+
+Chat models on a [llama.cpp router](llama-cpp.md#classification) are also listed as classifier models.
+
+Classifier models do not appear in `/model`. Extensions call them through `ctx.modelRegistry.classify()`, and [virtual models](virtual-models.md#route-requests) can use them to route requests; see the `jev-router.ts` example. When the service reports token counts, `result.usage` carries them with their cost at the model's catalog price.
+
 ## Overriding Built-in Providers
 
 Route a built-in provider through a proxy without redefining models:
@@ -438,6 +513,36 @@ Merge semantics:
 - Custom models are upserted by `id` within the provider.
 - If a custom model `id` matches a built-in model `id`, the custom model replaces that built-in model.
 - If a custom model `id` is new, it is added alongside built-in models.
+
+## Hiding Providers and Models
+
+Hidden models and providers disappear from the catalog everywhere it is read: `--list-models`, `/model`, Ctrl+P cycling, startup selection, and `enabledModels` / `favoriteModels` resolution.
+
+```json
+{
+  "disabledProviders": ["openrouter"],
+  "providers": {
+    "anthropic": { "whitelist": ["claude-sonnet-4-5"] },
+    "openai": { "blacklist": ["gpt-5.4"] },
+    "opencode": { "hideFreeModels": true }
+  }
+}
+```
+
+| Key | Where | Effect |
+|-----|-------|--------|
+| `disabledProviders` | Top level, array of provider ids | Removes each listed provider and all of its models. `providers.<id>.disabled: true` does the same for one provider. |
+| `whitelist` | Provider block, array of model ids | Keeps only the listed ids. |
+| `blacklist` | Provider block, array of model ids | Removes the listed ids. |
+| `hideFreeModels` | Provider block, boolean | Removes every model of that provider whose `cost.input` and `cost.output` are both `0`. |
+
+Behavior notes:
+- `whitelist` and `blacklist` match whole model ids exactly and case-sensitively; there are no globs. When both are set, a model must be in `whitelist` and not in `blacklist`.
+- All three provider filters run after custom `models` are merged in, and before `modelOverrides`. They also apply to the provider's custom `models` entries.
+- `hideFreeModels` is per provider. Other providers are unaffected, so a local provider whose models cost `0` (Ollama, LM Studio, vLLM) stays listed unless that provider sets the flag itself.
+- `hideFreeModels` also hides a custom `models` entry that omits `cost`, because an omitted `cost` is `0`. Give such a model a nonzero `cost`, or leave the flag off for that provider.
+- `hideFreeModels` reads the catalog `cost` (or the custom model's own `cost`). A `cost` set in `modelOverrides` is not considered.
+- A provider block that sets only `whitelist`, `blacklist`, or `hideFreeModels` is valid; no `baseUrl` or `models` is needed.
 
 ## Per-model Overrides
 
@@ -586,7 +691,8 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `supportsOpenAIGrammarTools` | Whether OpenAI-compatible APIs emit custom Lark/regex grammar tools. When `false`, grammar-constrained tools fall back to normal function tools. Default: `false`; the built-in model catalog enables it for GPT-5+ models on OpenAI, OpenAI Codex, Azure OpenAI, GitHub Copilot, opencode, and Cloudflare AI Gateway. |
 | `supportsRemoteCompactionV2` | For `openai-responses`, opt a verified proxy into native Responses remote compaction v2. Unknown custom proxies default to `false`; official OpenAI defaults to native support. |
 | `deferredToolsMode` | Use provider-specific deferred tool serialization. Currently only `"kimi"` is supported for Kimi's OpenAI-compatible Chat Completions format. |
-| `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_retention: "24h"` for OpenAI prompt caching, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
+| `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_options.ttl: "30m"` for GPT-5.6+ Responses models, `prompt_cache_retention: "24h"` for earlier OpenAI models, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
+| `supportsForcedToolChoice` | For `openai-completions` and `openai-responses`, whether the provider accepts a `tool_choice` that forces a tool (`required` or a named function). When `false`, a forced choice is dropped before the request is sent and the first-turn plan opener sends only its reminder. Default: `true`; a provider that refuses a forced choice with a 400 gets the request once more without it, and senpi stops forcing that model for the rest of the process. |
 | `openRouterRouting` | OpenRouter provider routing preferences. This object is sent as-is in the `provider` field of the [OpenRouter API request](https://openrouter.ai/docs/guides/routing/provider-selection). |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
 

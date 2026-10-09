@@ -1,3 +1,112 @@
+## 2026-10-07 - Per-message token estimates cached behind their JSON text (senpi#2525)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `estimateTokens` memoizes per message object in a WeakMap, keyed by a key derived from the message's JSON text (`packages/coding-agent/src/core/compaction/estimate-cache-key.ts`): under Bun its length plus a 128-bit digest, so an entry holds no second copy of the text; elsewhere the exact text. Any in-place change (strings of any length, numbers, booleans, shape, the resident store's token/text swaps) misses the cache and re-estimates; building the key costs less than the estimate it guards (about 4 ms vs 6-8 ms for the previous structural fingerprint on 10k messages). A message marked transient (`markTransientMessage`, a non-enumerable symbol flag: the runner's per-turn clone when a `context` handler is undeclared, and admission's sizing probes) is estimated directly, with no key and no cache entry: a fresh clone never repeats, so caching it only added cost.
+
+### Why
+
+senpi#2525: the per-turn context pipeline re-estimated every message every turn; on the issue's 10k-message transcript the estimators were about 55% of run-loop time. The estimates are pure functions of message content, so a validated cache makes the per-turn cost proportional to what changed.
+
+### Why an extension could not handle it
+
+The estimator is core mechanics shared by the extension pipeline, admission checks, and summarization sizing; memoizing it inside one extension would leave the other callers uncached.
+
+### Expected merge conflict zones
+
+- `compaction.ts`: the `estimateTokens` definition.
+
+## 2026-10-01 - A failed assistant weighs nothing in the keep budget (senpi#2480)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `findCutPoint` and `findProjectedCutPoint` weigh only the messages `keepBudgetWeighted` keeps: `dropFailedAssistantTurns` over the walked range (error/aborted assistants and the tool results only they declared). Those weigh zero; they stay valid cut points. A truncated (`length`) response keeps its weight: it is real content, and the truncated-response retry depends on where it cuts.
+
+### Why
+
+- A failed assistant is never sent to the provider. The second overflow-recovery rung in `agent-session.ts` compacts with `keepRecentTokens: 0`, and walking that budget back from the newest entry stopped on the rejected attempts that followed the overflowing turn, so the kept tail held only the failure and the retry had no turn to answer. Weighing them zero lands the cut on the turn being answered.
+
+### Why an extension could not handle it
+
+- The cut-point walk is core preparation inside `prepareCompaction()`; extensions receive the finished preparation in `session_before_compact` and cannot move where the kept tail starts.
+
+### Expected merge conflict zones
+
+- LOW: the token sum inside the backward walk of `findCutPoint()` and `findProjectedCutPoint()`; keep `keepBudgetTokens` as the weight function if upstream reshapes the loop.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): compaction
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/branch-summarization.ts`: resolved by L3b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: resolved by L3b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+- `packages/coding-agent/src/core/compaction/utils.ts`: resolved by L3b against upstream v0.99.1 (6a4af07d6): upstream constructs adopted, fork behavior kept.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; compaction keeps the fork machinery and cache-friendly safety tokens and adopts upstream split-turn and retain-none fixes (plan D-15).
+
+### Why an extension could not handle it
+
+Compaction mechanics run inside the session core; the compaction extension only sets policy.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-16 - Bound one compaction and settle its stream inside the watchdog (#1741)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/stream-watchdog.ts`: `consumeStreamWithIdleTimeout` gains an optional `settle()` callback and returns its value, awaiting the stream's final `result()` under the SAME idle and wall-clock timers as iteration (overloads keep the settle-less call sites at `Promise<void>`). Adds the compaction-wide bound `SUMMARIZATION_TOTAL_BUDGET_MS` (900,000 ms), `summarizationTotalBudgetMs(attemptOverrideMs?)`, `SummarizationTotalBudgetError`, and `createSummarizationDeadline(totalBudgetMs, now?)` whose `attemptBudgetMs()` clamps one attempt to the compaction's remaining budget and throws once nothing is left.
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `completeSummarization` returns the value settled inside `consumeStreamWithIdleTimeout` instead of awaiting `responseStream.result()` after the watchdog's `finally` cleared its timers.
+
+### Why
+
+- Issue #1741: final `result()` settlement sat outside the watchdog, so a provider whose iterator ends without a terminal `done`/`error` event parked compaction forever with no timer armed at all.
+- The per-attempt budget is size-scaled (2 ms per estimated input token, 30-minute ceiling) and every retry re-arms it, so a large session's total wait grew with the very thing that made it slow. One compaction now shares a single deadline that never scales with the input; only an explicit `compaction.summarizationMaxDurationMs` override raises it.
+
+### Why an extension could not handle it
+
+- The watchdog is core compaction mechanics shared by the core route and the builtin extension route; an extension cannot arm a timer around a stream core owns, nor bound an operation whose attempts core and the extension split between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `stream-watchdog.ts` `consumeStreamWithIdleTimeout` signature and its loop exits.
+- LOW: `compaction.ts` `completeSummarization` stream settlement.
+
+## 2026-09-07 - Effective admission reserve (#7921 case 2)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: resolve the effective reserve in `shouldCompact` through the shared policy resolver.
+
+### Why
+
+- code-yeongyu/oh-my-openagent#7921: a million-token model must reserve 40,000 tokens by default, not the raw 16,384.
+
+### Why an extension could not handle it
+
+- Core admission calls this predicate before extension compaction can enforce its budget. The policy imports core types only, so this runtime import introduces no cycle.
+
+### Expected merge conflict zones
+
+- `shouldCompact` and policy imports.
+
+## 2026-09-07 - Stuck-overflow classification (#1422)
+
+### What changed
+
+- New `packages/coding-agent/src/core/compaction/stuck-overflow.ts`: `isTurnStuckOnContextOverflow(message, contextWindow)` is true for a provider overflow error and for a zero-output `length` stop that filled the window, false for a completed answer whose usage merely exceeds the window. Imported by path from `agent-session.ts` and the goal extension; the barrel stays selective.
+
+### Why
+
+- Overflow recovery and the goal continuation guard need one definition of "this turn cannot progress by re-sending the same context".
+
+### Expected merge conflict zones
+
+- None upstream; the module is fork-only.
+
 ## 2026-09-05 - Re-anchor Astra configuration updates after compaction
 
 ### What changed
@@ -565,3 +674,62 @@ If upstream changes branch summary preparation or adds new branch summary data s
 ### Expected merge conflict zones
 
 - `compaction.ts` around `completeSummarization` request option construction.
+
+## 2026-09-06 - Support an optional compaction summarization model
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: extends the exported compaction settings contract with an optional `model` provider/model override.
+
+### Why
+
+- Claude SDK OAuth sessions need an explicit senpi summarization model escape hatch when SDK-native compaction does not fire.
+
+### Why an extension could not handle it
+
+- The settings type is consumed by core compaction execution and must be part of the shared compaction contract before extension hooks run.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/compaction/compaction.ts` settings type re-export near the module imports.
+
+## 2026-09-08 - Scale the summarization duration budget with the input size
+
+### What changed
+
+- `stream-watchdog.ts`: new `summarizationMaxDurationMs()` computes the per-attempt wall-clock budget as the larger of the 120s floor and 2ms per estimated input token, clamped to a 30-minute cap, with an optional explicit override.
+- `compaction.ts`: `completeSummarization()` estimates the context being summarized and applies the scaled budget instead of the fixed `DEFAULT_SUMMARIZATION_MAX_DURATION_MS`; `generateSummary()` and `generateSummaryWithUsage()` accept an optional override that flows from the resolved compaction settings.
+- `compaction-execution.ts`: `compact()` forwards `settings.summarizationMaxDurationMs` to history and turn-prefix summaries.
+- `compaction-settings.ts`: the resolved settings contract gains the optional `summarizationMaxDurationMs` override.
+- `compaction-settings-access.ts` / `compaction-settings-resolver.ts`: new optional `compaction.summarizationMaxDurationMs` setting; non-positive and non-finite values fall back to the adaptive default.
+
+### Why
+
+- #1068: a 257k-token session summarization on a slower provider exceeds the hardcoded 120s budget while still streaming, so every compaction attempt is rejected and the session cannot drop below its compaction threshold. At a 1M context window the automatic threshold fires only when the summarizable input is already hundreds of thousands of tokens, so the fixed 120s budget guarantees failure exactly when compaction becomes mandatory.
+
+### Why an extension could not handle it
+
+- `completeSummarization()` is the shared core choke point for every summarization stream; the extension policy layer reaches it only through this function's options, and the budget must apply per attempt inside the core watchdog.
+
+### Expected merge conflict zones
+
+- LOW: `compaction.ts` around `completeSummarization` and the `generateSummary*` signatures.
+- LOW: `compaction-settings.ts`, `compaction-settings-access.ts`, and `compaction-settings-resolver.ts` settings contracts.
+
+## 2026-09-12 - Upstream sync (upstream/main@71dca871) integration repairs
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/branch-summarization.ts`: fork `BranchSummaryStreamOptions` (`extraBody`, `extensionRunner` emitting `session_before_compact`, `CompactionPreparation` hand-off, `randomUUID` entry ids) unioned with upstream's `maxTokens = min(4096, model.maxTokens)` clamp and its `getSummarizationFailure` routing so length-capped summaries become typed errors.
+
+### Why
+
+- Branch summaries must go through the fork's extension hook and payload options while honoring upstream's output cap and failure classification.
+
+### Why an extension could not handle it
+
+- The summarization request is built inside core before `session_before_compact` fires; an extension can veto it but not change its budget or error typing.
+
+### Expected merge conflict zones
+
+- MEDIUM: `generateBranchSummary` option plumbing and the `streamSimple`/`streamFn` call.

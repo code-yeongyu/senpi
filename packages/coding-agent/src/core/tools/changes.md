@@ -1,5 +1,267 @@
 # core/tools changes
 
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): extension loader, runner and wrappers
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/tool-definition-wrapper.ts`: What changed: forwards both fork `freeform` and upstream `outputSchema` in `wrapToolDefinition()` and `createToolDefinitionFromAgentTool()`; context factory is upstream `ToolContextFactory(toolCallId, signal) => ExtensionToolContext`. Why: structured tool output and freeform tools coexist. Why an extension could not handle it: core tool wrapper. Expected merge conflict zones: the property lists after `parameters`.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; the extension loader/runner/wrapper adopt upstream contracts additively and keep the fork builtins, signatures and loader alias table (plan D-2).
+
+### Why an extension could not handle it
+
+This is the extension host itself; extensions cannot redefine how they are loaded, wrapped or dispatched.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): tools and shell utilities
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `core/tools/bash.ts`: structured bash result (`outputSchema` = `bashOutputSchema`; `structuredContent` = { output, truncated, full_output_path?, exit_code, wall_time_seconds }) for programmatic callers, capped at 1 MiB (`STRUCTURED_OUTPUT_MAX_BYTES`); empty output is `""` there while the model text stays `(no output)`. `core/tools/bash.ts`: a non-zero exit is now an `isError: true` result carrying `structuredContent` instead of a thrown error; the error text is unchanged (`<output>\n\nCommand exited with code N`). `core/tools/bash.ts`: signal-terminated shells report 128 + signal number (`child.signalCode` via `os.constants.signals`, 1 when unknown); a null exit code from custom `BashOperations` throws `Command terminated without an exit code`. `bash.ts`: eval-only marker `exposure: "eval"` on `createBashToolDefinition`; timeout validation; stream-callback error propagation; spill cleanup and `AggregateError` finalization; detached-group tracking (`noteDetachedChildExited`/`pruneTrackedDetachedChildren`, senpi#1697); PI_SESSION_CWD/PI_GOAL_STORE_FILE env; successful results keep the fork model-only truncation notice (`modelOnlyText`) as a separate content part.
+- `packages/coding-agent/src/core/tools/output-accumulator.ts`: `core/tools/output-accumulator.ts`: `readFullOutput(maxBytes)` + `FullOutput` (head/tail around an omission marker, UTF-8 boundary safe). `output-accumulator.ts`: fork `TailWindow`, `appendText()` string chunks (now encoded for `readFullOutput`), spill-error handling and `removeTempFile()`.
+- `packages/coding-agent/src/core/tools/read.ts`: `core/tools/read.ts`: `ReadToolOptions.resizeOptions` fallback and model `inputLimits.images.resize` passed to `processImage`. `read.ts`: structural folder options, local:// guard, filesystem policy checker, model-only continuation notices.
+- `packages/coding-agent/src/core/tools/render-utils.ts`: `core/tools/render-utils.ts` (silent merge, reviewed): `formatToolCallWithArgs` generic header helper added beside the fork model-only `getTextOutput` filter.
+
+### Why
+
+Upstream v0.99.1 (6a4af07d6) changed these paths while the fork carries its own behavior; tools and shell utils adopt upstream bash/read fixes and keep fork output shapes and hooks (plan D-15).
+
+### Why an extension could not handle it
+
+Built-in tool execution and shell handling are core tool implementations that extensions call, not replace.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## Read paths wrapped in quotes resolve to the file (2026-09-27)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/path-utils.ts`: `resolveReadPath()` and `resolveReadPathAsync()` fall back to the path without one pair of surrounding `"` or `'` quotes (optionally after `@`) when the literal path does not exist.
+
+### Why
+
+Windows Explorer's "Copy as path" produces `"C:\Users\<user>\Pictures\Screenshots\aaa.png"`. A real `windows-latest` run for [#2170](https://github.com/code-yeongyu/senpi/issues/2170) showed that the read tool resolved it relative to the working directory (`<cwd>\"C:\...`) and failed with ENOENT. A file whose name really contains the quotes still wins, because the fallback only runs when the literal path is missing.
+
+### Why an extension could not handle it
+
+Path resolution happens inside the builtin read tool before any extension hook sees the file.
+
+### Expected merge conflict zones
+
+- LOW: the first fallback in `resolveReadPath()` / `resolveReadPathAsync()`, next to the macOS screenshot variants.
+
+## Default reads consult the frozen fold engine for their language (2026-09-16)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: the default summary path awaits `prepareReadFolder` for the resolved absolute path before composing the summary, and re-checks the abort flag afterwards. Explicit offset/limit rereads, truncated reads and unselected languages are unaffected: the prepared folder is the injected folder itself unless the frozen selection binds that language to the grammar engine.
+
+### Why
+
+- #1685 freezes JavaScript structural reads on a grammar the engine loads lazily, on the first structural read for that language. The read tool is the only place that knows the path being read, so it is where the grammar load belongs; a missing or unusable grammar returns the same folder the tool already had.
+
+### Why an extension could not handle it
+
+- The builtin read tool composes its own output, and no extension hook runs between reading the file and composing the default summary.
+
+### Expected merge conflict zones
+
+- LOW: the `createDefaultReadSummary` call site inside `createReadToolDefinition` in `packages/coding-agent/src/core/tools/read.ts`, already fork-owned since the structural read delivery.
+
+## Bash keeps its process group until the last descendant exits (2026-09-15)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts` (`createLocalShellOperations`): the exec `finally` no longer untracks the shell pid the moment the shell is gone. Both branches now call `noteDetachedChildExited(pid)`, which keeps the entry tracked when the shell's process group still has members, and the block ends with `pruneTrackedDetachedChildren()` so drained groups cannot accumulate across a session.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/bash.ts` spawns the shell `detached`, so a command that backgrounds work (`sleep 30 &`, `nohup server &`) leaves those descendants alive in the shell's group after the shell itself exits. Untracking on exit dropped shutdown's only handle on them, so SIGHUP/SIGTERM cleanup left them running ([#1697](https://github.com/code-yeongyu/senpi/issues/1697)).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/bash.ts` owns the spawn/wait/cleanup seam of the builtin shell backend; no extension hook runs inside that `finally`, and extensions cannot register a process group with the host's shutdown cleanup.
+
+### Expected merge conflict zones
+
+- LOW: the exec `finally` block in `createLocalShellOperations` inside `packages/coding-agent/src/core/tools/bash.ts`, which the fork already diverges in for the abort/kill-grace tracking (2026-07-18 entry below).
+
+## Structural default reads with exact range fallback (2026-09-13)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: adds optional folder injection and uses the agent-layer pure view only for supported, non-prose default reads accepted by the unchanged truncator. Explicit offset/limit rereads remain verbatim; aborted reads never enter the folder.
+- `packages/coding-agent/src/core/tools/index.ts`: injects the frozen selected folder when constructing the session, coding and read-only tool sets, preserving image/policy options and explicit folder overrides.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/read.ts`: structural defaults reduce code output without hiding exact source from edit consumers or changing continuation/large-line footers.
+- `packages/coding-agent/src/core/tools/index.ts`: normal sessions already supply image and policy options, so composition must inject the same folder without overwriting those settings.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/read.ts`: exact raw-range and truncation composition belongs inside the existing builtin; replacing it would diverge from the independent harness reader.
+- `packages/coding-agent/src/core/tools/index.ts`: these factories own the built-in tool sets before extension execution.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/tools/read.ts` imports, options and text-output branch. Keep both truncate modules and existing edit matching unchanged.
+- LOW: `packages/coding-agent/src/core/tools/index.ts` selected-folder import and read option construction in the three factories.
+
+## Re-export the grep tool from its engine-backed module (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/grep.ts`: reduced to `export * from "./grep/index.ts"`. The tool implementation now lives in the `grep/` directory (engine contract, native and ripgrep engines, pattern ladder, formatting, renderer), and this file stays as the import path every existing caller already uses.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/grep.ts`: the engine-backed tool is several modules, not one file, and callers plus extension consumers import it by this path; keeping the module as a re-export moves the implementation without breaking those imports (Refs #1678).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/grep.ts`: the builtin tool factory is constructed by core session setup, so its module boundary cannot be relocated from an extension.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/core/tools/grep.ts` resolves to this re-export on sync; upstream edits to the old single-file implementation must be replayed inside `packages/coding-agent/src/core/tools/grep/` instead.
+
+## Align Cursor grep output with the engine-backed renderer (2026-09-14)
+
+- Cursor `pi_grep` calls now use the supported grep schema and the engine renderer's structured footer.
+
+## Restore grep to the registered tool surface (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/index.ts`: delete temporarilyDisabledToolNames and its temporary-withholding comment. Grep remains constructed as before; session defaults now activate it, and its declared eval exposure alone withholds it when eval is registered. Find and ls are unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/index.ts`: the temporary export fed catalog and selection filters that hid grep from codemode discovery even though the executable registry still contained it.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/index.ts`: an extension cannot remove a core export consumed by session registry construction; the temporary filter must be deleted at its source.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/index.ts`: allToolNames / ToolsOptions boundary. Preserve upstream tool names; do not reintroduce the deleted temporary set.
+
+## Declared eval exposure for builtin shells and grep (2026-09-14)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/grep.ts`, and `packages/coding-agent/src/core/tools/powershell.ts`: the preceding S1 policy change declares exposure: "eval" on each tool definition. PowerShell wraps the shared shell definition and overrides its exposure. This entry records that prerequisite for the grep surface restoration; no additional runtime change is made here.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/grep.ts`, and `packages/coding-agent/src/core/tools/powershell.ts`: declarations let the session derive eval-only routing from registered definitions rather than a hardcoded builtin name set, while sessions without eval retain direct access.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/grep.ts`, and `packages/coding-agent/src/core/tools/powershell.ts`: the core factories own their exposure metadata before the session constructs its catalog; a later extension cannot retroactively supply that declaration to every caller.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/tools/bash.ts` and `packages/coding-agent/src/core/tools/grep.ts`: returned definition metadata. `packages/coding-agent/src/core/tools/powershell.ts`: the createShellToolDefinition wrapper. Preserve exposure: "eval" alongside upstream factory changes.
+
+## Session cwd and goal-store environment keys (2026-09-13)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts` extends `resolveSpawnContext()` with `PI_SESSION_CWD` from `ctx.cwd` and optional `PI_GOAL_STORE_FILE` from `ctx.goalStoreFile`. Both inherited keys are deleted before active session values are applied, and injection still precedes `spawnHook`. With session exposure disabled or the optional goal path absent, stale inherited values remain unset.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/bash.ts` must give shell children the active session's working directory and authoritative goal-store path rather than inherited parent-session values. The session cwd can differ from a spawn-hook override, and the goal path cannot be inferred reliably from the session JSONL path for overridden session directories or in-memory sessions.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/bash.ts` owns the core shell spawn environment and its session-exposure opt-out. A consumer extension cannot enforce the delete-then-set contract for every core shell child or guarantee that custom spawn hooks receive the resolved values.
+
+### Expected merge conflict zones
+
+- LOW: the inherited-key deletion list and active-context assignment block in `resolveSpawnContext()` in `packages/coding-agent/src/core/tools/bash.ts`. Preserve injection before `spawnHook` and the `exposeSessionEnvironment` gate.
+
+### Tests
+
+- `packages/coding-agent/test/suite/bash-session-env.test.ts`: real registered shell children receive both values; opt-out and optional-getter omission clear inherited values.
+- `packages/coding-agent/test/sdk-session-manager.test.ts`: SDK-created session metadata reaches the registered bash tool.
+- `packages/coding-agent/test/agent-session-dynamic-tools.test.ts`: existing custom spawn-hook and session-exposure opt-out coverage.
+
+## Compact memory read classifications with stable headlines (2026-09-09)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`: consults registered classifiers after the SKILL.md check and before pi docs and AGENTS/CLAUDE resource classification. Memory reads render an accent headline and label with the existing line range and expand hint; docs/resource/skill formatting is unchanged.
+- `packages/coding-agent/src/core/tools/read.ts`: caches classifications, including unclaimed paths, by raw path in each tool call's renderer state so redraws and expand/collapse do not choose another headline.
+- `packages/coding-agent/src/core/tools/read-classifiers.ts` (new, fork-only): defines the shared classification types and a first-claim registry with idempotent unregister functions. Throwing classifiers are reported and skipped.
+
+### Why
+
+- `packages/coding-agent/src/core/tools/read.ts` needs to recognize extension-owned memory paths without hardcoding memory storage layouts, while keeping SKILL.md precedence and stable transcript headlines.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/tools/read.ts` owns built-in compact classification and per-call rendering state. An extension could replace the whole read renderer, but could not previously contribute a classification while retaining the host's existing formats and expansion behavior.
+
+### Expected merge conflict zones
+
+- MEDIUM: imports, `ReadRenderState`, `getCompactReadClassification`, `formatCompactReadCall`, and `createReadToolDefinition` in `packages/coding-agent/src/core/tools/read.ts`. Preserve classifier priority and per-call memoization when taking upstream renderer changes.
+- LOW: `packages/coding-agent/src/core/tools/read-classifiers.ts` is a new fork-only module.
+
+## Canonical identity is resolved, not guessed (2026-09-07)
+
+### What changed
+
+- `bounded-realpath.ts` (new) holds the shared pieces: `withResolutionDeadline` races a resolution against `RESOLUTION_DEADLINE_MS` (2s) and attaches a handler to the abandoned promise, `isMissingPathError`, and `foldPathForCaseInsensitiveFilesystem`.
+- `filesystem-policy.ts` `canonicalizeFilesystemPath` goes back to the `realpath` walk-up it used before the same-day open-free change, now raced against that deadline; past the deadline `realpathWithoutOpenStrict` answers instead.
+- `file-mutation-queue.ts` `getMutationQueueKey` likewise resolves with `realpath` under the deadline, keeps the ENOENT tolerance, falls back to the strict walker, and folds the key on filesystems that ignore case.
+
+### Why
+
+- The open-free walker cannot supply what these two callers need. It preserves the caller's spelling, so on a case-insensitive volume `Notes.txt` and `notes.txt` became two mutation-queue keys for one file and concurrent edits stopped being serialized. It also tolerated every error, so EACCES/EIO/ELOOP produced an unresolved path presented as canonical where `realpath` had failed closed. Only the kernel knows the on-disk spelling, so correctness has to come from `realpath` and boundedness from the deadline, not the reverse.
+- The deadline keeps the wedged-mount fix: `realpath` never returns on a macOS autofs trigger, and these run before every read/ls/grep/find/edit/write, so the caller still gets an answer while the doomed I/O is what fails.
+
+### Why an extension could not handle it
+
+- Both functions are core tool infrastructure that the built-in file tools call before any extension hook runs; the canonical path they produce is the input to extension containment policies.
+
+### Expected merge conflict zones
+
+- `filesystem-policy.ts` import block and `canonicalizeFilesystemPath` (upstream keeps a plain realpath walk-up); `file-mutation-queue.ts` `getMutationQueueKey`; `bounded-realpath.ts` is fork-only.
+- `test/canonical-path-identity.test.ts`, `test/bounded-realpath.test.ts` (new).
+
+## Filesystem canonicalization never opens a path component (2026-09-07)
+
+### What changed
+
+- `filesystem-policy.ts` `canonicalizeFilesystemPath` is now `realpathWithoutOpen(resolve(filePath))` (shared walker in `src/utils/paths.ts`) instead of an `fs.promises.realpath` walk-up that climbed to the nearest existing ancestor, retrying `lstat`/`readlink` per level. The walker keeps the same contract — symlinks resolved, missing descendants appended verbatim — so the local `isMissingPathError` helper is gone.
+- `file-mutation-queue.ts` `getMutationQueueKey` uses the same walker, so the queue key for a path that does not exist yet is still its resolved form.
+
+### Why
+
+- `canonicalizeFilesystemPath` runs before every `read`/`ls`/`grep`/`find`/`edit`/`write` and has no deadline of its own. Bun implements `fs.realpath*` by `open(2)`-ing every directory it resolves, so a path under a wedged mount (a macOS autofs trigger whose automounter never answers) stalled the tool call forever — measured on such a host: `canonicalizeFilesystemPath(<trigger>/probe.log)` was still pending after 4s with no error, while the `lstat` walker returns immediately. The same open-based resolution also fails with EACCES under an execute-only directory, which #1419 already fixed for the permission classifier.
+- The mutation-queue key must be stable for the same file, so it needs the same resolver the policy layer uses.
+
+### Why an extension could not handle it
+
+- Both functions are core tool infrastructure invoked by the built-in file tools before any extension hook runs.
+
+### Expected merge conflict zones
+
+- `filesystem-policy.ts` import block and the `canonicalizeFilesystemPath` body (upstream keeps the realpath walk-up).
+- `file-mutation-queue.ts` import block and `getMutationQueueKey`.
+- `test/filesystem-policy-canonicalize.test.ts` (new: symlinked parent, missing descendants, no-realpath proof, execute-only directory).
+
 ## Adopt upstream ctx.cwd tool resolution without dropping fork tool surfaces (2026-09-03)
 
 ### What changed
@@ -33,6 +295,8 @@
 
 ## grep is temporarily withheld from the model-facing tool surface (2026-08-29)
 
+Historical entry, superseded by the 2026-09-14 restoration above. The temporary set is deleted, not retained empty; grep withholding now comes only from the eval-only policy.
+
 ### What changed
 
 - `index.ts`: added `temporarilyDisabledToolNames`, currently holding `grep`. Tools named here are
@@ -53,9 +317,7 @@
 
 ### Expected merge conflict zones
 
-- `index.ts`: the `temporarilyDisabledToolNames` export sits directly below `allToolNames`, so an
-  upstream change that adds or removes a builtin tool name will conflict there. Resolve by keeping
-  both the upstream tool-name edit and this set; the set is intended to be emptied, not carried.
+- `index.ts`: the historical temporary export below `allToolNames` is now deleted. Keep upstream tool-name edits without restoring the set.
 
 ## Output spill streams capture early storage failures (2026-08-26)
 
@@ -452,3 +714,90 @@ The divergence lives in core wiring, package identity, or build plumbing that ex
 ### Expected merge conflict zones on next upstream sync
 
 - LOW: the abort/timeout handler block inside `createLocalBashOperations`.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: upstream renderer split (`createShellRenderers`) and strict-prefer sampling, plus the fork execute-path hardening: `rg` in the prompt snippet, `killedController` so `waitForChildProcess` stops preserving tails after the tree kill, streaming-callback error capture that aborts the command and rethrows, and output-finalization error aggregation.
+- `packages/coding-agent/src/core/tools/edit.ts`: fork `filesystemPolicy` check (`operation: "write"` on the canonicalized path) before any I/O; renderers come from `./renderers/edit.ts`.
+- `packages/coding-agent/src/core/tools/find.ts`: `filesystemPolicy` (`enumerate`) check on the search path and the fork `pathModule: typeof path.posix` typing.
+- `packages/coding-agent/src/core/tools/grep.ts`: `filesystemPolicy` (`enumerate`) check with a single `searchPath` declaration placed before the check.
+- `packages/coding-agent/src/core/tools/ls.ts`: `filesystemPolicy` (`enumerate`) check on the listed directory.
+- `packages/coding-agent/src/core/tools/read.ts`: `local://` URI guard with the eval-cell guidance, `filesystemPolicy` (`read`) check, and the definition keeps its third `ReadRenderState` type parameter.
+- `packages/coding-agent/src/core/tools/write.ts`: `filesystemPolicy` (`write`) check, `readLocalWriteBaseline` and `details: createWriteDetails(path, content, baseline)` (the app-server diff/updated source) with the `WriteToolDetails | undefined` return type.
+- `packages/coding-agent/src/core/tools/renderers/bash.ts`: upstream-new file carrying the fork presentation: whole-second `formatDuration` (`<1s`, `s`, `m`, `h`), `highlightBashCommand` with a bold `$ ` prompt ignoring the per-shell prompt, `detachAll()` instead of `clear()`, typed `getTextOutput`.
+- `packages/coding-agent/src/core/tools/renderers/edit.ts`: call preview and result body rendered through the fork `renderToolDiff(diff, { filePath, theme })`; `detachAll()`.
+- `packages/coding-agent/src/core/tools/renderers/read.ts`: `classifyRead` from the fork `read-classifiers.ts` registry (consulted after SKILL.md and before docs/resource), the `memory` headline branch, and per-call memoization of classifications in the exported `ReadRenderState`.
+- `packages/coding-agent/src/core/tools/renderers/write.ts`: `WriteCallRenderOptions.argsComplete` switches the preview to a `+`-prefixed `generateAddedContentDiff` rendered by `renderToolDiff`; `formatWriteResult` imported from `../write-result.ts`; `detachAll()`.
+
+### Why
+
+- The fork enforces extension-registered filesystem policy on every built-in tool, guards eval-only URIs, reports write details to the app server, and renders tool cards with themed diffs, highlighted commands and whole-second timings; upstream's renderer split moved presentation into new files, so that presentation had to be ported there.
+
+### Why an extension could not handle it
+
+- Built-in tool execution and their renderer pairs are core definitions; an extension can register new tools but cannot patch the built-ins' policy checks or renderers.
+
+### Expected merge conflict zones
+
+- HIGH: `packages/coding-agent/src/core/tools/bash.ts` execute body; `packages/coding-agent/src/core/tools/renderers/bash.ts` `formatShellCall`/`formatDuration`.
+- MEDIUM: policy blocks in `edit.ts`, `read.ts`, `write.ts`; `renderers/read.ts` classification; `renderers/write.ts` call preview.
+- LOW: import hunks in `find.ts`, `grep.ts`, `ls.ts`; `renderers/edit.ts` diff calls.
+
+
+## 2026-09-23 — Separate built-in notices from visible tool bodies
+
+### What changed
+
+`packages/coding-agent/src/core/tools/model-only-text.ts`, `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/find.ts`, `packages/coding-agent/src/core/tools/ls.ts`, `packages/coding-agent/src/core/tools/grep/format.ts`, `packages/coding-agent/src/core/tools/grep/index.ts`, `packages/coding-agent/src/core/tools/render-utils.ts`: Emit continuation, output-location, limit, and grep statistics notices as appended model-only text parts; keep the body first and omit the empty body for an oversized first line. Retain separator bytes for joined model text. Filter marked parts in shared rendering.
+
+### Why
+
+Built-in bookkeeping appeared inside expanded tool cards even though it addresses the model.
+
+### Why an extension could not handle it
+
+An extension cannot change the built-in return contract or reliably distinguish ordinary body text from notices without prohibited text matching.
+
+### Expected merge conflict zones
+
+Built-in tool output assembly, grep formatting, and getTextOutput.
+
+- Covered production paths: `packages/coding-agent/src/core/tools/model-only-text.ts`, `packages/coding-agent/src/core/tools/read.ts`, `packages/coding-agent/src/core/tools/bash.ts`, `packages/coding-agent/src/core/tools/find.ts`, `packages/coding-agent/src/core/tools/ls.ts`, `packages/coding-agent/src/core/tools/grep/format.ts`, `packages/coding-agent/src/core/tools/grep/index.ts`, `packages/coding-agent/src/core/tools/render-utils.ts`.
+
+## Core bash exports the session's browser engine (2026-10-03)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `resolveSpawnContext` removes any inherited `OMO_BROWSER_ENGINE` and, when session exposure is on, sets it from `ctx.browserEngine`.
+
+### Why
+
+A shell child of a session that chose `connected`, `builtin` or `none` must see that choice, and a session that chose nothing must not inherit the host process's value (senpi#2611).
+
+### Why an extension could not handle it
+
+The bash tool's spawn environment is assembled in this function.
+
+### Expected merge conflict zones
+
+The `delete env.PI_*` block and the session-exposure block in `resolveSpawnContext`.
+
+## 2026-10-03 - Edit card header shows the aggregate change count (senpi#2653)
+
+### What changed
+
+`packages/coding-agent/src/core/tools/diff-render.ts`: adds `countDiffChanges`, which returns net added/removed line counts for a unified diff (skipping `+++`/`---` headers and context). see `renderers/changes.md` for the edit-card header change.
+
+### Why
+
+The edit card showed the path but no aggregate change size at a glance.
+
+### Why an extension could not handle it
+
+The edit card header is produced inside the built-in edit renderer, below the extension API.
+
+### Expected merge conflict zones
+
+Upstream edits to `renderToolDiff`/`renderers/edit.ts` at the next sync.

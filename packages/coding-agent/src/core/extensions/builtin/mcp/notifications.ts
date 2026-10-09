@@ -10,14 +10,15 @@
 
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
-import {
-	PromptListChangedNotificationSchema,
-	ResourceListChangedNotificationSchema,
-	ToolListChangedNotificationSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { Type } from "typebox";
 import { ToolExecError } from "./errors.ts";
 import type { McpToolDefinition, McpToolDetails } from "./expose/register.ts";
+import {
+	PromptListChangedNotificationSchema,
+	ResourceListChangedNotificationSchema,
+	registerMcpNotificationHandler,
+	ToolListChangedNotificationSchema,
+} from "./notification-schemas.ts";
 import type { Client } from "./wrap.ts";
 import { type McpAsyncErrorSink, safeTimer } from "./wrap.ts";
 
@@ -100,7 +101,7 @@ export function createMcpListChangeCoalescer(options: McpListChangeCoalescerOpti
 
 /** Register list_changed handlers for tools/resources/prompts. `setNotificationHandler`
  * takes effect regardless of the server's declared capabilities. Malformed
- * notifications fail SDK schema validation and are dropped by the SDK before
+ * notifications fail schema validation and are dropped by the SDK before
  * reaching `onChange`, so the connection stays up. */
 export function subscribeMcpListChanged(client: Client, onChange: () => void): void {
 	for (const schema of [
@@ -108,7 +109,7 @@ export function subscribeMcpListChanged(client: Client, onChange: () => void): v
 		ResourceListChangedNotificationSchema,
 		PromptListChangedNotificationSchema,
 	]) {
-		client.setNotificationHandler(schema, () => {
+		registerMcpNotificationHandler(client, schema, () => {
 			onChange();
 		});
 	}

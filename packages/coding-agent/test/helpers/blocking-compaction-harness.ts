@@ -169,6 +169,7 @@ export function createBlockingContext(options: {
 export function createBeforeAgentStartEvent(): BeforeAgentStartEvent {
 	return {
 		type: "before_agent_start",
+		trigger: "prompt",
 		prompt: "continue",
 		systemPrompt: "system",
 		systemPromptOptions: Object.create(null) as BeforeAgentStartEvent["systemPromptOptions"],

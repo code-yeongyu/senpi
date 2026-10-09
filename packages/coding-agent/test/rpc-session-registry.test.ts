@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { getApiProvider, registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -23,23 +24,51 @@ const profile = (cwd: string, sessionPath: string): RpcSessionLaunchProfile => (
 	initialThinkingLevel: "high",
 });
 
+function assistantReply(): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text: "noted" }],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "claude-opus-4-6",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: 2,
+	};
+}
+
 function runtime(
 	options: Parameters<CreateAgentSessionRuntimeFactory>[0],
 	controls?: { waitForIdle?: () => Promise<void> },
 ) {
 	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
+	const flagValues = new Map<string, boolean | string>();
 	return {
 		session: {
 			sessionManager: options.sessionManager,
 			agentDir: options.agentDir,
 			// Projected into the `open_session` wire state, which shares one builder with get_state.
 			isFastModeActive: () => false,
+			agent: { state: {} },
 			getContextUsage: () => undefined,
 			favoriteModels: [],
 			scopedModels: [],
 			isBashRunning: false,
 			isStreaming: false,
-			extensionRunner: { hasHandlers: () => false, emit: async () => {} },
+			// Records flags like ExtensionRunner: an attach and a runtime replacement set the permission preset here.
+			extensionRunner: {
+				hasHandlers: () => false,
+				emit: async () => {},
+				setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
+				getFlagValues: () => new Map(flagValues),
+			},
 			abort: async () => {},
 			abortBash: () => {},
 			waitForIdle: controls?.waitForIdle ?? (async () => {}),
@@ -78,6 +107,34 @@ describe("RPC session registry", () => {
 		expect(first.sessionId).not.toBe(second.sessionId);
 		expect(first.durableSessionId).not.toBe(second.durableSessionId);
 		expect(registry.list()).toHaveLength(2);
+	});
+
+	test("starts an existing session file with a resume reason and a fresh one without", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "senpi-rpc-registry-"));
+		directories.push(dir);
+		const reasons: Array<string | undefined> = [];
+		const registry = new RpcSessionRegistry({
+			agentDir: dir,
+			createRuntime: async (options) => {
+				reasons.push(options.sessionStartEvent?.reason);
+				return runtime(options);
+			},
+		});
+		const existing = SessionManager.create(dir, join(dir, "sessions"));
+		existing.appendMessage({ role: "user", content: "which database?", timestamp: 1 });
+		// A session file is only materialized once an assistant message lands, and
+		// "already on disk" is exactly what makes the next open a resume.
+		existing.appendMessage(assistantReply());
+		const existingPath = existing.getSessionFile();
+		if (existingPath === undefined) throw new Error("expected a persisted session file");
+		expect(existsSync(existingPath)).toBe(true);
+
+		await registry.openSession(profile(dir, join(dir, "fresh.jsonl")));
+		await registry.openSession(profile(dir, existingPath));
+
+		// Re-opening a session file over RPC is a resume, exactly like interactive
+		// /resume: extensions that only rebuild state on "resume" must see it.
+		expect(reasons).toEqual([undefined, "resume"]);
 	});
 
 	test("reserves a canonical path before asynchronous runtime construction", async () => {
@@ -343,6 +400,8 @@ describe("RPC session registry", () => {
 		expect(attached.durableSessionId).toBe(first.durableSessionId);
 		expect(attached.attached).toBe(true);
 		expect(registry.list()).toHaveLength(1);
+		const runner = registry.peek(first.sessionId)?.runtime?.session.extensionRunner;
+		expect(runner?.getFlagValues().get("permission-preset")).toBe("default");
 	});
 
 	test("moves path attachment metadata after runtime replacement", async () => {
@@ -493,13 +552,19 @@ describe("RPC session registry", () => {
 		const launchProfile = Object.freeze(profile(dir, join(dir, "profile.jsonl")));
 		const manager = SessionManager.create(dir, dir);
 		const captured: Array<RpcSessionLaunchProfile | undefined> = [];
-		const fakeSession = (sessionManager: SessionManager) =>
-			({
+		const fakeSession = (sessionManager: SessionManager) => {
+			const flagValues = new Map<string, boolean | string>();
+			return {
 				sessionManager,
-				extensionRunner: { hasHandlers: () => false },
+				extensionRunner: {
+					hasHandlers: () => false,
+					setFlagValue: (name: string, value: boolean | string) => flagValues.set(name, value),
+					getFlagValues: () => new Map(flagValues),
+				},
 				abort: async () => {},
 				dispose: () => {},
-			}) as never;
+			} as never;
+		};
 		const factory: CreateAgentSessionRuntimeFactory = async (options) => {
 			captured.push(options.launchProfile as RpcSessionLaunchProfile | undefined);
 			return {
@@ -514,6 +579,7 @@ describe("RPC session registry", () => {
 		await session.newSession();
 		expect(captured).toEqual([launchProfile, launchProfile]);
 		expect(session.launchProfile).toBe(launchProfile);
+		expect(session.session.extensionRunner.getFlagValues().get("permission-preset")).toBe("default");
 		expect(existsSync(manager.getSessionDir())).toBe(true);
 	});
 });

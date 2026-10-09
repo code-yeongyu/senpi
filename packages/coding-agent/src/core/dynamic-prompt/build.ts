@@ -1,24 +1,41 @@
 import type { Skill } from "../skills.ts";
 import { formatSkillsForPrompt } from "../skills.ts";
+import { buildHandoffSection } from "./handoff.ts";
 import { buildIdentitySection } from "./identity.ts";
 import { buildIntentGate } from "./intent-gate.ts";
 import { buildPoliciesSection } from "./policies.ts";
 import { buildStyleSection } from "./style.ts";
 import { categorizeTools } from "./tool-categorization.ts";
 import { buildToolSection } from "./tool-section.ts";
-import type { AvailableTool } from "./types.ts";
+import type { AvailableTool, PromptSurface } from "./types.ts";
 import { buildVerificationSection } from "./verification.ts";
 import { buildWorkingTaskSection } from "./working-task.ts";
 import { buildWorkstationSection, type WorkstationDialect } from "./workstation.ts";
 
+export { type PromptSurface, type TerminalOrApp, terminalOrApp } from "./types.ts";
+
+export const PROMPT_SURFACE_ENV_VAR = "SENPI_PROMPT_SURFACE";
+
+/** `SENPI_PROMPT_SURFACE=app` or `=chat` selects that surface; unset or any other value is the terminal. */
+export function resolvePromptSurface(env: Readonly<Record<string, string | undefined>>): PromptSurface {
+	const value = env[PROMPT_SURFACE_ENV_VAR];
+	return value === "app" || value === "chat" ? value : "terminal";
+}
+
 /** Context handed to a `corePrompt` override so it can reuse the dynamic pieces. */
 export interface DynamicPromptCoreContext {
 	tools: AvailableTool[];
+	surface: PromptSurface;
 	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section. */
 	toolSection: string;
 }
 
 export interface BuildDynamicSystemPromptOptions {
+	/**
+	 * Session working directory. Not rendered: cwd and date reach the model as an
+	 * append-only environment-context message so this prompt stays byte-stable
+	 * across days and directories (senpi#2093).
+	 */
 	cwd: string;
 	selectedTools: string[];
 	toolSnippets: Record<string, string>;
@@ -29,7 +46,7 @@ export interface BuildDynamicSystemPromptOptions {
 	/**
 	 * Replaces the default core sections (identity through style) with a
 	 * model-specific full rewrite. Tool section, tuning, context files, skills,
-	 * date, and cwd assembly stay in this builder.
+	 * and workstation assembly stay in this builder.
 	 */
 	corePrompt?: (context: DynamicPromptCoreContext) => string;
 	/**
@@ -38,6 +55,12 @@ export interface BuildDynamicSystemPromptOptions {
 	 * (maximum emphasis).
 	 */
 	workstationDialect?: WorkstationDialect;
+	/**
+	 * Where replies render. `app` (a chat UI host) drops the visible routing line and keeps
+	 * tool and hook feedback with the agent; `chat` (a chat bridge) also drops the handoff block and
+	 * ledger lines; omitted means `terminal`.
+	 */
+	surface?: PromptSurface;
 }
 
 function buildContextFilesSection(contextFiles: Array<{ path: string; content: string }>): string {
@@ -58,9 +81,7 @@ function buildContextFilesSection(contextFiles: Array<{ path: string; content: s
 }
 
 export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOptions): string {
-	const promptCwd = options.cwd.replace(/\\/g, "/");
 	const tools = categorizeTools(options.selectedTools);
-	const date = new Date().toISOString().slice(0, 10);
 
 	const toolSection = buildToolSection({
 		tools,
@@ -68,22 +89,25 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 		promptGuidelines: options.promptGuidelines,
 	});
 
+	const surface = options.surface ?? "terminal";
 	const sections = options.corePrompt
-		? [options.corePrompt({ tools, toolSection })]
+		? [options.corePrompt({ tools, toolSection, surface })]
 		: [
 				buildIdentitySection(),
 				"",
-				buildIntentGate({ tools }),
+				buildIntentGate({ tools, surface }),
 				"",
 				buildWorkingTaskSection(),
 				"",
-				buildVerificationSection(),
+				buildVerificationSection({ surface }),
 				"",
 				toolSection,
 				"",
 				buildPoliciesSection(),
 				"",
-				buildStyleSection(),
+				buildHandoffSection({ surface }),
+				"",
+				buildStyleSection({ surface }),
 			];
 
 	const tuning = options.tuningSection?.trim();
@@ -108,12 +132,6 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 			dialect: options.workstationDialect ?? "default",
 		}),
 	);
-
-	// The claude-sdk-oauth lane appends these dynamic lines after the stable sections so the composed
-	// prompt is a single string. An earlier draft split at this point for prompt-cache scoping, but a
-	// wire-level probe proved the installed CLI joins array elements into one system block, so the
-	// split was removed (the sentinel leaked to the model as literal text).
-	sections.push("", `Current date: ${date}`, `Current working directory: ${promptCwd}`);
 
 	return sections.join("\n");
 }

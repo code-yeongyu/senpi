@@ -5,7 +5,13 @@ import { createChecks, evidenceDir, guardRealAuth, installCleanupHooks } from ".
 const CTRL_SEP = ["<", "|", "sep", "|", ">"].join("");
 const BANG_RUN_300 = /!{300}/;
 
-export const TTSR_SCENARIOS = ["ttsr-collapse", "ttsr-leak", "ttsr-repetitive-turns", "ttsr-paragraph-loop"];
+export const TTSR_SCENARIOS = [
+	"ttsr-collapse",
+	"ttsr-leak",
+	"ttsr-repetitive-turns",
+	"ttsr-paragraph-loop",
+	"ttsr-near-duplicate-loop",
+];
 
 // Shape of session 01a06648: the model re-announced the same planning step for minutes as
 // plain text without ever issuing the tool call. Three byte-identical paragraphs per cycle,
@@ -16,6 +22,28 @@ const PARAGRAPH_LOOP_CYCLE = [
 	"I'm now running the actual DAG start and capturing the run ID to track progress across all the parallel lanes before summarizing.",
 ];
 const PARAGRAPH_LOOP_TEXT = `${Array.from({ length: 3 }, () => PARAGRAPH_LOOP_CYCLE.join("\n\n")).join("\n\n")}\n\n`;
+
+// Shape of session 01a0a38c: the model restated one action for twelve minutes without ever
+// issuing the tool call, paraphrasing itself every time, so no two paragraphs are byte-identical
+// and only the near-duplicate frequency mechanism can see it.
+const NEAR_DUPLICATE_OPENERS = [
+	"I'm assembling the final delivery now",
+	"I'm putting together the final payload",
+	"I'm compiling the delivery code",
+	"I'm writing out the final assembly",
+	"I'm finalizing the delivery path",
+];
+const NEAR_DUPLICATE_TAILS = [
+	"downloading the images, building both captions, linting them, and sending both batches",
+	"fetching the images, assembling both captions, running the lint pass, and dispatching both batches",
+	"pulling the images, composing both captions, checking the lint, and delivering both batches",
+];
+const NEAR_DUPLICATE_PARAGRAPHS = Array.from({ length: 15 }, (_, index) => {
+	const opener = NEAR_DUPLICATE_OPENERS[index % NEAR_DUPLICATE_OPENERS.length];
+	const tail = NEAR_DUPLICATE_TAILS[index % NEAR_DUPLICATE_TAILS.length];
+	return `${opener}: ${tail} to the channel with attachments.`;
+});
+const NEAR_DUPLICATE_TEXT = `${NEAR_DUPLICATE_PARAGRAPHS.join("\n\n")}\n\n`;
 
 function readFirstPersistedAssistant(box) {
 	const files = readdirSync(box.sessionDir, { recursive: true, encoding: "utf8" })
@@ -209,11 +237,14 @@ export async function runTtsrScenario({ scenarioName, apiName, driveTurn, eviden
 	}
 	const collapse = scenarioName === "ttsr-collapse";
 	const paragraphLoop = scenarioName === "ttsr-paragraph-loop";
+	const nearDuplicateLoop = scenarioName === "ttsr-near-duplicate-loop";
 	let firstTurn;
 	if (collapse) {
 		firstTurn = { reasoning: `analyzing the problem ${"!".repeat(600)}`, chunks: 40 };
 	} else if (paragraphLoop) {
 		firstTurn = { text: PARAGRAPH_LOOP_TEXT, chunks: 60 };
+	} else if (nearDuplicateLoop) {
+		firstTurn = { text: NEAR_DUPLICATE_TEXT, chunks: 60 };
 	} else {
 		firstTurn = { reasoning: `Thinking... ${CTRL_SEP} ${CTRL_SEP} ${CTRL_SEP} trailing garbage ${"x".repeat(400)}`, chunks: 20 };
 	}
@@ -259,6 +290,34 @@ export async function runTtsrScenario({ scenarioName, apiName, driveTurn, eviden
 			);
 			checks.ok(
 				"ttsr-paragraph-loop: collapse-repetition system-interrupt injected into the recovery request",
+				replayBody.includes('rule=\\"collapse-repetition\\"'),
+				`interruptPresent=${replayBody.includes("collapse-repetition")}`,
+			);
+		} else if (nearDuplicateLoop) {
+			const distinct = new Set(NEAR_DUPLICATE_PARAGRAPHS).size;
+			const lastParagraph = NEAR_DUPLICATE_PARAGRAPHS[NEAR_DUPLICATE_PARAGRAPHS.length - 1];
+			const aborted = readFirstPersistedAssistant(box);
+			const persistedText = assistantText(aborted);
+			checks.ok(
+				"ttsr-near-duplicate-loop: no paragraph repeats byte-exactly, so only the frequency rule can fire",
+				distinct === NEAR_DUPLICATE_PARAGRAPHS.length,
+				`distinct=${distinct}/${NEAR_DUPLICATE_PARAGRAPHS.length}`,
+			);
+			checks.ok(
+				"ttsr-near-duplicate-loop: persisted aborted message is truncated before the streamed tail",
+				aborted?.stopReason === "aborted" &&
+					persistedText.length < NEAR_DUPLICATE_TEXT.length &&
+					!persistedText.includes(lastParagraph) &&
+					persistedText.includes("[output interrupted by stream rule]"),
+				`stopReason=${aborted?.stopReason ?? "missing"} chars=${persistedText.length}/${NEAR_DUPLICATE_TEXT.length}`,
+			);
+			checks.ok(
+				"ttsr-near-duplicate-loop: recovery request never replays the streamed tail",
+				!replayBody.includes(JSON.stringify(lastParagraph).slice(1, -1)),
+				`tailPresent=${replayBody.includes(JSON.stringify(lastParagraph).slice(1, -1))}`,
+			);
+			checks.ok(
+				"ttsr-near-duplicate-loop: collapse-repetition system-interrupt injected into the recovery request",
 				replayBody.includes('rule=\\"collapse-repetition\\"'),
 				`interruptPresent=${replayBody.includes("collapse-repetition")}`,
 			);

@@ -105,10 +105,25 @@ async function runDefaultScenario(
 		else throw error;
 	}
 	console.log(`RB_REJECTED: ${rubyRejected}`);
+	// senpi#2240: incomplete runs must now fail schema validation before execution.
+	let omittedLanguageError = "";
+	try {
+		const rejected = await session.executeTool("eval", { summary: "Run a cell without naming its kernel", timeout: 60 });
+		omittedLanguageError = textOf(rejected).trim();
+	} catch (error) {
+		if (error instanceof Error) omittedLanguageError = error.message;
+		else throw error;
+	}
+	console.log(`OMITTED_LANGUAGE_ERROR: ${omittedLanguageError}`);
 	if (tokens.join(",") !== "py,js") throw new QaScenarioError(`unexpected eval languages: ${tokens.join(",")}`);
 	if (!result.details.truncated) throw new QaScenarioError("eval output was not truncated");
 	if (!spillExists) throw new QaScenarioError("eval spill artifact was not written");
 	if (!rubyRejected) throw new QaScenarioError("disabled Ruby input was accepted");
+	if (
+		!omittedLanguageError.includes('Validation failed for tool "eval"') ||
+		!omittedLanguageError.includes("required properties language, code")
+	)
+		throw new QaScenarioError(`omitted-language call did not fail schema validation: ${omittedLanguageError}`);
 }
 
 async function runAbortScenario(

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
@@ -33,11 +34,27 @@ export class FileHookStateStorage implements HookStateStorage {
 		this.projectStatePath = join(options.cwd, CONFIG_DIR_NAME, "hooks-state.json");
 	}
 
+	/** Writers publish atomic snapshots. Missing or invalid snapshots authorize nothing. */
+	async readAsync(scope: HookTrustStorageScope): Promise<HookTrustState> {
+		const path = statePathForScope(scope, this.globalStatePath, this.projectStatePath);
+		try {
+			return readHookTrustStateJson(await readFile(path, "utf8"));
+		} catch (error) {
+			if (errorCode(error) === "ENOENT") return emptyHookTrustState();
+			throw error;
+		}
+	}
+
 	read(scope: HookTrustStorageScope): HookTrustState {
 		const path = statePathForScope(scope, this.globalStatePath, this.projectStatePath);
 		const snapshot = parseHookTrustStateJson(existsSync(path) ? readFileSync(path, "utf-8") : undefined);
 		if (snapshot !== undefined) {
 			return snapshot;
+		}
+		// No state directory means no writer and nothing to revalidate. Locking would create it, leaving an
+		// empty config folder in every project a session merely reads.
+		if (!existsSync(dirname(path))) {
+			return emptyHookTrustState();
 		}
 
 		let release: () => void;

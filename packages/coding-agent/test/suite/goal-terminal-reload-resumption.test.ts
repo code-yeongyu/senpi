@@ -62,6 +62,7 @@ function createGeneration(cwd: string, sessionId: string): Generation {
 	};
 	const pi = {
 		registerTool: (tool: ToolLike) => tools.set(tool.name, tool),
+		registerMessageRenderer: () => {},
 		registerCommand: () => {},
 		registerEntryRenderer: () => {},
 		appendEntry: () => {},

@@ -10,7 +10,8 @@ import {
 	reapplyPersistedMute,
 	restoreTerminalState,
 } from "../../src/core/extensions/builtin/terminal/restore.ts";
-import { DURABLE_MONITOR_EXPIRY_MS, MAX_DURABLE_MONITORS } from "../../src/core/extensions/builtin/terminal/shared.ts";
+import { resolveTerminalSettings } from "../../src/core/extensions/builtin/terminal/settings.ts";
+import { DURABLE_MONITOR_EXPIRY_MS } from "../../src/core/extensions/builtin/terminal/shared.ts";
 import {
 	type ManifestMonitor,
 	TerminalManifestWriter,
@@ -41,7 +42,17 @@ interface Harness {
 let harnessSeq = 0;
 const openHarnesses: Harness[] = [];
 
-async function makeHarness(now?: () => number): Promise<Harness> {
+interface HarnessOptions {
+	readonly now?: () => number;
+	/** The resolved `terminal.maxDurableMonitors` handed to the tool context; omitted means unlimited. */
+	readonly maxDurableMonitors?: number | "unlimited";
+}
+
+/** The configured cap used by tests that exercise refusal: small enough to reach quickly. */
+const CONFIGURED_CAP = 3;
+
+async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
+	const { now, maxDurableMonitors } = options;
 	harnessSeq += 1;
 	const sessionId = `durable-admission-${process.pid}-${harnessSeq}`;
 	// Never write inside the checkout: the manifest resolves under this absolute temp dir only.
@@ -66,6 +77,7 @@ async function makeHarness(now?: () => number): Promise<Harness> {
 		onMonitorEvent: (event) => events.push(event),
 		monitorRegistry: registry,
 		getSessionContext: () => ({ sessionManager: { getSessionId: () => sessionId } }) as unknown as ExtensionContext,
+		...(maxDurableMonitors !== undefined ? { maxDurableMonitors } : {}),
 	};
 	bindTerminalManifestWriter(sessionId, writer);
 	const harness: Harness = {
@@ -128,10 +140,25 @@ describe("durable monitor admission control", () => {
 		else process.env.SENPI_PTY_FORCE_PIPE = savedForcePipe;
 	});
 
-	it("admits exactly MAX_DURABLE_MONITORS persistent monitors and rejects the next with no spawn and no registration", async () => {
+	it("admits 12 persistent monitors with no refusal when no cap is configured", async () => {
 		const harness = await makeHarness();
-		expect(MAX_DURABLE_MONITORS).toBe(5);
-		for (let index = 1; index <= MAX_DURABLE_MONITORS; index += 1) {
+		for (let index = 1; index <= 12; index += 1) {
+			const created = await createPersistent(harness, `durable ${index}`);
+			expect(created.isError, firstText(created)).toBeFalsy();
+		}
+		await harness.writer.flush();
+
+		expect(harness.createSpy).toHaveBeenCalledTimes(12);
+		expect(harness.registry.snapshot()).toHaveLength(12);
+		const manifest = await harness.writer.store.read();
+		expect(manifest?.monitors.map((entry) => entry.description)).toEqual(
+			Array.from({ length: 12 }, (_, index) => `durable ${index + 1}`),
+		);
+	});
+
+	it("with maxDurableMonitors 3 refuses the 4th persistent create with no spawn and no registration", async () => {
+		const harness = await makeHarness({ maxDurableMonitors: CONFIGURED_CAP });
+		for (let index = 1; index <= CONFIGURED_CAP; index += 1) {
 			const created = await createPersistent(harness, `durable ${index}`);
 			expect(created.isError, firstText(created)).toBeFalsy();
 		}
@@ -143,31 +170,41 @@ describe("durable monitor admission control", () => {
 
 		expect(rejected.isError).toBe(true);
 		expect(firstText(rejected)).toBe(
-			`Cannot start another persistent monitor: this session already holds ${MAX_DURABLE_MONITORS} durable monitors (the maximum). Stop one with kill_bash first.`,
+			"Cannot start another persistent monitor: this session already holds 3 durable monitors, the limit set by terminal.maxDurableMonitors. Stop one with kill_bash first, or raise the setting.",
 		);
 		expect(harness.createSpy.mock.calls.length).toBe(spawnsBefore);
 		expect(harness.registerSpy.mock.calls.length).toBe(registrationsBefore);
-		expect(harness.registry.snapshot()).toHaveLength(MAX_DURABLE_MONITORS);
+		expect(harness.registry.snapshot()).toHaveLength(CONFIGURED_CAP);
 		await harness.writer.flush();
 		const manifest = await harness.writer.store.read();
-		expect(manifest?.monitors.map((entry) => entry.description)).toEqual([
-			"durable 1",
-			"durable 2",
-			"durable 3",
-			"durable 4",
-			"durable 5",
-		]);
+		expect(manifest?.monitors.map((entry) => entry.description)).toEqual(["durable 1", "durable 2", "durable 3"]);
 	});
 
-	it("never counts ephemeral monitors against the cap: 10 ephemeral first, then 5 persistent, all succeed", async () => {
-		const harness = await makeHarness();
+	it.each([
+		["unlimited", "unlimited"],
+		["an unknown string", "lots"],
+		["zero", 0],
+		["a negative number", -4],
+	] as const)("treats a maxDurableMonitors of %s as no cap", async (_label, raw) => {
+		const maxDurableMonitors = resolveTerminalSettings({ maxDurableMonitors: raw as never }).maxDurableMonitors;
+		expect(maxDurableMonitors).toBe("unlimited");
+		const harness = await makeHarness({ maxDurableMonitors });
+		for (let index = 1; index <= 7; index += 1) {
+			const created = await createPersistent(harness, `durable ${index}`);
+			expect(created.isError, firstText(created)).toBeFalsy();
+		}
+		expect(harness.registry.snapshot()).toHaveLength(7);
+	});
+
+	it("never counts ephemeral monitors against a configured cap: 10 ephemeral first, then 3 persistent, all succeed", async () => {
+		const harness = await makeHarness({ maxDurableMonitors: CONFIGURED_CAP });
 		// Ephemeral first: a cap that counted them would already be over budget by the 6th one,
 		// so every persistent create below would be refused.
 		for (let index = 1; index <= 10; index += 1) {
 			const created = await createEphemeral(harness, `ephemeral ${index}`);
 			expect(created.isError, firstText(created)).toBeFalsy();
 		}
-		for (let index = 1; index <= MAX_DURABLE_MONITORS; index += 1) {
+		for (let index = 1; index <= CONFIGURED_CAP; index += 1) {
 			const created = await createPersistent(harness, `durable ${index}`);
 			expect(created.isError, firstText(created)).toBeFalsy();
 		}
@@ -176,16 +213,16 @@ describe("durable monitor admission control", () => {
 		const manifest = await harness.writer.store.read();
 		const durable = manifest?.monitors.filter((entry) => entry.durabilityClass !== "ephemeral") ?? [];
 		const ephemeral = manifest?.monitors.filter((entry) => entry.durabilityClass === "ephemeral") ?? [];
-		expect(durable).toHaveLength(MAX_DURABLE_MONITORS);
+		expect(durable).toHaveLength(CONFIGURED_CAP);
 		expect(ephemeral).toHaveLength(10);
-		expect(harness.registry.snapshot()).toHaveLength(MAX_DURABLE_MONITORS + 10);
+		expect(harness.registry.snapshot()).toHaveLength(CONFIGURED_CAP + 10);
 	});
 
 	it("registers a durable monitor with an absolute 7-day expiry that a restore and a rearm both leave byte-identical", async () => {
 		const registeredAt = 1_700_000_000_000;
 		// A moving clock: an expiry refreshed by any later transition is observable as a slide.
 		let clock = registeredAt;
-		const harness = await makeHarness(() => clock);
+		const harness = await makeHarness({ now: () => clock });
 		const created = await createPersistent(harness, "expiry stable");
 		expect(created.isError, firstText(created)).toBeFalsy();
 		const monitorId = created.details?.monitor_id as string;
@@ -257,7 +294,7 @@ describe("durable monitor admission control", () => {
 
 		const digest = await restoreTerminalState({ manifest: harness.writer.store, handlers, now: () => now });
 
-		expect(digest).toEqual({
+		expect(digest).toMatchObject({
 			restored: 0,
 			lost: 0,
 			expired: 2,
@@ -331,5 +368,28 @@ describe("durable monitor admission control", () => {
 		expect(restoredEntry?.paused).toBe(true);
 		expect(digest.muted).toBe(1);
 		expect(digest.restored).toBe(0);
+	});
+
+	it("caps persistent creates before a writer is bound and records the queued specs once it binds", async () => {
+		const harness = await makeHarness({ maxDurableMonitors: CONFIGURED_CAP });
+		unbindTerminalManifestWriter(harness.sessionId);
+		const admitted: string[] = [];
+		for (let index = 0; index < CONFIGURED_CAP; index += 1) {
+			const result = await createPersistent(harness, `queued-${index}`);
+			expect(result.isError).not.toBe(true);
+			admitted.push(firstText(result));
+		}
+		const refused = await createPersistent(harness, "one-too-many");
+		expect(refused.isError).toBe(true);
+		expect(firstText(refused)).toContain(`${CONFIGURED_CAP} durable monitors`);
+		expect(harness.createSpy).toHaveBeenCalledTimes(CONFIGURED_CAP);
+
+		bindTerminalManifestWriter(harness.sessionId, harness.writer);
+		await harness.writer.flush();
+		const persisted = await harness.writer.store.read();
+		expect(persisted?.monitors.map((entry) => entry.description)).toEqual(
+			Array.from({ length: CONFIGURED_CAP }, (_, index) => `queued-${index}`),
+		);
+		expect(harness.writer.durableCount()).toBe(CONFIGURED_CAP);
 	});
 });

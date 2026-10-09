@@ -1,8 +1,17 @@
-import type { AgentToolResult, AgentToolUpdateCallback, ExtensionContext, ToolDefinition } from "@code-yeongyu/senpi";
+import type {
+	AgentToolResult,
+	AgentToolUpdateCallback,
+	ExtensionContext,
+	KernelPreludeContribution,
+	ToolDefinition,
+} from "@code-yeongyu/senpi";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
 import type { ResolvedCodemodeSettings } from "../config/settings.ts";
+import type { JsEnvironments } from "../environments/js-environments.ts";
+import type { PythonEnvironments } from "../environments/python-environments.ts";
 import type { EvalExecutionTracker } from "../extension/session-manager.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import type { EvalTimeoutFactory } from "./cell-execution.ts";
 import type { EvalDetachedCellManager } from "./detached-cell-manager.ts";
 import type { EvalExecutionEventPayload } from "./eval-execution-event.ts";
@@ -11,6 +20,7 @@ import type {
 	EnabledEvalLanguages,
 	EvalInputSchema,
 	EvalKernelManager,
+	EvalResultDetails,
 	EvalRuntimes,
 	EvalToolDetails,
 	EvalToolInput,
@@ -20,15 +30,21 @@ import type {
 export interface CreateEvalToolOptions {
 	readonly enabledLanguages: EnabledEvalLanguages;
 	readonly kernelManager: EvalKernelManager;
+	/** Idle time an interactive (detach-behavior) call blocks the agent loop before the cell detaches. */
 	readonly cellTimeoutSeconds: number;
 	/**
-	 * Longest an interactive (detach-behavior) call blocks the agent loop before the cell detaches,
-	 * capping the `timeout` detach budget. Defaults to {@link DEFAULT_FOREGROUND_WINDOW_SECONDS}.
-	 * Does not affect `on_timeout: "error"` calls or the wall-clock hard limit.
+	 * Caps `cellTimeoutSeconds` and the bridge-parked grace for interactive calls. Defaults to
+	 * {@link DEFAULT_FOREGROUND_WINDOW_SECONDS}. Does not affect the kill deadlines.
 	 */
 	readonly foregroundWindowSeconds?: number;
 	/** Wall-clock kill deadline applied to every cell; only used when this factory creates its own manager. */
 	readonly hardLimitSeconds?: number;
+	/**
+	 * Kill deadline for a cell's own execution time (host tool calls excluded); a per-call `timeout`
+	 * replaces it. Rendered into the tool schema and description; also seeds a self-created manager.
+	 */
+	readonly runBudgetSeconds?: number;
+	readonly maxDetachedCells?: number;
 	readonly executeTool: ExecuteTool;
 	readonly listTools?: () => readonly EvalSchemaToolInfo[];
 	readonly complete?: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>;
@@ -37,10 +53,12 @@ export interface CreateEvalToolOptions {
 	readonly imageResizer?: EvalImageResizer;
 	readonly executionTracker?: EvalExecutionTracker;
 	readonly cellManager?: EvalDetachedCellManager;
+	/** The session generation's handle registry (`wait()`, `handle()`, completion handles); absent before session_start. */
+	readonly handles?: HandleRegistry;
 	readonly onCellSettled?: (payload: EvalExecutionEventPayload) => void;
 	readonly timeoutFactory?: EvalTimeoutFactory;
 	readonly proxyExecutor?: (params: EvalToolInput, signal?: AbortSignal) => Promise<AgentToolResult<EvalToolDetails>>;
-	readonly renderers?: Pick<ToolDefinition<EvalInputSchema, EvalToolDetails>, "renderCall" | "renderResult">;
+	readonly renderers?: Pick<ToolDefinition<EvalInputSchema, EvalResultDetails>, "renderCall" | "renderResult">;
 	readonly spawns?: boolean;
 	/** Whether the session registry exposes the monitor tool through eval. */
 	readonly monitor?: boolean;
@@ -51,6 +69,14 @@ export interface CreateEvalToolOptions {
 	readonly runtimes?: EvalRuntimes;
 	/** Absolute path of the active bun-1-4 skill; the prompt names it as MUST READ on a bun kernel. */
 	readonly bunSkillPath?: string;
+	/** Kernel globals of the tools active when a cell is submitted; read once per cell. */
+	readonly kernelPreludes?: () => readonly KernelPreludeContribution[];
+	/** The session's Python environments: `%pip` / `%environment` cells and the import root of every Python cell. */
+	readonly pythonEnvironments?: PythonEnvironments;
+	/** The session's managed JavaScript packages: `%bun add` / `%npm add` cells and the bare-import fallback root. */
+	readonly jsEnvironments?: JsEnvironments;
+	/** Contributions whose documentation lines the description lists; snapshot taken when the tool is (re)registered. */
+	readonly promptKernelPreludes?: readonly KernelPreludeContribution[];
 }
 
 export interface EvalCellInvocation {

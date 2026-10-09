@@ -11,7 +11,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
 - **Bracketed Paste Mode**: Handles large pastes correctly with markers for >10 line pastes
 - **Component-based**: Simple Component interface with render() method
 - **Theme Support**: Components accept theme interfaces for customizable styling
-- **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, Spacer, Image, Box, Container, VStack, HStack, ScrollView
+- **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, MouseRegion, Spacer, Image, Box, Container, VStack, HStack, ScrollView
 - **Inline Images**: Renders images in terminals that support Kitty or iTerm2 graphics protocols
 - **Autocomplete Support**: File paths and slash commands
 
@@ -121,7 +121,7 @@ if (isViewportTUI(tui)) {
 }
 ```
 
-Stack entries support `basis`, `grow`, `shrink`, `minSize`, `maxSize`, and responsive `visible` callbacks. Mouse-wheel input targets the scroll view under the pointer and unused delta chains to outer scroll views by default. The primary scroll view receives the alternate-screen keyboard navigation actions and wheel input over non-scrollable regions. It can also jump between OSC 133 semantic prompt markers, matching common terminal prompt-navigation shortcuts. Press `Ctrl+Shift+F` to search its rendered content, `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G` to move between matches, and `Escape` to close search. `TuiAltScreenOptions.searchMatchStyle` and `searchCurrentMatchStyle` customize match highlighting.
+Stack entries support `basis`, `grow`, `shrink`, `minSize`, `maxSize`, and responsive `visible` callbacks. Mouse-wheel input targets the scroll view under the pointer and unused delta chains to outer scroll views by default. The primary scroll view receives the alternate-screen keyboard navigation actions and wheel input over non-scrollable regions. It can also jump between OSC 133 semantic prompt markers, matching common terminal prompt-navigation shortcuts. Press `Ctrl+Shift+F` to open or close its bordered search panel. The panel shows the configured previous/next shortcuts and provides clickable arrow controls; by default, `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G` move between matches, and `Escape` also closes search. `TuiAltScreenOptions.searchMatchStyle` and `searchCurrentMatchStyle` customize match highlighting, while `searchNavigationButtonStyle` styles each arrow button and receives its hover state. `TuiAltScreenOptions.scrollToEndIndicator` renders a clickable label centered on the last row of a `follow: "end"` primary scroll view while it is scrolled away from the end; clicking it resumes end-following.
 
 Layout geometry is rebuilt for each requested frame. Stateful components are retained, and their existing rendered-line caches remain effective. Calling `render(width)` directly on these layout components produces an unbounded document, which is also used when alt mode restores the main screen.
 
@@ -177,6 +177,7 @@ handle.unfocus();           // Release focus to normal fallback
 handle.unfocus({ target: baseComponent }); // Release this overlay to a specific component
 handle.unfocus({ target: null });   // Release this overlay and leave focus empty
 handle.isFocused();         // Check if overlay has focus
+handle.getBounds();         // Get last rendered terminal-relative bounds
 
 handle.unfocus();
 // Overlay loses focus; TUI falls back to another visible capturing overlay or the previous focus target.
@@ -211,6 +212,7 @@ All components implement:
 interface Component {
   render(width: number): string[];
   handleInput?(data: string): void;
+  handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
   invalidate?(): void;
 }
 ```
@@ -219,9 +221,57 @@ interface Component {
 |--------|-------------|
 | `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. |
 | `handleInput?(data)` | Called when the component has focus and receives keyboard input. The `data` string contains raw terminal input (may include ANSI escape sequences). |
+| `handleMouse?(event)` | Called by the renderer for normalized pointer input targeted at the component; regular-mode clicks require an active mouse-capture lease. |
 | `invalidate?()` | Called to clear any cached render state. Components should re-render from scratch on the next `render()` call. |
 
 The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
+
+### Mouse Input
+
+`TuiAltScreen` normalizes SGR mouse input and hit-tests components and overlays. Events contain component-local `x`/`y`, absolute `screenX`/`screenY`, bounds, button, modifiers, click count, and wheel delta.
+
+`TuiMainScreen` captures only while a host-owned lease is active: `const release = tui.acquireMouseCapture("pending-question")`; call `release()` when the interactive surface closes. Leases compose and releases are idempotent. A replacement renderer starts with no leases, so the host must reapply its intent after switching modes. Without a lease, native selection and scrollback remain untouched.
+
+Regular mode supports unmodified left press/click only. A handler must acknowledge an eligible press with `{ handled: true }` without activating; a same-cell release within 500 ms produces the click. Changed placement or target layout cancels the gesture. Wheel, motion, other buttons, and modified reports are consumed without dispatch, including in-flight reports after capture ends. While capture is active, use the terminal's selection bypass: usually Shift-drag, or Option-drag in iTerm2/Terminal.app. There is no regular-mode app-owned drag selection or wheel scrolling.
+
+Clicks fail closed when frame placement is unknown, resized, or image-bearing. Short fresh frames use a private cursor-position query; clearing and viewport-filling frames provide their own anchors. A query timeout leaves keyboard interaction available; a clearing render can recover the anchor. External stdout/stderr invalidates placement, and the next regular-mode render appends a fresh frame before recalibrating without clearing diagnostics or scrollback. Tracking is disabled on non-TTY output, Termux, and Windows consoles without Windows Terminal.
+
+```typescript
+import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+
+handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+  if (event.type === "click" && event.button === "left") {
+    this.expanded = !this.expanded;
+    return { handled: true };
+  }
+  if (event.type === "press" && event.button === "left") {
+    return { handled: true, capture: true, focus: true };
+  }
+  if (event.type === "drag") {
+    this.updateFromPointer(event.x, event.y);
+    return { handled: true, render: true };
+  }
+  return undefined;
+}
+```
+
+Returning `handled` suppresses renderer-level fallback behavior. `capture` keeps subsequent drag and release events routed to the same component. `focus` requests keyboard focus. The optional `render` flag controls repainting: press, click, drag, and wheel default to rendering; move and release do not. Set `render: true` for a hover state that visibly changed, or `render: false` for a handled no-op. Render requests are coalesced and terminal output remains differential.
+
+Unhandled gestures retain alternate-screen defaults: wheel input scrolls the nearest `ScrollView` and chains unused delta, primary-button drags select text, OSC 8 links open before parent click handlers, and unhandled right-click preserves configured paste behavior. A click is emitted only when press/release completes without a drag.
+
+Use `MouseRegion` to add mouse behavior without changing a component's rendering:
+
+```typescript
+const collapsible = new MouseRegion(content, (event) => {
+  if (event.button !== "left") return undefined;
+  if (event.type === "press") return { handled: true };
+  if (event.type !== "click") return undefined;
+  expanded = !expanded;
+  return { handled: true };
+});
+```
+
+`Container` and `Box` route events to nested children using geometry recorded by the last rendered frame, so pointer motion does not rerender children merely to hit-test them. Explicit `VStack`, `HStack`, and `ScrollView` layouts use the alternate-screen layout frame directly.
 
 ### Focusable Interface (IME Support)
 
@@ -247,7 +297,7 @@ When a `Focusable` component has focus, TUI:
 3. Positions the hardware terminal cursor at that location
 4. Shows the hardware cursor only when `showHardwareCursor` is enabled
 
-The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer constructor's `showHardwareCursor` argument, `setShowHardwareCursor(true)`, or `PI_HARDWARE_CURSOR=1`. The `Editor` and `Input` built-in components already implement this interface.
+The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer constructor's `showHardwareCursor` argument or `setShowHardwareCursor(true)`. The `Editor` and `Input` built-in components already implement this interface.
 
 **Container components with embedded inputs:** When a container component (dialog, selector, etc.) contains an `Input` or `Editor` child, the container must implement `Focusable` and propagate the focus state to the child:
 
@@ -339,6 +389,8 @@ input.setValue("initial");
 input.getValue();
 ```
 
+Clicking positions the cursor and gives the input keyboard focus in alternate-screen mode.
+
 **Key Bindings:**
 - `Enter` - Submit
 - `Ctrl+A` / `Ctrl+E` - Line start/end
@@ -374,6 +426,7 @@ editor.getPaddingX();  // Get current padding
 ```
 
 **Features:**
+- Click-to-position cursor and clickable autocomplete rows in alternate-screen mode
 - Multi-line editing with word wrap
 - Slash command autocomplete (type `/`)
 - File path autocomplete (press `Tab`)
@@ -514,6 +567,8 @@ list.setFilter("opt"); // Filter items
 ```
 
 **Controls:**
+- Mouse move/wheel: Highlight rows in alternate-screen mode
+- Click: Select a row
 - Arrow keys: Navigate
 - Enter: Select
 - Escape: Cancel
@@ -554,6 +609,8 @@ settings.updateValue("theme", "light");
 ```
 
 **Controls:**
+- Mouse move/wheel: Highlight rows in alternate-screen mode
+- Click: Activate a row
 - Arrow keys: Navigate
 - Enter/Space: Activate (cycle value or open submenu)
 - Escape: Cancel
@@ -657,7 +714,7 @@ if (matchesKey(data, Key.enter)) {
 2. **Width Changed or Change Above Viewport**: Clear screen and fully re-render
 3. **Normal Update**: Move the cursor to the first changed line, clear to the end, and render changed lines
 
-`TuiAltScreen` owns a terminal-height viewport. Without an explicit layout root it preserves the legacy single-document scrolling behavior. With `setLayoutRoot()`, `VStack`, `HStack`, and nested `ScrollView` components can reserve fixed regions and independently scroll constrained regions. It updates changed viewport rows in place, follows streaming output while at the bottom, and preserves a manually selected scroll position while content grows. Mouse-wheel and configurable keyboard navigation scroll without modifying terminal scrollback, including jumps between OSC 133 semantic prompt markers. Clicking an OSC 8 hyperlink opens it with the configured URL handler. Dragging with the primary mouse button selects text and, unless `TuiAltScreenOptions.copyOnSelect` is `false`, copies it to the clipboard with OSC 52; holding the drag at a scroll view's top or bottom edge auto-scrolls and extends the selection into off-screen content. Kitty images support vertical viewport cropping; iTerm2 inline images fall back to text because the iTerm2 protocol cannot delete or crop placements during viewport repainting.
+`TuiAltScreen` owns a terminal-height viewport. Without an explicit layout root it preserves the legacy single-document scrolling behavior. With `setLayoutRoot()`, `VStack`, `HStack`, and nested `ScrollView` components can reserve fixed regions and independently scroll constrained regions. It updates changed viewport rows in place, follows streaming output while at the bottom, and preserves a manually selected scroll position while content grows. Mouse-wheel and configurable keyboard navigation scroll without modifying terminal scrollback, including jumps between OSC 133 semantic prompt markers. Scrollbars support hover expansion, thumb dragging, and track-click jumping. Clicking an OSC 8 hyperlink opens it with the configured URL handler. Dragging with the primary mouse button selects text and, unless `TuiAltScreenOptions.copyOnSelect` is `false`, copies it to the clipboard with OSC 52; holding the drag at a scroll view's top or bottom edge auto-scrolls and extends the selection into off-screen content. Kitty images support vertical viewport cropping; iTerm2 inline images fall back to text because the iTerm2 protocol cannot delete or crop placements during viewport repainting.
 
 Both renderers wrap updates in **synchronized output** (`\x1b[?2026h` ... `\x1b[?2026l`) for atomic, flicker-free rendering.
 
@@ -701,6 +758,44 @@ const truncatedNoEllipsis = truncateToWidth("Hello World", 8, ""); // "Hello Wo"
 // Wrap text to width (preserving ANSI codes across line breaks)
 const lines = wrapTextWithAnsi("This is a long line that needs wrapping", 20);
 // ["This is a long line", "that needs wrapping"]
+```
+
+### Colors and terminal styles
+
+Colors are values that can be converted or mixed before terminal rendering:
+
+```typescript
+import {
+  colorToRgb,
+  foregroundAnsi,
+  getTerminalColorMode,
+  mixColors,
+  parseColor,
+  rgbColor,
+  styleText,
+} from "@earendil-works/pi-tui";
+
+const accent = parseColor("oklch(70% 0.12 220)");
+const background = parseColor("#20242a");
+const foreground = mixColors(accent, background, 0.2);
+
+const text = styleText(
+  "Ready",
+  { fg: foreground, bg: background, bold: true },
+  getTerminalColorMode(),
+);
+```
+
+`Color` is an indexed ANSI color, an sRGB color, or an OKLCH color. Every color converts to sRGB, so color math such as `mixColors()` always works. Indices 0-15 follow the user's terminal palette, so their sRGB values are approximations. `styleText()` converts colors to truecolor or 256-color output based on the requested terminal mode.
+
+`parseColor()` also accepts OKHSL, as in `okhsl(250 60% 55%)`; `okhslColor()` builds it in code and `colorToOkhsl()` reads any color's OKHSL channels. OKHSL saturation is relative to the most the sRGB gamut allows at that hue and lightness, so every value is in gamut. OKHSL colors are converted to sRGB when created.
+
+Conversions are not cached, and OKLCH colors outside the sRGB gamut are the most expensive to convert. For colors used on every render, convert once and reuse the result:
+
+```typescript
+const { r, g, b } = colorToRgb(mixColors(accent, background, 0.2));
+const foreground = rgbColor(r, g, b); // cheap to render repeatedly
+const foregroundCode = foregroundAnsi(foreground, getTerminalColorMode());
 ```
 
 ## Creating Custom Components

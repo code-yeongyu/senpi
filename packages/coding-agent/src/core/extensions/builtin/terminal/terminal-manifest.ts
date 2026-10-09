@@ -4,10 +4,10 @@
  * `terminal-manifest-model.ts` — never per-line output and never a runtime handle.
  */
 
+import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createSidecarStore, type SidecarStore } from "../../../session-sidecar-store.ts";
 import type { MonitorSnapshotEntry } from "./monitor-registry.ts";
-import { parseTerminalManifest } from "./restore.ts";
 import { DURABLE_MONITOR_EXPIRY_MS } from "./shared.ts";
 import {
 	type ManifestBackgroundSession,
@@ -19,6 +19,7 @@ import {
 	type TerminalManifestCheckpoint,
 	type TerminalManifestSession,
 } from "./terminal-manifest-model.ts";
+import { parseTerminalManifest } from "./terminal-manifest-parse.ts";
 
 export type {
 	CommandMonitorSpec,
@@ -94,6 +95,33 @@ export class TerminalManifestWriter {
 	 */
 	adoptRestored(entry: ManifestMonitor): void {
 		this.#entries.set(entry.monitorId, { ...entry, suspended: false });
+	}
+
+	/**
+	 * Write the post-restore truth once: re-spawned watches carry their new runtime identity (so
+	 * the NEXT crash stops them instead of starting copies), and entries that did not come back
+	 * are gone (so they are never re-run). With nothing left, the manifest file is removed.
+	 */
+	persistRestored(): Promise<void> {
+		return this.#persist();
+	}
+
+	/**
+	 * Reload seam (SF-2): a reload generation starts with an empty writer, and its first
+	 * transition would rewrite the manifest without the entries the previous generation
+	 * recorded. Seed the live (non-suspended) entries and background sessions from disk
+	 * without writing; a corrupt or absent manifest seeds nothing.
+	 */
+	async seedFromDisk(): Promise<void> {
+		let state: TerminalManifest | null;
+		try {
+			state = await this.store.read();
+		} catch {
+			return;
+		}
+		if (state === null) return;
+		for (const entry of state.monitors) if (!entry.suspended) this.#entries.set(entry.monitorId, entry);
+		for (const background of state.backgroundSessions) this.#backgrounds.set(background.id, background);
 	}
 
 	/**
@@ -177,8 +205,18 @@ export class TerminalManifestWriter {
 		await this.#persist();
 	}
 
-	recordBackgroundStart(id: string, command: string, startedAtMs?: number): Promise<void> {
-		this.#backgrounds.set(id, { id, command, startedAtMs: startedAtMs ?? this.#now() });
+	recordBackgroundStart(
+		id: string,
+		command: string,
+		startedAtMs?: number,
+		runtime?: ManifestBackgroundSession["runtime"],
+	): Promise<void> {
+		this.#backgrounds.set(id, {
+			id,
+			command,
+			startedAtMs: startedAtMs ?? this.#now(),
+			...(runtime === undefined ? {} : { runtime }),
+		});
 		return this.#persist();
 	}
 
@@ -193,7 +231,7 @@ export class TerminalManifestWriter {
 		this.#pending.clear();
 	}
 
-	#entryFor({ monitorId, spec }: MonitorRegistration): ManifestMonitor {
+	#entryFor({ monitorId, spec, runtime, deadlineMs }: MonitorRegistration): ManifestMonitor {
 		const createdAt = this.#now();
 		// A spec that omits `persistent` is ephemeral: the persisted field is a boolean the
 		// strict parse rejects as undefined, so coerce here rather than trusting the caller.
@@ -224,18 +262,32 @@ export class TerminalManifestWriter {
 			lastCheckpoint: null,
 			deliveryPaused: false,
 			fireWindow: { startMs: createdAt, count: 0 },
+			...(runtime === undefined ? {} : { runtime }),
+			...(deadlineMs === undefined || persistent ? {} : { deadlineMs }),
 		};
+	}
+
+	/** An empty manifest carries no state worth a file: unlink instead of writing `{[],[]}`. */
+	async #removeFile(): Promise<void> {
+		try {
+			await unlink(this.store.filePath);
+		} catch (error) {
+			if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error;
+		}
+		this.store.clear();
 	}
 
 	#persist(): Promise<void> {
 		const run = this.#tail.then(() =>
-			this.store.write({
-				version: TERMINAL_MANIFEST_VERSION,
-				sessionId: this.#sessionId,
-				monitors: [...this.#entries.values()],
-				backgroundSessions: [...this.#backgrounds.values()],
-				updatedAt: this.#now(),
-			}),
+			this.#entries.size === 0 && this.#backgrounds.size === 0
+				? this.#removeFile()
+				: this.store.write({
+						version: TERMINAL_MANIFEST_VERSION,
+						sessionId: this.#sessionId,
+						monitors: [...this.#entries.values()],
+						backgroundSessions: [...this.#backgrounds.values()],
+						updatedAt: this.#now(),
+					}),
 		);
 		this.#tail = run.then(
 			() => undefined,

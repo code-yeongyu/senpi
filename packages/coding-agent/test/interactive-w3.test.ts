@@ -77,7 +77,7 @@ async function fixture(label: string) {
 	return { root, cwd, sessionDir, client, opened, manager, fake };
 }
 
-describe("interactive-w3 shared-host regression contracts", () => {
+describe("interactive-w3 RPC host regression contracts", () => {
 	it("R4 mirrors compaction_start and compaction_end", async () => {
 		const f = await fixture("r4");
 		const seen: boolean[] = [];

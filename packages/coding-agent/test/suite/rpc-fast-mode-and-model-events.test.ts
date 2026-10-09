@@ -23,7 +23,7 @@ import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
  * assertions are on wire records, not on internal method calls.
  */
 
-const CODEX_PROVIDER = "openai-codex";
+const CODEX_PROVIDER = "chatgpt-subscription";
 const CODEX_API = "openai-codex-responses";
 const BASE_MODEL_ID = "gpt-5.6-sol";
 const ALT_MODEL_ID = "gpt-5.5";
@@ -386,7 +386,7 @@ describe("RPC fast-mode commands and model/tier events", () => {
 
 		// then: the wire reports the refusal instead of a false success
 		expect(response.success).toBe(false);
-		expect(response.error).toBe("Fast mode is only available for OpenAI Codex models.");
+		expect(response.error).toBe("Fast mode is only available for ChatGPT Subscription models.");
 		expect(readSettings(rpc.harness).modelServiceTiers).toBeUndefined();
 		expect((await rpc.send({ type: "get_state" })).data?.fastMode).toBe(false);
 	});

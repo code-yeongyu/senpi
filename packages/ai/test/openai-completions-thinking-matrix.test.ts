@@ -4,6 +4,8 @@ import { getModels } from "../src/compat.ts";
 import type { BuiltinProvider } from "../src/providers/all.ts";
 import type { Context, Model, ModelThinkingLevel, SimpleStreamOptions } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 type CapturedPayload = {
 	reasoning?: { effort?: string };
 	reasoning_effort?: string;
@@ -13,6 +15,12 @@ type CapturedPayload = {
 const context: Context = {
 	messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
 };
+
+/** The same model with no catalog ladder, so the provider's no-metadata fallback ladder applies. */
+function withoutCatalogLadder(model: Model<"openai-completions">): Model<"openai-completions"> {
+	const { thinkingLevelMap: _catalogLadder, ...rest } = model;
+	return rest;
+}
 
 async function capturePayload(
 	model: Model<"openai-completions">,
@@ -24,7 +32,7 @@ async function capturePayload(
 		baseUrl: "http://127.0.0.1:9",
 	};
 
-	const result = streamSimple(payloadCaptureModel, context, {
+	const result = streamSimple(payloadCaptureModel, normalizeContext(context), {
 		apiKey: "fake-key",
 		...(reasoning === undefined ? {} : { reasoning }),
 		onPayload: (payload) => {
@@ -52,7 +60,7 @@ async function captureDirectPayload(
 		baseUrl: "http://127.0.0.1:9",
 	};
 
-	const result = stream(payloadCaptureModel, context, {
+	const result = stream(payloadCaptureModel, normalizeContext(context), {
 		apiKey: "fake-key",
 		reasoningEffort: reasoningEffort as Exclude<ModelThinkingLevel, "off">,
 		onPayload: (payload) => {
@@ -113,8 +121,8 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 			expected: { thinking: { type: "enabled" }, reasoning_effort: "max" },
 		},
 		{
-			name: "OpenRouter DeepSeek's high-only ladder",
-			model: getOpenAICompletionsModel("openrouter", "deepseek/deepseek-r1"),
+			name: "OpenRouter DeepSeek's high-only fallback ladder",
+			model: withoutCatalogLadder(getOpenAICompletionsModel("openrouter", "deepseek/deepseek-r1")),
 			reasoning: "minimal" as const,
 			expected: { reasoning: { effort: "high" } },
 		},
@@ -233,11 +241,20 @@ describe("OpenAI Completions thinking ladder fallbacks", () => {
 		expect(await capturePayload(model, "max")).toMatchObject({ reasoning_effort: "high" });
 	});
 
-	it("does not send OpenRouter's none sentinel for mandatory Kimi K3 thinking", async () => {
-		const model = getOpenAICompletionsModel("openrouter", "moonshotai/kimi-k3");
+	it("does not send OpenRouter's none sentinel under the Kimi K3 fallback ladder", async () => {
+		const model = withoutCatalogLadder(getOpenAICompletionsModel("openrouter", "moonshotai/kimi-k3"));
 
 		const payload = await capturePayload(model);
 
+		expect(payload.reasoning).toBeUndefined();
+	});
+
+	it("does not send OpenRouter's none sentinel to a model the catalog marks reasoning-mandatory", async () => {
+		const model = getOpenAICompletionsModel("openrouter", "deepseek/deepseek-r1");
+
+		const payload = await capturePayload(model);
+
+		expect(model.thinkingLevelMap?.off).toBeNull();
 		expect(payload.reasoning).toBeUndefined();
 	});
 });

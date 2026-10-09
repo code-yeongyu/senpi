@@ -7,6 +7,7 @@ Themes are JSON files that define colors for the TUI.
 ## Table of Contents
 
 - [Locations](#locations)
+- [Use Your Terminal's Colors](#use-your-terminals-colors)
 - [Selecting a Theme](#selecting-a-theme)
 - [Creating a Custom Theme](#creating-a-custom-theme)
 - [Theme Format](#theme-format)
@@ -18,7 +19,7 @@ Themes are JSON files that define colors for the TUI.
 
 Pi loads themes from:
 
-- Built-in: `dark`, `light`
+- Built-in: `system`, `dark`, `light`, `grok-day`, `grok-night`
 - Global: `~/.senpi/agent/themes/*.json`
 - Project: `.senpi/themes/*.json` (only after the project is trusted)
 - Packages: `themes/` directories or `pi.themes` entries in `package.json`
@@ -26,6 +27,25 @@ Pi loads themes from:
 - CLI: `--theme <path>` (repeatable)
 
 Disable discovery with `--no-themes`.
+
+## Use Your Terminal's Colors
+
+The `system` theme is the default. It builds senpi's colors from your terminal's own palette, so senpi matches the terminal instead of bringing its own colors:
+
+- senpi queries the terminal's default foreground and background colors and its 16 ANSI colors.
+- Each color takes its hue from one ANSI color, for example errors from red and links from blue.
+- Each color's lightness is set so it stands out from the background by a minimum contrast. Body text keeps at least a 4.5:1 WCAG contrast ratio on the background and every panel.
+- When the terminal switches between light and dark, senpi queries the colors again and rebuilds the theme.
+
+The theme adapts to what the terminal reports:
+
+| Terminal reports | Result |
+|---|---|
+| Background and ANSI colors | Colors from the terminal palette, placed for the actual background. |
+| Background only | senpi's own hues, placed for the actual background. |
+| Nothing | ANSI color indices and the terminal's default colors, which the terminal renders itself. Secondary text is faint, and panels have no background color. |
+
+senpi asks the terminal for its colors at startup and waits at most 100 ms before showing the startup header. If the answer arrives later, for example over a slow SSH connection, the colors are applied when it lands. `system` is a reserved name: a custom theme with that name is ignored.
 
 ## Selecting a Theme
 
@@ -37,7 +57,7 @@ Select a theme via `/settings` or in `settings.json`:
 }
 ```
 
-On first run, pi detects your terminal background and defaults to `dark` or `light`.
+Without a `theme` setting, senpi uses `system`. To decide whether the terminal is light or dark, senpi reads the reported background color first, then the terminal's light/dark notification, then the `COLORFGBG` environment variable, and falls back to dark. The same decision picks the theme of a `light/dark` pair and the appearance of `system`.
 
 ### Initial Theme
 
@@ -88,7 +108,8 @@ vim ~/.senpi/agent/themes/my-theme.json
     "text": "",
     "thinkingText": "secondary",
     "selectedBg": "#2d2d30",
-    "scrollbarThumb": "#555566",
+    "scrollbarTrack": "secondary",
+    "scrollbarThumb": "",
     "searchMatchBg": "#2d2d30",
     "searchMatchText": "",
     "userMessageBg": "#2d2d30",
@@ -159,16 +180,17 @@ vim ~/.senpi/agent/themes/my-theme.json
 ```
 
 - `name` is required, must be unique, and must not contain `/`.
+- `appearance` is optional: `"dark"` or `"light"`, the background the theme is designed for. When omitted, senpi detects it from the theme colors.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below.
+- `colors` must define all 51 required tokens. `thinkingMax`, `scrollbarTrack`, `scrollbarThumb`, and the two search highlight tokens are optional and use the fallbacks listed below.
 
 The `$schema` field enables editor auto-completion and validation.
 
 ## Color Tokens
 
-Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `scrollbarThumb` and `searchMatchBg` fall back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
+Every theme must define all 51 required color tokens. The optional tokens preserve compatibility with existing themes: `thinkingMax` falls back to `thinkingXhigh`, `scrollbarTrack` falls back to `muted`, `scrollbarThumb` falls back to `text`, `searchMatchBg` falls back to `selectedBg`, and `searchMatchText` falls back to `text`. Other search matches use `searchMatchText` on `searchMatchBg` with an underline; the current match reverses that foreground/background pair and uses bold text.
 
-### Core UI (11 colors)
+### Core UI (11 required, 2 optional)
 
 | Token | Purpose |
 |-------|---------|
@@ -183,13 +205,14 @@ Every theme must define all 51 required color tokens. The optional tokens preser
 | `dim` | Tertiary text |
 | `text` | Default text (usually `""`) |
 | `thinkingText` | Thinking block text |
+| `scrollbarTrack` | Fullscreen scrollbar track foreground; optional, falls back to `muted` |
+| `scrollbarThumb` | Fullscreen scrollbar thumb foreground, shared by normal and expanded states; optional, falls back to `text` |
 
-### Backgrounds & Content (11 required, 3 optional)
+### Backgrounds & Content (11 required, 2 optional)
 
 | Token | Purpose |
 |-------|---------|
 | `selectedBg` | Selected line background |
-| `scrollbarThumb` | Fullscreen scrollbar thumb background; optional, falls back to `selectedBg` |
 | `searchMatchBg` | Transcript search match background and current-match text; optional, falls back to `selectedBg` |
 | `searchMatchText` | Transcript search match text and current-match background; optional, falls back to `text` |
 | `userMessageBg` | User message background |
@@ -276,11 +299,13 @@ The `export` section controls colors for `/export` HTML output. If omitted, colo
 
 ## Color Values
 
-Four formats are supported:
+Six formats are supported:
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| Hex | `"#ff0000"` | 6-digit hex RGB |
+| Hex | `"#f00"` or `"#ff0000"` | 3- or 6-digit hex RGB |
+| OKLCH | `"oklch(62% 0.1 200)"` | Perceptual lightness, chroma, and hue |
+| OKHSL | `"okhsl(250 60% 55%)"` | Hue, saturation, and lightness. Saturation is relative to the most the sRGB gamut allows at that hue and lightness, so every value is in gamut |
 | 256-color | `39` | xterm 256-color palette index (0-255) |
 | Variable | `"primary"` | Reference to a `vars` entry |
 | Default | `""` | Terminal's default color |
@@ -293,7 +318,7 @@ Four formats are supported:
 
 ### Terminal Compatibility
 
-Pi uses 24-bit RGB colors. Most modern terminals support this (iTerm2, Kitty, WezTerm, Windows Terminal, VS Code). For older terminals with only 256-color support, pi falls back to the nearest approximation.
+Pi uses 24-bit RGB colors. Most modern terminals support this (iTerm2, Kitty, WezTerm, Windows Terminal, VS Code). For older terminals with only 256-color support, pi falls back to the nearest approximation. OKLCH values are gamut-mapped to sRGB, and HTML exports convert OKHSL values to hex because CSS does not support them. Terminals with `TERM=*-direct` are detected as truecolor.
 
 Check truecolor support:
 

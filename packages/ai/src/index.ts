@@ -9,7 +9,10 @@ export type { AnthropicEffort, AnthropicOptions, AnthropicThinkingDisplay } from
 export { sanitizeAnthropicToolPairs } from "./api/anthropic-tool-pairs.ts";
 export type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 export type { BedrockOptions, BedrockThinkingDisplay } from "./api/bedrock-converse-stream.ts";
-export { measureCursorHistorySerializedBytes } from "./api/cursor-agent/measure.ts";
+export {
+	measureCursorHistorySerializedBytes,
+	measureCursorModelInputSerializedBytes,
+} from "./api/cursor-agent/measure.ts";
 export {
 	composeShellCommand as composeCursorShellCommand,
 	omitUndefinedArgs as omitUndefinedCursorArgs,
@@ -33,9 +36,13 @@ export type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./api/
 export type { GoogleVertexOptions } from "./api/google-vertex.ts";
 export * from "./api/lazy.ts";
 export type { MistralOptions } from "./api/mistral-conversations.ts";
-export type { OpenAICodexResponsesOptions, OpenAICodexWebSocketDebugStats } from "./api/openai-codex-responses.ts";
+export type {
+	ChatGptSubscriptionWebSocketDebugStats,
+	OpenAICodexResponsesOptions,
+} from "./api/openai-codex-responses.ts";
 export type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 export type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
+export { isOpenAIResponsesPromptCacheModel } from "./api/openai-responses-prompt-cache.ts";
 export { convertResponsesMessages } from "./api/openai-responses-shared.ts";
 export type { PiMessagesEvent, PiMessagesOptions, PiMessagesRewriteImpact } from "./api/pi-messages.ts";
 export {
@@ -85,10 +92,14 @@ export {
 	renderCursorCliModelString,
 	resolveCursorSelectionDescriptor,
 } from "./cursor/selection-descriptor.ts";
+export * from "./endpoint-reasoning-efforts.ts";
 export * from "./env-api-keys.ts";
-export * from "./images-models.ts";
+export * from "./legacy-provider-ids.ts";
+export { modelSupportsAssistantPrefill } from "./model.ts";
 export * from "./models.ts";
 export * from "./models-store.ts";
+export { supportsAllowedToolChoice } from "./openai-responses-compat.ts";
+export * from "./provider-diagnostic.ts";
 export * from "./providers/faux.ts";
 export * from "./session-resources.ts";
 export {
@@ -103,30 +114,37 @@ export {
 export { createXtmlRecoveryStreamParser } from "./tool-call-middleware/protocols/kimi-xtml/recovery-stream.ts";
 export { wrapStreamWithInvokeRecovery } from "./tool-call-middleware/recovery-stream-wrapper.ts";
 export * from "./types.ts";
+export * from "./utils/assistant-message-frame.ts";
 export {
 	type CursorExecResolvedCarrier,
 	copyCursorExecResolved,
 	isCursorExecResolved,
 	kCursorExecResolved,
 } from "./utils/block-symbols.ts";
+export { extractChatGptSubscriptionAccountId } from "./utils/chatgpt-subscription-auth.ts";
 export * from "./utils/diagnostics.ts";
 export { dropFailedAssistantTurns } from "./utils/drop-failed-assistant-turns.ts";
+export * from "./utils/empty-response-errors.ts";
 export { estimateContextTokens } from "./utils/estimate.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
-export { extractOpenAiCodexAccountId } from "./utils/openai-codex-auth.ts";
 export * from "./utils/overflow.ts";
 export {
 	isAnthropicApiBaseUrl,
 	PROMPT_CACHE_TTL_LONG_SECONDS,
+	PROMPT_CACHE_TTL_OPENAI_EXTENDED_SECONDS,
 	PROMPT_CACHE_TTL_SHORT_SECONDS,
+	type PromptCacheLifetime,
+	resolvePromptCacheLifetime,
 	resolvePromptCacheTtlSeconds,
 } from "./utils/prompt-cache-ttl.ts";
+export * from "./utils/provider-failure-description.ts";
 export * from "./utils/retry.ts";
 export * from "./utils/server-fallback-receipt.ts";
 export * from "./utils/stop-details.ts";
-export { contentText } from "./utils/text.ts";
+export { contentText, getSystemMessageText, renderSystemMessageUpdate } from "./utils/text.ts";
 export * from "./utils/tool-pair-repair.ts";
+export * from "./utils/transcript.ts";
 export * from "./utils/typebox-helpers.ts";
 export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";

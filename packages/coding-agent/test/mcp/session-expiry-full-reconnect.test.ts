@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	attach,
 	awaitMcpToolRegistration,
@@ -39,7 +40,7 @@ describe("MCP session expiry full reconnect", () => {
 			{ value: "after-expiry" },
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 
 		expect(textContent(result)).toBe("fixture tool_1 value=after-expiry mode=alpha");
@@ -56,7 +57,13 @@ describe("MCP session expiry full reconnect", () => {
 		const callTool = vi.spyOn(Client.prototype, "callTool");
 
 		await expect(
-			tool.execute("tc-persistent-expiry", { value: "still-expired" }, undefined, undefined, testContext()),
+			tool.execute(
+				"tc-persistent-expiry",
+				{ value: "still-expired" },
+				undefined,
+				undefined,
+				testContext() as ExtensionToolContext,
+			),
 		).rejects.toThrow(/run \/mcp reconnect fx/);
 
 		expect(connection.state).toBe("suspended");
@@ -72,7 +79,7 @@ describe("MCP session expiry full reconnect", () => {
 			{ value: "ordinary" },
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 
 		expect(textContent(result)).toBe("fixture tool_1 value=ordinary mode=alpha");

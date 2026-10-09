@@ -252,17 +252,21 @@ export default function openaiWebSearchExtension(pi: ExtensionAPI): void {
 		clearUi(ctx);
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (!supportsNativeOpenAiWebSearch(ctx.model)) {
-			return undefined;
-		}
+	pi.on(
+		"before_agent_start",
+		async (event, ctx) => {
+			if (!supportsNativeOpenAiWebSearch(ctx.model)) {
+				return undefined;
+			}
 
-		if (!isOpenaiWebSearchEnabled()) {
-			return undefined;
-		}
+			if (!isOpenaiWebSearchEnabled()) {
+				return undefined;
+			}
 
-		return {
-			systemPrompt: `${event.systemPrompt}\n${OPENAI_WEB_SEARCH_SECTION}`,
-		};
-	});
+			return {
+				systemPrompt: `${event.systemPrompt}\n${OPENAI_WEB_SEARCH_SECTION}`,
+			};
+		},
+		{ previewSafe: true },
+	);
 }

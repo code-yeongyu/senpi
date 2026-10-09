@@ -12,6 +12,7 @@ on:
       - '.gitignore'
       - 'package.json'
       - 'packages/ai/**'
+      - 'scripts/model-catalog-protocol.ts'
       - 'scripts/publish-model-catalog.mjs'
   # GitHub schedules use UTC. Run hourly candidates across the CET/CEST
   # boundaries; the publish job only uploads at 10:17, 12:17, and 14:17
@@ -71,7 +72,9 @@ jobs:
           retention-days: 14
 
   publish:
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+    # The upload targets the upstream pi-artifacts R2 bucket, whose credentials only the upstream
+    # repository holds. Forks generate and validate the catalog but never publish it (senpi#1522).
+    if: ${{ github.repository == 'badlogic/pi-mono' && (github.event_name == 'schedule' || github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}
     needs: generate
     runs-on: ubuntu-latest
     environment: pi-model-upload
@@ -136,8 +139,18 @@ jobs:
           echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
           echo "R2 publication allowed: $allowed ($reason; local time: $local_time)"
 
+      - name: Check R2 credentials
+        id: r2-credentials
+        run: |
+          if [[ -n "${AWS_ACCESS_KEY_ID}" && -n "${AWS_SECRET_ACCESS_KEY}" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::R2 credentials are not configured for this repository; skipping the model catalog upload."
+          fi
+
       - name: Publish model catalog to R2
-        if: steps.publication-window.outputs.allowed == 'true'
+        if: steps.publication-window.outputs.allowed == 'true' && steps.r2-credentials.outputs.configured == 'true'
         run: |
           node scripts/publish-model-catalog.mjs \
             --input .artifacts/model-catalog \

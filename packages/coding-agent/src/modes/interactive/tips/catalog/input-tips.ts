@@ -2,6 +2,12 @@ import type { TipDefinition } from "./types.ts";
 
 export const INPUT_TIPS = [
 	{
+		id: "click-pending-question",
+		bindings: [],
+		render: () =>
+			"Click a pending question's option to answer. Use the displayed selection-bypass modifier to select terminal text, or disable terminal.mouse in /settings.",
+	},
+	{
 		id: "queue-follow-up",
 		bindings: ["app.message.followUp"],
 		render: (keys) =>
@@ -84,5 +90,17 @@ export const INPUT_TIPS = [
 		id: "drag-drop-files",
 		bindings: [],
 		render: () => "Drag and drop files into the terminal to add their paths to your prompt.",
+	},
+	{
+		id: "answer-agent-question",
+		bindings: [],
+		render: () =>
+			"When the agent asks you a question, pick options with digits or arrows, press Enter to advance, and use the final Submit tab for a comment or partial answers; anything unanswered is reported back as unanswered.",
+	},
+	{
+		id: "open-pending-question",
+		bindings: ["app.question.answer", "app.question.next"],
+		render: (keys) =>
+			`Pending questions queue above the editor. An empty-composer digit selects an option; ${keys("app.question.answer")} opens the shown request and ${keys("app.question.next")} cycles requests. /answer lists them.`,
 	},
 ] satisfies readonly TipDefinition[];

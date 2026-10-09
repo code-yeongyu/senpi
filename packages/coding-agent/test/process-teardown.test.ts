@@ -15,12 +15,13 @@ function spawnChurner(root: string, termMarker: string, exitsOnTerm = false): Ch
 		for (let i = 0; i < 20000; i++) {
 			fs.mkdirSync(path.join(root, "initial-" + i));
 		}
-		// fs.writeSync, not process.stdout.write: pipe writes are async on
-		// macOS, and process.exit() right after an async write discards it, so
-		// the acknowledgement the parent waits on would be lost under load.
-		fs.writeSync(1, "ready\\n");
 		let i = 0;
 		let interval;
+		// Install the SIGTERM handler BEFORE announcing readiness: the parent
+		// sends SIGTERM as soon as it reads "ready", and a signal that lands in
+		// the gap between the write and process.on() takes the default action,
+		// so the child dies without ever writing "term-observed" (seen on a
+		// loaded CI runner as 'child closed before writing "term-observed"').
 		process.on("SIGTERM", () => {
 			fs.writeFileSync(termMarker, "term-observed");
 			fs.writeSync(1, "term-observed\\n");
@@ -29,6 +30,10 @@ function spawnChurner(root: string, termMarker: string, exitsOnTerm = false): Ch
 				process.exit(0);
 			}
 		});
+		// fs.writeSync, not process.stdout.write: pipe writes are async on
+		// macOS, and process.exit() right after an async write discards it, so
+		// the acknowledgement the parent waits on would be lost under load.
+		fs.writeSync(1, "ready\\n");
 		interval = setInterval(() => {
 			try {
 				const dir = path.join(root, "live-" + i++);

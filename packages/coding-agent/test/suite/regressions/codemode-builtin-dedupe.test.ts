@@ -118,7 +118,7 @@ process.stdout.write(JSON.stringify({
 		expect(result.evalExtensions).toHaveLength(1);
 		expect(result.evalExtensions[0]).toMatchObject({
 			path: CODEMODE_ENTRY,
-			sourceInfo: { source: "local", scope: "temporary", origin: "top-level" },
+			sourceInfo: { source: "builtin", scope: "system", origin: "top-level" },
 			description: expect.any(String),
 			sessionStartHandlers: 1,
 		});
@@ -155,7 +155,7 @@ export default function(pi) {
 		expect(result.evalExtensions).toHaveLength(1);
 		expect(result.evalExtensions[0]).toMatchObject({
 			path: CODEMODE_ENTRY,
-			sourceInfo: { source: "local", scope: "temporary", origin: "top-level" },
+			sourceInfo: { source: "builtin", scope: "system", origin: "top-level" },
 		});
 		expect(result.evalExtensions[0]?.description).not.toBe("user configured codemode");
 	});

@@ -82,7 +82,10 @@ export const COMPLETIONS_COMPAT = {
 	sessionAffinityFormat: "openai",
 	supportsPromptCacheKey: false,
 	supportsMaxOutputTokens: true,
+	supportsForcedToolChoice: true,
 	supportsLongCacheRetention: true,
+	supportsMidConvoSystemMessages: false,
+	supportsMidConvoToolAdditions: false,
 } satisfies Omit<
 	Required<OpenAICompletionsCompat>,
 	| "cacheControlFormat"
@@ -91,6 +94,7 @@ export const COMPLETIONS_COMPAT = {
 	| "toolSchemaFlavor"
 	| "thinkingTokenBudgetField"
 	| "vllmPriority"
+	| "veniceParameters"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	toolCallFormat?: OpenAICompletionsCompat["toolCallFormat"];

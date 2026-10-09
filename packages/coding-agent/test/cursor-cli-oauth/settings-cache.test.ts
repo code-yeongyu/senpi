@@ -50,7 +50,7 @@ describe("Cursor CLI OAuth provider settings cache", () => {
 		for (let i = 0; i < N; i++) loadCursorCliOauthProviderSettingsFromDisk(cwd);
 
 		expect(createSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
-		// The loader caches by (cwd, mtime, size); unchanged files must not create
+		// The loader caches by (cwd, file content revision); unchanged files must not create
 		// a fresh SettingsManager + locked disk reads on every call. Current code
 		// has no cache => N creates.
 		expect(createSpy.mock.calls.length).toBeLessThan(N);

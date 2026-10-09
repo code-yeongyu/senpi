@@ -172,6 +172,14 @@ describe("MonitorRegistry change notification", () => {
 				description: "quick echo watch",
 				paused: false,
 				startedAtMs: expect.any(Number),
+				command: "printf 'one\\n'",
+				filter: null,
+				persistent: false,
+				deadlineMs: expect.any(Number),
+				fireCount: 0,
+				lastFiredAtMs: null,
+				expiresAt: undefined,
+				fireWindow: undefined,
 			},
 		]);
 		await settled.promise;
@@ -230,6 +238,7 @@ describe("terminal extension footer status wiring", () => {
 			registerTool: (tool: { name: string; execute: (id: string, input: MonitorInput) => Promise<unknown> }) => {
 				tools.set(tool.name, tool);
 			},
+			registerMessageRenderer: () => {},
 			on: (event: string, handler: Handler) => {
 				const existing = handlers.get(event) ?? [];
 				existing.push(handler);

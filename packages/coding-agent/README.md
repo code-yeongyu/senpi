@@ -123,6 +123,7 @@ For each built-in provider, pi maintains a list of tool-capable models. Configur
 - Mistral
 - Groq
 - Cerebras
+- Venice AI
 - Cloudflare AI Gateway
 - Cloudflare Workers AI
 - xAI
@@ -161,7 +162,7 @@ The interface from top to bottom:
 
 - **Startup header** - Shows shortcuts (`/hotkeys` for all), loaded AGENTS.md files, prompt templates, skills, and extensions
 - **Messages** - Your messages, assistant responses, tool calls and results, notifications, errors, and extension UI
-- **Editor** - Where you type; border color indicates thinking level
+- **Editor** - Where you type; border color indicates thinking level and the border shows the streaming working indicator
 - **Footer** - Working directory, session name, total token/cache usage (`↑` input, `↓` output, `R` cache read, `W` cache write, `CH` latest cache hit rate), cost, context usage, current model. Totals include assistant responses, usage reported by tools, and summary generation.
 
 The editor can be temporarily replaced by other UI, like built-in `/settings` or custom UI from extensions (e.g., a Q&A tool that lets the user answer model questions in a structured format). [Extensions](#extensions) can also replace the editor, add widgets above/below it, a status line, custom footer, or overlays.
@@ -187,13 +188,13 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 |---------|-------------|
 | `/login`, `/logout` | Manage provider credentials |
 | [`/llama`](docs/llama-cpp.md) | Download, load, and unload llama.cpp router models |
-| `/model` | Switch models; Ctrl+S in the picker saves the startup default |
+| `/model` | Switch this session's model; Ctrl+S in the picker, or `/model <id> --default`, also makes it the startup default |
 | `/thinking` | Switch thinking level; Ctrl+S in the picker saves the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Theme, message delivery, transport, and other preferences |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
-| `/name <name>` | Set session display name |
+| `/rename [name]` | Rename the current session (`/name` is an alias) |
 | `/session` | Show session info (file, ID, messages, tokens, cost) |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/trust` | Save project trust decision for future sessions (restart required) |
@@ -271,6 +272,7 @@ Use `/session` in interactive mode to see the current session ID before reusing 
 - Search by typing, fold/unfold and jump between branches with Ctrl+←/Ctrl+→ or Alt+←/Alt+→, page with ←/→
 - Filter modes (Ctrl+O): default → no-tools → user-only → labeled-only → all
 - Press Ctrl+X to copy the selected message
+- Press Ctrl+E on an assistant response to edit it and continue from the edited copy
 - Press Shift+L to label entries as bookmarks and Shift+T to toggle label timestamps
 
 **`/fork`** - Create a new session file from a previous user message on the active branch. Opens a selector, copies the active path up to that point, and places the selected prompt in the editor for modification.
@@ -747,11 +749,13 @@ Commands run by the LLM-callable bash tool also receive current session metadata
 |----------|-------------|
 | `PI_SESSION_ID` | Current session ID |
 | `PI_SESSION_FILE` | Absolute session JSONL path; unset for ephemeral sessions |
+| `PI_SESSION_CWD` | Current session working directory |
+| `PI_GOAL_STORE_FILE` | Absolute session goal-store path, including in-memory sessions; the file need not exist yet |
 | `PI_PROVIDER` | Currently selected model provider |
 | `PI_MODEL` | Currently selected model ID |
 | `PI_REASONING_LEVEL` | Current effective reasoning level |
 
-These values are resolved when each command starts. See [Environment Variables](docs/environment-variables.md#bash-tool-session-environment) for semantics, examples, and custom-tool opt-out.
+These values are resolved when each command starts, including terminal-extension PTY bash. Eval kernels snapshot them at kernel start and pass them to their children. See [Environment Variables](docs/environment-variables.md#shell-tool-session-environment) for semantics, examples, and custom-tool opt-out.
 
 ---
 

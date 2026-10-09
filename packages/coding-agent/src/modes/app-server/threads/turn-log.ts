@@ -63,6 +63,12 @@ export class TurnLog {
 		turn.error = completion.error ?? null;
 	}
 
+	discardTurn(threadId: string, turnId: string): void {
+		const turns = this.getThreadTurns(threadId);
+		const index = turns.findIndex((candidate) => candidate.turnId === turnId);
+		if (index !== -1) turns.splice(index, 1);
+	}
+
 	readTurns(threadId: string): LoggedTurn[] {
 		return this.getThreadTurns(threadId).map(cloneTurn);
 	}

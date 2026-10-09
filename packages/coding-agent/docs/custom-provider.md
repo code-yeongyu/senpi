@@ -419,25 +419,31 @@ For providers with non-standard APIs, implement `streamSimple`. Study the existi
 
 ### Stream Pattern
 
+The stream receives a normalized `TranscriptContext`. System prompts and tool declarations live in transcript system messages, so read them with `getCurrentSystemPrompt(context.messages)` and `getCurrentTools(context.messages)` instead of `context.systemPrompt` and `context.tools`. When the provider exposes parsed stream events, await `options.onProviderStreamEvent?.(providerEvent, model)` for each one before normalizing it.
+
 All providers follow the same pattern:
 
 ```typescript
 import {
   type AssistantMessage,
   type AssistantMessageEventStream,
-  type Context,
   type Model,
   type SimpleStreamOptions,
+  type TranscriptContext,
   calculateCost,
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
 } from "@earendil-works/pi-ai";
 
 function streamMyProvider(
   model: Model<any>,
-  context: Context,
+  context: TranscriptContext,
   options?: SimpleStreamOptions
 ): AssistantMessageEventStream {
   const stream = createAssistantMessageEventStream();
+  const systemPrompt = getCurrentSystemPrompt(context.messages);
+  const tools = getCurrentTools(context.messages);
 
   (async () => {
     // Initialize output message
@@ -684,7 +690,7 @@ interface ProviderConfig {
   /** Custom streaming implementation for non-standard APIs. */
   streamSimple?: (
     model: Model<Api>,
-    context: Context,
+    context: TranscriptContext,
     options?: SimpleStreamOptions
   ) => AssistantMessageEventStream;
 

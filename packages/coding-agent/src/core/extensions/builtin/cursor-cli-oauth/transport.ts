@@ -1,5 +1,6 @@
 import { type ChildProcessByStdio, spawn } from "node:child_process";
 import type { Readable } from "node:stream";
+import { cursorAgentEnvironment } from "./environment.ts";
 import {
 	type CursorAgentExecutableDeps,
 	defaultCursorAgentExecutableDeps,
@@ -111,18 +112,6 @@ class AsyncEventQueue<T> implements AsyncIterableIterator<T> {
 	}
 }
 
-function explicitEnvironment(accountHome: string): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = {
-		HOME: accountHome,
-		AGENT_CLI_CREDENTIAL_STORE: "file",
-	};
-	for (const name of ["PATH", "TERM", "LANG", "LC_ALL", "FORCE_COLOR"] as const) {
-		const value = process.env[name];
-		if (value !== undefined) env[name] = value;
-	}
-	return env;
-}
-
 function killProcessGroup(child: ChildProcessByStdio<null, Readable, Readable>, signal: NodeJS.Signals): void {
 	const pid = child.pid;
 	if (pid === undefined) return;
@@ -152,7 +141,7 @@ export function spawnCursorCli(input: CursorCliTransportInput): CursorCliTranspo
 	const child = spawn(executable, buildCursorCliArgs(input), {
 		cwd: input.cwd,
 		detached: true,
-		env: explicitEnvironment(input.accountHome),
+		env: cursorAgentEnvironment(input.accountHome),
 		stdio: ["ignore", "pipe", "pipe"],
 		windowsHide: true,
 	});

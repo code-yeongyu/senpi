@@ -1,63 +1,66 @@
+import type { AccountLoginReceipt } from "@earendil-works/pi-ai";
+import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import {
 	getCredentialAccounts,
 	pinCredentialAccount,
 	removeCredentialAccount,
 } from "../../../core/credential-accounts.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../types.ts";
-import { emitProviderAccountsChanged } from "./claude-sdk-oauth/account-events.ts";
+import { accountDisplayNameCommand, promptAccountDisplayName } from "./account-display-name.ts";
+import { emitProviderAccountsChanged } from "./anthropic-subscription/account-events.ts";
+import { createExtensionLoginInteraction, LOGIN_CANCELLED_MESSAGE } from "./oauth-login-interaction.ts";
 
-const OPENAI_CODEX_PROVIDER_ID = "openai-codex";
-const LOGIN_CANCELLED_MESSAGE = "Login cancelled";
+const CHATGPT_SUBSCRIPTION_PROVIDER_ID = "chatgpt-subscription";
+const CHATGPT_SUBSCRIPTION_PROVIDER_LABEL = "ChatGPT Subscription OAuth";
+
+export interface GptAccountExtensionDeps {
+	/** Browser launcher for the browser login method; tests inject a recorder. */
+	readonly openBrowser?: ((url: string) => void) | undefined;
+}
 
 function parseArgs(rawArgs: string): string[] {
 	return rawArgs.trim().split(/\s+/).filter(Boolean);
 }
 
 function usage(ctx: ExtensionCommandContext): void {
-	ctx.ui.notify("Usage: /gpt-account [add | remove <name> | pin <name> | unpin]", "error");
-}
-
-function authEventMessage(event: unknown): string {
-	if (event === null || typeof event !== "object") return "OpenAI Codex OAuth authentication update.";
-	const value = event as Record<string, unknown>;
-	if (value.type === "auth_url" && typeof value.url === "string") {
-		return `Open this URL to authorize OpenAI Codex OAuth:\n${value.url}`;
-	}
-	if (value.type === "device_code" && typeof value.verificationUri === "string") {
-		return `Open this URL to authorize OpenAI Codex OAuth:\n${value.verificationUri}`;
-	}
-	return typeof value.message === "string" ? value.message : "OpenAI Codex OAuth authentication update.";
+	ctx.ui.notify(
+		"Usage: /gpt-account [add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+		"error",
+	);
 }
 
 async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
-	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, OPENAI_CODEX_PROVIDER_ID);
-	const lines = ["OpenAI Codex OAuth accounts:"];
+	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID);
+	const lines = ["ChatGPT Subscription OAuth accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
 	for (const account of accounts) {
-		const states = [account.name, account.source, account.blocked ? "blocked" : "available"];
+		const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
 		if (account.pinned) states.push("pinned");
 		lines.push(`  ${states.join(" | ")}`);
 	}
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
-async function addAccount(ctx: ExtensionCommandContext): Promise<void> {
+async function addAccount(ctx: ExtensionCommandContext, deps: GptAccountExtensionDeps): Promise<void> {
 	if (!ctx.hasUI) {
 		ctx.ui.notify("/gpt-account add requires an interactive UI.", "error");
 		return;
 	}
 	try {
-		await ctx.modelRegistry.modelRuntime.login(OPENAI_CODEX_PROVIDER_ID, "oauth", {
-			signal: ctx.signal,
-			prompt: async (prompt) => {
-				const answer = await ctx.ui.input(prompt.message);
-				if (answer === undefined) throw new Error(LOGIN_CANCELLED_MESSAGE);
-				return answer;
+		let receipt: AccountLoginReceipt | undefined;
+		await ctx.modelRegistry.modelRuntime.login(CHATGPT_SUBSCRIPTION_PROVIDER_ID, "oauth", {
+			...createExtensionLoginInteraction(ctx, {
+				providerLabel: CHATGPT_SUBSCRIPTION_PROVIDER_LABEL,
+				providerId: CHATGPT_SUBSCRIPTION_PROVIDER_ID,
+				openBrowser: deps.openBrowser,
+			}),
+			onAccountCommitted: (committed) => {
+				receipt = committed;
 			},
-			notify: (event) => ctx.ui.notify(authEventMessage(event), "info"),
 		});
-		emitProviderAccountsChanged(OPENAI_CODEX_PROVIDER_ID);
-		ctx.ui.notify("OpenAI Codex OAuth account added.", "info");
+		emitProviderAccountsChanged(CHATGPT_SUBSCRIPTION_PROVIDER_ID);
+		ctx.ui.notify("ChatGPT Subscription OAuth account added.", "info");
+		await promptAccountDisplayName(ctx, receipt);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (message === LOGIN_CANCELLED_MESSAGE) return;
@@ -70,8 +73,8 @@ async function removeAccount(ctx: ExtensionCommandContext, name: string | undefi
 		usage(ctx);
 		return;
 	}
-	await removeCredentialAccount(ctx.modelRegistry.authStorage, OPENAI_CODEX_PROVIDER_ID, name);
-	ctx.ui.notify(`Removed OpenAI Codex OAuth account '${name}'.`, "info");
+	await removeCredentialAccount(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID, name);
+	ctx.ui.notify(`Removed ChatGPT Subscription OAuth account '${name}'.`, "info");
 }
 
 async function pinAccount(ctx: ExtensionCommandContext, name: string | undefined): Promise<void> {
@@ -79,15 +82,17 @@ async function pinAccount(ctx: ExtensionCommandContext, name: string | undefined
 		usage(ctx);
 		return;
 	}
-	await pinCredentialAccount(ctx.modelRegistry.authStorage, OPENAI_CODEX_PROVIDER_ID, name);
-	ctx.ui.notify(`Pinned OpenAI Codex OAuth account '${name}'.`, "info");
+	await pinCredentialAccount(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID, name);
+	ctx.ui.notify(`Pinned ChatGPT Subscription OAuth account '${name}'.`, "info");
 }
 
-export default function gptAccountExtension(pi: ExtensionAPI): void {
+export default function gptAccountExtension(pi: ExtensionAPI, deps: GptAccountExtensionDeps = {}): void {
 	pi.registerCommand("gpt-account", {
-		description: "List and manage OpenAI Codex OAuth accounts.",
-		argumentHint: "[add | remove <name> | pin <name> | unpin]",
+		description: "List and manage ChatGPT Subscription OAuth accounts.",
+		argumentHint: "[add | remove <id> | pin <id> | unpin | rename <id> <display name...> | clear-name <id>]",
+		requiresArguments: false,
 		handler: async (rawArgs, ctx) => {
+			if (await accountDisplayNameCommand(ctx, CHATGPT_SUBSCRIPTION_PROVIDER_ID, rawArgs)) return;
 			const args = parseArgs(rawArgs);
 			const action = args[0] ?? "list";
 			try {
@@ -96,7 +101,7 @@ export default function gptAccountExtension(pi: ExtensionAPI): void {
 					return;
 				}
 				if (action === "add") {
-					await addAccount(ctx);
+					await addAccount(ctx, deps);
 					return;
 				}
 				if (action === "remove") {
@@ -108,8 +113,8 @@ export default function gptAccountExtension(pi: ExtensionAPI): void {
 					return;
 				}
 				if (action === "unpin" || (action === "pin" && args[1] === "unpin")) {
-					await pinCredentialAccount(ctx.modelRegistry.authStorage, OPENAI_CODEX_PROVIDER_ID, null);
-					ctx.ui.notify("Unpinned OpenAI Codex OAuth account.", "info");
+					await pinCredentialAccount(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID, null);
+					ctx.ui.notify("Unpinned ChatGPT Subscription OAuth account.", "info");
 					return;
 				}
 				usage(ctx);

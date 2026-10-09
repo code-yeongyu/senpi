@@ -1,5 +1,16 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Message, TextContent, ThinkingSelection, Usage } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	SystemMessage,
+	TextContent,
+	ThinkingSelection,
+	ToolResultMessage,
+	Usage,
+	UserMessage,
+} from "@earendil-works/pi-ai";
+import { getCurrentSystemMessage, normalizeProviderId } from "@earendil-works/pi-ai";
 import { randomBytes, randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -10,16 +21,41 @@ import {
 	readdirSync,
 	readFileSync,
 	readSync,
+	rmSync,
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir } from "fs/promises";
+import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
 import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
-import { listSessionInfos, listSessionsFromDir, type SessionListProgress } from "./session-discovery.ts";
+import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
+import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
+import { sessionCwdMatcher } from "./moved-session-cwd.ts";
+import type { RepositoryIdentity } from "./repository-identity.ts";
+import {
+	ALL_SESSION_LIST_PUBLISH_INTERVAL,
+	listSessionFilesInDir,
+	listSessionsFromDir,
+	type SessionListProgress,
+	sortSessionInfos,
+} from "./session-discovery.ts";
+import { materializeSessionEntries } from "./session-entry-materializer.ts";
+import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import {
+	discardFailedFirstFlush,
+	discardFailedFirstFlushAsync,
+	truncateToLastCompleteLine,
+} from "./session-write-recovery.ts";
+import {
+	hasOtherLiveSessionWriter,
+	registerSessionWriter,
+	reserveSessionWrite,
+	unregisterSessionWriter,
+} from "./session-write-reservation.ts";
+import { isVirtualModel } from "./virtual-models.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
 
@@ -53,6 +89,32 @@ import {
 	createCustomMessage,
 } from "./messages.ts";
 
+/**
+ * Whether `value` is plain JSON: null, booleans, finite numbers, strings, arrays of those, and objects
+ * with a plain prototype. Object properties that are undefined are allowed (JSON omits them and reading
+ * them gives undefined either way); an undefined array element is not (JSON turns it into null).
+ */
+function isPlainJson(value: unknown, depth = 0): boolean {
+	if (depth > 64) return false;
+	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+	if (typeof value === "number") return Number.isFinite(value);
+	if (Array.isArray(value)) {
+		// A plain loop, not every(): every() skips holes in a sparse array, which JSON turns into null.
+		for (let index = 0; index < value.length; index++) {
+			const item = value[index];
+			if (item === undefined || !isPlainJson(item, depth + 1)) return false;
+		}
+		return true;
+	}
+	if (typeof value !== "object") return false;
+	const prototype = Object.getPrototypeOf(value);
+	if (prototype !== Object.prototype && prototype !== null) return false;
+	for (const item of Object.values(value)) {
+		if (item !== undefined && !isPlainJson(item, depth + 1)) return false;
+	}
+	return true;
+}
+
 const contextMessageEntryIds = new WeakMap<object, string>();
 
 /** Request-local field carried across context hooks; never persisted or sent to providers. */
@@ -66,6 +128,23 @@ function withContextEntryId<T extends AgentMessage>(entryId: string, message: T)
 /** Entry identity for a transient message projected from session history. */
 export function getSessionContextEntryId(message: AgentMessage): string | undefined {
 	return contextMessageEntryIds.get(message);
+}
+
+/**
+ * Copy a message's context entry identity onto a derived message object. Context
+ * pipeline stages that spread messages call this so checkpoint provenance (the
+ * openai-remote replay boundary) survives both the cloned and the shared-transcript
+ * context-hook paths. The derived object gets the id both in the WeakMap (matching
+ * originals) and as the own enumerable property it would have carried via spread on
+ * the clone path — the source is only read, never written (senpi#2525).
+ */
+export function inheritSessionContextEntryId<T extends AgentMessage>(derived: T, source: AgentMessage): T {
+	const fromProperty = Object.getOwnPropertyDescriptor(source, SESSION_CONTEXT_ENTRY_ID)?.value;
+	const entryId = getSessionContextEntryId(source) ?? (typeof fromProperty === "string" ? fromProperty : undefined);
+	if (entryId === undefined) return derived;
+	contextMessageEntryIds.set(derived, entryId);
+	Object.assign(derived, { [SESSION_CONTEXT_ENTRY_ID]: entryId });
+	return derived;
 }
 
 export interface UsageTotals {
@@ -110,6 +189,9 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	thinkingLevel: string;
 	/** Explicit selector provenance. Omitted by legacy entries and SDK-defaulted fallbacks. */
 	thinkingSelection?: ThinkingSelection;
+	/** Set when a model switch re-applied this level: the switch's source (senpi#2870). */
+	triggerSource?: ModelChangeSource;
+	triggerActor?: string;
 }
 
 export interface ConfigurationUpdateEntry extends SessionEntryBase {
@@ -126,6 +208,53 @@ export interface ModelChangeEntry extends SessionEntryBase {
 	/** The model active before a fallback window, retained for restart restoration. */
 	originalProvider?: string;
 	originalModelId?: string;
+	/** What made the switch (senpi#2870); omitted by entries written before it was recorded. */
+	source?: ModelChangeSource;
+	/** Who issued it, where known: an extension path, an RPC client, the picker used. */
+	actor?: string;
+	/** The switch landed while a turn was streaming. */
+	duringTurn?: boolean;
+}
+
+/**
+ * A model switch the session refused. Recorded because the refusal happens
+ * before any `model_change` is appended, which left an attempted-and-rejected
+ * switch indistinguishable from one the user never made (#1526).
+ *
+ * Durability follows the shared session-file contract, it is not special-cased:
+ * `_persist` buffers every entry until the branch holds a user or assistant
+ * message (#10000), so a refusal recorded before the session's first message
+ * reaches the JSONL only when that message flushes the buffer. A session that
+ * never gets one keeps the record in memory for its lifetime and never writes a file.
+ */
+export interface ModelChangeRejectedEntry extends SessionEntryBase {
+	type: "model_change_rejected";
+	provider: string;
+	modelId: string;
+	reason: "context-budget" | "auth";
+	/**
+	 * The guard's own explanation, including its remedy. Named `detail` rather
+	 * than `message` so this entry stays structurally distinct from
+	 * `SessionMessageEntry`, whose `message` is an object.
+	 */
+	detail: string;
+	/** Budget numbers; present only for the context-budget reason. */
+	contextWindow?: number;
+	liveContextTokens?: number;
+	requiredTokens?: number;
+	shortfallTokens?: number;
+	safetyMarginProfile?: string;
+}
+
+export interface UsageEntry extends SessionEntryBase {
+	type: "usage";
+	/** Arbitrary usage category, such as "cache_warm". */
+	kind: string;
+	provider: string;
+	model: string;
+	usage: Usage;
+	/** Optional human-readable qualifier for usage notices. */
+	note?: string;
 }
 
 export interface CompactionEntry<T = unknown> extends SessionEntryBase {
@@ -139,6 +268,8 @@ export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	usage?: Usage;
 	/** True if generated by an extension, undefined/false if pi-generated (backward compatible) */
 	fromHook?: boolean;
+	/** Complete prompt and tool state at this compaction boundary. */
+	systemMessage?: SystemMessage;
 }
 
 export interface BranchSummaryEntry<T = unknown> extends SessionEntryBase {
@@ -202,21 +333,41 @@ export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 	display: boolean;
 }
 
+/** Content that an append-only context edit may replace without changing message metadata. */
+export type ContextEditableContent =
+	| UserMessage["content"]
+	| AssistantMessage["content"]
+	| ToolResultMessage["content"]
+	| CustomMessage["content"];
+
+/** Append-only change to one earlier entry's contribution to model context. */
+export interface ContextEditEntry extends SessionEntryBase {
+	type: "context_edit";
+	targetId: string;
+	/** Null omits the target from model context. A value replaces only its content. */
+	replacement: { content: ContextEditableContent } | null;
+}
+
 /** Session entry - has id/parentId for tree structure (returned by "read" methods in SessionManager) */
 export type SessionEntry =
 	| SessionMessageEntry
 	| ThinkingLevelChangeEntry
 	| ConfigurationUpdateEntry
 	| ModelChangeEntry
+	| ModelChangeRejectedEntry
+	| UsageEntry
 	| CompactionEntry
 	| BranchSummaryEntry
 	| CustomEntry
 	| CustomMessageEntry
+	| ContextEditEntry
 	| LabelEntry
 	| SessionInfoEntry;
 
 /** Raw file entry (includes header) */
 export type FileEntry = SessionHeader | SessionEntry;
+
+type MaterializedView = { readonly source: FileEntry[]; readonly length: number; readonly entries: SessionEntry[] };
 
 /** Tree node for getTree() - defensive copy of session structure */
 export interface SessionTreeNode {
@@ -226,6 +377,20 @@ export interface SessionTreeNode {
 	label?: string;
 	/** Timestamp of the latest label change for this entry, if any */
 	labelTimestamp?: string;
+}
+
+export interface ProjectedSessionEntry {
+	/** Raw append-only entry that owns this projected contribution. */
+	sourceEntry: SessionEntry;
+	/** Model-visible messages after context edits. Empty for state-only entries and omissions. */
+	messages: AgentMessage[];
+}
+
+export interface SessionProjection {
+	entries: ProjectedSessionEntry[];
+	messages: AgentMessage[];
+	thinkingLevel: string;
+	model: { provider: string; modelId: string } | null;
 }
 
 export interface SessionContext {
@@ -250,6 +415,10 @@ export interface SessionInfo {
 	messageCount: number;
 	firstMessage: string;
 	allMessagesText: string;
+	/** Latest repository identity the session recorded (see `repository-identity`). */
+	repositoryIdentity?: RepositoryIdentity;
+	/** Set on sessions of the current repository recorded at a path that no longer exists. */
+	moved?: boolean;
 }
 
 export type ReadonlySessionManager = Pick<
@@ -265,6 +434,7 @@ export type ReadonlySessionManager = Pick<
 	| "getBranch"
 	| "buildContextEntries"
 	| "buildSessionContext"
+	| "buildSessionProjection"
 	| "getHeader"
 	| "getEntries"
 	| "getTree"
@@ -416,8 +586,12 @@ function buildSessionPath(
 	}
 
 	const path: SessionEntry[] = [];
+	const visited = new Set<SessionEntry>();
 	let current: SessionEntry | undefined = leaf;
-	while (current) {
+	// A file with a reused id has a cycle in its parent chain; stop at the first revisit so the
+	// session still opens instead of walking forever.
+	while (current && !visited.has(current)) {
+		visited.add(current);
 		path.push(current);
 		current = current.parentId ? index.get(current.parentId) : undefined;
 	}
@@ -459,7 +633,10 @@ function getSessionContextSettings(
 					preFallbackThinkingLevel = thinkingLevel;
 					preFallbackThinkingSelection = thinkingSelection;
 					if (entry.originalProvider && entry.originalModelId) {
-						model = { provider: entry.originalProvider, modelId: entry.originalModelId };
+						// Read boundary (senpi#1989): a session recorded by an earlier
+						// version carries the legacy provider id, so normalize on read.
+						// No rewrite is added here.
+						model = { provider: normalizeProviderId(entry.originalProvider), modelId: entry.originalModelId };
 						isModelSelectionExplicit = true;
 					}
 				}
@@ -478,13 +655,19 @@ function getSessionContextSettings(
 				// model id must not become an authoritative selection; the fallback-original restore
 				// above guards the same way, and a later assistant message still restores the model.
 				if (entry.provider && entry.modelId) {
-					model = { provider: entry.provider, modelId: entry.modelId };
+					model = { provider: normalizeProviderId(entry.provider), modelId: entry.modelId };
 					isModelSelectionExplicit = true;
 				}
 			}
-		} else if (entry.type === "message" && entry.message.role === "assistant" && !isInFallbackWindow) {
-			if (isModelSelectionExplicit && model?.provider === entry.message.provider) continue;
-			model = { provider: entry.message.provider, modelId: entry.message.model };
+		} else if (
+			entry.type === "message" &&
+			entry.message.role === "assistant" &&
+			!isInFallbackWindow &&
+			// A failed routing attempt names the virtual model; no model answered it.
+			!isVirtualModel(entry.message)
+		) {
+			if (isModelSelectionExplicit && model?.provider === normalizeProviderId(entry.message.provider)) continue;
+			model = { provider: normalizeProviderId(entry.message.provider), modelId: entry.message.model };
 			isModelSelectionExplicit = false;
 		}
 	}
@@ -508,6 +691,7 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 		const message = entry.message;
 		// Session files are parsed without validation; old versions, forks, or
 		// hand-edited files can contain messages with null/missing content.
+		if (message.role === "system" && message.content == null) return [{ ...message, content: "" }];
 		if (
 			(message.role === "user" || message.role === "assistant" || message.role === "toolResult") &&
 			message.content == null
@@ -538,12 +722,11 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 		return [withContextEntryId(entry.id, createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp))];
 	}
 	if (entry.type === "compaction") {
-		return [
-			withContextEntryId(
-				entry.id,
-				createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp, entry.details),
-			),
-		];
+		const summary = withContextEntryId(
+			entry.id,
+			createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp, entry.details),
+		);
+		return entry.systemMessage ? [withContextEntryId(entry.id, entry.systemMessage), summary] : [summary];
 	}
 	return [];
 }
@@ -561,7 +744,10 @@ export function buildContextEntries(
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionEntry[] {
-	const path = buildSessionPath(entries, leafId, byId);
+	return contextEntriesOfPath(buildSessionPath(entries, leafId, byId));
+}
+
+function contextEntriesOfPath(path: SessionEntry[]): SessionEntry[] {
 	let compaction: CompactionEntry | null = null;
 
 	for (const entry of path) {
@@ -590,7 +776,7 @@ export function buildContextEntries(
 		if (entry.id === compaction.firstKeptEntryId) {
 			foundFirstKept = true;
 		}
-		if (foundFirstKept) {
+		if (foundFirstKept && !(entry.type === "message" && entry.message.role === "system")) {
 			contextEntries.push(entry);
 		}
 	}
@@ -598,20 +784,90 @@ export function buildContextEntries(
 	return contextEntries;
 }
 
+function projectContextEntry(entry: SessionEntry, edit: ContextEditEntry | undefined): AgentMessage[] {
+	const messages = sessionEntryToContextMessages(entry);
+	if (!edit) return messages;
+	const replacement = edit.replacement;
+	if (replacement === null) return [];
+
+	return messages.map((message) => {
+		if (
+			message.role !== "user" &&
+			message.role !== "assistant" &&
+			message.role !== "toolResult" &&
+			message.role !== "custom"
+		) {
+			return message;
+		}
+		const content =
+			(message.role === "assistant" || message.role === "toolResult") && typeof replacement.content === "string"
+				? [{ type: "text" as const, text: replacement.content }]
+				: replacement.content;
+		// The edited copy keeps the entry identity of the message it replaces.
+		return withContextEntryId(entry.id, { ...message, content } as AgentMessage);
+	});
+}
+
+/** One pass over the path: the projection plus the fork's full context settings. */
+function projectSession(
+	entries: SessionEntry[],
+	leafId?: string | null,
+	byId?: Map<string, SessionEntry>,
+	knownPath?: SessionEntry[],
+): { projection: SessionProjection; settings: ReturnType<typeof getSessionContextSettings> } {
+	const path = knownPath ?? buildSessionPath(entries, leafId, byId);
+	const settings = getSessionContextSettings(path);
+	const contextEntries = contextEntriesOfPath(path);
+	const edits = new Map<string, ContextEditEntry>();
+	for (const entry of contextEntries) {
+		if (entry.type === "context_edit") edits.set(entry.targetId, entry);
+	}
+	const projectedEntries = contextEntries.map(
+		(sourceEntry, index): ProjectedSessionEntry => ({
+			sourceEntry,
+			// buildContextEntries() may retain an older compaction entry because its
+			// raw ID lies inside the newest retained range. Only the newest compaction
+			// at index zero contributes a checkpoint and summary.
+			messages:
+				sourceEntry.type === "compaction" && index > 0
+					? []
+					: projectContextEntry(sourceEntry, edits.get(sourceEntry.id)),
+		}),
+	);
+	return {
+		projection: {
+			entries: projectedEntries,
+			messages: projectedEntries.flatMap((entry) => entry.messages),
+			thinkingLevel: settings.thinkingLevel,
+			model: settings.model,
+		},
+		settings,
+	};
+}
+
+/** Build provenance-preserving, compaction-aware model context. */
+export function buildSessionProjection(
+	entries: SessionEntry[],
+	leafId?: string | null,
+	byId?: Map<string, SessionEntry>,
+): SessionProjection {
+	return projectSession(entries, leafId, byId).projection;
+}
+
 /**
  * Build the session context from entries using tree traversal.
  * If leafId is provided, walks from that entry to root.
- * Handles compaction and branch summaries along the path.
+ * Handles compaction, branch summaries and context edits along the path: the messages are the
+ * canonical session projection's.
  */
 export function buildSessionContext(
 	entries: SessionEntry[],
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionContext {
-	const path = buildSessionPath(entries, leafId, byId);
-	const { thinkingLevel, thinkingSelection, model, configurationUpdate } = getSessionContextSettings(path);
-	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
-	return { messages, thinkingLevel, thinkingSelection, model, configurationUpdate };
+	const { projection, settings } = projectSession(entries, leafId, byId);
+	const { thinkingLevel, thinkingSelection, model, configurationUpdate } = settings;
+	return { messages: projection.messages, thinkingLevel, thinkingSelection, model, configurationUpdate };
 }
 
 /**
@@ -772,28 +1028,22 @@ function getSessionHeaderCwd(header: SessionHeader): string | undefined {
 	return typeof cwd === "string" ? cwd : undefined;
 }
 
-function sessionCwdMatches(cwd: string | undefined, resolvedCwd: string): boolean {
-	return cwd !== undefined && cwd !== "" && resolvePath(cwd) === resolvedCwd;
-}
-
 /** Exported for testing */
 export function findMostRecentSession(sessionDir: string, cwd?: string): string | null {
 	const resolvedSessionDir = normalizePath(sessionDir);
-	const resolvedCwd = cwd ? resolvePath(cwd) : undefined;
+	const matchesCwd = cwd ? sessionCwdMatcher(resolvePath(cwd)) : undefined;
 	try {
 		const files = readdirSync(resolvedSessionDir)
-			.filter((f) => f.endsWith(".jsonl"))
-			.map((f) => join(resolvedSessionDir, f))
-			.map((path) => ({ path, header: readSessionHeaderForDiscovery(path) }))
-			.filter(
-				(file): file is { path: string; header: SessionHeader } =>
-					file.header !== null &&
-					(!resolvedCwd || sessionCwdMatches(getSessionHeaderCwd(file.header), resolvedCwd)),
-			)
-			.map(({ path }) => ({ path, mtime: statSync(path).mtime }))
-			.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+			.filter((file) => file.endsWith(".jsonl"))
+			.map((file) => join(resolvedSessionDir, file))
+			.map((path) => ({ path, mtime: statSync(path).mtimeMs }))
+			.sort((a, b) => b.mtime - a.mtime);
 
-		return files[0]?.path || null;
+		for (const { path } of files) {
+			const header = readSessionHeaderForDiscovery(path);
+			if (header && (!matchesCwd || matchesCwd(getSessionHeaderCwd(header)))) return path;
+		}
+		return null;
 	} catch {
 		// Directory access and stat races make recent-session discovery unavailable.
 		return null;
@@ -822,6 +1072,18 @@ export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFi
 	};
 }
 
+const SETUP_ONLY_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
+	"session",
+	"model_change",
+	"model_change_rejected",
+	"thinking_level_change",
+]);
+
+/** A user or assistant message: the first one makes a new session worth a file (#10000). */
+function isConversationEntry(entry: FileEntry): boolean {
+	return entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant");
+}
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -829,6 +1091,9 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private headerWrite: Promise<void> | undefined;
+	// Set when an append to the flushed file failed and may have left a partial last line.
+	private tailMayBeTorn = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	// Runtime-only identity tracking lets AgentSession compare messages to a
@@ -842,12 +1107,43 @@ export class SessionManager {
 	private leafId: string | null = null;
 	private residentStore = new ResidentStringStore();
 	private mirrorTrimmed = false;
+	/**
+	 * Ids of entries a compaction trimmed from the resident mirror. They are still in the session file,
+	 * so a new entry must not reuse one: a reused id turns the file's parent chain into a cycle and the
+	 * next resume never finishes opening the session.
+	 */
+	private trimmedIds = new Set<string>();
+	private readonly idsInUse = { has: (id: string): boolean => this.byId.has(id) || this.trimmedIds.has(id) };
+	// Counts loaded/appended entries, including those removed from the resident mirror.
+	private fullEntryCount = 0;
 	private compactEntriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
+	/**
+	 * Materialized views of `fileEntries` (`compact`) and, once the mirror is trimmed, of the full
+	 * persisted history (`history`). Keyed by the mirror array and its length: appends push onto the
+	 * same array, so a view extends by materializing only the new tail, while anything that rebuilds
+	 * the mirror assigns a new array and invalidates both. Context builds run several times per turn;
+	 * without this each one re-copied every entry of the session.
+	 */
+	private compactView: MaterializedView | null = null;
+	private projectionMemo: {
+		readonly source: SessionEntry[];
+		readonly leafId: string | null;
+		readonly path: SessionEntry[];
+		readonly result: ReturnType<typeof projectSession>;
+	} | null = null;
+	private historyView: MaterializedView | null = null;
+	/** Id -> entry of the compact view, extended with it, so the branch shares its materialized objects. */
+	private compactLookup: { entries: SessionEntry[]; length: number; map: Map<string, SessionEntry> } | null = null;
 	// Monotonic counter bumped by every mutator; memoized materialized views are
 	// keyed on it so read hot paths (footer, RPC) never re-materialize unchanged sessions.
 	private mutationCount = 0;
 	private entriesCache: { mutation: number; entries: SessionEntry[] } | null = null;
-	private branchCache: { leafId: string | null; mutation: number; entries: SessionEntry[] } | null = null;
+	private branchCache: {
+		leafId: string | null;
+		mutation: number;
+		entries: SessionEntry[];
+		source: FileEntry[];
+	} | null = null;
 	private sessionNameCache: string | undefined = undefined;
 	// Running usage totals over ALL entries (not branch-scoped), maintained
 	// incrementally on assistant-message append and rebuilt from scratch in
@@ -873,12 +1169,24 @@ export class SessionManager {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
+		// A persisted manager owns its session file for as long as it lives; the shared
+		// RPC host reads this registry to release grants no writer holds anymore.
+		if (persist) registerSessionWriter(this);
 		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
+		// Lazily resolved: the session id only exists once the header loads or
+		// newSession() runs. Unpersisted sessions disable eviction entirely —
+		// dropping strings with no backing would lose them.
+		this.residentStore.configure({
+			blobsDir: () =>
+				this.persist && this.sessionId ? join(this.sessionDir, "resident-blobs", this.sessionId) : undefined,
+		});
 
 		if (sessionFile) {
-			this._setSessionFile(sessionFile, preloadedFileEntries);
+			this._setSessionFile(sessionFile, preloadedFileEntries, newSessionOptions);
+		} else if (preloadedFileEntries?.length) {
+			this._loadEntries(preloadedFileEntries, newSessionOptions);
 		} else {
 			this.newSession(newSessionOptions);
 		}
@@ -906,29 +1214,46 @@ export class SessionManager {
 		this._setSessionFile(sessionFile);
 	}
 
-	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
+	private _setSessionFile(
+		sessionFile: string,
+		preloadedFileEntries?: FileEntry[],
+		newSessionOptions?: NewSessionOptions,
+	): void {
+		if (this.persist) reserveSessionWrite(resolvePath(sessionFile));
 		this.sessionFile = resolvePath(sessionFile);
 		this.mirrorTrimmed = false;
+		this.trimmedIds.clear();
 		this.residentStore.clear();
 		if (existsSync(this.sessionFile)) {
-			this.fileEntries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
+			const entries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
 
 			// If file was empty, initialize it with a valid session header. If it was
 			// non-empty but did not parse as a pi session, fail without modifying it.
-			if (this.fileEntries.length === 0) {
+			if (entries.length === 0) {
 				const explicitPath = this.sessionFile;
 				if (statSync(explicitPath).size > 0) {
 					throw new Error(`Session file is not a valid ${APP_NAME} session: ${explicitPath}`);
 				}
-				this.newSession();
-				this.sessionFile = explicitPath;
+				// The explicit path is already granted above and keeps being written here:
+				// allocating a second path would take a grant no writer ever uses.
+				// An empty file carries no identity yet, so a caller-supplied id still applies.
+				this._resetToNewSession(newSessionOptions);
 				this._rewriteFile();
 				this.flushed = true;
 				return;
 			}
 
+			// A file-backed load keeps the reader contract: an entry set without a header
+			// adopts a fresh id in memory instead of creating a replacement session file
+			// (which `_loadEntries`' header-less branch would do for ingested entries).
+			this.fileEntries = entries;
+
 			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
 			this.sessionId = header?.id ?? createSessionId();
+			// Blobs left under this id by a process that is gone are a disposable cache:
+			// the JSONL is the authority for every entry and this store rewrites what it
+			// evicts, so clearing them bounds the directory to one process lifetime.
+			this._releaseBlobsDirUnlessShared();
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
@@ -939,16 +1264,42 @@ export class SessionManager {
 			this.mutationCount++;
 			this.flushed = true;
 		} else {
-			const explicitPath = this.sessionFile;
-			this.newSession();
-			this.sessionFile = explicitPath; // preserve explicit path from --session flag
+			// Same here: the explicit path from --session stays the only granted one.
+			// The file does not exist yet, so this open CREATES the session: a caller-supplied
+			// id is the session's identity from here on. An EXISTING file never reaches this
+			// branch, which is why a supplied id can never overwrite a header id.
+			this._resetToNewSession(newSessionOptions);
+			// A host-minted id is referenced by nothing yet, so its file may wait for the first
+			// assistant message. A CALLER-chosen id is already held in the caller's own records:
+			// the file has to answer to it now, or a reopen before the first reply would mint a
+			// different identity and the caller's record would point at nothing (#2010).
+			if (newSessionOptions?.id !== undefined) {
+				this._rewriteFile();
+				this.flushed = true;
+			}
 		}
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
+		const timestamp = this._resetToNewSession(options);
+		if (this.persist) {
+			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
+			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+			reserveSessionWrite(path);
+			this.sessionFile = path;
+		}
+		return this.sessionFile;
+	}
+
+	/** Resets every in-memory field onto a fresh header. Allocates no session path. */
+	private _resetToNewSession(options?: NewSessionOptions): string {
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
+		// Capture the previous backing before the id changes: the blobsDir
+		// provider resolves against the new id after this assignment, so clear()
+		// below would otherwise leak the old session's blob directory on disk.
+		const previousBlobsDir = this.residentStore.resolvedBlobsDir();
 		this.sessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const header: SessionHeader = {
@@ -961,7 +1312,12 @@ export class SessionManager {
 		};
 		this.fileEntries = [header];
 		this.mirrorTrimmed = false;
+		this.trimmedIds.clear();
+		this.fullEntryCount = 0;
 		this.residentStore.clear();
+		if (previousBlobsDir) {
+			this._removeBlobsDir(previousBlobsDir);
+		}
 		this.byId.clear();
 		this.entryOrdersById.clear();
 		this.messageEntryPositions = new WeakMap();
@@ -979,12 +1335,29 @@ export class SessionManager {
 		};
 		this.mutationCount++;
 		this.flushed = false;
+		return timestamp;
+	}
 
-		if (this.persist) {
-			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-			this.sessionFile = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
+	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): void {
+		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
+
+		if (header) {
+			this.fileEntries = entries;
+			this.sessionId = header.id;
+
+			if (migrateToCurrentVersion(this.fileEntries)) {
+				this._rewriteFile();
+			}
+		} else {
+			this.newSession(options);
+			this.fileEntries = this.fileEntries.concat(entries);
 		}
-		return this.sessionFile;
+
+		// Ingested entries join the same resident-string store as file-loaded ones, so large
+		// payloads stay out-of-line and every reader materializes through the one path.
+		this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
+		this._buildIndex();
+		this.mutationCount++;
 	}
 
 	private _buildIndex(): void {
@@ -1003,8 +1376,10 @@ export class SessionManager {
 			cost: 0,
 			latestCacheHitRate: undefined,
 		};
+		let fullEntryCount = 0;
 		for (const [order, entry] of this.fileEntries.entries()) {
 			if (entry.type === "session") continue;
+			fullEntryCount++;
 			this.byId.set(entry.id, entry);
 			this.entryOrdersById.set(entry.id, order);
 			this.leafId = entry.id;
@@ -1023,17 +1398,21 @@ export class SessionManager {
 				}
 			}
 		}
+		// A trimmed mirror cannot replace the full-history count.
+		if (!this.mirrorTrimmed) {
+			this.fullEntryCount = fullEntryCount;
+		}
 	}
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
-		const fd = openSync(this.sessionFile, "w");
-		try {
-			for (const entry of this.fileEntries) {
-				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(entry))}\n`);
-			}
-		} finally {
-			closeSync(fd);
+		reserveSessionWrite(this.sessionFile);
+		replaceFileAtomically(this.sessionFile, this._serializedFileEntries());
+	}
+
+	private *_serializedFileEntries(): Generator<string> {
+		for (const entry of this.fileEntries) {
+			yield `${JSON.stringify(this.residentStore.materialize(entry))}\n`;
 		}
 	}
 
@@ -1061,49 +1440,169 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
+	/**
+	 * Exposes the resident store for out-of-band string lifecycles such as the
+	 * agent's runtime message state (tokenized while idle, hydrated per turn).
+	 */
+	getResidentStore(): ResidentStringStore {
+		return this.residentStore;
+	}
+
 	getResidentStoreStats(): ResidentStoreStats {
 		return this.residentStore.stats();
 	}
 
+	/**
+	 * Writes the buffered header (and anything buffered behind it) through an exclusive create, as
+	 * the first assistant message would, and appends every later entry immediately. A session that
+	 * is exposed to other processes needs its id on disk first: a reopen of a missing file mints a
+	 * new id. The write is asynchronous (the session path never blocks on the filesystem); entries
+	 * persisted while it runs are appended by it before the transcript counts as flushed.
+	 */
+	persistHeaderNow(): Promise<void> {
+		if (!this.persist || !this.sessionFile || this.flushed) return this.headerWrite ?? Promise.resolve();
+		const sessionFile = this.sessionFile;
+		this.headerWrite ??= this._writeHeaderAsync(sessionFile).finally(() => {
+			this.headerWrite = undefined;
+		});
+		return this.headerWrite;
+	}
+
+	isTranscriptFlushed(): boolean {
+		return this.flushed;
+	}
+
+	/**
+	 * Removes the session file when nothing happened in it - the header plus model/thinking setup
+	 * entries only - and returns to buffering, so a later entry cannot recreate a header-less file.
+	 */
+	async discardHeaderOnlyFile(): Promise<boolean> {
+		await this.headerWrite;
+		if (!this.persist || !this.sessionFile || !this.flushed) return false;
+		if (!this.fileEntries.every((entry) => SETUP_ONLY_ENTRY_TYPES.has(entry.type))) return false;
+		await rm(this.sessionFile, { force: true });
+		this.flushed = false;
+		return true;
+	}
+
+	private async _writeHeaderAsync(sessionFile: string): Promise<void> {
+		reserveSessionWrite(sessionFile);
+		const entries = this.fileEntries;
+		const serialize = (batch: readonly FileEntry[]): string =>
+			batch.map((e) => `${JSON.stringify(this.residentStore.materialize(e))}\n`).join("");
+		let written = 0;
+		let handle: FileHandle | undefined = await open(sessionFile, "wx");
+		try {
+			while (written < entries.length) {
+				const batch = entries.slice(written);
+				written += batch.length;
+				await handle.writeFile(serialize(batch));
+			}
+			const closing = handle;
+			handle = undefined;
+			await closing.close();
+			// Entries persisted while the handle closed: append until a pass finds nothing new.
+			while (written < entries.length && this.sessionFile === sessionFile && this.fileEntries === entries) {
+				const batch = entries.slice(written);
+				written += batch.length;
+				await appendFile(sessionFile, serialize(batch));
+			}
+		} catch (error) {
+			// This write created the file: a part-written one would fail every later first flush with
+			// EEXIST while the entries it was carrying stayed in memory only. Nothing counts as flushed yet.
+			return discardFailedFirstFlushAsync(sessionFile, handle, error);
+		}
+		// Synchronous with the last check above: no entry can land between it and the flag.
+		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
+			this.flushed = true;
+		}
+	}
+
+	/**
+	 * A new session file is created only once the session contains a user or assistant message.
+	 * Setup entries alone (model, thinking level, system prompt) stay in memory so opening and
+	 * closing the agent without chatting leaves no file behind. Starting at the user message (not the
+	 * first assistant reply) keeps the prompt on disk if the first turn never completes (#10000).
+	 * An explicit persistHeaderNow() still writes the header first: a session exposed to other
+	 * processes needs its id on disk before any conversation.
+	 */
+	private _hasConversation(): boolean {
+		return this.fileEntries.some(isConversationEntry);
+	}
+
+	/**
+	 * Writes `entry`, which is not in `fileEntries` yet, before memory commits it. A throw means the
+	 * file did not take the entry, so the caller commits nothing and no later entry can chain onto it.
+	 */
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		reserveSessionWrite(this.sessionFile);
 		const persistedEntry = this.residentStore.materialize(entry);
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
-			if (this.flushed) {
+		if (this.flushed) {
+			if (this.tailMayBeTorn) {
+				truncateToLastCompleteLine(this.sessionFile);
+				this.tailMayBeTorn = false;
+			}
+			try {
 				appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
-			} else {
-				// Mark as not flushed so when assistant arrives, all entries get written
-				this.flushed = false;
+			} catch (error) {
+				this.tailMayBeTorn = true;
+				throw error;
 			}
 			return;
 		}
 
-		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
-				}
-			} finally {
-				closeSync(fd);
+		// Entries stay in memory only until the branch holds a user or assistant message; then all are
+		// written (#10000: the prompt reaches disk even if the first turn never completes).
+		if (!isConversationEntry(entry) && !this._hasConversation()) return;
+
+		// An asynchronous header write owns the file until it finishes, and appends this entry.
+		if (this.headerWrite) return;
+		const fd = openSync(this.sessionFile, "wx");
+		try {
+			for (const e of [...this.fileEntries, entry]) {
+				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
 			}
-			this.flushed = true;
-		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
+		} catch (error) {
+			discardFailedFirstFlush(this.sessionFile, fd, error);
 		}
+		closeSync(fd);
+		this.flushed = true;
 	}
 
-	private _appendEntry(entry: SessionEntry): void {
+	private _appendEntry(entry: SessionEntry, shareable?: object): void {
 		const residentEntry = this.residentStore.externalize(entry);
+		this._persist(residentEntry);
+		this._commitEntry(this._shareMessage(residentEntry, shareable));
+	}
+
+	/**
+	 * senpi#2537: the mirror used to hold its own JSON copy of every message the agent persisted, so each
+	 * message's object and array skeleton was resident twice (strings were already shared). For a message
+	 * that is plain JSON with no resident token, the mirror keeps a shallow copy instead: its own object
+	 * (context projections tag it, never the agent's object), sharing the agent's content arrays. The file
+	 * holds what `_persist` wrote, and a reload reads the same JSON. Anything else keeps the JSON copy: a
+	 * resident token means the idle release may tokenize the agent's strings in place later, and a
+	 * non-JSON value (a Date, NaN, a class instance) would make the mirror differ from a reload.
+	 */
+	private _shareMessage(residentEntry: SessionEntry, shareable: object | undefined): SessionEntry {
+		if (shareable === undefined || residentEntry.type !== "message") return residentEntry;
+		if (!this.residentStore.isTokenFree(residentEntry)) return residentEntry;
+		if (!isPlainJson(shareable)) return residentEntry;
+		const shared = { ...residentEntry, message: { ...shareable } as SessionMessageEntry["message"] };
+		this.residentStore.adoptTokenFree(shared);
+		return shared;
+	}
+
+	private _commitEntry(residentEntry: SessionEntry): void {
 		this.fileEntries.push(residentEntry);
 		this.byId.set(residentEntry.id, residentEntry);
 		this.entryOrdersById.set(residentEntry.id, this.fileEntries.length - 1);
 		this.leafId = residentEntry.id;
+		this.fullEntryCount++;
 		this._accumulateUsage(residentEntry);
 		this.mutationCount++;
-		this._persist(residentEntry);
 	}
 
 	/**
@@ -1184,14 +1683,28 @@ export class SessionManager {
 	 * These need to be appended via appendCompaction() and appendBranchSummary() methods.
 	 */
 	appendMessage(message: Message | CustomMessage | BashExecutionMessage): string {
+		return this._appendMessage(message, false);
+	}
+
+	/**
+	 * `appendMessage` for a message the session's own agent produced and whose content it does not change
+	 * after it is persisted (senpi#2537). The mirror keeps a shallow copy that shares the message's content
+	 * instead of a full JSON copy (see `_shareMessage` for when it falls back). `appendMessage` keeps the
+	 * full copy: a caller may still change its object after appending.
+	 */
+	appendOwnedMessage(message: Message | CustomMessage | BashExecutionMessage): string {
+		return this._appendMessage(message, true);
+	}
+
+	private _appendMessage(message: Message | CustomMessage | BashExecutionMessage, owned: boolean): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			message,
 		};
-		this._appendEntry(entry);
+		this._appendEntry(entry, owned ? message : undefined);
 		const order = this.entryOrdersById.get(entry.id);
 		if (order !== undefined) {
 			this.messageEntryPositions.set(message, { entryId: entry.id, order });
@@ -1210,14 +1723,20 @@ export class SessionManager {
 	}
 
 	/** Append a thinking level change as child of current leaf, then advance leaf. Returns entry id. */
-	appendThinkingLevelChange(thinkingLevel: string, thinkingSelection?: ThinkingSelection): string {
+	appendThinkingLevelChange(
+		thinkingLevel: string,
+		thinkingSelection?: ThinkingSelection,
+		trigger?: ModelChangeOrigin,
+	): string {
 		const entry: ThinkingLevelChangeEntry = {
 			type: "thinking_level_change",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			thinkingLevel,
 			thinkingSelection,
+			...(trigger === undefined ? {} : { triggerSource: trigger.source }),
+			...(trigger?.actor === undefined ? {} : { triggerActor: trigger.actor }),
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1227,10 +1746,28 @@ export class SessionManager {
 	appendConfigurationUpdate(effort: string): string {
 		const entry: ConfigurationUpdateEntry = {
 			type: "configuration_update",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			reasoning: { effort },
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
+	/**
+	 * Append a refused model switch (#1526). The refusal happens before any
+	 * `model_change` is written, so without this the attempt leaves no trace.
+	 */
+	appendModelChangeRejected(
+		details: Omit<ModelChangeRejectedEntry, "type" | "id" | "parentId" | "timestamp">,
+	): string {
+		const entry: ModelChangeRejectedEntry = {
+			type: "model_change_rejected",
+			id: generateId(this.idsInUse),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			...details,
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1243,10 +1780,11 @@ export class SessionManager {
 		reason?: "fallback" | "fallback-revert",
 		originalProvider?: string,
 		originalModelId?: string,
+		attribution?: { readonly origin: ModelChangeOrigin; readonly duringTurn: boolean },
 	): string {
 		const entry: ModelChangeEntry = {
 			type: "model_change",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			provider,
@@ -1254,35 +1792,88 @@ export class SessionManager {
 			reason,
 			originalProvider,
 			originalModelId,
+			...(attribution === undefined ? {} : { source: attribution.origin.source }),
+			...(attribution?.origin.actor === undefined ? {} : { actor: attribution.origin.actor }),
+			...(attribution?.duringTurn ? { duringTurn: true } : {}),
 		};
 		this._appendEntry(entry);
 		return entry.id;
 	}
 
+	/** Append model-attributed usage that does not participate in LLM context. Returns the appended entry. */
+	appendUsage(kind: string, provider: string, model: string, usage: Usage, note?: string): UsageEntry {
+		const entry: UsageEntry = {
+			type: "usage",
+			id: generateId(this.idsInUse),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			kind,
+			provider,
+			model,
+			usage,
+			...(note ? { note } : {}),
+		};
+		this._appendEntry(entry);
+		return entry;
+	}
+
 	/** Append a compaction summary as child of current leaf, then advance leaf. Returns entry id. */
 	appendCompaction<T = unknown>(
 		summary: string,
-		firstKeptEntryId: string,
+		firstKeptEntryId: string | null,
 		tokensBefore: number,
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
 	): string {
+		const timestamp = new Date().toISOString();
+		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
+		const id = generateId(this.idsInUse);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
-			id: generateId(this.byId),
+			id,
 			parentId: this.leafId,
-			timestamp: new Date().toISOString(),
+			timestamp,
 			summary,
-			firstKeptEntryId,
+			firstKeptEntryId: firstKeptEntryId ?? id,
 			tokensBefore,
 			details,
 			usage,
 			fromHook,
+			...(systemMessage ? { systemMessage: { ...systemMessage, timestamp: new Date(timestamp).getTime() } } : {}),
 		};
 		this._appendEntry(entry);
 		this._trimMirrorAfterCompaction(entry);
 		return entry.id;
+	}
+
+	/**
+	 * Release what outlives this manager in the process: the shared host's write
+	 * grant and the blob directory backing its resident mirror. The session JSONL
+	 * is untouched - it is the authority the next reader loads from. Idempotent.
+	 */
+	dispose(): void {
+		unregisterSessionWriter(this);
+		this._releaseBlobsDirUnlessShared();
+	}
+
+	/**
+	 * The blob directory is keyed by session id, so every live manager over the same
+	 * session file hydrates from it. Removing it while one of them is still reading
+	 * would cost that manager a full JSONL recovery per evicted string, so the last
+	 * owner to let go is the one that clears it.
+	 */
+	private _releaseBlobsDirUnlessShared(): void {
+		const blobsDir = this.residentStore.resolvedBlobsDir();
+		if (!blobsDir) return;
+		if (this.sessionFile && hasOtherLiveSessionWriter(this.sessionFile, this)) return;
+		this._removeBlobsDir(blobsDir);
+	}
+
+	private _removeBlobsDir(dir: string): void {
+		try {
+			rmSync(dir, { force: true, recursive: true });
+		} catch {}
 	}
 
 	private _trimMirrorAfterCompaction(compaction: CompactionEntry): void {
@@ -1301,7 +1892,11 @@ export class SessionManager {
 			if (entry.type !== "session") entry.parentId = parentId;
 			parentId = entry.type === "session" ? null : entry.id;
 		}
-		this.residentStore.clear();
+		const retainedIds = new Set(retained.map((entry) => entry.id));
+		for (const entry of this.fileEntries) {
+			if (entry.type !== "session" && !retainedIds.has(entry.id)) this.trimmedIds.add(entry.id);
+		}
+		this.residentStore.spillResident();
 		this.mirrorTrimmed = true;
 		this.fileEntries = [header, ...retained]
 			.filter((entry): entry is FileEntry => entry !== undefined)
@@ -1316,7 +1911,7 @@ export class SessionManager {
 			type: "custom",
 			customType,
 			data,
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
@@ -1329,13 +1924,13 @@ export class SessionManager {
 		const sanitizedName = name.replace(/[\r\n]+/g, " ").trim();
 		const entry: SessionInfoEntry = {
 			type: "session_info",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			name: sanitizedName,
 		};
-		this.sessionNameCache = sanitizedName || undefined;
 		this._appendEntry(entry);
+		this.sessionNameCache = sanitizedName || undefined;
 		return entry.id;
 	}
 
@@ -1367,9 +1962,50 @@ export class SessionManager {
 			content,
 			display,
 			details,
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
+		};
+		this._appendEntry(entry);
+		return entry.id;
+	}
+
+	/** Append a branch-local edit to an earlier model-visible entry. */
+	appendContextEdit(targetId: string, replacement: ContextEditEntry["replacement"]): string {
+		if (
+			replacement !== null &&
+			(typeof replacement !== "object" ||
+				!("content" in replacement) ||
+				(typeof replacement.content !== "string" && !Array.isArray(replacement.content)))
+		) {
+			throw new Error("Context edit replacement must be null or contain string/array content");
+		}
+		const target = this.byId.get(targetId);
+		if (!target) throw new Error(`Entry ${targetId} not found`);
+		if (!this.getBranch().some((entry) => entry.id === targetId)) {
+			throw new Error(`Entry ${targetId} is not on the active branch`);
+		}
+		const editable =
+			target.type === "custom_message" ||
+			(target.type === "message" &&
+				(target.message.role === "user" ||
+					target.message.role === "assistant" ||
+					target.message.role === "toolResult"));
+		if (!editable) throw new Error(`Entry ${targetId} does not contribute editable model content`);
+		const targetRole = target.type === "message" ? target.message.role : "custom";
+		const normalizedReplacement =
+			replacement !== null &&
+			(targetRole === "assistant" || targetRole === "toolResult") &&
+			typeof replacement.content === "string"
+				? { content: [{ type: "text" as const, text: replacement.content }] }
+				: replacement;
+		const entry: ContextEditEntry = {
+			type: "context_edit",
+			id: generateId(this.idsInUse),
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			targetId,
+			replacement: normalizedReplacement,
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1429,7 +2065,7 @@ export class SessionManager {
 		}
 		const entry: LabelEntry = {
 			type: "label",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			targetId,
@@ -1462,25 +2098,61 @@ export class SessionManager {
 		) {
 			return this.branchCache.entries;
 		}
+		if (fromId === undefined) {
+			const extended = this._extendBranchCache();
+			if (extended !== undefined) return extended;
+		}
 		const path: SessionEntry[] = [];
 		const startId = fromId ?? this.leafId;
 		let entriesById = this.byId;
 		if (fromId !== undefined && !entriesById.has(fromId) && this.mirrorTrimmed && this.sessionFile) {
 			entriesById = new Map(
 				this._loadFullHistoryEntries()
-					.filter((entry) => entry.type !== "session")
-					.map((entry) => [entry.id, this.residentStore.materialize(entry) as SessionEntry]),
+					.filter((entry): entry is SessionEntry => entry.type !== "session")
+					.map((entry) => [entry.id, this.residentStore.materialize(entry)]),
 			);
 		}
 		let current = startId ? entriesById.get(startId) : undefined;
-		while (current) {
-			path.unshift(this._materializeEntry(current));
+		const visited = new Set<SessionEntry>();
+		while (current && !visited.has(current)) {
+			visited.add(current);
+			path.push(current);
 			current = current.parentId ? entriesById.get(current.parentId) : undefined;
 		}
+		path.reverse();
+		const materializedPath =
+			(entriesById === this.byId ? this._fromCompactView(path) : undefined) ?? this._materializeEntries(path);
 		if (fromId === undefined) {
-			this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries: path };
+			this.branchCache = {
+				leafId: this.leafId,
+				mutation: this.mutationCount,
+				entries: materializedPath,
+				source: this.fileEntries,
+			};
 		}
-		return path;
+		return materializedPath;
+	}
+
+	/**
+	 * The cached branch extended by entries appended under its leaf since, when that is all that
+	 * changed (same mirror array, the new leaf descends from the cached one within a short walk).
+	 * Appending a message used to re-materialize the whole branch on the next read.
+	 */
+	private _extendBranchCache(): SessionEntry[] | undefined {
+		const cache = this.branchCache;
+		if (cache === null || cache.source !== this.fileEntries || cache.leafId === null) return undefined;
+		const added: SessionEntry[] = [];
+		let current = this.leafId ? this.byId.get(this.leafId) : undefined;
+		while (current && current.id !== cache.leafId) {
+			if (added.length >= 256) return undefined;
+			added.push(current);
+			current = current.parentId ? this.byId.get(current.parentId) : undefined;
+		}
+		if (current === undefined) return undefined;
+		added.reverse();
+		const entries = [...cache.entries, ...(this._fromCompactView(added) ?? this._materializeEntries(added))];
+		this.branchCache = { leafId: this.leafId, mutation: this.mutationCount, entries, source: this.fileEntries };
+		return entries;
 	}
 
 	/**
@@ -1492,11 +2164,60 @@ export class SessionManager {
 	}
 
 	/**
+	 * Build the canonical session projection (context edits, compaction boundary) from the current
+	 * leaf. Reads the compact mirror like buildSessionContext(), so a trimmed mirror never reloads
+	 * the full history.
+	 */
+	buildSessionProjection(): SessionProjection {
+		const { projection } = this._projectCurrent();
+		return { ...projection, messages: [...projection.messages], entries: [...projection.entries] };
+	}
+
+	/**
+	 * Projection of the current leaf over the compact view, memoized until the view or the leaf
+	 * changes: several context builds run per turn over the same, unchanged session. Callers get
+	 * copies of the arrays because the agent appends to the message array it receives.
+	 */
+	private _projectCurrent(): ReturnType<typeof projectSession> {
+		const entries = this._getCompactEntries();
+		const memo = this.projectionMemo;
+		if (memo?.source === entries && memo.leafId === this.leafId) return memo.result;
+		const path = this._extendPath(memo, entries) ?? buildSessionPath(entries, this.leafId);
+		const result = projectSession(entries, this.leafId, undefined, path);
+		this.projectionMemo = { source: entries, leafId: this.leafId, path, result };
+		return result;
+	}
+
+	/**
+	 * The memoized leaf path extended by entries appended under its leaf, when the compact view only
+	 * grew by such a chain (the normal case while a session runs); undefined when it must be rebuilt.
+	 */
+	private _extendPath(memo: SessionManager["projectionMemo"], entries: SessionEntry[]): SessionEntry[] | undefined {
+		if (!memo || memo.leafId === null || this.leafId === null) return undefined;
+		const previous = memo.source;
+		if (entries.length <= previous.length || entries[previous.length - 1] !== previous[previous.length - 1]) {
+			return undefined;
+		}
+		let parentId: string | null = memo.leafId;
+		const appended: SessionEntry[] = [];
+		for (let index = previous.length; index < entries.length; index++) {
+			const entry = entries[index]!;
+			if (entry.parentId !== parentId) return undefined;
+			appended.push(entry);
+			parentId = entry.id;
+		}
+		if (parentId !== this.leafId) return undefined;
+		return [...memo.path, ...appended];
+	}
+
+	/**
 	 * Build the session context (what gets sent to the LLM).
 	 * Uses tree traversal from current leaf.
 	 */
 	buildSessionContext(): SessionContext {
-		return buildSessionContext(this._getCompactEntries(), this.leafId);
+		const { projection, settings } = this._projectCurrent();
+		const { thinkingLevel, thinkingSelection, model, configurationUpdate } = settings;
+		return { messages: [...projection.messages], thinkingLevel, thinkingSelection, model, configurationUpdate };
 	}
 
 	hasContextMessages(): boolean {
@@ -1523,8 +2244,10 @@ export class SessionManager {
 
 	private hasBranchEntry(predicate: (entry: SessionEntry) => boolean): boolean {
 		let current = this.leafId ? this.byId.get(this.leafId) : undefined;
-		while (current) {
+		const visited = new Set<SessionEntry>();
+		while (current && !visited.has(current)) {
 			if (predicate(current)) return true;
+			visited.add(current);
 			current = current.parentId ? this.byId.get(current.parentId) : undefined;
 		}
 		return false;
@@ -1550,21 +2273,131 @@ export class SessionManager {
 	 */
 	getEntries(): SessionEntry[] {
 		if (this.mirrorTrimmed && this.sessionFile) {
-			return this._loadFullHistoryEntries()
+			// Every append reaches both the file and the mirror, so the full history is the history
+			// read at trim time plus the mirror's tail; per-turn readers no longer re-parse the file.
+			const extended = this._extendView(this.historyView);
+			if (extended !== undefined) {
+				this.historyView = { source: this.fileEntries, length: this.fileEntries.length, entries: extended };
+				return extended;
+			}
+			const history = this._loadFullHistoryEntries()
 				.filter((e): e is SessionEntry => e.type !== "session")
 				.map((entry) => this.residentStore.materialize(entry));
+			this.historyView = { source: this.fileEntries, length: this.fileEntries.length, entries: history };
+			return history;
 		}
 		if (this.entriesCache !== null && this.entriesCache.mutation === this.mutationCount) {
 			return this.entriesCache.entries;
 		}
-		const entries = this.fileEntries
-			.filter((e): e is SessionEntry => e.type !== "session")
-			.map((entry) => this._materializeEntry(entry));
-		this.entriesCache = { mutation: this.mutationCount, entries };
-		return entries;
+		// Not trimmed: every entry is in the mirror, so the compact view is exactly the full list
+		// and extends by the appended tail instead of re-copying the session on each mutation.
+		const materializedEntries = this._getCompactEntries();
+		this.entriesCache = { mutation: this.mutationCount, entries: materializedEntries };
+		return materializedEntries;
+	}
+
+	/** Returns the maintained non-header entry count without loading or materializing history. */
+	getEntryCount(): number {
+		return this.fullEntryCount;
+	}
+
+	/**
+	 * Release the memoized materialized views. Materialized entries hold the full
+	 * persisted strings, so views kept between turns pin the whole session text
+	 * in memory even while nothing runs. The next read rebuilds them from the
+	 * bounded resident store.
+	 */
+	dropMaterializedCaches(): void {
+		this.entriesCache = null;
+		this.branchCache = null;
+		this.compactEntriesCache = null;
+		this.compactView = null;
+		this.historyView = null;
+		this.compactLookup = null;
+		this.projectionMemo = null;
+	}
+
+	/** Whether a full-history view of a trimmed mirror is held: the whole file's entries, parsed. */
+	holdsMaterializedHistory(): boolean {
+		return this.historyView !== null;
+	}
+
+	/** The view's entries extended by the mirror's new tail, or undefined when it must be rebuilt. */
+	private _extendView(view: MaterializedView | null): SessionEntry[] | undefined {
+		if (view === null || view.source !== this.fileEntries || view.length > this.fileEntries.length) return undefined;
+		if (view.length === this.fileEntries.length) return view.entries;
+		let missing = false;
+		const tail: SessionEntry[] = [];
+		for (const entry of this.fileEntries.slice(view.length)) {
+			if (entry.type === "session") continue;
+			const materialized = this.residentStore.materialize(entry, () => {
+				missing = true;
+				return undefined;
+			}) as SessionEntry;
+			tail.push(materialized);
+		}
+		if (missing) return undefined;
+		this._bindMessagePositions(tail);
+		return [...view.entries, ...tail];
+	}
+
+	/**
+	 * The compact view's materialized entry for each path entry, or undefined when one is not in the
+	 * view. The branch is a subset of the compact view whenever the leaf is in the mirror; sharing its
+	 * objects keeps one materialized copy of the session instead of two (about 20 MB at 50k entries).
+	 */
+	private _fromCompactView(path: readonly SessionEntry[]): SessionEntry[] | undefined {
+		const entries = this._getCompactEntries();
+		let lookup = this.compactLookup;
+		if (
+			lookup === null ||
+			lookup.length > entries.length ||
+			(lookup.length > 0 && lookup.entries[lookup.length - 1] !== entries[lookup.length - 1])
+		) {
+			lookup = { entries, length: 0, map: new Map() };
+		}
+		for (let index = lookup.length; index < entries.length; index++) {
+			const entry = entries[index]!;
+			lookup.map.set(entry.id, entry);
+		}
+		this.compactLookup = { entries, length: entries.length, map: lookup.map };
+		const shared: SessionEntry[] = [];
+		for (const entry of path) {
+			const materialized = lookup.map.get(entry.id);
+			if (materialized === undefined || materialized.parentId !== entry.parentId) return undefined;
+			shared.push(materialized);
+		}
+		return shared;
+	}
+
+	private _bindMessagePositions(entries: readonly SessionEntry[]): void {
+		for (const entry of entries) {
+			if (entry.type !== "message") continue;
+			const order = this.entryOrdersById.get(entry.id);
+			if (order !== undefined) this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
+		}
+	}
+
+	private _materializeEntries(entries: readonly SessionEntry[]): SessionEntry[] {
+		return materializeSessionEntries(entries, {
+			residentStore: this.residentStore,
+			loadHistoryEntries: () => this._loadFullHistoryEntries(),
+			onMaterialized: (entry) => {
+				if (entry.type !== "message") return;
+				const order = this.entryOrdersById.get(entry.id);
+				if (order !== undefined) {
+					this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
+				}
+			},
+		});
 	}
 
 	private _getCompactEntries(): SessionEntry[] {
+		const extended = this._extendView(this.compactView);
+		if (extended !== undefined) {
+			this.compactView = { source: this.fileEntries, length: this.fileEntries.length, entries: extended };
+			return extended;
+		}
 		if (this.compactEntriesCache?.mutation !== this.mutationCount) {
 			this.compactEntriesCache = {
 				mutation: this.mutationCount,
@@ -1590,11 +2423,8 @@ export class SessionManager {
 			}
 		}
 		const materialized = entries.map((entry) => this.residentStore.materialize(entry) as SessionEntry);
-		for (const entry of materialized) {
-			if (entry.type !== "message") continue;
-			const order = this.entryOrdersById.get(entry.id);
-			if (order !== undefined) this.messageEntryPositions.set(entry.message, { entryId: entry.id, order });
-		}
+		this._bindMessagePositions(materialized);
+		this.compactView = { source: this.fileEntries, length: this.fileEntries.length, entries: materialized };
 		return materialized;
 	}
 
@@ -1613,15 +2443,18 @@ export class SessionManager {
 		const roots: SessionTreeNode[] = [];
 
 		// Create nodes with resolved labels
+		// A file with duplicated entry ids (#1247) lists one id more than once. The first occurrence owns
+		// the id here (node, label and parent edge); attaching later ones would multiply every subtree.
 		for (const entry of entries) {
+			if (nodeMap.has(entry.id)) continue;
 			const label = this.labelsById.get(entry.id);
 			const labelTimestamp = this.labelTimestampsById.get(entry.id);
 			nodeMap.set(entry.id, { entry, children: [], label, labelTimestamp });
 		}
 
-		// Build tree
 		for (const entry of entries) {
 			const node = nodeMap.get(entry.id)!;
+			if (node.entry !== entry) continue;
 			if (entry.parentId === null || entry.parentId === entry.id) {
 				roots.push(node);
 			} else {
@@ -1694,10 +2527,9 @@ export class SessionManager {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
 		const fromId = this.leafId ?? "root";
-		this.leafId = branchFromId;
 		const entry: BranchSummaryEntry = {
 			type: "branch_summary",
-			id: generateId(this.byId),
+			id: generateId(this.idsInUse),
 			parentId: branchFromId,
 			timestamp: new Date().toISOString(),
 			fromId,
@@ -1726,10 +2558,30 @@ export class SessionManager {
 		// Because labels are real tree entries, later entries can be children of labels;
 		// removing labels requires re-chaining the retained path to avoid orphaned subtrees.
 		const pathWithoutLabels: SessionEntry[] = [];
+		const replacementByLabelId = new Map<string, string>();
+		const pendingLabelIds: string[] = [];
 		let pathParentId: string | null = null;
 		for (const entry of path) {
-			if (entry.type === "label") continue;
-			pathWithoutLabels.push({ ...entry, parentId: pathParentId });
+			if (entry.type === "label") {
+				pendingLabelIds.push(entry.id);
+				continue;
+			}
+			for (const labelId of pendingLabelIds) {
+				replacementByLabelId.set(labelId, entry.id);
+			}
+			pendingLabelIds.length = 0;
+			pathWithoutLabels.push(
+				entry.type === "compaction"
+					? {
+							...entry,
+							parentId: pathParentId,
+							firstKeptEntryId:
+								entry.firstKeptEntryId === entry.id
+									? entry.id
+									: (replacementByLabelId.get(entry.firstKeptEntryId) ?? entry.firstKeptEntryId),
+						}
+					: { ...entry, parentId: pathParentId },
+			);
 			pathParentId = entry.id;
 		}
 
@@ -1775,23 +2627,27 @@ export class SessionManager {
 				parentId = labelEntry.id;
 			}
 
+			reserveSessionWrite(newSessionFile);
+			// Materialize the branched entries while the previous backing is still
+			// readable, then clear: re-externalizing tokenized entries after clear()
+			// would bake sentinel tokens into the new branched JSONL.
+			const branchedEntries = this._materializeEntries([...pathWithoutLabels, ...labelEntries]);
+			const previousBlobsDir = this.residentStore.resolvedBlobsDir();
 			this.residentStore.clear();
+			if (previousBlobsDir) {
+				this._removeBlobsDir(previousBlobsDir);
+			}
 			this.mirrorTrimmed = false;
-			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-				this.residentStore.externalize(entry),
-			);
+			this.trimmedIds.clear();
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
+			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 			this._buildIndex();
 			this.mutationCount++;
 
-			// Only write the file now if it contains an assistant message.
-			// Otherwise defer to _persist(), which creates the file on the
-			// first assistant response, matching the newSession() contract
-			// and avoiding the duplicate-header bug when _persist()'s
-			// no-assistant guard later resets flushed to false.
-			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-			if (hasAssistant) {
+			// Use the same rule as _persist(): write now if the branched path already
+			// has a conversation, otherwise let _persist() create the file later.
+			if (this._hasConversation()) {
 				this._rewriteFile();
 				this.flushed = true;
 			} else {
@@ -1816,10 +2672,9 @@ export class SessionManager {
 			labelEntries.push(labelEntry);
 			parentId = labelEntry.id;
 		}
+		const branchedEntries = this._materializeEntries([...pathWithoutLabels, ...labelEntries]);
 		this.residentStore.clear();
-		this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries].map((entry) =>
-			this.residentStore.externalize(entry),
-		);
+		this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 		this.sessionId = newSessionId;
 		this._buildIndex();
 		this.mutationCount++;
@@ -1841,9 +2696,12 @@ export class SessionManager {
 	 * @param path Path to session file
 	 * @param sessionDir Optional session directory for /new or /branch. If omitted, derives from file's parent.
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
+	 * @param options Applied only when this open CREATES the session (the path does not exist
+	 * yet, or exists and is empty). An existing session file keeps the id in its header.
 	 */
-	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+	static open(path: string, sessionDir?: string, cwdOverride?: string, options?: NewSessionOptions): SessionManager {
 		const resolvedPath = resolvePath(path);
+		reserveSessionWrite(resolvedPath);
 		let header: SessionHeader | null = null;
 		let preloadedFileEntries: FileEntry[] | undefined;
 		if (cwdOverride === undefined && existsSync(resolvedPath)) {
@@ -1864,10 +2722,13 @@ export class SessionManager {
 			const content = readFileSync(resolvedPath);
 			if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(resolvedPath, "\n");
 		}
-		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
+		// The header keeps the cwd it was recorded with; a folder the OmO desktop moved opens where it lives now,
+		// and the file is never rewritten (senpi#2990).
+		const headerCwd = header ? getSessionHeaderCwd(header) : undefined;
+		const cwd = cwdOverride ?? (headerCwd ? resolveMovedPath(headerCwd) : headerCwd) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
-		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
+		return new SessionManager(cwd, dir, resolvedPath, true, options, preloadedFileEntries);
 	}
 
 	/**
@@ -1885,9 +2746,9 @@ export class SessionManager {
 		return new SessionManager(cwd, dir, undefined, true);
 	}
 
-	/** Create an in-memory session (no file persistence) */
-	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions): SessionManager {
-		return new SessionManager(cwd, "", undefined, false, options);
+	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem. */
+	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions, entries?: FileEntry[]): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, options, entries);
 	}
 
 	/**
@@ -1938,6 +2799,7 @@ export class SessionManager {
 			cwd: resolvedTargetCwd,
 			parentSession: resolvedSourcePath,
 		};
+		reserveSessionWrite(newSessionFile);
 		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
 
 		// Copy all non-header entries from source
@@ -1951,47 +2813,90 @@ export class SessionManager {
 	}
 
 	/**
+	 * Find an exact session ID without loading transcript bodies.
+	 * @param cwd Working directory (used to compute default session directory)
+	 * @param id Exact session ID
+	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
+	 */
+	static findById(cwd: string, id: string, sessionDir?: string): string | undefined {
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
+		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		const matchesCwd = sessionCwdMatcher(resolvePath(cwd));
+
+		try {
+			for (const file of readdirSync(dir)) {
+				if (!file.endsWith(".jsonl")) continue;
+				const path = join(dir, file);
+				const header = readSessionHeaderForDiscovery(path);
+				if (header?.id !== id) continue;
+				if (filterCwd && !matchesCwd(getSessionHeaderCwd(header))) continue;
+				return path;
+			}
+		} catch {
+			// Exact session discovery is best-effort, matching list().
+		}
+		return undefined;
+	}
+
+	/**
 	 * List all sessions for a directory.
 	 * @param cwd Working directory (used to compute default session directory)
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.senpi/agent/sessions/<encoded-cwd>/).
 	 * @param onProgress Optional callback for progress updates (loaded, total)
 	 */
-	static async list(cwd: string, sessionDir?: string, onProgress?: SessionListProgress): Promise<SessionInfo[]> {
+	static async list(
+		cwd: string,
+		sessionDir?: string,
+		onProgress?: SessionListProgress,
+		signal?: AbortSignal,
+	): Promise<SessionInfo[]> {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
-		const resolvedCwd = resolvePath(cwd);
-		const sessions = (await listSessionsFromDir(dir, onProgress)).filter(
-			(session) => !filterCwd || sessionCwdMatches(session.cwd, resolvedCwd),
-		);
-		sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
-		return sessions;
+		const matchesCwd = sessionCwdMatcher(resolvePath(cwd));
+		const includeSession = (session: SessionInfo) => !filterCwd || matchesCwd(session.cwd);
+		const progress: SessionListProgress | undefined = onProgress
+			? (loaded, total, partialSessions) => onProgress(loaded, total, partialSessions?.filter(includeSession))
+			: undefined;
+		const sessions = (await listSessionsFromDir(dir, progress, signal)).filter(includeSession);
+		return sortSessionInfos(sessions);
 	}
 
 	/**
 	 * List all sessions across all project directories.
 	 * @param onProgress Optional callback for progress updates (loaded, total)
 	 */
-	static async listAll(onProgress?: SessionListProgress): Promise<SessionInfo[]>;
-	static async listAll(sessionDir?: string, onProgress?: SessionListProgress): Promise<SessionInfo[]>;
+	static async listAll(onProgress?: SessionListProgress, signal?: AbortSignal): Promise<SessionInfo[]>;
+	static async listAll(
+		sessionDir?: string,
+		onProgress?: SessionListProgress,
+		signal?: AbortSignal,
+	): Promise<SessionInfo[]>;
 	static async listAll(
 		sessionDirOrOnProgress?: string | SessionListProgress,
-		onProgress?: SessionListProgress,
+		onProgressOrSignal?: SessionListProgress | AbortSignal,
+		signal?: AbortSignal,
 	): Promise<SessionInfo[]> {
 		const customSessionDir =
 			typeof sessionDirOrOnProgress === "string" ? normalizePath(sessionDirOrOnProgress) : undefined;
-		const progress = typeof sessionDirOrOnProgress === "function" ? sessionDirOrOnProgress : onProgress;
+		const progress =
+			typeof sessionDirOrOnProgress === "function"
+				? sessionDirOrOnProgress
+				: typeof onProgressOrSignal === "function"
+					? onProgressOrSignal
+					: undefined;
+		const abortSignal =
+			typeof sessionDirOrOnProgress === "string" || typeof onProgressOrSignal === "function"
+				? signal
+				: (onProgressOrSignal ?? signal);
+		abortSignal?.throwIfAborted();
 		if (customSessionDir) {
-			const sessions = await listSessionsFromDir(customSessionDir, progress);
-			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
-			return sessions;
+			return sortSessionInfos(await listSessionsFromDir(customSessionDir, progress, abortSignal));
 		}
 
 		const sessionsDir = getSessionsDir();
 
 		try {
-			if (!existsSync(sessionsDir)) {
-				return [];
-			}
+			if (!existsSync(sessionsDir)) return [];
 			const entries = await readdir(sessionsDir, { withFileTypes: true });
 			const dirs = entries
 				.filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
@@ -2010,16 +2915,23 @@ export class SessionManager {
 				}
 			}
 
-			// Process all files with progress tracking
+			// Process each directory through its own summary index, with progress over all files
 			let loaded = 0;
-			const sessions = await listSessionInfos(dirFiles.flat(), () => {
+			const partialSessions: SessionInfo[] = [];
+			const onLoaded = (info: SessionInfo | null): void => {
 				loaded++;
-				progress?.(loaded, totalFiles);
-			});
+				if (info) partialSessions.push(info);
+				const publish = loaded === 1 || loaded % ALL_SESSION_LIST_PUBLISH_INTERVAL === 0 || loaded === totalFiles;
+				progress?.(loaded, totalFiles, publish ? sortSessionInfos([...partialSessions]) : undefined);
+			};
+			const sessions: SessionInfo[] = [];
+			for (const [index, dir] of dirs.entries()) {
+				sessions.push(...(await listSessionFilesInDir(dir, dirFiles[index] ?? [], onLoaded, abortSignal)));
+			}
 
-			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
-			return sessions;
+			return sortSessionInfos(sessions);
 		} catch {
+			abortSignal?.throwIfAborted();
 			return [];
 		}
 	}

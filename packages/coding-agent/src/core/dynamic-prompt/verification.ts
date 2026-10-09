@@ -1,3 +1,5 @@
+import { type PromptSurface, type TerminalOrApp, terminalOrApp } from "./types.ts";
+
 export type TestDisciplineRule = {
 	id:
 		| "deterministic-tests"
@@ -56,7 +58,20 @@ export function buildTestDisciplineSection(): string {
 	return lines.join("\n");
 }
 
-export function buildVerificationSection(): string {
+/**
+ * The app surface's claim audit (senpi#2377): a check that could not run is covered by what did run,
+ * and tool and hook feedback stays with the agent. Every app-surface verification rule renders it.
+ */
+export const APP_UNRUN_CHECK_RULE =
+	"A check that did not run is covered by the evidence that did run; name it only when no other evidence supports the claim. Replies render in an app, so tool and hook feedback (comment-checker findings, language-server availability, internal notices) is for you to act on: it reaches the user only when it changes what they get, and an unavailable tool or hook never does by itself.";
+
+const CLAIM_AUDIT: Record<TerminalOrApp, string> = {
+	terminal:
+		"report only evidence-backed work, flag the unverified explicitly, and report failing tests with the output.",
+	app: `report only evidence-backed work and report failing tests with the output. ${APP_UNRUN_CHECK_RULE}`,
+};
+
+export function buildVerificationSection(options: { surface?: PromptSurface } = {}): string {
 	return `## Verification
 
 Tier the scope, never the rigor.
@@ -67,5 +82,5 @@ Tier the scope, never the rigor.
 
 ${buildTestDisciplineSection()}
 
-"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: report only evidence-backed work, flag the unverified explicitly, and report failing tests with the output. Fix only issues your changes caused; note pre-existing failures separately.`;
+"Should pass" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: ${CLAIM_AUDIT[terminalOrApp(options.surface ?? "terminal")]} Fix only issues your changes caused; note pre-existing failures separately.`;
 }

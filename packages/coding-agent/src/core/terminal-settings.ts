@@ -1,4 +1,12 @@
+export const TERMINAL_MOUSE_MODES = ["off", "whilePending", "always"] as const;
+export type TerminalMouseMode = (typeof TERMINAL_MOUSE_MODES)[number];
+
+export function isTerminalMouseMode(value: unknown): value is TerminalMouseMode {
+	return value === "off" || value === "whilePending" || value === "always";
+}
+
 export interface TerminalSettings {
+	mouse?: TerminalMouseMode; // default: whilePending; off also disables fullscreen capture
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
@@ -19,6 +27,7 @@ export interface TerminalSettings {
 	monitorMaxLinesPerInjection?: number; // default: 50 (bounded monitor event batch)
 	monitorMaxCharsPerInjection?: number; // default: 4096 (bounded monitor event batch)
 	monitorWakeBudget?: number; // default: 5 (consecutive monitor-only wake limit)
+	maxDurableMonitors?: number | "unlimited"; // default: "unlimited" (persistent monitors per session; invalid values mean unlimited)
 }
 
 export interface BranchSummarySettings {

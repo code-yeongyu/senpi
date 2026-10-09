@@ -14,6 +14,8 @@ import {
 import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 process.env.CURSOR_CONVERSATION_ID_STORE = join(mkdtempSync(join(tmpdir(), "cursor-cache-")), "ids.json");
 
 const neverAbortedSignal = new AbortController().signal;
@@ -75,7 +77,7 @@ async function startServer(handler: (stream: http2.ServerHttp2Stream) => void): 
 async function runStream(baseUrl: string, sessionId: string, userContent = "hello", conversationId?: string) {
 	const result = streamCursorAgent(
 		buildModel(baseUrl),
-		{ messages: [{ role: "user", content: userContent, timestamp: 0 }] },
+		normalizeContext({ messages: [{ role: "user", content: userContent, timestamp: 0 }] }),
 		{ apiKey: "test-token", sessionId, conversationId, signal: neverAbortedSignal },
 	);
 	for await (const _event of result) {

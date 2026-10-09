@@ -14,15 +14,18 @@
  * retried; a failure that already burned the budget degrades as before.
  */
 import type { RetryPolicy } from "@earendil-works/pi-ai";
+import { DEFAULT_SUMMARIZATION_MAX_DURATION_MS } from "../../../compaction/stream-watchdog.ts";
 
 export const MAX_SUMMARIZATION_ATTEMPT_RETRIES = 3;
 
 /**
- * Total wall-clock all retried attempts of one summarization may consume.
- * Half of a single attempt's 120s budget: room for several fast upstream
+ * Total wall-clock all retried attempts of one summarization may consume:
+ * half of a single attempt's budget. Room for several fast upstream
  * rejections, never room to add another full deadline to the turn.
  */
-export const SUMMARIZATION_RETRY_TOTAL_BUDGET_MS = 60_000;
+export function summarizationRetryTotalBudgetMs(attemptBudgetMs: number): number {
+	return attemptBudgetMs / 2;
+}
 
 /** Faster first retry than the provider default: this route blocks the turn. */
 export const DEFAULT_SUMMARIZATION_RETRY_POLICY: RetryPolicy = {
@@ -31,6 +34,15 @@ export const DEFAULT_SUMMARIZATION_RETRY_POLICY: RetryPolicy = {
 	baseDelayMs: 1_000,
 };
 
-export function allowSummarizationRetry(elapsedMs: number): boolean {
-	return elapsedMs < SUMMARIZATION_RETRY_TOTAL_BUDGET_MS;
+/**
+ * Whether a retry may start given the wall clock already spent on the current
+ * attempt set. The total budget tracks the attempt budget: a large session
+ * whose single attempt legitimately spans minutes keeps proportional room to
+ * retry, while the invariant "never another full deadline" still holds.
+ */
+export function allowSummarizationRetry(
+	elapsedMs: number,
+	attemptBudgetMs: number = DEFAULT_SUMMARIZATION_MAX_DURATION_MS,
+): boolean {
+	return elapsedMs < summarizationRetryTotalBudgetMs(attemptBudgetMs);
 }

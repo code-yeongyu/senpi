@@ -24,15 +24,15 @@ support/           Shared test support modules
 helpers/           Shared subprocess/QA/fixture helpers
 benchmarks/        Perf-oriented probes (not part of the default correctness gate)
 examples/          Coverage for the shipped `examples/` extensions
-manual-qa/         Explicit manual QA scripts (not part of default suite)
+manual-qa/         Explicit manual QA scripts (excluded from the default suite; SENPI_MANUAL_QA=1 to run a *.test.ts)
 qa/app-server/     Real app-server surface drivers (own AGENTS.md)
 integration/       Explicitly gated real-provider tests
 fixtures/, goldens/ Shared deterministic inputs and snapshots
 model-runtime*.test.ts / models-store.test.ts / remote-catalog-provider.test.ts / runtime-credentials.test.ts
                    Model/catalog/auth runtime coverage
 claude-sdk-oauth-*.test.ts
-                   Flat cluster (51 files) at test/ root covering the Claude SDK
-                   OAuth provider extension
+                   Flat cluster at `test/anthropic-subscription-*.test.ts` covering the Claude SDK
+                   OAuth provider extension (historically named `claude-sdk-oauth-*.test.ts`)
 ```
 
 The flat `test/*.test.ts` root cluster (~350 files) is legacy/feature-focused placement.
@@ -60,6 +60,7 @@ Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runt
 - Guarding only the `SENPI_` lane is not enough: with the omo brand active, `brandEnvNames` resolves `OMO_CODING_AGENT_DIR` first, so `getAgentDir()` bypassed the quarantine and `settings-tips.test.ts` wiped the live `~/.omo/agent/settings.json` again on 2026-08-25 (reproduced pre-fix against a decoy dir; post-fix the decoy stays intact). The scrub of all lanes plus the brand marker is what closes this; never narrow it back to a single-lane guard, and never reintroduce an `if (!process.env.SENPI_CODING_AGENT_DIR)` short-circuit here.
 - Before this guard always won, an inherited env made the whole suite run against the real config and tests deleted `~/.omo/agent/settings.json` (proven live 2026-08-18: favorite-guard ENOENT crashes matched suite-run windows exactly).
 - To target a specific real directory in a test, pass the agent dir explicitly to `SettingsManager.create` / `SessionManager.create` rather than relying on the ambient env. Use `SENPI_TEST_USE_REAL_AGENT_DIR=1` only for the rare whole-suite opt-in.
+- `setup.ts` also calls `scrubHostLifecycleEnv`, which deletes every `SENPI_RPC_HOST_*` variable. A host generation exports its lifecycle (`GENERATION`, `INSTANCE_ID`, `DAEMON_DIR`, `PUBLIC_SOCKET`, `WATCH_PPID`, `WATCH_FD`, `SCRATCH_DIR`, `CLEANUP_PATHS`) to every session it runs, so a suite started from an omo session otherwise inherits it: `rpc-multi-session.test.ts` read generation 10 instead of 0, and spawned test hosts watched the outer supervisor's pid. The scrub is by prefix like the agent-dir lanes; a test that needs a host tuning variable (`SENPI_RPC_HOST_IDLE_EXIT_MS`, `SENPI_RPC_HOST_RSS_WARN_MB`) sets it explicitly.
 - Tests that spawn the CLI as a subprocess must set `SENPI_CODING_AGENT_DIR` to a temp dir in the child env explicitly (see `test/helpers/rpc-hermetic.ts`); never let the child inherit an unguarded ambient value.
 
 ## LIVE AND MANUAL SURFACES
@@ -72,7 +73,7 @@ Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runt
 
 - Run every added or changed test file directly until green.
 - Run the narrow owning directory or package suite when shared harnesses, fixtures, or lifecycle behavior change.
-- Package runner is Vitest: `bun run --cwd packages/coding-agent test --run <path>`.
+- Package runner is Vitest: `bun run --cwd packages/coding-agent test <path>` (the `test` script already passes `--run`; passing it again makes vitest reject the duplicated flag).
 - Root `bun run check` is static validation and does not replace tests.
 
 ---

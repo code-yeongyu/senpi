@@ -2,8 +2,9 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
-import { getModel } from "../src/compat.ts";
-import type { Context, ToolCall } from "../src/types.ts";
+import { transformMessages } from "../src/api/transform-messages.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
+import type { Api, Model, ToolCall } from "../src/types.ts";
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
@@ -80,7 +81,124 @@ function createFakeAnthropicClient(response: Response): Anthropic {
 	} as unknown as Anthropic;
 }
 
+type ResponseContentBlock = { type: "thinking"; thinking: string; signature: string } | { type: "text"; text: string };
+
+function createResponseModelSseResponse(model: string, contentBlock: ResponseContentBlock): Response {
+	return createSseResponse([
+		{
+			event: "message_start",
+			data: JSON.stringify({
+				type: "message_start",
+				message: { id: "msg_response_model", model, usage: { input_tokens: 100, output_tokens: 0 } },
+			}),
+		},
+		{
+			event: "content_block_start",
+			data: JSON.stringify({ type: "content_block_start", index: 0, content_block: contentBlock }),
+		},
+		{ event: "content_block_stop", data: JSON.stringify({ type: "content_block_stop", index: 0 }) },
+		{
+			event: "message_delta",
+			data: JSON.stringify({
+				type: "message_delta",
+				delta: { stop_reason: "end_turn" },
+				usage: { input_tokens: 100, output_tokens: 20 },
+			}),
+		},
+		{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
+	]);
+}
+
 describe("Anthropic raw SSE parsing", () => {
+	it("forwards parsed provider stream events in order", async () => {
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const providerEvents: unknown[] = [];
+		const eventModels: Model<Api>[] = [];
+		const result = await streamAnthropic(
+			model,
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
+			{
+				client: createFakeAnthropicClient(createSseResponse(minimalAnthropicEvents)),
+				onProviderStreamEvent: async (event, eventModel) => {
+					await Promise.resolve();
+					providerEvents.push(event);
+					eventModels.push(eventModel);
+				},
+			},
+		).result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(providerEvents.map((event) => (event as { type: string }).type)).toEqual([
+			"message_start",
+			"content_block_start",
+			"content_block_delta",
+			"content_block_stop",
+			"message_delta",
+			"message_stop",
+		]);
+		expect(eventModels).toEqual([model, model, model, model, model, model]);
+	});
+
+	it("keeps signed thinking replayable when a proxy relabels the model", async () => {
+		// Regression test for earendil-works/pi#9188.
+		const model = getModel("anthropic", "claude-opus-5");
+		const responseModel = "kimi-for-coding";
+		const initialContext = normalizeContext({
+			messages: [{ role: "user", content: "Hello", timestamp: 1 }],
+		});
+		const first = await streamAnthropic(model, initialContext, {
+			client: createFakeAnthropicClient(
+				createResponseModelSseResponse(responseModel, {
+					type: "thinking",
+					thinking: "reasoning",
+					signature: "signature",
+				}),
+			),
+		}).result();
+
+		expect(first.model).toBe(model.id);
+		expect(first.responseModel).toBe(responseModel);
+
+		const transformed = transformMessages([...initialContext.messages, first], model);
+		const replayedAssistant = transformed.find((message) => message.role === "assistant");
+		expect(replayedAssistant?.content).toEqual([
+			{ type: "thinking", thinking: "reasoning", thinkingSignature: "signature" },
+		]);
+	});
+
+	it("uses a returned fallback model for cost attribution", async () => {
+		const fallbackModel = "fallback-model";
+		const model: Model<"anthropic-messages"> = {
+			...getModel("anthropic", "claude-opus-5"),
+			compat: {
+				allowedFallbackModels: [
+					{
+						provider: "anthropic",
+						model: fallbackModel,
+						cost: { input: 3, output: 5, cacheRead: 0, cacheWrite: 0 },
+					},
+				],
+			},
+		};
+		const result = await streamAnthropic(
+			model,
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
+			{
+				client: createFakeAnthropicClient(
+					createResponseModelSseResponse(fallbackModel, { type: "text", text: "done" }),
+				),
+			},
+		).result();
+
+		// Fork contract: a served model that is one of the request's allowed server-side
+		// fallbacks becomes the message model (as after a mid-output fallback marker), so its
+		// signed thinking is not replayed to the requested model as same-model output.
+		expect(result.model).toBe(fallbackModel);
+		expect(result.responseModel).toBe(fallbackModel);
+		expect(result.usage.cost.input).toBeCloseTo(0.0003, 10);
+		expect(result.usage.cost.output).toBeCloseTo(0.0001, 10);
+	});
+
 	it("fails safely when Anthropic falls back after output begins", async () => {
 		const model = getModel("anthropic", "claude-opus-5");
 		const response = createSseResponse([
@@ -120,12 +238,12 @@ describe("Anthropic raw SSE parsing", () => {
 
 		const result = await streamAnthropic(
 			model,
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
-			{ client: createFakeAnthropicClient(response) },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
+			{ client: createFakeAnthropicClient(response), abortServerSideFallback: true },
 		).result();
 
 		expect(result.stopReason).toBe("error");
-		expect(result.errorMessage).toContain("unsupported mid-output model fallback");
+		expect(result.errorMessage).toContain("Server-side fallback");
 	});
 
 	it("forces streaming after an onPayload replacement", async () => {
@@ -143,7 +261,7 @@ describe("Anthropic raw SSE parsing", () => {
 
 		await streamAnthropic(
 			getModel("anthropic", "claude-fable-5-1"),
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{
 				client,
 				onPayload: (payload) => ({ ...(payload as Record<string, unknown>), stream: false }),
@@ -167,8 +285,8 @@ describe("Anthropic raw SSE parsing", () => {
 		} as unknown as Anthropic;
 
 		await streamAnthropic(
-			getModel("openrouter", "anthropic/claude-3-haiku"),
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			getModel("anthropic", "claude-haiku-4-5"),
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{ client, thinkingEnabled: false },
 		).result();
 
@@ -190,7 +308,7 @@ describe("Anthropic raw SSE parsing", () => {
 
 		const result = await streamAnthropic(
 			getModel("anthropic", "claude-fable-5-1"),
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{ client },
 		).result();
 
@@ -215,12 +333,13 @@ describe("Anthropic raw SSE parsing", () => {
 		const delta = JSON.parse(events[4].data) as Record<string, unknown>;
 		delta.input_transformations = [
 			{ type: "thinking_dropped", path: "messages.3.content.0", reason: "model_binding_mismatch" },
+			{ type: "thinking_mismatch_allowed", path: "messages.3.content.1", reason: "prefix_binding_mismatch" },
 		];
 		events[4].data = JSON.stringify(delta);
 
 		const result = await streamAnthropic(
 			getModel("anthropic", "claude-fable-5-1"),
-			{ messages: [{ role: "user", content: "Hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
 			{ client: createFakeAnthropicClient(createSseResponse(events)) },
 		).result();
 
@@ -235,6 +354,11 @@ describe("Anthropic raw SSE parsing", () => {
 							path: "messages.3.content.0",
 							reason: "model_binding_mismatch",
 						},
+						{
+							type: "thinking_mismatch_allowed",
+							path: "messages.3.content.1",
+							reason: "prefix_binding_mismatch",
+						},
 					],
 				},
 			},
@@ -242,7 +366,7 @@ describe("Anthropic raw SSE parsing", () => {
 	});
 	it("repairs malformed SSE JSON and malformed streamed tool JSON", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "Use the edit tool.", timestamp: Date.now() }],
 			tools: [
 				{
@@ -254,7 +378,7 @@ describe("Anthropic raw SSE parsing", () => {
 					}),
 				},
 			],
-		};
+		});
 
 		const malformedToolJsonDelta = String.raw`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"A\H\",\"text\":\"col1	col2\"}"}}`;
 
@@ -329,9 +453,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("preserves content from content_block_start events", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
-		};
+		});
 		const response = createSseResponse([
 			{
 				event: "message_start",
@@ -427,9 +551,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("preserves refusal stop details from message_delta", async () => {
 		const model = getModel("anthropic", "claude-fable-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "blocked request", timestamp: Date.now() }],
-		};
+		});
 		const explanation =
 			"This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy. To learn more, provide feedback, or request an exemption based on how you use Claude, visit our help center: https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude.";
 		const response = createSseResponse([
@@ -486,9 +610,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("preserves sensitive stop reasons with a descriptive error message", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "blocked request", timestamp: Date.now() }],
-		};
+		});
 		const response = createSseResponse([
 			{
 				event: "message_start",
@@ -536,9 +660,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("treats message_delta without usage as a no-op for usage accumulation", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
-		};
+		});
 		const response = createSseResponse(
 			minimalAnthropicEvents.map((event) =>
 				event.event === "message_delta"
@@ -564,9 +688,9 @@ describe("Anthropic raw SSE parsing", () => {
 
 	it("ignores unknown SSE events after message_stop", async () => {
 		const model = getModel("anthropic", "claude-haiku-4-5");
-		const context: Context = {
+		const context = normalizeContext({
 			messages: [{ role: "user", content: "Say hello.", timestamp: Date.now() }],
-		};
+		});
 		const response = createSseResponse([
 			...minimalAnthropicEvents,
 			{ event: "done", data: "[DONE]" },

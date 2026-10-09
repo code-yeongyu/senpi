@@ -80,7 +80,7 @@ describe("createAgentSessionServices provider registration order", () => {
 		expect(applied).toEqual([
 			"native:ord-native",
 			"config:ord-legacy",
-			"config:claude-sdk-oauth",
+			"config:anthropic-subscription",
 			"config:cursor-cli-oauth",
 		]);
 	});
@@ -96,7 +96,7 @@ describe("createAgentSessionServices provider registration order", () => {
 			"config:ord-legacy-first",
 			"native:ord-native",
 			"config:ord-legacy-last",
-			"config:claude-sdk-oauth",
+			"config:anthropic-subscription",
 			"config:cursor-cli-oauth",
 		]);
 	});

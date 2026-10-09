@@ -80,7 +80,7 @@ Nothing was running:
 
 ### restart
 
-`restart` stops the managed daemon, then starts it again. It preserves the previous daemon flags from `settings.json` when available, so a daemon started with `--listen unix:///tmp/senpi-app-server.sock` restarts with the same listener even if the restart command omits `--listen`.
+`restart` stops the managed daemon, then starts it again. It preserves the previous daemon flags from `settings.json` when available, so a daemon started with `--listen unix:///tmp/senpi-app-server.sock` restarts with the same listener even if the restart command omits `--listen`. Extensions follow the same rule: the recorded `--extension` list is reused unless the restart command names its own.
 
 ```bash
 senpi app-server daemon restart

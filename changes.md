@@ -1,5 +1,524 @@
 # changes — senpi-monorepo root
 
+## 2026-10-04 - Biome skips the vendored pi codemode runtime (codemode plan node 18, part 1)
+
+### What changed
+
+- `biome.json`: `packages/senpi-codemode/src/kernels/sandbox/vendor/**` and `packages/senpi-codemode/test/sandbox/vendor/**` are excluded from formatting and lint.
+
+### Why
+
+- Those files are upstream's source and test, kept byte-identical (apart from an attribution header) so their provenance stays checkable against the release and a future sync re-applies only the marked local blocks. Formatting them would rewrite every line.
+
+### Why an extension could not handle it
+
+- This is repository tooling configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `files.includes` list in `biome.json`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): paths divergent from the new pin
+
+### What changed
+
+- `packages/pty/tsconfig.build.json`: the fork's own build config for `packages/pty` (present since before the previous pin, not in the pinned upstream tree). Git rename detection pairs it with upstream's `packages/codemode/tsconfig.build.json`, which this sync does not add (Exclusion list), because the two files are byte-identical.
+
+### Why
+
+`packages/pty` is a fork-only package; its build config matches the generic package template upstream also uses. The rename pairing is a content match, not an upstream ownership.
+
+### Why an extension could not handle it
+
+Workspace build configuration is read by `scripts/build-all.mjs` before any runtime or extension loads.
+
+### Expected merge conflict zones
+
+- NONE for this path; a future upstream change to `packages/codemode/tsconfig.build.json` stays excluded by `.github/agent/upstream-exclusions.txt`.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): manifests, build and check scripts
+
+### What changed
+
+- `biome.json`: `biome.json`: adopted the model-catalog-protocol includes and the `scripts/biome/model-type-comparison.grit` plugin; `packages/agent/examples/**` include not added.
+- `package.json`: Root `package.json`: fork scripts kept (`build-all.mjs` build, the fork `check` chain with conflict-marker/bun-lock/install-lock/claude-sdk-platform-lock gates, `run-workspaces.mjs` launchers, `refresh-lock`, `preinstall`); devDependencies kept (biome 2.5.14, @types/node 26.6.2, typescript 7.0.2, @typescript/typescript6, tsx 4.23.13, vitest + @vitest/coverage-v8 5.0.1). Adopted from upstream: `generate:models` runs generate-models only (the `generate-image-models` chain dropped for the D-3 image-model unification), and `test:scripts` also runs the adopted upstream `scripts/model-catalog-protocol.test.ts`. Not adopted: codemode/mcp/durable build phases, the tsx removal. `packages/ai/package.json`: `openai` 6.26.0 -> 7.19.0 (hold lifted, D-10); `generate-image-models` script and its `prepublishOnly` step removed (D-3 ADOPT form; task 28 restores both from OURS if the D-3 fallback is taken). Version, internal ranges, fork scripts and deps unchanged. `packages/agent/package.json`: `@earendil-works/chord` exact 0.85.1 -> 0.99.1 (D-12, chord moves to upstream 0.99.1); adopted upstream `./experimental/pico3` export and `build: tsc`; bench scripts keep tsx. `packages/coding-agent/package.json`: `@earendil-works/chord` exact 0.99.1 (D-12); no `@earendil-works/pi-codemode` / `pi-mcp` and no `quickjs-wasi` (upstream codemode runtime, D-2); fork build/binary/copy-assets scripts kept (no codemode worker entry). `packages/tui/package.json`: version OURS; adopted `build: tsc`.
+- `pi-test.ps1`: `pi-test.sh`, `pi-test.ps1`: fork tsx launcher kept (D-11).
+- `pi-test.sh`: `pi-test.sh`, `pi-test.ps1`: fork tsx launcher kept (D-11).
+- `tsconfig.base.json`: `tsconfig.base.json`: OURS (no `verbatimModuleSyntax`, decorator options kept).
+- `tsconfig.json`: `tsconfig.json`: fork paths kept, no codemode/mcp/durable paths; adopted the `@earendil-works/pi-agent-core/experimental/pico3` path and `scripts/model-catalog-protocol{,.test}.ts` in `include`. `packages/agent/examples/**` not added (its only content is the excluded mcp-codemode example).
+- `vitest.base.ts`: `vitest.base.ts`: adopted the `@earendil-works/pi-ai/api/*` alias; codemode/mcp aliases not added.
+
+### Why
+
+- The fork builds through `scripts/build-all.mjs` and runs sources with tsx (D-11); upstream's plain-node source execution and TypeScript-7 script rewrites are mechanism changes the fork already covers.
+- Upstream codemode, MCP, tool-search and durable are excluded (D-2, D-7), so their workspace packages, dependencies, build phases, tsconfig/vitest aliases and smoke checks stay out.
+- The `openai` 6.26.0 hold had no failing check behind it and the adopted upstream OpenAI adapters target 7.19.0 (D-10).
+- chord follows upstream 0.99.1 with exact pins (D-12, check:pinned-deps).
+
+### Why an extension could not handle it
+
+Workspace manifests, tsconfig and build/check scripts are repository build infrastructure, outside any runtime extension.
+
+### Expected merge conflict zones
+
+Every path listed above conflicts again where upstream edits the hunks named in its line; the fork-kept constructs named there are the anchors to preserve.
+
+## 2026-09-30 - Sync with upstream v0.99.1 (6a4af07d6): upstream features excluded on record
+
+### What changed
+
+Upstream paths below are not added (or stay deleted) in this sync; `.github/agent/upstream-exclusions.txt` lists them for mechanical re-exclusion after every upstream merge.
+
+- `packages/coding-agent/examples/sdk/14-codemode-mcp.ts` (not added / kept deleted)
+- `packages/codemode/package.json` (not added / kept deleted)
+- `packages/codemode/src/declarations.ts` (not added / kept deleted)
+- `packages/codemode/src/identifier.ts` (not added / kept deleted)
+- `packages/codemode/src/index.ts` (not added / kept deleted)
+- `packages/codemode/src/runtime/host.ts` (not added / kept deleted)
+- `packages/codemode/src/runtime/prelude-source.ts` (not added / kept deleted)
+- `packages/codemode/src/runtime/protocol.ts` (not added / kept deleted)
+- `packages/codemode/src/runtime/worker.ts` (not added / kept deleted)
+- `packages/codemode/src/source.ts` (not added / kept deleted)
+- `packages/codemode/src/types.ts` (not added / kept deleted)
+- `packages/codemode/src/wasm.ts` (not added / kept deleted)
+- `packages/codemode/tsconfig.build.json` (not added / kept deleted)
+- `packages/codemode/vitest.config.ts` (not added / kept deleted)
+- `packages/durable/package.json` (not added / kept deleted)
+- `packages/durable/src/documents.ts` (not added / kept deleted)
+- `packages/durable/src/entries.ts` (not added / kept deleted)
+- `packages/durable/src/env/index.ts` (not added / kept deleted)
+- `packages/durable/src/env/node.ts` (not added / kept deleted)
+- `packages/durable/src/env/utils/adaptive-publisher.ts` (not added / kept deleted)
+- `packages/durable/src/env/utils/output-capture.ts` (not added / kept deleted)
+- `packages/durable/src/env/utils/truncate.ts` (not added / kept deleted)
+- `packages/durable/src/errors.ts` (not added / kept deleted)
+- `packages/durable/src/harness/config.ts` (not added / kept deleted)
+- `packages/durable/src/harness/context.ts` (not added / kept deleted)
+- `packages/durable/src/harness/generation.ts` (not added / kept deleted)
+- `packages/durable/src/harness/harness.ts` (not added / kept deleted)
+- `packages/durable/src/harness/live.ts` (not added / kept deleted)
+- `packages/durable/src/harness/prompt.ts` (not added / kept deleted)
+- `packages/durable/src/harness/registry.ts` (not added / kept deleted)
+- `packages/durable/src/harness/scheduler.ts` (not added / kept deleted)
+- `packages/durable/src/harness/submissions.ts` (not added / kept deleted)
+- `packages/durable/src/harness/types.ts` (not added / kept deleted)
+- `packages/durable/src/harness/util.ts` (not added / kept deleted)
+- `packages/durable/src/ids.ts` (not added / kept deleted)
+- `packages/durable/src/index.ts` (not added / kept deleted)
+- `packages/durable/src/session/forks.ts` (not added / kept deleted)
+- `packages/durable/src/session/observation.ts` (not added / kept deleted)
+- `packages/durable/src/session/session.ts` (not added / kept deleted)
+- `packages/durable/src/session/transaction.ts` (not added / kept deleted)
+- `packages/durable/src/storage/jsonl/index.ts` (not added / kept deleted)
+- `packages/durable/src/storage/jsonl/node.ts` (not added / kept deleted)
+- `packages/durable/src/storage/jsonl/storage.ts` (not added / kept deleted)
+- `packages/durable/src/storage/memory.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/database.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/index.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/migrations.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/node.ts` (not added / kept deleted)
+- `packages/durable/src/storage/sqlite/storage.ts` (not added / kept deleted)
+- `packages/durable/src/tasks.ts` (not added / kept deleted)
+- `packages/durable/src/testing/assertions.ts` (not added / kept deleted)
+- `packages/durable/src/testing/index.ts` (not added / kept deleted)
+- `packages/durable/src/testing/runner.ts` (not added / kept deleted)
+- `packages/durable/src/testing/storage-benchmark.ts` (not added / kept deleted)
+- `packages/durable/src/testing/storage-conformance.ts` (not added / kept deleted)
+- `packages/durable/src/testing/types.ts` (not added / kept deleted)
+- `packages/durable/src/types.ts` (not added / kept deleted)
+- `packages/durable/tsconfig.build.json` (not added / kept deleted)
+- `packages/durable/vitest.benchmark.config.ts` (not added / kept deleted)
+- `packages/durable/vitest.config.ts` (not added / kept deleted)
+- `packages/mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt` (not added / kept deleted)
+- `packages/mcp/package.json` (not added / kept deleted)
+- `packages/mcp/src/auth-provider.ts` (not added / kept deleted)
+- `packages/mcp/src/client.ts` (not added / kept deleted)
+- `packages/mcp/src/index.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/callback.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/discovery.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/errors.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/flow.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/index.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/provider.ts` (not added / kept deleted)
+- `packages/mcp/src/oauth/types.ts` (not added / kept deleted)
+- `packages/mcp/src/protocol/content.ts` (not added / kept deleted)
+- `packages/mcp/src/protocol/jsonrpc.ts` (not added / kept deleted)
+- `packages/mcp/src/protocol/types.ts` (not added / kept deleted)
+- `packages/mcp/src/testing/index.ts` (not added / kept deleted)
+- `packages/mcp/src/transports/in-memory.ts` (not added / kept deleted)
+- `packages/mcp/src/transports/stdio.ts` (not added / kept deleted)
+- `packages/mcp/src/transports/streamable-http.ts` (not added / kept deleted)
+- `packages/mcp/src/transports/transport.ts` (not added / kept deleted)
+- `packages/mcp/tsconfig.build.json` (not added / kept deleted)
+- `packages/mcp/vitest.config.ts` (not added / kept deleted)
+
+### Why
+
+The fork keeps one implementation per capability: its own builtin mcp, tool-search and senpi-codemode instead of upstream's codemode/MCP/tool-search built-ins and packages (plan D-2, owner default Q1); builtin cache-keepalive instead of upstream cache warming, whose default spends paid refreshes (D-5, Q3); report-bug skills instead of `/bug` uploads to Radius (D-6, Q4); no `packages/durable`, which nothing in the fork imports (D-7). Paths the fork had already deleted (core/index.ts, core/radius.ts, session-share.ts, tui latex.ts, providers/openai-codex.ts, npm-shrinkwrap.json) stay deleted.
+
+### Why an extension could not handle it
+
+Exclusion is a repository-level decision about which upstream files exist at all; an extension can add behavior but cannot remove files an upstream merge adds.
+
+### Expected merge conflict zones
+
+Every upstream release that touches these paths re-adds or modifies them: re-run `git rm -rqf --ignore-unmatch $(cat .github/agent/upstream-exclusions.txt)` after the merge and extend the list (with a dated block here) when upstream adds a new file to an excluded feature.
+
+## Publish the real @code-yeongyu/senpi manifest, senpi#2360 (2026-09-29)
+
+### What changed
+
+- `package.json`: `check` no longer runs `check:shrinkwrap`; the `check:shrinkwrap` and `shrinkwrap:coding-agent` scripts are removed and `refresh-lock` no longer regenerates `publish-deps.lock.json`.
+
+### Why
+
+- The published senpi package declares its real dependencies now, so the publish-staging manifest that the shrinkwrap generator produced has no consumer (see `scripts/changes.md`).
+
+### Why an extension could not handle it
+
+- Repository scripts.
+
+### Expected merge conflict zones
+
+- LOW: the `check` chain and `refresh-lock` in the root `package.json` `scripts` block.
+
+## bun.lock workspace ranges follow the manifests after a release, senpi#2352 (2026-09-29)
+
+### What changed
+
+- `package.json`: `check` runs the new `check:bun-lock` (`node scripts/regenerate-bun-lock-isolated.mjs --check`), and `version:patch`, `version:minor` and `version:major` refresh bun.lock through `scripts/regenerate-bun-lock-isolated.mjs` instead of an in-place `bun install --lockfile-only`.
+- `bun.lock`: regenerated once; twenty stale workspace dependency ranges (`^2026.9.28-7`, and `^2026.9.28-3` in the leaf `evals`, `server` and `sqlite-node` workspaces) now match their manifests.
+
+### Why
+
+- Bun 1.4.2 does not reach a fixed point in one seeded `--lockfile-only` pass after a version bump: it rewrites each workspace `version` but keeps the old ranges the workspaces declare on each other. Release v2026.9.29 shipped that lock and a fresh `bun install` rewrote it. Nothing in `check` or CI ran the existing `--check` mode, so the drift was invisible.
+
+### Why an extension could not handle it
+
+- Repository lockfile maintenance and validation scripts.
+
+### Expected merge conflict zones
+
+- LOW: the `check` chain and the `version:*` lines in the root `package.json` `scripts` block.
+
+## Remove the desktop computer-use stack, now owned by omo (2026-09-28)
+
+### What changed
+
+- `Cargo.toml`: the workspace keeps `crates/senpi-pty` and `crates/senpi-grep`; the ten `crates/senpi-desktop-*` members and the desktop-only dependency pins are gone, and `Cargo.lock` loses only the packages they alone pulled in.
+- `tsconfig.json`: the `@code-yeongyu/senpi-desktop-{engine,prelude,protocol,service,tool}` path mappings are removed with the packages.
+- `bun.lock`, `package-lock.json`: the five `packages/desktop-*` workspaces drop out.
+
+### Why
+
+- Computer use ships from omo (code-yeongyu/oh-my-openagent#8893). senpi keeps only the generic hooks (tool kernel preludes, tool-owned permission parsers, the `tool_search` activation event; #2178). Wave 0 (#2129) had left the engine crates, packages and CI here (senpi#2128).
+
+### Why an extension could not handle it
+
+- Workspace layout and toolchain configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `members` list and `[workspace.dependencies]` in `Cargo.toml`; the `paths` block in `tsconfig.json`.
+
+## Reject committed merge-conflict markers (2026-09-27)
+
+### What changed
+
+- `package.json`: `check` runs the new `check:conflict-markers` (`scripts/check-conflict-markers.mjs`), which fails on any tracked text line that opens (`<<<<<<< `), bases (`||||||| `) or closes (`>>>>>>> `) a conflict.
+
+### Why
+
+- Merge resolutions kept committing diff3 leftovers into trackers and changelogs (#963, #1189, and #2087's leftover in `core/changes.md`, senpi#2173).
+
+### Why an extension could not handle it
+
+- Repository validation gate.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script chain in the root `package.json`.
+
+## Resolve the desktop packages from source in the root type check (2026-09-24)
+
+### What changed
+
+- `tsconfig.json` `paths` maps `@code-yeongyu/senpi-desktop-{engine,prelude,protocol,service,tool}` to each package's `src/index.ts`, beside the existing workspace entries.
+
+### Why
+
+- The root `tsc --noEmit` in `bun run check` has to resolve the desktop packages (senpi#2128) from source, like every other workspace package. Without the mapping it reads `dist/*.d.ts`, which is missing in a fresh checkout and stale after a source edit.
+
+### Why an extension could not handle it
+
+- The root type check runs on the repository before any senpi extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `paths` block of `tsconfig.json`, where upstream adds its own workspace entries.
+
+## Add senpi-desktop crate workspace skeletons (2026-09-25)
+
+### What changed
+
+- `Cargo.toml` workspace `members` now includes the ten `crates/senpi-desktop-*` computer-use crates: core, safety, session, backend-fake, backend-atspi, backend-macos, backend-x11, backend-wayland, backend-win32, and engine.
+- `[workspace.dependencies]` pins the desktop native stack copied from oh-my-pi `crates/pi-natives` (image with `bmp`, png, flume, parking_lot, xcap, core-graphics, objc2*, foreign-types, tempfile, libc, x11rb, atspi, ashpd, reis, zbus, xkeysym, windows-sys, enigo, uiautomation) plus serde/serde_json/schemars/thiserror/tokio/clap/ulid/sha2 and a proptest dev pin.
+
+### Why
+
+- Wave 0 freezes the crate graph and exact dependency versions so later computer-use lanes compile against a locked workspace without napi or pipewire.
+
+### Why an extension could not handle it
+
+- Cargo workspace membership and `[workspace.dependencies]` are resolved by the Rust toolchain before any senpi extension loads.
+
+### Expected merge conflict zones
+
+- Root `Cargo.toml` `members` list and the `[workspace.dependencies]` table against any upstream native-crate pin bump.
+
+## Harness state leaves the tree and cannot be tracked again (2026-09-23)
+
+### What changed
+
+- 541 tracked files are removed from the index and working tree: `.omo/evidence/` (478), `local-ignore/qa-evidence/` (39), `.omo/plans/` (13), `.omo/run-continuation/` (5), `.omo/ultragoal/` (3) and a root-level `.qa-evidence/` (3, from senpi#1980). `.omo/init-deep.json` stays. History is untouched.
+- `.gitignore` replaces the directory rule `.omo/` with `.omo/*` plus `!.omo/init-deep.json`, so the one tracked file is no longer a tracked-but-ignored inconsistency, and adds `.qa-evidence/` and `qa-evidence/` at any depth.
+- `scripts/tracked-harness-artifacts-audit.test.mjs` (root `test:scripts`) reads `git ls-files` and fails when any tracked path lives under `.omo/` (minus the allowlist), `packages/*/.omo/`, `local-ignore/`, `.qa-evidence/` or `qa-evidence/`; RED on the previous `main` tree (541), GREEN here.
+- `AGENTS.md`: `local-ignore/` is described as never tracked, and the QA-receipts rule says receipts stay local and are summarized in the PR body.
+
+### Why
+
+- Every one of those files was added past an ignore rule that already existed; nothing in CI noticed. The sibling repository made the same decision (code-yeongyu/oh-my-openagent#8703): QA evidence is written locally and summarized in the PR, never committed.
+
+### Why an extension could not handle it
+
+- Repository hygiene: `.gitignore`, a scripts-level audit, and the index. No runtime is involved.
+
+### Expected merge conflict zones
+
+- `.gitignore` tail (the `.omo/` block) against any upstream ignore additions; `AGENTS.md` STRUCTURE table and QUALITY GATES bullet.
+
+## Unify the shared and evals Vitest runners (2026-09-21)
+
+### What changed
+
+- `package.json` pins the root development runner and its V8 coverage provider to 5.0.1 so the hoisted runner can load coverage.
+- `.gitignore` excludes the `.vitest/` artifact directory.
+- `package-lock.json` and `bun.lock` resolve Vitest and V8 coverage 5.0.1 across every workspace, including evals.
+- `package.json` overrides vitest-evals 0.17.0's Vitest peer edge to 5.0.1.
+- `bun.lock` retains configuration version 0 and the existing hoisted install layout.
+
+### Why
+
+- PTY and codemode invoke the hoisted runner without declaring it. A root pin makes their shared runner version explicit under both npm and Bun.
+- vitest-evals 0.17.0 declares Vitest `>=4 <5`. Its npm peer override makes the single-major installation explicit; runtime tests and TypeScript checks verify compatibility instead of preserving a split runner graph.
+- Bun hoists the harness beside the root runner even when a lock entry requests workspace nesting. Keeping every runner on 5.0.1 avoids mixed TaskMeta types without changing the native workflows' root dependency paths.
+
+### Why an extension could not handle it
+
+- Package managers select test runners and resolve peer dependencies before extensions load.
+
+### Expected merge conflict zones
+
+- The root development dependencies and generated dependency locks.
+
+## Run the two dev lanes through run-workspaces --parallel and drop concurrently (2026-09-21)
+
+### What changed
+
+- `package.json`: the root `dev` script is `node scripts/run-workspaces.mjs --parallel --workspace packages/ai --workspace packages/coding-agent dev`; the `concurrently` devDependency is removed and `shell-quote` 1.10.0 is declared as a root devDependency — three repository scripts import it directly but it only reached `node_modules` as `concurrently`'s transitive dependency (its version was already pinned by the root override). `package-lock.json` / `bun.lock` are regenerated the repository way (`bun.lock` stays `configVersion: 0`).
+
+### Why
+
+- `concurrently` was the last root script that bypassed the package-manager-agnostic runner from #1447; `npm run dev`, `bun run dev` and `pnpm run dev` now all start both lanes through the same driver, with prefixed output and one Ctrl-C reaching every lane (senpi#1895).
+
+### Why an extension could not handle it
+
+- Root scripts and the dependency closure are resolved by the package manager before any extension loads.
+
+### Expected merge conflict zones
+
+- The root `scripts.dev` line and the root devDependency block, on every upstream tooling bump.
+
+## Refresh the dependency pins and pin past the reachable advisories (2026-09-21)
+
+### What changed
+
+- `package.json`: the root `overrides` block moves `fast-uri` to 3.1.8, `brace-expansion` to 5.0.12 and `@anthropic-ai/sdk` to 0.127.0, and gains `express-rate-limit` 8.7.0, `hono` 4.13.8, `ip-address` 10.7.2, `qs` 6.16.0 and a nested `@earendil-works/gondolin` > `undici` 6.28.1. `@types/node` moves to 26.6.2, `@biomejs/biome` to 2.5.14 and `tsx` to 4.23.13.
+- `biome.json`: the `$schema` URL follows the Biome pin to 2.5.14.
+- `packages/telemetry/package.json`: `@types/node` moves to 26.6.2.
+
+### Why
+
+- Every advisory `npm audit` and `bun audit` could reach came in through a transitive edge the fork does not declare: `fast-uri` and `ajv`, and the `@modelcontextprotocol/sdk` subtree that carries `hono`, `qs` and `express-rate-limit` > `ip-address`. `scripts/regenerate-bun-lock-isolated.mjs` seeds its island with the committed `bun.lock`, so re-resolving only the npm lock left Bun on the vulnerable copies; declaring the versions as overrides moves both lockfiles together without drifting the 56 unrelated transitives a from-scratch Bun resolution touched.
+- `tsx` stops at 4.23.13 because 4.23.14 and 4.23.15 were both published 2026-09-20, inside the `.npmrc` `min-release-age=2` window npm enforces.
+
+### Why an extension could not handle it
+
+- Dependency resolution and formatter configuration are read by the package manager and the toolchain before any extension is loaded.
+
+### Expected merge conflict zones
+
+- LOW: the `overrides` block and the devDependency versions, on every upstream manifest bump.
+
+## Make B.AI credentials available to development environments (2026-09-18)
+
+### What changed
+
+- `.devcontainer/devcontainer.json` exposes an optional B.AI secret alongside the other provider keys.
+- `pi-test.sh`, `pi-test.ps1`, `test.sh`, and
+  `packages/coding-agent/scripts/qa-app-server/lib/env.mjs` scrub `BAI_API_KEY` from hermetic test processes.
+
+### Why
+
+- The native B.AI provider should work consistently in local checkouts and dev containers without storing
+  credentials in tracked files.
+
+### Why an extension could not handle it
+
+- Development environment bootstrapping and container secret declarations run before Senpi or its extensions.
+
+### Expected merge conflict zones
+
+- LOW: the provider-key arrays in the setup script and devcontainer secret block.
+
+## Root check verifies formatting instead of rewriting it (2026-09-17)
+
+### What changed
+
+- `package.json`: the root `check` script now runs `biome check --error-on-warnings .` (read-only) instead of `biome check --write --error-on-warnings .`, so format drift fails the script rather than being silently repaired. A new `check:fix` script keeps the autofix form (`biome check --write --error-on-warnings . && npm run check`) for local use.
+- `.husky/pre-commit`: runs `npm run check:fix`, preserving the hook's existing autofix-then-verify behavior now that `check` no longer writes.
+- `.github/workflows/releasability.yml`: drops the hand-inlined read-only biome step plus its verbatim copy of the remaining check sub-scripts and calls `npm run check` directly; that workaround existed only because `check` autofixed, and its copy had already drifted from the real chain (missing `check:entry-graphs` and `check:claude-sdk-platform-lock`).
+
+### Why
+
+- #1443: the CI `Static checks` job runs `npm run check`, whose leading `biome check --write` reformats offending files inside the runner and exits 0. The rewrite is discarded when the runner exits, so a formatting regression could never fail CI while drift accumulated on main. Root `AGENTS.md` also requires the local check and CI to stay in sync; with autofix in the shared script they disagreed by construction.
+
+### Why an extension could not handle it
+
+- The root `package.json` script chain, the Husky hook, and the workflow step are build-time and repository-policy gates that execute before any Senpi runtime loads; no runtime extension participates in them.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script string in root `package.json` and the adjacent `check:fix` entry.
+- LOW: the check invocation line in `.husky/pre-commit`.
+
+## claude-sdk-oauth re-login refreshes the slot; stored pool blocks bind to credential revisions (2026-09-17)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/accounts.ts`: new `upsertAccount()` — a same-name slot is replaced in place (fresh token material, block stamps cleared, `displayName` preserved); unknown names still append.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts`: a re-login now targets an existing slot instead of minting `account-N+1` — a lone slot or the pool's one `auth_error`-blocked slot is refreshed in place; anything else stays append-only unless the user types an existing name, so a blank or headless re-login never overwrites the newest working slot in a multi-account pool. The Anthropic import is now a move: accepting it removes the grant from the `anthropic` provider so two stores never refresh one single-use token.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/index.ts`: wires `removeAnthropicCredential` through the locked auth.json backend.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/{affinity,guidance,stream-guidance}.ts`: `AllAccountsBlockedError` carries the dominant block reason and the all-blocked guidance names an authentication failure explicitly, so the outer credential-pool classifier maps it to `auth_error` instead of laundering it into a rate-limit cooldown via the generic "(rate limit or auth errors)" wording.
+- `packages/coding-agent/src/core/credential-pool/{state-store,rotation-stream}.ts` and `packages/coding-agent/src/core/credential-accounts.ts`: stored-lane sidecar health is bound to a credential revision (HMAC over the installation key and slot material, never raw material) — the stored-lane twin of the env revision rule — so a re-login or token refresh retires the block the old material earned. Legacy rows without a revision are retired on first read.
+- Tests: new `test/claude-sdk-oauth-login-refresh.test.ts` (refresh matrix, import move, dominant reason) and `test/credential-pool-stored-revision.test.ts` (legacy/foreign/current revision, revision stamping); `test/credential-error-taxonomy.test.ts` gains the guidance→classifier composition cases; `test/credential-accounts.test.ts` and `test/model-runtime-credential-rotation.test.ts` fixtures now stamp the matching revision for blocks that must apply.
+
+### Why
+
+- omo#7084 (two fresh field reports on 2026.9.16-3): `/login claude-sdk-oauth` never refreshed the existing slot — it appended `account-N+1` or threw on a duplicate name — while `auth_error` blocks were permanent by design ("until login refreshes the slot"), so the documented recovery could never fire and the pool dead-ended at "blocked until re-login". The import path also copied the Anthropic grant into a second store, guaranteeing a later `invalid_grant`.
+- omo#8383: the lane's generic all-blocked wording let the outer classifier string-match "rate limit" and stamp a cooldown for what was a 401 revocation, and the stored lane's sidecar had no credential-replacement signal at all, so blocks outlived the credential that earned them.
+
+### Why an extension could not handle it
+
+- The slot store, the OAuth login flow, the failover block policy, and the credential-pool sidecar are engine internals; the recovery contract spans the lane's auth.json stamps and the generic pool's sidecar, which no extension surface reaches.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts` (login naming and the import branch).
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts` (stored-lane listing and `persistBlock`).
+
+## Type-check the qa scripts (2026-09-16)
+
+### What changed
+
+- `tsconfig.json` includes `scripts/qa/**/*.ts` so root `tsc --noEmit` type-checks the qa runners.
+- `package.json`: `npm run check` also runs `tsc --noEmit -p scripts/tsconfig.json` after the root program.
+
+### Why
+
+- `scripts/qa/*.ts` sat outside every tsconfig, so implicit-any import errors there never failed CI.
+
+### Why an extension could not handle it
+
+- Root `tsconfig.json` include globs and the `package.json` `check` script are compile-time gates; no runtime extension can add files to `tsc`.
+
+### Expected merge conflict zones
+
+- LOW: the `include` array in root `tsconfig.json` and the `check` script string in root `package.json`.
+
+## Re-wire check:entry-graphs into the root check chain (2026-09-13)
+
+### What changed
+
+- `package.json`: `npm run check` runs `check:entry-graphs` after `check:ts-imports`, matching the original 5507d76ee gate. `scripts/check-entry-graphs.mjs` prints each entry's file count on success so a green run still reports the harness/session size.
+- `packages/agent/src/harness/messages.ts`: session no longer value-imports the AI barrel; see `packages/agent/src/changes.md`.
+
+### Why
+
+- The session subpath is a cost contract (budget 25, no `packages/ai/src/index.ts`). The script existed but was not in `check`, so the barrel regression stayed red until someone ran it by hand.
+
+### Why an extension could not handle it
+
+- Root `package.json` scripts and the source import graph are build-time inputs; no runtime extension can restore either.
+
+### Expected merge conflict zones
+
+- LOW: the `check` script string in root `package.json`.
+
+## Pin the bundled chord workspace to upstream's published version (2026-09-12)
+
+### What changed
+
+- `packages/chord/package.json` returns to upstream's own `0.85.1` version instead of the fork CalVer stamp, so the bundled workspace keeps `@earendil-works/chord`'s published release identity.
+
+### Why
+
+- chord is bundled into the senpi tarball but the fork does not publish it. CalVer-stamping it made the packaged manifests declare `@earendil-works/chord@^<CalVer>`, which no registry version answers, so `bun add @code-yeongyu/senpi` failed (issue #1632). Keeping chord on upstream's `0.85.1` — which exists on the registry and is byte-for-byte our bundled copy apart from packaging metadata — makes every declared edge resolvable while the bundled copy shadows it at runtime.
+
+### Why an extension could not handle it
+
+- `packages/chord/package.json` is static manifest data consumed by the package manager and the release/publish pipeline, never reachable from the runtime extension system.
+
+### Expected merge conflict zones
+
+- The `version` field in `packages/chord/package.json`.
+
+## Scrub VENICE_API_KEY in the hermetic test environments (2026-09-10)
+
+### What changed
+
+- `pi-test.sh` and `pi-test.ps1` add `VENICE_API_KEY` to the provider credentials cleared before the suite runs, alongside the existing `CEREBRAS_API_KEY`/`XAI_API_KEY` entries. `test.sh` and `packages/coding-agent/scripts/qa-app-server/lib/env.mjs` gained the same entry.
+
+### Why
+
+- Venice is now a built-in provider, and several suites key opt-in live behavior off the mere presence of a provider API key. Leaving `VENICE_API_KEY` in the inherited environment would let a developer's real credential change test behavior or reach the network.
+
+### Why an extension could not handle it
+
+- These are the shell entry points that build the test environment before any senpi process starts.
+
+### Expected merge conflict zones
+
+- LOW: the `unset`/credential-name lists in `pi-test.sh` and `pi-test.ps1` when upstream adds providers.
+
+## Root scripts reach workspaces only through scripts/run-workspaces.mjs (2026-09-07)
+
+### What changed
+
+- `package.json`: `test`, `clean`, `eval`, `dev`, `dev:tsc`, `generate:models`, `generate:model-catalog`, `hydrate:model-data`, and `check:model-data` delegate into workspaces through `node scripts/run-workspaces.mjs [--if-present] [--workspace <path>] <script>` instead of `npm run --workspaces --if-present <script>`, `npm --workspace=<name> run`, `npm --prefix <dir> run`, or `cd <dir> && npm run` lanes inside concurrently. `dev` keeps only the `packages/ai` and `packages/coding-agent` lanes, the two workspaces that define a `dev` script. `version:*` keep `npm version --workspaces` (npm's version bookkeeping, not a script delegation); `refresh-lock`, `publish*`, and `release*` are untouched.
+
+### Why
+
+- Under bun the old shapes worked only where bun happened to rewrite `npm run` to `bun run`, and bun's `--workspaces` fans out in parallel while npm runs sequentially; `--prefix`, `--workspace=`, and `cd <dir> && npm run` never reach bun or pnpm and always execute real npm, against the `scripts/AGENTS.md` rule of not hardcoding the child package manager. The runner executes every workspace script with the manager that launched the root script, sequentially and in path order, with one PASS / SKIP / FAIL summary, so `bun run test`, `npm run test`, and `pnpm run test` behave identically. The `packages/agent` and `packages/tui` dev lanes pointed at scripts that do not exist.
+
+### Why an extension could not handle it
+
+- Root manifest scripts run before any Senpi runtime starts; the package manager is the only surface above them.
+
+### Expected merge conflict zones
+
+- LOW: the nine script lines in the root `package.json` `scripts` block. Upstream still spells these in npm's dialect; keep the runner form on sync.
+
 ## bun.lock refreshed wherever package-lock.json is refreshed (2026-09-04)
 
 ### What changed
@@ -352,3 +871,67 @@ Every remaining audited production path with no nearer tracker than the root:
 - Upstream changes to the SQLite backend's dependency placement or independent-version policy.
 - Future workspace additions under nested `packages/*/*` paths, which must remain aligned
   across root npm workspaces, `pnpm-workspace.yaml`, and `scripts/build-all.mjs`.
+
+## Upstream sync (upstream/main@71dca871) integration repairs (2026-09-12)
+
+### What changed
+
+- `package.json`: the root manifest stays the fork's `senpi-monorepo` (Node >= 24, `packages/pty` workspace, `build`/`clean`/`test` routed through `scripts/build-all.mjs` and `scripts/run-workspaces.mjs`, the fork `check` chain with `check:claude-sdk-platform-lock` and `tsc --noEmit`, `refresh-lock`, `preinstall` bin stubs, Bun/pnpm `trustedDependencies`/`onlyBuiltDependencies`, and the held overrides such as `protobufjs 7.6.5`, `@anthropic-ai/sdk 0.123.0`, `esbuild 0.28.2`); upstream's `check:runtime-deps`/`check:entry-graphs`/`check:package-install` scripts exist but are not wired into `check`.
+- `packages/chord/package.json`: differs from the pin only by version fields: the fork CalVer `2026.9.12` instead of `0.85.1`, `vitest 4.1.11` instead of `4.1.9` so the held pin stays single-instanced, and `private: true` because chord is bundled into the senpi tarball rather than published.
+- `packages/chord/src/types.ts`: the same declarations as upstream; the only difference is biome 2.5.10 formatting of the nested conditional types (`JsonRepresentation`, `InvalidJsonPart`, `InvalidRemoteMember`), which the fork's `--error-on-warnings` check rewrites.
+- `packages/telemetry/package.json`: version fields only: CalVer `2026.9.12`, `@types/node 26.2.0`, `vitest 4.1.11`, `private: true`.
+- `tsconfig.json`: keeps the fork path map (`@code-yeongyu/senpi`, `@code-yeongyu/senpi/hooks`, `@code-yeongyu/senpi-server`, `@earendil-works/pi-pty`, `@earendil-works/pi-agent-core/session/testing`) unioned with upstream's Chord root and subpath entries; the file is expanded one-entry-per-line by the fork formatter.
+- `vitest.base.ts`: unions upstream's `aiUtils` alias with the fork `aiAuthPool` alias (`@earendil-works/pi-ai/auth/*` -> `packages/ai/src/auth/*`) beside the Chord aliases upstream added.
+
+### Why
+
+- The fork ships under its own package names, CalVer lockstep, Node 24 floor, mixed npm/Bun/pnpm build orchestration and held dependency pins; the root manifest, TypeScript path map and vitest aliases are where those choices are declared, so the sync cannot take upstream's versions of them verbatim.
+
+### Why an extension could not handle it
+
+- Workspace manifests, compiler path maps and test-runner aliases are build-time inputs read before any runtime code loads; no extension hook can rename packages, change the engine floor or register a module alias.
+
+### Expected merge conflict zones
+
+- HIGH: root `package.json` `scripts`, `devDependencies`, `overrides` and `engines` whenever upstream bumps tooling or adds a `check:*` step.
+- MEDIUM: `tsconfig.json` `paths` when upstream adds a workspace or subpath export; `vitest.base.ts` alias list for the same reason.
+- LOW: `packages/chord/package.json` and `packages/telemetry/package.json` version lines on every upstream release; `packages/chord/src/types.ts` re-wraps whenever upstream edits those conditional types.
+
+## 2026-10-02 - Upstream durable package not taken (upstream v1.0.0 sync)
+
+### What changed
+
+- `packages/durable/src/harness/agent.ts`
+- `packages/durable/src/harness/compaction.ts`
+- `packages/durable/src/harness/define.ts`
+- `packages/durable/src/harness/events.ts`
+- `packages/durable/src/harness/inbox.ts`
+- `packages/durable/src/harness/json.ts`
+- `packages/durable/src/harness/output.ts`
+- `packages/durable/src/harness/task-graph.ts`
+- `packages/durable/src/harness/tool.ts`
+- `packages/durable/src/harness/usage.ts`
+- `packages/durable/src/harness/view.ts`
+- `packages/durable/src/tools/bash.ts`
+- `packages/durable/src/tools/edit.ts`
+- `packages/durable/src/tools/env.ts`
+- `packages/durable/src/tools/file-mutation-queue.ts`
+- `packages/durable/src/tools/image.ts`
+- `packages/durable/src/tools/index.ts`
+- `packages/durable/src/tools/read.ts`
+- `packages/durable/src/tools/write.ts`
+- `packages/durable/src/truncate.ts`
+
+None of these upstream paths exist in the fork. Upstream moved the agent harness out of `packages/agent` into a new `packages/durable` package (7fd478a2e); git records these files as rename destinations of the harness the fork keeps. The fork keeps its harness in `packages/agent/src/harness/**` byte-identical to the previous fork state, and `packages/durable` stays on `.github/agent/upstream-exclusions.txt`.
+
+### Why
+
+The fork's session runtime, compaction, task and eval surfaces are built on its own harness; adopting the durable package would rewrite those surfaces and remove fork behaviour. Real fixes upstream makes in these files are ported into the kept harness instead (see the fork-owned trees rule in `.github/agent/merge-driver.md`).
+
+### Why an extension could not handle it
+
+This is a package-level choice about which source tree ships; extensions cannot replace the agent harness.
+
+### Expected merge conflict zones
+
+Every upstream change under `packages/durable/src/**` appears as a deleted-by-us path; resolve by keeping it absent and porting real fixes into `packages/agent/src/harness/**`.

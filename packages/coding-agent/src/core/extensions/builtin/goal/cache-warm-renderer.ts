@@ -1,3 +1,4 @@
+import type { CustomEntry } from "../../../session-manager.ts";
 import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { EntryRenderer } from "../../types.ts";
 import {
@@ -21,6 +22,18 @@ export const renderGoalCacheWarmupEntry: EntryRenderer<GoalCacheWarmupEntryData>
 	};
 });
 
+/**
+ * One card per wait cycle: a cache-warm entry for the same Goal that directly follows the
+ * previous card (a reload re-arm, or the wake that ends the wait) replaces it in place.
+ */
+export function isSameGoalCacheWarmCard(
+	previous: CustomEntry<GoalCacheWarmupEntryData>,
+	next: CustomEntry<GoalCacheWarmupEntryData>,
+): boolean {
+	const goalId = next.data?.goalId;
+	return typeof goalId === "string" && goalId.length > 0 && previous.data?.goalId === goalId;
+}
+
 function titleLine(data: GoalCacheWarmupEntryData): string {
 	const wakeSources =
 		data.activeMonitorCount === 1 ? "1 wake source on duty" : `${data.activeMonitorCount} wake sources on duty`;
@@ -30,7 +43,7 @@ function titleLine(data: GoalCacheWarmupEntryData): string {
 		case "scheduled":
 			return `⚡ Cache-warm wait${iterationText} · ${wakeSources}`;
 		case "resumed":
-			return `⚡ Cache-warm wake${iterationText} · ${formatExpectedWake(data.dueAtMs, data.waitedMs ?? data.delayMs)} · ${wakeSources}`;
+			return `⚡ Cache-warm wake${iterationText} · waited ${formatWakeDuration(data.waitedMs ?? data.delayMs)} · ${wakeSources}`;
 	}
 }
 
@@ -41,16 +54,25 @@ function validIteration(value: number | undefined): number | undefined {
 function whyLine(data: GoalCacheWarmupEntryData): string {
 	switch (data.phase) {
 		case "scheduled": {
-			const expected = `Continuation expected ${formatExpectedWake(data.dueAtMs, data.delayMs)}`;
+			// The wait is not a cache-warm timer: it lets the live wake sources
+			// deliver, and the timed wake is only the stall backstop.
+			const backstop = `Stall backstop ${formatExpectedWake(data.dueAtMs, data.delayMs)}`;
 			if (data.cache?.ttlSeconds === undefined) {
-				return `${expected} - the monitor wakes the goal the moment decisive output lands.`;
+				return `${backstop} - the goal resumes as soon as a wake source delivers.`;
 			}
 			return data.delayMs < data.cache.ttlSeconds * 1000
-				? `${expected} - the timed wake stays inside the ${formatCacheTtl(data.cache.ttlSeconds)} prompt-cache TTL.`
-				: `${expected} - the prompt-cache TTL may elapse before the timed wake.`;
+				? `${backstop} - the goal resumes as soon as a wake source delivers, inside the ${formatCacheTtl(data.cache.ttlSeconds)} prompt-cache TTL.`
+				: `${backstop} - the goal resumes as soon as a wake source delivers; the ${formatCacheTtl(data.cache.ttlSeconds)} prompt-cache TTL may elapse first.`;
 		}
 		case "resumed":
-			return "Woke on schedule to keep pursuing the goal.";
+			switch (data.wakeCause) {
+				case "timer":
+					return "The stall backstop fired; queued the goal continuation.";
+				case "sources-drained":
+					return "Wake sources finished; queued the goal continuation.";
+				case undefined:
+					return "Queued the goal continuation; the wake trigger was not recorded.";
+			}
 	}
 }
 
@@ -68,16 +90,18 @@ function expandedLine(data: GoalCacheWarmupEntryData): string {
 function warmLine(data: GoalCacheWarmupEntryData): string | undefined {
 	const cache = data.cache;
 	if (cache === undefined || cache.cachedTokens <= 0) return undefined;
-	const tokens = `~${formatWarmTokenCount(cache.cachedTokens)} tokens`;
+	const body = `Prior turn: ~${formatWarmTokenCount(cache.cachedTokens)} cache-read/write tokens (cumulative)`;
+	if (cache.cacheLifetime === "best-effort") {
+		return `${body} · provider caching is best-effort; next cache hit unverified`;
+	}
 	const ttlMayHaveElapsed =
 		cache.ttlSeconds !== undefined && (data.waitedMs ?? data.delayMs) >= cache.ttlSeconds * 1000;
 	if (ttlMayHaveElapsed) {
-		return `${tokens} were cached after the prior turn · prompt-cache TTL may have elapsed before this wake`;
+		return `${body} · prompt-cache TTL may have elapsed; next cache hit unverified`;
 	}
-	const body = data.phase === "scheduled" ? `${tokens} kept warm` : `${tokens} stayed warm in the prompt cache`;
 	const saved =
 		cache.estimatedSavedUsd !== undefined && cache.estimatedSavedUsd > 0
-			? ` · est. ${formatSavedUsd(cache.estimatedSavedUsd)} saved vs a cold re-read`
+			? ` · est. ${formatSavedUsd(cache.estimatedSavedUsd)} discount if reused`
 			: "";
-	return `${body}${saved}`;
+	return `${body}${saved} · next cache hit unverified`;
 }

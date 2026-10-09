@@ -151,11 +151,41 @@ describe("cache keep-alive", () => {
 		});
 	});
 
-	it("does not ping while a goal continuation timer is armed", async () => {
+	it("does not schedule pings while parked, including when a detached turn finishes", async () => {
+		const h = harness();
+		await h.fire("agent_end", agentEnd);
+		await h.fire("session_parked");
+		await h.fire("agent_end", agentEnd);
+		expect(vi.getTimerCount()).toBe(0);
+		await advance(480_000);
+		expect(h.warm).not.toHaveBeenCalled();
+		await h.fire("session_resumed");
+		expect(vi.getTimerCount()).toBe(1);
+		await advance(0);
+		expect(h.warm).toHaveBeenCalledOnce();
+		await h.fire("session_shutdown");
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it("keeps its schedule when a goal continuation timer is armed", async () => {
+		// The goal monitor now parks on a long stall backstop instead of waking on
+		// the cache-safe interval, so an armed goal timer no longer refreshes the
+		// prompt cache and must not stop the opt-in keep-alive loop.
 		const h = harness({ goalArmed: true });
 		await h.fire("agent_end", agentEnd);
-		await advance(300_000);
-		expect(h.warm).not.toHaveBeenCalled();
+		await advance(240_000);
+		expect(h.warm).toHaveBeenCalledOnce();
+		expect(h.entries.map((entry) => entry.data.stopReason)).not.toContain("goal-timer-armed");
+	});
+
+	it("keeps its schedule when the goal timer arms mid-wait", async () => {
+		const h = harness();
+		await h.fire("agent_end", agentEnd);
+		await advance(100_000);
+		h.pi.events?.emit("goal_continuation_timer_state", { armed: true, kind: "monitor" });
+		await advance(140_000);
+		expect(h.warm).toHaveBeenCalledOnce();
+		expect(h.entries.map((entry) => entry.data.stopReason)).not.toContain("goal-timer-armed");
 	});
 
 	it("stops after three attempted pings and rejects a fourth arm", async () => {

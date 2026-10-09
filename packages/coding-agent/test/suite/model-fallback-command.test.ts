@@ -22,8 +22,8 @@ let previousAgentDir: string | undefined;
 const primary = model("anthropic", "claude-fable-5", true);
 const fallback = model("ccapi", "kimi-k3", true);
 const kimiK3 = model("kimi-coding", "k3", true);
-const sdkFable = model("claude-sdk-oauth", "claude-fable-5", true);
-const sdkOpus5 = model("claude-sdk-oauth", "claude-opus-5", true);
+const sdkFable = model("anthropic-subscription", "claude-fable-5", true);
+const sdkOpus5 = model("anthropic-subscription", "claude-opus-5", true);
 const opus5 = model("anthropic", "claude-opus-5", true);
 const opus48 = model("anthropic", "claude-opus-4-8", true);
 
@@ -170,6 +170,8 @@ async function context(
 		newSession: async () => ({ cancelled: false }),
 		fork: async () => ({ cancelled: false }),
 		navigateTree: async () => ({ cancelled: false }),
+		editAssistantMessage: async () => ({ cancelled: false }),
+		editUserMessage: async () => ({ cancelled: false }),
 		switchSession: async () => ({ cancelled: false }),
 		reload: async () => {},
 	};
@@ -194,12 +196,24 @@ describe("model fallback builtin command", () => {
 		expect(command?.description).toContain("fallback");
 	});
 
-	it("reports empty state when no fallback chains are configured", async () => {
+	it("reports empty state when nothing is configured and no shipped family is served", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "senpi-fallback-command-"));
+		dirs.push(dir);
+		const notices: string[] = [];
+		// The shipped defaults are keyed on the fable family, and canonicalization drops a bare
+		// key no provider serves, so a registry without a fable model renders nothing.
+		const ctx = await context(dir, notices, ["Show chains & live state"], [kimiK3], [kimiK3]);
+
+		await (await harness()).get("fallback")?.handler("", ctx);
+
+		expect(notices.join("\n")).toContain("No fallback chains configured");
+	});
+
+	it("renders the shipped fable chain when the user configured nothing", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "senpi-fallback-command-"));
 		dirs.push(dir);
 		const notices: string[] = [];
 		const catalogOnly = model("github-copilot", "claude-fable-5", true);
-		// No shipped defaults exist anymore: with nothing configured the command says so.
 		const ctx = await context(
 			dir,
 			notices,
@@ -210,7 +224,9 @@ describe("model fallback builtin command", () => {
 
 		await (await harness()).get("fallback")?.handler("", ctx);
 
-		expect(notices.join("\n")).toContain("No fallback chains configured");
+		const rendered = notices.join("\n");
+		expect(rendered).toContain("anthropic-subscription/claude-fable-5 ->");
+		expect(rendered).toContain("claude-opus-5");
 	});
 
 	it("lists a configured chain for the provider the user actually pinned", async () => {
@@ -221,7 +237,7 @@ describe("model fallback builtin command", () => {
 		const agentDir = process.env.SENPI_CODING_AGENT_DIR;
 		if (!agentDir) throw new Error("SENPI_CODING_AGENT_DIR not set");
 		writeSettings(agentDir, {
-			retry: { fallbackChains: { "claude-sdk-oauth/claude-fable-5": ["kimi-coding/k3:max"] } },
+			retry: { fallbackChains: { "anthropic-subscription/claude-fable-5": ["kimi-coding/k3:max"] } },
 		});
 		const ctx = await context(
 			dir,
@@ -234,7 +250,7 @@ describe("model fallback builtin command", () => {
 		await (await harness()).get("fallback")?.handler("", ctx);
 
 		const rendered = notices.join("\n");
-		expect(rendered).toContain("claude-sdk-oauth/claude-fable-5 ->");
+		expect(rendered).toContain("anthropic-subscription/claude-fable-5 ->");
 		expect(rendered).toContain("kimi-coding/k3:max");
 	});
 

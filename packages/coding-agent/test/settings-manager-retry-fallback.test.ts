@@ -28,6 +28,54 @@ afterEach(() => {
 	}
 });
 
+describe("SettingsManager runtime overrides (--no-model-fallback, omo#8700)", () => {
+	it("keeps an override after a save of an unrelated setting", () => {
+		const { agentDir, projectDir } = createPaths();
+		const manager = SettingsManager.create(projectDir, agentDir);
+		manager.applyOverrides({ retry: { modelFallback: false } });
+
+		manager.setDefaultThinkingLevel("high");
+
+		expect(manager.getRetryFallbackSettings().modelFallback).toBe(false);
+	});
+
+	it("keeps an override across reload()", async () => {
+		const { agentDir, projectDir } = createPaths();
+		const manager = SettingsManager.create(projectDir, agentDir);
+		manager.applyOverrides({ retry: { modelFallback: false }, askUser: { enabled: false } });
+
+		await manager.reload();
+
+		expect(manager.getRetryFallbackSettings().modelFallback).toBe(false);
+		expect(manager.getAskUserSettings().enabled).toBe(false);
+	});
+
+	it("lets an explicit in-session setter win for exactly the key it sets", () => {
+		const { agentDir, projectDir } = createPaths();
+		const manager = SettingsManager.create(projectDir, agentDir);
+		manager.applyOverrides({ retry: { modelFallback: false }, askUser: { enabled: false } });
+
+		manager.setModelFallbackEnabled(true);
+
+		expect(manager.getRetryFallbackSettings().modelFallback).toBe(true);
+		expect(manager.getAskUserSettings().enabled).toBe(false);
+	});
+
+	it("never writes an override to the settings file", async () => {
+		const { agentDir, projectDir } = createPaths();
+		const manager = SettingsManager.create(projectDir, agentDir);
+		manager.applyOverrides({ retry: { modelFallback: false } });
+
+		manager.setDefaultThinkingLevel("high");
+		await manager.flush();
+
+		const written = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8")) as {
+			retry?: { modelFallback?: boolean };
+		};
+		expect(written.retry?.modelFallback).toBeUndefined();
+	});
+});
+
 describe("SettingsManager retry fallback settings", () => {
 	// Fallback chains ship EMPTY by default (2026-09-05 "require explicit fallback
 	// chains"): no implicit lanes, no wildcard escape route — a model falls back only
@@ -44,11 +92,16 @@ describe("SettingsManager retry fallback settings", () => {
 		expect(SettingsManager.create(projectDir, agentDir).getAbortServerSideFallback()).toBe(true);
 	});
 
-	it("returns empty chains when fallback settings are unset or malformed", () => {
+	it("returns the shipped chains when fallback settings are unset or malformed", () => {
 		const { agentDir, projectDir } = createPaths();
+		const shipped = {
+			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+			"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+		};
 		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings()).toEqual({
 			modelFallback: true,
-			chains: {},
+			chains: shipped,
 			revertPolicy: "cooldown-expiry",
 		});
 
@@ -65,7 +118,7 @@ describe("SettingsManager retry fallback settings", () => {
 
 		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings()).toEqual({
 			modelFallback: true,
-			chains: {},
+			chains: shipped,
 			revertPolicy: "cooldown-expiry",
 		});
 	});
@@ -79,11 +132,18 @@ describe("SettingsManager retry fallback settings", () => {
 		await manager.flush();
 
 		const reloaded = SettingsManager.create(projectDir, agentDir);
-		// Only the configured key exists; unconfigured models have no chain at all.
+		// The configured key replaces its shipped default outright; the other shipped key stays.
 		expect(reloaded.getRetryFallbackSettings()).toEqual({
 			modelFallback: false,
 			chains: {
 				"claude-fable-5": ["ccapi/kimi-k3:max"],
+				"claude-fable-5-1": [
+					"claude-opus-5-5:max",
+					"claude-opus-5:max",
+					"claude-opus-4-8:max",
+					"claude-opus-4-6:max",
+				],
+				"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
 			},
 			revertPolicy: "never",
 		});
@@ -92,11 +152,14 @@ describe("SettingsManager retry fallback settings", () => {
 		await reloaded.flush();
 		expect(existsSync(join(projectDir, CONFIG_DIR_NAME, "settings.json"))).toBe(false);
 
-		// Removing the user's override leaves no chain for that model — there is no
-		// shipped default to restore.
+		// Removing the user's override restores the shipped default for that family.
 		reloaded.removeFallbackChain("claude-fable-5");
 		await reloaded.flush();
-		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains).toEqual({});
+		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains).toEqual({
+			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+			"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+		});
 	});
 
 	it("reports which settings scope supplied the fallback chains", () => {
@@ -122,8 +185,12 @@ describe("SettingsManager retry fallback settings", () => {
 		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { fallbackChains: null } }));
 		const manager = SettingsManager.create(projectDir, agentDir);
 		expect(manager.getFallbackChainsScope()).toBe("global");
-		// Malformed input degrades to the empty default, not to shipped chains.
-		expect(manager.getRetryFallbackSettings().chains).toEqual({});
+		// Malformed input degrades to the shipped defaults, never to a half-read map.
+		expect(manager.getRetryFallbackSettings().chains).toEqual({
+			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+			"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+		});
 	});
 
 	it("resolves only the chains the user configured", () => {
@@ -142,9 +209,19 @@ describe("SettingsManager retry fallback settings", () => {
 		const chains = SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains;
 
 		expect(chains["example-gateway/unrelated-model"]).toEqual(["example-gateway/unrelated-fallback:max"]);
-		// No shipped defaults exist to fill in: unconfigured models have no chain.
-		expect(chains["claude-fable-5"]).toBeUndefined();
-		expect(Object.keys(chains)).toEqual(["example-gateway/unrelated-model"]);
+		// An unrelated key layers over the shipped defaults instead of replacing the map.
+		expect(chains["claude-fable-5"]).toEqual([
+			"claude-opus-5-5:max",
+			"claude-opus-5:max",
+			"claude-opus-4-8:max",
+			"claude-opus-4-6:max",
+		]);
+		expect(Object.keys(chains).sort()).toEqual([
+			"claude-fable-5",
+			"claude-fable-5-1",
+			"claude-opus-5-5",
+			"example-gateway/unrelated-model",
+		]);
 	});
 
 	it("lets a user chain replace a default outright and an empty array delete it", () => {

@@ -1,15 +1,25 @@
+// Cursor admission bounds a request two ways: every tool result is capped on
+// its own, and the aggregate model input is held under an explicit budget by
+// blanking the oldest tool result bodies. Since senpi#1603 the budget comes
+// from the model window and admission never removes a message, so each case
+// below states the budget it exercises.
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import { buildCursorHistoryWireBytesForTest } from "@earendil-works/pi-ai/api/cursor-agent";
+import { fauxAssistantMessage, fauxToolCall, measureCursorModelInputSerializedBytes } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	CURSOR_TOOL_RESULT_MAX_BYTES,
-	CURSOR_TOOL_RESULT_MAX_CHARS,
-	truncateToolResultBodies,
-} from "../../../src/core/agent-session.ts";
-import { convertToLlmForTransport } from "../../../src/core/messages.ts";
+import { CURSOR_TOOL_RESULT_MAX_CHARS, truncateToolResultBodies } from "../../../src/core/agent-session.ts";
+import { admitCursorHistory } from "../../../src/core/cursor-history-admission.ts";
+import { convertToLlm, convertToLlmForTransport } from "../../../src/core/messages.ts";
 import { createHarness, type Harness } from "../harness.ts";
+
+// Observed Cursor context ceilings persist; keep them out of the real agent dir.
+process.env.CURSOR_CONTEXT_LIMIT_STORE = join(mkdtempSync(join(tmpdir(), "cursor-limits-")), "limits.json");
+
+/** Explicit aggregate budget these cases exercise, in serialized model-input bytes. */
+const BUDGET_BYTES = 50_000;
 
 function textMessage(role: AgentMessage["role"], text: string): AgentMessage {
 	return { role, content: [{ type: "text", text }] } as AgentMessage;
@@ -77,8 +87,23 @@ function cursorPairedMessages(resultTexts: string[]): AgentMessage[] {
 	return messages;
 }
 
-function serializedCursorHistoryBytes(messages: AgentMessage[]): number {
-	return buildCursorHistoryWireBytesForTest(messages as never).reduce((total, bytes) => total + bytes.byteLength, 0);
+/** Serialized bytes of what Cursor replays to the model, as admission measures it. */
+function modelInputBytes(messages: AgentMessage[], convert = convertToLlm): number {
+	const converted = convert(messages);
+	const activeUserMessageIndex = converted.at(-1)?.role === "user" ? converted.length - 1 : -1;
+	return measureCursorModelInputSerializedBytes(converted, activeUserMessageIndex);
+}
+
+function textBytes(messages: AgentMessage[]): number {
+	return new TextEncoder().encode(
+		messages
+			.flatMap((message) =>
+				message.role === "toolResult"
+					? message.content.filter((part) => part.type === "text").map((part) => part.text)
+					: [],
+			)
+			.join(""),
+	).byteLength;
 }
 
 describe("1043 cursor toolResult truncate", () => {
@@ -107,17 +132,20 @@ describe("1043 cursor toolResult truncate", () => {
 		expect(toolText).not.toContain("\ud800");
 	});
 
-	it("bounds the aggregate UTF-8 payload across all tool results", () => {
+	it("bounds the aggregate payload across all tool results without dropping one", () => {
 		const messages = Array.from({ length: 100 }, (_, index) =>
 			textMessage("toolResult", `${index}:${"가".repeat(2000)}`),
 		);
-		const { messages: next, changed } = truncateToolResultBodies(messages);
-		expect(changed).toBe(true);
+		const admission = admitCursorHistory({ messages, budgetBytes: BUDGET_BYTES });
+		expect(admission.changed).toBe(true);
+		const next = admission.messages;
 		if (!next) throw new Error("expected messages");
+		expect(next.length).toBe(messages.length);
+		expect(admission.blankedToolResults).toBeGreaterThan(0);
 		expect(messageText(next[99])).toMatch(/^99:가+\n\.\.\.\[truncated\]$/);
 		expect(messageText(next[0])).toBe("");
-		const bytes = new TextEncoder().encode(next.map(messageText).join("")).byteLength;
-		expect(bytes).toBeLessThanOrEqual(50_000);
+		expect(textBytes(next)).toBeLessThanOrEqual(BUDGET_BYTES);
+		expect(admission.bytesAfter).toBeLessThanOrEqual(BUDGET_BYTES);
 	});
 
 	it("reserves marker budget before the full-part fast path (review reproduction)", () => {
@@ -133,18 +161,10 @@ describe("1043 cursor toolResult truncate", () => {
 			toolResult("가".repeat(2000), "cjk-7"),
 			toolResult("n".repeat(1990), "newest"),
 		];
-		const { messages: next } = truncateToolResultBodies(messages);
+		const { messages: next } = truncateToolResultBodies(messages, CURSOR_TOOL_RESULT_MAX_CHARS, BUDGET_BYTES);
 		if (!next) throw new Error("expected messages");
-		const bytes = new TextEncoder().encode(
-			next
-				.flatMap((message) =>
-					message.role === "toolResult"
-						? message.content.filter((part) => part.type === "text").map((part) => part.text)
-						: [],
-				)
-				.join(""),
-		).byteLength;
-		expect(bytes).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		expect(next.length).toBe(messages.length);
+		expect(textBytes(next)).toBeLessThanOrEqual(BUDGET_BYTES);
 	});
 
 	it("truncates Cursor admission while persisting the full tool result through AgentSession", async () => {
@@ -185,29 +205,41 @@ describe("1043 cursor toolResult truncate", () => {
 		).toBe("payload ".repeat(20_000));
 	});
 
-	it("bounds the duplicated decoded Cursor root and turn history for CJK results", () => {
+	it("bounds the decoded Cursor model input for CJK results", () => {
 		const messages = cursorPairedMessages(Array.from({ length: 8 }, () => "界".repeat(2000)));
 		const rawBytes = new TextEncoder().encode(JSON.stringify(messages)).byteLength;
 		expect(rawBytes).toBeGreaterThan(48_000);
-		const { messages: next } = truncateToolResultBodies(messages);
+		const { messages: next } = truncateToolResultBodies(messages, CURSOR_TOOL_RESULT_MAX_CHARS, BUDGET_BYTES);
 		if (!next) throw new Error("expected messages");
-		expect(serializedCursorHistoryBytes(next)).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		expect(next.length).toBe(messages.length);
+		expect(modelInputBytes(next)).toBeLessThanOrEqual(BUDGET_BYTES);
 	});
 
-	it("truncates newline-heavy parts before their serialized Cursor payload exceeds the cap", () => {
+	it("truncates newline-heavy parts before their serialized Cursor payload exceeds the budget", () => {
+		// 16,000 raw newline characters serialize to twice that once escaped, so the
+		// budget has to be compared against the serialized form, not the text length.
 		const messages = cursorPairedMessages(Array.from({ length: 8 }, () => "\n".repeat(2000)));
-		const { messages: next, changed } = truncateToolResultBodies(messages);
-		expect(changed).toBe(true);
+		const budgetBytes = 20_000;
+		const admission = admitCursorHistory({ messages, budgetBytes });
+		expect(admission.bytesBefore).toBeGreaterThan(budgetBytes);
+		expect(admission.changed).toBe(true);
+		const next = admission.messages;
 		if (!next) throw new Error("expected messages");
-		expect(serializedCursorHistoryBytes(next)).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		expect(next.length).toBe(messages.length);
+		expect(modelInputBytes(next)).toBeLessThanOrEqual(budgetBytes);
 	});
 
-	it("truncates NUL-heavy parts before their serialized Cursor payload exceeds the cap", () => {
+	it("truncates NUL-heavy parts before their serialized Cursor payload exceeds the budget", () => {
 		const messages = cursorPairedMessages(Array.from({ length: 8 }, () => "\0".repeat(2000)));
-		const { messages: next, changed } = truncateToolResultBodies(messages);
+		const { messages: next, changed } = truncateToolResultBodies(
+			messages,
+			CURSOR_TOOL_RESULT_MAX_CHARS,
+			BUDGET_BYTES,
+		);
 		expect(changed).toBe(true);
 		if (!next) throw new Error("expected messages");
-		expect(serializedCursorHistoryBytes(next)).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		expect(next.length).toBe(messages.length);
+		expect(modelInputBytes(next)).toBeLessThanOrEqual(BUDGET_BYTES);
 	});
 
 	it("bounds 1,450 emptied image parts including their envelopes", () => {
@@ -215,18 +247,18 @@ describe("1043 cursor toolResult truncate", () => {
 		const result = messages.find((message) => message.role === "toolResult");
 		if (result?.role !== "toolResult") throw new Error("expected tool result");
 		result.content = (imageToolResult(1450) as Extract<AgentMessage, { role: "toolResult" }>).content;
-		const before = serializedCursorHistoryBytes(messages);
-		expect(before).toBeGreaterThan(CURSOR_TOOL_RESULT_MAX_BYTES);
+		const budgetBytes = 20_000;
+		expect(modelInputBytes(messages)).toBeGreaterThan(budgetBytes);
 
-		const { messages: next, changed } = truncateToolResultBodies(messages);
-		expect(changed).toBe(true);
+		const admission = admitCursorHistory({ messages, budgetBytes });
+		expect(admission.changed).toBe(true);
+		const next = admission.messages;
 		if (!next) throw new Error("expected messages");
-		expect(
-			buildCursorHistoryWireBytesForTest(next as never).reduce((total, bytes) => total + bytes.byteLength, 0),
-		).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		expect(next.length).toBe(messages.length);
+		expect(modelInputBytes(next)).toBeLessThanOrEqual(budgetBytes);
 	});
 
-	it("accounts for adversarial tool names in Cursor wire history", () => {
+	it("accounts for adversarial tool names in Cursor model input", () => {
 		const messages = cursorPairedMessages(["ok"]);
 		const result = messages.find((message) => message.role === "toolResult");
 		if (result?.role !== "toolResult") throw new Error("expected tool result");
@@ -236,14 +268,16 @@ describe("1043 cursor toolResult truncate", () => {
 		const toolCall = call.content.find((part) => part.type === "toolCall");
 		if (toolCall?.type !== "toolCall") throw new Error("expected tool call");
 		toolCall.name = result.toolName;
-		const before = serializedCursorHistoryBytes(messages);
-		expect(before).toBeGreaterThan(CURSOR_TOOL_RESULT_MAX_BYTES);
-		const { messages: next, changed } = truncateToolResultBodies(messages);
-		expect(changed).toBe(true);
+		const budgetBytes = 20_000;
+		expect(modelInputBytes(messages)).toBeGreaterThan(budgetBytes);
+		const admission = admitCursorHistory({ messages, budgetBytes });
+		expect(admission.changed).toBe(true);
+		const next = admission.messages;
 		if (!next) throw new Error("expected messages");
-		expect(
-			buildCursorHistoryWireBytesForTest(next as never).reduce((total, bytes) => total + bytes.byteLength, 0),
-		).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		// A tool name is not a body: it cannot be blanked, so the request stays
+		// over budget and goes out anyway for the overflow path to handle.
+		expect(next.length).toBe(messages.length);
+		expect(admission.blankedToolResults).toBeGreaterThan(0);
 	});
 
 	it("uses the full history when admission ends in a resumed tool result", () => {
@@ -257,9 +291,10 @@ describe("1043 cursor toolResult truncate", () => {
 		const result = messages.find((message) => message.role === "toolResult");
 		if (result?.role !== "toolResult") throw new Error("expected tool result");
 		result.toolName = toolCall.name;
-		const { messages: next, changed } = truncateToolResultBodies(messages);
+		const { messages: next, changed } = truncateToolResultBodies(messages, CURSOR_TOOL_RESULT_MAX_CHARS, 20_000);
 		expect(changed).toBe(true);
-		expect(next).toBeDefined();
+		if (!next) throw new Error("expected messages");
+		expect(next.length).toBe(messages.length);
 	});
 
 	it("measures converted custom messages in Cursor admission", () => {
@@ -267,78 +302,100 @@ describe("1043 cursor toolResult truncate", () => {
 			{ role: "custom", customType: "note", content: "x".repeat(60_000), timestamp: 0 },
 			...cursorPairedMessages(["ok"]),
 		] as AgentMessage[];
-		const { messages: next, changed } = truncateToolResultBodies(messages);
-		expect(changed).toBe(true);
-		expect(next).toBeDefined();
+		const admission = admitCursorHistory({ messages, budgetBytes: BUDGET_BYTES });
+		expect(admission.bytesBefore).toBeGreaterThan(BUDGET_BYTES);
+		expect(admission.changed).toBe(true);
+		const next = admission.messages;
+		if (!next) throw new Error("expected messages");
+		expect(next.length).toBe(messages.length);
 	});
 
-	it("keeps 200-turn Cursor admission bounded", () => {
+	it("keeps 200-turn Cursor admission bounded and complete", () => {
 		const messages = cursorPairedMessages(Array.from({ length: 200 }, () => "x".repeat(2000)));
 		const started = performance.now();
-		truncateToolResultBodies(messages);
+		const admission = admitCursorHistory({ messages, budgetBytes: BUDGET_BYTES });
 		expect(performance.now() - started).toBeLessThan(1000);
+		// 200 turns of envelopes alone exceed this budget. Every body is blanked and
+		// the over-budget request still goes out whole - no turn is deleted (#1603).
+		expect(admission.messages?.length).toBe(messages.length);
+		expect(admission.blankedToolResults).toBe(200);
+		expect(admission.bytesAfter).toBeLessThan(admission.bytesBefore);
+		expect(admission.overBudget).toBe(true);
 	});
 
-	it("accounts for adversarial tool-call arguments in Cursor wire history", () => {
+	it("accounts for adversarial tool-call arguments in Cursor model input", () => {
 		const messages = cursorPairedMessages(["ok"]);
 		const call = messages.find((message) => message.role === "assistant");
 		if (call?.role !== "assistant") throw new Error("expected assistant message");
 		const toolCall = call.content.find((part) => part.type === "toolCall");
 		if (toolCall?.type !== "toolCall") throw new Error("expected tool call");
 		toolCall.arguments = { value: "a".repeat(25_000) };
-		const before = serializedCursorHistoryBytes(messages);
-		expect(before).toBeGreaterThan(CURSOR_TOOL_RESULT_MAX_BYTES);
-		const { messages: next, changed } = truncateToolResultBodies(messages);
-		expect(changed).toBe(true);
+		const budgetBytes = 20_000;
+		expect(modelInputBytes(messages)).toBeGreaterThan(budgetBytes);
+		const admission = admitCursorHistory({ messages, budgetBytes });
+		expect(admission.changed).toBe(true);
+		const next = admission.messages;
 		if (!next) throw new Error("expected messages");
-		expect(
-			buildCursorHistoryWireBytesForTest(next as never).reduce((total, bytes) => total + bytes.byteLength, 0),
-		).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		// Tool-call arguments are history, not a body: the turn survives intact.
+		expect(next.length).toBe(messages.length);
+		expect(next.filter((message) => message.role === "user").length).toBe(
+			messages.filter((message) => message.role === "user").length,
+		);
 	});
 
-	it("does not evict fitting 68 paired tool turns", () => {
+	it("does not touch fitting 68 paired tool turns", () => {
 		const messages = cursorPairedMessages(Array.from({ length: 68 }, () => "1234567890"));
-		const { messages: next, changed } = truncateToolResultBodies(messages);
+		const { messages: next, changed } = truncateToolResultBodies(
+			messages,
+			CURSOR_TOOL_RESULT_MAX_CHARS,
+			BUDGET_BYTES,
+		);
 		expect(changed).toBe(false);
 		expect(next).toBe(messages);
 	});
 
-	it("does not evict fitting 97 paired tool turns", () => {
+	it("does not touch fitting 97 paired tool turns", () => {
 		const messages = cursorPairedMessages(Array.from({ length: 97 }, () => "1234567890"));
-		expect(serializedCursorHistoryBytes(messages)).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
-		const { messages: next, changed } = truncateToolResultBodies(messages);
+		expect(modelInputBytes(messages)).toBeLessThanOrEqual(BUDGET_BYTES);
+		const { messages: next, changed } = truncateToolResultBodies(
+			messages,
+			CURSOR_TOOL_RESULT_MAX_CHARS,
+			BUDGET_BYTES,
+		);
 		expect(changed).toBe(false);
 		expect(next).toBe(messages);
 	});
 
-	it("bounds aggregate envelopes across 98 paired tool turns", () => {
+	it("blanks bodies rather than turns when 98 paired tool turns exceed the budget", () => {
 		const messages = cursorPairedMessages(Array.from({ length: 98 }, () => "1234567890"));
-		const before = serializedCursorHistoryBytes(messages);
-		expect(before).toBeGreaterThan(CURSOR_TOOL_RESULT_MAX_BYTES);
+		const budgetBytes = Math.floor(modelInputBytes(messages) / 2);
 
-		const { messages: next, changed } = truncateToolResultBodies(messages);
-		expect(changed).toBe(true);
+		const admission = admitCursorHistory({ messages, budgetBytes });
+		expect(admission.changed).toBe(true);
+		const next = admission.messages;
 		if (!next) throw new Error("expected messages");
-		expect(
-			buildCursorHistoryWireBytesForTest(next as never).reduce((total, bytes) => total + bytes.byteLength, 0),
-		).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		expect(next.length).toBe(messages.length);
+		expect(admission.blankedToolResults).toBeGreaterThan(0);
+		expect(admission.bytesAfter).toBeLessThan(admission.bytesBefore);
+		// Bodies are all this pass may empty; the remaining envelopes keep the
+		// request over budget, and it is admitted rather than trimmed.
+		expect(admission.overBudget).toBe(true);
 	});
 
 	for (const partCount of [7424, 7500]) {
-		it(`keeps the ${partCount}-part Cursor wire representation within the bound`, () => {
+		it(`keeps the ${partCount}-part Cursor model input within the budget`, () => {
 			const messages = cursorPairedMessages(["placeholder"]);
 			const result = messages.find((message) => message.role === "toolResult");
 			if (result?.role !== "toolResult") throw new Error("expected tool result");
 			result.content = Array.from({ length: partCount }, () => ({ type: "text" as const, text: "abcdefghij" }));
 
-			const { messages: next } = truncateToolResultBodies(messages);
+			const { messages: next } = truncateToolResultBodies(messages, CURSOR_TOOL_RESULT_MAX_CHARS, BUDGET_BYTES);
 			if (!next) throw new Error("expected messages");
+			expect(next.length).toBe(messages.length);
 			const transformed = next.find((message) => message.role === "toolResult");
 			if (transformed?.role !== "toolResult") throw new Error("expected transformed tool result");
 			expect(transformed.toolCallId).toBe(result.toolCallId);
-			expect(
-				buildCursorHistoryWireBytesForTest(next as never).reduce((total, bytes) => total + bytes.byteLength, 0),
-			).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+			expect(modelInputBytes(next)).toBeLessThanOrEqual(BUDGET_BYTES);
 			expect(
 				transformed.content.filter((part) => part.type === "text" && part.text === "").length,
 			).toBeLessThanOrEqual(1);
@@ -353,17 +410,9 @@ describe("1043 cursor toolResult truncate", () => {
 					content: Array.from({ length: partCount }, () => ({ type: "text" as const, text: "abcdefghij" })),
 				},
 			];
-			const { messages: next } = truncateToolResultBodies(messages);
+			const { messages: next } = truncateToolResultBodies(messages, CURSOR_TOOL_RESULT_MAX_CHARS, BUDGET_BYTES);
 			if (!next) throw new Error("expected messages");
-			const bytes = new TextEncoder().encode(
-				next[0].role === "toolResult"
-					? next[0].content
-							.filter((part) => part.type === "text")
-							.map((part) => part.text)
-							.join("")
-					: "",
-			).byteLength;
-			expect(bytes).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+			expect(textBytes(next)).toBeLessThanOrEqual(BUDGET_BYTES);
 		});
 	}
 
@@ -378,17 +427,18 @@ describe("1043 cursor toolResult truncate", () => {
 		);
 		const convert = (candidate: AgentMessage[]) =>
 			convertToLlmForTransport(candidate, { blockImages: true, alwaysKeepNewest: 1 });
-		const before = serializedCursorHistoryBytes(convert(messages) as never);
-		expect(before).toBeGreaterThan(CURSOR_TOOL_RESULT_MAX_BYTES);
+		const budgetBytes = 15_000;
+		expect(modelInputBytes(messages, convert)).toBeGreaterThan(budgetBytes);
 		const { messages: next, changed } = truncateToolResultBodies(
 			messages,
 			CURSOR_TOOL_RESULT_MAX_CHARS,
-			CURSOR_TOOL_RESULT_MAX_BYTES,
+			budgetBytes,
 			convert,
 		);
 		expect(changed).toBe(true);
 		if (!next) throw new Error("expected messages");
-		expect(serializedCursorHistoryBytes(convert(next) as never)).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		expect(next.length).toBe(messages.length);
+		expect(modelInputBytes(next, convert)).toBeLessThanOrEqual(budgetBytes);
 	});
 
 	it("measures maxHistoricalImages elision with the configured transport converter (R9-1)", () => {
@@ -403,17 +453,17 @@ describe("1043 cursor toolResult truncate", () => {
 		messages.splice(messages.length - 1, 0, textMessage("assistant", "completed"));
 		const convert = (candidate: AgentMessage[]) =>
 			convertToLlmForTransport(candidate, { blockImages: false, maxHistoricalImages: 0, alwaysKeepNewest: 1 });
-		const before = serializedCursorHistoryBytes(convert(messages) as never);
-		expect(before).toBeGreaterThan(CURSOR_TOOL_RESULT_MAX_BYTES);
+		expect(modelInputBytes(messages, convert)).toBeGreaterThan(BUDGET_BYTES);
 		const { messages: next, changed } = truncateToolResultBodies(
 			messages,
 			CURSOR_TOOL_RESULT_MAX_CHARS,
-			CURSOR_TOOL_RESULT_MAX_BYTES,
+			BUDGET_BYTES,
 			convert,
 		);
 		expect(changed).toBe(true);
 		if (!next) throw new Error("expected messages");
-		expect(serializedCursorHistoryBytes(convert(next) as never)).toBeLessThanOrEqual(CURSOR_TOOL_RESULT_MAX_BYTES);
+		expect(next.length).toBe(messages.length);
+		expect(modelInputBytes(next, convert)).toBeLessThanOrEqual(BUDGET_BYTES);
 	});
 
 	it("keeps grapheme clusters intact and retains a marker when only marker space remains", () => {

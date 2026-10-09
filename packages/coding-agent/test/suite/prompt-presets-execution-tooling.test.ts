@@ -51,8 +51,9 @@ function occurrences(haystack: string, needle: string): number {
 }
 
 const EXPECTED_CONCERN: Record<ExecutionToolingRuleId, ExecutionToolingConcern> = {
-	"eval-default-surface": "code-cell-routing",
-	"eval-real-code": "code-cell-routing",
+	"eval-routing-decision": "code-cell-routing",
+	"eval-evidence-return": "code-cell-routing",
+	"perceived-state-loop": "code-cell-routing",
 	"eval-stay-direct": "code-cell-routing",
 };
 
@@ -65,6 +66,7 @@ const PRESET_DIALECT: ReadonlyArray<readonly [PromptPresetName, ExecutionTooling
 	["claude-opus-4-6", "claude"],
 	["claude-opus-4-5", "claude"],
 	["kimi-k3", "kimi"],
+	["kimi-k2-8", "kimi"],
 	["kimi-k2-7", "kimi"],
 	["kimi-k2-6", "kimi"],
 	["glm-5.3", "claude"],
@@ -91,6 +93,7 @@ describe("execution tooling directive", () => {
 				expect(rule.directive[dialect]).not.toMatch(/\p{Extended_Pictographic}/u);
 			}
 			expect(rule.directive.kimi).not.toMatch(/\bNEVER\b/);
+			expect(rule.directive.kimi, `${rule.id} kimi dialect shouts`).not.toMatch(/\b[A-Z]{4,}\b/);
 		}
 	});
 

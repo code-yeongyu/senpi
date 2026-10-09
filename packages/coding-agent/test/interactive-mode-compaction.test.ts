@@ -827,6 +827,24 @@ describe("InteractiveMode compaction events", () => {
 		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(2);
 	});
 
+	// Regression test for #9340.
+	test("routes interactive response aborts through AgentSession", () => {
+		const abort = vi.fn(async () => {});
+		const ui = {
+			clearAllQueues: () => ({ steering: [], followUp: [] }),
+			updatePendingMessagesDisplay: vi.fn(),
+			session: { abort },
+		};
+		const restoreQueuedMessagesToEditor = Reflect.get(InteractiveMode.prototype, "restoreQueuedMessagesToEditor") as (
+			this: typeof ui,
+			options?: { abort?: boolean },
+		) => number;
+
+		restoreQueuedMessagesToEditor.call(ui, { abort: true });
+
+		expect(abort).toHaveBeenCalledOnce();
+	});
+
 	test("preserves steering behavior when flushing into an active agent run", async () => {
 		const message = { text: "change direction", mode: "steer" as const };
 		const fakeThis = {

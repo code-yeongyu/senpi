@@ -26,14 +26,15 @@ export function parsePermissionPresetFlag(value: string): PermissionPresetName |
 	return parsePermissionPresetName(value.trim());
 }
 
+export const PERMISSION_PRESET_NAMES: readonly PermissionPresetName[] = [
+	"full-access",
+	"workspace",
+	"accept-edits",
+	"auto",
+	"read-only",
+	"ask",
+];
+
 export function parsePermissionPresetName(value: string): PermissionPresetName | undefined {
-	switch (value) {
-		case "full-access":
-		case "workspace":
-		case "read-only":
-		case "ask":
-			return value;
-		default:
-			return undefined;
-	}
+	return PERMISSION_PRESET_NAMES.find((name) => name === value);
 }

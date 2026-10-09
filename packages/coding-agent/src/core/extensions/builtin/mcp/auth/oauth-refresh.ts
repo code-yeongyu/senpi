@@ -1,17 +1,17 @@
-import {
-	discoverOAuthServerInfo,
-	type OAuthServerInfo,
-	refreshAuthorization,
-} from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthServerInfo } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { AuthorizationServerMetadata, OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { loadMcpSdkAuth } from "../sdk.lazy.ts";
 import { safeDelay } from "../wrap.ts";
 import { isInvalidGrant, isTransientTokenError, OAuthFlowError } from "./oauth-errors.ts";
+import { oauthFetch } from "./oauth-fetch.ts";
 import {
 	type McpOAuthProvider,
 	mergeTokensIntoStoredAuth,
 	REFRESH_LEEWAY_MS,
+	sameAuthorizationServer,
 	storedAuthToTokens,
+	storedGrantIssuer,
 } from "./oauth-provider.ts";
 import type { McpStoredAuth } from "./token-store.ts";
 
@@ -53,7 +53,7 @@ export class McpRefreshManager {
 	}
 
 	async ensureFresh(): Promise<OAuthTokens | undefined> {
-		const record = this.#provider.store.read();
+		const record = await this.#provider.store.readAsync();
 		if (record?.accessToken === undefined) return undefined;
 		if (!isTokenStale(record, Date.now())) return storedAuthToTokens(record);
 		return this.refresh();
@@ -87,6 +87,21 @@ export class McpRefreshManager {
 
 	async #doRefresh(current: McpStoredAuth, refreshToken: string): Promise<OAuthTokens> {
 		const info = await this.#discover();
+		// senpi#2940: a refresh token is presented only to the authorization server that issued it. A grant bound
+		// elsewhere, or one that cannot be attributed at all, is a continuity break: drop it and require a fresh
+		// sign-in rather than refreshing silently against whatever server discovery now names.
+		const issuer = storedGrantIssuer(current);
+		const authorizationServer = String(info.authorizationServerUrl);
+		if (issuer === undefined || !sameAuthorizationServer(issuer, authorizationServer)) {
+			this.#provider.store.writeUnlocked(undefined);
+			throw new OAuthFlowError(
+				"needs_auth",
+				issuer === undefined
+					? `MCP server ${this.#provider.serverName} has a saved sign-in with no record of the authorization server that issued it; credentials cleared, re-authentication required.`
+					: `MCP server ${this.#provider.serverName} now uses authorization server ${authorizationServer}, but its saved sign-in was issued by ${issuer}; credentials cleared, re-authentication required.`,
+				{ serverName: this.#provider.serverName },
+			);
+		}
 		const clientInformation = this.#provider.clientInformation();
 		if (clientInformation === undefined) {
 			throw new OAuthFlowError("needs_auth", `MCP server ${this.#provider.serverName} is not registered`, {
@@ -94,6 +109,7 @@ export class McpRefreshManager {
 			});
 		}
 		const resource = new URL(current.resource ?? this.#provider.serverUrl);
+		const { refreshAuthorization } = await loadMcpSdkAuth();
 		const maxRetries = this.#options.maxRetries ?? 2;
 		for (let attempt = 0; ; attempt++) {
 			try {
@@ -102,10 +118,12 @@ export class McpRefreshManager {
 					clientInformation,
 					refreshToken,
 					resource,
-					fetchFn: this.#options.fetchFn,
+					fetchFn: oauthFetch(this.#options.fetchFn),
 				});
-				this.#provider.store.writeUnlocked(mergeTokensIntoStoredAuth(current, tokens, this.#provider.serverUrl));
-				return tokens;
+				this.#provider.store.writeUnlocked(
+					mergeTokensIntoStoredAuth(current, tokens, this.#provider.serverUrl, authorizationServer),
+				);
+				return { ...tokens, issuer: authorizationServer };
 			} catch (error) {
 				if (isInvalidGrant(error)) {
 					// Terminal: drop credentials so the next use forces a clean re-auth.
@@ -137,8 +155,9 @@ export class McpRefreshManager {
 		}
 	}
 
-	#discover(): Promise<OAuthServerInfo> {
+	async #discover(): Promise<OAuthServerInfo> {
 		if (this.#options.discover !== undefined) return this.#options.discover(this.#provider.serverUrl);
-		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: this.#options.fetchFn });
+		const { discoverOAuthServerInfo } = await loadMcpSdkAuth();
+		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: oauthFetch(this.#options.fetchFn) });
 	}
 }

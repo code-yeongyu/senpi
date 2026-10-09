@@ -1,228 +1,174 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempDisposable, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createEventBus } from "../../src/core/event-bus.ts";
 import configReloadExtension from "../../src/core/extensions/builtin/config-reload/index.ts";
-import type { ConfigReloadLogger } from "../../src/core/extensions/builtin/config-reload/log.ts";
 import {
 	ConfigReloadWatchEngine,
 	type WatchEventListener,
 } from "../../src/core/extensions/builtin/config-reload/watch-engine.ts";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-	ExtensionUIContext,
-	SessionShutdownEvent,
-	SessionStartEvent,
-} from "../../src/core/extensions/types.ts";
+import { createHarness } from "./harness.ts";
 
-type RecordedHandler = (event: unknown, ctx: ExtensionContext) => unknown | Promise<unknown>;
+afterEach(() => vi.useRealTimers());
 
-type ManualExtension = {
-	readonly api: ExtensionAPI;
-	readonly handlers: Map<string, RecordedHandler[]>;
-};
-
-/**
- * A subscribe seam whose unsubscribes are slow: each one records the teardown
- * marker observed at the moment it runs, so a test can prove close() returned
- * before the loop drained.
- */
-type SlowTeardownProbe = {
-	readonly subscribe: (
-		path: string,
-		listener: WatchEventListener,
-		options?: { readonly recursive: boolean },
-	) => () => void;
-	/** Marker value each unsubscribe saw when it ran. */
-	readonly unsubscribeMarkers: string[];
-	marker: string;
-	emit(path: string, filename: string | null): void;
-	activeListenerCount(path: string): number;
-};
-
-function createSlowTeardownProbe(): SlowTeardownProbe {
-	const listeners = new Map<string, Set<WatchEventListener>>();
-	const probe: SlowTeardownProbe = {
-		marker: "before-close",
-		unsubscribeMarkers: [],
-		subscribe: (path, listener) => {
-			const set = listeners.get(path) ?? new Set<WatchEventListener>();
-			set.add(listener);
-			listeners.set(path, set);
-			return () => {
-				probe.unsubscribeMarkers.push(probe.marker);
-				set.delete(listener);
-			};
-		},
-		emit: (path, filename) => {
-			for (const listener of [...(listeners.get(path) ?? [])]) listener("change", filename);
-		},
-		activeListenerCount: (path) => listeners.get(path)?.size ?? 0,
-	};
-	return probe;
-}
-
-function createManualExtension(): ManualExtension {
-	const handlers = new Map<string, RecordedHandler[]>();
-	const api = {
-		events: createEventBus(),
-		on: (event: string, handler: RecordedHandler) => {
-			const registered = handlers.get(event) ?? [];
-			registered.push(handler);
-			handlers.set(event, registered);
-		},
-	} as unknown as ExtensionAPI;
-	return { api, handlers };
-}
-
-async function invoke(
-	handlers: ReadonlyMap<string, readonly RecordedHandler[]>,
-	eventName: string,
-	event: unknown,
-	ctx: ExtensionContext,
-): Promise<void> {
-	const handler = handlers.get(eventName)?.at(-1);
-	if (!handler) throw new Error(`Missing ${eventName} handler`);
-	await handler(event, ctx);
-}
-
-function fakeContext(cwd: string): ExtensionContext {
-	return {
-		cwd,
-		mode: "tui",
-		ui: { notify: () => {} } as unknown as ExtensionUIContext,
-		isIdle: () => true,
-		hasPendingMessages: () => false,
-		isProjectTrusted: () => true,
-		isCompacting: () => false,
-	} as unknown as ExtensionContext;
-}
-
-function silentLogger(): ConfigReloadLogger {
-	return {
-		debug: vi.fn(),
-		info: vi.fn(),
-		warn: vi.fn(),
-		error: vi.fn(),
-	} as unknown as ConfigReloadLogger;
-}
-
-const tempDirs: string[] = [];
-
-function createTempDir(prefix: string): string {
-	const directory = mkdtempSync(join(tmpdir(), prefix));
-	tempDirs.push(directory);
-	return directory;
-}
-
-afterEach(() => {
-	vi.useRealTimers();
-	vi.restoreAllMocks();
-	for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true });
-});
-
-describe("config reload watcher teardown is non-blocking", () => {
-	it("returns from close() before the unsubscribe loop runs", async () => {
-		// Given: an engine watching several directories through a probe that
-		// records the teardown marker each unsubscribe observes.
-		const rootDir = createTempDir("senpi-config-reload-lazy-engine-");
-		const watchedDirs = ["one", "two", "three"].map((name) => {
-			const directory = join(rootDir, name);
-			mkdirSync(directory);
-			writeFileSync(join(directory, "config.json"), '{"a":1}\n', "utf-8");
-			return directory;
-		});
-		const probe = createSlowTeardownProbe();
-		const onRealChange = vi.fn();
+// #1656: replaces the unsafe fire-and-forget contract with cancellation plus joined disposal.
+describe("config reload shutdown", () => {
+	it("cancels synchronously and joins asynchronous disposal on repeated close", async () => {
+		// Given: every disposer shares an explicitly gated completion.
+		await using root = await mkdtempDisposable(join(tmpdir(), "config-close-"));
+		const released = Promise.withResolvers<void>();
+		const unsubscribed: string[] = [];
 		const engine = new ConfigReloadWatchEngine({
-			targets: watchedDirs.map((path, index) => ({ id: `target-${index}`, kind: "dir" as const, path })),
-			subscribe: probe.subscribe,
-			onRealChange,
+			targets: ["one", "two"].map((id) => ({ id, kind: "dir", path: root.path })),
+			subscribe: () => () => {
+				unsubscribed.push("cancelled");
+				return released.promise;
+			},
+			onRealChange: () => {},
 		});
-		expect(watchedDirs.every((path) => probe.activeListenerCount(path) === 1)).toBe(true);
-
-		// When: the engine is closed and the caller immediately marks that
-		// control returned to it.
-		const teardown = engine.close();
-		probe.marker = "after-close-returned";
-
-		// Then: no unsubscribe ran before close() returned, and every one of them
-		// ran afterwards.
-		expect(probe.unsubscribeMarkers).toEqual([]);
-		await teardown;
-		expect(probe.unsubscribeMarkers).toEqual([
-			"after-close-returned",
-			"after-close-returned",
-			"after-close-returned",
-		]);
-		expect(watchedDirs.every((path) => probe.activeListenerCount(path) === 0)).toBe(true);
+		let completed = false;
+		try {
+			// When: shutdown is requested twice before native disposal completes.
+			const first = engine.close();
+			const second = engine.close();
+			void Promise.all([first, second]).then(() => {
+				completed = true;
+			});
+			await Promise.resolve();
+			// Then: cancellation already ran, but both callers still own the same join.
+			expect(unsubscribed).toHaveLength(2);
+			expect(second).toBe(first);
+			expect(completed).toBe(false);
+			released.resolve();
+			await first;
+		} finally {
+			released.resolve();
+			await engine.close();
+		}
 	});
 
-	it("drops events delivered after close() while teardown is still pending", async () => {
-		// Given: a closed engine whose subscriptions are still live because the
-		// deferred unsubscribe loop has not drained yet.
+	it("ignores stale events while asynchronous teardown is outstanding", async () => {
+		// Given: a saved callback can still arrive after cancellation.
+		await using root = await mkdtempDisposable(join(tmpdir(), "config-stale-"));
+		const path = join(root.path, "config.json");
+		await writeFile(path, "{}");
+		const released = Promise.withResolvers<void>();
+		let listener: WatchEventListener = () => {};
+		const changed = vi.fn();
+		const engine = new ConfigReloadWatchEngine({
+			targets: [{ id: "config", kind: "dir", path: root.path }],
+			subscribe: (_path, callback) => {
+				listener = callback;
+				return () => released.promise;
+			},
+			onRealChange: changed,
+		});
 		vi.useFakeTimers();
-		const rootDir = createTempDir("senpi-config-reload-lazy-drop-");
-		const watchedDir = join(rootDir, "watched");
-		mkdirSync(watchedDir);
-		const configPath = join(watchedDir, "config.json");
-		writeFileSync(configPath, '{"a":1}\n', "utf-8");
-		const probe = createSlowTeardownProbe();
-		const onRealChange = vi.fn();
-		const engine = new ConfigReloadWatchEngine({
-			targets: [{ id: "target", kind: "dir", path: watchedDir }],
-			subscribe: probe.subscribe,
-			onRealChange,
-			debounceMs: 200,
-		});
-
-		// When: a real content change is delivered to the still-attached listener
-		// after close() returned.
-		const teardown = engine.close();
-		expect(probe.activeListenerCount(watchedDir)).toBe(1);
-		writeFileSync(configPath, '{"a":2}\n', "utf-8");
-		probe.emit(watchedDir, "config.json");
-		await vi.advanceTimersByTimeAsync(200);
-
-		// Then: the closed engine reported nothing, and teardown still completes.
-		expect(onRealChange).not.toHaveBeenCalled();
-		await teardown;
-		expect(probe.activeListenerCount(watchedDir)).toBe(0);
+		try {
+			// When: a stale content event arrives during shutdown.
+			const closing = engine.close();
+			await writeFile(path, '{"changed":true}');
+			listener("change", "config.json");
+			await vi.runAllTimersAsync();
+			// Then: inert subscriptions cannot produce reload work.
+			expect(changed).not.toHaveBeenCalled();
+			released.resolve();
+			await closing;
+		} finally {
+			released.resolve();
+			vi.useRealTimers();
+			await engine.close();
+		}
 	});
 
-	it("returns from session_shutdown without waiting for the unsubscribe loop", async () => {
-		// Given: a started extension whose watcher unsubscribes record the
-		// teardown marker they observe.
-		const agentDir = createTempDir("senpi-config-reload-lazy-shutdown-");
-		writeFileSync(join(agentDir, "settings.json"), '{"theme":"dark"}\n', "utf-8");
-		const probe = createSlowTeardownProbe();
-		const extension = createManualExtension();
-		configReloadExtension(extension.api, {
-			agentDir,
-			subscribe: probe.subscribe,
-			logger: silentLogger(),
+	it("waits for all disposers before surfacing teardown failures", async () => {
+		// Given: one failed disposer and one independently gated disposer.
+		await using root = await mkdtempDisposable(join(tmpdir(), "config-failure-"));
+		const released = Promise.withResolvers<void>();
+		const failure = new Error("disposer failed");
+		let subscriptions = 0;
+		const engine = new ConfigReloadWatchEngine({
+			targets: ["one", "two"].map((id) => ({ id, kind: "dir", path: root.path })),
+			subscribe: () =>
+				++subscriptions === 1
+					? () => {
+							throw failure;
+						}
+					: () => released.promise,
+			onRealChange: () => {},
 		});
-		const context = fakeContext(agentDir);
-		await invoke(
-			extension.handlers,
-			"session_start",
-			{ type: "session_start", reason: "startup" } satisfies SessionStartEvent,
-			context,
+		// When: shutdown encounters the failure before the other disposer settles.
+		const closing = engine.close();
+		const outcome = closing.then(
+			() => "resolved",
+			(error: unknown) => error,
 		);
-		expect(probe.activeListenerCount(agentDir)).toBeGreaterThan(0);
+		released.resolve();
+		// Then: the caller receives the collected failure rather than false success.
+		expect(await outcome).toMatchObject({ errors: [failure] });
+	});
 
-		// When: the session shuts down for a reload.
-		await invoke(
-			extension.handlers,
-			"session_shutdown",
-			{ type: "session_shutdown", reason: "reload" } satisfies SessionShutdownEvent,
-			context,
-		);
-		probe.marker = "after-shutdown-returned";
+	it("awaits watchers before the real extension shutdown dispatch completes", async () => {
+		// Given: the real extension runner with a gated event-source disposer.
+		await using root = await mkdtempDisposable(join(tmpdir(), "config-session-close-"));
+		const released = Promise.withResolvers<void>();
+		const cancelled = Promise.withResolvers<void>();
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) =>
+					configReloadExtension(pi, {
+						agentDir: root.path,
+						subscribe: () => () => {
+							cancelled.resolve();
+							return released.promise;
+						},
+					}),
+			],
+		});
+		let completed = false;
+		try {
+			await harness.session.bindExtensions({ mode: "tui" });
+			// When: session_shutdown traverses the real runner.
+			const closing = harness
+				.getExtensionRunner()
+				.emit({ type: "session_shutdown", reason: "quit" })
+				.then(() => {
+					completed = true;
+				});
+			await cancelled.promise;
+			await Promise.resolve();
+			// Then: process teardown cannot overtake pending watcher disposal.
+			expect(completed).toBe(false);
+			released.resolve();
+			await closing;
+		} finally {
+			released.resolve();
+			harness.cleanup();
+		}
+	});
 
-		// Then: the shutdown handler resolved before any unsubscribe ran.
-		expect(probe.unsubscribeMarkers).toEqual([]);
+	it.each([false, true])("starts RPC watchers only for persistent sessions (persistent=%s)", async (persistent) => {
+		// Given: actual in-memory or persistent session-manager ownership.
+		await using root = await mkdtempDisposable(join(tmpdir(), "config-rpc-probe-"));
+		const subscribe = vi.fn(() => () => {});
+		const harness = await createHarness({
+			persistSession: persistent,
+			extensionFactories: [
+				(pi) =>
+					configReloadExtension(pi, {
+						agentDir: root.path,
+						subscribe,
+					}),
+			],
+		});
+		try {
+			// When: the RPC session binds its extensions.
+			await harness.session.bindExtensions({ mode: "rpc" });
+			// Then: snapshot-only probes avoid watches without disabling durable sessions.
+			expect(subscribe.mock.calls.length > 0).toBe(persistent);
+		} finally {
+			await harness.getExtensionRunner().emit({ type: "session_shutdown", reason: "quit" });
+			harness.cleanup();
+		}
 	});
 });

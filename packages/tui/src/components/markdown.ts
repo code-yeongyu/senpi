@@ -1,8 +1,8 @@
 // allow: SIZE_OK - existing markdown renderer is oversized; this merge only preserves behavior and cache-key correctness.
 import { Marked, type Token, Tokenizer, type TokenizerExtension, type Tokens } from "marked";
 import { getCapabilities, hyperlink, isImageLine } from "../terminal-image.ts";
-import type { Component } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
+import { type Component, nextRenderRevision } from "../tui.ts";
+import { applyBackgroundToLine, flattenLines, visibleWidth, wrapTextWithAnsi } from "../utils.ts";
 import { latexToUnicode } from "./latex.ts";
 
 const STRICT_STRIKETHROUGH_REGEX = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
@@ -435,6 +435,7 @@ export class Markdown implements Component {
 	private cachedText?: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private revision = nextRenderRevision();
 
 	constructor(
 		text: string,
@@ -461,6 +462,17 @@ export class Markdown implements Component {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.markRevision();
+	}
+
+	/** Instances that expose a revision advance the shared clock; others (e.g. an animated subclass) stay local. */
+	private markRevision(): void {
+		this.revision = this.getRenderRevision() === undefined ? this.revision + 1 : nextRenderRevision();
+	}
+
+	/** Exact `Markdown` instances only; a subclass may render more than its source text. */
+	getRenderRevision(): number | undefined {
+		return Object.getPrototypeOf(this) === Markdown.prototype ? this.revision : undefined;
 	}
 
 	render(width: number): string[] {
@@ -579,6 +591,7 @@ export class Markdown implements Component {
 
 		// Combine top padding, content, and bottom padding
 		const result = emptyLines.concat(contentLines, emptyLines);
+		flattenLines(result);
 
 		// Update cache
 		this.cachedText = this.text;

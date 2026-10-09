@@ -2,6 +2,8 @@
  * Real-surface terminal persistence QA: two fresh extension generations over one
  * on-disk session sidecar. No OS-level senpi process is spawned; PTYs and file
  * watchers are real.
+ *
+ * Run: SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/persistent-monitor-restart.test.ts
  */
 
 import { existsSync } from "node:fs";
@@ -11,7 +13,14 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import registerTerminalExtension from "../../src/core/extensions/builtin/terminal/index.ts";
 import { MonitorRegistry } from "../../src/core/extensions/builtin/terminal/monitor-registry.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/types.ts";
+import { RESTORE_DIGEST_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/restore-digest.ts";
+import { whenRestoreDecided } from "../../src/core/extensions/builtin/terminal/restore-session.ts";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionToolContext,
+	ToolDefinition,
+} from "../../src/core/extensions/types.ts";
 
 const harness = vi.hoisted(() => ({
 	/** Every TerminalManifestWriter the extension constructs, so the test can await its own flush. */
@@ -40,6 +49,7 @@ type Generation = {
 	tools: Map<string, Tool>;
 	handlers: Map<string, Handler[]>;
 	messages: string[];
+	digests: Array<{ outcome: string; monitors: Array<{ description: string; outcome: string }> }>;
 	context: ExtensionContext;
 	api: ExtensionAPI;
 	fire(event: string, payload: unknown): Promise<void>;
@@ -49,6 +59,7 @@ function generation(dir: string): Generation {
 	const tools = new Map<string, Tool>();
 	const handlers = new Map<string, Handler[]>();
 	const messages: string[] = [];
+	const digests: Array<{ outcome: string; monitors: Array<{ description: string; outcome: string }> }> = [];
 	const api = {
 		cwd: dir,
 		registerTool: (tool: Tool) => tools.set(tool.name, tool),
@@ -63,8 +74,11 @@ function generation(dir: string): Generation {
 		registerRemovedToolHint: () => {},
 		registerLazyToolActivator: () => {},
 		on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
-		sendMessage: (message: { content?: unknown }) =>
-			messages.push(typeof message.content === "string" ? message.content : JSON.stringify(message.content)),
+		sendMessage: (message: { content?: unknown; customType?: string; details?: unknown }) => {
+			messages.push(typeof message.content === "string" ? message.content : JSON.stringify(message.content));
+			if (message.customType === RESTORE_DIGEST_CUSTOM_TYPE)
+				digests.push(message.details as (typeof digests)[number]);
+		},
 		sendUserMessage: () => {},
 		appendEntry: () => {},
 		setSessionName: () => {},
@@ -100,6 +114,7 @@ function generation(dir: string): Generation {
 		tools,
 		handlers,
 		messages,
+		digests,
 		context,
 		api,
 		async fire(event, payload) {
@@ -163,28 +178,28 @@ it("restores persistent monitors across two session generations and enforces the
 			{ command: "sleep 30", description: "background bash", run_in_background: true },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		const fileResult = await monitor.execute(
 			"file",
 			{ description: "deploy changes", path: deploy, event: "modify", persistent: true },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		const commandResult = await monitor.execute(
 			"command",
 			{ description: "service log", command: `tail -n 0 -F ${service}`, persistent: true },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		const ephemeralResult = await monitor.execute(
 			"ephemeral deadline",
 			{ description: "temporary wait", command: "sleep 30", timeout_ms: 60_000 },
 			undefined,
 			undefined,
-			a.context,
+			a.context as ExtensionToolContext,
 		);
 		commandMonitorId = String(commandResult.details?.monitor_id ?? "");
 		originalRuntimeId = String(commandResult.details?.bash_id ?? "");
@@ -204,10 +219,15 @@ it("restores persistent monitors across two session generations and enforces the
 		b = generation(dir);
 		const detachedNotice = nextMessage(b, (content) => content.includes("changed while detached"));
 		await b.fire("session_start", { type: "session_start", reason: "resume" });
-		const digest = b.messages.filter((message) => message.includes("Terminal state after restart"));
-		expect(digest).toHaveLength(1);
-		expect(digest[0]).toContain("restored 2");
-		expect(digest[0]).toContain("lost 2");
+		await whenRestoreDecided(SESSION_ID);
+		expect(b.digests).toHaveLength(1);
+		const outcomes = (b.digests[0]?.monitors ?? []).map((entry) => [entry.description, entry.outcome]);
+		// Both durable watches and the ephemeral one (60 s left) come back; nothing else is a monitor.
+		expect(outcomes.sort()).toEqual([
+			["deploy changes", "restored"],
+			["service log", "restored"],
+			["temporary wait", "restored"],
+		]);
 		const restored = b.tools.get("bash");
 		const monitorB = b.tools.get("monitor");
 		if (!monitorB || !restored) throw new Error("restored generation tools missing");
@@ -254,9 +274,21 @@ it("restores persistent monitors across two session generations and enforces the
 		if (b) {
 			const kill = b.tools.get("kill_bash");
 			if (kill && backgroundId)
-				await kill.execute("cleanup-background", { bash_id: backgroundId }, undefined, undefined, b.context);
+				await kill.execute(
+					"cleanup-background",
+					{ bash_id: backgroundId },
+					undefined,
+					undefined,
+					b.context as ExtensionToolContext,
+				);
 			if (kill && restoredRuntimeId)
-				await kill.execute("cleanup-monitor", { bash_id: restoredRuntimeId }, undefined, undefined, b.context);
+				await kill.execute(
+					"cleanup-monitor",
+					{ bash_id: restoredRuntimeId },
+					undefined,
+					undefined,
+					b.context as ExtensionToolContext,
+				);
 			await b.fire("session_shutdown", { type: "session_shutdown", reason: "quit" });
 		}
 		if (a && !b) await a.fire("session_shutdown", { type: "session_shutdown", reason: "quit" });

@@ -28,7 +28,8 @@ function packLabels(labels: readonly string[], budget: number): string {
 }
 
 function labelOf(entry: EvalDetachedCellStatusEntry): string {
-	return entry.summary === undefined || entry.summary.length === 0 ? entry.cellId : entry.summary;
+	const label = entry.summary === undefined || entry.summary.length === 0 ? entry.cellId : entry.summary;
+	return entry.queuedBehind === undefined ? label : `queued ${label}`;
 }
 
 /**
@@ -52,10 +53,12 @@ export function formatElapsedSeconds(value: number): string {
 	return `${hours}h ${remainingMinutes}m`;
 }
 
-/** Whole seconds since the oldest detached cell was created; never negative on clock skew. */
+/** Whole seconds since the oldest executing detached cell started; queued cells do not tick. */
 export function evalCellElapsedSeconds(entries: readonly EvalDetachedCellStatusEntry[], nowMs: number): number {
 	let oldest = Number.POSITIVE_INFINITY;
-	for (const entry of entries) oldest = Math.min(oldest, entry.startedAtMs);
+	for (const entry of entries) {
+		if (entry.queuedBehind === undefined) oldest = Math.min(oldest, entry.startedAtMs);
+	}
 	if (!Number.isFinite(oldest)) return 0;
 	return Math.max(0, Math.round((nowMs - oldest) / 1000));
 }
@@ -67,7 +70,9 @@ export function formatEvalCellStatus(
 ): string | undefined {
 	const first = entries[0];
 	if (first === undefined) return undefined;
-	const suffix = ` (${formatElapsedSeconds(evalCellElapsedSeconds(entries, nowMs))})`;
+	const suffix = entries.every((entry) => entry.queuedBehind !== undefined)
+		? " (queued)"
+		: ` (${formatElapsedSeconds(evalCellElapsedSeconds(entries, nowMs))})`;
 	if (entries.length === 1) {
 		const head = `${DETACHED_GLYPH} ${first.language} · `;
 		return head + truncateEnd(labelOf(first), MAX_STATUS_LENGTH - head.length - suffix.length) + suffix;

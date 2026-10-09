@@ -1,4 +1,9 @@
-import { type AssistantMessage, SERVER_FALLBACK_ABORTED_DIAGNOSTIC } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	describeProviderFailureForUser,
+	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
+	stripTurnRetrySuppressionPrefix,
+} from "@earendil-works/pi-ai";
 import { formatDuration } from "../../../utils/duration.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "../../provider-native-rendering.ts";
 import { theme } from "../theme/theme.ts";
@@ -10,12 +15,17 @@ type AssistantRenderDescriptorKind = "spacer" | MarkdownDescriptorKind | TextDes
 export type AssistantRenderDescriptor = {
 	readonly kind: AssistantRenderDescriptorKind;
 	readonly text: string;
+	/** Index of the thinking run this label/body belongs to; set only for thinking descriptors. */
+	readonly thinkingRun?: number;
 };
 
 type AssistantRenderDescriptorOptions = {
 	readonly expanded: boolean;
+	readonly providerErrorOwned?: boolean;
 	readonly hiddenThinkingLabel: string;
 	readonly hideThinkingBlock: boolean;
+	/** Per-run click overrides of `hideThinkingBlock`, keyed by thinking run index. */
+	readonly thinkingVisibilityOverrides?: ReadonlyMap<number, boolean>;
 	readonly hasToolCalls: boolean;
 };
 
@@ -46,6 +56,7 @@ export function createAssistantRenderDescriptors(
 ): readonly AssistantRenderDescriptor[] {
 	const descriptors: AssistantRenderDescriptor[] = [];
 	if (message.content.some((content) => isVisibleContent(content, true))) descriptors.push(SPACER_DESCRIPTOR);
+	let thinkingRunIndex = 0;
 	for (let i = 0; i < message.content.length; i++) {
 		const content = message.content[i];
 		switch (content.type) {
@@ -79,21 +90,23 @@ export function createAssistantRenderDescriptors(
 				}
 				i--;
 				if (thinkingBlocks.length === 0) break;
+				const thinkingRun = thinkingRunIndex++;
+				const hidden = options.thinkingVisibilityOverrides?.get(thinkingRun) ?? options.hideThinkingBlock;
 				if (!hasTiming) {
-					const text = options.hideThinkingBlock
+					const text = hidden
 						? theme.italic(theme.fg("thinkingText", options.hiddenThinkingLabel))
 						: thinkingBlocks.join("\n\n");
-					descriptors.push({ kind: options.hideThinkingBlock ? "thinking-label" : "thinking-md", text });
+					descriptors.push({ kind: hidden ? "thinking-label" : "thinking-md", text, thinkingRun });
 				} else {
 					const label = isDone
 						? theme.italic(theme.fg("thinkingText", `Thought: ${formatDuration(Math.max(0, maxEnd - minStart))}`))
 						: theme.italic(theme.fg("thinkingText", options.hiddenThinkingLabel));
-					if (options.hideThinkingBlock) {
-						descriptors.push({ kind: "thinking-label", text: label });
+					if (hidden) {
+						descriptors.push({ kind: "thinking-label", text: label, thinkingRun });
 					} else {
 						descriptors.push(
-							{ kind: "thinking-label", text: label },
-							{ kind: "thinking-md", text: thinkingBlocks.join("\n\n") },
+							{ kind: "thinking-label", text: label, thinkingRun },
+							{ kind: "thinking-md", text: thinkingBlocks.join("\n\n"), thinkingRun },
 						);
 					}
 				}
@@ -132,20 +145,28 @@ export function createAssistantRenderDescriptors(
 			break;
 		case "aborted": {
 			if (options.hasToolCalls) break;
+			if (options.providerErrorOwned) break;
 			const abortMessage =
 				message.errorMessage && message.errorMessage !== "Request was aborted"
-					? message.errorMessage
+					? stripTurnRetrySuppressionPrefix(message.errorMessage)
 					: "Operation aborted";
 			addError(abortMessage);
 			break;
 		}
-		case "error":
-			if (
-				!options.hasToolCalls &&
-				!message.diagnostics?.some((entry) => entry.type === SERVER_FALLBACK_ABORTED_DIAGNOSTIC)
-			)
-				addError(`Error: ${message.errorMessage || "Unknown error"}`);
+		case "error": {
+			if (options.hasToolCalls) break;
+			if (options.providerErrorOwned) break;
+			if (message.diagnostics?.some((entry) => entry.type === SERVER_FALLBACK_ABORTED_DIAGNOSTIC)) break;
+			// A provider-stream stall or transport drop carries the classifier's own
+			// wording so the retry engine can read it; the transcript gets the
+			// plain-language version, without the recovery advice a retry still in
+			// flight would contradict, and never the internal replay marker.
+			const described = describeProviderFailureForUser(message.errorMessage);
+			addError(
+				described ?? `Error: ${stripTurnRetrySuppressionPrefix(message.errorMessage ?? "") || "Unknown error"}`,
+			);
 			break;
+		}
 		case "pending":
 		case "stop":
 		case "toolUse":

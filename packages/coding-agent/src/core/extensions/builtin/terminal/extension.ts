@@ -1,182 +1,35 @@
-import { isAbsolute, join } from "node:path";
-import { getShellEnv } from "../../../../utils/shell.ts";
+import { join } from "node:path";
 import { encodedSessionId } from "../../../session-sidecar-store.ts";
 import { SettingsManager } from "../../../settings-manager.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { isAnthropicBashEnabled } from "../anthropic-bash/index.ts";
 import { isEvalOnlyRouting } from "../eval-only-routing.ts";
-import { TERMINAL_MONITOR_STATE_EVENT, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
-import { createRestartableCommandHandler } from "./durable-command.ts";
-import { createCheckpointedFileRestoreHandler } from "./durable-file.ts";
-import { acquireTerminalLease, releaseTerminalLease } from "./manifest-lease.ts";
+import {
+	buildToolContext,
+	bundleSinks,
+	createBundle,
+	sessionKeyOf,
+	type TerminalExtensionState,
+} from "./extension-state.ts";
+import { currentLeaseToken, releaseTerminalLease, retireLeaseToken } from "./manifest-lease.ts";
 import { MonitorNotifier } from "./monitor-notify.ts";
+import { terminalStateDir } from "./monitor-state-dir.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
-import { getTerminalNotificationDelivery, TerminalNotifier } from "./notify.ts";
+import { TerminalNotifier } from "./notify.ts";
 import { buildTerminalPromptSection } from "./prompt.ts";
-import {
-	type RestoreDigest,
-	type RestoreHandler,
-	type RestoreHandlers,
-	type RestoreOutcome,
-	reapplyPersistedMute,
-	restoreTerminalState,
-} from "./restore.ts";
-import type { TerminalRuntimeSession } from "./runtime-session.ts";
-import {
-	claimParkedBundle,
-	parkBundle,
-	type TerminalEventSinks,
-	TerminalSessionBundle,
-	teardownParkedBundle,
-} from "./session-bundle.ts";
-import { loadTerminalSettings, type ResolvedTerminalSettings, TERMINAL_SETTINGS_DEFAULTS } from "./settings.ts";
+import { createDigestSlot, registerRestoreDigestRenderer } from "./restore-digest.ts";
+import { detachPersistence, flushRestoreDigest, startPersistence, stopPersistence } from "./restore-session.ts";
+import { claimParkedBundle, parkBundle, teardownParkedBundle } from "./session-bundle.ts";
+import { loadTerminalSettings, TERMINAL_SETTINGS_DEFAULTS } from "./settings.ts";
 import { TERMINAL_BASH_TOOL, TERMINAL_COMPANION_TOOLS } from "./shared.ts";
-import { type ManifestMonitor, TerminalManifestWriter } from "./terminal-manifest.ts";
+import { TerminalManifestWriter } from "./terminal-manifest.ts";
 import { createPtyBashTool } from "./tools/bash.ts";
 import { createBashInputTool } from "./tools/bash-input.ts";
 import { createBashOutputTool } from "./tools/bash-output.ts";
 import { createBashResizeTool } from "./tools/bash-resize.ts";
-import type { TerminalToolContext } from "./tools/context.ts";
 import { createKillBashTool } from "./tools/kill-bash.ts";
-import { bindTerminalManifestWriter, createMonitorTool, unbindTerminalManifestWriter } from "./tools/monitor.ts";
-
-interface TerminalExtensionState {
-	bundle: TerminalSessionBundle | null;
-	settings: ResolvedTerminalSettings;
-	notifier: TerminalNotifier | null;
-	monitorNotifier: MonitorNotifier | null;
-	statusTicker: MonitorStatusTicker;
-	ctx: ExtensionContext | undefined;
-	shellPath: string | undefined;
-	steppedAside: boolean;
-	noticeShown: boolean;
-	/** Set only when this generation acquired the persistence lease (non-reload starts). */
-	lease: { path: string; pid: number } | null;
-	/** Manifest recorder; present only while this process owns the session's lease. */
-	manifestWriter: TerminalManifestWriter | null;
-	recordedBackgroundIds: Set<string>;
-}
-
-/** Tests and SDK callers may hand partial contexts without a session manager. */
-function sessionKeyOf(ctx: ExtensionContext | undefined): string | undefined {
-	return ctx?.sessionManager?.getSessionId?.();
-}
-
-/**
- * Per-session persistence dir for the terminal lease + manifest; undefined when the context
- * carries no durable session dir (SDK/in-memory sessions must not persist terminal state).
- */
-function terminalStateDir(ctx: ExtensionContext | undefined): string | undefined {
-	const sessionDir = ctx?.sessionManager?.getSessionDir?.();
-	if (sessionDir === undefined || sessionDir.length === 0 || !isAbsolute(sessionDir)) return undefined;
-	return join(sessionDir, "extensions", "terminal");
-}
-
-function createBundle(state: TerminalExtensionState): TerminalSessionBundle {
-	return new TerminalSessionBundle({
-		maxSessions: state.settings.maxSessions,
-		scrollback: state.settings.scrollback,
-	});
-}
-
-/** Sinks read the live instance state at call time, so notifier swaps need no re-bind. */
-function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): TerminalEventSinks {
-	return {
-		onMonitorEvent: (event) => state.monitorNotifier?.notifyEvent(event),
-		onMonitorState: (snapshot) => {
-			state.statusTicker.sync(snapshot);
-			const payload = {
-				activeCount: snapshot.length,
-				monitors: snapshot.map((entry) => ({
-					id: entry.id,
-					description: entry.description,
-					paused: entry.paused,
-					startedAtMs: entry.startedAtMs,
-				})),
-			};
-			pi.events?.emit(TERMINAL_MONITOR_STATE_EVENT, payload);
-			pi.rpc?.emit(TERMINAL_MONITOR_STATE_EVENT, payload);
-			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
-				source: "terminal-monitors",
-				activeCount: snapshot.length,
-				monitors: snapshot.map((entry) => ({
-					id: entry.id,
-					description: entry.description,
-					startedAtMs: entry.startedAtMs,
-				})),
-			});
-			if (state.manifestWriter) void state.manifestWriter.observeMonitorState(snapshot);
-		},
-		onBackgroundState: (snapshot) => {
-			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
-				source: "terminal-background-sessions",
-				activeCount: snapshot.length,
-				items: snapshot,
-			});
-			const writer = state.manifestWriter;
-			if (!writer) return;
-			for (const entry of snapshot) {
-				if (state.recordedBackgroundIds.has(entry.id)) continue;
-				state.recordedBackgroundIds.add(entry.id);
-				void writer.recordBackgroundStart(entry.id, entry.description ?? entry.id, entry.startedAtMs);
-			}
-		},
-		onBackgroundExit: (id, runtime) => {
-			state.recordedBackgroundIds.delete(id);
-			if (state.manifestWriter) void state.manifestWriter.recordBackgroundExit(id);
-			state.notifier?.notifyCompletion(id, runtime);
-		},
-	};
-}
-
-function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState): TerminalToolContext {
-	const requireBundle = (): TerminalSessionBundle => {
-		// Lazily create a bundle so the tools work even when invoked directly (e.g. via the
-		// SDK) before `session_start` initializes one. `session_start` replaces it with a
-		// settings-configured bundle and tears down any earlier one.
-		if (!state.bundle) {
-			state.bundle = createBundle(state);
-			state.bundle.bind(bundleSinks(pi, state));
-		}
-		return state.bundle;
-	};
-	return {
-		get manager() {
-			return requireBundle().manager;
-		},
-		get cwd() {
-			return state.ctx?.cwd ?? process.cwd();
-		},
-		get shellPath() {
-			return state.shellPath;
-		},
-		get defaultCols() {
-			return state.settings.defaultCols;
-		},
-		get defaultRows() {
-			return state.settings.defaultRows;
-		},
-		get timeoutAction() {
-			return state.settings.timeoutAction;
-		},
-		get monitorRegistry() {
-			return requireBundle().monitors;
-		},
-		getEnv: () => getShellEnv(),
-		getSessionContext: () => state.ctx,
-		// Exit listeners registered before a reload reach the post-reload owner through the
-		// shared bundle, so this must dispatch via the bundle, never the instance notifier.
-		onBackgroundStart: (id: string, description: string, startedAtMs: number) => {
-			state.bundle?.notifyBackgroundStart(id, description, startedAtMs);
-		},
-		onBackgroundExit: (id: string, runtime: TerminalRuntimeSession) => {
-			state.bundle?.notifyBackgroundExit(id, runtime);
-		},
-		onMonitorRearmed: (id: string) => state.monitorNotifier?.rearm(id),
-		onMonitorsResumed: (ids: readonly string[]) => state.monitorNotifier?.resume(ids),
-	};
-}
+import { bindTerminalManifestWriter, createMonitorTool } from "./tools/monitor.ts";
 
 function shouldStepAside(ctx: ExtensionContext | undefined): boolean {
 	return isAnthropicBashEnabled() && ctx?.model?.api === "anthropic-messages";
@@ -207,170 +60,6 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 	pi.setActiveTools([...active]);
 }
 
-/** Send one model-visible terminal reminder; suppressed by notify `off` and non-interactive modes. */
-function sendTerminalReminder(pi: ExtensionAPI, state: TerminalExtensionState, sentence: string): void {
-	getTerminalNotificationDelivery({
-		sendMessage: (message, options) => pi.sendMessage(message, options),
-		getContext: () => state.ctx,
-		getMode: () => state.settings.notify,
-	})?.send(`<system-reminder>${sentence}</system-reminder>`);
-}
-
-function clauseWithDescriptions(label: string, count: number, descriptions: readonly string[]): string {
-	return descriptions.length > 0 ? `${label} ${count} (${descriptions.join(", ")})` : `${label} ${count}`;
-}
-
-/**
- * The ONE coalesced restore digest. Counts come from the restore orchestrator; descriptions
- * are attributed per manifest entry so the sentence stays a single message however many
- * monitors there are. Empty clauses are omitted; undefined when there is nothing to report.
- */
-function restoreDigestSentence(
-	digest: RestoreDigest,
-	restoredDescriptions: readonly string[],
-	lostDescriptions: readonly string[],
-): string | undefined {
-	const clauses: string[] = [];
-	if (digest.restored > 0) clauses.push(clauseWithDescriptions("restored", digest.restored, restoredDescriptions));
-	if (digest.lost > 0) clauses.push(clauseWithDescriptions("lost", digest.lost, lostDescriptions));
-	if (digest.expired > 0) clauses.push(`expired ${digest.expired}`);
-	if (digest.muted > 0) clauses.push(`${digest.muted} still muted`);
-	if (clauses.length === 0) return undefined;
-	return `Terminal state after restart: ${clauses.join("; ")}.`;
-}
-
-/**
- * Non-reload startup: acquire the persistence lease, then restore from the manifest and
- * deliver EXACTLY ONE coalesced digest. A live foreign holder keeps its lease and gets one
- * attached-elsewhere reminder; an unreadable manifest fails closed with one notice and no
- * restore attempt. Only the lease owner records manifest state afterwards.
- */
-async function adoptPersistedTerminalState(
-	pi: ExtensionAPI,
-	state: TerminalExtensionState,
-	toolCtx: TerminalToolContext,
-	bundle: TerminalSessionBundle,
-	sessionKey: string,
-): Promise<void> {
-	const ctx = state.ctx;
-	const dir = terminalStateDir(ctx);
-	if (dir === undefined || !ctx?.sessionManager) return;
-	const lease = await acquireTerminalLease({ dir, encodedSessionId: sessionKey });
-	if (!lease.acquired) {
-		sendTerminalReminder(
-			pi,
-			state,
-			`Terminal monitors for this session are attached in another live process (pid ${lease.holder.pid}); nothing was restored here.`,
-		);
-		return;
-	}
-	state.lease = { path: lease.path, pid: lease.pid };
-	const writer = new TerminalManifestWriter({ session: ctx.sessionManager });
-	state.manifestWriter = writer;
-	state.recordedBackgroundIds.clear();
-	bindTerminalManifestWriter(sessionKey, writer);
-
-	// The real durability handlers, built from what this restore site already owns: the live
-	// registry/manager of the bundle created for this generation, plus the manifest writer.
-	// Each monitor's REAL outcome is recorded so the digest attributes descriptions correctly.
-	const nowMs = Date.now();
-	const outcomesById = new Map<string, RestoreOutcome>();
-	const registry = bundle.monitors;
-	const record = (handler: RestoreHandler): RestoreHandler => {
-		return async (monitor: ManifestMonitor) => {
-			const result = await handler(monitor);
-			outcomesById.set(monitor.monitorId, result.outcome);
-			// Re-adopt every entry that is LIVE in this generation, so the next persist rewrites
-			// the manifest with it instead of erasing it: `restored` and `muted` both describe a
-			// live monitor (a mute only silences delivery). `lost`/`expired`/`attachedElsewhere`
-			// are deliberately not adopted — nothing is running for them here.
-			if (result.outcome === "restored" || result.outcome === "muted") {
-				writer.adoptRestored(monitor);
-				// Re-bind the persisted fire budget so a restart cannot hand the watch a fresh window.
-				registry.adoptFireWindow(monitor.monitorId, monitor.fireWindow);
-			}
-			return result;
-		};
-	};
-	const restartableCommand = createRestartableCommandHandler({ ctx: toolCtx, registry });
-	// The file handler re-binds the mon_ id to the fresh runtime id; capture that id here so a
-	// persisted mute is re-applied by the runtime id the registry can actually resolve.
-	let freshFileRuntimeId: string | undefined;
-	const checkpointedFile = createCheckpointedFileRestoreHandler({
-		registry,
-		writer,
-		bindMonitorId: (monitorId, runtimeId) => {
-			freshFileRuntimeId = runtimeId;
-			bundle.manager.bindMonitorId(monitorId, runtimeId);
-		},
-		now: () => nowMs,
-	});
-	const handlers: RestoreHandlers = {
-		"restartable-command": record(restartableCommand),
-		"checkpointed-file": record(async (monitor) => {
-			freshFileRuntimeId = undefined;
-			const result = await checkpointedFile(monitor);
-			if (result.outcome !== "restored" || freshFileRuntimeId === undefined) return result;
-			return { ...result, outcome: reapplyPersistedMute(registry, monitor, freshFileRuntimeId) };
-		}),
-	};
-	const digest = await restoreTerminalState({ manifest: writer.store, handlers, now: () => nowMs });
-
-	let manifest = null;
-	let unreadable = digest.storeError;
-	if (!unreadable) {
-		try {
-			manifest = await writer.store.read();
-		} catch {
-			unreadable = true;
-		}
-	}
-	if (unreadable) {
-		sendTerminalReminder(
-			pi,
-			state,
-			"Terminal state after restart: the persisted terminal manifest is corrupt; nothing was restored here (fail closed).",
-		);
-		return;
-	}
-	if (manifest === null) return; // nothing was ever persisted for this session
-
-	const restoredDescriptions: string[] = [];
-	const lostDescriptions: string[] = [];
-	for (const monitor of manifest.monitors) {
-		// Same boundary as the restore orchestrator: at the deadline the entry is expired.
-		if (monitor.expiresAt !== null && monitor.expiresAt <= nowMs) continue;
-		const outcome = outcomesById.get(monitor.monitorId);
-		// Only `restored` and `lost` carry descriptions; a muted restore is reported by its own
-		// count clause, so naming it under either list would desync the clause counts.
-		if (outcome === "restored") restoredDescriptions.push(monitor.description);
-		else if (outcome === undefined || outcome === "lost") lostDescriptions.push(monitor.description);
-	}
-	for (const background of manifest.backgroundSessions) lostDescriptions.push(background.command);
-	const sentence = restoreDigestSentence(digest, restoredDescriptions, lostDescriptions);
-	if (sentence !== undefined) sendTerminalReminder(pi, state, sentence);
-}
-
-/** Detach the manifest recorder without writing (a reload keeps live state instead). */
-function detachManifestWriter(state: TerminalExtensionState, sessionKey: string | undefined): void {
-	state.manifestWriter = null;
-	state.recordedBackgroundIds.clear();
-	if (sessionKey !== undefined) unbindTerminalManifestWriter(sessionKey);
-}
-
-/**
- * Shutdown view of the manifest: recordShutdown absorbs pending checkpoints, marks every
- * live monitor `suspended`, and persists in one write. Detach FIRST so bundle teardown's
- * empty-registry sync cannot touch the recorder afterwards.
- */
-async function suspendAndFlushManifest(state: TerminalExtensionState, sessionKey: string): Promise<void> {
-	const writer = state.manifestWriter;
-	// Final live-state sync: the shutdown write must carry each watch's burned fire window.
-	if (writer && state.bundle) await writer.observeMonitorState(state.bundle.monitors.snapshot());
-	detachManifestWriter(state, sessionKey);
-	if (writer) await writer.recordShutdown();
-}
-
 export function registerTerminalExtension(pi: ExtensionAPI): void {
 	const state: TerminalExtensionState = {
 		bundle: null,
@@ -394,7 +83,13 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		noticeShown: false,
 		lease: null,
 		manifestWriter: null,
+		ensurePersistence: null,
 		recordedBackgroundIds: new Set(),
+		keeper: null,
+		digestSlot: createDigestSlot(),
+		generation: 0,
+		restoreInFlight: Promise.resolve(),
+		parked: false,
 	};
 	const toolCtx = buildToolContext(pi, state);
 
@@ -404,6 +99,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	pi.registerTool(createBashResizeTool(toolCtx));
 	pi.registerTool(createKillBashTool(toolCtx));
 	pi.registerTool(createMonitorTool(toolCtx));
+	registerRestoreDigestRenderer(pi);
 
 	pi.on("session_start", async (event, ctx) => {
 		state.ctx = ctx;
@@ -437,29 +133,46 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		}
 		state.bundle ??= createBundle(state);
 		state.bundle.bind(bundleSinks(pi, state));
-		if (event.reason === "reload") {
+		const holdsLease = sessionKey !== undefined && currentLeaseToken(encodedSessionId(sessionKey)) !== undefined;
+		if (event.reason === "reload" && holdsLease) {
 			// Park/claim and the lease stay untouched: the same pid keeps holding it. The
 			// reload generation only rebinds the recorder so manifest coverage continues.
 			if (sessionKey !== undefined && terminalStateDir(ctx) !== undefined) {
 				const writer = new TerminalManifestWriter({ session: ctx.sessionManager });
+				// SF-2: seed from disk so the first post-reload write keeps the pre-reload entries.
+				await writer.seedFromDisk();
 				state.manifestWriter = writer;
 				state.recordedBackgroundIds.clear();
 				bindTerminalManifestWriter(sessionKey, writer);
 			}
 		} else if (sessionKey !== undefined) {
-			await adoptPersistedTerminalState(pi, state, toolCtx, state.bundle, sessionKey);
+			await startPersistence({ pi, state, toolCtx, sessionKey });
 		}
 		syncToolset(pi, state);
+	});
+
+	pi.on("session_parked", () => {
+		state.parked = true;
+		state.bundle?.monitors.setParked(true);
+		state.statusTicker.stop();
+	});
+
+	pi.on("session_resumed", () => {
+		state.parked = false;
+		state.bundle?.monitors.setParked(false);
+		if (state.bundle) state.statusTicker.sync(state.bundle.monitors.snapshot());
 	});
 
 	pi.on("model_select", async (event, ctx) => {
 		state.ctx = { ...ctx, model: event.model };
 		syncToolset(pi, state);
+		flushRestoreDigest(pi, state);
 	});
 
 	pi.on("input", (event) => {
 		if (event.source === "extension") return;
 		state.monitorNotifier?.noteActivity();
+		flushRestoreDigest(pi, state);
 		const resumed = state.bundle?.monitors.resume() ?? [];
 		if (resumed.length > 0) state.monitorNotifier?.resume(resumed.map((monitor) => monitor.id));
 	});
@@ -468,12 +181,16 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		state.monitorNotifier?.noteActivity();
 	});
 
-	pi.on("before_agent_start", async (event) => {
-		if (state.steppedAside) return undefined;
-		return {
-			systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({ evalOnly: isEvalOnlyRouting(pi) })}`,
-		};
-	});
+	pi.on(
+		"before_agent_start",
+		async (event) => {
+			if (state.steppedAside) return undefined;
+			return {
+				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({ evalOnly: isEvalOnlyRouting(pi) })}`,
+			};
+		},
+		{ previewSafe: true },
+	);
 
 	pi.on("session_shutdown", async (event, ctx) => {
 		state.monitorNotifier?.dispose();
@@ -485,24 +202,26 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			// Keep state.bundle referenced: exit listeners captured by this instance's tool
 			// context still route through the shared bundle after the new owner claims it.
 			// The lease is deliberately NOT released: the same pid keeps it across the reload.
-			detachManifestWriter(state, sessionKey);
+			state.keeper?.stop();
+			state.keeper = null;
+			detachPersistence(state, sessionKey);
 			state.bundle.park();
 			await parkBundle(sessionKey, state.bundle);
 			return;
 		}
-		if (sessionKey !== undefined) await suspendAndFlushManifest(state, sessionKey);
-		const lease = state.lease;
-		state.lease = null;
-		if (lease !== null) {
-			await releaseTerminalLease(lease);
-		} else if (sessionKey !== undefined) {
+		const inheritedLease = state.lease === null;
+		if (sessionKey !== undefined) await stopPersistence(state, sessionKey);
+		if (inheritedLease && sessionKey !== undefined) {
 			const dir = terminalStateDir(ctx) ?? terminalStateDir(state.ctx);
 			// A reload generation inherits the pre-reload lease without re-acquiring it;
 			// releasing by (path, own pid) removes exactly that file and no foreign holder's.
 			if (dir !== undefined) {
+				const token = currentLeaseToken(encodedSessionId(sessionKey));
+				if (token !== undefined) retireLeaseToken(token);
 				await releaseTerminalLease({
 					path: join(dir, `${encodedSessionId(sessionKey)}.lease`),
 					pid: process.pid,
+					...(token === undefined ? {} : { token }),
 				});
 			}
 		}

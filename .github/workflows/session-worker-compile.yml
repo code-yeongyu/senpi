@@ -1,0 +1,43 @@
+name: Compiled session worker
+
+on:
+  pull_request:
+    paths:
+      - packages/coding-agent/src/modes/rpc/**
+      - packages/coding-agent/src/bun/**
+      - packages/coding-agent/package.json
+      - scripts/build-binaries.sh
+      - scripts/build-binaries-flags.test.mjs
+      - scripts/session-worker-compile.test.ts
+      - bun.lock
+      - package-lock.json
+      - pnpm-lock.yaml
+      - '**/*.lock.json'
+      - .github/workflows/session-worker-compile.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  relocated-worker:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Verify standalone compile arguments
+        run: node --test scripts/build-binaries-flags.test.mjs
+      - name: Compile and relocate the production worker client
+        run: bun test scripts/session-worker-compile.test.ts

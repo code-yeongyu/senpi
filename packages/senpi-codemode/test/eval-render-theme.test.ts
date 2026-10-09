@@ -51,6 +51,9 @@ const FG_COLORS = {
 	thinkingMax: "#2d2d2d",
 	bashMode: "#2e2e2e",
 	searchMatchText: "#2f2f2f",
+	skillMention: "#303030",
+	scrollbarTrack: "#3a3a3a",
+	scrollbarThumb: "#3b3b3b",
 } satisfies Record<ThemeColor, string>;
 
 const BG_COLORS = {
@@ -156,11 +159,34 @@ describe("eval renderer theme hierarchy", () => {
 			output,
 		);
 
-		// When
+		// When: a collapsed detached cell keeps the framed code preview (senpi#2933), and the
+		// non-cell result keeps its output and tool-call collapse rows.
 		const lines = [
-			...renderEvalCall({ language: "js", code, summary: "collapse previews" }, TEST_THEME, callContext()).render(
-				80,
-			),
+			...renderEvalResult(
+				evalResult(
+					{
+						language: "js",
+						durationMs: 1,
+						toolCalls: [],
+						truncated: false,
+						cells: [
+							{
+								index: 0,
+								code,
+								language: "js",
+								output: "detached chunk",
+								status: "detached",
+								durationMs: 1,
+								summary: "collapse previews",
+							},
+						],
+					},
+					"",
+				),
+				{ expanded: false, isPartial: false },
+				TEST_THEME,
+				resultContext(),
+			).render(80),
 			...renderEvalResult(result, { expanded: false, isPartial: false }, TEST_THEME, resultContext()).render(80),
 		];
 
@@ -196,7 +222,7 @@ describe("eval renderer theme hierarchy", () => {
 		const component = renderEvalCall(
 			{ language: "js", code: "const answer = 42;", summary: "compute" },
 			TEST_THEME,
-			callContext(),
+			callContext({ expanded: true }),
 		);
 
 		// When
@@ -204,13 +230,13 @@ describe("eval renderer theme hierarchy", () => {
 		const codeLine = requiredLine(lines, "answer");
 
 		// Then
-		expect.soft(stripAnsi(lines[0] ?? "")).toContain("eval js pending");
+		expect.soft(stripAnsi(lines[0] ?? "")).toContain("eval js streaming");
 		expect.soft(stripAnsi(lines.join("\n"))).toContain("compute");
 		expect.soft(stripAnsi(codeLine)).toContain("const answer = 42;");
 		expect.soft(codeLine.startsWith(TEST_THEME.getFgAnsi("mdCodeBlock"))).toBe(false);
 	});
 
-	it("Given themed status events when rendered then operation and error summaries use semantic colors", () => {
+	it("Given themed status events when rendered expanded then operation and error summaries use semantic colors (senpi#2933)", () => {
 		// Given
 		const result = evalResult(
 			{
@@ -235,15 +261,74 @@ describe("eval renderer theme hierarchy", () => {
 			"",
 		);
 
-		// When
-		const lines = renderEvalResult(result, { expanded: false, isPartial: false }, TEST_THEME, resultContext()).render(
-			80,
-		);
+		// When: the collapsed row is one line, so the status history renders through expand
+		const lines = renderEvalResult(
+			result,
+			{ expanded: true, isPartial: false },
+			TEST_THEME,
+			resultContext({ expanded: true }),
+		).render(80);
 		const readLine = requiredLine(lines, "read 7 chars");
 		const errorLine = requiredLine(lines, "write: denied");
 
 		// Then
 		expect.soft(readLine).toContain(TEST_THEME.getFgAnsi("muted"));
 		expect.soft(errorLine).toContain(TEST_THEME.getFgAnsi("warning"));
+	});
+
+	it("Given a themed live status tail whose newest event overflows then every row keeps one frame border and whole escape sequences (senpi#2933 review NEW-3)", () => {
+		// Given: two 2-line events at 40 cols overflow the 2-row tail, so the older event folds
+		// and the newest event's head row is cut. Styled with the real Theme, a clipped row must
+		// still carry exactly one frame border and no partial escape sequence (review r4 HIGH-1).
+		const result = evalResult(
+			{
+				language: "py",
+				durationMs: 1,
+				toolCalls: [],
+				truncated: false,
+				cells: [
+					{
+						index: 0,
+						code: "work()",
+						language: "py",
+						output: "",
+						status: "running",
+						startedAt: 1_700_000_000_000,
+						statusEvents: [
+							{ op: "log", message: "first\nsecond" },
+							{ op: "log", message: "third\nfourth" },
+						],
+					},
+				],
+			},
+			"",
+		);
+
+		// When
+		const lines = renderEvalResult(
+			result,
+			{ expanded: false, isPartial: true },
+			TEST_THEME,
+			resultContext({ now: 1_700_000_001_000 }),
+		).render(40);
+
+		// Then: the newest row stays visible, the marker counts what was cut, no row doubles its
+		// border, and every CSI ends in a final byte (senpi#2839's inert rule).
+		const text = lines.join("\n");
+		expect(text).toContain("fourth");
+		const fourthRow =
+			lines.map((line) => line.replace(/\u001b\[[0-9;]*m/gu, "")).find((line) => line.includes("fourth")) ?? "";
+		expect(fourthRow.trimEnd().endsWith("fourth"), "the kept row is whole, never clipped").toBe(true);
+		expect(text.replace(/\u001b\[[0-9;]*m/gu, "")).toContain("1 earlier status events, 1 rows");
+		for (const line of lines) {
+			const plain = line.replace(/\u001b\[[0-9;]*m/gu, "");
+			expect(/│\s*│/u.test(plain), JSON.stringify(line)).toBe(false);
+		}
+		const trailing = /\u001b\[[0-9;]*$/u;
+		for (const line of lines) {
+			expect(trailing.test(line), JSON.stringify(line)).toBe(false);
+			const stripped = line.replace(/\u001b\[[0-9;]*m/gu, "");
+			expect(stripped.includes("\u001b"), JSON.stringify(line)).toBe(false);
+		}
 	});
 });

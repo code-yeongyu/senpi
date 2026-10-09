@@ -10,6 +10,8 @@ export interface JavaScriptKernelHarnessOptions {
 	readonly cwd?: string;
 	readonly localRoots?: JavaScriptKernelOptions["localRoots"];
 	readonly artifactsDir?: string;
+	readonly sessionEnv?: JavaScriptKernelOptions["sessionEnv"];
+	readonly workerEntryUrl?: JavaScriptKernelOptions["workerEntryUrl"];
 }
 
 export async function withJavaScriptKernel<T>(
@@ -22,6 +24,8 @@ export async function withJavaScriptKernel<T>(
 		parallelPoolWidth: 2,
 		...(options.localRoots === undefined ? {} : { localRoots: options.localRoots }),
 		...(options.artifactsDir === undefined ? {} : { artifactsDir: options.artifactsDir }),
+		...(options.sessionEnv === undefined ? {} : { sessionEnv: options.sessionEnv }),
+		...(options.workerEntryUrl === undefined ? {} : { workerEntryUrl: options.workerEntryUrl }),
 	});
 	try {
 		return await run(kernel);

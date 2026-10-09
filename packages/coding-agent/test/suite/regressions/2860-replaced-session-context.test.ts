@@ -27,6 +27,13 @@ function getText(message: AgentSession["messages"][number]): string {
 				.join("");
 }
 
+// senpi#2093: a real session opens with a hidden environment-context message, named by its type here.
+function transcript(session: AgentSession): string[] {
+	return session.messages.map((message) =>
+		message.role === "custom" ? `custom:${message.customType}` : `${message.role}:${getText(message)}`,
+	);
+}
+
 describe("regression #2860: replaced session callbacks", () => {
 	const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -117,9 +124,19 @@ describe("regression #2860: replaced session callbacks", () => {
 							customInstructions: options?.customInstructions,
 							replaceInstructions: options?.replaceInstructions,
 							label: options?.label,
+							expectedLeafId: options?.expectedLeafId,
 						});
 						return { cancelled: result.cancelled };
 					},
+					editAssistantMessage: async (entryId, text, options) => {
+						const result = await session.editAssistantMessage(entryId, text, {
+							summarize: options?.summarize,
+							customInstructions: options?.customInstructions,
+							expectedLeafId: options?.expectedLeafId,
+						});
+						return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
+					},
+					editUserMessage: (entryId, text, options) => session.editUserMessage(entryId, text, options),
 					switchSession: async (sessionPath, options) => runtime.switchSession(sessionPath, options),
 					reload: async () => {
 						await session.reload();
@@ -201,7 +218,8 @@ describe("regression #2860: replaced session callbacks", () => {
 		expect(replacementSessionFile).not.toBe(oldSessionFile);
 		expect(staleCtxThrows).toBe(true);
 		expect(stalePiThrows).toBe(true);
-		expect(runtime.session.messages.map((message) => `${message.role}:${getText(message)}`)).toEqual([
+		expect(transcript(runtime.session)).toEqual([
+			"custom:environment-context",
 			"user:Hello from the new session!",
 			"assistant:hello reply",
 		]);
@@ -232,7 +250,8 @@ describe("regression #2860: replaced session callbacks", () => {
 		await runtime.session.prompt("seed");
 		await runtime.session.prompt("/fork-it");
 
-		expect(runtime.session.messages.map((message) => `${message.role}:${getText(message)}`)).toEqual([
+		expect(transcript(runtime.session)).toEqual([
+			"custom:environment-context",
 			"user:seed",
 			"assistant:seed reply",
 			"user:fork callback message",
@@ -269,7 +288,8 @@ describe("regression #2860: replaced session callbacks", () => {
 		await runtime.session.prompt("/switch-it");
 
 		expect(runtime.session.sessionFile).toBe(targetSessionPath);
-		expect(runtime.session.messages.map((message) => `${message.role}:${getText(message)}`)).toEqual([
+		expect(transcript(runtime.session)).toEqual([
+			"custom:environment-context",
 			"user:target",
 			"assistant:target reply",
 			"user:switch callback message",

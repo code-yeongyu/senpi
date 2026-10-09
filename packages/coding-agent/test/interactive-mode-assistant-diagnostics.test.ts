@@ -32,36 +32,103 @@ const message: AssistantMessage = {
 						path: "messages.2.content.0",
 						reason: "prefix_binding_mismatch",
 					},
+					{
+						type: "thinking_dropped",
+						path: "messages.5.content.0",
+						reason: "prefix_binding_mismatch",
+					},
+					{
+						type: "thinking_dropped",
+						path: "messages.8.content.0",
+						reason: "prefix_binding_mismatch",
+					},
 				],
 			},
 		},
 	],
 };
 
+type NoticeContext = {
+	chatContainer: Container;
+	settingsManager: { getShowCacheMissNotices(): boolean };
+	sessionManager: { getBranch(): Array<{ type: "message"; message: AssistantMessage }> };
+};
+
+const maybeShowThinkingDropNotice = Reflect.get(InteractiveMode.prototype, "maybeShowThinkingDropNotice") as (
+	this: NoticeContext,
+	message: AssistantMessage,
+) => void;
+
 describe("InteractiveMode assistant diagnostics", () => {
 	test("shows Anthropic thinking drops when cache miss notices are enabled", () => {
-		const maybeShowAssistantDiagnostics = Reflect.get(InteractiveMode.prototype, "maybeShowAssistantDiagnostics") as (
-			this: {
-				chatContainer: Container;
-				settingsManager: { getShowCacheMissNotices(): boolean };
-			},
-			message: AssistantMessage,
-		) => void;
-
 		initTheme("dark");
 		const enabled = {
 			chatContainer: new Container(),
 			settingsManager: { getShowCacheMissNotices: () => true },
+			sessionManager: { getBranch: () => [] },
 		};
-		maybeShowAssistantDiagnostics.call(enabled, message);
+		maybeShowThinkingDropNotice.call(enabled, message);
 		const output = stripAnsi(enabled.chatContainer.render(120).join("\n"));
-		expect(output).toContain("Anthropic dropped thinking block: prefix_binding_mismatch at messages.2.content.0");
+		expect(output).toContain("Anthropic dropped 3 thinking blocks (details in session)");
 
 		const disabled = {
 			chatContainer: new Container(),
 			settingsManager: { getShowCacheMissNotices: () => false },
+			sessionManager: { getBranch: () => [] },
 		};
-		maybeShowAssistantDiagnostics.call(disabled, message);
+		maybeShowThinkingDropNotice.call(disabled, message);
 		expect(disabled.chatContainer.children).toHaveLength(0);
+	});
+
+	test("shows a Copilot tool-limit notice once per session regardless of cache notice settings", () => {
+		const maybeShowAssistantDiagnostics = Reflect.get(InteractiveMode.prototype, "maybeShowAssistantDiagnostics") as (
+			this: {
+				chatContainer: Container;
+				settingsManager: { getShowCacheMissNotices(): boolean };
+				sessionManager: { getSessionId(): string };
+				copilotToolLimitNoticeSessionId?: string;
+			},
+			message: AssistantMessage,
+		) => void;
+		const copilotMessage: AssistantMessage = {
+			...message,
+			provider: "github-copilot",
+			diagnostics: [
+				{
+					type: "github_copilot_tool_limit",
+					timestamp: 1,
+					details: {
+						message:
+							"GitHub Copilot accepts at most 128 tools on endpoints without tool search; senpi omitted 2 excess tool definitions.",
+					},
+				},
+			],
+		};
+		const target = {
+			chatContainer: new Container(),
+			settingsManager: { getShowCacheMissNotices: () => false },
+			sessionManager: { getSessionId: () => "session-1" },
+			copilotToolLimitNoticeSessionId: undefined,
+		};
+
+		initTheme("dark");
+		maybeShowAssistantDiagnostics.call(target, copilotMessage);
+		maybeShowAssistantDiagnostics.call(target, copilotMessage);
+
+		const output = stripAnsi(target.chatContainer.render(120).join("\n"));
+		expect(output.match(/GitHub Copilot accepts at most 128 tools/g)).toHaveLength(1);
+	});
+
+	test("does not repeat unchanged Anthropic thinking drops", () => {
+		initTheme("dark");
+		const context = {
+			chatContainer: new Container(),
+			settingsManager: { getShowCacheMissNotices: () => true },
+			sessionManager: { getBranch: () => [{ type: "message" as const, message }] },
+		};
+
+		maybeShowThinkingDropNotice.call(context, { ...message, timestamp: 2 });
+
+		expect(context.chatContainer.children).toHaveLength(0);
 	});
 });

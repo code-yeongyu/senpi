@@ -29,12 +29,11 @@ Example: {"op":"init","list":[{"phase":"Setup","items":["Survey code","Write tes
 
 ## Rules
 - Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.
-- NEVER make a todo call your turn's only tool call — batch it with the real work: init with the first reads/edits, each done/start with the next action. Solo todo turns waste a round trip.
+- NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.
 - Blocked? append a task to the active phase, or drop.
 - Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text — copy it verbatim from the latest todo result; when it is lost, view echoes the list.
 
 ## When to create a list
-- Task requires 3+ distinct steps
 - User explicitly requests one
 - User provides a set of tasks
 - New instructions arrive mid-task — reconcile before acting: keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect
@@ -49,7 +48,7 @@ export const TASK_MANAGEMENT_SECTION = `
 <Task_Management>
 ## Todo Management
 
-Use the todo tool for multi-step work; its description carries the operations, anatomy, and rules. Mark each item done the moment it finishes and reconcile the list against the newest user message before ending a turn.
+A request with three or more distinct steps gets a phased todo before the first edit - investigation, implementation, verification, final report - in the todo tool; its description carries the operations, anatomy, and rules. Mark each item done the moment it finishes and reconcile the list against the newest user message before ending a turn.
 
 ## Evidence
 - File edit: inspect the changed files and diagnostics.

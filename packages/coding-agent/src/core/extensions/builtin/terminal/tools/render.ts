@@ -1,5 +1,6 @@
 import { Text } from "@earendil-works/pi-tui";
 import { truncateToVisualLines } from "../../../../../modes/interactive/components/visual-truncate.ts";
+import { isModelOnlyText } from "../../../../tools/model-only-text.ts";
 import type { AgentToolResult, ToolDefinition } from "../../../types.ts";
 import type { BashOutputInput, bashOutputSchema } from "./bash-output.ts";
 import type { MonitorInput, monitorSchema } from "./monitor.ts";
@@ -17,8 +18,10 @@ class BashOutputResultComponent {
 	#expanded = false;
 
 	setResult(result: AgentToolResult<BashOutputDetails>, options: RenderResultOptions): void {
-		const block = result.content.find((content) => content.type === "text");
-		this.#text = block?.type === "text" ? block.text : "";
+		this.#text = result.content
+			.filter((content) => content.type === "text" && !isModelOnlyText(content))
+			.map((content) => (content.type === "text" ? content.text : ""))
+			.join("\n");
 		this.#isPartial = options.isPartial;
 		this.#expanded = options.expanded;
 	}

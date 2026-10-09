@@ -58,10 +58,14 @@ describe("release main synchronization", () => {
 	it("synchronizes remote main after the next-cycle commit and before either push", () => {
 		const releaseSource = readFileSync(new URL("./release.mjs", import.meta.url), "utf8");
 		const nextCycleCommit = releaseSource.indexOf('gitCommit("Add [Unreleased] section for next cycle"');
-		const synchronize = releaseSource.indexOf("syncRemoteMainBeforePush(");
-		const pushMain = releaseSource.indexOf('gitPush("main"');
+		const synchronize = releaseSource.indexOf("syncRemoteMainBeforePush(args.dryRun");
+		const pushMain = releaseSource.indexOf('gitPush("main", args.dryRun');
 		const pushTag = releaseSource.indexOf("gitPush(`v${version}`");
 
+		const tag = releaseSource.indexOf("gitTag(version, args.dryRun)");
+		assert.ok(nextCycleCommit > 0 && synchronize > 0 && pushMain > 0 && pushTag > 0 && tag > 0);
+		// The tag is cut before main is synchronized, so a late main merge never reaches the tagged commit (senpi#2943).
+		assert.ok(tag < synchronize);
 		assert.ok(nextCycleCommit < synchronize);
 		assert.ok(synchronize < pushMain);
 		assert.ok(pushMain < pushTag);

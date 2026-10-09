@@ -118,12 +118,17 @@ export function readInitializeProbe(text: string): string | undefined {
 	return typeof userAgent === "string" ? userAgent : undefined;
 }
 
-export async function readSettings(paths: SettingsPaths): Promise<{ readonly listen: AppServerListen } | undefined> {
+export async function readSettings(
+	paths: SettingsPaths,
+): Promise<{ readonly listen: AppServerListen; readonly extensions: readonly string[] } | undefined> {
 	try {
 		const parsed: unknown = JSON.parse(await readFile(paths.settingsFile, "utf8"));
 		if (!isRecord(parsed)) return undefined;
 		const listen = parseListen(parsed.listen);
-		return listen ? { listen } : undefined;
+		const extensions = Array.isArray(parsed.extensions)
+			? parsed.extensions.filter((value): value is string => typeof value === "string")
+			: [];
+		return listen ? { listen, extensions } : undefined;
 	} catch (error: unknown) {
 		if (isNodeErrorCode(error, "ENOENT") || error instanceof SyntaxError) return undefined;
 		throw error;

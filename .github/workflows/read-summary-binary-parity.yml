@@ -1,0 +1,72 @@
+name: Read summary binary parity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/agent/**"
+      - "packages/coding-agent/**"
+      - "scripts/prepare-bun-compile-assets.mjs"
+      - "scripts/qa/read-summary-*.mjs"
+      - "scripts/qa/fixtures/read-summary-provider.mjs"
+      - ".github/workflows/read-summary-binary-parity.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: read-summary-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: Read binary parity (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+      - name: Install without hooks or lifecycle scripts
+        run: bun install --ignore-scripts --frozen-lockfile
+        env:
+          HUSKY: "0"
+      - name: Fetch the existing locked canvas prebuild
+        working-directory: node_modules/canvas
+        run: bun ../prebuild-install/bin.js -r napi
+      - name: Check and build source
+        run: |
+          bunx --bun --no-install tsc --noEmit
+          bun run build:bun
+          bun scripts/prepare-bun-compile-assets.mjs
+      - name: Compile the read surface
+        run: bun scripts/qa/read-summary-build.mjs --out read-parity/senpi
+      - name: Execute source and relocated binary reads
+        shell: bash
+        run: |
+          binary="$GITHUB_WORKSPACE/read-parity/senpi"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            binary="$(cygpath -w "$binary.exe")"
+            output="$(cygpath -w "$GITHUB_WORKSPACE/read-parity/smoke.json")"
+          else
+            output="$GITHUB_WORKSPACE/read-parity/smoke.json"
+          fi
+          bun scripts/qa/read-summary-smoke.mjs --binary "$binary" --out "$output"
+      - name: Upload real read receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-binary-parity-${{ matrix.os }}
+          path: read-parity/**/*.json
+          if-no-files-found: error
+          retention-days: 14

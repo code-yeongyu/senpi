@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { emitProviderAccountFailover } from "../../src/core/extensions/builtin/claude-sdk-oauth/account-events.ts";
+import { emitProviderAccountFailover } from "../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import type { RpcEnvelope } from "../../src/modes/app-server/rpc/envelope.ts";
 import { ServerCore } from "../../src/modes/app-server/server/server-core.ts";
 
@@ -19,10 +19,10 @@ describe("app-server account reads", () => {
 			await initialize(fixture.core, fixture.connectionId);
 			await fixture.core.receive(
 				fixture.connectionId,
-				request(2, "account/providerAccounts/read", { provider: "claude-sdk-oauth" }),
+				request(2, "account/providerAccounts/read", { provider: "anthropic-subscription" }),
 			);
 			expect(resultOf(fixture.sent[1], 2)).toEqual({
-				provider: "claude-sdk-oauth",
+				provider: "anthropic-subscription",
 				accounts: [
 					{ name: "env", source: "env", blocked: false, pinned: false },
 					{ name: "env-2", source: "env", blocked: false, pinned: false },
@@ -35,7 +35,7 @@ describe("app-server account reads", () => {
 
 	it("does not project the Claude empty sentinel as a default account", async () => {
 		const fixture = await createFixture({
-			"claude-sdk-oauth": {
+			"anthropic-subscription": {
 				type: "oauth",
 				access: "claude-sdk-oauth-managed",
 				refresh: "claude-sdk-oauth-managed",
@@ -46,9 +46,9 @@ describe("app-server account reads", () => {
 			await initialize(fixture.core, fixture.connectionId);
 			await fixture.core.receive(
 				fixture.connectionId,
-				request(2, "account/providerAccounts/read", { provider: "claude-sdk-oauth" }),
+				request(2, "account/providerAccounts/read", { provider: "anthropic-subscription" }),
 			);
-			expect(resultOf(fixture.sent[1], 2)).toEqual({ provider: "claude-sdk-oauth", accounts: [] });
+			expect(resultOf(fixture.sent[1], 2)).toEqual({ provider: "anthropic-subscription", accounts: [] });
 		} finally {
 			await rm(fixture.root, { recursive: true, force: true });
 		}
@@ -57,7 +57,7 @@ describe("app-server account reads", () => {
 	it("projects Claude stored and environment accounts together", async () => {
 		vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "legacy-env");
 		const fixture = await createFixture({
-			"claude-sdk-oauth": {
+			"anthropic-subscription": {
 				type: "oauth",
 				access: "claude-sdk-oauth-managed",
 				refresh: "claude-sdk-oauth-managed",
@@ -69,10 +69,10 @@ describe("app-server account reads", () => {
 			await initialize(fixture.core, fixture.connectionId);
 			await fixture.core.receive(
 				fixture.connectionId,
-				request(2, "account/providerAccounts/read", { provider: "claude-sdk-oauth" }),
+				request(2, "account/providerAccounts/read", { provider: "anthropic-subscription" }),
 			);
 			expect(resultOf(fixture.sent[1], 2)).toEqual({
-				provider: "claude-sdk-oauth",
+				provider: "anthropic-subscription",
 				accounts: [
 					{ name: "stored", source: "login", blocked: false, pinned: false },
 					{ name: "env", source: "env", blocked: false, pinned: false },
@@ -90,13 +90,13 @@ describe("app-server account reads", () => {
 			await initialize(fixture.core, fixture.connectionId);
 			await fixture.core.receive(
 				fixture.connectionId,
-				request(2, "account/providerAccounts/pin", { provider: "claude-sdk-oauth", name: "env" }),
+				request(2, "account/providerAccounts/pin", { provider: "anthropic-subscription", name: "env" }),
 			);
 			expect(resultOf(fixture.sent[1], 2)).toEqual({});
 			expect(
 				JSON.parse(
 					await (await import("node:fs/promises")).readFile(join(fixture.root, "agent", "auth.json"), "utf8"),
-				)["claude-sdk-oauth"],
+				)["anthropic-subscription"],
 			).toMatchObject({
 				pinned: "env",
 				access: "claude-sdk-oauth-managed",
@@ -132,7 +132,7 @@ describe("app-server account reads", () => {
 	it("reads, pins, and removes provider accounts without exposing credentials", async () => {
 		// Given: managed provider slots include token-shaped values that must stay in auth.json.
 		const fixture = await createFixture({
-			"claude-sdk-oauth": {
+			"anthropic-subscription": {
 				type: "oauth",
 				access: "claude-sdk-oauth-managed",
 				refresh: "claude-sdk-oauth-managed",
@@ -145,6 +145,7 @@ describe("app-server account reads", () => {
 						access: "sk-ant-test-personal",
 						refresh: "refresh-personal",
 						expires: 4_102_444_800_000,
+						displayName: "Personal (work: dev)",
 					},
 					{
 						name: "work",
@@ -165,38 +166,44 @@ describe("app-server account reads", () => {
 			// When: the desktop-facing provider account methods are used.
 			await fixture.core.receive(
 				fixture.connectionId,
-				request(2, "account/providerAccounts/read", { provider: "claude-sdk-oauth" }),
+				request(2, "account/providerAccounts/read", { provider: "anthropic-subscription" }),
 			);
 			await fixture.core.receive(
 				fixture.connectionId,
-				request(3, "account/providerAccounts/pin", { provider: "claude-sdk-oauth", name: "personal" }),
+				request(3, "account/providerAccounts/pin", { provider: "anthropic-subscription", name: "personal" }),
 			);
 			await fixture.core.receive(
 				fixture.connectionId,
-				request(4, "account/providerAccounts/remove", { provider: "claude-sdk-oauth", name: "work" }),
+				request(4, "account/providerAccounts/remove", { provider: "anthropic-subscription", name: "work" }),
 			);
 
 			// Then: only safe slot metadata crosses the wire and each mutation notifies clients.
 			expect(resultOf(fixture.sent[1], 2)).toEqual({
-				provider: "claude-sdk-oauth",
+				provider: "anthropic-subscription",
 				accounts: [
-					{ name: "personal", source: "login", blocked: false, pinned: false },
+					{
+						name: "personal",
+						displayName: "Personal (work: dev)",
+						source: "login",
+						blocked: false,
+						pinned: false,
+					},
 					{ name: "work", source: "import", blocked: true, pinned: true },
 				],
 			});
 			expect(resultOf(fixture.sent[2], 3)).toEqual({});
 			expect(resultOf(fixture.sent[4], 4)).toEqual({});
-			emitProviderAccountFailover("claude-sdk-oauth", "personal", "work", "rate_limit");
+			emitProviderAccountFailover("anthropic-subscription", "personal", "work", "rate_limit");
 			const notifications = fixture.sent.filter(
 				(message) => "method" in message && message.method === "account/providerAccounts/updated",
 			);
 			expect(notifications).toHaveLength(2);
 			for (const notification of notifications) {
-				expect(notification).toMatchObject({ params: { provider: "claude-sdk-oauth" } });
+				expect(notification).toMatchObject({ params: { provider: "anthropic-subscription" } });
 			}
 			expect(fixture.sent.at(-1)).toMatchObject({
 				method: "account/providerAccounts/failover",
-				params: { provider: "claude-sdk-oauth", from: "personal", to: "work", reason: "rate_limit" },
+				params: { provider: "anthropic-subscription", from: "personal", to: "work", reason: "rate_limit" },
 			});
 			expect(JSON.stringify(fixture.sent)).not.toMatch(/sk-ant/);
 		} finally {

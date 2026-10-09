@@ -29,6 +29,29 @@ describe("ModelRegistry recovery configuration", () => {
 		writeFileSync(modelsJsonPath, JSON.stringify({ providers }));
 	}
 
+	/**
+	 * Resolve a model a `modelOverrides` fixture addresses, and say so plainly when the bundled
+	 * catalog no longer carries it.
+	 *
+	 * An override only ever decorates a model the catalog already has, so a retired id makes
+	 * `find` return undefined and every field assertion then reports `expected undefined to be X`
+	 * - a message that names neither the provider nor the id. senpi#1945 was exactly that: the
+	 * catalog dropped bare `anthropic/claude-opus-4` in favour of the `4.1`+ line, and the failure
+	 * read as a recovery-config bug for long enough to produce two wrong published diagnoses.
+	 * Fixtures that address the catalog go through here so the next retirement explains itself.
+	 */
+	function findCatalogModel(registry: Awaited<ReturnType<typeof createModelRegistry>>, provider: string, id: string) {
+		const model = registry.find(provider, id);
+		if (!model) {
+			throw new Error(
+				`fixture addresses a model the ${provider} catalog does not carry: "${id}". ` +
+					`A modelOverrides entry only decorates an existing catalog model, so this fixture can never ` +
+					`assert anything. Point it at an id the catalog still ships (see packages/ai/src/providers/data/${provider}.json).`,
+			);
+		}
+		return model;
+	}
+
 	test("applies recoverTextToolCalls from custom definitions and model overrides", async () => {
 		writeRawModelsJson({
 			custom: {
@@ -39,7 +62,9 @@ describe("ModelRegistry recovery configuration", () => {
 			openrouter: {
 				modelOverrides: {
 					"anthropic/claude-sonnet-4": { recoverTextToolCalls: false },
-					"anthropic/claude-opus-4": { recoverTextToolCalls: true },
+					// The true direction needs a model the catalog still ships: bare
+					// `anthropic/claude-opus-4` was retired in favour of the 4.1+ line (senpi#1945).
+					"anthropic/claude-opus-4.1": { recoverTextToolCalls: true },
 					"unknown/recovery-model": { recoverTextToolCalls: true },
 				},
 			},
@@ -80,8 +105,8 @@ describe("ModelRegistry recovery configuration", () => {
 		const registry = await createModelRegistry(authStorage, modelsJsonPath);
 		expect(registry.find("custom", "custom-recovery")?.recoverTextToolCalls).toBe(true);
 		expect(registry.find("custom", "custom-recovery-unset")?.recoverTextToolCalls).toBeUndefined();
-		expect(registry.find("openrouter", "anthropic/claude-sonnet-4")?.recoverTextToolCalls).toBe(false);
-		expect(registry.find("openrouter", "anthropic/claude-opus-4")?.recoverTextToolCalls).toBe(true);
+		expect(findCatalogModel(registry, "openrouter", "anthropic/claude-sonnet-4").recoverTextToolCalls).toBe(false);
+		expect(findCatalogModel(registry, "openrouter", "anthropic/claude-opus-4.1").recoverTextToolCalls).toBe(true);
 		expect(registry.find("openrouter", "unknown/recovery-model")).toBeUndefined();
 
 		registry.registerProvider("extension-provider", {

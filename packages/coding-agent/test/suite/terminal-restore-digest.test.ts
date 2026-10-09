@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerTerminalExtension } from "../../src/core/extensions/builtin/terminal/extension.ts";
+import { RESTORE_DIGEST_CUSTOM_TYPE } from "../../src/core/extensions/builtin/terminal/restore-digest.ts";
+import { whenRestoreDecided } from "../../src/core/extensions/builtin/terminal/restore-session.ts";
 import {
 	DURABLE_MONITOR_EXPIRY_MS,
 	FIRE_BUDGET_AUTO_MUTE_SUMMARY,
@@ -37,9 +39,9 @@ vi.mock("../../src/core/extensions/builtin/terminal/restore.ts", async (importOr
 			if (handlers) {
 				const wrapped: Record<string, unknown> = {};
 				for (const [key, handler] of Object.entries(handlers)) {
-					wrapped[key] = (monitor: unknown) => {
+					wrapped[key] = (monitor: unknown, context: unknown) => {
 						trackers.handlerCalls += 1;
-						return (handler as (monitor: unknown) => unknown)(monitor);
+						return (handler as (monitor: unknown, context: unknown) => unknown)(monitor, context);
 					};
 				}
 				forwarded = { ...options, handlers: wrapped } as typeof options;
@@ -117,6 +119,7 @@ function createGeneration(cwd: string, sessionId: string, sessionDir: string): G
 	let activeTools: string[] = [];
 	const pi = {
 		registerTool: (tool: ToolLike) => tools.set(tool.name, tool),
+		registerMessageRenderer: () => {},
 		on: (eventType: string, handler: Handler) => {
 			const registered = handlers.get(eventType) ?? [];
 			registered.push(handler);
@@ -171,8 +174,38 @@ function terminalMessages(generation: Generation): SentMessage[] {
 	return generation.sent.filter((entry) => entry.message.customType === "senpi-terminal:notification");
 }
 
-function reminderContents(generation: Generation): string[] {
-	return terminalMessages(generation).map((entry) => entry.message.content);
+interface DigestMonitor {
+	monitorId: string;
+	description: string;
+	outcome: string;
+}
+
+interface DigestView {
+	content: string;
+	outcome: string;
+	monitors: DigestMonitor[];
+	background: Array<{ id: string; outcome: string }>;
+}
+
+interface DigestDetails {
+	outcome: string;
+	monitors: DigestMonitor[];
+	backgroundSessions: Array<{ id: string; outcome: string }>;
+}
+
+/** The ONE restore digest travels on its own custom type; details carry the per-monitor outcomes. */
+function restoreDigests(generation: Generation): DigestView[] {
+	return generation.sent
+		.filter((entry) => entry.message.customType === RESTORE_DIGEST_CUSTOM_TYPE)
+		.map((entry) => {
+			const details = (entry.message as { details?: DigestDetails }).details;
+			return {
+				content: entry.message.content,
+				outcome: details?.outcome ?? "none",
+				monitors: details?.monitors ?? [],
+				background: details?.backgroundSessions ?? [],
+			};
+		});
 }
 
 /** Monitor line/summary injections travel on their own custom type, not the terminal one. */
@@ -237,6 +270,7 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 	async function start(reason: string): Promise<Generation> {
 		const generation = build();
 		await generation.emit("session_start", { type: "session_start", reason });
+		await whenRestoreDecided(sessionId);
 		return generation;
 	}
 
@@ -326,10 +360,16 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		expect(trackers.restoreCalls).toBe(1);
 		// The three persistent command monitors are durable, so the real restartable-command
 		// handler brings them back; a background session carries no durable identity and is lost.
-		expect(reminderContents(gen2)).toEqual([
-			"<system-reminder>Terminal state after restart: restored 3 (watch alpha, watch beta, watch gamma); lost 1 (background build log).</system-reminder>",
+		const [digest, ...extra] = restoreDigests(gen2);
+		expect(extra).toEqual([]);
+		expect(digest?.monitors.map((entry) => [entry.description, entry.outcome])).toEqual([
+			["watch alpha", "restored"],
+			["watch beta", "restored"],
+			["watch gamma", "restored"],
 		]);
-		expect(terminalMessages(gen2)).toHaveLength(1);
+		expect(digest?.background.map((entry) => entry.outcome)).toEqual(["exited"]);
+		expect(digest?.content).toContain("Terminal state after restart");
+		expect(terminalMessages(gen2)).toEqual([]);
 		expect(gen2.userMessages).toEqual([]);
 	});
 
@@ -347,9 +387,9 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		// re-adoption existed, that write rewrote the file from an in-memory map that never
 		// contained the restored entry, erasing it.
 		const gen2 = await start("resume");
-		expect(reminderContents(gen2)).toEqual([
-			"<system-reminder>Terminal state after restart: restored 1 (standing watch).</system-reminder>",
-		]);
+		expect(
+			restoreDigests(gen2).map((digest) => digest.monitors.map((entry) => [entry.description, entry.outcome])),
+		).toEqual([[["standing watch", "restored"]]]);
 		await startMonitor(gen2, "second watch");
 		// The intervening persist really landed on disk, and it kept the restored entry.
 		await flushManifestWriters();
@@ -360,8 +400,13 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 
 		// Generation 3: the original durable monitor is STILL restored, not lost.
 		const gen3 = await start("resume");
-		expect(reminderContents(gen3)).toEqual([
-			"<system-reminder>Terminal state after restart: restored 2 (standing watch, second watch).</system-reminder>",
+		expect(
+			restoreDigests(gen3).map((digest) => digest.monitors.map((entry) => [entry.description, entry.outcome])),
+		).toEqual([
+			[
+				["standing watch", "restored"],
+				["second watch", "restored"],
+			],
 		]);
 		// The stable mon_ handle from generation 1 still resolves two restarts later.
 		const standing = readManifest().monitors.find((entry) => entry.description === "standing watch");
@@ -407,12 +452,55 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 		extraChildren.push(child);
 		expect(child.pid).toBeDefined();
 		mkdirSync(stateDir, { recursive: true });
-		writeFileSync(leasePath(), JSON.stringify({ pid: child.pid, startedAtMs: Date.now() }), "utf8");
+		// The holder's start instant is what a live-pid confirm compares against: record the
+		// moment the child was spawned, to the second, as the lease v2 record does.
+		writeFileSync(
+			leasePath(),
+			JSON.stringify({ pid: child.pid, startedAtMs: Math.round(Date.now() / 1000) * 1000 }),
+			"utf8",
+		);
+		// Persistence is lazy: with no manifest there is nothing to restore and no lease is
+		// contested at start. Seed one durable entry so the holder check actually runs.
+		writeFileSync(
+			manifestPath(),
+			JSON.stringify({
+				version: 1,
+				sessionId,
+				monitors: [
+					{
+						monitorId: "mon_HELDELSEWHERE0001",
+						sessionId,
+						description: "held watch",
+						runtimeKind: "command",
+						durabilityClass: "restartable-command",
+						command: "cat",
+						cwd,
+						createdAt: Date.now() - 60_000,
+						expiresAt: Date.now() + DURABLE_MONITOR_EXPIRY_MS,
+						persistent: true,
+						suspended: false,
+						lastCheckpoint: null,
+						deliveryPaused: false,
+						fireWindow: { startMs: Date.now() - 60_000, count: 0 },
+					},
+				],
+				backgroundSessions: [],
+				updatedAt: Date.now() - 30_000,
+			}),
+			"utf8",
+		);
 
-		const generation = await start("resume");
+		const generation = build();
+		await generation.emit("session_start", { type: "session_start", reason: "resume" });
 
-		expect(reminderContents(generation)).toEqual([
-			`<system-reminder>Terminal monitors for this session are attached in another live process (pid ${child.pid}); nothing was restored here.</system-reminder>`,
+		// Deferred, not decided: the note waits for real input, and nothing is restored or spawned.
+		expect(restoreDigests(generation)).toEqual([]);
+		await generation.emit("input", { type: "input", text: "hi", source: "interactive" });
+		expect(restoreDigests(generation).map((digest) => [digest.outcome, digest.content])).toEqual([
+			[
+				"deferred",
+				`Terminal state after restart: monitors held by pid ${child.pid}; they come back here when that process exits.`,
+			],
 		]);
 		expect(trackers.restoreCalls).toBe(0);
 		expect(trackers.spawnCalls).toBe(0);
@@ -424,10 +512,9 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 
 		const generation = await start("resume");
 
-		const contents = reminderContents(generation);
-		expect(contents).toHaveLength(1);
-		expect(contents[0]).toContain("corrupt");
-		expect(contents[0]).toContain("<system-reminder>");
+		expect(restoreDigests(generation).map((digest) => [digest.outcome, digest.content])).toEqual([
+			["corrupt", "Terminal state after restart: the saved monitor state was unreadable, nothing was restored."],
+		]);
 		expect(trackers.handlerCalls).toBe(0);
 	});
 
@@ -528,10 +615,16 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 			content.includes(`changed while detached: modified ${watched}`),
 		);
 		await generation.emit("session_start", { type: "session_start", reason: "resume" });
+		await whenRestoreDecided(sessionId);
 
-		expect(reminderContents(generation)).toContain(
-			"<system-reminder>Terminal state after restart: restored 2 (durable artifact watch, durable command watch).</system-reminder>",
-		);
+		expect(
+			restoreDigests(generation).map((digest) => digest.monitors.map((entry) => [entry.description, entry.outcome])),
+		).toEqual([
+			[
+				["durable artifact watch", "restored"],
+				["durable command watch", "restored"],
+			],
+		]);
 		// Exactly one PTY for the restartable-command entry; the file watch spawns nothing.
 		expect(trackers.spawnCalls).toBe(1);
 		expect(trackers.handlerCalls).toBe(2);
@@ -582,9 +675,9 @@ describe("terminal restore digest — lease, manifest restore, one resume digest
 
 		const generation = await start("resume");
 
-		expect(reminderContents(generation)).toContain(
-			"<system-reminder>Terminal state after restart: 1 still muted.</system-reminder>",
-		);
+		expect(
+			restoreDigests(generation).map((digest) => digest.monitors.map((entry) => [entry.description, entry.outcome])),
+		).toEqual([[["muted durable command", "muted"]]]);
 		expect(trackers.spawnCalls).toBe(1);
 		// The mute was applied by the FRESH runtime id: bash_output reports the live monitor muted.
 		const peeked = await generation.tools

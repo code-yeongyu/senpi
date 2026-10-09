@@ -28,12 +28,14 @@ export function resolveSessionArtifactsDir(sessionFile: string | undefined): Ses
 
 export interface TruncationMeta {
 	readonly direction: "head" | "tail" | "middle";
-	readonly truncatedBy: "lines" | "bytes" | "middle";
+	readonly truncatedBy: "lines" | "bytes" | "columns" | "middle";
 	readonly totalLines: number;
 	readonly totalBytes: number;
 	readonly outputLines: number;
 	readonly outputBytes: number;
 	readonly maxBytes?: number;
+	readonly maxColumns?: number;
+	readonly columnTruncatedLines?: number;
 	readonly shownRange?: { readonly start: number; readonly end: number };
 	readonly headRange?: { readonly start: number; readonly end: number };
 	readonly tailRange?: { readonly start: number; readonly end: number };
@@ -61,9 +63,11 @@ export function formatTruncationWarning(meta: TruncationMeta | undefined): strin
 			const elidedLines = meta.elidedLines ?? Math.max(0, meta.totalLines - meta.outputLines);
 			const elidedBytes = meta.elidedBytes ?? Math.max(0, meta.totalBytes - meta.outputBytes);
 			message =
-				meta.headRange !== undefined && meta.tailRange !== undefined
-					? `Showing lines ${meta.headRange.start}-${meta.headRange.end} and ${meta.tailRange.start}-${meta.tailRange.end} of ${meta.totalLines}; ${elidedLines} middle line${elidedLines === 1 ? "" : "s"} (${formatBytes(elidedBytes)}) elided`
-					: `Showing ${meta.outputLines} of ${meta.totalLines} lines; middle elided`;
+				elidedLines === 0
+					? `${formatBytes(elidedBytes)} elided from the middle of a line`
+					: meta.headRange !== undefined && meta.tailRange !== undefined
+						? `Showing lines ${meta.headRange.start}-${meta.headRange.end} and ${meta.tailRange.start}-${meta.tailRange.end} of ${meta.totalLines}; ${elidedLines} middle line${elidedLines === 1 ? "" : "s"} (${formatBytes(elidedBytes)}) elided`
+						: `Showing ${meta.outputLines} of ${meta.totalLines} lines; middle elided`;
 			break;
 		}
 		case "head":
@@ -72,13 +76,43 @@ export function formatTruncationWarning(meta: TruncationMeta | undefined): strin
 				meta.shownRange !== undefined && meta.shownRange.end >= meta.shownRange.start
 					? `Showing lines ${meta.shownRange.start}-${meta.shownRange.end} of ${meta.totalLines}`
 					: `Showing ${meta.outputLines} of ${meta.totalLines} lines`;
-			if (meta.truncatedBy === "bytes") message += ` (${formatBytes(meta.maxBytes ?? meta.outputBytes)} limit)`;
+			message += formatByteLoss(meta);
 			break;
 		default:
 			return assertNever(meta.direction);
 	}
 	if (meta.artifactId !== undefined) message += `. Full output: ${meta.artifactId}`;
 	return `[${message}]`;
+}
+
+/** Model-facing notice for a cut result: kept and original sizes, then the full-output pointer. */
+export function formatModelTruncationNotice(meta: TruncationMeta): string {
+	const { artifactId, ...shown } = meta;
+	const detail = formatTruncationWarning(shown)?.slice(1, -1);
+	const notice = `[Output truncated: kept ${meta.outputBytes} of ${meta.totalBytes} bytes.${detail === undefined ? "" : ` ${detail}`}]`;
+	return artifactId === undefined ? notice : `${notice}\n${artifactNotice(artifactId)}`;
+}
+
+function formatByteLoss(meta: TruncationMeta): string {
+	const dropped = formatBytes(Math.max(0, meta.totalBytes - meta.outputBytes));
+	switch (meta.truncatedBy) {
+		case "columns": {
+			const clamped = meta.columnTruncatedLines ?? 0;
+			const width = meta.maxColumns === undefined ? "the column cap" : `${meta.maxColumns} columns`;
+			return `; ${clamped} line${clamped === 1 ? "" : "s"} clamped to ${width} (${dropped} dropped)`;
+		}
+		case "bytes":
+			return meta.maxBytes === undefined ? ` (${dropped} dropped)` : ` (${formatBytes(meta.maxBytes)} limit)`;
+		case "lines":
+		case "middle":
+			return "";
+		default:
+			return assertNeverCause(meta.truncatedBy);
+	}
+}
+
+function assertNeverCause(value: never): never {
+	throw new TypeError(`Unhandled truncation cause: ${String(value)}`);
 }
 
 export function stripOutputNotice(text: string, meta: TruncationMeta | undefined): string {

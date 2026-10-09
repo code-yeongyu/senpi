@@ -22,6 +22,7 @@ function assertWire(requests: CapturedRequest[]): void {
 		expect(request.rawBody).not.toMatch(/OPENAI_API_KEY|authorization/iu);
 	}
 	const firstMessages = messages(requests[0]!);
+	// senpi#2118: the environment context reaches the wire as the leading block of the prompt's user message.
 	expect(firstMessages.map((message) => message.role)).toEqual(["system", "user"]);
 	expect(JSON.stringify(firstMessages[0])).not.toMatch(/<tool_call>|<invoke|tool call format/iu);
 }

@@ -24,12 +24,13 @@ afterEach(() => {
 });
 
 describe("release package versioning", () => {
-	it("updates the pty, client, and protocol workspaces during lockstep releases", () => {
+	it("updates the chord, pty, client, and protocol workspaces during lockstep releases", () => {
 		// Given
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-release-versioning-"));
 		for (const file of [
 			"packages/ai/package.json",
 			"packages/agent/package.json",
+			"packages/chord/package.json",
 			"packages/client/package.json",
 			"packages/coding-agent/package.json",
 			"packages/protocol/package.json",
@@ -62,6 +63,13 @@ describe("release package versioning", () => {
 		const protocolPackage = JSON.parse(
 			readFileSync(join(tempDir, "packages", "protocol", "package.json"), "utf8"),
 		);
+		// Chord is bundled but keeps upstream's own release identity, so it does NOT ride the fork
+		// CalVer lockstep and applyWorkspaceVersions must leave its version untouched (issue #1632).
+		const chordPackage = JSON.parse(
+			readFileSync(join(tempDir, "packages", "chord", "package.json"), "utf8"),
+		);
+		assert.equal(chordPackage.version, "0.0.0");
+		assert.ok(!logs.some((message) => message.includes("packages/chord/package.json")));
 		assert.equal(ptyPackage.version, "2099.1.2");
 		assert.equal(clientPackage.version, "2099.1.2");
 		assert.equal(protocolPackage.version, "2099.1.2");

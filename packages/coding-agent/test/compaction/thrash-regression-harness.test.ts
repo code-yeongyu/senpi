@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import compactionExtension, { getPromptContextWindow } from "../../src/core/extensions/builtin/compaction/index.ts";
+import { flushCompactionLogs } from "../../src/core/extensions/builtin/compaction/log.ts";
 import {
 	computeEffectiveThreshold,
 	resolveEffectiveReserveTokens,
@@ -23,7 +24,8 @@ afterEach(() => {
 	for (const harness of harnesses.splice(0)) harness.cleanup();
 });
 
-function logEvents(harness: Harness): Array<{ event: string }> {
+async function logEvents(harness: Harness): Promise<Array<{ event: string }>> {
+	await flushCompactionLogs();
 	const candidates = [
 		join(harness.tempDir, "logs", "compaction.log"),
 		join(harness.tempDir, "agent", "logs", "compaction.log"),
@@ -119,7 +121,7 @@ async function runLongSession(
 	// the whole churn. Without this, the invalidation bound is vacuous (0 <= 0 + 2
 	// passes with no speculative lifecycle at all). Asserted BEFORE the event count so
 	// a missing speculative lifecycle fails on its own cause, not on arithmetic.
-	const midChurn = logEvents(harness);
+	const midChurn = await logEvents(harness);
 	expect(count(midChurn, "speculative_started")).toBeGreaterThanOrEqual(1);
 	// A storm would invalidate on every one of the 324 churn context events; the shipped
 	// contract invalidates only on real lifecycle events.
@@ -147,7 +149,7 @@ async function runLongSession(
 
 	if (!runner.isActive || !runner.hasHandlers("before_agent_start"))
 		throw new Error("real compaction extension is inactive");
-	const events = logEvents(harness);
+	const events = await logEvents(harness);
 	return { harness, events, contextEvents };
 }
 
@@ -252,7 +254,7 @@ describe("production-shaped compaction thrash regression", () => {
 			},
 		];
 		await harness.getExtensionRunner().emitContext(bandMessages);
-		const events = logEvents(harness);
+		const events = await logEvents(harness);
 		expect(count(events, "emergency_prune")).toBeGreaterThanOrEqual(1);
 	});
 });

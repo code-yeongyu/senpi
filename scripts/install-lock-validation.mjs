@@ -49,7 +49,10 @@ export function validateGeneratedFiles(options) {
 			errors.push(`${lockPath || "root"} contains dev/extraneous metadata`);
 		}
 		const metadataError = registryMetadataError(lockPath, entry);
-		if (metadataError && !lockstepInternalNames.has(packageName)) {
+		// Internal workspaces (lockstep + bundled-internal like chord) carry a registry tarball URL
+		// without integrity because they are staged from the local tree, not fetched; exempt every
+		// internal name, not only the CalVer-locked ones.
+		if (metadataError && !internalNames.has(packageName)) {
 			errors.push(metadataError);
 		}
 		if (packageName && lockstepInternalNames.has(packageName) && entry.version !== installerPackageJson.version) {

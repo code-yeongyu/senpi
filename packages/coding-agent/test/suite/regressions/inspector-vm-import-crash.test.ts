@@ -1,7 +1,7 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { close as closeInspector, url as inspectorUrl, open as openInspector } from "node:inspector";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, describe, expect, test, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import { isRecoverableInspectorVmImportError } from "../../../src/inspector-policy.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 
@@ -61,6 +61,54 @@ function createCrashContext(): UncaughtCrashThis {
 	};
 }
 
+interface ChildRun {
+	readonly status: number | null;
+	readonly output: string;
+}
+
+/**
+ * Resolves on the child's own `close` event rather than a spawn kill timer, so a slow machine
+ * delays the answer instead of killing a child that is still making progress. If the test times
+ * out first, its whole process group (launcher and cli-main child) is killed.
+ */
+function runUntilClose(args: readonly string[], env: NodeJS.ProcessEnv): Promise<ChildRun> {
+	const child = spawn(process.execPath, args, {
+		detached: process.platform !== "win32",
+		env,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	onTestFinished(() => {
+		if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
+		if (process.platform === "win32") {
+			spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+			return;
+		}
+		try {
+			process.kill(-child.pid, "SIGKILL");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+		}
+	});
+	let stdout = "";
+	let stderr = "";
+	child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+		stdout += chunk;
+	});
+	child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+		stderr += chunk;
+	});
+	return new Promise((resolve, reject) => {
+		child.once("error", reject);
+		child.once("close", (status) => resolve({ status, output: `${stdout}${stderr}` }));
+	});
+}
+
+// The launcher -> cli-main child imports the whole engine graph through tsx: at most 13.6 s of CPU
+// (measured with /usr/bin/time), which the full parallel regression run stretched to 143 s of wall
+// time (worst of 70 samples; a third exceeded the old 30 s spawn limit). This bound only catches a
+// hung child and matches the sibling inspector-endpoint-handoff test, which drives the same child.
+const CLI_MAIN_CHILD_BUDGET_MS = 180_000;
+
 afterEach(() => {
 	vi.restoreAllMocks();
 });
@@ -74,28 +122,27 @@ afterAll(() => {
 });
 
 describe("Inspector VM dynamic import crash handling", () => {
-	test("hands the fixed Inspector endpoint from the launcher to cli-main", () => {
-		const fixturePath = fileURLToPath(new URL("../../fixtures/inspector-fixed-port.ts", import.meta.url));
-		const cliPath = fileURLToPath(new URL("../../../src/cli.ts", import.meta.url));
-		const result = spawnSync(process.execPath, ["--import", "tsx", fixturePath, cliPath, "--help"], {
-			encoding: "utf8",
-			env: {
+	test(
+		"hands the fixed Inspector endpoint from the launcher to cli-main",
+		async () => {
+			const fixturePath = fileURLToPath(new URL("../../fixtures/inspector-fixed-port.ts", import.meta.url));
+			const cliPath = fileURLToPath(new URL("../../../src/cli.ts", import.meta.url));
+			const { status, output } = await runUntilClose(["--import", "tsx", fixturePath, cliPath, "--help"], {
 				...process.env,
 				NODE_OPTIONS: "--inspect=127.0.0.1:0",
 				PI_OFFLINE: "1",
-			},
-			timeout: 30_000,
-		});
-		const output = `${result.stdout}${result.stderr}`;
-		const endpoints = [...output.matchAll(/Debugger listening on ws:\/\/127\.0\.0\.1:(\d+)\//g)].map(
-			(match) => match[1],
-		);
+			});
+			const endpoints = [...output.matchAll(/Debugger listening on ws:\/\/127\.0\.0\.1:(\d+)\//g)].map(
+				(match) => match[1],
+			);
 
-		expect(result.status).toBe(0);
-		expect(output).not.toContain("address already in use");
-		expect(endpoints).toHaveLength(2);
-		expect(new Set(endpoints).size).toBe(1);
-	});
+			expect(status).toBe(0);
+			expect(output).not.toContain("address already in use");
+			expect(endpoints).toHaveLength(2);
+			expect(new Set(endpoints).size).toBe(1);
+		},
+		CLI_MAIN_CHILD_BUDGET_MS,
+	);
 
 	test("keeps the interactive child running for the exact Inspector eval rejection", () => {
 		const context = createCrashContext();

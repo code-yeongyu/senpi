@@ -2,6 +2,7 @@ import { MIN_ANSWER_TOKENS } from "../src/api/simple-options.ts";
 import type { AssistantMessage, Context, Usage } from "../src/types.ts";
 import { estimateContextTokens } from "../src/utils/estimate.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
 export const CONTEXT_WINDOW = 10_000;
 const CONTEXT_SAFETY_TOKENS = 4_096;
 export const LAST_ADMITTED_ESTIMATE = CONTEXT_WINDOW - CONTEXT_SAFETY_TOKENS - MIN_ANSWER_TOKENS;
@@ -35,7 +36,7 @@ export function contextWithEstimate(estimate: number): Context {
 	const context: Context = {
 		messages: [createAssistant(estimate - 1), { role: "user", content: "tail", timestamp: 200 }],
 	};
-	const actual = estimateContextTokens(context).tokens;
+	const actual = estimateContextTokens(normalizeContext(context)).tokens;
 	if (actual !== estimate) throw new Error(`fixture estimate drifted: expected ${estimate}, got ${actual}`);
 	return context;
 }

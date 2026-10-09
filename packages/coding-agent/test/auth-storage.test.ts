@@ -549,3 +549,75 @@ describe("AuthStorage", () => {
 		expect(readFileSync(authJsonPath, "utf8")).toBe("{invalid-json");
 	});
 });
+
+describe("poisoned managed-sentinel pool slot migration", () => {
+	const sentinel = "claude-sdk-oauth-managed";
+
+	function poisonedPool(): Record<string, unknown> {
+		return {
+			type: "oauth",
+			access: sentinel,
+			refresh: sentinel,
+			expires: 4_102_444_800_000,
+			pinned: "login-2",
+			accounts: [
+				{ name: "default", access: "real-access", refresh: "real-refresh", expires: 1, source: "login" },
+				{ name: "login-2", access: sentinel, refresh: sentinel, expires: 4_102_444_800_000, source: "login" },
+			],
+		};
+	}
+
+	const tempDir = join(tmpdir(), `pi-test-auth-storage-sentinel-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+	const poisonedPath = join(tempDir, "auth.json");
+
+	beforeEach(() => {
+		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
+		mkdirSync(tempDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
+	});
+
+	test("a poisoned pool is healed on read and the repair is written back once", async () => {
+		// The credential sits under the canonical post-rename key while its flat
+		// sentinel values keep the literal `claude-sdk-oauth-managed` material the
+		// provider wrote — the exact shape the auth.json key migration produces.
+		writeFileSync(poisonedPath, JSON.stringify({ "anthropic-subscription": poisonedPool() }, null, 2));
+		const storage = AuthStorage.create(poisonedPath);
+
+		const credential = (await storage.read("anthropic-subscription")) as unknown as {
+			accounts: Array<{ name: string; access: string; refresh: string }>;
+			pinned?: string;
+		};
+		expect(credential.accounts.map((slot) => slot.name)).toEqual(["default"]);
+		expect(credential.pinned).toBeUndefined();
+
+		// The on-disk bytes no longer carry the poisoned entry, so every later
+		// process - including a rotation reader - starts from a clean pool.
+		const onDisk = JSON.parse(readFileSync(poisonedPath, "utf8")) as Record<
+			string,
+			{ accounts: Array<{ name: string }>; pinned?: string }
+		>;
+		expect(onDisk["anthropic-subscription"].accounts.map((slot) => slot.name)).toEqual(["default"]);
+		expect(onDisk["anthropic-subscription"].pinned).toBeUndefined();
+	});
+
+	test("a clean pool is never rewritten", async () => {
+		const clean = {
+			type: "oauth",
+			access: sentinel,
+			refresh: sentinel,
+			expires: 4_102_444_800_000,
+			accounts: [
+				{ name: "default", access: "real-access", refresh: "real-refresh", expires: 1, source: "login" },
+				{ name: "work", access: "work-access", refresh: "work-refresh", expires: 1, source: "login" },
+			],
+		};
+		const before = JSON.stringify({ "anthropic-subscription": clean }, null, 2);
+		writeFileSync(poisonedPath, before);
+		const storage = AuthStorage.create(poisonedPath);
+		await storage.read("anthropic-subscription");
+		expect(readFileSync(poisonedPath, "utf8")).toBe(before);
+	});
+});
