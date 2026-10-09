@@ -1,3 +1,24 @@
+## 2026-10-08 - Builtin-only SDK children own their MCP configuration
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: a `noExtensions: true` loader creates a session-owned MCP service even when no host registry is supplied. The service is created on each factory execution, so a reloaded child does not reuse a disposed service.
+- `packages/coding-agent/test/suite/regressions/2514-mcp-session-binding.test.ts`: a real builtin-only SDK child cannot replace the classic parent's common server or parent-only extension declaration. Parent tools, an already offered executable, and the parent's process and generation survive child attach, reload, and shutdown.
+
+### Why
+
+The in-process child loader runs before SDK session creation, outside any provider scope. Its MCP builtin previously joined the classic singleton. Removing the parent's extension-only declarations replaced that service's configuration and retired the parent's invocation fences, causing all parent MCP calls to return `unavailable` with `MCP session or server configuration was replaced`. This reproduces on OmO native 5.1.27 after creating a builtin-only SDK child; the same parent call works on 5.1.21.
+
+Refreshing every binding would apply the child's configuration to the parent and lose the parent's extension servers. Builtin-only children now own independent connections unless a host registry is supplied. Normal classic loaders retain their existing shared-service reload behavior, and host-registry loaders retain their transport leases.
+
+### Why an extension could not handle it
+
+The builtin MCP factory is selected while loading resources, before an extension can observe the child attaching to the shared service. The loader already owns the builtin-only boundary used by the in-process adapter.
+
+### Expected merge conflict zones
+
+- LOW: the MCP factory override condition in `DefaultResourceLoader`'s constructor and the MCP session-binding regression suite.
+
 ## 2026-10-08 - A required compaction inside one long turn splits that turn instead of ending it (senpi#2925)
 
 ### What changed

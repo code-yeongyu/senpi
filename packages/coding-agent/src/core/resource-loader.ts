@@ -592,7 +592,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
 		this.additionalHookPaths = options.additionalHookPaths ?? [];
 		this.builtinExtensionFactories =
-			options.mcpRegistry === undefined
+			options.mcpRegistry === undefined && options.noExtensions !== true
 				? builtinExtensions
 				: builtinExtensions.map((extension) =>
 						extension.id === "mcp"
