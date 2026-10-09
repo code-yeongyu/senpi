@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Clipboard copies inside tmux with `allow-passthrough` enabled now wrap the OSC 52 sequence in a tmux DCS passthrough envelope so it reaches the outer terminal (for example across SSH); sessions outside tmux, with passthrough disabled, or where the tmux probe fails keep emitting the raw OSC 52 sequence.
+
 - Polling `senpi host status` no longer restarts a dead owner's two-second host-exit grace. Observe-only reads follow the normal idle policy, while a dropped unclassified peer and activity on an existing connection still reset continuous quiescence ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
 
 ### Removed

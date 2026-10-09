@@ -1,5 +1,32 @@
 # changes
 
+## 2026-10-09 - tmux clipboard passthrough (senpi#1211)
+
+### What changed
+
+- `packages/coding-agent/src/utils/clipboard.ts` probes the effective tmux
+  `#{allow-passthrough}` value through the async clipboard command runner (250 ms budget) and wraps
+  OSC 52 clipboard writes with the TUI package's existing `wrapTmuxPassthrough` DCS helper only when
+  passthrough is enabled. Non-tmux sessions, disabled passthrough, and failed or timed-out probes keep
+  receiving the raw OSC 52 sequence.
+
+### Why
+
+- tmux can accept raw application OSC 52 while still failing to deliver it through an SSH client.
+  A DCS passthrough envelope reaches the outer terminal when `allow-passthrough` is enabled, so
+  fullscreen selection and `/copy` update the workstation clipboard from a remote Senpi session.
+  Keeping raw OSC 52 when passthrough is unavailable preserves tmux's `set-clipboard on` path.
+
+### Why an extension could not handle it
+
+- Clipboard transport is a shared host utility used by interactive selection and core commands.
+  Extensions receive no hook between the selected text and the terminal escape sequence.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/utils/clipboard.ts` around `emitOsc52()` (now async, awaited at both
+  call sites in `copyToClipboard`) and the `@earendil-works/pi-tui` import.
+
 ## 2026-10-09 - Windows tree kills no longer use taskkill /T (senpi#2999 follow-up)
 
 ### What changed
