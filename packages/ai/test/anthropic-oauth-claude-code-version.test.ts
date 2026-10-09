@@ -23,6 +23,7 @@ type ClientHeaders = Record<string, string | null>;
 
 const mockState = vi.hoisted(() => ({
 	clients: [] as ClientHeaders[],
+	billingVersions: [] as (string | undefined)[],
 	failuresBeforeSuccess: [] as Error[],
 }));
 
@@ -50,13 +51,16 @@ vi.mock("@anthropic-ai/sdk", () => {
 
 		beta = {
 			messages: {
-				create: () => ({
-					asResponse: async () => {
-						const failure = mockState.failuresBeforeSuccess.shift();
-						if (failure) throw failure;
-						return createSseResponse();
-					},
-				}),
+				create: (body: { system?: { text?: string }[] }) => {
+					mockState.billingVersions.push(/cc_version=(\d+\.\d+\.\d+)\./.exec(body.system?.[0]?.text ?? "")?.[1]);
+					return {
+						asResponse: async () => {
+							const failure = mockState.failuresBeforeSuccess.shift();
+							if (failure) throw failure;
+							return createSseResponse();
+						},
+					};
+				},
 			},
 		};
 	}
@@ -65,7 +69,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 });
 
 function claudeCliVersion(headers: ClientHeaders | undefined): string {
-	const match = /^claude-cli\/(\d+\.\d+\.\d+)$/.exec(headers?.["user-agent"] ?? "");
+	const match = /^claude-cli\/(\d+\.\d+\.\d+) \(external, cli\)$/.exec(headers?.["user-agent"] ?? "");
 	if (!match?.[1]) throw new Error(`user-agent is not a claude-cli version: ${String(headers?.["user-agent"])}`);
 	return match[1];
 }
@@ -92,6 +96,7 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 
 	beforeEach(() => {
 		mockState.clients.length = 0;
+		mockState.billingVersions.length = 0;
 		mockState.failuresBeforeSuccess.length = 0;
 		installClaudeCodeVersionStore(null);
 	});
@@ -101,7 +106,9 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 	});
 
 	it("advertises a claude-cli user-agent at or above Anthropic's minimum supported version", async () => {
-		await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
+		const result = await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
+		expect(result.errorMessage).toBeUndefined();
+		expect(result.stopReason).toBe("stop");
 
 		const headers = mockState.clients.at(-1);
 		expect(headers?.["x-app"]).toBe("cli");
@@ -122,6 +129,7 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 		await streamAnthropic(model, normalizeContext(context), { apiKey: oauthToken }).result();
 		const version = claudeCliVersion(mockState.clients.at(-1));
 		mockState.clients.length = 0;
+		mockState.billingVersions.length = 0;
 		return version;
 	}
 
@@ -133,6 +141,8 @@ describe("Anthropic OAuth Claude Code identity headers", () => {
 
 		expect(message.stopReason).toBe("stop");
 		expect(mockState.clients.map(claudeCliVersion)).toEqual([expect.any(String), required]);
+		// The billing block is re-signed with the version each attempt advertises.
+		expect(mockState.billingVersions).toEqual(mockState.clients.map(claudeCliVersion));
 	});
 
 	it("gives up after one retry and names the advertised version and the pin variable", async () => {

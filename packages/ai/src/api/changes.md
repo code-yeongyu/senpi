@@ -1,3 +1,21 @@
+## 2026-10-09 - Native Anthropic OAuth request fingerprint (senpi#1398)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: native OAuth requests advertise the external CLI user-agent suffix (`claude-cli/<version> (external, cli)`) and the Agent SDK identity, and `createRequest` prepends a deterministic billing block derived from the first serialized user text block before payload hooks run. The block signs with the Claude Code version the request's client advertises (pin, cached latest, or floor), so the user-agent and `cc_version` always agree, and a `claude_code_version_too_old` retry re-signs it with the raised version. Hashing uses private Web Crypto SHA-256; caller system/cache metadata, payload hooks, and the forced-tool-choice fallback are preserved. API-key, Cloudflare, and Copilot paths are unchanged.
+
+### Why
+
+- `packages/ai/src/api/anthropic-messages.ts`: native OAuth requests lacked the billing fingerprint and external CLI identity used by the subscription request path, causing request rejection despite advertising a supported client version.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/anthropic-messages.ts`: native OAuth detection, SDK client headers, the advertised-version retry, serialized first-user input, and retry payload construction are adapter-owned; an extension cannot supply a consistent default for all native callers.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/api/anthropic-messages.ts` around `buildOAuthBillingBlock` next to `claudeCodeVersion`, the OAuth `user-agent` in `createClient`, the OAuth identity block in `buildParams`, and the pre-hook billing prepend in `createRequest`.
+
 ## 2026-10-09 - Restore api-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed
