@@ -58,6 +58,11 @@ export function promoteStopWithPendingToolCalls(message: AssistantMessage): Assi
 	return { ...message, stopReason: "toolUse" };
 }
 
+/** The stop reason the loop acts on; applied before `message_end` so every consumer sees the same object. */
+export function settleStopReason(message: AssistantMessage): AssistantMessage {
+	return demoteToolUseWithoutToolCalls(promoteStopWithPendingToolCalls(message));
+}
+
 export function shouldTerminateAssistantTurn(message: AssistantMessage): boolean {
 	return message.stopReason === "error" || message.stopReason === "aborted" || isClassifierRefusal(message);
 }

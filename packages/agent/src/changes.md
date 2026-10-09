@@ -1,3 +1,22 @@
+## 2026-10-09 - The loop settles a response's stop reason before message_end (senpi#3029)
+
+### What changed
+
+- `packages/agent/src/assistant-terminal-state.ts`: `settleStopReason` applies `promoteStopWithPendingToolCalls` and then `demoteToolUseWithoutToolCalls`.
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` settles the stop reason of a finished response before it stores it in the context and emits `message_end`; `runLoop` uses the returned object as is instead of normalizing a copy afterwards.
+
+### Why
+
+`runLoop` normalized the stop reason after `message_end`, and both helpers return a new object when they change it. So when a provider ended with `stop` while tool calls were pending, or with `toolUse` and no tool call, `finishTurn` and `turn_end` got a copy that was never persisted, and `message_end`, agent state and the session file kept the raw stop reason. `AgentSession` resolves the `turn_end` entry ID by the identity of the persisted object, so it reported `turn_end could not resolve the persisted assistant entry ID` and skipped every `turn_end` extension handler for that turn.
+
+### Why an extension could not handle it
+
+The copy is made inside the agent loop between `message_end` and `finishTurn`; no extension hook sits between them.
+
+### Expected merge conflict zones
+
+- The terminal branches of `streamAssistantResponse` and the response handling at the top of `runLoop`'s inner loop.
+
 ## 2026-10-07 - Terminal auth failures preserve retry diagnostics (senpi#2893)
 
 ### What changed
