@@ -18,7 +18,6 @@ import { attachHarnessSession, awaitMcpToolRegistration, toolResultTexts } from 
 import {
 	awaitMcpConnected,
 	cleanupRoots,
-	fakePi,
 	makeRoot,
 	setConfig,
 	stdioServer,
@@ -247,10 +246,12 @@ describe("/mcp command suite", () => {
 			isProjectTrusted: () => true,
 			getRegisteredMcpServers: () => [decl],
 		};
-		const pi = fakePi();
-		await getMcpService().attachSession({ type: "session_start", reason: "startup" }, ctxWithDecl, pi, {
-			agentDir: root.agentDir,
-		});
+		// The session attaches through the API its /mcp command runs with, as the MCP builtin does (senpi#3001).
+		const commandActiveTools: string[] = [];
+		const { command, extension } = await loadCommand(commandActiveTools);
+		for (const handler of extension.handlers.get("session_start") ?? []) {
+			await handler({ type: "session_start", reason: "startup" }, ctxWithDecl);
+		}
 		await awaitMcpToolRegistration("fixture");
 		expect(
 			getMcpService()
@@ -278,20 +279,14 @@ describe("/mcp command suite", () => {
 		runner.setUIContext(createUi(), "tui");
 		const ctx = runner.createCommandContext();
 
-		const commandActiveTools: string[] = [];
-		const { command } = await loadCommand(commandActiveTools);
 		await command.handler("reconnect fixture", ctx);
 		await awaitMcpToolRegistration("fixture");
-		// The seed and the command's session are both bound; once the seed is gone, a read naming no session sees the
-		// reattached session's own servers, never a peer's (senpi#3001).
-		await getMcpService().releaseSession(pi);
 
 		const snapshot = getMcpService()
 			.getServerSnapshots()
 			.find((s) => s.name === "fixture");
 		expect(snapshot?.source).toBe("extension");
-		// Reconnect attaches through the /mcp command extension's API, not the
-		// fake API used to seed the service before the command runner exists.
+		// Reconnect attaches through the /mcp command extension's API.
 		expect(commandActiveTools).toContain("mcp_fixture_tool_1");
 	});
 

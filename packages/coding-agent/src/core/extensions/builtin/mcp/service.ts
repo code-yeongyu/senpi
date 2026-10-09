@@ -296,16 +296,17 @@ export class McpService {
 	}
 
 	/**
-	 * The session whose servers a caller may see (senpi#3001): `pi`'s own binding. A caller naming no session, or a `pi`
-	 * this service never bound, sees the sole live session, and `null` (nothing) once two or more are live, so it never
-	 * gets a peer's servers. `undefined` when no session is live: there is no peer, and the merged config is shown.
+	 * The session whose servers a caller may see (senpi#3001): `pi`'s own binding. A caller naming no session sees the
+	 * sole live session, and `null` (nothing) once two or more are live. A `pi` with no binding (never bound, or released
+	 * and not attached again) sees `null` while any session is live, since every live session is a peer of it.
+	 * `undefined` when no session is live: there is no peer, and the merged config is shown.
 	 */
 	#viewerFor(pi: object | undefined): McpSessionBinding | null | undefined {
 		const live = this.#liveBindings();
 		const own = pi === undefined ? undefined : this.#bindings.get(pi);
 		if (own !== undefined) return own;
 		if (live.length === 0) return undefined;
-		return live.length === 1 ? live[0] : null;
+		return pi === undefined && live.length === 1 ? live[0] : null;
 	}
 
 	/**

@@ -1395,3 +1395,20 @@ describe("senpi#3001: /mcp auth commands reach only a server the session declare
 		REGISTRATION_TIMEOUT_MS * 3,
 	);
 });
+
+describe("senpi#3001: a session handle the service has not bound sees no peer's MCP servers", () => {
+	it("gives a released session's handle no server, connection or exposure while a peer is live", async () => {
+		// Given: two live sessions; only the first declares `extra`, which is connected.
+		const { bravoPi } = await twoProjectSessions();
+		const service = getMcpService();
+
+		// When: the peer is released with no dispose reason, as a reload, new, resume or fork does before its next attach.
+		await service.releaseSession(bravoPi);
+
+		// Then: its handle sees nothing, not the servers and connections of the sole live session, its peer.
+		expect(service.getServerSnapshots(bravoPi)).toEqual([]);
+		expect(service.getConnection("extra", bravoPi)).toBeUndefined();
+		expect(await service.getServerExposureStatus("extra", bravoPi)).toEqual({ toolCount: null });
+		expect(service.getConnection("extra")).toBeDefined();
+	});
+});

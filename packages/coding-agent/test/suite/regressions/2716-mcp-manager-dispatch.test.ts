@@ -8,10 +8,11 @@ import { McpTokenStore } from "../../../src/core/extensions/builtin/mcp/auth/tok
 import { registerMcpCommands } from "../../../src/core/extensions/builtin/mcp/commands.ts";
 import { McpManagerView } from "../../../src/core/extensions/builtin/mcp/manager-view.ts";
 import { McpService } from "../../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
 import { initTheme, theme } from "../../../src/modes/interactive/theme/theme.ts";
 import { createUi } from "../../mcp/fixtures/commands.ts";
-import { cleanupRoots, fakePi, makeRoot, setConfig, stdioServer } from "../../mcp/fixtures/service-lifecycle.ts";
+import { cleanupRoots, makeRoot, setConfig, stdioServer } from "../../mcp/fixtures/service-lifecycle.ts";
 import { waitForSignalBeforeCompletion } from "../../promise-test-utils.ts";
 import { createHarness } from "../harness.ts";
 
@@ -39,14 +40,15 @@ async function setup(name: string, oauth = false) {
 	});
 	const service = new McpService();
 	cleanup.push(() => service.dispose("quit"));
-	await service.attachSession(
-		{ type: "session_start", reason: "startup" },
-		{ cwd: root.cwd, isProjectTrusted: () => true },
-		fakePi(),
-		{ agentDir: root.agentDir },
-	);
-	expect(await service.whenAttachSettled()).toBe("settled");
-	const harness = await createHarness({ extensionFactories: [(pi) => registerMcpCommands(pi, service)] });
+	const command: { pi?: ExtensionAPI } = {};
+	const harness = await createHarness({
+		extensionFactories: [
+			(pi) => {
+				command.pi = pi;
+				registerMcpCommands(pi, service);
+			},
+		],
+	});
 	cleanup.push(async () => harness.cleanup());
 	const ui = createUi();
 	const tui = new TUI(new VirtualTerminal(120, 36));
@@ -65,7 +67,17 @@ async function setup(name: string, oauth = false) {
 			}, reject);
 		});
 	await harness.session.bindExtensions({ uiContext: ui, mode: "tui" });
-	return { root, service, harness, ui };
+	const pi = command.pi;
+	if (pi === undefined) throw new Error("The /mcp command extension never loaded");
+	// The session attaches through the API its /mcp command runs with, as the MCP builtin does (senpi#3001).
+	await service.attachSession(
+		{ type: "session_start", reason: "startup" },
+		{ cwd: root.cwd, isProjectTrusted: () => true },
+		pi,
+		{ agentDir: root.agentDir },
+	);
+	expect(await service.whenAttachSettled()).toBe("settled");
+	return { root, service, harness, ui, pi };
 }
 
 // senpi#2716, PR #2747: exercise the registered slash command and real manager,
