@@ -576,15 +576,15 @@ export class McpService {
 	}
 
 	/**
-	 * The connection serving `name`. With `pi`, only one that session is offered (senpi#3001); without it, the shared
-	 * connection, for process-level callers.
+	 * The connection serving `name`. With `pi`, only one that session is offered (senpi#3001); without it, the
+	 * shared one.
 	 */
 	getConnection(name: string, pi?: object): ServerConnection | undefined {
 		const entry = pi === undefined ? this.#entryForName(name) : this.#offeredEntry(name, pi);
 		return entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 	}
 
-	/** The entry for `name` when the session `pi` resolves to (see `#viewerFor`) is offered it; with no live session, any. */
+	/** `name`'s entry when `pi`'s viewer (see `#viewerFor`) is offered it; with no live session, the shared one. */
 	#offeredEntry(name: string, pi: object): McpConnectionEntry | undefined {
 		const viewer = this.#viewerFor(pi);
 		const entry = this.#entryForName(name);
@@ -599,8 +599,8 @@ export class McpService {
 	}
 
 	/**
-	 * The servers the session `pi` resolves to declares (see `#viewerFor`), each with the shared connection only when
-	 * that session's own credentials resolve it (senpi#3001). With no live session, the merged config and every connection.
+	 * The servers `pi`'s viewer (see `#viewerFor`) declares, each with the shared connection only when the viewer's own
+	 * credentials resolve it (senpi#3001). With no live session, the merged config and every connection.
 	 */
 	getServerSnapshots(pi?: object): McpServerSnapshot[] {
 		const viewer = this.#viewerFor(pi);
@@ -620,8 +620,9 @@ export class McpService {
 	}
 
 	/**
-	 * The last `maxLines` log lines of `name`'s connection. With `pi`, only of a connection the session `pi` resolves to
-	 * (see `#viewerFor`) holds with its own credentials, even stale ones (senpi#3001); without it, the shared one's.
+	 * The last `maxLines` log lines of `name`'s connection. With `pi`, only when `pi`'s viewer (see `#viewerFor`)
+	 * resolves its credentials, even stale ones, so it can read its own stale connection's logs (senpi#3001); without
+	 * it, the shared one's.
 	 */
 	getLogLines(name: string, maxLines: number, pi?: object): string[] {
 		const viewer = pi === undefined ? undefined : this.#viewerFor(pi);
@@ -804,7 +805,7 @@ export class McpService {
 									failures.push(error);
 								}
 							}
-							// The session instructions block was likewise captured at attach
+							// Each session's instructions block was likewise captured at attach
 							// time, before this server connected; rebuild it so the first
 							// turn carries this server's instructions after a raced connect.
 							// Every live session rebuilds, since each block reads only its own
@@ -949,7 +950,8 @@ export class McpService {
 				.map((name) => this.#captureWireStatusServer(name, owner)),
 		);
 		const snapshot: McpWireStatusSnapshot = { servers };
-		// A session-less capture is the sole live session's: stored as that session's, never where a peer can read it.
+		// A capture naming no session is stored under its owner's session id, or the owner when it has none, never where
+		// a peer can read it.
 		const key = sessionId ?? owner.context.sessionManager?.getSessionId?.();
 		const previous = (key === undefined
 			? this.#wireStatusByOwner.get(owner)
