@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Scope MCP status, logs, manager entries, prompt instructions and auth commands to the calling session's servers and credentials. Status reads without a session id return no data when multiple sessions are live ([#3011](https://github.com/code-yeongyu/senpi/pull/3011) by [@ferose](https://github.com/ferose)).
+
 ### Removed
 
 ## [2026.10.10-11] - 2026-10-09

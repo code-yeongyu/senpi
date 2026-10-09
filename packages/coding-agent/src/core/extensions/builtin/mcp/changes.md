@@ -1,3 +1,28 @@
+## 2026-10-09 - Per-session MCP status and instructions (senpi#3001)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: status reads without an id select the sole live session, or return an empty snapshot. Captures and notifications use the resolved owner's id; owners without ids use a `WeakMap`.
+- `service.ts`: snapshots and exposure use the caller's declared servers and matching credentials. An unbound caller sees nothing while sessions are live. With no live session, these methods retain the merged view.
+- `service.ts`: connection and cached-instruction reads require an available connection. Logs allow matching stale credentials. Missing credential identities match only a connection started without credentials or using the same agent dir and env.
+- `service.ts`, `instructions.ts`, `index.ts`: each binding stores its own instructions and preserves them on re-attach. Raced connects refresh all live sessions; stale credentials refresh only the declaring session's block.
+- `commands.ts`, `manager.ts`: status, logs, tests and manager entries pass the caller's `pi`. Tests report disabled or untrusted servers, stale credentials, or a connection unavailable to the caller.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth-dispatch.ts`: auth and logout use `getAuthTarget(name, pi)`, which selects the caller's declaration and credential source, not a peer's same-named server. Without `pi`, auth targets retain the merged view.
+- Still shared: elicitation UI, name-keyed reconnects and call accounting, and auth status. The manager's Sign in or Sign out choice still follows the shared connection.
+
+### Why
+
+- Process-wide status, manager entries and prompt instructions exposed servers a session never declared. Auth commands could also use a peer's same-named server and token store.
+- Unbound callers and missing credentials must not expose a peer's connection. A replaced connection must also lose its instructions in the previous owner's prompt.
+
+### Why an extension could not handle it
+
+- Session bindings and captured status are private to the MCP service. Prompt injection and `/mcp` commands belong to the builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: bindings, viewer selection, credential matching, status capture, instructions, auth targets, disposal and raced-connect refreshes.
+- `instructions.ts` and `index.ts`: session-aware refresh and injection. `commands.ts`, `manager.ts` and `auth/commands-auth-dispatch.ts`: caller propagation and auth dispatch.
 ## 2026-10-08 - Resolve and spawn each session's MCP servers with its own trust, env and agent dir (senpi#2986)
 
 ### What changed

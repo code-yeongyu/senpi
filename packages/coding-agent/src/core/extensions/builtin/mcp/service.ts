@@ -82,6 +82,8 @@ interface McpSessionBinding {
 	readonly options: McpSessionOptions;
 	readonly registeredIdentities: Map<string, string>;
 	registration: McpSessionRegistration | undefined;
+	/** MCP instructions from this session's declared servers and available connections. */
+	instructions: string;
 	/** The session id read at attach, while the context is live: a released session's context may already be stale. */
 	readonly sessionId: string | undefined;
 }
@@ -100,7 +102,6 @@ export class McpService {
 	#lastSessionStartReason: SessionStartEvent["reason"] | null = null;
 	#config: ResolvedMcpConfig | null = null;
 	#elicitationUiProvider: (() => McpElicitationUi | undefined) | undefined;
-	#mcpInstructions = "";
 	readonly #pendingAuth = new Map<string, import("./auth/oauth-provider.ts").McpOAuthProvider>();
 	readonly #interactiveAuthServers = new Set<string>();
 	readonly #promptCommandNames = new Set<string>();
@@ -119,8 +120,9 @@ export class McpService {
 	readonly #skillServerWarnings = new Set<string>();
 	#attachQueue: Promise<void> = Promise.resolve();
 	readonly #deferredAttach = new McpDeferredAttach();
-	#latestWireStatus: McpWireStatusSnapshot = { servers: [] };
 	readonly #wireStatusBySession = new Map<string, McpWireStatusSnapshot>();
+	// Sessions without an id can read their status only while they are the sole live session (senpi#3001).
+	readonly #wireStatusByOwner = new WeakMap<McpConfigOwner, McpWireStatusSnapshot>();
 	readonly #connections = new Map<string, McpConnectionEntry>();
 	readonly #connectionKeysByName = new Map<string, string>();
 	readonly #outputArtifacts = new McpOutputArtifacts();
@@ -266,6 +268,8 @@ export class McpService {
 			...owner,
 			registeredIdentities: previous?.registeredIdentities ?? new Map(),
 			registration: previous?.registration,
+			// Enable, add and reconnect re-attach without refreshing instructions; preserve the existing block.
+			instructions: previous?.instructions ?? "",
 			sessionId: owner.context.sessionManager?.getSessionId?.(),
 		};
 		// Re-inserting keeps the most recent attach last, which is what a caller naming no session gets.
@@ -289,6 +293,19 @@ export class McpService {
 	/** The binding of the session that owns `pi`; without one, the most recently attached live session. */
 	#bindingFor(pi: object | undefined): McpSessionBinding | undefined {
 		return pi === undefined ? this.#liveBindings().at(-1) : this.#bindings.get(pi);
+	}
+
+	/**
+	 * Resolve the caller's view (senpi#3001). An omitted `pi` selects the sole live session.
+	 * Return `null` for an ambiguous or unbound caller while sessions are live.
+	 * Return `undefined` when no session is live, allowing the merged config view.
+	 */
+	#viewerFor(pi: object | undefined): McpSessionBinding | null | undefined {
+		const live = this.#liveBindings();
+		const own = pi === undefined ? undefined : this.#bindings.get(pi);
+		if (own !== undefined) return own;
+		if (live.length === 0) return undefined;
+		return pi === undefined && live.length === 1 ? live[0] : null;
 	}
 
 	/**
@@ -535,14 +552,12 @@ export class McpService {
 		this.#sessionContext = null;
 		this.#config = null;
 		this.#elicitationUiProvider = undefined;
-		this.#mcpInstructions = "";
 		this.#pendingAuth.clear();
 		this.#interactiveAuthServers.clear();
 		this.#promptCommandNames.clear();
 		this.#registrationListeners.clear();
 		this.#wireStatusListeners.clear();
 		this.#wireStatusBySession.clear();
-		this.#latestWireStatus = { servers: [] };
 		this.#deferredAttach.clear();
 		const entries = [...this.#connections.values()];
 		this.#connections.clear();
@@ -559,10 +574,20 @@ export class McpService {
 		return this.#disposed;
 	}
 
-	getConnection(name: string): ServerConnection | undefined {
-		const key = this.#connectionKeysByName.get(name);
-		const entry = key === undefined ? undefined : this.#connections.get(key);
+	/**
+	 * Return a current connection available to `pi`, or the shared connection when `pi` is omitted.
+	 */
+	getConnection(name: string, pi?: object): ServerConnection | undefined {
+		const entry = pi === undefined ? this.#entryForName(name) : this.#offeredEntry(name, pi);
 		return entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
+	}
+
+	/** Resolve an available connection through `#viewerFor`; use the shared entry when no session is live. */
+	#offeredEntry(name: string, pi: object): McpConnectionEntry | undefined {
+		const viewer = this.#viewerFor(pi);
+		const entry = this.#entryForName(name);
+		if (viewer === undefined || entry === undefined) return entry;
+		return viewer !== null && offersConnection(viewer, entry) ? entry : undefined;
 	}
 
 	async reconnectServer(name: string): Promise<void> {
@@ -571,7 +596,20 @@ export class McpService {
 		await reconnectMcpNow(entry.connection);
 	}
 
-	getServerSnapshots(): McpServerSnapshot[] {
+	/**
+	 * List the viewer's declared servers and connections matching its credentials.
+	 * With no live session, list the merged config and all connections.
+	 */
+	getServerSnapshots(pi?: object): McpServerSnapshot[] {
+		const viewer = this.#viewerFor(pi);
+		if (viewer === null) return [];
+		if (viewer !== undefined) {
+			return Object.keys(viewer.config.servers)
+				.sort()
+				.map((name) =>
+					this.#serverSnapshot(name, viewer.config.servers[name], this.#sameCredentialEntry(viewer, name)),
+				);
+		}
 		const names = new Set<string>(Object.keys(this.#config?.servers ?? {}));
 		for (const entry of this.#connections.values()) names.add(entry.name);
 		return [...names]
@@ -579,14 +617,24 @@ export class McpService {
 			.map((name) => this.#serverSnapshot(name, this.#config?.servers[name], this.#entryForName(name)));
 	}
 
-	getLogLines(name: string, maxLines: number): string[] {
-		const key = this.#connectionKeysByName.get(name);
-		const lines = key === undefined ? [] : (this.#connections.get(key)?.logger.getRingBuffer() ?? []);
+	/**
+	 * Return the last `maxLines` lines from a connection matching the caller's credentials, even if stale.
+	 * An omitted `pi` reads the shared connection's logs.
+	 */
+	getLogLines(name: string, maxLines: number, pi?: object): string[] {
+		const viewer = pi === undefined ? undefined : this.#viewerFor(pi);
+		if (viewer === null) return [];
+		const entry = viewer === undefined ? this.#entryForName(name) : this.#sameCredentialEntry(viewer, name);
+		const lines = entry?.logger.getRingBuffer() ?? [];
 		return lines.slice(Math.max(0, lines.length - maxLines));
 	}
 
-	async getServerExposureStatus(name: string): Promise<McpServerExposureStatus> {
-		return await getMcpServiceExposureStatus(name, this.#config, this.#entryForName(name));
+	/** Read exposure using the viewer's config and matching credentials; see `#viewerFor`. */
+	async getServerExposureStatus(name: string, pi?: object): Promise<McpServerExposureStatus> {
+		const viewer = this.#viewerFor(pi);
+		if (viewer === null) return { toolCount: null };
+		if (viewer === undefined) return await getMcpServiceExposureStatus(name, this.#config, this.#entryForName(name));
+		return await getMcpServiceExposureStatus(name, viewer.config, this.#sameCredentialEntry(viewer, name));
 	}
 
 	recordCall(name: string, elapsedMs: number, failed: boolean): void {
@@ -611,14 +659,19 @@ export class McpService {
 	}
 
 	/**
-	 * Return the attach-time inventory captured for one session. This is the
-	 * handoff consumed by the app-server's session-owned adapter; it deliberately
-	 * does not expose or derive from the lifecycle-only server snapshots.
+	 * Return captured inventory for the app-server's session-owned adapter, not lifecycle snapshots.
+	 * Without an id, return the sole live session's inventory or an empty snapshot.
 	 */
 	getWireStatusSnapshot(sessionId?: string): McpWireStatusSnapshot {
-		return sessionId === undefined
-			? this.#latestWireStatus
-			: (this.#wireStatusBySession.get(sessionId) ?? { servers: [] });
+		if (sessionId !== undefined) return this.#wireStatusBySession.get(sessionId) ?? { servers: [] };
+		const owner = this.#statusOwner(undefined);
+		return (owner === undefined ? undefined : this.#storedWireStatus(owner)) ?? { servers: [] };
+	}
+
+	/** Read captured status by session id, or by owner when it has no id. */
+	#storedWireStatus(owner: McpConfigOwner): McpWireStatusSnapshot | undefined {
+		const sessionId = owner.context.sessionManager?.getSessionId?.();
+		return sessionId === undefined ? this.#wireStatusByOwner.get(owner) : this.#wireStatusBySession.get(sessionId);
 	}
 
 	/**
@@ -747,10 +800,9 @@ export class McpService {
 									failures.push(error);
 								}
 							}
-							// The session instructions block was likewise captured at attach
-							// time, before this server connected; rebuild it so the first
-							// turn carries this server's instructions after a raced connect.
-							refreshMcpInstructionsForSession(this);
+							// Refresh every live session after a raced connect: add new instructions
+							// for its owner and remove them from sessions whose connection was replaced.
+							for (const live of this.#liveBindings()) refreshMcpInstructionsForSession(this, live.pi);
 							if (failures.length > 0) {
 								throw new AggregateError(
 									failures,
@@ -871,13 +923,12 @@ export class McpService {
 	}
 
 	/**
-	 * The config a session's status reports: its own binding's, found by session id (senpi#2597). The merged config
-	 * decides only which connections live; a session's status lists only the servers it declares. Without a session
-	 * id, the most recently attached live session's.
+	 * Select the session whose config determines status. The merged config controls connection lifetime only.
+	 * Without an id, select the sole live session or none (senpi#3001).
 	 */
 	#statusOwner(sessionId: string | undefined): McpConfigOwner | undefined {
 		const live = this.#liveBindings();
-		if (sessionId === undefined) return live.at(-1);
+		if (sessionId === undefined) return live.length === 1 ? live[0] : undefined;
 		return live.findLast((binding) => binding.context.sessionManager?.getSessionId?.() === sessionId);
 	}
 
@@ -889,18 +940,21 @@ export class McpService {
 				.map((name) => this.#captureWireStatusServer(name, owner)),
 		);
 		const snapshot: McpWireStatusSnapshot = { servers };
-		const previous = this.getWireStatusSnapshot(sessionId);
-		this.#latestWireStatus = snapshot;
-		if (sessionId !== undefined) this.#wireStatusBySession.set(sessionId, snapshot);
+		// Store under the resolved owner's id or identity, never in a process-wide slot.
+		const key = sessionId ?? owner.context.sessionManager?.getSessionId?.();
+		const previous = (key === undefined
+			? this.#wireStatusByOwner.get(owner)
+			: this.#wireStatusBySession.get(key)) ?? { servers: [] };
+		if (key === undefined) this.#wireStatusByOwner.set(owner, snapshot);
+		else this.#wireStatusBySession.set(key, snapshot);
 		if (JSON.stringify(previous) === JSON.stringify(snapshot)) return;
-		for (const listener of this.#wireStatusListeners) listener(sessionId, snapshot);
+		for (const listener of this.#wireStatusListeners) listener(key, snapshot);
 	}
 
 	/** Only a connection resolving `owner`'s own credentials counts: a peer's catalog and login never show in its status. */
 	async #captureWireStatusServer(name: string, owner: McpConfigOwner): Promise<McpWireStatusServer> {
 		const server = owner.config.servers[name];
-		const shared = this.#entryForName(name);
-		const entry = shared !== undefined && resolvesSameCredentials(owner, shared) ? shared : undefined;
+		const entry = this.#sameCredentialEntry(owner, name);
 		const connection = entry?.credentialsCurrent?.() === false ? undefined : entry?.connection;
 		const connected = connection?.state === "connected";
 		const needsAuth = !connected && this.#serverSnapshot(name, server, entry).lifecycleState === "needs_auth";
@@ -944,6 +998,12 @@ export class McpService {
 		return key === undefined ? undefined : this.#connections.get(key);
 	}
 
+	/** Match the owner's credentials, including stale credentials, against the shared connection. */
+	#sameCredentialEntry(owner: McpConfigOwner, name: string): McpConnectionEntry | undefined {
+		const shared = this.#entryForName(name);
+		return shared !== undefined && resolvesSameCredentials(owner, shared) ? shared : undefined;
+	}
+
 	/**
 	 * The agent dir and env a server's credentials resolve with: those its connection spawned with, else those of a
 	 * live session that declares it, never the last attach's (senpi#2986).
@@ -955,15 +1015,23 @@ export class McpService {
 		return this.#liveBindings().find((binding) => declares(binding.config, name, configHash))?.options;
 	}
 
-	setMcpInstructions(instructions: string): void {
-		this.#mcpInstructions = instructions;
+	/** Store instructions for a bound session; ignore unbound callers. */
+	setMcpInstructions(instructions: string, pi: object): void {
+		const binding = this.#bindings.get(pi);
+		if (binding !== undefined) binding.instructions = instructions;
 	}
 
-	getMcpInstructions(): string {
-		if ([...this.#connections.values()].some((entry) => entry.credentialsCurrent?.() === false)) {
-			refreshMcpInstructionsForSession(this);
-		}
-		return this.#mcpInstructions;
+	/**
+	 * Return this session's instructions, rebuilding if a declared connection's credentials are stale.
+	 */
+	getMcpInstructions(pi: object): string {
+		const binding = this.#bindings.get(pi);
+		if (binding === undefined) return "";
+		const stale = [...this.#connections.values()].some(
+			(entry) => declares(binding.config, entry.name, entry.configHash) && entry.credentialsCurrent?.() === false,
+		);
+		if (stale) refreshMcpInstructionsForSession(this, pi);
+		return binding.instructions;
 	}
 
 	setMcpElicitationUiProvider(provider: (() => McpElicitationUi | undefined) | undefined): void {
@@ -996,14 +1064,27 @@ export class McpService {
 		return this.#pendingAuth;
 	}
 
+	/**
+	 * Resolve auth against the viewer's declaration. Use a matching connection's credential source,
+	 * otherwise the viewer's options. An omitted `pi` uses the merged config and `#credentialOptions`.
+	 */
 	getAuthTarget(
 		name: string,
+		pi?: object,
 	):
 		| { config: McpServerConfig; agentDir?: string; env?: Record<string, string | undefined>; callbackUrl?: string }
 		| undefined {
-		const server = this.#config?.servers[name];
+		const viewer = pi === undefined ? undefined : this.#viewerFor(pi);
+		if (viewer === null) return undefined;
+		const server = (viewer?.config ?? this.#config)?.servers[name];
 		if (server?.config === undefined) return undefined;
-		const credentials = this.#credentialOptions(name);
+		const entry = viewer === undefined ? undefined : this.#sameCredentialEntry(viewer, name);
+		const credentials =
+			viewer === undefined
+				? this.#credentialOptions(name)
+				: entry === undefined
+					? viewer.options
+					: { agentDir: entry.agentDir, env: entry.env };
 		return {
 			config: server.config,
 			agentDir: credentials?.agentDir,
@@ -1017,8 +1098,9 @@ export class McpService {
 		return wireAuthStatus(this.#entryForName(name), this.#config?.servers[name], this.#credentialOptions(name));
 	}
 
-	getCachedInstructions(name: string): string | undefined {
-		const entry = this.#entryForName(name);
+	/** Read cached instructions from a current connection available to this session. */
+	getCachedInstructions(name: string, pi: object): string | undefined {
+		const entry = this.#offeredEntry(name, pi);
 		return entry?.credentialsCurrent?.() === false ? undefined : entry?.cachedCatalog?.instructions;
 	}
 
@@ -1043,18 +1125,21 @@ function offersConnection(binding: McpSessionBinding, entry: McpConnectionEntry)
 }
 
 /**
- * Whether `owner` declares `entry`'s server with its config hash and resolves, now, the credentials the connection's
- * own agent dir and env resolve. Unlike `offersConnection`, a connection whose credentials went stale (revoked or
- * rotated tokens) still matches its own session, so that session's status reports it as needing auth; a peer's
- * connection with other credentials never matches.
+ * Match the declared config and current credentials against the connection's credential source.
+ * Unlike `offersConnection`, stale credentials still match so their owner can see the needs-auth status.
+ * Missing identities match only if the connection started without credentials or shares the same source;
+ * losing credentials must not expose a peer's authenticated connection (senpi#3001).
  */
 function resolvesSameCredentials(owner: McpConfigOwner, entry: McpConnectionEntry): boolean {
 	const server = owner.config.servers[entry.name];
 	if (server?.config === undefined || server.configHash !== entry.configHash) return false;
 	const { agentDir, env } = owner.options;
+	const current = mcpCredentialIdentity(server.config, entry.name, agentDir, env);
+	if (current !== mcpCredentialIdentity(server.config, entry.name, entry.agentDir, entry.env)) return false;
 	return (
-		mcpCredentialIdentity(server.config, entry.name, agentDir, env) ===
-		mcpCredentialIdentity(server.config, entry.name, entry.agentDir, entry.env)
+		current !== undefined ||
+		entry.credentialIdentity === undefined ||
+		(agentDir === entry.agentDir && env === entry.env)
 	);
 }
 
