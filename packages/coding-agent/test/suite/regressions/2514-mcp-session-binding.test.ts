@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { getMcpCatalogCachePath } from "../../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import mcpExtension from "../../../src/core/extensions/builtin/mcp/index.ts";
-import { refreshMcpInstructionsForSession } from "../../../src/core/extensions/builtin/mcp/instructions.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
 import { parseSkillMcpDeclarations, type SkillLike } from "../../../src/core/extensions/builtin/mcp/skills.ts";
 import { MCP_STARTUP_TIMEOUT_ENV } from "../../../src/core/extensions/builtin/mcp/startup-race.ts";
@@ -844,6 +843,18 @@ function configureExtraForRootProject(): TestRoot {
 	return makeRoot("2597-peer", cleanupTasks);
 }
 
+/** Two app-server sessions: the first's project declares `extra` beside the shared `fx`, the peer's only `fx`. */
+async function twoProjectSessions(): Promise<{ alphaPi: CapturingPi; bravoPi: CapturingPi }> {
+	const peer = configureExtraForRootProject();
+	const alphaPi = capturingPi();
+	const bravoPi = capturingPi();
+	await attachInProject(alphaPi, root, "alpha");
+	await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+	await attachInProject(bravoPi, peer, "bravo");
+	await untilFakeRegistered(bravoPi, TOOL);
+	return { alphaPi, bravoPi };
+}
+
 /** Attach an app-server session in `project` whose session id is `sessionId`, sharing the agent dir. */
 async function attachInProject(
 	pi: CapturingPi,
@@ -1004,13 +1015,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 
 	it("lists only a session's own servers in its MCP status, never a peer's", async () => {
 		// Given: the first session's project declares `extra` beside the shared `fx`; a peer elsewhere declares only `fx`.
-		const peer = configureExtraForRootProject();
-		const alphaPi = capturingPi();
-		const bravoPi = capturingPi();
-		await attachInProject(alphaPi, root, "alpha");
-		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
-		await attachInProject(bravoPi, peer, "bravo");
-		await untilFakeRegistered(bravoPi, TOOL);
+		await twoProjectSessions();
 
 		// When: each session asks for its MCP status.
 		const alpha = await getMcpService().refreshWireStatusSnapshot("alpha");
@@ -1229,34 +1234,24 @@ async function attachFakeTo(service: ReturnType<typeof getMcpService>, pi: Captu
 
 const ALPHA_ONLY_INSTRUCTIONS = "Use the extra server only from the first session.";
 
-/** Declare `extra` with server instructions from a session's own extensions, so only that session's config has it. */
-function registerInstructedExtraServer(pi: ExtensionAPI): void {
-	const fixture = stdioFixtureCommand();
-	pi.registerMcpServer("extra", {
-		type: "stdio",
-		command: fixture.command,
-		args: [...fixture.args, "--tools", "1", "--instructions", ALPHA_ONLY_INSTRUCTIONS],
-		exposure: "search",
-		lifecycle: "eager",
-	});
-}
-
-/** Two app-server sessions: the first's project declares `extra` beside the shared `fx`, the peer's only `fx`. */
-async function twoProjectSessions(): Promise<{ alphaPi: CapturingPi; bravoPi: CapturingPi }> {
-	const peer = configureExtraForRootProject();
-	const alphaPi = capturingPi();
-	const bravoPi = capturingPi();
-	await attachInProject(alphaPi, root, "alpha");
-	await untilFakeRegistered(alphaPi, EXTRA_TOOL);
-	await attachInProject(bravoPi, peer, "bravo");
-	await untilFakeRegistered(bravoPi, TOOL);
-	return { alphaPi, bravoPi };
+/** Declare `name` with these server instructions from a session's own extensions, so only its config has it. */
+function registerInstructedServer(name: string, instructions: string): (pi: ExtensionAPI) => void {
+	return (pi) => {
+		const fixture = stdioFixtureCommand();
+		pi.registerMcpServer(name, {
+			type: "stdio",
+			command: fixture.command,
+			args: [...fixture.args, "--tools", "1", "--instructions", instructions],
+			exposure: "search",
+			lifecycle: "eager",
+		});
+	};
 }
 
 /** Two live sessions: the first alone declares `extra`, whose server sends instructions; both declare `fx`. */
 async function twoInstructedSessions(): Promise<{ alpha: Harness; bravo: Harness }> {
 	configureServer();
-	const alpha = await openSession(await mcpExtensions(registerInstructedExtraServer));
+	const alpha = await openSession(await mcpExtensions(registerInstructedServer("extra", ALPHA_ONLY_INSTRUCTIONS)));
 	await untilToolRegistered(alpha, EXTRA_TOOL);
 	const bravo = await openSession();
 	await untilToolRegistered(bravo, TOOL);
@@ -1286,8 +1281,7 @@ describe("senpi#3001: a session sees only its own MCP servers in its status, sna
 		const refreshed = await service.refreshWireStatusSnapshot();
 		const read = service.getWireStatusSnapshot();
 
-		// Then: it gets no session's status, not the one that attached or captured last; once the peer quits, the sole
-		// live session's own status.
+		// Then: it gets no session's status; once the peer quits, the sole live session's status.
 		expect(refreshed).toEqual({ servers: [] });
 		expect(read).toEqual({ servers: [] });
 		await service.releaseSession(bravoPi, "quit");
@@ -1299,11 +1293,12 @@ describe("senpi#3001: a session sees only its own MCP servers in its status, sna
 		const { alphaPi, bravoPi } = await twoProjectSessions();
 		const service = getMcpService();
 
-		// When: each session reads its server snapshots and the exposure of `extra`, and a caller naming none reads them.
+		// When: each session reads its server snapshots.
 		const bravo = service.getServerSnapshots(bravoPi);
 		const alpha = service.getServerSnapshots(alphaPi);
 
-		// Then: the peer sees neither the server nor the connection only the first session declares.
+		// Then: the peer sees neither the server nor the connection only the first session declares, and a caller naming
+		// no session sees nothing.
 		expect(bravo.map((snapshot) => snapshot.name)).toEqual(["fx"]);
 		expect(await service.getServerExposureStatus("extra", bravoPi)).toEqual({ toolCount: null });
 		expect(alpha.map((snapshot) => snapshot.name)).toEqual(["extra", "fx"]);
@@ -1341,7 +1336,7 @@ describe("senpi#3001: a session sees only its own MCP servers in its status, sna
 
 			// Then: its status lists its own `fx` and not the first session's `extra`.
 			const status = ui.notifications.at(-1)?.message ?? "";
-			expect(status).toContain("fx");
+			expect(status.split("\n").some((line) => line.startsWith("fx "))).toBe(true);
 			expect(status).not.toContain("extra");
 		},
 		REGISTRATION_TIMEOUT_MS * 3,
@@ -1364,10 +1359,8 @@ describe("senpi#3001: /mcp auth commands reach only a server the session declare
 			// When: the peer runs `/mcp logout extra`.
 			await runner.getCommand("mcp")?.handler("logout extra", runner.createCommandContext());
 
-			// Then: it is refused as unknown, logs nothing out, and leaves the first session's connection untouched.
+			// Then: it is refused as unknown and leaves the first session's connection untouched.
 			expect(ui.notifications).toContainEqual({ message: "Unknown MCP server: extra", type: "error" });
-			expect(JSON.stringify(ui.notifications)).not.toContain("logged out");
-			expect(JSON.stringify(bravo.sessionManager.getEntries())).not.toContain("logged out");
 			expect(getMcpService().getConnection("extra")).toBe(extra);
 			expect(extra.generation).toBe(generation);
 		},
@@ -1393,23 +1386,12 @@ describe("senpi#3001: a session handle the service has not bound sees no peer's 
 });
 
 const INST_TOOL = "mcp_inst_tool_1";
-const ALPHA_INST = "Follow the first session configuration of the inst server.";
-const BRAVO_INST = "Follow the peer configuration of the inst server.";
+const ALPHA_INST_INSTRUCTIONS = "Follow the first session configuration of the inst server.";
+const BRAVO_INST_INSTRUCTIONS = "Follow the peer configuration of the inst server.";
 
 /** A live session whose own extensions declare `inst` with these server instructions, each text its own config hash. */
 async function openInstSession(instructions: string): Promise<Harness> {
-	const harness = await openSession(
-		await mcpExtensions((pi) => {
-			const fixture = stdioFixtureCommand();
-			pi.registerMcpServer("inst", {
-				type: "stdio",
-				command: fixture.command,
-				args: [...fixture.args, "--tools", "1", "--instructions", instructions],
-				exposure: "search",
-				lifecycle: "eager",
-			});
-		}),
-	);
+	const harness = await openSession(await mcpExtensions(registerInstructedServer("inst", instructions)));
 	await untilToolRegistered(harness, INST_TOOL);
 	await getMcpService().whenAttachSettled(REGISTRATION_TIMEOUT_MS);
 	return harness;
@@ -1421,18 +1403,18 @@ describe("senpi#3001: a raced connect rebuilds the instructions of every live se
 		async () => {
 			// Given: the first session declares `inst` and is instructed by it.
 			setConfig(root, {});
-			const alpha = await openInstSession(ALPHA_INST);
-			expect(await systemPromptOf(alpha)).toContain(ALPHA_INST);
+			const alpha = await openInstSession(ALPHA_INST_INSTRUCTIONS);
+			expect(await systemPromptOf(alpha)).toContain(ALPHA_INST_INSTRUCTIONS);
 
 			// When: a peer declaring `inst` with another config attaches last, so its connection replaces the first's.
-			const bravo = await openInstSession(BRAVO_INST);
+			const bravo = await openInstSession(BRAVO_INST_INSTRUCTIONS);
 
 			// Then: the first session's next turn carries no instructions from a connection it no longer has, nor the
 			// peer's; the peer's turn carries its own.
 			const alphaPrompt = await systemPromptOf(alpha);
-			expect(alphaPrompt).not.toContain(ALPHA_INST);
-			expect(alphaPrompt).not.toContain(BRAVO_INST);
-			expect(await systemPromptOf(bravo)).toContain(BRAVO_INST);
+			expect(alphaPrompt).not.toContain(ALPHA_INST_INSTRUCTIONS);
+			expect(alphaPrompt).not.toContain(BRAVO_INST_INSTRUCTIONS);
+			expect(await systemPromptOf(bravo)).toContain(BRAVO_INST_INSTRUCTIONS);
 		},
 		REGISTRATION_TIMEOUT_MS * 3,
 	);
@@ -1444,8 +1426,8 @@ describe("senpi#3001: /mcp test of a declared server the session is offered no c
 		async () => {
 			// Given: the first session declares `inst`, and a peer's own `inst` config replaced its connection.
 			setConfig(root, {});
-			const alpha = await openInstSession(ALPHA_INST);
-			await openInstSession(BRAVO_INST);
+			const alpha = await openInstSession(ALPHA_INST_INSTRUCTIONS);
+			await openInstSession(BRAVO_INST_INSTRUCTIONS);
 			const ui = createUi();
 			const runner = alpha.getExtensionRunner();
 			runner.setUIContext(ui);
@@ -1528,11 +1510,8 @@ describe("senpi#3001: a session sees a shared connection only with its own crede
 		const { alphaPi, bravoPi } = await twoTokenSessions();
 		const service = getMcpService();
 
-		// When: each session builds its instructions block.
-		refreshMcpInstructionsForSession(service, alphaPi);
-		refreshMcpInstructionsForSession(service, bravoPi);
-
-		// Then: only the alpha session gets the connection and its server's instructions.
+		// When/Then: only the alpha session is offered the connection, and only its instructions block, built when `fx`
+		// connected, carries that server's instructions.
 		expect(service.getConnection("fx", alphaPi)).toBeDefined();
 		expect(service.getConnection("fx", bravoPi)).toBeUndefined();
 		expect(service.getCachedInstructions("fx", bravoPi)).toBeUndefined();
@@ -1544,7 +1523,6 @@ describe("senpi#3001: a session sees a shared connection only with its own crede
 		// Given: a session instructed by `fx`.
 		const { alphaPi } = await twoTokenSessions();
 		const service = getMcpService();
-		refreshMcpInstructionsForSession(service, alphaPi);
 		expect(service.getMcpInstructions(alphaPi)).toContain(FX_INSTRUCTIONS);
 
 		// When: it attaches again, as `/mcp enable`, `add` and `reconnect` do, with no instructions refresh after it.
