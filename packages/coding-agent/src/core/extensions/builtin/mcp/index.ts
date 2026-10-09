@@ -114,7 +114,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			attachedSessionId = ctx.sessionManager?.getSessionId?.();
 			attachPromise = (async () => {
 				await service.attachSession(event, ctx, pi);
-				refreshMcpInstructionsForSession(service);
+				refreshMcpInstructionsForSession(service, pi);
 				if (sessionOwned) registerMcpPromptCommands(service, pi, service.getMcpPromptServers(pi));
 				else registerMcpPromptCommands(pi, service.getMcpPromptServers(pi));
 			})();
@@ -157,7 +157,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				}
 				// Use the known instructions now. Deferred catalog registration refreshes
 				// the service for subsequent turns instead of gating this provider request.
-				const systemPrompt = injectMcpInstructions(service, event.systemPrompt);
+				const systemPrompt = injectMcpInstructions(service, event.systemPrompt, pi);
 				return systemPrompt === undefined ? undefined : { systemPrompt };
 			} catch (error) {
 				if (!(error instanceof Error)) throw error;

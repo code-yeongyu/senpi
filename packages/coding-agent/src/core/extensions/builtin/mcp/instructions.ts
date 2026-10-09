@@ -2,25 +2,26 @@ import type { McpService } from "./service.ts";
 
 const MAX_INSTRUCTIONS_CHARS = 4000;
 
-export function refreshMcpInstructionsForSession(service: McpService): void {
-	service.setMcpInstructions(buildMcpInstructionsBlock(service));
+/** Rebuild the instructions block of the session that owns `pi` from its own servers (senpi#3001). */
+export function refreshMcpInstructionsForSession(service: McpService, pi: object): void {
+	service.setMcpInstructions(buildMcpInstructionsBlock(service, pi), pi);
 }
 
-export function injectMcpInstructions(service: McpService, systemPrompt: string): string | undefined {
-	const instructions = service.getMcpInstructions();
+export function injectMcpInstructions(service: McpService, systemPrompt: string, pi: object): string | undefined {
+	const instructions = service.getMcpInstructions(pi);
 	if (instructions.length === 0) return undefined;
 	if (systemPrompt.includes(instructions)) return undefined;
 	return `${systemPrompt}\n\n${instructions}`;
 }
 
-function buildMcpInstructionsBlock(service: McpService): string {
+function buildMcpInstructionsBlock(service: McpService, pi: object): string {
 	const blocks: string[] = [];
-	for (const snapshot of service.getServerSnapshots()) {
-		const connection = service.getConnection(snapshot.name);
+	for (const snapshot of service.getServerSnapshots(pi)) {
+		const connection = service.getConnection(snapshot.name, pi);
 		const instructions =
 			connection?.state === "connected"
 				? connection.client.getInstructions()
-				: service.getCachedInstructions(snapshot.name);
+				: service.getCachedInstructions(snapshot.name, pi);
 		if (instructions === undefined || instructions.length === 0) continue;
 		blocks.push(formatInstructionsBlock(snapshot.name, instructions));
 	}

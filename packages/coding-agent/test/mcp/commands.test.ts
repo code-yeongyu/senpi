@@ -282,6 +282,9 @@ describe("/mcp command suite", () => {
 		const { command } = await loadCommand(commandActiveTools);
 		await command.handler("reconnect fixture", ctx);
 		await awaitMcpToolRegistration("fixture");
+		// The seed and the command's session are both bound; once the seed is gone, a read naming no session sees the
+		// reattached session's own servers, never a peer's (senpi#3001).
+		await getMcpService().releaseSession(pi);
 
 		const snapshot = getMcpService()
 			.getServerSnapshots()

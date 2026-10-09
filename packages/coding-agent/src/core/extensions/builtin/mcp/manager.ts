@@ -50,8 +50,8 @@ async function manage(
 		let disconnect: Array<() => void> = [];
 		const bind = (): void => {
 			for (const stop of disconnect) stop();
-			disconnect = service.getServerSnapshots().flatMap((snapshot) => {
-				const connection = service.getConnection(snapshot.name);
+			disconnect = service.getServerSnapshots(pi).flatMap((snapshot) => {
+				const connection = service.getConnection(snapshot.name, pi);
 				return connection ? [connection.onStateChange(listener)] : [];
 			});
 		};
@@ -67,8 +67,8 @@ async function manage(
 	};
 	for (;;) {
 		const name = await view.menu(async () => {
-			const rows = await buildMcpStatusRows(service.getServerSnapshots(), (server) =>
-				service.getServerExposureStatus(server),
+			const rows = await buildMcpStatusRows(service.getServerSnapshots(pi), (server) =>
+				service.getServerExposureStatus(server, pi),
 			);
 			return {
 				title: "MCP servers",
@@ -95,7 +95,7 @@ async function manage(
 		let message: string | undefined;
 		for (;;) {
 			const action = await view.menu(() => {
-				const snapshot = service.getServerSnapshots().find((server) => server.name === name);
+				const snapshot = service.getServerSnapshots(pi).find((server) => server.name === name);
 				const config = service.getAuthTarget(name)?.config;
 				return {
 					title: `MCP server ${name}`,
@@ -107,18 +107,20 @@ async function manage(
 				};
 			}, subscribe);
 			if (action === undefined) break;
-			const snapshot = service.getServerSnapshots().find((server) => server.name === name);
+			const snapshot = service.getServerSnapshots(pi).find((server) => server.name === name);
 			if (!snapshot) break;
 			if (action === "auth" || action === "logout") return { command: action, name };
 			message = undefined;
 			try {
 				if (action === "status") {
-					const rows = await buildMcpStatusRows([snapshot], (server) => service.getServerExposureStatus(server));
+					const rows = await buildMcpStatusRows([snapshot], (server) =>
+						service.getServerExposureStatus(server, pi),
+					);
 					await showText(view, `Details of ${name}`, formatMcpStatus("", rows).trim());
 				} else if (action === "logs") {
 					await showText(view, `Logs of ${name}`, service.getLogLines(name, 20).join("\n") || "(empty)");
 				} else if (action === "tools") {
-					const connection = service.getConnection(name);
+					const connection = service.getConnection(name, pi);
 					if (connection?.state !== "connected") continue;
 					const tools = await collectAllPages((cursor) =>
 						connection.client.listTools(cursor === undefined ? {} : { cursor }, { timeout: 2000 }),

@@ -5,7 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { closeSync, constants, mkdirSync, openSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { ProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
@@ -21,6 +21,7 @@ import { createAgentSession } from "../../../src/core/sdk.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import type { ExtensionAPI, LoadExtensionsResult } from "../../../src/index.ts";
+import { createUi } from "../../mcp/fixtures/commands.ts";
 import { type CapturingPi, capturingPi, registeredTool } from "../../mcp/fixtures/register-call.ts";
 import {
 	assertAlive,
@@ -1148,3 +1149,124 @@ async function attachFakeTo(service: ReturnType<typeof getMcpService>, pi: Captu
 		{ agentDir: root.agentDir },
 	);
 }
+
+const ALPHA_ONLY_INSTRUCTIONS = "Use the extra server only from the first session.";
+
+/** Declare `extra` with server instructions from a session's own extensions, so only that session's config has it. */
+function registerInstructedExtraServer(pi: ExtensionAPI): void {
+	const fixture = stdioFixtureCommand();
+	pi.registerMcpServer("extra", {
+		type: "stdio",
+		command: fixture.command,
+		args: [...fixture.args, "--tools", "1", "--instructions", ALPHA_ONLY_INSTRUCTIONS],
+		exposure: "search",
+		lifecycle: "eager",
+	});
+}
+
+/** Two app-server sessions: the first's project declares `extra` beside the shared `fx`, the peer's only `fx`. */
+async function twoProjectSessions(): Promise<{ alphaPi: CapturingPi; bravoPi: CapturingPi }> {
+	const peer = configureExtraForRootProject();
+	const alphaPi = capturingPi();
+	const bravoPi = capturingPi();
+	await attachInProject(alphaPi, root, "alpha");
+	await untilFakeRegistered(alphaPi, EXTRA_TOOL);
+	await attachInProject(bravoPi, peer, "bravo");
+	await untilFakeRegistered(bravoPi, TOOL);
+	return { alphaPi, bravoPi };
+}
+
+/** Two live sessions: the first alone declares `extra`, whose server sends instructions; both declare `fx`. */
+async function twoInstructedSessions(): Promise<{ alpha: Harness; bravo: Harness }> {
+	configureServer();
+	const alpha = await openSession(await mcpExtensions(registerInstructedExtraServer));
+	await untilToolRegistered(alpha, EXTRA_TOOL);
+	const bravo = await openSession();
+	await untilToolRegistered(bravo, TOOL);
+	await getMcpService().whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+	return { alpha, bravo };
+}
+
+async function systemPromptOf(harness: Harness): Promise<string> {
+	let systemPrompt = "";
+	harness.setResponses([
+		(context) => {
+			systemPrompt = getCurrentSystemPrompt(context.messages);
+			return fauxAssistantMessage("done");
+		},
+	]);
+	await harness.session.prompt("capture prompt");
+	return systemPrompt;
+}
+
+describe("senpi#3001: a session sees only its own MCP servers in its status, snapshots, /mcp and instructions", () => {
+	it("gives a caller naming no session no peer's MCP status while two sessions are live", async () => {
+		// Given: two live sessions with their own MCP status; only the first declares `extra`.
+		const { bravoPi } = await twoProjectSessions();
+		const service = getMcpService();
+
+		// When: a caller that names no session refreshes and reads the status.
+		const refreshed = await service.refreshWireStatusSnapshot();
+		const read = service.getWireStatusSnapshot();
+
+		// Then: it gets no session's status, not the one that attached or captured last; once the peer quits, the sole
+		// live session's own status.
+		expect(refreshed).toEqual({ servers: [] });
+		expect(read).toEqual({ servers: [] });
+		await service.releaseSession(bravoPi, "quit");
+		expect((await service.refreshWireStatusSnapshot()).servers.map((server) => server.name)).toEqual(["extra", "fx"]);
+	});
+
+	it("lists only a session's own servers in its server snapshots and exposure, never a peer's", async () => {
+		// Given: two live sessions; only the first declares `extra`, which is connected.
+		const { alphaPi, bravoPi } = await twoProjectSessions();
+		const service = getMcpService();
+
+		// When: each session reads its server snapshots and the exposure of `extra`, and a caller naming none reads them.
+		const bravo = service.getServerSnapshots(bravoPi);
+		const alpha = service.getServerSnapshots(alphaPi);
+
+		// Then: the peer sees neither the server nor the connection only the first session declares.
+		expect(bravo.map((snapshot) => snapshot.name)).toEqual(["fx"]);
+		expect(await service.getServerExposureStatus("extra", bravoPi)).toEqual({ toolCount: null });
+		expect(alpha.map((snapshot) => snapshot.name)).toEqual(["extra", "fx"]);
+		expect(service.getServerSnapshots()).toEqual([]);
+	});
+
+	it(
+		"keeps a server's instructions out of a peer session's system prompt",
+		async () => {
+			// Given: two live sessions; only the first declares `extra`, whose server sends instructions.
+			const { alpha, bravo } = await twoInstructedSessions();
+
+			// When: each session sends a turn.
+			const alphaPrompt = await systemPromptOf(alpha);
+			const bravoPrompt = await systemPromptOf(bravo);
+
+			// Then: only the session that declares `extra` is instructed by it.
+			expect(alphaPrompt).toContain(ALPHA_ONLY_INSTRUCTIONS);
+			expect(bravoPrompt).not.toContain(ALPHA_ONLY_INSTRUCTIONS);
+		},
+		REGISTRATION_TIMEOUT_MS * 3,
+	);
+
+	it(
+		"shows only a session's own servers in its /mcp status",
+		async () => {
+			// Given: two live sessions; only the first declares `extra`.
+			const { bravo } = await twoInstructedSessions();
+			const ui = createUi();
+			const runner = bravo.getExtensionRunner();
+			runner.setUIContext(ui);
+
+			// When: the peer runs `/mcp status`.
+			await runner.getCommand("mcp")?.handler("status", runner.createCommandContext());
+
+			// Then: its status lists its own `fx` and not the first session's `extra`.
+			const status = ui.notifications.at(-1)?.message ?? "";
+			expect(status).toContain("fx");
+			expect(status).not.toContain("extra");
+		},
+		REGISTRATION_TIMEOUT_MS * 3,
+	);
+});
