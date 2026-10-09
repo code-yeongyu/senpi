@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { getMcpCatalogCachePath } from "../../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import mcpExtension from "../../../src/core/extensions/builtin/mcp/index.ts";
+import { refreshMcpInstructionsForSession } from "../../../src/core/extensions/builtin/mcp/instructions.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
 import { parseSkillMcpDeclarations, type SkillLike } from "../../../src/core/extensions/builtin/mcp/skills.ts";
 import { MCP_STARTUP_TIMEOUT_ENV } from "../../../src/core/extensions/builtin/mcp/startup-race.ts";
@@ -760,32 +761,10 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 
 describe("senpi#3001: a session's MCP status counts a shared connection only with its own credentials", () => {
 	it("lists a peer's declared server with none of the live connection's catalog, server info or status", async () => {
-		// Given: two sessions declare the same bearer http server with different tokens. The peer attaches first, then the
-		// alpha session attaches last, so the live connection carries alpha's credentials.
-		const fixture = await sharingHttpFixture();
-		cleanupTasks.push(() => fixture.close());
-		setConfig(root, {
-			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_3001_TOKEN", lifecycle: "eager" },
-		});
+		// Given: two sessions declare the same bearer http server with different tokens, and the live connection carries
+		// the alpha session's.
+		await twoTokenSessions();
 		const service = getMcpService();
-		const attachWithToken = (pi: CapturingPi, sessionId: string, token: string) =>
-			service.attachSession(
-				{ type: "session_start", reason: "startup" },
-				{
-					cwd: root.cwd,
-					isProjectTrusted: () => true,
-					mode: "app-server",
-					sessionManager: { getEntries: () => [], getSessionId: () => sessionId },
-				},
-				pi,
-				{ agentDir: root.agentDir, env: { SENPI_3001_TOKEN: token } },
-			);
-		await attachWithToken(capturingPi(), "bravo", "bravo-token");
-		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
-		const alphaPi = capturingPi();
-		await attachWithToken(alphaPi, "alpha", "alpha-token");
-		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
-		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
 
 		// When: each session reads its own MCP status.
 		const alpha = await service.refreshWireStatusSnapshot("alpha");
@@ -1481,4 +1460,127 @@ describe("senpi#3001: /mcp test of a declared server the session is offered no c
 		},
 		REGISTRATION_TIMEOUT_MS * 3,
 	);
+});
+
+// No apostrophe: the instructions block escapes it.
+const FX_INSTRUCTIONS = "Use fx with the first session token only.";
+
+/** Attach an app-server session `sessionId` whose env holds `token`, the bearer token of `twoTokenSessions`'s `fx`. */
+function attachWithToken(
+	pi: CapturingPi,
+	sessionId: string,
+	token: string,
+	reason: "startup" | "reload" = "startup",
+): Promise<void> {
+	return getMcpService().attachSession(
+		{ type: "session_start", reason },
+		{
+			cwd: root.cwd,
+			isProjectTrusted: () => true,
+			mode: "app-server",
+			sessionManager: { getEntries: () => [], getSessionId: () => sessionId },
+		},
+		pi,
+		{ agentDir: root.agentDir, env: { SENPI_3001_TOKEN: token } },
+	);
+}
+
+/**
+ * Two app-server sessions declare the same bearer http `fx`, whose server sends instructions, with different tokens.
+ * The peer attaches first and the alpha session last, so the live connection carries the alpha session's credentials.
+ */
+async function twoTokenSessions(): Promise<{ alphaPi: CapturingPi; bravoPi: CapturingPi }> {
+	const fixture = await sharingHttpFixture(0, { instructions: FX_INSTRUCTIONS });
+	cleanupTasks.push(() => fixture.close());
+	setConfig(root, {
+		fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_3001_TOKEN", lifecycle: "eager" },
+	});
+	const service = getMcpService();
+	const bravoPi = capturingPi();
+	await attachWithToken(bravoPi, "bravo", "bravo-token");
+	await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+	const alphaPi = capturingPi();
+	await attachWithToken(alphaPi, "alpha", "alpha-token");
+	await untilFakeRegistered(alphaPi, "mcp_fx_echo");
+	await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+	return { alphaPi, bravoPi };
+}
+
+describe("senpi#3001: a session sees a shared connection only with its own credentials", () => {
+	it("shows a peer with other credentials no live connection in its server snapshots or exposure", async () => {
+		// Given: two sessions declare `fx` with different tokens, and the live connection carries the alpha session's.
+		const { alphaPi, bravoPi } = await twoTokenSessions();
+		const service = getMcpService();
+
+		// When: each session reads its server snapshots.
+		const alphaFx = service.getServerSnapshots(alphaPi).find((snapshot) => snapshot.name === "fx");
+		const bravoFx = service.getServerSnapshots(bravoPi).find((snapshot) => snapshot.name === "fx");
+
+		// Then: the alpha session sees its connection; the peer lists its own declaration with none of that connection.
+		expect(alphaFx).toMatchObject({ lifecycleState: "connected", uptimeMs: expect.any(Number) });
+		expect(bravoFx).toMatchObject({ lifecycleState: "not_spawned", generation: null, uptimeMs: null });
+		expect(await service.getServerExposureStatus("fx", alphaPi)).toMatchObject({ toolCount: 1 });
+		expect(await service.getServerExposureStatus("fx", bravoPi)).toEqual({ toolCount: null });
+	});
+
+	it("offers a peer with other credentials neither the connection nor its server instructions", async () => {
+		// Given: two sessions declare `fx` with different tokens, and the live connection carries the alpha session's.
+		const { alphaPi, bravoPi } = await twoTokenSessions();
+		const service = getMcpService();
+
+		// When: each session builds its instructions block.
+		refreshMcpInstructionsForSession(service, alphaPi);
+		refreshMcpInstructionsForSession(service, bravoPi);
+
+		// Then: only the alpha session gets the connection and its server's instructions.
+		expect(service.getConnection("fx", alphaPi)).toBeDefined();
+		expect(service.getConnection("fx", bravoPi)).toBeUndefined();
+		expect(service.getCachedInstructions("fx", bravoPi)).toBeUndefined();
+		expect(service.getMcpInstructions(alphaPi)).toContain(FX_INSTRUCTIONS);
+		expect(service.getMcpInstructions(bravoPi)).not.toContain(FX_INSTRUCTIONS);
+	});
+
+	it("keeps a session's instructions block through a re-attach that no instructions refresh follows", async () => {
+		// Given: a session instructed by `fx`.
+		const { alphaPi } = await twoTokenSessions();
+		const service = getMcpService();
+		refreshMcpInstructionsForSession(service, alphaPi);
+		expect(service.getMcpInstructions(alphaPi)).toContain(FX_INSTRUCTIONS);
+
+		// When: it attaches again, as `/mcp enable`, `add` and `reconnect` do, with no instructions refresh after it.
+		await attachWithToken(alphaPi, "alpha", "alpha-token", "reload");
+
+		// Then: its block still carries the instructions.
+		expect(service.getMcpInstructions(alphaPi)).toContain(FX_INSTRUCTIONS);
+	});
+});
+
+describe("senpi#3001: a status refresh that names no session", () => {
+	it("notifies listeners under the sole live session's id, where the status is stored", async () => {
+		// Given: one live session with a session id, whose attach captured no status (it is neither rpc nor app-server).
+		configureServer();
+		const service = getMcpService();
+		await service.attachSession(
+			{ type: "session_start", reason: "startup" },
+			{
+				cwd: root.cwd,
+				isProjectTrusted: () => true,
+				sessionManager: { getEntries: () => [], getSessionId: () => "alpha" },
+			},
+			capturingPi(),
+			{ agentDir: root.agentDir },
+		);
+		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
+		const notified: Array<string | undefined> = [];
+		const unsubscribe = service.onWireStatusChanged((sessionId) => notified.push(sessionId));
+
+		// When: a caller naming no session refreshes the status.
+		const snapshot = await service.refreshWireStatusSnapshot();
+		unsubscribe();
+
+		// Then: the session's status is captured, stored and announced under its own id.
+		expect(snapshot.servers.map((server) => server.name)).toEqual(["fx"]);
+		expect(service.getWireStatusSnapshot("alpha")).toEqual(snapshot);
+		expect(notified).toEqual(["alpha"]);
+	});
 });
