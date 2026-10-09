@@ -40,6 +40,7 @@ export function storedAuthToTokens(record: McpStoredAuth | undefined, now = Date
 		refresh_token: record.refreshToken,
 		token_type: "Bearer",
 		...(expiresIn === undefined ? {} : { expires_in: expiresIn }),
+		...(record.scope === undefined ? {} : { scope: record.scope }),
 	};
 }
 
@@ -55,6 +56,9 @@ export function mergeTokensIntoStoredAuth(
 	};
 	const refreshToken = tokens.refresh_token ?? current?.refreshToken;
 	if (refreshToken !== undefined) next.refreshToken = refreshToken;
+	if (tokens.scope !== undefined) {
+		next.scope = [...new Set(tokens.scope.split(" ").filter((scope) => scope.length > 0))].sort().join(" ");
+	}
 	const expiresAt = tokenExpiresAt(tokens);
 	if (expiresAt !== undefined) next.expiresAt = expiresAt;
 	else delete next.expiresAt;

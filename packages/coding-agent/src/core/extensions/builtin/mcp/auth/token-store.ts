@@ -13,6 +13,7 @@ import { adoptLegacyRecord, type LegacyMigration, readRecordAsync } from "./lega
 export interface McpStoredAuth {
 	accessToken?: string;
 	refreshToken?: string;
+	scope?: string;
 	clientInfo?: OAuthClientInformationFull;
 	codeVerifier?: string;
 	discoveryState?: OAuthDiscoveryState;

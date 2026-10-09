@@ -1,3 +1,22 @@
+## 2026-10-07 - Retain granted OAuth scope metadata (senpi#2861)
+
+### What changed
+
+- `auth/token-store.ts` and `auth/oauth-provider.ts` retain the granted scope in the token record and restore it for SDK token reads. An explicit scope is stored as a deduplicated sorted set of space-delimited names. A refresh response that omits scope retains the preceding scope; an explicit response replaces it.
+- `test/mcp/oauth-provider.test.ts` covers scope normalization, persisted/restored scope and omitted/changed refresh scope without a remote server.
+
+### Why
+
+- Grant-continuity decisions need the actual granted scope. The previous token conversion discarded it, preventing a reliable comparison across refreshes.
+
+### Why an extension could not handle it
+
+- The existing MCP OAuth provider and token store own persistence and SDK conversion; another extension cannot repair their private token record.
+
+### Expected merge conflict zones
+
+- Token-record fields and the stored/SDK token conversion helpers in `auth/token-store.ts` and `auth/oauth-provider.ts`.
+
 ## 2026-10-06 - Nonblocking first-turn MCP admission (senpi#2843)
 
 ### What changed

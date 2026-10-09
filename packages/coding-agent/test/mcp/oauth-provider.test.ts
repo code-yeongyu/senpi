@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { beginAuthorization, completeAuthorization } from "../../src/core/extensions/builtin/mcp/auth/oauth.ts";
-import { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
+import {
+	McpOAuthProvider,
+	mergeTokensIntoStoredAuth,
+	storedAuthToTokens,
+} from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
 import { McpRefreshManager } from "../../src/core/extensions/builtin/mcp/auth/oauth-refresh.ts";
 import { McpTokenStore } from "../../src/core/extensions/builtin/mcp/auth/token-store.ts";
 import { type IdpFixture, spawnOAuthIdp } from "./fixtures/spawn-idp.ts";
@@ -52,6 +56,49 @@ async function followAuthorize(authorizationUrl: URL): Promise<string> {
 }
 
 describe("McpOAuthProvider + flows", () => {
+	it("canonicalizes the granted scope set before persistence", async () => {
+		const { store, provider } = makeProvider(await makeAgentDir(), "https://fixture.example/mcp");
+		await provider.saveTokens({
+			access_token: "scope-access",
+			token_type: "Bearer",
+			scope: " offline_access mcp mcp ",
+		});
+
+		expect(store.read()).toMatchObject({ scope: "mcp offline_access" });
+		expect(provider.tokens()).toMatchObject({ scope: "mcp offline_access" });
+	});
+
+	it("persists the granted scope and restores it in SDK tokens", async () => {
+		const { store, provider } = makeProvider(await makeAgentDir(), "https://fixture.example/mcp");
+		await provider.saveTokens({
+			access_token: "scope-access",
+			refresh_token: "scope-refresh",
+			token_type: "Bearer",
+			scope: "mcp offline_access",
+		});
+
+		expect(store.read()).toMatchObject({ scope: "mcp offline_access" });
+		expect(provider.tokens()).toMatchObject({ scope: "mcp offline_access" });
+	});
+
+	it.each([
+		{ responseScope: undefined, expectedScope: "mcp offline_access" },
+		{ responseScope: "mcp", expectedScope: "mcp" },
+	])("refresh merge retains or replaces granted scope ($responseScope)", ({ responseScope, expectedScope }) => {
+		const current = mergeTokensIntoStoredAuth(
+			undefined,
+			{ access_token: "scope-access", token_type: "Bearer", scope: "mcp offline_access" },
+			"https://fixture.example/mcp",
+		);
+		const next = mergeTokensIntoStoredAuth(
+			current,
+			{ access_token: "scope-rotated", token_type: "Bearer", scope: responseScope },
+			"https://fixture.example/mcp",
+		);
+
+		expect(storedAuthToTokens(next)).toMatchObject({ scope: expectedScope });
+	});
+
 	it("completes the code + PKCE happy path and stores tokens with RFC 8707 resource", async () => {
 		const fixture = await idp();
 		const agentDir = await makeAgentDir();
