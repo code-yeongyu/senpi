@@ -1458,3 +1458,27 @@ describe("senpi#3001: a raced connect rebuilds the instructions of every live se
 		REGISTRATION_TIMEOUT_MS * 3,
 	);
 });
+
+describe("senpi#3001: /mcp test of a declared server the session is offered no connection for", () => {
+	it(
+		"says the server has no connection for the session instead of answering nothing",
+		async () => {
+			// Given: the first session declares `inst`, and a peer's own `inst` config replaced its connection.
+			setConfig(root, {});
+			const alpha = await openInstSession(ALPHA_INST);
+			await openInstSession(BRAVO_INST);
+			const ui = createUi();
+			const runner = alpha.getExtensionRunner();
+			runner.setUIContext(ui);
+
+			// When: the first session runs `/mcp test inst`.
+			await runner.getCommand("mcp")?.handler("test inst", runner.createCommandContext());
+
+			// Then: it is told the server has no connection for it.
+			expect(ui.notifications).toEqual([
+				{ message: "MCP server inst has no connection for this session", type: "error" },
+			]);
+		},
+		REGISTRATION_TIMEOUT_MS * 3,
+	);
+});

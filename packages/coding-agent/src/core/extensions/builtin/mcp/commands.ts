@@ -169,7 +169,10 @@ async function testServer(
 ): Promise<void> {
 	if (!ensureKnown(name, ctx, pi, service, notify)) return;
 	const connection = service.getConnection(name, pi);
-	if (connection === undefined) return;
+	if (connection === undefined) {
+		notify(`MCP server ${name} has no connection for this session`, "error");
+		return;
+	}
 	const started = Date.now();
 	try {
 		await connection.connect();
