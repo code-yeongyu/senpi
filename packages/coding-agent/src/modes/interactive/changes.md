@@ -1,3 +1,21 @@
+## 2026-10-08 - In-session resume warns about foreign holders (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: keeps the existing `handleResumeSession` and missing-cwd retry inline; after a successful switch publishes the CLI hold, warns with the foreign holder pid/cwd. A holder lookup filesystem error warns without turning a successful resume into a fatal error.
+
+### Why
+
+An in-session `/resume` previously opened a held JSONL silently.
+
+### Why an extension could not handle it
+
+The resume selector and runtime switch are owned by interactive mode.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: imports and the successful-switch paths in `handleResumeSession`.
+
 ## 2026-10-08 - `/answer skip` keeps a required question's refusal (senpi#2949)
 
 ### What changed

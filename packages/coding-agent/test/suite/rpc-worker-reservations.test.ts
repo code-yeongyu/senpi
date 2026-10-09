@@ -121,12 +121,12 @@ export default function () {
 				}
 				const previousWorkers = new Set(host.workers);
 				const competing = host.send("control", { type: "open_session", cwd, sessionPath: alias });
-				const challengers = [...host.workers].filter((candidate) => !previousWorkers.has(candidate));
-				expect(challengers).toHaveLength(1);
 				expect(await phase("alias-denied", competing)).toMatchObject({
 					success: false,
 					error: expect.stringContaining("session_path_in_use"),
 				});
+				const challengers = [...host.workers].filter((candidate) => !previousWorkers.has(candidate));
+				expect(challengers).toHaveLength(1);
 				await phase("challenger-exit", Promise.all(challengers.map((candidate) => candidate.exited)));
 				expect(host.registry.size).toBe(2);
 				expect(host.exited.has(worker)).toBe(false);

@@ -2,6 +2,10 @@ import { isAbsolute } from "node:path";
 import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import {
+	type SessionPathReservations as DaemonPathReservations,
+	SESSION_PATH_RETRY_AFTER_MS,
+} from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
 import {
 	type LiveWorkerPaths,
@@ -18,8 +22,10 @@ import {
 	type RpcSessionRow,
 	sessionIdentity,
 } from "./session-registry.ts";
+import { releaseWithinGrace } from "./session-teardown.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
 import { SESSION_WORKER_LIMITS, type SessionWriteGrant, typedWorkerRefusal } from "./session-worker-protocol.ts";
+import { WorkerSessionClaims } from "./worker-session-claims.ts";
 
 type SessionWorkerCallbacks = ConstructorParameters<typeof SessionWorkerClient>[0];
 
@@ -29,12 +35,14 @@ export interface WorkerSessionRegistryOptions {
 	readonly now: () => number;
 	/** Production builds the real worker; a caller may supply one to drive a lifecycle path deterministically. */
 	readonly createWorker?: (callbacks: SessionWorkerCallbacks) => SessionWorkerClient;
+	readonly pathReservations?: DaemonPathReservations;
 }
 
 /** Transport-side lifecycle owner. Caller paths are never inspected on this event loop. */
 export class WorkerSessionRegistry {
 	private readonly entries = new Map<string, RpcSessionEntry>();
 	private readonly reservations = new SessionPathReservations();
+	private readonly claims = new Map<string, WorkerSessionClaims>();
 	private serial = 0;
 	readonly closeGraceMs: number;
 	private readonly now: () => number;
@@ -51,6 +59,10 @@ export class WorkerSessionRegistry {
 
 	get size(): number {
 		return this.entries.size;
+	}
+
+	holderPids(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]> {
+		return this.options.pathReservations?.holderPids?.(observedStarts) ?? Promise.resolve([]);
 	}
 
 	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
@@ -84,6 +96,8 @@ export class WorkerSessionRegistry {
 		}
 		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
 		const handle = `rpc-${++this.serial}`;
+		const claims = new WorkerSessionClaims(this.options.pathReservations);
+		this.claims.set(handle, claims);
 		const storedProfile = frozenProfile(profile);
 		const entry: RpcSessionEntry = {
 			state: "opening",
@@ -106,10 +120,19 @@ export class WorkerSessionRegistry {
 			reconcile: (livePaths) => this.reconcile(handle, livePaths),
 			exit: () => {
 				if (this.entries.get(handle) !== entry) return;
-				entry.state = "closed";
-				this.entries.delete(handle);
-				this.reservations.releaseAll(handle);
-				entry.closeResolve?.();
+				const finish = (): void => {
+					if (this.entries.get(handle) !== entry) return;
+					entry.state = "closed";
+					this.entries.delete(handle);
+					this.claims.delete(handle);
+					this.reservations.releaseAll(handle);
+					entry.closeResolve?.();
+				};
+				return releaseWithinGrace(
+					{ closeGraceMs: this.closeGraceMs, releaseReservation: () => claims.close() },
+					handle,
+					entry.reservationKey ?? handle,
+				).then(finish);
 			},
 			failure: (error) => {
 				// The open below only learns that its entry left `opening`, never why. Without this the
@@ -131,7 +154,13 @@ export class WorkerSessionRegistry {
 				worker.quarantine();
 				return attached;
 			}
-			const grant = this.reserve(handle, path);
+			const predecessor = await claims.claim(path);
+			if (predecessor)
+				throw new RpcSessionRegistryError("session_path_in_use", undefined, {
+					owner: predecessor,
+					retry_after_ms: SESSION_PATH_RETRY_AFTER_MS,
+				});
+			const grant = await this.reserve(handle, path);
 			if (grant !== "granted") throw new RpcSessionRegistryError(RESERVATION_DENIAL_CODES[grant]);
 			entry.reservationKey = path;
 			entry.requestedPathKey = profile.sessionPath ? path : undefined;
@@ -186,6 +215,8 @@ export class WorkerSessionRegistry {
 		// attachments; only an explicit close or eviction reaches the worker.
 		if (options?.detach && entry.retainOnDisconnect) {
 			entry.attachments = 0;
+			entry.detachedAt ??= this.now();
+			if (!entry.worker?.busy) this.claims.get(handle)?.setAttached(false);
 			return entry;
 		}
 		entry.state = "closing";
@@ -282,6 +313,7 @@ export class WorkerSessionRegistry {
 		}
 		const result = this.openResult(owner, entry);
 		entry.attachments++;
+		this.claims.get(owner)?.setAttached(true);
 		// Retention is a property of the live session: any attach may ask for it, and
 		// no attach may revoke it for the clients that already rely on it.
 		if (options?.retainOnDisconnect) entry.retainOnDisconnect = true;
@@ -294,12 +326,20 @@ export class WorkerSessionRegistry {
 		return this.reservations.count(handle);
 	}
 
-	private reserve(handle: string, path: string): SessionWriteGrant {
+	private async reserve(handle: string, path: string): Promise<SessionWriteGrant> {
 		const entry = this.entries.get(handle);
 		if (!entry) return "conflict";
 		if (this.reservations.owner(path) === handle) return "granted";
 		if (entry.state !== "opening" && entry.state !== "open") return "conflict";
-		return this.reservations.reserve(handle, path, this.liveWorkerPaths(entry));
+		const grant = this.reservations.reserve(handle, path, this.liveWorkerPaths(entry));
+		if (grant !== "granted") return grant;
+		const owner = await this.claims.get(handle)?.claim(path, entry.attachments > 0 || entry.worker?.busy === true);
+		if (owner || this.entries.get(handle) !== entry || (entry.state !== "opening" && entry.state !== "open")) {
+			const live = this.liveWorkerPaths(entry);
+			this.reservations.reconcile(handle, live ?? { livePaths: [], sessionPath: entry.reservationKey });
+			return "conflict";
+		}
+		return "granted";
 	}
 
 	/**
@@ -309,11 +349,18 @@ export class WorkerSessionRegistry {
 	 * quarantined keeps every grant until its real exit, because a worker stuck in a
 	 * syscall can still be writing a path it can no longer report.
 	 */
-	private reconcile(handle: string, livePaths: readonly string[]): void {
+	private async reconcile(handle: string, livePaths: readonly string[]): Promise<void> {
 		const entry = this.entries.get(handle);
 		if (entry?.state !== "open") return;
 		const sessionPath = entry.worker?.snapshot?.sessionPath;
+		const attached = entry.attachments > 0 || entry.worker?.busy === true;
+		if (sessionPath) {
+			const owner = await this.claims.get(handle)?.claim(sessionPath, attached);
+			if (owner) throw new RpcSessionRegistryError("session_path_in_use");
+			if (this.entries.get(handle) !== entry || entry.state !== "open") return;
+		}
 		this.reservations.reconcile(handle, { livePaths, sessionPath });
+		this.claims.get(handle)?.reconcile(sessionPath ? [...livePaths, sessionPath] : livePaths, attached);
 		if (!sessionPath) return;
 		entry.reservationKey = sessionPath;
 		entry.sessionPath = sessionPath;

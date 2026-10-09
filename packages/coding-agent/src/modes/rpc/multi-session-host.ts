@@ -110,11 +110,18 @@ export function createHostCore(
 	hooks: HostCoreHooks = {},
 ) {
 	const policy = resolveHostIdlePolicy(process.env, idle);
+	const pathReservations = createEndpointReservations({
+		agentDir: options.agentDir,
+		socket: listenSocketPath(options),
+		instanceId: hostInstanceId(),
+		onFailure: hostLog,
+	});
 	const registry = options.workerConfiguration
 		? new WorkerSessionRegistry({
 				configuration: options.workerConfiguration,
 				now: policy.now,
 				closeGraceMs: idle.closeGraceMs ?? parseIdleExitMs(process.env[RPC_CLOSE_GRACE_MS_ENV]) ?? 10_000,
+				pathReservations,
 			})
 		: new RpcSessionRegistry({
 				agentDir: options.agentDir,
@@ -125,12 +132,7 @@ export function createHostCore(
 				// Two generations of this daemon can be alive at once during a handoff; the claims
 				// they publish here are what keeps them off one session file.
 				...(hooks.onSessionCountChange ? { onSizeChange: hooks.onSessionCountChange } : {}),
-				pathReservations: createEndpointReservations({
-					agentDir: options.agentDir,
-					socket: listenSocketPath(options),
-					instanceId: hostInstanceId(),
-					onFailure: hostLog,
-				}),
+				pathReservations,
 			});
 	const router = new SessionCommandRouter(
 		registry,

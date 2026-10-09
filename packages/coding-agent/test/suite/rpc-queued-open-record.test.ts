@@ -71,26 +71,36 @@ describe("open_session queued record", () => {
 			releasePreflight = resolve;
 		});
 		let handled = false;
-		await using rig = createInProcessRig(dir, undefined, async (command) => {
-			if (command.type !== "prompt") return;
-			await preflight;
-			handled = true;
-		});
+		const received = Promise.withResolvers<Record<string, unknown>>();
+		const deadline = AbortSignal.timeout(10_000);
+		deadline.addEventListener("abort", () => received.reject(deadline.reason), { once: true });
+		await using rig = createInProcessRig(
+			dir,
+			undefined,
+			async (command) => {
+				if (command.type !== "prompt") return;
+				await preflight;
+				handled = true;
+			},
+			{
+				onRecord: (record) => {
+					if (record.type === "queued" && record.for_request === "prompt-1") received.resolve(record);
+				},
+			},
+		);
 		mkdirSync(join(dir, "p"));
 		const opened = await rig.open("c1", { cwd: join(dir, "p"), sessionPath: join(dir, "s1.jsonl") });
 		const sessionId = (opened?.data as { sessionId?: string } | undefined)?.sessionId;
 		if (sessionId === undefined) throw new Error(`open failed: ${JSON.stringify(opened)}`);
 
 		const prompt = rig.send("c1", { type: "prompt", id: "prompt-1", sessionId, message: "first prompt" });
-		await rig.settle();
-
-		const received = rig
-			.recordsFor("c1")
-			.find((record) => record.type === "queued" && record.for_request === "prompt-1");
-		expect(handled).toBe(false);
-		expect(received).toBeDefined();
-		expect(received?.id).toBeUndefined();
-		releasePreflight();
+		try {
+			const acknowledgement = await received.promise;
+			expect(handled).toBe(false);
+			expect(acknowledgement.id).toBeUndefined();
+		} finally {
+			releasePreflight();
+		}
 		await prompt;
 		expect(handled).toBe(true);
 	});

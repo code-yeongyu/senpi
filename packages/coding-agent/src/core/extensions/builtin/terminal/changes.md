@@ -1,3 +1,22 @@
+## 2026-10-08 - Share process identity parsing with held-session admission (senpi#2951)
+
+### What changed
+
+- `process-start-probe.ts` uses the existing daemon process reader's shared start-time parser for ps and ISO output. Linux still reads procfs; Windows retains its 5 s per-pid probe.
+- `process-identity.ts` keeps its public comparator and tolerance exports, forwarding them from the same shared leaf. The 3 s tolerance is unchanged.
+
+### Why
+
+- Held-session snapshot fallback and lease validation must interpret the same process start identity without separate parsers or tolerances.
+
+### Why an extension could not handle it
+
+- Lease identity validation runs before extension admission.
+
+### Expected merge conflict zones
+
+- `process-start-probe.ts` parsing and `process-identity.ts` comparator exports.
+
 ## 2026-10-02 - Monitor footer ticker retires on a stale context (senpi#2549)
 
 ### What changed

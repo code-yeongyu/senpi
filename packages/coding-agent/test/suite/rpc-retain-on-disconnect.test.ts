@@ -1,15 +1,7 @@
-import type { EventEmitter } from "node:events";
-import { join } from "node:path";
-import { Worker } from "node:worker_threads";
 import { afterEach, expect, it, vi } from "vitest";
-import { parseArgs } from "../../src/cli/args.ts";
-import { buildRpcSessionState } from "../../src/modes/rpc/connection-handler.ts";
-import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
-import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
-import type { HostToSessionWorker, WorkerSnapshot } from "../../src/modes/rpc/session-worker-protocol.ts";
-import { WorkerSessionRegistry } from "../../src/modes/rpc/worker-session-registry.ts";
-import { createHarness } from "./harness.ts";
+import { retainHost } from "./rpc-retain-on-disconnect-support.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
+import { reservationPhase } from "./rpc-worker-reservation-support.ts";
 
 vi.mock("node:worker_threads", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:worker_threads")>();
@@ -29,184 +21,6 @@ afterEach(() => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
-
-type WireRecord = Record<string, unknown> & { id?: string; type?: string; sessionId?: string };
-type ListedSession = { sessionId: string; status: string; sessionPath?: string; attachments: number };
-
-/** Fields the host accepts on `open_session`, including the retention flag under test. */
-interface OpenFields {
-	cwd?: string;
-	sessionPath?: string;
-	retain_on_disconnect?: boolean;
-	kind?: "interactive" | "worker";
-}
-
-/**
- * One shared multi-session host: the real router, registry, writer and worker
- * client, with only the worker THREAD replaced. Every lifecycle decision under
- * test (attachment refcount, release on connection drop, eviction sweep) runs
- * its production code path; the fake worker answers the same protocol a real
- * session worker answers and exits when the host asks it to close.
- */
-async function retainHost(options: { idleEvictionMs?: number } = {}) {
-	const harness = await createHarness();
-	const baseState = buildRpcSessionState(harness.session);
-	const clock = { now: 0 };
-	const paths = new Map<EventEmitter, string>();
-	const posted: Array<{ worker: EventEmitter; message: HostToSessionWorker }> = [];
-	let serial = 0;
-	const snapshotFor = (path: string, activity?: Partial<WorkerSnapshot>): WorkerSnapshot => ({
-		state: { ...baseState, sessionId: `durable-${path}`, sessionFile: path },
-		sessionPath: path,
-		liveSessionPaths: [path],
-		busy: false,
-		streaming: false,
-		...activity,
-	});
-	vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (
-		this: EventEmitter,
-		message: HostToSessionWorker,
-	) {
-		posted.push({ worker: this, message });
-		switch (message.type) {
-			case "prepare": {
-				const path = message.profile.sessionPath ?? join(harness.tempDir, `session-${++serial}.jsonl`);
-				paths.set(this, path);
-				queueMicrotask(() =>
-					this.emit("message", { type: "prepared", request: message.request, sessionPath: path }),
-				);
-				break;
-			}
-			case "commit": {
-				const path = paths.get(this) ?? "";
-				queueMicrotask(() =>
-					this.emit("message", { type: "ready", request: message.request, snapshot: snapshotFor(path) }),
-				);
-				break;
-			}
-			case "bind":
-			case "command":
-			case "prompt_surface":
-			case "browser_engine":
-			case "permission_preset":
-				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
-				break;
-			case "close":
-				// A real session worker exits on close; the host releases ownership on that exit.
-				queueMicrotask(() => this.emit("exit", 0));
-				break;
-			case "cancel_ui":
-				break;
-			default: {
-				const exhaustive: never = message;
-				throw new Error(`Unexpected message ${exhaustive}`);
-			}
-		}
-	});
-	// Every destination the host writes to, in write order: the stdio lane plus
-	// each registered client connection.
-	const records: WireRecord[] = [];
-	const collect = (line: string): void => void records.push(JSON.parse(line) as WireRecord);
-	const writer = new SessionEventWriter(collect);
-	const registered = new Set<string>();
-	const connect = (connection: string): string => {
-		if (registered.has(connection)) return connection;
-		writer.registerConnection(connection, { writeRaw: collect, waitForBackpressure: async () => {} });
-		registered.add(connection);
-		return connection;
-	};
-	const registry = new WorkerSessionRegistry({
-		configuration: {
-			parsed: parseArgs(["--mode", "rpc"]),
-			cwd: harness.tempDir,
-			agentDir: harness.tempDir,
-			appMode: "rpc",
-		},
-		closeGraceMs: 100,
-		now: () => clock.now,
-	});
-	const router = new SessionCommandRouter(
-		registry,
-		writer,
-		{ cwd: harness.tempDir },
-		undefined,
-		{},
-		{ now: () => clock.now, idleEvictionMs: options.idleEvictionMs },
-	);
-	let requests = 0;
-	/** Drains the host's microtask-driven lifecycle chains, then its record queues. */
-	const settle = async (): Promise<void> => {
-		for (let turn = 0; turn < 10; turn++) await new Promise((resolve) => setImmediate(resolve));
-		await writer.flush();
-	};
-	return {
-		registry,
-		router,
-		writer,
-		records,
-		posted,
-		clock,
-		cwd: harness.tempDir,
-		settle,
-		async open(connection: string, fields: OpenFields): Promise<WireRecord | undefined> {
-			const id = `open-${++requests}`;
-			const failure = await writer.withConnection(connect(connection), () =>
-				router.handle({ type: "open_session", id, ...fields }),
-			);
-			await settle();
-			return (failure as WireRecord | undefined) ?? records.find((record) => record.id === id);
-		},
-		async close(connection: string, sessionId: string): Promise<void> {
-			await writer.withConnection(connection, () =>
-				router.handle({ type: "close_session", id: `close-${++requests}`, sessionId }),
-			);
-			await settle();
-		},
-		/** The socket host's own drop order: unregister the transport, then release its sessions. */
-		async drop(connection: string): Promise<void> {
-			writer.unregisterConnection(connection);
-			registered.delete(connection);
-			await router.releaseConnection(connection);
-			await settle();
-		},
-		async list(): Promise<ListedSession[]> {
-			const response = await router.handle({
-				type: "list_sessions",
-				id: `list-${++requests}`,
-				include_workers: true,
-			});
-			return (response as { data?: { sessions?: ListedSession[] } } | undefined)?.data?.sessions ?? [];
-		},
-		/** The live worker client of an open session, for producing worker-side traffic. */
-		client(sessionId: string) {
-			const client = registry.peek(sessionId)?.worker;
-			if (!client) throw new Error(`Expected a worker client for ${sessionId}`);
-			const path = client.snapshot?.sessionPath ?? "";
-			return {
-				activity(activity: Partial<WorkerSnapshot>, settled?: boolean) {
-					client.worker.emit("message", {
-						type: "snapshot",
-						snapshot: snapshotFor(path, activity),
-						signal: new SharedArrayBuffer(8),
-						...(settled ? { settled: true } : {}),
-					});
-				},
-				output(record: object) {
-					client.worker.emit("message", {
-						type: "output",
-						record,
-						signal: new SharedArrayBuffer(8),
-						activity: { busy: false, streaming: false },
-					});
-				},
-			};
-		},
-		async [Symbol.asyncDispose]() {
-			await router.dispose();
-			harness.cleanup();
-		},
-	};
-}
 
 it("keeps a retained session listed and re-attachable after its only connection drops", async () => {
 	// Given: a retained idle session owned by exactly one connection.
@@ -235,12 +49,12 @@ it("runs a retained session's in-flight turn to settlement after the drop", asyn
 	await using host = await retainHost();
 	const opened = await host.open("conn-a", { cwd: host.cwd, retain_on_disconnect: true });
 	const sessionId = (opened?.data as { sessionId?: string } | undefined)?.sessionId ?? "";
-	host.client(sessionId).activity({ busy: true, streaming: true });
+	await host.client(sessionId).activity({ busy: true, streaming: true });
 	await host.drop("conn-a");
 
 	// When: the turn settles after the drop.
-	host.client(sessionId).output({ type: "agent_settled" });
-	host.client(sessionId).activity({ busy: false, streaming: false }, true);
+	await host.client(sessionId).output({ type: "agent_settled" });
+	await host.client(sessionId).activity({ busy: false, streaming: false }, true);
 	await host.settle();
 
 	// Then: the turn's settlement was published and the session outlived it.
@@ -378,7 +192,18 @@ it.each(["get_state", "memory_report"])(
 	"does not renew a detached worker isolate's idle window for %s",
 	async (command) => {
 		// Given: an idle retained worker isolate nobody is attached to, near its eviction deadline.
-		await using host = await retainHost({ idleEvictionMs: 1_000 });
+		const published = Promise.withResolvers<void>();
+		let awaitedSession: string | undefined;
+		await using host = await retainHost({
+			idleEvictionMs: 1_000,
+			onRecord: (record) => {
+				if (
+					record.sessionId === awaitedSession &&
+					(record.type === "session_parked" || record.type === "session_closed")
+				)
+					published.resolve();
+			},
+		});
 		await host.open("owner", { cwd: host.cwd, retain_on_disconnect: true });
 		const [row] = await host.list();
 		if (!row) throw new Error("Session did not open");
@@ -386,6 +211,7 @@ it.each(["get_state", "memory_report"])(
 		if (!entry) throw new Error("Session did not open");
 		await host.drop("owner");
 		host.clock.now = 999;
+		awaitedSession = row.sessionId;
 
 		// When: a detached observation is routed just before the deadline.
 		host.registry.getForCommand(row.sessionId, command);
@@ -396,6 +222,7 @@ it.each(["get_state", "memory_report"])(
 		expect(entry.state).toBe("closing");
 		await entry.closeCompletion;
 		expect(await host.list()).toEqual([]);
+		await reservationPhase("detached-worker-lifecycle-published", published.promise);
 		const lifecycle = host.records.filter(
 			(record) =>
 				record.sessionId === row.sessionId &&

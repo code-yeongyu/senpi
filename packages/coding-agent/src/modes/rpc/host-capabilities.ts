@@ -16,6 +16,7 @@ import {
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
+	SESSION_HELD_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
@@ -35,6 +36,8 @@ export function multiSessionHostCapabilities(options: {
 			MEDIA_PLACEHOLDERS_CAPABILITY,
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 			CONTINUE_FROM_LEAF_CAPABILITY,
+			// Both shared runtimes dispatch through the active session-writing holder guard.
+			SESSION_HELD_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the
 			// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 			// per-session launch profile `context`/`auto_title` travel on, and the session

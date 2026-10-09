@@ -131,19 +131,26 @@ describe("RPC attachment edge regressions", () => {
 	});
 
 	test("disconnect waits for an in-flight open before releasing its reservation", async () => {
+		const enteredRuntime = Promise.withResolvers<void>();
+		const deadline = AbortSignal.timeout(10_000);
+		deadline.addEventListener("abort", () => enteredRuntime.reject(deadline.reason), { once: true });
 		let releaseRuntime!: () => void;
 		const runtimeReady = new Promise<void>((resolve) => {
 			releaseRuntime = resolve;
 		});
 		const { dir, registry, writer, router } = await setup(async (options) => {
+			enteredRuntime.resolve();
 			await runtimeReady;
 			return runtime(options);
 		});
 		const opening = writer.withConnection("connection", () => router.handle(open(dir, join(dir, "race.jsonl"))));
 		const released = router.releaseConnection("connection");
-		await Promise.resolve();
-		expect(registry.list()[0]?.status).toBe("opening");
-		releaseRuntime();
+		try {
+			await enteredRuntime.promise;
+			expect(registry.list()[0]?.status).toBe("opening");
+		} finally {
+			releaseRuntime();
+		}
 		await Promise.all([opening, released]);
 		expect(registry.list()).toEqual([]);
 	});

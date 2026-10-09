@@ -14,6 +14,7 @@ import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { SESSION_RELEASED_ENTRY_TYPE } from "../../src/modes/rpc/session-release.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
 import { createInProcessRig, type FakeBindingExtras, type FakeTurn } from "./rpc-inprocess-host-support.ts";
+import { commandStart, runsBash } from "./rpc-release-session-support.ts";
 
 const scratches: string[] = [];
 
@@ -75,17 +76,14 @@ function afterReleased(sessionPath: string): string[] | null {
 	return index === -1 ? null : kinds.slice(index + 1);
 }
 
-const runsBash: (turn: () => FakeTurn) => Handler = (turn) => async (command) => {
-	if (command.type === "bash") await turn().startBash();
-};
-
 describe("release_session refuses a session that is not quiet", () => {
 	it("refuses while a user bash runs, then hands over once it ended, with nothing after session_released", async () => {
 		// Given: a user bash in flight on another connection.
-		const { rig, sessionId, sessionPath, turn } = await quietSession("bash", runsBash);
+		const { started, markStarted } = commandStart();
+		const { rig, sessionId, sessionPath, turn } = await quietSession("bash", runsBash(markStarted));
 		await using _rig = rig;
 		const bashReply = rig.send("conn-b", { type: "bash", id: "b1", sessionId, command: "sleep 3" });
-		await rig.settle();
+		await started;
 		const before = entryKinds(sessionPath);
 
 		// When / Then: the release is refused, naming the bash and its request, and the file is untouched.
@@ -112,10 +110,11 @@ describe("release_session refuses a session that is not quiet", () => {
 
 	it("with interrupt, aborts the bash, waits for it to be recorded, then releases", async () => {
 		// Given: a user bash in flight on another connection.
-		const { rig, sessionId, sessionPath } = await quietSession("bash-interrupt", runsBash);
+		const { started, markStarted } = commandStart();
+		const { rig, sessionId, sessionPath } = await quietSession("bash-interrupt", runsBash(markStarted));
 		await using _rig = rig;
 		const bashReply = rig.send("conn-b", { type: "bash", id: "b1", sessionId, command: "sleep 3" });
-		await rig.settle();
+		await started;
 
 		// When: the release interrupts.
 		const reply = await release(rig, sessionId, true);
@@ -179,12 +178,16 @@ describe("release_session refuses a session that is not quiet", () => {
 	it("refuses while another request for the session is still being handled (prompt first, command in flight)", async () => {
 		// Given: a prompt command still inside its handler.
 		let unblock: (() => void) | undefined;
+		const { started, markStarted } = commandStart();
 		const { rig, sessionId } = await quietSession("prompt-in-flight", () => async (command) => {
-			if (command.type === "prompt") await new Promise<void>((resolve) => (unblock = resolve));
+			if (command.type !== "prompt") return;
+			const blocked = new Promise<void>((resolve) => (unblock = resolve));
+			markStarted();
+			await blocked;
 		});
 		await using _rig = rig;
 		const promptReply = rig.send("conn-b", { type: "prompt", id: "p1", sessionId, message: "race" });
-		await rig.settle();
+		await started;
 
 		// When / Then: the release is refused for the in-flight request.
 		expect(await release(rig, sessionId)).toMatchObject({

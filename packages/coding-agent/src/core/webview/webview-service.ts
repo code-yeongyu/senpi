@@ -9,6 +9,7 @@ import {
 	DEFAULT_READINESS,
 	type ReadinessEvent,
 	readinessLogFromEnvironment,
+	retireFailureLogFromEnvironment,
 	timedDeadline,
 	WebViewNotReadyError,
 	type WebViewReadinessPolicy,
@@ -19,6 +20,10 @@ export interface WebViewServiceOptions {
 	readonly onReadiness?: (event: ReadinessEvent) => void;
 	/** The readiness bound of each launch; defaults to `attachBoundMs`. Tests signal it instead of waiting. */
 	readonly attachDeadline?: (launch: number) => AttachDeadline;
+	/** Ends the Chrome no view uses; defaults to `retireBunChrome`. Tests substitute it to fail a retirement. */
+	readonly retireChrome?: (webViewClass: NativeWebViewClass) => Promise<void>;
+	/** Told when a retirement failed; without it (or when it throws) the failure becomes a process warning. */
+	readonly onRetireFailure?: (message: string) => void;
 }
 
 export interface WebViewClientGrant {
@@ -36,6 +41,8 @@ export class WebViewService {
 	readonly #readiness: WebViewReadinessPolicy;
 	readonly #onReadiness: (event: ReadinessEvent) => void;
 	readonly #attachDeadline: (launch: number) => AttachDeadline;
+	readonly #retireChrome: (webViewClass: NativeWebViewClass) => Promise<void>;
+	readonly #onRetireFailure: ((message: string) => void) | undefined;
 	readonly #clients = new Map<string, WebViewServiceClient>();
 	#retiring: Promise<void> = Promise.resolve();
 	#chromeInUse = false;
@@ -48,6 +55,8 @@ export class WebViewService {
 		this.#onReadiness = options.onReadiness ?? (() => {});
 		const boundMs = this.#readiness.attachBoundMs;
 		this.#attachDeadline = options.attachDeadline ?? (() => timedDeadline(boundMs));
+		this.#retireChrome = options.retireChrome ?? retireBunChrome;
+		this.#onRetireFailure = options.onRetireFailure;
 	}
 
 	get viewCount(): number {
@@ -61,7 +70,8 @@ export class WebViewService {
 		const channel = new MessageChannel();
 		const client = new WebViewServiceClient(clientId, owner, channel.port1, {
 			createView: (options, onConsole, adopt, wanted) => this.#createView(options, onConsole, adopt, wanted),
-			onClientClosed: (closed) => void this.#drop(closed),
+			// A failed retirement was already reported by the chain; this path has no caller to hand it to.
+			onClientClosed: (closed) => void this.#drop(closed).catch(() => {}),
 		});
 		this.#clients.set(clientId, client);
 		return { clientId, port: channel.port2 };
@@ -170,8 +180,24 @@ export class WebViewService {
 	#retireIfIdle(): Promise<void> {
 		if (!this.#chromeInUse || this.#busy()) return this.#retiring;
 		this.#chromeInUse = false;
-		this.#retiring = this.#retiring.then(() => (this.#busy() ? undefined : retireBunChrome(this.#webViewClass)));
-		return this.#retiring;
+		const retirement = this.#retiring.then(() => (this.#busy() ? undefined : this.#retireChrome(this.#webViewClass)));
+		// senpi#2993: the chain every later launch and retirement awaits must not keep a failure, or one
+		// failed retirement would fail every launch after it. The caller of this one still gets the error.
+		this.#retiring = retirement.catch((error: unknown) => this.#reportRetireFailure(error));
+		return retirement;
+	}
+
+	#reportRetireFailure(error: unknown): void {
+		const message = error instanceof Error ? error.message : String(error);
+		try {
+			if (this.#onRetireFailure) {
+				this.#onRetireFailure(message);
+				return;
+			}
+		} catch {
+			// The diagnostics log can be the thing that failed; fall through to the process warning.
+		}
+		process.emitWarning(`WebView Chrome retirement failed: ${message}`, { code: "SENPI_WEBVIEW_RETIRE_FAILED" });
 	}
 
 	#busy(): boolean {
@@ -202,7 +228,11 @@ export function mainThreadWebViewService(): WebViewService | undefined {
 	const webViewClass = mainThreadWebViewClass();
 	if (!webViewClass) return undefined;
 	const onReadiness = readinessLogFromEnvironment();
-	const service = new WebViewService(webViewClass, onReadiness ? { onReadiness } : {});
+	const onRetireFailure = retireFailureLogFromEnvironment();
+	const service = new WebViewService(webViewClass, {
+		...(onReadiness ? { onReadiness } : {}),
+		...(onRetireFailure ? { onRetireFailure } : {}),
+	});
 	Reflect.set(globalThis, SERVICE_KEY, service);
 	return service;
 }

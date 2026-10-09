@@ -1,8 +1,9 @@
-import { realpathSync } from "node:fs";
-import { readFile, rm, stat } from "node:fs/promises";
+import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
+import { parseJson, readFileOrUndefined } from "../src/modes/rpc/host-daemon-state.ts";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
@@ -20,20 +21,42 @@ import {
 	type WireRecord,
 } from "./helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
-import { processAlive, reapProcessesUnder, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import { processAlive, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
 
 const scratches: GenerationScratch[] = [];
 const peers: JsonlPeer[] = [];
 const models: HeldAnthropicModel[] = [];
 const servers: Server[] = [];
 const intruderSockets: Socket[] = [];
-const supervisors: number[] = [];
+const supervisors = new Map<number, string | undefined>();
 const firstPids = new Map<string, number>();
 
 afterEach(async () => {
 	for (const peer of peers.splice(0)) peer.destroy();
-	for (const model of models.splice(0)) await model.close();
-	for (const pid of supervisors.splice(0)) {
+	for (const model of models.splice(0)) {
+		model.release();
+		await model.close();
+	}
+	// Only processes launched in these private generation directories are owned by this test.
+	// Record their identity before stopping the supervisors; never discover targets by argv.
+	for (const qa of scratches) {
+		const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
+		for (const generation of await readdir(paths.generationsDir, { withFileTypes: true }).catch(() => [])) {
+			if (!generation.isDirectory()) continue;
+			for (const name of ["host.pid", "host-child.pid"]) {
+				const record = parseJson(await readFileOrUndefined(join(paths.generationsDir, generation.name, name)));
+				if (typeof record?.pid === "number" && typeof record.processStartTime === "string")
+					supervisors.set(record.pid, record.processStartTime);
+			}
+		}
+	}
+	for (const [pid, startedAt] of supervisors) {
+		if (!processAlive(pid)) continue;
+		const observed = await readProcessStartTime(pid);
+		// A child can follow its stopped supervisor out while the async identity probe runs.
+		if (!processAlive(pid)) continue;
+		if (startedAt === undefined || observed !== startedAt)
+			throw new Error("Owned generation PID identity changed; refusing to signal it");
 		// Never `kill` on the strength of a liveness READ: a drained generation can exit between the
 		// check and the signal, and the raw ESRCH that follows fails the hook - and therefore the case
 		// - for the one outcome this teardown was hoping for.
@@ -42,13 +65,11 @@ afterEach(async () => {
 		// sandbox under a host that is still writing to it is what leaves ENOTEMPTY behind.
 		await waitForPidGone(pid, 20_000);
 	}
+	supervisors.clear();
 	// A half-open probe connection would otherwise hold close() open for the whole hook budget.
 	for (const socket of intruderSockets.splice(0)) socket.destroy();
 	for (const server of servers.splice(0)) await new Promise<void>((resolve) => server.close(() => resolve()));
 	for (const qa of scratches.splice(0)) {
-		// A refused handoff spawns a successor this case never registered; every process whose argv
-		// names this sandbox is one of ours, so the sweep is exact rather than pattern-lucky.
-		await reapProcessesUnder(qa.root);
 		await rm(qa.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 	}
 	firstPids.clear();
@@ -113,12 +134,26 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		expect((await probeHost({ socket: qa.socket }))?.instanceId).toBe(live?.instanceId);
 	}, 120_000);
 
-	it("answers session_path_in_use until the old generation parks the path, then opens it", async () => {
+	it("answers session_path_in_use for an existing transcript until the old generation parks it", async () => {
 		const held = await HeldAnthropicModel.start();
 		models.push(held);
 		const qa = await generation("path", held.origin);
-		const owner = await probeHost({ socket: qa.socket });
+		const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
+		const pointer = JSON.parse(await readFile(paths.pointerFile, "utf8")) as WireRecord;
+		const oldHost = JSON.parse(
+			await readFile(join(paths.dir, String(pointer.generation_dir), "host-child.pid"), "utf8"),
+		) as WireRecord;
 		const sessionPath = join(qa.sessionDir, "held.jsonl");
+		await writeFile(
+			sessionPath,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: "29510000-0000-4000-8000-000000000010",
+				timestamp: new Date(0).toISOString(),
+				cwd: qa.cwd,
+			})}\n`,
+		);
 		const holder = await peer(qa);
 		const sessionId = openedSessionId(
 			await holder.request({
@@ -143,11 +178,8 @@ describe.skipIf(process.platform === "win32")("generation handoff between live h
 		expect(refused).toMatchObject({
 			success: false,
 			error: "session_path_in_use",
-			errorData: {
-				retry_after_ms: 2000,
-				// The claim names the generation that is still writing the file, by its canonical path.
-				owner: { instanceId: owner?.instanceId, sessionPath: join(realpathSync(qa.sessionDir), "held.jsonl") },
-			},
+			errorCode: "session_path_in_use",
+			errorData: { owner: { pid: oldHost.pid }, retry_after_ms: 2_000 },
 		});
 
 		const parked = watcher.waitFor(
@@ -234,7 +266,7 @@ async function generation(label: string, modelOrigin?: string): Promise<Generati
 		env: generationEnv(qa),
 		_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
 	});
-	supervisors.push(ensured.pid);
+	supervisors.set(ensured.pid, await readProcessStartTime(ensured.pid));
 	firstPids.set(qa.root, ensured.pid);
 	return qa;
 }
@@ -254,7 +286,7 @@ async function handoff(qa: GenerationScratch): Promise<{ pid: number; generation
 		_test: { launch: supervisorLaunch, readinessTimeoutMs: 60_000 },
 	});
 	if (result.action !== "handoff") throw new Error(`handoff refused: ${JSON.stringify(result)}`);
-	supervisors.push(result.pid);
+	supervisors.set(result.pid, await readProcessStartTime(result.pid));
 	return { pid: result.pid, generation: result.generation, instanceId: result.instanceId };
 }
 

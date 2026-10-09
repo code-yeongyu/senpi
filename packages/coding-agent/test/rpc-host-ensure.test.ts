@@ -263,7 +263,7 @@ describe("ensureHost", () => {
 
 	it("escalates to SIGKILL when our own dead host ignores SIGTERM", async () => {
 		const qa = await scratch("sigkill");
-		const writerStartTime = "sigkill-test-self";
+		const writerStartTime = "2026-10-08T12:00:00.000Z";
 		const old = await startManagedProcess(qa, {
 			writer: "self",
 			ignoreTerm: true,
@@ -1000,14 +1000,14 @@ describe("processMatchesPidFile", () => {
 		let failures = 2;
 		let calls = 0;
 		const matches = await processMatchesPidFile(
-			{ pid: process.pid, processStartTime: "self" },
+			{ pid: process.pid, processStartTime: "2026-10-08T12:00:00.000Z" },
 			async () => {
 				calls += 1;
 				if (failures > 0) {
 					failures -= 1;
 					throw new Error("Command failed: powershell.exe -NoProfile");
 				}
-				return "self";
+				return "2026-10-08T12:00:00.000Z";
 			},
 			() => true,
 			{ attempts: 5, delayMs: 5 },

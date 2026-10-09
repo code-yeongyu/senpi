@@ -27,6 +27,7 @@ describe("multi-session RPC protocol info", () => {
 					"media_placeholders",
 					"durable_client_message_id",
 					"continue_from_leaf",
+					"session_held",
 					"retain_on_disconnect",
 					"session_context",
 					"session_kind",

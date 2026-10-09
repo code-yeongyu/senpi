@@ -106,22 +106,33 @@ describe.skipIf(process.platform === "win32")("a live pre-layout-2 host (#2423)"
 		expect(await readFile(flatPidFile(legacy), "utf8")).toBe(legacy.flatRecord);
 	}, 240_000);
 
-	it("is never signalled when the flat record's start time names another process (pid reuse)", async () => {
-		const legacy = await startLegacyHost("l2r");
-		// Same pid, different identity guard: the record describes a process that is gone, and the live
-		// process now holding that pid proves nothing. Neither a drain nor an ensure may signal it.
-		const stale = `${JSON.stringify({ pid: legacy.pid, processStartTime: "not-the-live-start-time" })}\n`;
-		await writeFile(flatPidFile(legacy), stale, { mode: 0o600 });
+	it.each([
+		{ locale: "C", startTime: "1970-01-01T00:00:00.000Z" },
+		{
+			locale: "ko_KR",
+			startTime: "1970\uB144 1\uC6D4 1\uC77C \uBAA9\uC694\uC77C 00\uC2DC 00\uBD84 00\uCD08",
+		},
+		{ locale: "ja_JP", startTime: "\u6728 1/ 1 00:00:00 1970" },
+	])(
+		"is never signalled when a $locale flat record names another process (pid reuse)",
+		async ({ startTime }) => {
+			const legacy = await startLegacyHost("l2r");
+			// Same pid, different identity guard: the record describes a process that is gone, and the live
+			// process now holding that pid proves nothing. Neither a drain nor an ensure may signal it.
+			const stale = `${JSON.stringify({ pid: legacy.pid, processStartTime: startTime })}\n`;
+			await writeFile(flatPidFile(legacy), stale, { mode: 0o600 });
 
-		const stop = await stopHost({ socket: legacy.socket, agentDir: legacy.qa.agentDir, drain: true });
-		const threadSocket = join(legacy.qa.root, "t.sock");
-		const ensured = await ensureOn(legacy.qa, threadSocket);
+			const stop = await stopHost({ socket: legacy.socket, agentDir: legacy.qa.agentDir, drain: true });
+			const threadSocket = join(legacy.qa.root, "t.sock");
+			const ensured = await ensureOn(legacy.qa, threadSocket);
 
-		expect(stop).toEqual({ action: "refuse", reason: "unknown_owner" });
-		expect(ensured.pid).not.toBe(legacy.pid);
-		expect(processAlive(legacy.pid)).toBe(true);
-		expect(await probeHost({ socket: legacy.socket, timeoutMs: 10_000 })).toBeDefined();
-	}, 240_000);
+			expect(stop).toEqual({ action: "refuse", reason: "unknown_owner" });
+			expect(ensured.pid).not.toBe(legacy.pid);
+			expect(processAlive(legacy.pid)).toBe(true);
+			expect(await probeHost({ socket: legacy.socket, timeoutMs: 10_000 })).toBeDefined();
+		},
+		240_000,
+	);
 
 	it("is not drained by a stop aimed at an endpoint its record does not name", async () => {
 		const legacy = await startLegacyHost("l2o");

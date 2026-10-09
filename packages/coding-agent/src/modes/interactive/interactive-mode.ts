@@ -111,6 +111,7 @@ import type {
 import { buildNoticeBox, type NoticeLine, type NoticeSpec } from "../../core/extensions/notice/index.ts";
 import type { QuestionRequest, QuestionResponse, SystemPromptChangeEvent } from "../../core/extensions/types.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
+import { sessionHolderWarning } from "../../core/foreign-session-holders.ts";
 import { appendUncaughtCrashLog, appendUnhandledRejectionLog } from "../../core/hidden-stdout-log.ts";
 import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts";
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
@@ -8778,6 +8779,11 @@ export class InteractiveMode {
 			if (result.cancelled) {
 				return result;
 			}
+			const warning = await sessionHolderWarning(
+				this.sessionManager.getSessionFile(),
+				this.sessionManager.getSessionId(),
+			);
+			if (warning !== undefined) this.showWarning(warning);
 			const switchTimings = formatTimings("switch");
 			this.showStatus(
 				switchTimings === undefined ? "Resumed session" : `Resumed session | switch timings: ${switchTimings}`,
@@ -8798,6 +8804,11 @@ export class InteractiveMode {
 				if (result.cancelled) {
 					return result;
 				}
+				const warning = await sessionHolderWarning(
+					this.sessionManager.getSessionFile(),
+					this.sessionManager.getSessionId(),
+				);
+				if (warning !== undefined) this.showWarning(warning);
 				this.showStatus("Resumed session in current cwd");
 				return result;
 			}

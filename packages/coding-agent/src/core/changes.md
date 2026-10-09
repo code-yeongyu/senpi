@@ -1,3 +1,22 @@
+## 2026-10-08 - Foreign session-holder admission evidence (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/core/foreign-session-holders.ts`: asynchronously reads only a regular file's JSONL header when an id is not known, leaving FIFO readers to the session runtime; resolves moved paths and queries `liveSessionHolders` afresh. Excludes this process PID, shared by its session-worker threads; formats terminal-safe, one-line warnings. Advisory CLI lookup errors produce a warning without aborting startup or resume; host admission retains strict lookup errors.
+- `packages/coding-agent/src/core/session-holders.ts`: accepts command-scoped lease probes so publication rechecks reread holder records and check liveness without respawning the same PID identity query. Move-lock callers retain the default fresh probes.
+
+### Why
+
+Daemon path reservations do not describe interactive CLI holders. Live holder leases already provide dead-pid, boot and process-start checks.
+
+### Why an extension could not handle it
+
+Host admission happens before runtime and extension creation.
+
+### Expected merge conflict zones
+
+- Fork-only file; holder queries and header reading.
+
 ## 2026-10-08 - A required compaction inside one long turn splits that turn instead of ending it (senpi#2925)
 
 ### What changed

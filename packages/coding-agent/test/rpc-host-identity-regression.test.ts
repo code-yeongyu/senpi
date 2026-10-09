@@ -19,7 +19,7 @@ describe("RPC ownership observation", () => {
 	it("does not classify an absent identity on a live pid as gone", async () => {
 		await expect(
 			processMatchesPidFile(
-				{ pid: process.pid, processStartTime: "identity" },
+				{ pid: process.pid, processStartTime: "2026-10-08T12:00:00.000Z" },
 				async () => undefined,
 				() => true,
 				{ attempts: 1 },
@@ -28,7 +28,7 @@ describe("RPC ownership observation", () => {
 	});
 
 	it("still recognizes confirmed absence and a different process identity", async () => {
-		const recorded = { pid: process.pid, processStartTime: "identity" };
+		const recorded = { pid: process.pid, processStartTime: "2026-10-08T12:00:00.000Z" };
 		expect(
 			await processMatchesPidFile(
 				recorded,
@@ -40,7 +40,7 @@ describe("RPC ownership observation", () => {
 		expect(
 			await processMatchesPidFile(
 				recorded,
-				async () => "replacement",
+				async () => "2026-10-08T12:01:00.000Z",
 				() => true,
 				{ attempts: 1 },
 			),

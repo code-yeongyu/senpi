@@ -38,6 +38,18 @@ export function readinessLogFromEnvironment(): ((event: ReadinessEvent) => void)
 	};
 }
 
+/** Appends one line per failed Chrome retirement to the same CI diagnostics file (senpi#2993). */
+export function retireFailureLogFromEnvironment(): ((message: string) => void) | undefined {
+	const path = process.env.SENPI_WEBVIEW_READINESS_LOG;
+	if (!path) return undefined;
+	return (message) => {
+		appendFileSync(
+			path,
+			`${new Date().toISOString()} pid=${process.pid} webview retire-failed ${JSON.stringify(message)}\n`,
+		);
+	};
+}
+
 export class WebViewNotReadyError extends Error {
 	readonly code = "ERR_WEBVIEW_NOT_READY";
 	readonly phase = "cdp-target-attach";

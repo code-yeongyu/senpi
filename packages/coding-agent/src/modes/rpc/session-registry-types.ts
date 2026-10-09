@@ -72,6 +72,7 @@ export class RpcSessionRegistryError extends Error {
 		| "unknown_session"
 		| "session_closing"
 		| "session_path_in_use"
+		| "session_held"
 		| "session_id_in_use"
 		| "session_reservation_limit"
 		| "invalid_path"

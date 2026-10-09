@@ -3,7 +3,9 @@ import type {
 	CreateAgentSessionRuntimeResult,
 } from "../../src/core/agent-session-runtime.ts";
 import { isSessionBusySnapshot } from "../../src/core/session-activity.ts";
+import { holdSessionFile } from "../../src/core/session-holders.ts";
 import { ProjectTrustStore } from "../../src/core/trust-manager.ts";
+import type { SessionPathReservations } from "../../src/modes/rpc/host-reservations.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { type RpcSessionIdlePolicy, SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
@@ -56,6 +58,7 @@ export interface FakeTurn {
 /** What the rig's binding reports beyond command handling. */
 export interface FakeBindingExtras {
 	readonly pendingPrompts?: () => readonly Promise<unknown>[];
+	readonly onRecord?: (record: WireRecord) => void;
 }
 
 /**
@@ -88,6 +91,14 @@ function inProcessRuntimeFactory(): {
 	const createRuntime: CreateAgentSessionRuntimeFactory = async (options) => {
 		new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 		const manager = options.sessionManager;
+		const file = manager.getSessionFile();
+		const hold =
+			file === undefined
+				? undefined
+				: holdSessionFile(file, manager.getSessionId(), {
+						cwd: options.cwd,
+						expectExisting: false,
+					});
 		const state = { isStreaming: false, aborted: false };
 		let bash: { end: (cancelled: boolean) => void } | undefined;
 		const pendingDeliveries: string[] = [];
@@ -184,7 +195,7 @@ function inProcessRuntimeFactory(): {
 				waitForIdle: async () => {
 					await held?.promise;
 				},
-				dispose: () => {},
+				dispose: () => hold?.release(),
 				messages: [],
 				pendingMessageCount: 0,
 			},
@@ -206,18 +217,23 @@ export function createInProcessRig(
 	idle?: RpcSessionIdlePolicy,
 	handle: (command: RpcCommand) => Promise<void> = async () => {},
 	extras: FakeBindingExtras = {},
+	pathReservations?: SessionPathReservations,
 ) {
 	const { createRuntime, turns, teardown } = inProcessRuntimeFactory();
 	// One clock for both halves of the idle contract: the registry stamps `lastCommandAt`
 	// and the router's sweep compares against it.
-	const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime, now: idle?.now });
+	const registry = new RpcSessionRegistry({ agentDir: dir, createRuntime, now: idle?.now, pathReservations });
 	const delivered: Array<{ connection?: string; record: WireRecord }> = [];
 	const writer = new SessionEventWriter((line) => delivered.push({ record: JSON.parse(line) as WireRecord }));
 	const registered = new Set<string>();
 	const connect = (connection: string): string => {
 		if (registered.has(connection)) return connection;
 		writer.registerConnection(connection, {
-			writeRaw: (line) => delivered.push({ connection, record: JSON.parse(line) as WireRecord }),
+			writeRaw: (line) => {
+				const record = JSON.parse(line) as WireRecord;
+				delivered.push({ connection, record });
+				extras.onRecord?.(record);
+			},
 			waitForBackpressure: async () => {},
 		});
 		registered.add(connection);

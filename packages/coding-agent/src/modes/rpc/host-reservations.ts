@@ -22,9 +22,15 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
+import {
+	processIsLive,
+	processStartTimeMs,
+	readProcessStartTime,
+	sameProcessStartMs,
+} from "../app-server/daemon/process.ts";
 import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
+import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 /** How long a client should wait before retrying a path another generation still holds. */
 export const SESSION_PATH_RETRY_AFTER_MS = 2_000;
@@ -41,6 +47,8 @@ export interface SessionPathOwner {
 }
 
 export interface SessionPathReservations {
+	/** Live processes registered to this daemon, never inferred from a holder's own labels. */
+	holderPids?(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]>;
 	/** Records this host as the holder of `sessionPath`, or reports the holder whose claim stands. */
 	claim(sessionPath: string, attached?: boolean): Promise<SessionPathOwner | undefined>;
 	/** Drops this host's claim. A claim made by another generation is never touched. */
@@ -126,6 +134,52 @@ export function createSessionPathReservations(options: {
 		await rename(staging, file);
 	};
 	return {
+		async holderPids(observedStarts?: ReadonlyMap<number, number | undefined>): Promise<readonly number[]> {
+			const candidates = (await readSessionPathClaims(dir)).map(({ owner }) => owner);
+			const generations = await readdir(paths.generationsDir, { withFileTypes: true }).catch(() => []);
+			for (const generation of generations) {
+				if (!generation.isDirectory()) continue;
+				const record = parseJson(
+					await readFileOrUndefined(join(paths.generationsDir, generation.name, "host-child.pid")),
+				);
+				if (typeof record?.pid !== "number") continue;
+				candidates.push({
+					pid: record.pid,
+					processStartTime: typeof record.processStartTime === "string" ? record.processStartTime : null,
+					instanceId: generation.name,
+					sessionPath: "",
+				});
+			}
+			const byPid = new Map<number, SessionPathOwner[]>();
+			for (const owner of candidates) {
+				if (owner.pid === process.pid) continue;
+				const owners = byPid.get(owner.pid) ?? [];
+				owners.push(owner);
+				byPid.set(owner.pid, owners);
+			}
+			const live = await Promise.all(
+				[...byPid].map(async ([pid, owners]) => {
+					if (!processIsLive(pid)) return undefined;
+					if (observedStarts) {
+						// Only foreign-looking holders need family classification. Their bounded OS
+						// probes were already done by lease validation at this command's admission.
+						if (!observedStarts.has(pid)) return undefined;
+						const observed = observedStarts.get(pid);
+						return owners.some((owner) => {
+							if (owner.processStartTime === null) return false;
+							return sameProcessStartMs(processStartTimeMs(owner.processStartTime), observed);
+						})
+							? pid
+							: undefined;
+					}
+					const current = await readProcessStartTime(pid, process.platform, 1_000).catch(() => undefined);
+					return current !== undefined && owners.some((owner) => owner.processStartTime === current)
+						? pid
+						: undefined;
+				}),
+			);
+			return [...new Set(live.filter((value): value is number => value !== undefined))];
+		},
 		async claim(sessionPath: string, attached = true): Promise<SessionPathOwner | undefined> {
 			const existing = await readOwner(reservationFile(dir, sessionPath));
 			if (existing && existing.pid !== pid) {
@@ -223,9 +277,14 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
  */
 export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean> {
 	if (!processIsLive(owner.pid)) return false;
-	if (owner.processStartTime === null) return true;
+	const recorded = owner.processStartTime === null ? undefined : processStartTimeMs(owner.processStartTime);
+	if (recorded === undefined) {
+		logUnknownHostIdentity("session-path-claim", owner.pid);
+		return true;
+	}
 	const current = await readProcessStartTime(owner.pid).catch(() => undefined);
-	return current === undefined || current === owner.processStartTime;
+	const observed = current === undefined ? undefined : processStartTimeMs(current);
+	return observed === undefined || sameProcessStartMs(recorded, observed);
 }
 
 function errorMessage(cause: unknown): string {

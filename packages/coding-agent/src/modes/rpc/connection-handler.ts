@@ -70,6 +70,7 @@ import {
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
+	SESSION_HELD_CAPABILITY,
 } from "./custom-capability.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { settleExtensionUiResponse } from "./extension-ui-response.ts";
@@ -958,7 +959,8 @@ export function createRpcConnectionHandler(
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
 								CONTINUE_FROM_LEAF_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
-								...(options.capabilities ?? []),
+								// Client flags cannot advertise a host guard this classic binding does not run.
+								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),
 							]),
 						],
 						mode: "classic",

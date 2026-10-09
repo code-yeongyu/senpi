@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { processStartTimeMs } from "../../../../modes/app-server/daemon/process.ts";
 
 const LINUX_CLOCK_TICKS_PER_SECOND = 100;
 
@@ -15,27 +16,37 @@ async function linuxProcessStartMs(pid: number): Promise<number | undefined> {
 	return Math.round((bootSeconds + startTicks / LINUX_CLOCK_TICKS_PER_SECOND) * 1000);
 }
 
-function execText(command: string, args: readonly string[]): Promise<string> {
+function execText(command: string, args: readonly string[], env?: NodeJS.ProcessEnv): Promise<string> {
 	return new Promise((resolve, reject) => {
-		execFile(command, [...args], { encoding: "utf8", timeout: 5_000, windowsHide: true }, (error, stdout) => {
-			if (error) reject(error);
-			else resolve(stdout);
-		});
+		execFile(
+			command,
+			[...args],
+			{
+				encoding: "utf8",
+				timeout: 5_000,
+				windowsHide: true,
+				...(env === undefined ? {} : { env }),
+			},
+			(error, stdout) => {
+				if (error) reject(error);
+				else resolve(stdout);
+			},
+		);
 	});
 }
 
 async function darwinProcessStartMs(pid: number): Promise<number | undefined> {
-	const text = (await execText("ps", ["-o", "lstart=", "-p", String(pid)])).trim();
+	const text = (
+		await execText("ps", ["-o", "lstart=", "-p", String(pid)], { ...process.env, LC_ALL: "C", LANG: "C" })
+	).trim();
 	if (text.length === 0) return undefined;
-	const parsed = new Date(text).getTime();
-	return Number.isFinite(parsed) ? parsed : undefined;
+	return processStartTimeMs(text);
 }
 
 async function windowsProcessStartMs(pid: number): Promise<number | undefined> {
 	const script = `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`;
 	const text = (await execText("powershell", ["-NoProfile", "-NonInteractive", "-Command", script])).trim();
-	const parsed = new Date(text).getTime();
-	return Number.isFinite(parsed) ? parsed : undefined;
+	return processStartTimeMs(text);
 }
 
 /**

@@ -29,6 +29,7 @@ import { type HostDaemonPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
+import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
 
 export interface LegacyHost {
 	readonly record: DaemonPidFile;
@@ -80,7 +81,11 @@ export async function provenLegacyOwner(
 		return undefined;
 	}
 	const identity = { pid: legacy.record.pid, processStartTime: startTime };
-	return (await processMatchesPidFile(identity, readProcessStartTime).catch(() => false)) ? identity : undefined;
+	const proven = await processMatchesPidFile(identity, readProcessStartTime).catch((error: unknown) => {
+		if (error instanceof ProcessIdentityUnreadableError) logUnknownHostIdentity("legacy_host.pid", identity.pid);
+		return false;
+	});
+	return proven ? identity : undefined;
 }
 
 /**
@@ -108,6 +113,7 @@ async function judgeLegacyHost(
 	if (identity === "gone") return { verdict: "absent" };
 	const where = `pid ${pid} (${host.socket})`;
 	if (identity === "unreadable") {
+		logUnknownHostIdentity("legacy_host.pid", pid);
 		return {
 			verdict: "held",
 			detail: `${where} cannot be proven to be the process its record names; stop it by hand`,

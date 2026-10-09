@@ -1,5 +1,56 @@
 import { execFile } from "node:child_process";
 
+const WINDOWS_FILETIME_EPOCH = 116444736000000000n;
+export const PROCESS_START_TOLERANCE_MS = 3_000;
+
+/** FILETIME and C/localized lstart/ISO identities share one millisecond representation. */
+export function processStartTimeMs(identity: string): number | undefined {
+	if (/^\d+$/.test(identity)) {
+		const parsed = Number((BigInt(identity) - WINDOWS_FILETIME_EPOCH) / 10_000n);
+		return Number.isFinite(parsed) ? parsed : undefined;
+	}
+	// Persisted lstart values, like the C-locale form, describe the host's local timezone.
+	const localIdentity = identity.trim();
+	const korean =
+		/^(\d{4})\uB144\s+(\d{1,2})\uC6D4\s+(\d{1,2})\uC77C\s+[\uC6D4\uD654\uC218\uBAA9\uAE08\uD1A0\uC77C]\uC694\uC77C\s+(\d{1,2})\uC2DC\s+(\d{1,2})\uBD84\s+(\d{1,2})\uCD08$/.exec(
+			localIdentity,
+		);
+	const japanese =
+		/^[\u65E5\u6708\u706B\u6C34\u6728\u91D1\u571F](?:\u66DC\u65E5)?\s+(\d{1,2})\/\s*(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})$/.exec(
+			localIdentity,
+		);
+	const parts = korean
+		? korean.slice(1)
+		: japanese
+			? [japanese[6], japanese[1], japanese[2], japanese[3], japanese[4], japanese[5]]
+			: undefined;
+	if (parts === undefined) {
+		const parsed = Date.parse(identity);
+		return Number.isFinite(parsed) ? parsed : undefined;
+	}
+	const [year = NaN, month = NaN, day = NaN, hour = NaN, minute = NaN, second = NaN] = parts.map(Number);
+	const parsed = new Date(year, month - 1, day, hour, minute, second, 0);
+	// A recognized but invalid calendar must not fall back to Date.parse's rollover behavior.
+	return parsed.getFullYear() === year &&
+		parsed.getMonth() === month - 1 &&
+		parsed.getDate() === day &&
+		parsed.getHours() === hour &&
+		parsed.getMinutes() === minute &&
+		parsed.getSeconds() === second
+		? parsed.getTime()
+		: undefined;
+}
+
+export function sameProcessStartMs(recorded: number | undefined, observed: number | undefined): boolean {
+	return (
+		recorded !== undefined &&
+		observed !== undefined &&
+		Number.isFinite(recorded) &&
+		Number.isFinite(observed) &&
+		Math.abs(recorded - observed) <= PROCESS_START_TOLERANCE_MS
+	);
+}
+
 export interface DaemonPidFile {
 	readonly pid: number;
 	/**
@@ -86,9 +137,13 @@ export async function processMatchesPidFile(
 	for (let attempt = 1; attempt <= attempts; attempt++) {
 		try {
 			const current = await readStartTime(pidFile.pid);
-			if (current !== undefined) return current === pidFile.processStartTime;
+			if (current !== undefined) {
+				const recorded = processStartTimeMs(pidFile.processStartTime);
+				const observed = processStartTimeMs(current);
+				if (recorded !== undefined && observed !== undefined) return sameProcessStartMs(recorded, observed);
+			}
 			if (!isLive(pidFile.pid)) return false;
-			lastError = new Error("process identity probe returned no identity for a live process");
+			lastError = new Error("process identity probe returned no usable identity for a live process");
 			if (attempt < attempts) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 		} catch (error: unknown) {
 			if (!isLive(pidFile.pid)) return false;
@@ -122,7 +177,11 @@ export async function readProcessIdentity(
 		execFile(
 			command.executable,
 			command.args,
-			{ windowsHide: true, ...(effectiveTimeoutMs === undefined ? {} : { timeout: effectiveTimeoutMs }) },
+			{
+				windowsHide: true,
+				...(effectiveTimeoutMs === undefined ? {} : { timeout: effectiveTimeoutMs }),
+				...(platform === "win32" ? {} : { env: { ...process.env, LC_ALL: "C", LANG: "C" } }),
+			},
 			(error, stdout) => {
 				if (error) {
 					const code = "code" in error ? error.code : undefined;

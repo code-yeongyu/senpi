@@ -1,3 +1,21 @@
+## 2026-10-08 - Interactive startup warns about live session holders (senpi#2951)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: prints the interactive holder warning after runtime creation publishes the CLI's own hold. Existing `--name` validation and persistence stay at their original post-selection location.
+
+### Why
+
+Opening the same JSONL in a CLI and a host silently admitted two writers.
+
+### Why an extension could not handle it
+
+The warning belongs to CLI startup and must work with extensions disabled.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: imports and the block after runtime creation.
+
 ## 2026-10-08 - JSON print mode exits non-zero when the run ran out of context (senpi#2925)
 
 ### What changed

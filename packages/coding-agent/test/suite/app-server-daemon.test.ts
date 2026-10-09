@@ -32,9 +32,9 @@ describe("app-server daemon state", () => {
 
 		// When: the parsed records are compared with a process start-time reader.
 		const matches = valid ? await processMatchesPidFile(valid, async () => "Mon Jul  2 10:00:00 2026") : false;
-		const stale = valid ? await processMatchesPidFile(valid, async () => "Mon Jul  2 10:00:01 2026") : true;
+		const stale = valid ? await processMatchesPidFile(valid, async () => "Mon Jul  2 10:00:04 2026") : true;
 
-		// Then: only the valid pidfile with the exact process start time is accepted.
+		// Then: the valid pidfile matches, and a start beyond the shared tolerance does not.
 		expect(malformed).toBeUndefined();
 		expect(matches).toBe(true);
 		expect(stale).toBe(false);

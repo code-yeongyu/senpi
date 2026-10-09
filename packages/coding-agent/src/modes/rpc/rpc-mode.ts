@@ -55,7 +55,9 @@
  * decides. An attach naming another surface rebuilds the live session's prompt.
  *
  * Stable error codes (in the response `error` field, machine-matchable):
- * `unknown_session`, `session_closing`, `session_path_in_use`, `missing_session_id`
+ * `unknown_session`, `session_closing`, `session_path_in_use`, `session_held`
+ * (a live holder outside this daemon family; `errorData: { holders: [{ pid, cwd? }] }`),
+ * `missing_session_id`
  * (session-scoped command without `sessionId` in multi mode), `multi_session_disabled`
  * (`open_session` in classic mode), `invalid_path` (relative `sessionPath`/`cwd`),
  * `open_failed: <detail>`, `invalid_session_context: <detail>` (a `context` past a

@@ -15,6 +15,7 @@ import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.
 import {
 	breakStaleLock,
 	errorCode,
+	type LockProbes,
 	publishExclusive,
 	readLeaseText,
 	reclaimLockState,
@@ -190,12 +191,12 @@ function publishHolderRecord(dir: string, record: string, content: string): void
 	}
 }
 
-async function liveHolders(dir: string): Promise<SessionHolder[]> {
+async function liveHolders(dir: string, probes: LockProbes = {}): Promise<SessionHolder[]> {
 	const holders: SessionHolder[] = [];
 	for (const name of await readdir(dir)) {
 		if (!HOLDER_RECORD.test(name)) continue;
 		const path = join(dir, name);
-		const state = await reclaimLockState(path);
+		const state = await reclaimLockState(path, probes);
 		if (state.state === "stale") await breakStaleLock(path, state.raw);
 		if (state.state !== "held" || state.holder === undefined) continue;
 		const raw = await readLeaseText(path);
@@ -208,9 +209,13 @@ async function liveHolders(dir: string): Promise<SessionHolder[]> {
  * Live processes that have `sessionFile` open right now (stale records of dead or reused pids are
  * reclaimed on the way). A caller about to start another writer uses it to wait instead of racing one.
  */
-export async function liveSessionHolders(sessionFile: string, sessionId: string): Promise<SessionHolder[]> {
+export async function liveSessionHolders(
+	sessionFile: string,
+	sessionId: string,
+	probes: LockProbes = {},
+): Promise<SessionHolder[]> {
 	try {
-		return await liveHolders(holdersDir(sessionFile, sessionId));
+		return await liveHolders(holdersDir(sessionFile, sessionId), probes);
 	} catch (error) {
 		if (errorCode(error) === "ENOENT") return [];
 		throw error;

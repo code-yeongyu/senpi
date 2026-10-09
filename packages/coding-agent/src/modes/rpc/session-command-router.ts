@@ -25,6 +25,7 @@ import { runWithSessionAttribution } from "./session-attribution.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { readDrainVerdicts } from "./session-drain.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
+import { dispatchSessionBinding, sessionHeldCheck } from "./session-held.ts";
 import type { OpenRpcSession, RpcSessionLaunchProfile, RpcSessionRegistry } from "./session-registry.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 import { releaseSession } from "./session-release.ts";
@@ -108,7 +109,8 @@ export class SessionCommandRouter {
 	private readonly registry: Pick<
 		RpcSessionRegistry,
 		"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
-	>;
+	> &
+		Partial<Pick<RpcSessionRegistry, "holderPids">>;
 	private readonly writer: SessionEventWriter;
 	private readonly defaults: RpcHostSessionDefaults;
 	private readonly createBinding: typeof createRpcSessionBinding;
@@ -142,7 +144,8 @@ export class SessionCommandRouter {
 		registry: Pick<
 			RpcSessionRegistry,
 			"openSession" | "peek" | "getForCommand" | "beginClose" | "close" | "closeMarked" | "list" | "size" | "warm"
-		>,
+		> &
+			Partial<Pick<RpcSessionRegistry, "holderPids">>,
 		writer: SessionEventWriter,
 		defaults: RpcHostSessionDefaults,
 		createBinding: typeof createRpcSessionBinding = createRpcSessionBinding,
@@ -357,17 +360,19 @@ export class SessionCommandRouter {
 			return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 		}
 		if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
+		const sessionId = command.sessionId;
 		try {
-			this.registry.getForCommand(command.sessionId, command.type);
-			const binding = this.bindings.get(command.sessionId);
-			if (!binding) return error(command.id, command.type, RPC_ERROR_UNKNOWN_SESSION);
-			// A prompt's preflight runs on the session's loop and can outlive the client's request deadline on a
-			// starved host; acknowledging receipt first lets the client wait it out (senpi#2871).
-			if (command.type === "prompt") this.acknowledgePrompt(command.id, command.sessionId);
-			await binding.handle(command);
+			const entry = this.registry.getForCommand(sessionId, command.type);
+			await dispatchSessionBinding(
+				command,
+				entry,
+				this.bindings.get(sessionId),
+				() => this.acknowledgePrompt(command.id, sessionId),
+				(observedStarts) => this.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
+			);
 			return undefined;
 		} catch (cause) {
-			return error(command.id, command.type, this.code(cause));
+			return error(command.id, command.type, this.code(cause), this.detail(cause));
 		}
 	}
 
@@ -603,7 +608,11 @@ export class SessionCommandRouter {
 		if (retryFallbackError)
 			return error(command.id, "open_session", `${RPC_ERROR_INVALID_LAUNCH_PROFILE}: ${retryFallbackError}`);
 		let opened: OpenRpcSession | undefined;
+		const assertSessionNotHeld = sessionHeldCheck(
+			(observedStarts) => this.registry.holderPids?.(observedStarts) ?? Promise.resolve([]),
+		);
 		try {
+			await assertSessionNotHeld(command.sessionPath);
 			opened = await this.registry.openSession(
 				{
 					cwd: command.cwd ?? this.defaults.cwd,
@@ -629,6 +638,13 @@ export class SessionCommandRouter {
 			);
 			const openedSession = opened;
 			const entry = this.registry.getForCommand(openedSession.sessionId, "open_session");
+			const state = entry.worker?.snapshot?.state;
+			// The runtime has now published its own lease. Recheck before attaching or replying,
+			// so an opener racing the initial lookup is rolled back rather than admitted.
+			await assertSessionNotHeld(
+				entry.runtime?.session.sessionFile ?? state?.sessionFile ?? entry.sessionPath,
+				entry.runtime?.session.sessionId ?? state?.sessionId ?? entry.durableSessionId,
+			);
 			this.writer.setSessionKind(openedSession.sessionId, entry.kind);
 			this.writer.setSessionMedia(
 				openedSession.sessionId,
@@ -702,9 +718,9 @@ export class SessionCommandRouter {
 				this.releaseOwnerAttachment(owner, openedSession.sessionId);
 				await this.releaseOwnedSession(openedSession.sessionId);
 			}
-			const state =
+			const replyState =
 				entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);
-			if (!state) throw new Error("Session state was not created");
+			if (!replyState) throw new Error("Session state was not created");
 			this.writer.enqueue(opened.sessionId, {
 				id: command.id,
 				type: "response",
@@ -712,7 +728,7 @@ export class SessionCommandRouter {
 				success: true,
 				data: {
 					sessionId: opened.sessionId,
-					state,
+					state: replyState,
 					...(opened.attached ? { attached: true } : {}),
 				},
 			});
@@ -720,7 +736,8 @@ export class SessionCommandRouter {
 		} catch (cause) {
 			if (opened) {
 				try {
-					await this.registry.close(opened.sessionId);
+					if (opened.attached) await this.releaseOwnedSession(opened.sessionId);
+					else await this.registry.close(opened.sessionId);
 				} catch {
 					/* The open rollback has already removed the entry. */
 				}

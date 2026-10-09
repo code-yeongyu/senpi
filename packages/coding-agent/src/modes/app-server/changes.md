@@ -1,3 +1,22 @@
+## 2026-10-08 - Shared start-time identity parser and tolerance (senpi#2951)
+
+### What changed
+
+- `daemon/process.ts` parses Windows FILETIME and ps/ISO process identities into milliseconds using a named FILETIME epoch, and owns the shared 3 s comparison tolerance. RPC family checks and terminal leases reuse this existing supervisor leaf.
+- The same parser recognizes persisted Korean year/month/day lstart and Japanese weekday/month-day lstart in the local timezone. Calendar rollover is rejected. Unrecognized formats remain unknown instead of becoming ownership proof.
+
+### Why
+
+- Failed process snapshots need reliable per-pid identity recovery; an unknown start cannot establish daemon ownership. Shared parsing prevents the lease and daemon identity formats from drifting.
+
+### Why an extension could not handle it
+
+- Host admission and lease ownership run outside extension callbacks.
+
+### Expected merge conflict zones
+
+- `daemon/process.ts` identity helpers; no supervisor import graph change.
+
 ## 2026-10-08 - Daemon launches do not replay a Node eval caller (senpi#2599)
 
 ### What changed
