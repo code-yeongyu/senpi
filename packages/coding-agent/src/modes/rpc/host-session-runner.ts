@@ -1,9 +1,20 @@
 /** Short-lived, attach-before-act clients for `senpi host session`. */
 import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { daemonEnvKeys, daemonEnvOverrides, writeDaemonEnvKeys } from "./host-daemon-env.ts";
+import { createHostDaemonPaths } from "./host-daemon-paths.ts";
+import { HostEnsureRefusedError } from "./host-decision.ts";
 import { endpointKindOfSocket } from "./host-endpoints.ts";
+import { type EnsuredHost, ensureHost } from "./host-ensure.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
-import { HOST_EXIT_ERROR, HOST_EXIT_REFUSED, HOST_EXIT_USAGE, type HostOutcome, refusal } from "./host-outcome.ts";
+import {
+	HOST_EXIT_ERROR,
+	HOST_EXIT_OK,
+	HOST_EXIT_REFUSED,
+	HOST_EXIT_USAGE,
+	type HostOutcome,
+	refusal,
+} from "./host-outcome.ts";
 import type { HostTarget } from "./host-runner.ts";
 import { isTransportGoneError, RpcClient, RpcCommandError } from "./rpc-client.ts";
 
@@ -100,15 +111,35 @@ function codeFromMessage(message: string): string {
 	if (message.startsWith("Model not found:")) return "model_not_found";
 	if (message.startsWith("Entry not found:")) return "unknown_cursor";
 	if (message.startsWith("Agent is already processing")) return "busy";
+	// SessionCommandRouter puts its stable code in `error` when no errorData is needed.
+	const code = /^([a-z][a-z_]+)(?::|$)/.exec(message)?.[1];
+	if (code) return code;
 	return "host_error";
 }
 
 export async function runHostSessionRequest(request: HostSessionRequest): Promise<HostOutcome> {
 	const { socket, agentDir } = request.target;
 	let client: RpcClient | undefined;
+	let ensured: EnsuredHost | undefined;
 	try {
 		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {
 			return refusal("refuse", undefined, { reason: "unsupported_endpoint_kind", socket, endpoint_kind: "tui" });
+		}
+		if (request.action === "open") {
+			ensured = await ensureHost({
+				socket,
+				agentDir,
+				hostArgs: request.spec.hostArgs,
+				env: daemonEnvOverrides(process.env, request.spec.env),
+				policy: request.spec.policy,
+				upgrade: "never",
+			});
+			if (!ensured.reused) {
+				await writeDaemonEnvKeys(
+					createHostDaemonPaths({ socket, agentDir }),
+					daemonEnvKeys(process.env, request.spec.env),
+				);
+			}
 		}
 		client = new RpcClient({ socketPath: socket });
 		try {
@@ -125,7 +156,34 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 			await client.openSession({ sessionPath: row.sessionPath, cwd: row.cwd });
 		}
 		switch (request.action) {
-			case "open":
+			case "open": {
+				const opened = await client.openSession({
+					cwd: request.cwd,
+					retain_on_disconnect: true,
+					...(request.model && { provider: request.model.provider, modelId: request.model.id }),
+				});
+				ensured?.release();
+				if (request.name !== undefined) await client.setSessionName(request.name);
+				const disposition = request.prompt === undefined ? undefined : await client.prompt(request.prompt);
+				const row = (await client.listSessions()).find((row) => row.sessionId === opened.sessionId);
+				const { state } = opened;
+				return {
+					exitCode: HOST_EXIT_OK,
+					payload: {
+						action: "open",
+						socket,
+						pid: ensured?.pid,
+						reused: ensured?.reused,
+						sessionId: opened.sessionId,
+						sessionPath: state.sessionFile,
+						durableSessionId: row?.durableSessionId,
+						cwd: state.cwd,
+						model: state.model ? { provider: state.model.provider, id: state.model.id } : null,
+						attached: opened.attached ?? false,
+						...(disposition !== undefined && { prompt: { disposition } }),
+					},
+				};
+			}
 			case "close":
 			case "model":
 			case "prompt":
@@ -140,8 +198,12 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 				return assertNever(request);
 		}
 	} catch (error) {
+		if (error instanceof HostEnsureRefusedError) {
+			return refusal("refuse", undefined, { reason: error.reason, socket, detail: error.detail });
+		}
 		return mapError(error, socket);
 	} finally {
+		ensured?.release();
 		await client?.stop();
 	}
 }

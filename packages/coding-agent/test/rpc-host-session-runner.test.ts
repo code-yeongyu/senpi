@@ -1,22 +1,88 @@
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { isAbsolute, join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as hostEnsure from "../src/modes/rpc/host-ensure.ts";
+import { DEFAULT_HOST_LAUNCH_SPEC } from "../src/modes/rpc/host-launch-spec.ts";
 import { mapError, resolveSessionRow, runHostSessionRequest } from "../src/modes/rpc/host-session-runner.ts";
-import { RpcCommandError, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
+import { RpcClient, RpcCommandError, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
+import { type FakeModelServer, startFakeModelServer } from "./helpers/rpc-fake-model.ts";
+import { supervisorLaunch } from "./helpers/rpc-generation-support.ts";
+import { writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
+import { hostCliSandbox, sweepHostCliSandboxes } from "./suite/host-cli-support.ts";
 
 const dirs: string[] = [];
+const clients: RpcClient[] = [];
+const models: FakeModelServer[] = [];
 function scratch(): string {
 	const dir = mkdtempSync(join(tmpdir(), "hs-unit-"));
 	dirs.push(dir);
 	return dir;
 }
-afterEach(() => {
+afterEach(async () => {
+	for (const client of clients.splice(0)) await client.stop();
+	await sweepHostCliSandboxes();
+	for (const model of models.splice(0)) await model.close();
+	vi.restoreAllMocks();
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
+}, 120_000);
+
+async function rig() {
+	const qa = await hostCliSandbox("session");
+	const cwd = join(qa.root, "work");
+	mkdirSync(cwd);
+	const fake = await startFakeModelServer();
+	models.push(fake);
+	writeRpcModelsJson(qa.agentDir, fake.origin);
+	const ensure = hostEnsure.ensureHost;
+	vi.spyOn(hostEnsure, "ensureHost").mockImplementation((options) =>
+		ensure({ ...options, _test: { launch: supervisorLaunch, readinessTimeoutMs: 30_000 } }),
+	);
+	const target = { socket: qa.socket, agentDir: qa.agentDir };
+	const spec = {
+		...DEFAULT_HOST_LAUNCH_SPEC,
+		env: { SENPI_CODING_AGENT_DIR: qa.agentDir, SENPI_RUNTIME: "node", PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+	};
+	const opened = await runHostSessionRequest({
+		action: "open",
+		target,
+		cwd,
+		spec,
+		model: { provider: "anthropic", id: "mock-claude-rpc" },
+		name: "lane-1",
+	});
+	expect(opened.exitCode, JSON.stringify(opened.payload)).toBe(0);
+	const ref = String(opened.payload.sessionId);
+	const client = new RpcClient({ socketPath: qa.socket });
+	clients.push(client);
+	await client.start();
+	return { qa, cwd, target, spec, opened, ref, client, fake };
+}
 
 // #3073: callers distinguish refusal, caller error and broken transport without scraping prose.
 describe("host session runner", () => {
+	it("opens a retained named session and releases its client attachment", async () => {
+		const { opened, client, ref } = await rig();
+		expect(ref).toMatch(/^rpc-\d+$/);
+		expect(isAbsolute(String(opened.payload.sessionPath))).toBe(true);
+		expect(opened.payload).toMatchObject({
+			durableSessionId: expect.any(String),
+			model: { id: "mock-claude-rpc" },
+			attached: false,
+		});
+		expect(await client.listSessions()).toEqual([
+			expect.objectContaining({ sessionId: ref, attachments: 0, status: "open", name: "lane-1" }),
+		]);
+	}, 120_000);
+
+	it("releases the ensure hold after a refused open", async () => {
+		const { client, target, spec } = await rig();
+		const before = await client.listSessions();
+		const result = await runHostSessionRequest({ action: "open", target, spec, cwd: "relative" });
+		expect(result).toMatchObject({ exitCode: 2, payload: { action: "error", reason: "invalid_path" } });
+		expect(await client.listSessions()).toHaveLength(before.length);
+	}, 120_000);
+
 	it("refuses an unavailable host without starting one", async () => {
 		const agentDir = scratch();
 		expect(
@@ -39,13 +105,21 @@ describe("host session runner", () => {
 		["future_code", "future_code", 3],
 		["invalid_path", "invalid_path", 2],
 		["open_failed", "open_failed", 1],
+		["invalid_path", undefined, 2],
+		["open_failed: unavailable", undefined, 1],
 		["Model not found: a/b", undefined, 3],
 		["Entry not found: x", undefined, 3],
 		["Agent is already processing a prompt", undefined, 3],
 	] as const)("maps host response %s", (message, code, exitCode) => {
 		const reason =
 			code ??
-			(message.startsWith("Model") ? "model_not_found" : message.startsWith("Entry") ? "unknown_cursor" : "busy");
+			(message.startsWith("Model")
+				? "model_not_found"
+				: message.startsWith("Entry")
+					? "unknown_cursor"
+					: message.startsWith("Agent")
+						? "busy"
+						: message.split(":")[0]);
 		const data = { holders: [{ pid: 42 }] };
 		expect(mapError(new RpcCommandError(message, code, data), "/rpc.sock")).toEqual({
 			exitCode,
