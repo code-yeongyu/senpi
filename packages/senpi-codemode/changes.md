@@ -1,5 +1,46 @@
 # senpi-codemode fork changes
 
+## 2026-10-10 - Install Julia globals sizing only on request (Refs senpi#3048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`: load the sizing asset once from the serialized memory-globals handler and resolve newly installed bindings in the latest world. If the asset cannot be loaded, return an empty globals result, preserving the diagnostic reply contract rather than emitting `init-failed`.
+- `packages/senpi-codemode/src/kernels/jl/globals.jl`: retain the original sizing constants, type, constructors, traversal and largest-globals implementation verbatim.
+- `packages/senpi-codemode/test/kernels/memory-globals-harness.ts`, `test/kernels/jl/lazy-globals.test.ts` and `test/gate/allowlist.json`: instrument the defining asset and protect zero installed sizing bindings before a below-threshold first result.
+
+### Why
+
+- Below-threshold cells already avoided globals walks, but each fresh interpreter still paid to lower and install the unused sizing implementation.
+
+### Why an extension could not handle it
+
+- Julia binding installation and the read-only diagnostic request belong to the embedded runner.
+
+### Expected merge conflict zones
+
+- Runner sizing definitions and memory-globals dispatch. Host thresholds, ceilings, hysteresis, stop settlement, reply ownership and sizing budgets remain unchanged.
+
+## 2026-10-10 - Include Julia handles at first use (Refs senpi#3048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/jl/prelude.jl`: serialize the first handles include under a lock, resolve the asset relative to the prelude directory even inside a child task, and resolve newly installed bindings in the latest world.
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`: load named handle bindings before evaluation and serialize newly created handles in the latest world.
+- `packages/senpi-codemode/test/kernels/jl/lazy-handles.test.ts` and `test/gate/allowlist.json`: retain the reviewed zero-installation, concurrent first-use, annotation, display, completion and reset regressions. Run fixtures from an empty cwd and cover indirect first use inside `@async` and `Threads.@spawn`, plus missing/invalid globals assets.
+
+### Why
+
+- A fresh interpreter otherwise installs handle types and Base extensions before any handle is requested.
+- Known limitation: pre-eval installation uses lexical triggers. A cell that first reaches `handle` indirectly (for example, `getproperty(Main, Symbol("han" * "dle"))`) can load methods mid-cell and then hit a world-age "method too new" error when it uses the handle later in that cell. Use a direct `handle` reference to preload the bindings, or use the returned handle in a subsequent cell.
+
+### Why an extension could not handle it
+
+- Julia binding installation and world age belong to the embedded runner.
+
+### Expected merge conflict zones
+
+- Prelude handle producer and runner evaluation/result encoding. Handle implementation and wait semantics are unchanged; indirect mid-cell access retains the world-age limitation above.
+
 ## 2026-10-09 - Benchmark CPU includes result serialization (Refs senpi#3048)
 
 ### What changed
