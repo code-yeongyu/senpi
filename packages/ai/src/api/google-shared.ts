@@ -13,6 +13,7 @@ import {
 import { clampThinkingLevel } from "../models.ts";
 import type {
 	ImageContent,
+	Message,
 	Model,
 	ProviderNativeContent,
 	StopReason,
@@ -20,6 +21,7 @@ import type {
 	TextContent,
 	ThinkingLevel,
 	Tool,
+	ToolCall,
 	TranscriptContext,
 } from "../types.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
@@ -173,6 +175,18 @@ export function requiresToolCallId(modelId: string): boolean {
 	);
 }
 
+/**
+ * Gemini 3+ strictly validates replayed tool calls: the first functionCall part of every step
+ * in the current turn must carry the thoughtSignature the model returned, or the API answers
+ * 400 "Function call is missing a thought_signature in functionCall parts" (Vertex and AI
+ * Studio both; enforced even at MINIMAL thinking). See:
+ * https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+ */
+function requiresThoughtSignatureReplay(modelId: string): boolean {
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	return geminiMajorVersion !== undefined && geminiMajorVersion >= 3;
+}
+
 function getGeminiMajorVersion(modelId: string): number | undefined {
 	const match = modelId.toLowerCase().match(/^gemini(?:-live)?-(\d+)/);
 	if (!match) return undefined;
@@ -203,6 +217,19 @@ function appendContent(contents: Content[], content: Content): void {
 	contents.push(content);
 }
 
+function findLastUserTextMessageIndex(messages: Message[]): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
+		if (msg.role !== "user") continue;
+		if (typeof msg.content === "string") {
+			if (msg.content.trim().length > 0) return i;
+		} else if (msg.content.some((item) => item.type === "text" && item.text.trim().length > 0)) {
+			return i;
+		}
+	}
+	return -1;
+}
+
 /**
  * Convert internal messages to Gemini Content[] format.
  */
@@ -214,6 +241,9 @@ export function convertMessages<T extends GoogleApiType>(
 	// Gemini has no mid-conversation system messages; the leading prompt is sent as systemInstruction.
 	const conversation = withoutInitialSystemMessage(collapseSystemMessages(context).messages);
 	const contents: Content[] = [];
+	// Tool-call blocks replayed as text under a strict-signature model; their paired tool
+	// results must follow the same shape so no unpaired functionResponse part is emitted.
+	const textToolCallIds = new Set<string>();
 	const normalizeId = (id: string): string => {
 		if (!requiresToolCallId(model.id)) return id;
 		return normalizeToolCallId(id);
@@ -223,7 +253,10 @@ export function convertMessages<T extends GoogleApiType>(
 		preserveThinking: options.preserveThinking,
 	});
 
-	for (const msg of transformedMessages) {
+	const lastUserTextIndex = findLastUserTextMessageIndex(transformedMessages);
+
+	for (let msgIndex = 0; msgIndex < transformedMessages.length; msgIndex++) {
+		const msg = transformedMessages[msgIndex];
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				appendContent(contents, {
@@ -253,6 +286,21 @@ export function convertMessages<T extends GoogleApiType>(
 			const parts: Part[] = [];
 			// Check if message is from same provider and model - only then keep thinking blocks
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
+
+			// Strict validation (requiring a thoughtSignature on the first functionCall part) applies
+			// to the current turn — assistant steps after the last user message with text content.
+			// Earlier turns preserve structured function calls. In the current turn, if the first
+			// toolCall block lacks a valid signature, the whole step is replayed as text, because
+			// the documented skip_thought_signature_validator sentinel is rejected by Vertex (pi-mono #4032)
+			// and an unsigned functionCall part is a hard 400 on Gemini 3+.
+			const isCurrentTurn = msgIndex > lastUserTextIndex;
+			const firstToolCall = msg.content.find((b): b is ToolCall => b.type === "toolCall");
+			const hasValidFirstSignature =
+				firstToolCall !== undefined &&
+				resolveThoughtSignature(isSameProviderAndModel, firstToolCall.thoughtSignature) !== undefined;
+
+			const replayUnsignedToolCallsAsText =
+				requiresThoughtSignatureReplay(model.id) && isCurrentTurn && !hasValidFirstSignature;
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -287,16 +335,25 @@ export function convertMessages<T extends GoogleApiType>(
 						});
 					}
 				} else if (block.type === "toolCall") {
-					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature);
-					const part: Part = {
-						functionCall: {
-							name: block.name,
-							args: block.arguments ?? {},
-							...(requiresToolCallId(model.id) ? { id: block.id } : {}),
-						},
-						...(thoughtSignature && { thoughtSignature }),
-					};
-					parts.push(part);
+					if (replayUnsignedToolCallsAsText) {
+						textToolCallIds.add(block.id);
+						parts.push({
+							text: sanitizeSurrogates(
+								`[Tool Call: ${block.name} (id: ${block.id})]\nArguments: ${JSON.stringify(block.arguments ?? {}, null, 2)}`,
+							),
+						});
+					} else {
+						const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature);
+						const part: Part = {
+							functionCall: {
+								name: block.name,
+								args: block.arguments ?? {},
+								...(requiresToolCallId(model.id) ? { id: block.id } : {}),
+							},
+							...(thoughtSignature && { thoughtSignature }),
+						};
+						parts.push(part);
+					}
 				} else if (block.type === "providerNative") {
 				}
 			}
@@ -310,9 +367,41 @@ export function convertMessages<T extends GoogleApiType>(
 			// Extract text and image content
 			const textContent = msg.content.filter((c): c is TextContent => c.type === "text");
 			const textResult = textContent.map((c) => c.text).join("\n");
-			const imageContent = model.input.includes("image")
-				? msg.content.filter((c): c is ImageContent => c.type === "image")
-				: [];
+			const allImageBlocks = msg.content.filter((c): c is ImageContent => c.type === "image");
+			const modelAcceptsImages = model.input.includes("image");
+			const imageContent = modelAcceptsImages ? allImageBlocks : [];
+
+			const imageParts: Part[] = imageContent.map((imageBlock) => ({
+				inlineData: {
+					mimeType: imageBlock.mimeType,
+					data: imageBlock.data,
+				},
+			}));
+
+			const sanitizedToolName = sanitizeSurrogates(msg.toolName);
+
+			// A tool call replayed as text pairs with its result as text: an unpaired
+			// functionResponse part would break the model turn's call/response pairing.
+			if (textToolCallIds.has(msg.toolCallId)) {
+				let bodyText = "";
+				if (textResult.length > 0) {
+					bodyText = `\n${sanitizeSurrogates(textResult)}`;
+				} else if (allImageBlocks.length > 0 && !modelAcceptsImages) {
+					bodyText = "\n(see attached image)";
+				} else if (allImageBlocks.length === 0) {
+					bodyText = "\n(no output)";
+				}
+				const errorMarker = msg.isError ? " (error)" : "";
+				const callIdPart = ` (id: ${msg.toolCallId})`;
+				appendContent(contents, {
+					role: "user",
+					parts: [
+						{ text: `[Tool Result: ${sanitizedToolName}${callIdPart}]${errorMarker}${bodyText}` },
+						...imageParts,
+					],
+				});
+				continue;
+			}
 
 			const hasText = textResult.length > 0;
 			const hasImages = imageContent.length > 0;
@@ -325,17 +414,10 @@ export function convertMessages<T extends GoogleApiType>(
 			// Use "output" key for success, "error" key for errors as per SDK documentation
 			const responseValue = hasText ? sanitizeSurrogates(textResult) : hasImages ? "(see attached image)" : "";
 
-			const imageParts: Part[] = imageContent.map((imageBlock) => ({
-				inlineData: {
-					mimeType: imageBlock.mimeType,
-					data: imageBlock.data,
-				},
-			}));
-
 			const includeId = requiresToolCallId(model.id);
 			const functionResponsePart: Part = {
 				functionResponse: {
-					name: msg.toolName,
+					name: sanitizedToolName,
 					response: msg.isError ? { error: responseValue } : { output: responseValue },
 					...(hasImages && modelSupportsMultimodalFunctionResponse && { parts: imageParts }),
 					...(includeId ? { id: msg.toolCallId } : {}),

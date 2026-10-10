@@ -1,3 +1,21 @@
+## 2026-10-09 - Gemini 3+ replays unsigned tool-call steps as text (Vertex 400 fix)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: `convertMessages` gains `requiresThoughtSignatureReplay` (Gemini major version >= 3). When an assistant step in the current turn (after the last user text message) lacks a valid thought signature on its first tool call, the step is replayed as text rather than unsigned `functionCall` parts: each call becomes `[Tool Call: <name> (id: <id>)]` and its paired result `[Tool Result: <name> (id: <id>)]` (`textToolCallIds` preserves pairing). Earlier turns retain structured function calls. If tool results contain images and the model supports them, `inlineData` parts are appended in the same user turn; if images exist but the model does not support them, the placeholder text is retained.
+
+### Why
+
+Gemini 3+ strictly validates replayed tool calls: the first `functionCall` part of every step in the current turn must carry the thought signature the model returned, or Vertex/AI Studio answer 400 "Function call is missing a thought_signature in functionCall parts" (enforced even at MINIMAL thinking; https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures). A session that switches to a Gemini 3 model mid-thread replays tool-call steps recorded by other models, which carry no signature, causing every subsequent Gemini turn to fail with this 400 (reproduced from cross-provider history replayed after a mid-session model switch). The documented `skip_thought_signature_validator` escape hatch is rejected by Vertex, which is why upstream removed it (pi-mono #4032); text replay is the remaining documented-safe shape ("either include the full context or omit it entirely"). Earlier turns do not require thought signatures and remain structured.
+
+### Why an extension could not handle it
+
+The signature replay decision lives in the provider adapter's message conversion, which runs after every extension hook; extensions only see the already-built request.
+
+### Expected merge conflict zones
+
+- LOW: the `block.type === "toolCall"` branch and the new `textToolCallIds` set in `convertMessages`, plus the top of the `msg.role === "toolResult"` branch, in `packages/ai/src/api/google-shared.ts`.
+
 ## 2026-10-09 - Restore api-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed
