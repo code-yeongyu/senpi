@@ -6,7 +6,7 @@
 
 ### Added
 
-- The footer shows a reasoning model's level as `effort <level>` with the key bound to `app.thinking.cycle` beside it (`shift+tab` by default, your own key when rebound, nothing when unbound); on a narrow terminal the key drops first, then the level, never the model id. A one-time tip, `Shift+Tab changes the reasoning level`, is shown once per agent directory for reasoning models ([#3090](https://github.com/code-yeongyu/senpi/issues/3090), requested by @devxoul).
+- The footer shows a reasoning model's level as `effort <level>` with the key bound to `app.thinking.cycle` beside it (`shift+tab` by default, your own key when rebound, nothing when unbound) whenever the whole footer fits; on a narrower terminal the key drops first, then the label falls back to the compact `model:<level>` the footer always showed, so no stat or path character is lost to the hint. A one-time tip, `Shift+Tab changes the reasoning level`, is shown once per agent directory for reasoning models ([#3090](https://github.com/code-yeongyu/senpi/issues/3090), requested by @devxoul).
 
 ### Changed
 

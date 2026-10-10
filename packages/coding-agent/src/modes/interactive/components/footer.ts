@@ -3,12 +3,12 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
 import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
 import { accountLabel, listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
-import { type Component, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { theme } from "../theme/theme.ts";
 import { type FooterSegment, planFooterLayout } from "./footer-layout.ts";
-import { keyText } from "./keybinding-hints.ts";
+import { buildRightLabel, colorRightSide } from "./footer-right-label.ts";
 
 const FAST_MODE_INDICATOR = "\u26a1 ";
 
@@ -86,41 +86,6 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 
 	if (!isInsideHome) return cwd;
 	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
-}
-
-/** One coloured run of the right side, in render order. */
-type RightSideRun = {
-	readonly text: string;
-	readonly color: "muted" | "warning" | "accent" | "dim" | "borderMuted";
-};
-
-/**
- * Color the right side of the footer: (provider) muted, model accent, the
- * `effort <level>` label muted and its cycle-key hint dim.
- *
- * The runs come from the values that produced the text, never from re-parsing
- * the rendered string: an account display name may legally contain `)` or `:`,
- * and a regex over the rendered segment would then colour the provider prefix
- * as the model, or cut the model id into a "thinking level".
- *
- * `plain` is the rendered segment, which the layout pass may have truncated at
- * the tail (and whose truncation can append reset sequences); each run is
- * clipped to the visible text that survived, so a run boundary can never cut
- * an escape sequence in half.
- */
-function colorRightSide(runs: readonly RightSideRun[], plain: string): string {
-	const text = stripTerminalSequences(plain);
-	if (!text) return "";
-	let offset = 0;
-	let colored = "";
-	for (const run of runs) {
-		if (offset >= text.length) break;
-		const visible = text.slice(offset, offset + run.text.length);
-		if (visible.length === 0) break;
-		colored += theme.fg(run.color, visible);
-		offset += visible.length;
-	}
-	return colored;
 }
 
 /**
@@ -247,35 +212,11 @@ export class FooterComponent implements Component {
 		});
 		let tail: FooterSegment = makeTail(delegationIndicator !== "");
 
-		// Model label pinned to the right edge. The right side is a ladder of forms,
-		// richest first: the cycle-key hint drops first, then the provider prefix,
-		// then the `effort <level>` label; the model id is the floor that always stays.
+		// Model label pinned to the right edge; the forms ladder and what each form
+		// may cost the left side live in ./footer-right-label.ts.
 		const modelName = state.model?.id || "no-model";
 		const fastIndicator = this.session.isFastModeActive() ? FAST_MODE_INDICATOR : "";
-		const modelRuns: RightSideRun[] = [
-			...(fastIndicator ? [{ text: fastIndicator, color: "warning" as const }] : []),
-			{ text: modelName, color: "accent" as const },
-		];
-		// A virtual model routes each request; show where the latest response went.
 		const routed = this.session.routedModel;
-		if (routed) {
-			modelRuns.push({ text: ` → ${routed.model.id}`, color: "accent" });
-			if (routed.thinkingLevel) modelRuns.push({ text: `:${routed.thinkingLevel}`, color: "dim" });
-		}
-		const segmentFromRuns = (runs: readonly RightSideRun[]): FooterSegment => {
-			const plain = runs.map((run) => run.text).join("");
-			return { plain, colored: colorRightSide(runs, plain) };
-		};
-		const levelRuns: RightSideRun[] = state.model?.reasoning
-			? [
-					...modelRuns,
-					{ text: separator, color: "borderMuted" },
-					{ text: `effort ${state.thinkingLevel || "off"}`, color: "muted" },
-				]
-			: modelRuns;
-		// The key is whatever the user bound to app.thinking.cycle; unbound means no hint.
-		const cycleKey = state.model?.reasoning ? keyText("app.thinking.cycle") : "";
-		const hintRuns: RightSideRun[] = cycleKey ? [...levelRuns, { text: ` (${cycleKey})`, color: "dim" }] : levelRuns;
 		let accountSuffix = "";
 		if (state.model) {
 			try {
@@ -291,16 +232,16 @@ export class FooterComponent implements Component {
 			(this.footerData.getAvailableProviderCount() > 1 || accountSuffix !== "") && state.model
 				? `(${state.model.provider}${accountSuffix}) `
 				: "";
-		const providerRuns: RightSideRun[] = [{ text: providerPrefix, color: "muted" }];
-		const rightLadder: RightSideRun[][] = [];
-		if (providerPrefix && cycleKey) rightLadder.push([...providerRuns, ...hintRuns]);
-		if (providerPrefix) rightLadder.push([...providerRuns, ...levelRuns]);
-		else if (cycleKey) rightLadder.push(hintRuns);
-		if (levelRuns !== modelRuns) rightLadder.push(levelRuns);
-		rightLadder.push(modelRuns);
-		const rightForms = rightLadder.map(segmentFromRuns);
-		const floorRight = rightForms[rightForms.length - 1] ?? segmentFromRuns(modelRuns);
-		const forms: [FooterSegment, ...FooterSegment[]] = [rightForms[0] ?? floorRight, ...rightForms.slice(1)];
+		const rightLabel = buildRightLabel({
+			modelName,
+			fastIndicator,
+			routed: routed ? { modelId: routed.model.id, thinkingLevel: routed.thinkingLevel } : undefined,
+			reasoning: state.model?.reasoning === true,
+			thinkingLevel: state.thinkingLevel || "off",
+			providerPrefix,
+			separator,
+		});
+		const { forms, floor: floorRight, floorRuns } = rightLabel;
 
 		const marker: FooterSegment = { plain: "…", colored: theme.fg("dim", "…") };
 		const planWithTail = (tailSegment: FooterSegment) =>
@@ -360,7 +301,7 @@ export class FooterComponent implements Component {
 			left = { colored: theme.fg("muted", plan.leftPlain), width: visibleWidth(plan.leftPlain) };
 		} else {
 			left = { colored: "", width: 0 };
-			right = { plain: plan.rightPlain, colored: colorRightSide(modelRuns, plan.rightPlain) };
+			right = { plain: plan.rightPlain, colored: colorRightSide(floorRuns, plan.rightPlain) };
 		}
 
 		const rightWidth = visibleWidth(right.plain);

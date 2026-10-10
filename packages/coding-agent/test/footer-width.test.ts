@@ -1,7 +1,11 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
-import { type FooterSegment, planFooterLayout } from "../src/modes/interactive/components/footer-layout.ts";
+import {
+	type FooterRightForm,
+	type FooterSegment,
+	planFooterLayout,
+} from "../src/modes/interactive/components/footer-layout.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 import {
@@ -102,10 +106,10 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
-		expect(plain).toContain("test-model");
+		expect(plain).toContain("test-model:high");
 		expect(plain).toContain("main");
 		expect(plain).toContain("(auto)");
-		expect(plain).not.toContain("deep-work-on-footer-layout");
+		expect(plain).toContain("…");
 	});
 
 	it("elides the path before hiding cache and cost stats", () => {
@@ -134,7 +138,7 @@ describe("FooterComponent width handling", () => {
 		}
 		expect(plain).toContain("CH25.0%");
 		expect(plain).toContain("$1.234");
-		expect(plain).toContain("test-model \u2022 effort high");
+		expect(plain).toContain("test-model:high");
 		expect(plain).toMatch(/^…/);
 		expect(plain).toContain("coding-agent");
 		expect(plain).not.toContain("/workspace/client");
@@ -188,7 +192,10 @@ describe("planFooterLayout provider priority", () => {
 	const middle = [seg("session-name"), seg("↑1.2M"), seg("↓45K"), seg("CH92.3%"), seg("$12.345")];
 	const tail = seg("120K/1M (12.0%) (auto)");
 	const right = {
-		forms: [seg("(anthropic) claude-opus-5:low"), seg("claude-opus-5:low")] as [FooterSegment, ...FooterSegment[]],
+		forms: [
+			{ ...seg("(anthropic) claude-opus-5:low"), fitsWith: "middle-elision" as const },
+			seg("claude-opus-5:low"),
+		] as [FooterRightForm, ...FooterRightForm[]],
 	};
 	const baseInput = {
 		anchor,
@@ -217,6 +224,40 @@ describe("planFooterLayout provider priority", () => {
 		expect(plan.keptMiddleCount).toBe(0);
 		expect(plan.showMarker).toBe(false);
 		expect(plan.rightForm).toBe(1);
+	});
+
+	it("accepts a form that must fit with everything only in the full layout", () => {
+		const ladder = {
+			forms: [
+				{ ...seg("(anthropic) claude-opus-5 • effort low (shift+tab)"), fitsWith: "everything" as const },
+				{ ...seg("(anthropic) claude-opus-5 • effort low"), fitsWith: "everything" as const },
+				{ ...seg("(anthropic) claude-opus-5:low"), fitsWith: "middle-elision" as const },
+				seg("claude-opus-5:low"),
+			] as [FooterRightForm, ...FooterRightForm[]],
+		};
+		const everything = planFooterLayout({ ...baseInput, right: ladder, width: 160 });
+		expect(everything).toEqual({ kind: "full", rightForm: 0 });
+
+		const oneStatShort = planFooterLayout({ ...baseInput, right: ladder, width: 130 });
+		expect(oneStatShort.kind).toBe("middle-elided");
+		if (oneStatShort.kind !== "middle-elided") throw new Error("unexpected plan");
+		expect(oneStatShort.rightForm).toBe(2);
+		expect(oneStatShort.keptMiddleCount).toBeGreaterThan(0);
+	});
+
+	it("lets the level-bearing floor shorten the path instead of dropping the level", () => {
+		const ladder = {
+			forms: [
+				{ ...seg("(anthropic) claude-opus-5 • effort low"), fitsWith: "everything" as const },
+				{ ...seg("(anthropic) claude-opus-5:low"), fitsWith: "middle-elision" as const },
+				seg("claude-opus-5:low"),
+			] as [FooterRightForm, ...FooterRightForm[]],
+		};
+		const plan = planFooterLayout({ ...baseInput, right: ladder, width: 62 });
+		expect(plan.kind).toBe("pwd-elided");
+		if (plan.kind !== "pwd-elided") throw new Error("unexpected plan");
+		expect(plan.rightForm).toBe(2);
+		expect(plan.pwdPlain).toMatch(/^…/);
 	});
 
 	it("keeps the existing pwd-elided and anchor/tail guarantees untouched", () => {

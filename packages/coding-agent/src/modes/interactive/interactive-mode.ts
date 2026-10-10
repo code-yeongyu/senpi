@@ -1720,37 +1720,8 @@ export class InteractiveMode {
 					"dim",
 					`Press ${keyText("app.tools.expand")} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
 				);
-			const tipsEnabled = this.settingsManager.getTipsEnabled();
-			// Header-only quiet startup keeps the header but not the startup details, tips included.
-			const quietStartup = this.settingsManager.getQuietStartup() !== false;
-			// The one-time reasoning-level notice (senpi#3090) goes first; when it shows,
-			// the rotating tip skips its own thinking-level entry so the two do not repeat each other.
-			const reasoningNotice =
-				tipsEnabled && !quietStartup
-					? resolveReasoningLevelNotice({
-							history: this.settingsManager.getTipsHistory(),
-							modelReasoning: this.session.state.model?.reasoning === true,
-							keys: keyDisplayText,
-						})
-					: undefined;
-			if (reasoningNotice) {
-				this.recordShownTip(reasoningNotice.tipId);
-			}
-			const startupTip = resolveStartupTipLine({
-				tipsEnabled,
-				quietStartup,
-				history: this.settingsManager.getTipsHistory(),
-				now: Date.now(),
-				definitions: TIP_DEFINITIONS,
-				keys: keyText,
-				hasCommand: (command) => this.hasRegisteredCommand(command),
-				...(reasoningNotice ? { exclude: new Set(["thinking-level"]) } : {}),
-			});
-			if (startupTip) {
-				this.recordShownTip(startupTip.tipId);
-			}
-			const tipLines = [reasoningNotice?.line, startupTip?.line].filter((line) => line !== undefined);
-			const tipLine = tipLines.length > 0 ? theme.fg("dim", tipLines.join("\n")) : undefined;
+			const startupTips = this.resolveStartupTips();
+			const tipLine = startupTips ? theme.fg("dim", startupTips) : undefined;
 			const onboarding = () =>
 				theme.fg("dim", `Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`);
 			this.builtInHeader = new ExpandableText(
@@ -2229,6 +2200,43 @@ export class InteractiveMode {
 		this.headerContainer.removeChild(this.shortcutOverlay);
 		this.shortcutOverlay = undefined;
 		this.ui.requestRender();
+	}
+
+	/**
+	 * The tip block under the startup header, recorded as shown. The one-time
+	 * reasoning-level notice (senpi#3090) goes first; on the launch it shows, the
+	 * rotating tip skips its own `thinking-level` entry so the two do not repeat each other.
+	 */
+	private resolveStartupTips(): string | undefined {
+		const tipsEnabled = this.settingsManager.getTipsEnabled();
+		// Header-only quiet startup keeps the header but not the startup details, tips included.
+		const quietStartup = this.settingsManager.getQuietStartup() !== false;
+		const reasoningNotice =
+			tipsEnabled && !quietStartup
+				? resolveReasoningLevelNotice({
+						history: this.settingsManager.getTipsHistory(),
+						modelReasoning: this.session.state.model?.reasoning === true,
+						keys: keyDisplayText,
+					})
+				: undefined;
+		if (reasoningNotice) {
+			this.recordShownTip(reasoningNotice.tipId);
+		}
+		const startupTip = resolveStartupTipLine({
+			tipsEnabled,
+			quietStartup,
+			history: this.settingsManager.getTipsHistory(),
+			now: Date.now(),
+			definitions: TIP_DEFINITIONS,
+			keys: keyText,
+			hasCommand: (command) => this.hasRegisteredCommand(command),
+			...(reasoningNotice ? { exclude: new Set(["thinking-level"]) } : {}),
+		});
+		if (startupTip) {
+			this.recordShownTip(startupTip.tipId);
+		}
+		const lines = [reasoningNotice?.line, startupTip?.line].filter((line) => line !== undefined);
+		return lines.length > 0 ? lines.join("\n") : undefined;
 	}
 
 	private recordShownTip(tipId: string): void {

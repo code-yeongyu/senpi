@@ -10,13 +10,26 @@ export interface FooterSegment {
 	readonly colored: string;
 }
 
+/**
+ * How much the left side may give up for a right-label form to be kept:
+ * `everything` means the form is used only when the whole footer fits as is,
+ * `middle-elision` lets the middle stats elide but never the pwd, and
+ * `pwd-elision` (the default) also lets the pwd shrink from its head.
+ */
+export type FooterRightFit = "everything" | "middle-elision" | "pwd-elision";
+
+export interface FooterRightForm extends FooterSegment {
+	readonly fitsWith?: FooterRightFit;
+}
+
 export interface FooterRightLabel {
 	/**
 	 * Right-label forms from richest to poorest, e.g. provider + model + level + key hint
-	 * down to the bare model id. The planner keeps the first form that fits; the last
-	 * one is the floor that must always fit and is what truncation falls back to.
+	 * down to the bare model id. The planner keeps the first form that fits under its
+	 * own `fitsWith` rule; the last one is the floor that must always fit and is what
+	 * truncation falls back to.
 	 */
-	readonly forms: readonly [FooterSegment, ...FooterSegment[]];
+	readonly forms: readonly [FooterRightForm, ...FooterRightForm[]];
 }
 
 export interface FooterLayoutInput {
@@ -119,8 +132,8 @@ export function planFooterLayout(input: FooterLayoutInput): FooterLayout {
 	const preferPwdElision = visibleWidth(pwd.plain) > Math.floor(input.width / 3);
 
 	const floorForm = right.forms.length - 1;
-	const planForRight = (rightSegment: FooterSegment, rightForm: number): FooterLayout | undefined => {
-		const isFloor = rightForm === floorForm;
+	const planForRight = (rightSegment: FooterRightForm, rightForm: number): FooterLayout | undefined => {
+		const fit = rightSegment.fitsWith ?? "pwd-elision";
 		const candidates = [
 			{ keptMiddleCount: middle.length, showMarker: false },
 			...Array.from({ length: middle.length }, (_, index) => ({
@@ -140,9 +153,10 @@ export function planFooterLayout(input: FooterLayoutInput): FooterLayout {
 				}
 				return { kind: "middle-elided", ...candidate, rightForm };
 			}
+			if (fit === "everything") return undefined;
 
-			const isMinimalFallback = isFloor && candidate.keptMiddleCount === 0 && !candidate.showMarker;
-			if (preferPwdElision || isMinimalFallback) {
+			const emptyMiddle = candidate.keptMiddleCount === 0 && !candidate.showMarker;
+			if (preferPwdElision || (fit === "pwd-elision" && emptyMiddle)) {
 				const budget = pwdBudget([...anchorRest, ...retainedMiddle, ...marker, tail], rightSegment, input);
 				if (budget >= 2) {
 					return {
