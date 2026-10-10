@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A JavaScript cell that reads stdin (`fs.readFileSync(0)` or `"/dev/stdin"`, `fs.promises.readFile("/dev/stdin")`, `Bun.stdin`, `Bun.file("/dev/stdin")`) now sees EOF instead of the host's stdin. The worker thread shares the host's fd 0, which in interactive mode is the TUI's terminal: the read blocked on the user's keyboard, and because a timed-out cell's worker is replaced rather than stopped, the abandoned read kept swallowing every key typed into the chat input until the CLI restarted. `Bun.$` children already got an empty stdin; this closes the direct-read paths.
+
 ### Removed
 
 ## [2026.10.10-12] - 2026-10-10
