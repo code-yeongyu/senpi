@@ -48,7 +48,15 @@ export async function rig(held = false) {
 	const target = { socket: qa.socket, agentDir: qa.agentDir };
 	const spec = {
 		...DEFAULT_HOST_LAUNCH_SPEC,
-		env: { SENPI_CODING_AGENT_DIR: qa.agentDir, SENPI_RUNTIME: "node", PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+		// The runner's own HOME would load its user skills, whose MCP sidecars the host pools past a close.
+		env: {
+			SENPI_CODING_AGENT_DIR: qa.agentDir,
+			SENPI_RUNTIME: "node",
+			PI_OFFLINE: "1",
+			PI_TELEMETRY: "0",
+			HOME: qa.root,
+			USERPROFILE: qa.root,
+		},
 	};
 	const opened = await runHostSessionRequest({
 		action: "open",

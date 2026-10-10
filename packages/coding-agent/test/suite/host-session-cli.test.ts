@@ -121,7 +121,12 @@ describe("senpi host session process contract", () => {
 		const model = await gatedModel();
 		writeRpcModelsJson(qa.agentDir, model.origin, ["mock-claude-rpc-2"]);
 		const command = async (args: string[], code = 0, endpoint = qa) => {
-			const result = await runHostCli(endpoint, ["session", ...args], { ANTHROPIC_API_KEY: MOCK_API_KEY });
+			// A sandbox HOME: the runner's user skills would start MCP sidecars the host pools past a close.
+			const result = await runHostCli(endpoint, ["session", ...args], {
+				ANTHROPIC_API_KEY: MOCK_API_KEY,
+				HOME: qa.root,
+				USERPROFILE: qa.root,
+			});
 			expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(code);
 			return onlyJsonLine(result);
 		};
