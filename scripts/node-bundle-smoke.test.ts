@@ -141,7 +141,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 		} finally {
 			rmSync(state, { recursive: true, force: true });
 		}
-	}, 40_000);
+	});
 
 	test("loads an external TypeScript extension and lists the flag it registers", () => {
 		// Given: a fresh agent dir, so the help fast path misses its per-extension-set cache and
@@ -162,7 +162,7 @@ describe.each(runtimes)("the Node bundle under %s", (runtime) => {
 			rmSync(extensionDir, { recursive: true, force: true });
 			rmSync(state, { recursive: true, force: true });
 		}
-	}, 70_000);
+	});
 
 	test("opens and closes a shared session when the bundle receives RPC commands", async () => {
 		// Given: isolated state, with no provider request or user extensions.
