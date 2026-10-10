@@ -42,7 +42,7 @@ describe("FooterComponent SDK delegation marker", () => {
 	it("renders the complete (SDK) marker or omits it entirely at every width", () => {
 		// Head elision must never leave fragments like "…SDK)" behind.
 		const markerFragments = ["SDK)", "DK)", "K)"];
-		// The reasoning label ("test-model:high") widens the pinned right side so the
+		// The reasoning label ("test-model • effort high (shift+tab)") widens the pinned right side so the
 		// left-elision budget lands inside the marker at narrow widths (reviewer repro).
 		const sessions = [
 			createFooterSession("s", { reasoning: true, thinkingLevel: "high" }),

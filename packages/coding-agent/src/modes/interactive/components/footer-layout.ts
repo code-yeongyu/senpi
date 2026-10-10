@@ -11,10 +11,12 @@ export interface FooterSegment {
 }
 
 export interface FooterRightLabel {
-	/** Model label only (e.g. "gpt-5.6:high"); the form that must always fit. */
-	readonly minimal: FooterSegment;
-	/** Model label with provider prefix; used only when the full layout fits. */
-	readonly full: FooterSegment | undefined;
+	/**
+	 * Right-label forms from richest to poorest, e.g. provider + model + level + key hint
+	 * down to the bare model id. The planner keeps the first form that fits; the last
+	 * one is the floor that must always fit and is what truncation falls back to.
+	 */
+	readonly forms: readonly [FooterSegment, ...FooterSegment[]];
 }
 
 export interface FooterLayoutInput {
@@ -41,19 +43,20 @@ export interface FooterLayoutInput {
  * "only the model label survives". The caller materializes the plan into text.
  */
 export type FooterLayout =
-	| { readonly kind: "full"; readonly useFullRight: boolean }
+	| { readonly kind: "full"; readonly rightForm: number }
 	| {
 			readonly kind: "middle-elided";
 			readonly keptMiddleCount: number;
 			readonly showMarker: boolean;
-			readonly useFullRight: boolean;
+			/** Index into `right.forms` of the form this plan keeps. */
+			readonly rightForm: number;
 	  }
 	| {
 			readonly kind: "pwd-elided";
 			readonly pwdPlain: string;
 			readonly keptMiddleCount: number;
 			readonly showMarker: boolean;
-			readonly useFullRight: boolean;
+			readonly rightForm: number;
 	  }
 	| { readonly kind: "left-elided"; readonly leftPlain: string }
 	| { readonly kind: "right-truncated"; readonly rightPlain: string };
@@ -105,7 +108,8 @@ export function elideHead(text: string, maxWidth: number): string {
 /**
  * Pick the richest layout that fits the width. The model label is pinned to
  * the right edge and the anchor/tail segments stay visible. The pwd shrinks
- * from its head before middle stats yield from the right.
+ * from its head before middle stats yield from the right; the right label
+ * steps down its own ladder (`right.forms`) one form at a time before that.
  */
 export function planFooterLayout(input: FooterLayoutInput): FooterLayout {
 	const { anchor, middle, tail, right } = input;
@@ -114,7 +118,9 @@ export function planFooterLayout(input: FooterLayoutInput): FooterLayout {
 	const anchorRest = anchor.filter((_, index) => index !== input.pwdIndex);
 	const preferPwdElision = visibleWidth(pwd.plain) > Math.floor(input.width / 3);
 
-	const planForRight = (rightSegment: FooterSegment, useFullRight: boolean): FooterLayout | undefined => {
+	const floorForm = right.forms.length - 1;
+	const planForRight = (rightSegment: FooterSegment, rightForm: number): FooterLayout | undefined => {
+		const isFloor = rightForm === floorForm;
 		const candidates = [
 			{ keptMiddleCount: middle.length, showMarker: false },
 			...Array.from({ length: middle.length }, (_, index) => ({
@@ -130,12 +136,12 @@ export function planFooterLayout(input: FooterLayoutInput): FooterLayout {
 			const left = [...anchor, ...retainedMiddle, ...marker, tail];
 			if (fits(left, rightSegment, input)) {
 				if (candidate.keptMiddleCount === middle.length) {
-					return { kind: "full", useFullRight };
+					return { kind: "full", rightForm };
 				}
-				return { kind: "middle-elided", ...candidate, useFullRight };
+				return { kind: "middle-elided", ...candidate, rightForm };
 			}
 
-			const isMinimalFallback = !useFullRight && candidate.keptMiddleCount === 0 && !candidate.showMarker;
+			const isMinimalFallback = isFloor && candidate.keptMiddleCount === 0 && !candidate.showMarker;
 			if (preferPwdElision || isMinimalFallback) {
 				const budget = pwdBudget([...anchorRest, ...retainedMiddle, ...marker, tail], rightSegment, input);
 				if (budget >= 2) {
@@ -143,7 +149,7 @@ export function planFooterLayout(input: FooterLayoutInput): FooterLayout {
 						kind: "pwd-elided",
 						pwdPlain: elideHead(pwd.plain, budget),
 						...candidate,
-						useFullRight,
+						rightForm,
 					};
 				}
 			}
@@ -152,18 +158,16 @@ export function planFooterLayout(input: FooterLayoutInput): FooterLayout {
 		return undefined;
 	};
 
-	if (right.full !== undefined) {
-		const fullRightPlan = planForRight(right.full, true);
-		if (fullRightPlan !== undefined) return fullRightPlan;
+	for (const [rightForm, segment] of right.forms.entries()) {
+		const plan = planForRight(segment, rightForm);
+		if (plan !== undefined) return plan;
 	}
 
-	const minimalRightPlan = planForRight(right.minimal, false);
-	if (minimalRightPlan !== undefined) return minimalRightPlan;
-
-	const leftBudget = input.width - input.minPadding - visibleWidth(right.minimal.plain);
+	const floor = right.forms[floorForm] ?? right.forms[0];
+	const leftBudget = input.width - input.minPadding - visibleWidth(floor.plain);
 	if (leftBudget >= 1) {
 		const allLeftPlain = [...anchor, tail].map((segment) => segment.plain).join(input.separator);
 		return { kind: "left-elided", leftPlain: elideHead(allLeftPlain, leftBudget) };
 	}
-	return { kind: "right-truncated", rightPlain: truncateToWidth(right.minimal.plain, input.width, "") };
+	return { kind: "right-truncated", rightPlain: truncateToWidth(floor.plain, input.width, "") };
 }

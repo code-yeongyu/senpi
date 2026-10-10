@@ -73,7 +73,7 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[0]);
 
-		expect(statsLine).toContain("auto:high \u2192 gpt-5.6-luna:medium");
+		expect(statsLine).toContain("auto \u2192 gpt-5.6-luna:medium \u2022 effort high");
 	});
 
 	it("updates usage totals after an entry is appended", () => {
@@ -102,10 +102,10 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
-		expect(plain).toContain("test-model:high");
+		expect(plain).toContain("test-model");
 		expect(plain).toContain("main");
 		expect(plain).toContain("(auto)");
-		expect(plain).toContain("…");
+		expect(plain).not.toContain("deep-work-on-footer-layout");
 	});
 
 	it("elides the path before hiding cache and cost stats", () => {
@@ -134,7 +134,7 @@ describe("FooterComponent width handling", () => {
 		}
 		expect(plain).toContain("CH25.0%");
 		expect(plain).toContain("$1.234");
-		expect(plain).toContain("test-model:high");
+		expect(plain).toContain("test-model \u2022 effort high");
 		expect(plain).toMatch(/^…/);
 		expect(plain).toContain("coding-agent");
 		expect(plain).not.toContain("/workspace/client");
@@ -175,7 +175,7 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
-		expect(plain).toContain("(test) test-model:high");
+		expect(plain).toContain("(test) test-model \u2022 effort high");
 	});
 });
 
@@ -187,7 +187,9 @@ describe("planFooterLayout provider priority", () => {
 	const anchor: [FooterSegment, ...FooterSegment[]] = [seg("~/local-workspaces/senpi"), seg("main")];
 	const middle = [seg("session-name"), seg("↑1.2M"), seg("↓45K"), seg("CH92.3%"), seg("$12.345")];
 	const tail = seg("120K/1M (12.0%) (auto)");
-	const right = { minimal: seg("claude-opus-5:low"), full: seg("(anthropic) claude-opus-5:low") };
+	const right = {
+		forms: [seg("(anthropic) claude-opus-5:low"), seg("claude-opus-5:low")] as [FooterSegment, ...FooterSegment[]],
+	};
 	const baseInput = {
 		anchor,
 		pwdIndex: 0,
@@ -205,7 +207,7 @@ describe("planFooterLayout provider priority", () => {
 		if (plan.kind !== "middle-elided") throw new Error("unexpected plan");
 		expect(plan.keptMiddleCount).toBe(3);
 		expect(plan.showMarker).toBe(true);
-		expect(plan.useFullRight).toBe(true);
+		expect(plan.rightForm).toBe(0);
 	});
 
 	it("falls back to the bare model label when even empty middle cannot fit the full label", () => {
@@ -214,7 +216,7 @@ describe("planFooterLayout provider priority", () => {
 		if (plan.kind !== "middle-elided") throw new Error("unexpected plan");
 		expect(plan.keptMiddleCount).toBe(0);
 		expect(plan.showMarker).toBe(false);
-		expect(plan.useFullRight).toBe(false);
+		expect(plan.rightForm).toBe(1);
 	});
 
 	it("keeps the existing pwd-elided and anchor/tail guarantees untouched", () => {

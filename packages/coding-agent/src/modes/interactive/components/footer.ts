@@ -8,6 +8,7 @@ import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { theme } from "../theme/theme.ts";
 import { type FooterSegment, planFooterLayout } from "./footer-layout.ts";
+import { keyText } from "./keybinding-hints.ts";
 
 const FAST_MODE_INDICATOR = "\u26a1 ";
 
@@ -88,10 +89,14 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 }
 
 /** One coloured run of the right side, in render order. */
-type RightSideRun = { readonly text: string; readonly color: "muted" | "warning" | "accent" | "dim" };
+type RightSideRun = {
+	readonly text: string;
+	readonly color: "muted" | "warning" | "accent" | "dim" | "borderMuted";
+};
 
 /**
- * Color the right side of the footer: (provider) muted, model accent, :thinking dim.
+ * Color the right side of the footer: (provider) muted, model accent, the
+ * `effort <level>` label muted and its cycle-key hint dim.
  *
  * The runs come from the values that produced the text, never from re-parsing
  * the rendered string: an account display name may legally contain `)` or `:`,
@@ -242,31 +247,35 @@ export class FooterComponent implements Component {
 		});
 		let tail: FooterSegment = makeTail(delegationIndicator !== "");
 
-		// Model label pinned to the right edge; the provider prefix stays only when
-		// the full line fits.
+		// Model label pinned to the right edge. The right side is a ladder of forms,
+		// richest first: the cycle-key hint drops first, then the provider prefix,
+		// then the `effort <level>` label; the model id is the floor that always stays.
 		const modelName = state.model?.id || "no-model";
 		const fastIndicator = this.session.isFastModeActive() ? FAST_MODE_INDICATOR : "";
-		let minimalRight = `${fastIndicator}${modelName}`;
-		if (state.model?.reasoning) {
-			const thinkingLevel = state.thinkingLevel || "off";
-			minimalRight = thinkingLevel === "off" ? `${minimalRight}:off` : `${minimalRight}:${thinkingLevel}`;
-		}
-		const thinkingSuffix = state.model?.reasoning ? `:${state.thinkingLevel || "off"}` : "";
 		const modelRuns: RightSideRun[] = [
 			...(fastIndicator ? [{ text: fastIndicator, color: "warning" as const }] : []),
 			{ text: modelName, color: "accent" as const },
-			...(thinkingSuffix ? [{ text: thinkingSuffix, color: "dim" as const }] : []),
 		];
 		// A virtual model routes each request; show where the latest response went.
 		const routed = this.session.routedModel;
 		if (routed) {
-			const routedSuffix = ` → ${routed.model.id}`;
-			const routedLevel = routed.thinkingLevel ? `:${routed.thinkingLevel}` : "";
-			minimalRight += `${routedSuffix}${routedLevel}`;
-			modelRuns.push({ text: routedSuffix, color: "accent" });
-			if (routedLevel) modelRuns.push({ text: routedLevel, color: "dim" });
+			modelRuns.push({ text: ` → ${routed.model.id}`, color: "accent" });
+			if (routed.thinkingLevel) modelRuns.push({ text: `:${routed.thinkingLevel}`, color: "dim" });
 		}
-		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(modelRuns, minimalRight) };
+		const segmentFromRuns = (runs: readonly RightSideRun[]): FooterSegment => {
+			const plain = runs.map((run) => run.text).join("");
+			return { plain, colored: colorRightSide(runs, plain) };
+		};
+		const levelRuns: RightSideRun[] = state.model?.reasoning
+			? [
+					...modelRuns,
+					{ text: separator, color: "borderMuted" },
+					{ text: `effort ${state.thinkingLevel || "off"}`, color: "muted" },
+				]
+			: modelRuns;
+		// The key is whatever the user bound to app.thinking.cycle; unbound means no hint.
+		const cycleKey = state.model?.reasoning ? keyText("app.thinking.cycle") : "";
+		const hintRuns: RightSideRun[] = cycleKey ? [...levelRuns, { text: ` (${cycleKey})`, color: "dim" }] : levelRuns;
 		let accountSuffix = "";
 		if (state.model) {
 			try {
@@ -282,15 +291,16 @@ export class FooterComponent implements Component {
 			(this.footerData.getAvailableProviderCount() > 1 || accountSuffix !== "") && state.model
 				? `(${state.model.provider}${accountSuffix}) `
 				: "";
-		const full: FooterSegment | undefined = providerPrefix
-			? {
-					plain: `${providerPrefix}${minimalRight}`,
-					colored: colorRightSide(
-						[{ text: providerPrefix, color: "muted" }, ...modelRuns],
-						`${providerPrefix}${minimalRight}`,
-					),
-				}
-			: undefined;
+		const providerRuns: RightSideRun[] = [{ text: providerPrefix, color: "muted" }];
+		const rightLadder: RightSideRun[][] = [];
+		if (providerPrefix && cycleKey) rightLadder.push([...providerRuns, ...hintRuns]);
+		if (providerPrefix) rightLadder.push([...providerRuns, ...levelRuns]);
+		else if (cycleKey) rightLadder.push(hintRuns);
+		if (levelRuns !== modelRuns) rightLadder.push(levelRuns);
+		rightLadder.push(modelRuns);
+		const rightForms = rightLadder.map(segmentFromRuns);
+		const floorRight = rightForms[rightForms.length - 1] ?? segmentFromRuns(modelRuns);
+		const forms: [FooterSegment, ...FooterSegment[]] = [rightForms[0] ?? floorRight, ...rightForms.slice(1)];
 
 		const marker: FooterSegment = { plain: "…", colored: theme.fg("dim", "…") };
 		const planWithTail = (tailSegment: FooterSegment) =>
@@ -300,7 +310,7 @@ export class FooterComponent implements Component {
 				pwdIndex,
 				middle,
 				tail: tailSegment,
-				right: { minimal, full },
+				right: { forms },
 				separator,
 				minPadding: 2,
 				ellipsisMarker: marker,
@@ -326,16 +336,16 @@ export class FooterComponent implements Component {
 		let left: { colored: string; width: number };
 		let right: FooterSegment;
 		if (plan.kind === "full") {
-			right = plan.useFullRight && full ? full : minimal;
+			right = forms[plan.rightForm] ?? floorRight;
 			left = joinSegments([...anchor, ...middle, tail]);
 		} else if (plan.kind === "middle-elided") {
-			right = plan.useFullRight && full ? full : minimal;
+			right = forms[plan.rightForm] ?? floorRight;
 			const segments = [...anchor, ...middle.slice(0, plan.keptMiddleCount)];
 			if (plan.showMarker) segments.push(marker);
 			segments.push(tail);
 			left = joinSegments(segments);
 		} else if (plan.kind === "pwd-elided") {
-			right = plan.useFullRight && full ? full : minimal;
+			right = forms[plan.rightForm] ?? floorRight;
 			const segments: FooterSegment[] = [
 				...anchor.map((segment, index) =>
 					index === pwdIndex ? { plain: plan.pwdPlain, colored: theme.fg("accent", plan.pwdPlain) } : segment,
@@ -346,7 +356,7 @@ export class FooterComponent implements Component {
 			segments.push(tail);
 			left = joinSegments(segments);
 		} else if (plan.kind === "left-elided") {
-			right = minimal;
+			right = floorRight;
 			left = { colored: theme.fg("muted", plan.leftPlain), width: visibleWidth(plan.leftPlain) };
 		} else {
 			left = { colored: "", width: 0 };

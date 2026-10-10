@@ -1,3 +1,25 @@
+## 2026-10-10 - The footer shows the reasoning level and its cycle key (senpi#3090)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: for a reasoning model the right side reads `<model> • effort <level> (<key>)` instead of `<model>:<level>`, where `<key>` is `keyText("app.thinking.cycle")` (the user's own binding; an unbound action shows no hint). The right side is now a ladder of forms the layout steps down one at a time: the key hint drops first, then the provider prefix, then the `effort <level>` label; the model id is the floor. The virtual-model routing suffix (` → <physical>:<level>`) stays glued to the model id. A `borderMuted` run colour was added for the ` • ` separator inside the right side.
+- `packages/coding-agent/src/modes/interactive/components/footer-layout.ts`: `FooterRightLabel` is `{ forms: [richest, ..., floor] }` instead of `{ minimal, full }`, and the `full` / `middle-elided` / `pwd-elided` plans carry `rightForm` (index into `forms`) instead of `useFullRight`. Head elision and right truncation use the floor form.
+- `packages/coding-agent/src/modes/interactive/tips/reasoning-level-notice.ts` (new): `resolveReasoningLevelNotice` returns the one-time `Tip: <Key> changes the reasoning level` line for a reasoning model when `app.thinking.cycle` is bound and the tip id `reasoning-level-key` is not yet in the settings tip history.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the startup header resolves that notice before the rotating startup tip, records it through `recordShownTip` (so it lands in `tipsHistory` and never repeats from that agent directory), excludes the rotating `thinking-level` tip on the launch the notice shows, and renders both lines in the one tip slot under the header. The same `tips` / `quietStartup` gates apply.
+- Tests: `test/footer-reasoning-level.test.ts` (widths 160/80/70/40, default key, rebound key, unbound action, non-reasoning model, `off`, routed model), `test/reasoning-level-notice.test.ts` (shown once, persisted across a fresh `SettingsManager`, never for a non-reasoning model or an unbound key); `footer-width`, `footer-account-label-coloring`, `footer-fast-mode-icon` updated to the new label.
+
+### Why
+
+- Users did not discover that Shift+Tab cycles the reasoning level: the only sign was a dim `:high` glued to the model id with nothing saying a key changes it (senpi#3090, requested by @devxoul).
+
+### Why an extension could not handle it
+
+- The footer's right-side label, its width ladder and the startup tip slot are the interactive mode's own rendering; an extension can add a status line but cannot change how the model label is composed or truncated.
+
+### Expected merge conflict zones
+
+- LOW: the model-label block of `footer.ts` `render()` and the `FooterRightLabel` / `FooterLayout` types in `footer-layout.ts` (both fork-only); the startup-tip block in `interactive-mode.ts` (fork-only tips).
+
 ## 2026-10-08 - In-session resume warns about foreign holders (senpi#2951)
 
 ### What changed
