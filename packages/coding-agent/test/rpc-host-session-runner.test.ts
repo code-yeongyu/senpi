@@ -1,10 +1,12 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as hostEnsure from "../src/modes/rpc/host-ensure.ts";
 import { DEFAULT_HOST_LAUNCH_SPEC } from "../src/modes/rpc/host-launch-spec.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
+import { attachJsonlLineReader } from "../src/modes/rpc/jsonl.ts";
 import { mapError, resolveSessionRow, runHostSessionRequest } from "../src/modes/rpc/host-session-runner.ts";
 import { RpcClient, type RpcClientEvent, RpcCommandError, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
 import { type FakeModelServer, startFakeModelServer } from "./helpers/rpc-fake-model.ts";
@@ -15,12 +17,14 @@ import { hostCliSandbox, sweepHostCliSandboxes } from "./suite/host-cli-support.
 const dirs: string[] = [];
 const clients: RpcClient[] = [];
 const models: (FakeModelServer | HeldAnthropicModel)[] = [];
+const closeWires: (() => Promise<void>)[] = [];
 function scratch(): string {
 	const dir = mkdtempSync(join(tmpdir(), "hs-unit-"));
 	dirs.push(dir);
 	return dir;
 }
 afterEach(async () => {
+	for (const close of closeWires.splice(0)) await close();
 	for (const client of clients.splice(0)) await client.stop();
 	await sweepHostCliSandboxes();
 	for (const model of models.splice(0)) {
@@ -78,8 +82,160 @@ function nextEvent(client: RpcClient, type: RpcClientEvent["type"]): Promise<Rpc
 	});
 }
 
+/** A real socket with controlled wire ordering for races a model cannot schedule exactly. */
+async function wireRig(
+	onState: (
+		call: number,
+		send: (record: Record<string, unknown>) => void,
+		reply: (state: Record<string, unknown>) => void,
+		socket: Socket,
+	) => void,
+) {
+	const dir = scratch();
+	const socket = join(dir, "wire.sock");
+	const peers = new Set<Socket>();
+	let stateReads = 0;
+	const server = createServer((peer) => {
+		peers.add(peer);
+		peer.once("close", () => peers.delete(peer));
+		attachJsonlLineReader(peer, (line) => {
+			const command = JSON.parse(line) as { type: string; id: string };
+			const send = (record: Record<string, unknown>) => peer.write(`${JSON.stringify(record)}\n`);
+			const reply = (data: Record<string, unknown>) =>
+				send({ type: "response", id: command.id, command: command.type, success: true, data });
+			if (command.type === "list_sessions")
+				reply({
+					sessions: [{ sessionId: "rpc-1", cwd: dir, sessionPath: join(dir, "session.jsonl"), status: "open" }],
+				});
+			else if (command.type === "open_session") reply({ sessionId: "rpc-1", state: {} });
+			else if (command.type === "get_state") onState(++stateReads, send, reply, peer);
+			else throw new Error(`Unexpected wire request ${command.type}`);
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(socket, resolve));
+	closeWires.push(async () => {
+		for (const peer of peers) peer.destroy();
+		await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+	});
+	return { target: { socket, agentDir: dir }, stateReads: () => stateReads };
+}
+
 // #3073: callers distinguish refusal, caller error and broken transport without scraping prose.
 describe("host session runner", () => {
+	it("waits for a real settled run and answers an already idle session", async () => {
+		const { target, ref, fake } = await rig(true);
+		await runHostSessionRequest({ action: "prompt", target, ref, text: "unique-600" });
+		await runHostSessionRequest({ action: "steer", target, ref, text: "unique-601" });
+		const snapshotted = Promise.withResolvers<void>();
+		const getState = RpcClient.prototype.getState;
+		vi.spyOn(RpcClient.prototype, "getState").mockImplementation(async function (this: RpcClient) {
+			const state = await getState.call(this);
+			snapshotted.resolve();
+			return state;
+		});
+		const waiting = runHostSessionRequest({ action: "wait", target, ref, until: "done", timeoutMs: 20_000 });
+		await snapshotted.promise;
+		if (fake instanceof HeldAnthropicModel) fake.release();
+		expect(await waiting).toMatchObject({
+			exitCode: 0,
+			payload: { action: "wait", outcome: "done", state: { isStreaming: false } },
+		});
+		expect(
+			await runHostSessionRequest({ action: "wait", target, ref, until: "idle", timeoutMs: 20_000 }),
+		).toMatchObject({ exitCode: 0, payload: { outcome: "already_idle" } });
+	}, 120_000);
+
+	it("does not miss settlement delivered before the initial state reply", async () => {
+		const idle = { isStreaming: false, steering: [], followUp: [], ordered: [], pendingMessageCount: 0 };
+		const wire = await wireRig((call, send, reply) => {
+			if (call === 1) send({ type: "agent_settled", sessionId: "rpc-1" });
+			reply(idle);
+		});
+		expect(
+			await runHostSessionRequest({
+				action: "wait",
+				target: wire.target,
+				ref: "rpc-1",
+				until: "done",
+				timeoutMs: 1000,
+			}),
+		).toMatchObject({ exitCode: 0, payload: { outcome: "done" } });
+		expect(wire.stateReads()).toBe(2);
+	});
+
+	it("checks queues once per idle event and ignores low-level run and turn endings", async () => {
+		const wire = await wireRig((call, send, reply) => {
+			reply({
+				isStreaming: call === 1,
+				steering: call === 2 ? ["queued"] : [],
+				followUp: [],
+				ordered: [],
+				pendingMessageCount: call === 2 ? 1 : 0,
+			});
+			if (call === 1) {
+				send({ type: "turn_end", sessionId: "rpc-1" });
+				send({ type: "agent_end", sessionId: "rpc-1" });
+				send({ type: "agent_settled", sessionId: "rpc-1" });
+			}
+			if (call < 3) send({ type: "agent_idle", sessionId: "rpc-1" });
+		});
+		expect(
+			await runHostSessionRequest({
+				action: "wait",
+				target: wire.target,
+				ref: "rpc-1",
+				until: "idle",
+				timeoutMs: 1000,
+			}),
+		).toMatchObject({ exitCode: 0, payload: { outcome: "idle" } });
+		expect(wire.stateReads()).toBe(3);
+	});
+
+	it.each(["session_closed", "session_parked", "synthetic_settle"])(
+		"reports terminal %s without reading a dead session",
+		async (kind) => {
+			const wire = await wireRig((_call, send) => {
+				send(
+					kind === "synthetic_settle"
+						? { type: "agent_settled", sessionId: "rpc-1", reason: "session_closed" }
+						: { type: kind, sessionId: "rpc-1", reason: "host_shutdown" },
+				);
+			});
+			expect(
+				await runHostSessionRequest({
+					action: "wait",
+					target: wire.target,
+					ref: "rpc-1",
+					until: "done",
+					timeoutMs: 1000,
+				}),
+			).toMatchObject({ exitCode: 0, payload: { outcome: kind === "synthetic_settle" ? "session_closed" : kind } });
+		},
+	);
+
+	it("reports a lost transport instead of waiting for its deadline", async () => {
+		const wire = await wireRig((_call, _send, _reply, socket) => socket.destroy());
+		expect(
+			await runHostSessionRequest({
+				action: "wait",
+				target: wire.target,
+				ref: "rpc-1",
+				until: "done",
+				timeoutMs: 1000,
+			}),
+		).toMatchObject({ exitCode: 1, payload: { reason: "transport_gone" } });
+	});
+
+	it("times out a held turn and leaves it available to abort", async () => {
+		const { target, ref } = await rig(true);
+		await runHostSessionRequest({ action: "prompt", target, ref, text: "held timeout" });
+		expect(await runHostSessionRequest({ action: "wait", target, ref, until: "done", timeoutMs: 10 })).toMatchObject({
+			exitCode: 1,
+			payload: { reason: "wait_timeout", timeoutMs: 10 },
+		});
+		expect(await runHostSessionRequest({ action: "abort", target, ref })).toMatchObject({ exitCode: 0 });
+	}, 120_000);
+
 	it("reads append-order cursors, tails, context messages, state and observe-only listings", async () => {
 		const { client, opened, target, ref } = await rig();
 		await client.openSession({ sessionPath: String(opened.payload.sessionPath) });

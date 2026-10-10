@@ -16,7 +16,14 @@ import {
 	refusal,
 } from "./host-outcome.ts";
 import type { HostTarget } from "./host-runner.ts";
-import { isTransportGoneError, RpcClient, RpcCommandError } from "./rpc-client.ts";
+import {
+	isTransportGoneError,
+	RpcClient,
+	type RpcClientEvent,
+	RpcCommandError,
+	type RpcTransportGoneError,
+} from "./rpc-client.ts";
+import type { RpcSessionClosedEvent, RpcSessionState } from "./rpc-types.ts";
 
 /** Routing handles last one host epoch; keep a durable id or path across parking and handoff. */
 export type SessionRef = string;
@@ -121,6 +128,7 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 	const { socket, agentDir } = request.target;
 	let client: RpcClient | undefined;
 	let ensured: EnsuredHost | undefined;
+	let disconnected: ((error: RpcTransportGoneError) => void) | undefined;
 	try {
 		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {
 			return refusal("refuse", undefined, { reason: "unsupported_endpoint_kind", socket, endpoint_kind: "tui" });
@@ -141,7 +149,7 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 				);
 			}
 		}
-		client = new RpcClient({ socketPath: socket });
+		client = new RpcClient({ socketPath: socket, onDisconnect: (error) => disconnected?.(error) });
 		try {
 			await client.start();
 		} catch (error) {
@@ -253,8 +261,93 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 					},
 				};
 			}
+			case "wait": {
+				const attached = client;
+				const started = Date.now();
+				return await new Promise<HostOutcome>((resolveWait, reject) => {
+					let finished = false;
+					let observed = false;
+					let state: RpcSessionState | undefined;
+					let timer: ReturnType<typeof setTimeout> | undefined;
+					const cleanup = () => {
+						finished = true;
+						clearTimeout(timer);
+						unsubscribe();
+						disconnected = undefined;
+					};
+					const fail = (error: unknown) => {
+						if (finished) return;
+						cleanup();
+						reject(error);
+					};
+					const finish = (outcome: string) => {
+						if (finished) return;
+						cleanup();
+						resolveWait({
+							exitCode: HOST_EXIT_OK,
+							payload: {
+								action: "wait",
+								sessionId,
+								until: request.until,
+								outcome,
+								waited_ms: Date.now() - started,
+								state: {
+									isStreaming: state?.isStreaming ?? false,
+									pendingMessageCount: state?.pendingMessageCount ?? 0,
+									lastAbortSource: state?.lastAbortSource ?? null,
+								},
+							},
+						});
+					};
+					// Subscribe BEFORE the snapshot, including when settlement arrives with that reply.
+					const unsubscribe = attached.onEvent((record) => {
+						const event = record as RpcClientEvent | RpcSessionClosedEvent;
+						if (event.type === "session_closed" || event.type === "session_parked") {
+							finish(event.type);
+							return;
+						}
+						if (event.type === "agent_settled" && "reason" in event && event.reason === "session_closed") {
+							finish("session_closed");
+							return;
+						}
+						if (event.type !== "agent_idle" && !(request.until === "done" && event.type === "agent_settled"))
+							return;
+						observed = true;
+						void attached.getState().then((snapshot) => {
+							state = snapshot;
+							if (request.until === "done") finish("done");
+							else if (
+								!snapshot.isStreaming &&
+								snapshot.steering.length === 0 &&
+								snapshot.followUp.length === 0 &&
+								snapshot.ordered.length === 0 &&
+								snapshot.pendingMessageCount === 0
+							)
+								finish("idle");
+						}, fail);
+					});
+					disconnected = fail;
+					timer = setTimeout(() => {
+						if (finished) return;
+						cleanup();
+						resolveWait({
+							exitCode: HOST_EXIT_ERROR,
+							payload: {
+								action: "error",
+								reason: "wait_timeout",
+								sessionId,
+								until: request.until,
+								timeoutMs: request.timeoutMs,
+							},
+						});
+					}, request.timeoutMs);
+					void attached.getState().then((snapshot) => {
+						state = snapshot;
+						if (!snapshot.isStreaming && !observed) finish("already_idle");
+					}, fail);
+				});
+			}
 			case "close":
-			case "wait":
 				throw new Error(`Session command not implemented: ${request.action}`);
 			default:
 				return assertNever(request);
