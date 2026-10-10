@@ -30,6 +30,11 @@ describe("runtime dependency payload (#3083)", () => {
 		write(join(dep, "CONTRIBUTING.md"), "# inert\n");
 		write(join(dep, "LICENSE.md"), "MIT\n");
 		write(join(dep, "dist/data.json"), '{"answer":42}\n');
+		write(
+			join(modules, "skill-pkg/package.json"),
+			JSON.stringify({ name: "skill-pkg", main: "index.js", pi: "SKILL.md" }),
+		);
+		write(join(modules, "skill-pkg/SKILL.md"), "# declared root skill\n");
 		// An export can legitimately live in a directory otherwise mistaken for documentation.
 		write(
 			join(modules, "native-helper/package.json"),
@@ -63,6 +68,7 @@ describe("runtime dependency payload (#3083)", () => {
 		expect(readFileSync(join(copied, "native-helper/docs/index.js"), "utf8")).toContain("kept");
 		expect(readFileSync(join(copied, "nested-dep/dist/data.json"), "utf8")).toBe('{"answer":42}\n');
 		expect(existsSync(join(copied, "native-ext/prebuilds/native.node"))).toBe(true);
+		expect(readFileSync(join(copied, "skill-pkg/SKILL.md"), "utf8")).toContain("declared root skill");
 		expect(existsSync(join(copied, "skill-pkg/src/skill/demo/SKILL.md"))).toBe(true);
 	});
 });
