@@ -18,6 +18,26 @@
 - `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: source bookkeeping and importer result.
 - `packages/coding-agent/src/core/extensions/extension-module-cache.ts`: importer contract and freshness check.
 
+## 2026-10-10 — Shared prompt-preset resolution contract (omo #9851)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts` (new): the model-id matchers and `extract*` helpers moved out of `presets.ts`, now exported. `presets.ts` re-imports them; behavior is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts` (new): a pure, settings-free `resolvePresetName({ providerID, modelID, name? })` replicating the auto-resolution branch, plus `PROMPT_PRESET_MODEL_CASES` (one representative id per auto-resolvable preset) and `AUTO_RESOLVED_PRESET_NAMES`.
+- `packages/coding-agent/package.json`: new public `./prompt-presets` export subpath serving the contract.
+
+### Why
+
+The OmO plugin's per-model prompt routing (oh-my-openagent #9856) must resolve model ids to the same presets as the runtime. The resolution logic was internal to this package and not exported, so there was no shared source of truth to pin a cross-repo parity test against. The contract module is the single source of truth; `gpt-5` is a manual-only preset (no model matcher), so the auto-resolvable set intentionally excludes it.
+
+### Why an extension could not handle it
+
+The matchers and precedence live in the builtin prompt-preset extension's own resolution path; exporting them is a change to that module's public surface, not something a separate extension can provide.
+
+### Expected merge conflict zones
+
+The matcher/helper block that moved from `presets.ts` to `matchers.ts`, and the `exports` map in `package.json`.
+
 ## 2026-10-08 - A required question never tells the model to proceed without an answer (senpi#2949)
 
 ### What changed
