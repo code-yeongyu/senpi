@@ -20,7 +20,7 @@
 	"scripts": {
 		"gate": "bun scripts/gate-eval.ts",
 		"bench": "bun scripts/bench-eval.ts",
-		"test": "vitest run test/",
+		"test": "node ../../scripts/run-tests.mjs vitest run test/",
 		"clean": "node -e \"\"",
 		"build": "node -e \"\""
 	},

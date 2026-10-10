@@ -10,7 +10,7 @@
 		"build:native:darwin": "native/darwin/build.sh",
 		"build:native:linux": "native/linux/build.sh",
 		"build:native:win32": "node native/win32/build.mjs",
-		"test": "node --test --import tsx --import ./test/setup-multiplexer-env.mjs --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts",
+		"test": "node ../../scripts/run-tests.mjs node --test --import tsx --import ./test/setup-multiplexer-env.mjs --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts",
 		"prepublishOnly": "npm run clean && npm run build",
 		"bench:frame-cost": "tsx bench/frame-cost.ts"
 	},

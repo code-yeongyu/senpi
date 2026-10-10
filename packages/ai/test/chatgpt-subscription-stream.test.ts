@@ -1,9 +1,9 @@
-import { mkdtempSync } from "node:fs";
 import { arch, platform, release, tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { makeTempDir as mkdtempSync } from "../../../scripts/vitest-temp.ts";
 import {
 	closeChatGptSubscriptionWebSocketSessions,
 	getChatGptSubscriptionWebSocketDebugStats,

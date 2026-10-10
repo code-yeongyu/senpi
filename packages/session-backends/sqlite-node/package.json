@@ -20,8 +20,8 @@
 		"clean": "node -e \"import('node:fs/promises').then(fs=>fs.rm('dist',{recursive:true,force:true}))\"",
 		"build": "tsc -p tsconfig.build.json && node scripts/copy-migrations.mjs",
 		"bench:session:timing": "vitest bench --config vitest.benchmark.config.ts",
-		"test": "vitest --run",
-		"coverage": "vitest --run --coverage",
+		"test": "node ../../../scripts/run-tests.mjs vitest --run",
+		"coverage": "node ../../../scripts/run-tests.mjs vitest --run --coverage",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"author": "Earendil Works",

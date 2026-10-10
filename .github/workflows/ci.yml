@@ -15,6 +15,9 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  SENPI_TEST_TEMP_GUARD: "1"
+
 jobs:
   codemode-gate:
     name: codemode-gate
@@ -53,7 +56,7 @@ jobs:
       - name: Build workspace entries
         run: bun packages/senpi-codemode/scripts/gate-build.ts
       - name: Eval regression gate
-        run: bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
+        run: node scripts/run-tests.mjs bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
       - name: Codemode package tests (including gate regressions)
         run: bun run --cwd packages/senpi-codemode test -- test/gate
       - name: Gate harness types
@@ -159,7 +162,7 @@ jobs:
 
       - name: Test shard
         timeout-minutes: 25
-        run: npx vitest run --shard=${{ matrix.shard }}/3
+        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/3
         working-directory: packages/coding-agent
 
       - name: Workflow summary
@@ -225,7 +228,7 @@ jobs:
           export SENPI_GREP_NATIVE_PATH="$PWD/$node_file"
           cd packages/coding-agent
           echo "engine=native"
-          SENPI_GREP_ENGINE=native bunx vitest run test/grep --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/grep-native-contract.json"
+          SENPI_GREP_ENGINE=native node ../../scripts/run-tests.mjs vitest run test/grep --reporter=default --reporter=json --outputFile="$RUNNER_TEMP/grep-native-contract.json"
           node --input-type=module <<'NODE'
           import assert from "node:assert/strict";
           import { readFileSync } from "node:fs";
@@ -236,7 +239,7 @@ jobs:
           console.log(`engine=native engine-contract.native.test.ts: ${contract.assertionResults.length} passed, 0 skipped`);
           NODE
           echo "engine=rg"
-          SENPI_GREP_ENGINE=rg bunx vitest run test/grep
+          SENPI_GREP_ENGINE=rg node ../../scripts/run-tests.mjs vitest run test/grep
 
   hooks-trust-storage-windows:
     name: Hooks trust storage (Windows)
@@ -256,7 +259,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Run hooks trust-storage regressions
-        run: npx vitest run test/suite/hooks-trust.test.ts test/suite/hooks-trust-storage-errors.test.ts test/suite/hooks-trust-storage-release-errors.test.ts test/suite/hooks-trust-storage-aba.test.ts
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/hooks-trust.test.ts test/suite/hooks-trust-storage-errors.test.ts test/suite/hooks-trust-storage-release-errors.test.ts test/suite/hooks-trust-storage-aba.test.ts
         working-directory: packages/coding-agent
 
   # Durable scheduled prompts: rename claims, runner leases, ungated delivery locks, taskkill
@@ -283,7 +286,7 @@ jobs:
         run: npm run build
 
       - name: Run scheduled-prompt suites
-        run: npx vitest run test/suite/schedule-runner.test.ts test/suite/schedule-extension.test.ts test/suite/schedule-cli.test.ts
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/schedule-runner.test.ts test/suite/schedule-extension.test.ts test/suite/schedule-cli.test.ts
         working-directory: packages/coding-agent
 
   rpc-windows:
@@ -314,39 +317,39 @@ jobs:
       # Each suite runs in its own process; lifecycle failures are not retried in-process. The verbose
       # reporter names every test in the log, so a Windows-only case is provably run, not just counted.
       - name: Run RPC host ensure tests
-        run: bunx vitest run test/rpc-host-ensure.test.ts --reporter=verbose
+        run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-ensure.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC host lifecycle tests
-        run: bunx vitest run test/rpc-host-lifecycle.test.ts --reporter=verbose
+        run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-lifecycle.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run RPC socket transport tests
         shell: bash
-        run: bunx vitest run test/rpc-socket-transport.test.ts --reporter=verbose --reporter=json --outputFile=vitest-socket-transport.json
+        run: node ../../scripts/run-tests.mjs vitest run test/rpc-socket-transport.test.ts --reporter=verbose --reporter=json --outputFile=vitest-socket-transport.json
         working-directory: packages/coding-agent
 
       # The `senpi host` contract over the named-pipe transport: a second ensure reuses the daemon
       # on the pipe, and a generation handoff refuses (a pipe can be neither renamed nor drained).
       - name: Run senpi host CLI tests (named pipes)
-        run: bunx vitest run test/suite/host-cli-win32.test.ts --reporter=verbose
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/host-cli-win32.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       - name: Run app-server daemon tests
-        run: bunx vitest run test/suite/app-server-daemon.test.ts --reporter=verbose
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/app-server-daemon.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       # endpoint.json written and read back on Windows paths: registry_version, endpoint_kind, and a
       # legacy record read as rpc_host.
       - name: Run endpoint registry tests
-        run: bunx vitest run test/suite/rpc-endpoint-registry.test.ts --reporter=verbose
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/rpc-endpoint-registry.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       # The session gateway is POSIX-only: an interactive TUI on win32 starts normally, its endpoint
       # request answers unsupported_platform, and nothing is registered.
       - name: Run interactive TUI control endpoint tests (win32)
         shell: bash
-        run: bunx vitest run test/suite/interactive-session-control-win32.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/interactive-session-control-win32.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
         working-directory: packages/coding-agent
 
       # A skipped suite exits 0: fail unless the win32-only cases (the named-pipe wrong-secret test and
@@ -396,12 +399,12 @@ jobs:
 
       - name: Verify native importer
         shell: bash
-        run: npx vitest run test/extensions/bun-extension-importer.test.ts test/extensions/bun-extension-regressions.test.ts
+        run: node ../../scripts/run-tests.mjs vitest run test/extensions/bun-extension-importer.test.ts test/extensions/bun-extension-regressions.test.ts
         working-directory: packages/coding-agent
 
       - name: Verify relocated compiled extensions
         shell: bash
-        run: bun test scripts/compiled-extension-platform.test.ts scripts/compiled-extension-load.test.ts
+        run: node scripts/run-tests.mjs bun test scripts/compiled-extension-platform.test.ts scripts/compiled-extension-load.test.ts
 
   # omo#8700: npm installs Claude Code on Windows as a claude.cmd shim around bin\claude.exe. The
   # shim-resolution test only runs on a real Windows host, under Node and under Bun (the omo engine
@@ -430,12 +433,12 @@ jobs:
 
       - name: Run Claude executable resolution tests (Node)
         shell: bash
-        run: npx vitest run test/anthropic-subscription-executable-path-lookup.test.ts test/anthropic-subscription-executable-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-node.json
+        run: node ../../scripts/run-tests.mjs vitest run test/anthropic-subscription-executable-path-lookup.test.ts test/anthropic-subscription-executable-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-node.json
         working-directory: packages/coding-agent
 
       - name: Run Claude executable shim test (Bun)
         shell: bash
-        run: bunx --bun vitest run test/anthropic-subscription-executable-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-bun.json
+        run: bun ../../scripts/run-tests.mjs vitest run test/anthropic-subscription-executable-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-bun.json
         working-directory: packages/coding-agent
 
       - name: Require the Windows shim test to have executed
@@ -480,7 +483,7 @@ jobs:
 
       - name: Run the bash grandchild console probe
         shell: bash
-        run: bunx vitest run test/bash-grandchild-console-windows.test.ts --reporter=verbose --reporter=json --outputFile=vitest-console.json
+        run: node ../../scripts/run-tests.mjs vitest run test/bash-grandchild-console-windows.test.ts --reporter=verbose --reporter=json --outputFile=vitest-console.json
         working-directory: packages/coding-agent
         env:
           SENPI_CONSOLE_PROBE_RESULTS: console-probe-results.jsonl
@@ -540,7 +543,7 @@ jobs:
           SENPI_WEBVIEW_READINESS_LOG: ${{ runner.temp }}/webview-readiness.log
         run: |
           out="$RUNNER_TEMP/vitest-webview.txt"
-          bunx --bun vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts test/js-kernel-webview-readiness.test.ts --reporter=verbose --reporter=hanging-process --reporter=json --outputFile=vitest-webview.json > "$out" 2>&1 &
+          bun ../../scripts/run-tests.mjs vitest run test/js-kernel-webview.test.ts test/js-kernel-webview-lifecycle.test.ts test/js-kernel-webview-resilience.test.ts test/js-kernel-webview-launch.test.ts test/js-kernel-webview-readiness.test.ts --reporter=verbose --reporter=hanging-process --reporter=json --outputFile=vitest-webview.json > "$out" 2>&1 &
           suite=$!
           for _ in $(seq 1 540); do kill -0 "$suite" 2>/dev/null || break; sleep 1; done
           if kill -0 "$suite" 2>/dev/null; then
@@ -618,7 +621,7 @@ jobs:
       # (senpi#2706: a Linux spawn's stdout is a socket) fails here instead of shipping.
       - name: Run the process-mode kernel suite
         timeout-minutes: 12
-        run: npx vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
+        run: node ../../scripts/run-tests.mjs vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
         working-directory: packages/senpi-codemode
 
       # Runs whatever the suite's outcome: a failed run is when a kernel child is most likely to leak.
@@ -664,19 +667,19 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Slow and hung bootstrap regressions
         working-directory: packages/senpi-codemode
-        run: bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
+        run: bun ../../scripts/run-tests.mjs vitest run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
       - name: Python environments stay inside the revision on Windows
         working-directory: packages/senpi-codemode
         shell: pwsh
         run: |
-          bun ../../node_modules/vitest/vitest.mjs run test/environments/py-environment.test.ts -t "pip config file|staged revision|null device" --reporter=default --reporter=json --outputFile="$env:RUNNER_TEMP/py-env-win.json"
+          bun ../../scripts/run-tests.mjs vitest run test/environments/py-environment.test.ts -t "pip config file|staged revision|null device" --reporter=default --reporter=json --outputFile="$env:RUNNER_TEMP/py-env-win.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # A skipped test is not a pass: the pip-config case must have run on this Windows interpreter.
           bun -e "const r = JSON.parse(await Bun.file(process.argv[1]).text()); const t = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.startsWith('When a pip config file names a root')); const d = r.testResults.flatMap((f) => f.assertionResults).find((a) => a.title.includes('pointed at the null device')); if (!t || t.status !== 'passed' || !d || d.status !== 'passed') { console.error('pip config test: ' + (t ? t.status : 'missing') + ', null device test: ' + (d ? d.status : 'missing')); process.exit(1) }" "$env:RUNNER_TEMP/py-env-win.json"
       # Plan node 11: Python kernel tools serve callbacks on threads beside a SIGTERM-only interrupt; run them on Windows too.
       - name: Kernel-tool suites
         working-directory: packages/senpi-codemode
-        run: python --version && bun ../../node_modules/vitest/vitest.mjs run test/py-kernel-tools.test.ts test/kernel-tools-registry.test.ts test/kernel-tools-reentrancy.test.ts --reporter=default --reporter=json --outputFile.json=vitest-kernel-tools.json
+        run: python --version && bun ../../scripts/run-tests.mjs vitest run test/py-kernel-tools.test.ts test/kernel-tools-registry.test.ts test/kernel-tools-reentrancy.test.ts --reporter=default --reporter=json --outputFile.json=vitest-kernel-tools.json
       - name: Require the kernel-tool suites to have executed
         shell: bash
         run: |
@@ -706,7 +709,7 @@ jobs:
       - name: Packaged cold and warm Python cells
         shell: pwsh
         run: |
-          & "$env:RUNNER_TEMP/python-host/python-host.exe"
+          bun scripts/run-tests.mjs "$env:RUNNER_TEMP/python-host/python-host.exe"
           exit $LASTEXITCODE
 
   test-workspaces:
@@ -743,17 +746,17 @@ jobs:
       - name: Fresh release entry graphs (codemode and exclusions)
         run: |
           npm rebuild canvas --foreground-scripts
-          bun test scripts/release-graph-codemode.test.ts
-          bun test scripts/release-graph-exclusions.test.ts
+          node scripts/run-tests.mjs bun test scripts/release-graph-codemode.test.ts
+          node scripts/run-tests.mjs bun test scripts/release-graph-exclusions.test.ts
 
       - name: Node bundle isolation and RPC smoke
         run: |
-          bun test scripts/node-bundle-provider-isolation.test.ts
-          bun test scripts/node-bundle-smoke.test.ts
-          bun test scripts/node-bundle-cursor-exec.test.ts
-          bun test scripts/node-bundle-reinstall.test.ts
-          bun test scripts/bun-bundle-provider-coverage.test.ts
-          bun test scripts/compiled-provider-probe.test.ts
+          node scripts/run-tests.mjs bun test scripts/node-bundle-provider-isolation.test.ts
+          node scripts/run-tests.mjs bun test scripts/node-bundle-smoke.test.ts
+          node scripts/run-tests.mjs bun test scripts/node-bundle-cursor-exec.test.ts
+          node scripts/run-tests.mjs bun test scripts/node-bundle-reinstall.test.ts
+          node scripts/run-tests.mjs bun test scripts/bun-bundle-provider-coverage.test.ts
+          node scripts/run-tests.mjs bun test scripts/compiled-provider-probe.test.ts
 
       - name: Script tests
         run: npm run test:scripts
@@ -815,7 +818,7 @@ jobs:
       - name: Supervisor owner, normal-stop and compiler regressions
         working-directory: packages/coding-agent
         run: >
-          npx vitest run
+          node ../../scripts/run-tests.mjs vitest run
           test/suite/regressions/3044-rpc-owner-lifetime.test.ts
           test/suite/regressions/3045-owner-review.test.ts
           test/suite/regressions/3054-supervisor-child-exit.test.ts
@@ -912,7 +915,7 @@ jobs:
 
       - name: Terminal extension + shell resolution tests
         shell: bash
-        run: npx vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts test/suite/regressions/issue-1229-win-fswatch-noncanonical-abort.test.ts
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts test/suite/regressions/issue-1229-win-fswatch-noncanonical-abort.test.ts
         working-directory: packages/coding-agent
 
   inspector-handoff:
@@ -940,7 +943,7 @@ jobs:
         run: npm run build
 
       - name: Run Inspector handoff regression
-        run: npx vitest run test/suite/regressions/inspector-endpoint-handoff.test.ts
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/regressions/inspector-endpoint-handoff.test.ts
         working-directory: packages/coding-agent
 
       - name: Summarize Inspector handoff

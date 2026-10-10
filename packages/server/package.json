@@ -28,7 +28,7 @@
 		"clean": "shx rm -rf dist",
 		"dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
 		"build": "tsc -p tsconfig.build.json",
-		"test": "vitest --run",
+		"test": "node ../../scripts/run-tests.mjs vitest --run",
 		"typecheck": "tsc -p tsconfig.test.json",
 		"prepublishOnly": "npm run clean && npm run build"
 	},

@@ -8,7 +8,7 @@
 		"eval": "npm run eval:host && npm run eval:docs --",
 		"eval:host": "node scripts/run-evals.mjs",
 		"eval:docs": "node --experimental-strip-types src/cli.ts",
-		"test": "vitest run --config vitest.test.config.ts"
+		"test": "node ../../scripts/run-tests.mjs vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
 		"@earendil-works/pi-ai": "^2026.10.10-12",

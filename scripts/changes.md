@@ -1,3 +1,22 @@
+## 2026-10-10 - Test invocations own their temporary storage (senpi#3064)
+
+### What changed
+
+- `scripts/run-tests.mjs`: launch test processes with a private TMPDIR/TEMP/TMP before Vitest initializes, remove that root after child exit, and forward catchable interrupts to the child's process group before teardown. CI compares sorted top-level temp names after cleanup, bounded at 100000 entries, and fails with each leftover name.
+- `scripts/vitest-temp.ts`: shared file-scoped fixture creation registers teardown even when an assertion fails.
+
+### Why
+
+- Vitest 5 forks write SSR transform copies into its core temp directory independently of cacheDir. Its core directory survives normal close; workers killed before project close also leave copies. Test fixtures without teardown add smaller directories.
+
+### Why an extension could not handle it
+
+- These are test-process bootstrap and fixture ownership rules, not agent runtime extension behavior.
+
+### Expected merge conflict zones
+
+- Test command wiring in package manifests and workflows; Vitest's temp-copy implementation should be rechecked after dependency upgrades.
+
 ## 2026-10-09 - The agent ./harness/env/nodejs entry graph allows one more file (senpi#2999)
 
 ### What changed

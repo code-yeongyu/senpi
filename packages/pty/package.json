@@ -34,7 +34,7 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json",
-		"test": "vitest --run test",
+		"test": "node ../../scripts/run-tests.mjs vitest --run test",
 		"check:prebuild": "node native/check-prebuild-fresh.mjs",
 		"prepublishOnly": "npm run clean && npm run build"
 	},

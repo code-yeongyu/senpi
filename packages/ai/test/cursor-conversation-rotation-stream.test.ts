@@ -1,10 +1,10 @@
-import { mkdtempSync } from "node:fs";
 import * as http2 from "node:http2";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { create, toBinary } from "@bufbuild/protobuf";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { makeTempDir as mkdtempSync } from "../../../scripts/vitest-temp.ts";
 import { AgentServerMessageSchema } from "../src/api/cursor-agent/gen/agent_pb.ts";
 import { frameConnectMessage, stream as streamCursorAgent } from "../src/api/cursor-agent.ts";
 import { CURSOR_CONVERSATION_POISONED_MESSAGE } from "../src/api/cursor-conversation-rotation.ts";
