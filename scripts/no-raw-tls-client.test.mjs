@@ -385,4 +385,81 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 			assert.deepEqual(evaluateShippedSource(scan, [pinnedCallEntry()]), { offenders: [], stale: [] });
 		});
 	});
+describe("review round: tracked-only scan, binding pins, widened forms (failing-first)", () => {
+	it("catches the widened module-access and binding forms", () => {
+		const samples = [
+			["binding call", 'import { connect } from "node:http2"; export const go = (h) => connect(h);'],
+			["binding call", 'import { connect as h2c } from "node:http2"; h2c(h);'],
+			["binding call", 'import { get as g } from "node:https"; g(url);'],
+			["binding call", 'import { TLSSocket } from "node:tls"; new TLSSocket(sock);'],
+			["module access", 'import * as h2 from "node:http2"; h2.connect(h);'],
+			["module access", 'import h2 from "node:http2"; h2.connect(h);'],
+			["module access", 'process.getBuiltinModule("node:tls");'],
+			["module access", 'process.getBuiltinModule("https");'],
+			["module access", 'process.getBuiltinModule("node:http2");'],
+			["module access", 'export { connect } from "node:tls";'],
+			["module access", 'export * from "node:https";'],
+			["template import", "const m = await import(`node:tls`);"],
+			["template require", "const m = require(`node:https`);"],
+		];
+		for (const [kind, sample] of samples) {
+			assert.ok(findRawTlsClients(sample).length > 0, kind + " sample not caught: " + sample);
+		}
+	});
+
+	it("does not flag inert neighbors", () => {
+		const samples = [
+			'import { createServer } from "node:http2"; createServer(h);',
+			'import { createServer } from "node:https";',
+			'import { connect } from "node:tlsx"; connect(h);',
+			'import type { Agent } from "node:https";',
+			'import { connect } from "node:tls";',
+		];
+		for (const sample of samples) {
+			assert.deepEqual(findRawTlsClients(sample), [], "unexpected hit: " + sample);
+		}
+	});
+
+	it("pins a named-import binding by its call; import-pinned entries go stale", () => {
+		const entries = [
+			{ file: "pkg/b.mjs", call: 'httpsGet(url, { redaction: "none" })', count: 2, reason: "host is a literal" },
+		];
+		const exact = [
+			{ path: "pkg/b.mjs", content: 'import { get as httpsGet } from "node:https";\nhttpsGet(url, { redaction: "none" });\nhttpsGet(url, { redaction: "none" });\n' },
+		];
+		assert.deepEqual(evaluateShippedSource(exact, entries), { offenders: [], stale: [] });
+		const extra = [
+			{ path: "pkg/b.mjs", content: 'import { get as httpsGet } from "node:https";\nhttpsGet(url, { redaction: "none" });\nhttpsGet(url, { redaction: "none" });\nhttpsGet({ host, servername: host });\n' },
+		];
+		assert.ok(evaluateShippedSource(extra, entries).offenders.length > 0, "new binding call must fail");
+		const importPinned = [
+			{ file: "pkg/b.mjs", call: 'import { get as httpsGet } from "node:https"', count: 1, reason: "x" },
+		];
+		assert.ok(evaluateShippedSource(exact, importPinned).stale.length > 0, "import-pinned entries must go stale");
+	});
+
+	it("keeps string contents distinct when normalizing", () => {
+		const paren = findRawTlsClients('tls.connect({ host: ")" + h });');
+		assert.equal(paren[0].text, 'tls.connect({ host: ")" + h })');
+		const withSpaces = findRawTlsClients('tls.connect({ host: "a  b" });');
+		const single = findRawTlsClients('tls.connect({ host: "a b" });');
+		assert.notEqual(withSpaces[0].text, single[0].text);
+		const long1 = 'tls.connect({ pad: "' + "x".repeat(500) + '" });';
+		const long2 = 'tls.connect({ pad: "' + "x".repeat(499) + 'y" });';
+		assert.notEqual(findRawTlsClients(long1)[0].text, findRawTlsClients(long2)[0].text);
+	});
+
+	it("collects only tracked files", () => {
+		const tracked = new Set(listTrackedFiles());
+		for (const file of collectShippedSourceFiles()) {
+			assert.ok(tracked.has(file), "untracked file scanned: " + file);
+		}
+		assert.ok(collectShippedSourceFiles().includes("packages/ai/src/api/cursor-agent.ts"));
+	});
+
+	it("tolerates only ENOENT when reading sources", () => {
+		assert.equal(readSourceFile(path.join(REPO_ROOT, "definitely-missing-file.ts")), null);
+		assert.throws(() => readSourceFile(path.join(REPO_ROOT, "scripts")));
+	});
+});
 });
