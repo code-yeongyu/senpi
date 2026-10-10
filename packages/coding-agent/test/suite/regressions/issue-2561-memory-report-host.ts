@@ -44,6 +44,8 @@ export interface MemoryReportHost {
 	readonly memoryDir: string;
 	readonly holdMarker: string;
 	stderr(): string;
+	/** Resolves once stderr contains `text`; rejects after `deadlineMs` with what stderr held. */
+	waitForStderr(text: string, deadlineMs: number): Promise<void>;
 	request(command: RecordValue): Promise<RecordValue>;
 	runCommand(name: string): Promise<void>;
 }
@@ -115,6 +117,22 @@ export async function startMemoryReportHost(env: Readonly<Record<string, string>
 		memoryDir: join(root, "session-artifacts", "memory"),
 		holdMarker,
 		stderr: () => stderr,
+		// stderr and the stdout reply are separate pipes, so a line written before the reply can still arrive after it.
+		waitForStderr: (text, deadlineMs) =>
+			new Promise<void>((resolve, reject) => {
+				const onData = (): void => {
+					if (!stderr.includes(text)) return;
+					clearTimeout(timer);
+					child.stderr.off("data", onData);
+					resolve();
+				};
+				const timer = setTimeout(() => {
+					child.stderr.off("data", onData);
+					reject(new Error(`stderr never contained ${JSON.stringify(text)} within ${deadlineMs} ms; got: ${JSON.stringify(stderr)}`));
+				}, deadlineMs);
+				child.stderr.on("data", onData);
+				onData();
+			}),
 		request,
 		async runCommand(name) {
 			const done = waitForJsonLine(
