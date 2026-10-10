@@ -1,3 +1,21 @@
+## 2026-10-10 - Re-register a stale dynamic OAuth client when the flow's redirect URI differs
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts`: `runInteractive` and `runAuthStart` now call `dropStaleRegistration` before `beginAuthorization`. When the stored dynamic registration (`clientInfo.redirect_uris`) does not include the redirect URI the flow will send, the stored registration is dropped (`invalidateCredentials("client")`) so the SDK registers a fresh client whose metadata matches the flow. A registration whose redirect URI matches is kept.
+
+### Why
+
+- Background connects register the placeholder `http://127.0.0.1:0/callback` (`BACKGROUND_REDIRECT` in `context.ts`), while the interactive loopback flow binds a real ephemeral port. The SDK reuses a stored registration across flows, so the authorize request sent a `redirect_uri` the registration did not name. Authorization servers that validate `redirect_uri` exactly (e.g. Neon) show the consent screen and then reject after approval with "Invalid redirect URI"; every retry reused the same poisoned registration, so the flow could never complete. Observed live against `https://mcp.neon.tech/mcp`: a background connect registered `http://127.0.0.1:0/callback`, and `/mcp auth` then failed after consent with "Invalid redirect URI" for its `http://127.0.0.1:<port>/callback`.
+
+### Why an extension could not handle it
+
+- The dynamic registration and its reuse live in the MCP builtin's OAuth provider and token store; only the auth flow runners can drop it before `beginAuthorization`.
+
+### Expected merge conflict zones
+
+- `dropStaleRegistration` and the `beginAuthorization` calls in `runInteractive` and `runAuthStart` in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/commands-auth.ts`.
+
 ## 2026-10-10 - Unsubscribe the control-inventory listeners on a reload, not only on quit
 
 ### What changed
