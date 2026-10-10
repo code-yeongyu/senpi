@@ -55,24 +55,27 @@ test("job teardown retires only recorded run roots, including a late recreated r
 		const exported = spawnSync(process.execPath, [guard, "snapshot", receipt, "--export-env"], options);
 		assert.ifError(exported.error);
 		assert.equal(exported.status, 0, exported.stderr);
-		const { registry } = JSON.parse(readFileSync(receipt, "utf8"));
-		assert.equal(readFileSync(environmentFile, "utf8"), `SENPI_TEST_TEMP_REGISTRY=${registry}\n`);
+		const { registry, scope, environment } = JSON.parse(readFileSync(receipt, "utf8"));
+		assert.equal(readFileSync(environmentFile, "utf8"), `TMPDIR=${scope}\nTEMP=${scope}\nTMP=${scope}\nSENPI_TEST_TEMP_REGISTRY=${registry}\n`);
 		const ran = spawnSync(process.execPath, [runner, process.execPath, "-e", ""], {
-			...options, env: { ...options.env, SENPI_TEST_TEMP_REGISTRY: registry },
+			...options, env: { ...options.env, TMPDIR: scope, TEMP: scope, TMP: scope, SENPI_TEST_TEMP_REGISTRY: registry },
 		});
 		assert.ifError(ran.error);
 		assert.equal(ran.status, 0, ran.stderr);
 		const root = JSON.parse(readFileSync(registry, "utf8").trim());
 		mkdirSync(root);
 		writeFileSync(join(root, "late-worker-write"), "owned");
-		const unowned = join(directory, "st-unowned");
+		const unowned = join(scope, "st-unowned");
 		mkdirSync(unowned);
 		const checked = spawnSync(process.execPath, [guard, "check", receipt], options);
 		assert.ifError(checked.error);
 		assert.equal(checked.status, 1);
 		assert.match(checked.stdout, /recorded owned roots retired at job teardown: 1/);
 		assert.match(checked.stderr, /leftover: "st-unowned"/);
-		assert.deepEqual(readdirSync(directory), ["st-unowned"]);
+		assert.equal(existsSync(scope), false, "the exclusive job parent is removed even on leak failure");
+		assert.equal(readFileSync(environmentFile, "utf8"),
+			`TMPDIR=${scope}\nTEMP=${scope}\nTMP=${scope}\nSENPI_TEST_TEMP_REGISTRY=${registry}\n` +
+			Object.entries(environment).map(([name, value]) => `${name}=${value}\n`).join(""));
 	} finally {
 		rmSync(parent, { recursive: true, force: true });
 	}
