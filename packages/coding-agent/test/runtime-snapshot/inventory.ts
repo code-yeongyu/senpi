@@ -6,6 +6,7 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
@@ -94,8 +95,9 @@ export function inventoryRuntime(snapshot: string, state: string, runtime: strin
 		),
 	].sort();
 	assert(paths.length > 0, "resolver instrumentation must observe runtime modules");
+	const snapshotRoot = realpathSync(snapshot);
 	for (const path of paths) {
-		const inside = relative(snapshot, path);
+		const inside = relative(snapshotRoot, realpathSync(path));
 		assert(!isAbsolute(inside) && !inside.startsWith(".."), `runtime escaped its snapshot: ${path}`);
 	}
 	return paths;
