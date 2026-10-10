@@ -1,9 +1,9 @@
 import { convertToLlm } from "../../../messages.ts";
 import type { ContextEvent, ExtensionContext } from "../../types.ts";
 import {
-	BUILTIN_CONTEXT_REDUCTION_OPTIONS,
-	reduceContextMessages,
-	shouldApplyContextReduction,
+	type ContextReductionState,
+	createContextReductionState,
+	reduceContextWithFrontier,
 } from "./context-reduction.ts";
 import { markOpenAiRemoteReplayBoundary } from "./openai-remote.ts";
 import { isOpenAiRemoteCompactionModel } from "./openai-remote-model.ts";
@@ -24,6 +24,10 @@ export function buildCompactionContext(input: {
 	toolAdmissionEnabled: boolean;
 	breakerFallback: boolean;
 	laneOwnsCompaction: boolean;
+	contextReductionState?: ContextReductionState;
+	contextOverheadTokens?: number;
+	/** The smaller of the compaction threshold and the reserved prompt budget. */
+	reductionCeilingTokens?: number;
 	/**
 	 * The lane replays into a resident transcript that only accepts appends, so no per-turn reduction
 	 * runs, including the breaker fallback: a rewrite of an already-sent message diverges it.
@@ -45,13 +49,14 @@ export function buildCompactionContext(input: {
 	const sourceMessages =
 		!input.laneOwnsCompaction &&
 		input.appendOnlyTranscript !== true &&
-		(input.breakerFallback ||
-			shouldApplyContextReduction({
-				usageTokens: input.ctx.getContextUsage()?.tokens ?? null,
-				contextWindow: input.contextWindow,
-				isProviderNativeCompactionPath: isOpenAiRemoteCompactionModel(input.ctx.model) || input.laneOwnsCompaction,
-			}))
-			? reduceContextMessages(admittedMessages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
+		!isOpenAiRemoteCompactionModel(input.ctx.model)
+			? reduceContextWithFrontier(admittedMessages, input.contextReductionState ?? createContextReductionState(), {
+					unreducedMessages: input.event.messages,
+					contextWindow: input.contextWindow,
+					ceilingTokens: input.reductionCeilingTokens ?? input.promptContextWindow,
+					overheadTokens: input.contextOverheadTokens ?? 0,
+					force: input.breakerFallback,
+				})
 			: admittedMessages;
 	const emergency = input.laneOwnsCompaction
 		? { messages: sourceMessages, needsAggressiveCompaction: false }

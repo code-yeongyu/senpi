@@ -1,3 +1,28 @@
+## 2026-10-10 - Stable request-local reduction frontier (senpi#900)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts`: builds on @codeg-dev's #901 latch with a cut index and SHA-256 fingerprint of the unreduced prefix. Collapse, assistant shrinking, and clearing see only that prefix. The cut protects five messages and 3,000 recent tokens; clearing also keeps six clearable results within the prefix. Appends below the block budget leave the serialized prefix unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: gates on the unreduced outgoing estimate, including prompt/tool overhead, rather than the previous provider request's reduced usage. A 10% window tail budget advances the frontier in blocks. A projected request at 95% of the smaller compaction threshold or reserved prompt budget forces an earlier step. The existing emergency prune remains after reduction. Native and append-only lanes bypass reduction, including breaker fallback.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: persists the latch, cut, and fingerprint as `senpi.context-reduction.v1` custom entries before returning changed context. Reload/resume restores the latest record on the active branch after its last compaction. Accepted compaction resets it; navigation and forks persist a reset. Rejected compaction does not release the latch.
+- Tests drive the extension runner through consecutive turns, low reported usage, model-window growth, forced ceiling steps, native bypass, persisted reopen, and branch/compaction resets. Offline replay support compares the real pipeline on recorded or synthetic JSONL without printing transcript content.
+
+### Why
+
+- Reports by @daehwanahn and @ddotz establish two independent costs: alternating full/reduced requests around the 50% usage gate, and tail-relative reducer decisions rewriting an already-warm reduced prefix. A latch alone fixes only the first.
+- Persisting the actual cut preserves the exact decision across restarts, including ceiling-driven steps and model-window changes. Deriving it from history alone would have to reconstruct request boundaries and past model/budget settings. The 10% block budget is 100k on a 1M window: large enough to amortize rewrites, with the independent ceiling overriding it when space is tight.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts`, `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`, and `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` are the builtin extension that owns request-local reductions and compaction lifecycle state. This change stays within that boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts`: reduction gate and frontier helpers.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: reduction inputs and native bypass.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: context hook and session lifecycle handlers.
+- Eval clearability is deliberately unchanged; it belongs to #3100.
+
 ## 2026-10-07 - Compaction context hook declares non-mutation (senpi#2525)
 
 ### What changed

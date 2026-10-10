@@ -69,7 +69,11 @@ function userMessage(text: string, timestamp: number): UserMessage {
 
 function createContextHandler(): ExtensionHandler<ContextEvent, ContextEventResult> {
 	let contextHandler: ExtensionHandler<ContextEvent, ContextEventResult> | undefined;
+	const storedEntries = SessionManager.inMemory();
 	const api = {
+		appendEntry: (customType: string, data?: unknown) => {
+			storedEntries.appendCustomEntry(customType, data);
+		},
 		on: (event: string, handler: ExtensionHandler<ContextEvent, ContextEventResult>) => {
 			if (event === "context") contextHandler = handler;
 		},
@@ -92,8 +96,7 @@ function createBeforeAgentStartHandler(): ExtensionHandler<BeforeAgentStartEvent
 }
 
 function createContext(contextWindow: number, maxTokens = contextWindow, compact = vi.fn()): ExtensionContext {
-	const sessionManager = Object.create(null) as ExtensionContext["sessionManager"];
-	sessionManager.getBranch = vi.fn(() => []);
+	const sessionManager = SessionManager.inMemory();
 	return {
 		hasUI: false,
 		mode: "print",
