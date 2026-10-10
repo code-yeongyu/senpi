@@ -1,48 +1,38 @@
 #!/usr/bin/env node
-// Guard for the "stay on Bun 1.4.2" decision (senpi#3078, revisit-condition 3).
-//
-// Bun 1.4.2 carries CVE-2026-48618: its TLS hostname check accepts
-// look-alike-dot hosts (U+3002, U+FF0E, U+FF61), fixed in 1.4.3. Staying on
-// 1.4.2 is safe only while every shipped outbound TLS path derives its host
-// from a parsed URL: new URL() normalizes the look-alike dots, so the
-// normalized name is rejected correctly on 1.4.2 as well. This test fails
-// CI when shipped production source gains a direct low-level TLS/HTTPS
-// client call that is not on the reviewed allowlist below, so the decision
-// cannot silently go stale.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const REPO_ROOT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
-const PACKAGES_DIR = path.join(REPO_ROOT, "packages");
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs"]);
-const EXCLUDED_SEGMENTS = new Set([
-	"test",
-	"tests",
-	"__tests__",
-	"fixtures",
-	"__fixtures__",
-	"test-support",
-	"test-fixtures",
-	"references",
-	"docs",
-]);
+import {
+	collectShippedSourceFiles,
+	evaluateShippedSource,
+	findRawTlsClients,
+	isScannedSourceFile,
+	listTrackedFiles,
+	readSourceFile,
+	REPO_ROOT,
+} from "./no-raw-tls-client-scan.test-support.mjs";
 
 // Reviewed allowlist. Each entry pins one exact call: the repo-relative
-// file, the detected call's normalized text (whitespace collapsed, exactly
-// as the failure message prints it), the expected occurrence count, and a
-// one-line reason stating where the host comes from. A reason is only
-// valid if the host is "new URL(...).hostname" or a literal. Adding or
-// editing an entry is a reviewed act: name the host provenance and
-// reference senpi#3078.
+// file, the detected call's normalized text (whitespace collapsed outside
+// string literals, exactly as the failure message prints it), the expected
+// occurrence count, and a one-line reason stating where the host comes
+// from. A reason is valid only if the host reaches TLS through a URL parse
+// - new URL(...).hostname, or an API such as https.get(urlString) /
+// http2.connect(authority) that parses its argument - or is a literal.
+// Adding or editing an entry is a reviewed act: name the host provenance
+// and reference senpi#3078.
 const ALLOWLIST = [
+	{
+		file: "packages/ai/src/api/cursor-agent.ts",
+		call: "import * as http2 from \"node:http2\"",
+		count: 1,
+		reason: "namespace import grants module access to node:http2; every use is one of the two pinned http2.connect(baseUrl) calls below (senpi#3078).",
+	},
 	{
 		file: "packages/ai/src/api/cursor-agent.ts",
 		call: "http2.connect(baseUrl)",
 		count: 2,
-		reason: "Node-only module (node:http2, header note at :15) unreachable under Bun; baseUrl is the CURSOR_API_URL literal or model.baseUrl config, and Node's http2.connect parses the string authority as a URL before TLS (senpi#3078).",
+		reason: "the authority argument is the CURSOR_API_URL literal or model.baseUrl config, and http2.connect URL-parses the authority before the TLS handshake (measured on Bun 1.4.2, senpi#3078), so the servername never sees a raw look-alike-dot host.",
 	},
 ];
 
@@ -50,195 +40,16 @@ const OFFENDER_GUIDANCE = [
 	"Shipped source must not gain raw TLS/HTTPS client calls.",
 	"Bun 1.4.2 is pinned (senpi#3078) and carries CVE-2026-48618: its TLS hostname",
 	"check accepts look-alike-dot hosts. We are safe only because every shipped",
-	"outbound TLS path takes its host from a parsed URL - new URL() normalizes the",
-	"dots. If this call site's host provably comes from new URL(...).hostname or a",
-	"literal, add a reviewed entry to ALLOWLIST in scripts/no-raw-tls-client.test.mjs:",
-	'    { file: "<path>", call: "<exact normalized call text>", count: <n>, reason: "<where the host comes from>" },',
+	"outbound TLS path reaches its host through a URL parse - new URL() normalizes",
+	"the dots, and APIs like https.get(urlString)/http2.connect(authority) parse",
+	"their argument. If this call's host provably does the same, or is a literal,",
+	"add a reviewed entry to ALLOWLIST in scripts/no-raw-tls-client.test.mjs:",
+	'    { file: "<path>", call: "<exact normalized call text>", count: <n>, reason: "<host provenance>" },',
 	"Otherwise route the request through fetch(), which parses the URL.",
 ].join("\n");
 
-// Direct client calls: the host argument bypasses URL parsing unless the
-// allowlist proves otherwise. Bun.connect is flagged in every form because
-// its tls: option path bypasses fetch's URL handling entirely.
-const CALL_PATTERNS = [
-	["tls.connect(", /\btls\s*\.\s*connect\s*\(/g],
-	["https.request(", /\bhttps\s*\.\s*request\s*\(/g],
-	["https.get(", /\bhttps\s*\.\s*get\s*\(/g],
-	["http2.connect(", /\bhttp2\s*\.\s*connect\s*\(/g],
-	["Bun.connect(", /\bBun\s*\.\s*connect\s*\(/g],
-	["new https.Agent(", /\bnew\s+https\s*\.\s*Agent\s*\(/g],
-	["new tls.TLSSocket(", /\bnew\s+tls\s*\.\s*TLSSocket\s*\(/g],
-	["checkServerIdentity", /\bcheckServerIdentity\b/g],
-];
-
-// Import forms. The module specifier is anchored on both quotes, so
-// "node:tlsx" or "./tls" never match. Group 1 catches "import type", which
-// is erased at compile time and cannot reach the runtime.
-const IMPORT_FROM =
-	/import\s+(type\s+)?([^;'"]*?)\s*from\s*["']((?:node:)?(?:tls|https))["']/g;
-const REQUIRE_FORM = /\brequire\s*\(\s*["']((?:node:)?(?:tls|https))["']\s*\)/g;
-const DYNAMIC_IMPORT_FORM = /\bimport\s*\(\s*["']((?:node:)?(?:tls|https))["']\s*\)/g;
-
-// A node:https import is flagged only when it grants request/get: namespace,
-// default, require and dynamic forms grant the whole module; named imports
-// are flagged only when request/get is among them, so
-// "import { createServer } from 'node:https'" (inbound server) stays clean.
-function httpsImportGrantsRequestGet(clause) {
-	if (/\*\s*as\b/.test(clause)) return true;
-	const named = clause.match(/\{([^}]*)\}/);
-	if (!named) return /[\w$]/.test(clause);
-	const outsideBraces = clause.replace(/\{[^}]*\}/g, "").replace(/,/g, "").trim();
-	if (/[\w$]/.test(outsideBraces)) return true;
-	const names = named[1].split(",").map((part) => part.trim().split(/\s+as\s+/)[0].trim());
-	return names.includes("request") || names.includes("get");
-}
-
-function normalizeCallText(text) {
-	return text
-		.replace(/\s+/g, " ")
-		.replace(/\(\s+/g, "(")
-		.replace(/,\s*\)/g, ")")
-		.replace(/\s+\)/g, ")");
-}
-
-// The matched call plus its balanced argument list, normalized, so a
-// reformatted call still matches its pinned allowlist text.
-function callText(content, match) {
-	const open = match.index + match[0].length - 1;
-	let depth = 0;
-	let close = -1;
-	for (let i = open; i < content.length && i < open + 400; i += 1) {
-		const character = content[i];
-		if (character === "(") depth += 1;
-		else if (character === ")") {
-			depth -= 1;
-			if (depth === 0) {
-				close = i;
-				break;
-			}
-		}
-	}
-	if (close === -1) close = Math.min(content.length, open + 400) - 1;
-	return normalizeCallText(content.slice(match.index, close + 1));
-}
-
-function lineNumber(content, index) {
-	let line = 1;
-	for (let i = 0; i < index; i += 1) {
-		if (content[i] === "\n") line += 1;
-	}
-	return line;
-}
-
-function findRawTlsClients(content) {
-	const hits = [];
-	for (const [id, pattern] of CALL_PATTERNS) {
-		for (const match of content.matchAll(pattern)) {
-			hits.push({ line: lineNumber(content, match.index), id, text: callText(content, match) });
-		}
-	}
-	for (const match of content.matchAll(IMPORT_FROM)) {
-		const typeClause = match[1];
-		const clause = match[2];
-		const module = match[3];
-		if (typeClause) continue;
-		if (module.endsWith("tls")) {
-			hits.push({
-				line: lineNumber(content, match.index),
-				id: 'import from "' + module + '"',
-				text: normalizeCallText(match[0]),
-			});
-		} else if (httpsImportGrantsRequestGet(clause)) {
-			hits.push({
-				line: lineNumber(content, match.index),
-				id: "import granting request/get from node:https",
-				text: normalizeCallText(match[0]),
-			});
-		}
-	}
-	for (const [pattern, label] of [
-		[REQUIRE_FORM, "require"],
-		[DYNAMIC_IMPORT_FORM, "import"],
-	]) {
-		for (const match of content.matchAll(pattern)) {
-			hits.push({
-				line: lineNumber(content, match.index),
-				id: label + '("' + match[1] + '")',
-				text: normalizeCallText(match[0]),
-			});
-		}
-	}
-	return hits.sort((a, b) => a.line - b.line || a.id.localeCompare(b.id));
-}
-
-function isScannedSourceFile(relativePath) {
-	const name = relativePath.slice(relativePath.lastIndexOf("/") + 1);
-	if (/\.(test|spec)\.[a-z]+$/.test(name)) return false;
-	if (name.endsWith(".d.ts")) return false;
-	if (!SOURCE_EXTENSIONS.has(path.extname(name))) return false;
-	const segments = relativePath.split("/");
-	if (segments.some((segment) => EXCLUDED_SEGMENTS.has(segment))) return false;
-	return true;
-}
-
-function evaluateShippedSource(scan, allowlist) {
-	const offenders = [];
-	const matched = new Map(allowlist.map((entry) => [entry, 0]));
-	const scannedPaths = new Set(scan.map((item) => item.path));
-	for (const item of scan) {
-		for (const hit of findRawTlsClients(item.content)) {
-			const entry = allowlist.find(
-				(candidate) => candidate.file === item.path && candidate.call === hit.text,
-			);
-			if (entry) {
-				matched.set(entry, matched.get(entry) + 1);
-				continue;
-			}
-			offenders.push(item.path + ":" + hit.line + "  " + hit.text);
-		}
-	}
-	const stale = [];
-	for (const entry of allowlist) {
-		const seen = matched.get(entry) ?? 0;
-		if (!scannedPaths.has(entry.file)) {
-			stale.push(entry.file + ": stale allowlist entry (no longer scanned)");
-		} else if (seen !== entry.count) {
-			stale.push(entry.file + ": expected " + entry.call + " x" + entry.count + ", found x" + seen);
-		}
-		if (!entry.reason || !entry.reason.trim()) {
-			stale.push(entry.file + ": allowlist entry without a reason");
-		}
-	}
-	return { offenders, stale };
-}
-
-function collectShippedSourceFiles() {
-	const files = [];
-	const walk = (directory, relativeDirectory) => {
-		let entries;
-		try {
-			entries = readdirSync(directory, { withFileTypes: true });
-		} catch {
-			return;
-		}
-		for (const entry of entries) {
-			const relativePath = relativeDirectory + "/" + entry.name;
-			if (entry.isDirectory()) {
-				walk(path.join(directory, entry.name), relativePath);
-				continue;
-			}
-			if (isScannedSourceFile(relativePath)) files.push(relativePath);
-		}
-	};
-	for (const pkg of readdirSync(PACKAGES_DIR, { withFileTypes: true })) {
-		if (!pkg.isDirectory()) continue;
-		walk(path.join(PACKAGES_DIR, pkg.name, "src"), "packages/" + pkg.name + "/src");
-	}
-	return files.sort();
-}
-
 describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)", () => {
-	it("catches every direct client pattern and import form, with line numbers", () => {
+	it("catches every direct client pattern, module form and binding, with line numbers", () => {
 		const samples = [
 			["tls.connect(", 'await tls.connect({ host: hostname, port: 443 });'],
 			["https.request(", "https.request(url, onResponse);"],
@@ -248,39 +59,37 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 			["new https.Agent(", "new https.Agent({ keepAlive: true });"],
 			["new tls.TLSSocket(", "new tls.TLSSocket(socket, options);"],
 			["checkServerIdentity", "const options = { checkServerIdentity: () => undefined };"],
-			['import from "node:tls"', 'import * as tls from "node:tls";'],
-			['import from "node:tls"', 'import { connect } from "node:tls";'],
-			['import from "tls"', 'import { connect as tlsConnect } from "tls";'],
 			['require("node:tls")', 'const tls = require("node:tls");'],
+			['require("https")', "const https = require('https');"],
 			['import("node:tls")', 'const tls = await import("node:tls");'],
-			["import granting request/get from node:https", 'import { request } from "node:https";'],
-			["import granting request/get from node:https", 'import { get as httpsGet } from "node:https";'],
-			["import granting request/get from node:https", 'import * as https from "node:https";'],
-			["import granting request/get from node:https", 'import https from "node:https";'],
-			['require("node:https")', 'const https = require("node:https");'],
-			['import("node:https")', 'const https = await import("node:https");'],
+			['getBuiltinModule("node:tls")', 'const tls = process.getBuiltinModule("node:tls");'],
+			['getBuiltinModule("node:http2")', 'const h2 = process.getBuiltinModule("node:http2");'],
+			['re-export from "node:tls"', 'export { connect } from "node:tls";'],
+			['re-export from "node:https"', 'export * from "node:https";'],
+			['module access: import from "node:http2"', 'import * as http2 from "node:http2";'],
+			['module access: import from "node:https"', 'import https from "node:https";'],
+			['binding call: httpsGet (imported from "node:https")', 'import { get as httpsGet } from "node:https";\nhttpsGet(url);'],
+			['binding call: connect (imported from "node:http2")', 'import { connect } from "node:http2";\nconnect(host);'],
+			['binding call: h2c (imported from "node:http2")', 'import { connect as h2c } from "node:http2";\nh2c(host);'],
+			['binding call: TLSSocket (imported from "node:tls")', 'import { TLSSocket } from "node:tls";\nnew TLSSocket(sock);'],
+			['template import of "node:tls"', "const tls = await import(`node:tls`);"],
+			['template require of "node:https"', "const m = require(`node:https`);"],
 		];
 		for (const [id, sample] of samples) {
 			const hits = findRawTlsClients(sample);
-			assert.ok(
-				hits.some((hit) => hit.id === id),
-				"sample not caught as " + id + ": " + sample,
-			);
+			assert.ok(hits.some((hit) => hit.id === id), "sample not caught as " + id + ": " + sample);
 		}
-		const positioned = findRawTlsClients(
-			'const a = 1;\n\nawait tls.connect({ host: "x", port: 1 });',
-		);
-		assert.deepEqual(positioned, [
-			{ line: 3, id: "tls.connect(", text: 'tls.connect({ host: "x", port: 1 })' },
-		]);
+		const positioned = findRawTlsClients('const a = 1;\n\nawait tls.connect({ host: "x", port: 1 });');
+		assert.deepEqual(positioned, [{ line: 3, id: "tls.connect(", text: 'tls.connect({ host: "x", port: 1 })' }]);
 	});
 
 	it("does not flag URL-parsed or inbound-server neighbors", () => {
 		const samples = [
+			'import { createServer } from "node:http2"; createServer(h);',
 			'import { createServer } from "node:https";',
+			'import { connect } from "node:tlsx"; connect(h);',
 			'import type { Agent } from "node:https";',
-			'import { connect } from "node:tlsx";',
-			'import { connect } from "./tls";',
+			'import { connect } from "node:tls";',
 			"const response = await fetch(url);",
 			"const { hostname } = new URL(url);",
 			"tls.createServer(options, handler);",
@@ -304,21 +113,30 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 		assert.equal(isScannedSourceFile("packages/ai/src/types.d.ts"), false);
 	});
 
-	it("holds: shipped production source has no raw TLS client calls outside the allowlist", () => {
-		const files = collectShippedSourceFiles();
-		assert.ok(files.length > 100, "scanner lost sight of the monorepo");
-		const scan = files.map((relativePath) => ({
-			path: relativePath,
-			content: readFileSync(path.join(REPO_ROOT, relativePath), "utf8"),
-		}));
-		const verdict = evaluateShippedSource(scan, ALLOWLIST);
-		assert.deepEqual(verdict.offenders, [], OFFENDER_GUIDANCE);
-		assert.deepEqual(
-			verdict.stale,
-			[],
-			"Every allowlist entry must match the shipped tree: file scanned, reason present.",
-		);
+	it("collects only tracked files", () => {
+		const tracked = new Set(listTrackedFiles());
+		for (const file of collectShippedSourceFiles()) {
+			assert.ok(tracked.has(file), "untracked file scanned: " + file);
+		}
+		assert.ok(collectShippedSourceFiles().includes("packages/ai/src/api/cursor-agent.ts"));
 	});
+
+	it("tolerates only ENOENT when reading sources", () => {
+		assert.equal(readSourceFile(path.join(REPO_ROOT, "definitely-missing-file.ts")), null);
+		assert.throws(() => readSourceFile(path.join(REPO_ROOT, "scripts")));
+	});
+
+	it("keeps string contents distinct when normalizing", () => {
+		const paren = findRawTlsClients('tls.connect({ host: ")" + h });');
+		assert.equal(paren[0].text, 'tls.connect({ host: ")" + h })');
+		const withSpaces = findRawTlsClients('tls.connect({ host: "a  b" });');
+		const single = findRawTlsClients('tls.connect({ host: "a b" });');
+		assert.notEqual(withSpaces[0].text, single[0].text);
+		const long1 = 'tls.connect({ pad: "' + "x".repeat(500) + '" });';
+		const long2 = 'tls.connect({ pad: "' + "x".repeat(499) + 'y" });';
+		assert.notEqual(findRawTlsClients(long1)[0].text, findRawTlsClients(long2)[0].text);
+	});
+
 	describe("allowlist pins exact call sites (in-memory)", () => {
 		const pinnedCallEntry = () => ({
 			file: "pkg/a.ts",
@@ -330,16 +148,12 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 		it("passes the exact allowlisted calls with the exact counts", () => {
 			const entries = [
 				pinnedCallEntry(),
-				{
-					file: "pkg/b.mjs",
-					call: 'import { get as httpsGet } from "node:https"',
-					count: 1,
-					reason: "host is the api.example.com literal",
-				},
+				{ file: "pkg/b.mjs", call: 'require("node:https")', count: 1, reason: "host is a literal" },
+				{ file: "pkg/b.mjs", call: "https.get(url)", count: 1, reason: "host is a literal" },
 			];
 			const scan = [
 				{ path: "pkg/a.ts", content: "one();\nhttp2.connect(baseUrl);\ntwo();\nhttp2.connect(baseUrl);\n" },
-				{ path: "pkg/b.mjs", content: 'import { get as httpsGet } from "node:https";\n' },
+				{ path: "pkg/b.mjs", content: 'const https = require("node:https");\nhttps.get(url);\n' },
 			];
 			assert.deepEqual(evaluateShippedSource(scan, entries), { offenders: [], stale: [] });
 		});
@@ -378,88 +192,55 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 			);
 		});
 
-		it("still matches the pinned text when the call is reformatted", () => {
-			const scan = [
-				{ path: "pkg/a.ts", content: "http2.connect(\n\tbaseUrl,\n);\nhttp2.connect( baseUrl );\n" },
+		it("pins a named-import binding by its call; import-pinned entries go stale", () => {
+			const entries = [
+				{ file: "pkg/b.mjs", call: 'httpsGet(url, { redaction: "none" })', count: 2, reason: "host is a literal" },
 			];
+			const exact = [
+				{
+					path: "pkg/b.mjs",
+					content:
+						'import { get as httpsGet } from "node:https";\nhttpsGet(url, { redaction: "none" });\nhttpsGet(url, { redaction: "none" });\n',
+				},
+			];
+			assert.deepEqual(evaluateShippedSource(exact, entries), { offenders: [], stale: [] });
+			const extra = [
+				{
+					path: "pkg/b.mjs",
+				content:
+						'import { get as httpsGet } from "node:https";\nhttpsGet(url, { redaction: "none" });\nhttpsGet(url, { redaction: "none" });\nhttpsGet({ host, servername: host });\n',
+				},
+			];
+			assert.ok(evaluateShippedSource(extra, entries).offenders.length > 0, "new binding call must fail");
+			const importPinned = [
+				{ file: "pkg/b.mjs", call: 'import { get as httpsGet } from "node:https"', count: 1, reason: "x" },
+			];
+			assert.ok(evaluateShippedSource(exact, importPinned).stale.length > 0, "import-pinned entries must go stale");
+		});
+
+		it("still matches the pinned text when the call is reformatted", () => {
+			const scan = [{ path: "pkg/a.ts", content: "http2.connect(\n\tbaseUrl,\n);\nhttp2.connect( baseUrl );\n" }];
 			assert.deepEqual(evaluateShippedSource(scan, [pinnedCallEntry()]), { offenders: [], stale: [] });
 		});
 	});
-describe("review round: tracked-only scan, binding pins, widened forms (failing-first)", () => {
-	it("catches the widened module-access and binding forms", () => {
-		const samples = [
-			["binding call", 'import { connect } from "node:http2"; export const go = (h) => connect(h);'],
-			["binding call", 'import { connect as h2c } from "node:http2"; h2c(h);'],
-			["binding call", 'import { get as g } from "node:https"; g(url);'],
-			["binding call", 'import { TLSSocket } from "node:tls"; new TLSSocket(sock);'],
-			["module access", 'import * as h2 from "node:http2"; h2.connect(h);'],
-			["module access", 'import h2 from "node:http2"; h2.connect(h);'],
-			["module access", 'process.getBuiltinModule("node:tls");'],
-			["module access", 'process.getBuiltinModule("https");'],
-			["module access", 'process.getBuiltinModule("node:http2");'],
-			["module access", 'export { connect } from "node:tls";'],
-			["module access", 'export * from "node:https";'],
-			["template import", "const m = await import(`node:tls`);"],
-			["template require", "const m = require(`node:https`);"],
-		];
-		for (const [kind, sample] of samples) {
-			assert.ok(findRawTlsClients(sample).length > 0, kind + " sample not caught: " + sample);
-		}
-	});
 
-	it("does not flag inert neighbors", () => {
-		const samples = [
-			'import { createServer } from "node:http2"; createServer(h);',
-			'import { createServer } from "node:https";',
-			'import { connect } from "node:tlsx"; connect(h);',
-			'import type { Agent } from "node:https";',
-			'import { connect } from "node:tls";',
-		];
-		for (const sample of samples) {
-			assert.deepEqual(findRawTlsClients(sample), [], "unexpected hit: " + sample);
-		}
-	});
-
-	it("pins a named-import binding by its call; import-pinned entries go stale", () => {
-		const entries = [
-			{ file: "pkg/b.mjs", call: 'httpsGet(url, { redaction: "none" })', count: 2, reason: "host is a literal" },
-		];
-		const exact = [
-			{ path: "pkg/b.mjs", content: 'import { get as httpsGet } from "node:https";\nhttpsGet(url, { redaction: "none" });\nhttpsGet(url, { redaction: "none" });\n' },
-		];
-		assert.deepEqual(evaluateShippedSource(exact, entries), { offenders: [], stale: [] });
-		const extra = [
-			{ path: "pkg/b.mjs", content: 'import { get as httpsGet } from "node:https";\nhttpsGet(url, { redaction: "none" });\nhttpsGet(url, { redaction: "none" });\nhttpsGet({ host, servername: host });\n' },
-		];
-		assert.ok(evaluateShippedSource(extra, entries).offenders.length > 0, "new binding call must fail");
-		const importPinned = [
-			{ file: "pkg/b.mjs", call: 'import { get as httpsGet } from "node:https"', count: 1, reason: "x" },
-		];
-		assert.ok(evaluateShippedSource(exact, importPinned).stale.length > 0, "import-pinned entries must go stale");
-	});
-
-	it("keeps string contents distinct when normalizing", () => {
-		const paren = findRawTlsClients('tls.connect({ host: ")" + h });');
-		assert.equal(paren[0].text, 'tls.connect({ host: ")" + h })');
-		const withSpaces = findRawTlsClients('tls.connect({ host: "a  b" });');
-		const single = findRawTlsClients('tls.connect({ host: "a b" });');
-		assert.notEqual(withSpaces[0].text, single[0].text);
-		const long1 = 'tls.connect({ pad: "' + "x".repeat(500) + '" });';
-		const long2 = 'tls.connect({ pad: "' + "x".repeat(499) + 'y" });';
-		assert.notEqual(findRawTlsClients(long1)[0].text, findRawTlsClients(long2)[0].text);
-	});
-
-	it("collects only tracked files", () => {
-		const tracked = new Set(listTrackedFiles());
-		for (const file of collectShippedSourceFiles()) {
-			assert.ok(tracked.has(file), "untracked file scanned: " + file);
-		}
-		assert.ok(collectShippedSourceFiles().includes("packages/ai/src/api/cursor-agent.ts"));
-	});
-
-	it("tolerates only ENOENT when reading sources", () => {
-		assert.equal(readSourceFile(path.join(REPO_ROOT, "definitely-missing-file.ts")), null);
-		assert.throws(() => readSourceFile(path.join(REPO_ROOT, "scripts")));
+	it("holds: shipped production source has no raw TLS client calls outside the pinned allowlist", () => {
+		const files = collectShippedSourceFiles();
+		assert.ok(files.length > 100, "scanner lost sight of the monorepo");
+		const scan = files.map((relativePath) => ({
+			path: relativePath,
+			content: readFileSyncCompat(relativePath),
+		}));
+		const verdict = evaluateShippedSource(scan.filter((item) => item.content !== null), ALLOWLIST);
+		assert.deepEqual(verdict.offenders, [], OFFENDER_GUIDANCE);
+		assert.deepEqual(
+			verdict.stale,
+			[],
+			"Every allowlist entry must match the shipped tree: file scanned, normalized call text found, occurrence count exact, reason present.",
+		);
 	});
 });
-});
+
+function readFileSyncCompat(relativePath) {
+	return readSourceFile(path.join(REPO_ROOT, relativePath));
+}
