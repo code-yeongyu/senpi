@@ -7,10 +7,23 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveWorkspaceDirectories } from "./run-workspaces.mjs";
 
 const runner = fileURLToPath(new URL("./run-tests.mjs", import.meta.url));
 const require = createRequire(import.meta.url);
 const vitestRoot = dirname(require.resolve("vitest/package.json"));
+
+test("workspace test entrypoints cannot bypass temp ownership (#3064)", async () => {
+	const root = fileURLToPath(new URL("../", import.meta.url));
+	const workspaces = await resolveWorkspaceDirectories(root);
+	const testers = workspaces.filter((workspace) => typeof workspace.scripts.test === "string");
+	assert.ok(testers.length > 0);
+	for (const workspace of testers) {
+		assert.match(workspace.scripts.test, /\brun-tests\.mjs\b/, workspace.relativePath);
+	}
+	const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+	assert.match(manifest.scripts["test:scripts"], /\brun-tests\.mjs\b/);
+});
 for (const status of [0, 7]) {
 	test(`test runner removes owned temp files after exit ${status} (#3064)`, async () => {
 		const parent = mkdtempSync(join(tmpdir(), "senpi-runner-proof-"));
