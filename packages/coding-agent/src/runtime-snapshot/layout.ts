@@ -1,17 +1,10 @@
-import {
-	existsSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	realpathSync,
-	renameSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { dependencyFileExclusions } from "./dependency-files.ts";
 import { copyFiles, createSnapshotFileCopier, type SnapshotFileCopier } from "./file-copier.ts";
 import { RUNTIME_SNAPSHOT_MARKER, type RuntimeSnapshotMarker } from "./marker.ts";
+import { planPackageRoot } from "./package-files.ts";
+import { type FilePairs, planTree } from "./tree.ts";
 
 export interface RuntimeManifest {
 	readonly buildId: string;
@@ -28,141 +21,6 @@ export class RuntimeSnapshotLayoutError extends Error {
 }
 
 export const STAGING_PREFIX = ".tmp-";
-
-/** Type declarations and source maps: no runtime ever loads them, and they are half the files. */
-const UNLOADED_FILE = /\.(?:d\.[cm]?ts|map)$/;
-
-type FilePairs = [string, string][];
-
-function isMissing(error: unknown): boolean {
-	return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
-}
-
-/**
- * Creates the directories of a tree copy and lists the files to copy into them, following
- * symlinks so nothing in the result points back at the source. `skipModules` leaves nested
- * `node_modules` out: dependencies are placed on their own.
- */
-function planTree(
-	source: string,
-	target: string,
-	files: FilePairs,
-	skipModules: boolean,
-	seen = new Set<string>(),
-	excluded: (relativePath: string) => boolean = () => false,
-	relativeDir = "",
-): void {
-	const real = realpathSync(source);
-	if (seen.has(real)) return;
-	seen.add(real);
-	mkdirSync(target, { recursive: true });
-	for (const entry of readdirSync(real, { withFileTypes: true })) {
-		if (skipModules && entry.name === "node_modules") continue;
-		const relativePath = relativeDir === "" ? entry.name : `${relativeDir}/${entry.name}`;
-		if (excluded(relativePath)) continue;
-		const from = join(real, entry.name);
-		const to = join(target, entry.name);
-		if (entry.isDirectory()) {
-			planTree(from, to, files, skipModules, seen, excluded, relativePath);
-		} else if (entry.isFile()) {
-			if (!UNLOADED_FILE.test(entry.name)) files.push([from, to]);
-		} else if (entry.isSymbolicLink()) {
-			let isDirectory: boolean;
-			try {
-				isDirectory = statSync(from).isDirectory();
-			} catch (error) {
-				// A dangling link in the install stays unresolvable in the snapshot too.
-				if (isMissing(error)) continue;
-				throw error;
-			}
-			if (isDirectory) planTree(from, to, files, skipModules, seen, excluded, relativePath);
-			else if (!UNLOADED_FILE.test(entry.name)) files.push([realpathSync(from), to]);
-		}
-	}
-	seen.delete(real);
-}
-
-/** npm ships these from the package root whether or not `files` lists them. */
-const ALWAYS_SHIPPED = /^(?:package\.json|readme(?:\..*)?|licen[cs]e(?:\..*)?)$/i;
-
-function globToRegExp(glob: string): RegExp {
-	let source = "";
-	for (let index = 0; index < glob.length; index++) {
-		const char = glob[index];
-		if (glob.startsWith("**/", index)) {
-			source += "(?:.*/)?";
-			index += 2;
-		} else if (glob.startsWith("**", index)) {
-			source += ".*";
-			index += 1;
-		} else if (char === "*") source += "[^/]*";
-		else if (char === "?") source += "[^/]";
-		else source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-	}
-	// An entry names a file or a whole directory.
-	return new RegExp(`^${source}(?:/.*)?$`);
-}
-
-function shippedEntries(packageDir: string): { readonly include: string[]; readonly exclude: RegExp[] } | undefined {
-	const manifest: unknown = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
-	const listed =
-		typeof manifest === "object" && manifest !== null ? (manifest as { files?: unknown }).files : undefined;
-	if (!Array.isArray(listed) || !listed.every((entry) => typeof entry === "string")) return undefined;
-	const normalize = (entry: string) => entry.replace(/^\.\//, "").replace(/\/+$/, "");
-	return {
-		include: listed.filter((entry) => !entry.startsWith("!")).map(normalize),
-		exclude: listed.filter((entry) => entry.startsWith("!")).map((entry) => globToRegExp(normalize(entry.slice(1)))),
-	};
-}
-
-/**
- * The package itself, as npm ships it (#3083): the entries its `files` field lists, minus its `!`
- * exclusions, plus the files npm always includes. A repository checkout then snapshots what a
- * published install would instead of its sources and tests. A package without `files` ships its
- * whole directory, and so does its snapshot.
- */
-function planPackageRoot(packageDir: string, target: string, files: FilePairs): void {
-	const shipped = shippedEntries(packageDir);
-	if (shipped === undefined) {
-		planTree(packageDir, target, files, true);
-		return;
-	}
-	const root = realpathSync(packageDir);
-	const excluded = (relativePath: string) => shipped.exclude.some((pattern) => pattern.test(relativePath));
-	const planned = new Set<string>();
-	const plan = (relativePath: string): void => {
-		if (planned.has(relativePath) || excluded(relativePath)) return;
-		const from = join(root, relativePath);
-		let isDirectory: boolean;
-		try {
-			isDirectory = statSync(from).isDirectory();
-		} catch (error) {
-			if (isMissing(error)) return;
-			throw error;
-		}
-		planned.add(relativePath);
-		const to = join(target, relativePath);
-		if (isDirectory) planTree(from, to, files, true, new Set([root]), excluded, relativePath);
-		else if (!UNLOADED_FILE.test(relativePath)) {
-			mkdirSync(dirname(to), { recursive: true });
-			files.push([realpathSync(from), to]);
-		}
-	};
-	mkdirSync(target, { recursive: true });
-	const topLevel = readdirSync(root).filter((name) => name !== "node_modules");
-	for (const name of topLevel) if (ALWAYS_SHIPPED.test(name)) plan(name);
-	for (const entry of shipped.include) {
-		const segments = entry.split("/");
-		const wildcard = segments.findIndex((segment) => /[*?]/.test(segment));
-		if (wildcard === -1) plan(entry);
-		else if (wildcard > 0)
-			plan(segments.slice(0, wildcard).join("/")); // the directory a nested glob lives in: a superset
-		else {
-			const pattern = globToRegExp(segments[0] ?? "");
-			for (const name of topLevel) if (pattern.test(name)) plan(name);
-		}
-	}
-}
 
 /** The node_modules directories Node's resolver walks from `dir`, nearest first. */
 function moduleDirectoriesFrom(dir: string): string[] {
@@ -228,7 +86,7 @@ function planModules(
 	const placed = new Map<string, string>();
 	const pending: { readonly installDir: string; readonly snapshotDir: string }[] = [];
 	const place = (installDir: string, snapshotDir: string): void => {
-		planTree(installDir, snapshotDir, files, true);
+		planTree(installDir, snapshotDir, files, true, new Set(), dependencyFileExclusions(installDir));
 		placed.set(snapshotDir, installDir);
 		pending.push({ installDir, snapshotDir });
 	};
