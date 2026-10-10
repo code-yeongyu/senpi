@@ -1,3 +1,22 @@
+## 2026-10-10 - Runtime dependency snapshots omit development payload (#3083 part B)
+
+### What changed
+
+- `packages/coding-agent/src/runtime-snapshot/layout.ts` (fork-only) keeps the full nested/hoisted dependency closure, applying `packages/coding-agent/src/runtime-snapshot/dependency-files.ts` to each dependency's payload. Development trees and root README/changelog/history files are omitted unless a manifest entry names them. Redundant TypeScript under `src` is omitted only for packages with an existing built JavaScript entry; source-only extensions, source assets, skills, license files, native binaries and wasm remain.
+- `packages/coding-agent/src/runtime-snapshot/tree.ts` and `packages/coding-agent/src/runtime-snapshot/package-files.ts` extract tree planning and the existing shipped-package policy from layout, without changing the package-root selection. The real CLI inventory regression observes Node resolution hooks, Bun loads/resolution and transpiler reads across help, external TypeScript/typebox loading, a faux turn, Claude executable resolution, photon, grep and codemode bootstrap. Glob-only shipping is now tested at the snapshot boundary.
+
+### Why
+
+Copying dependency tests, documentation and duplicate TypeScript sources increases file-system work on every new snapshot. A representative run cannot prove an unvisited provider or dynamic extension will never load a package, so it must not become a package allowlist. Both runtimes resolve the Claude platform binary inside the snapshot; it stays eagerly copied with the existing clone/link/copy mechanism, independent of install updates.
+
+### Why an extension could not handle it
+
+Snapshot materialization precedes extension loading. An extension cannot reduce this first-launch copy or safely repair a missing dependency after an update deletes the original install.
+
+### Expected merge conflict zones
+
+- None upstream: `runtime-snapshot/` is fork-only. Part A's package selection moved from layout into package-files; preserve it when merging other snapshot changes.
+
 ## 2026-10-10 - The runtime snapshot copies the shipped package files only (#3083)
 
 ### What changed
