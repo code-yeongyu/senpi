@@ -4,6 +4,8 @@
 
 ### What changed
 
+- `packages/senpi-codemode/test/gate/allowlist.json`: register the three additive pip scratch lifetime regression contracts without changing the frozen compatibility baseline.
+
 - `packages/senpi-codemode/src/environments/py-installer.ts`: create a per-install scratch directory inside the staged revision, pass it as TMPDIR/TEMP/TMP to Python and build backends, and remove it in finally after success, failure or cancellation.
 
 ### Why
