@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { prepareRuntimeSnapshot } from "../../src/runtime-snapshot/enter.ts";
 import { createFakeInstall, type FakeInstall } from "./fake-install.ts";
@@ -69,15 +68,19 @@ describe("runtime snapshot copies only the shipped package files (#3083)", () =>
 		expect(readFileSync(join(snapshotDir, "extra/notes.txt"), "utf8")).toBe("kept\n");
 	});
 
-	it("lists none of this checkout's source, test or script trees among the shipped files", () => {
-		// Given: the real package, as this repository checks it out
-		const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-		const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as { files: string[] };
+	it("ships a root file selected only by an include glob", async () => {
+		// Given: no literal files entry names the metadata file.
+		const install = createFakeInstall();
+		installs.push(install);
+		asCheckout(install, ["dist", "metadata-*.json"]);
+		write(join(install.packageDir, "metadata-only.json"), '{"sentinel":3083}\n');
+		write(join(install.packageDir, "unshipped.json"), "{}\n");
 
-		// Then
-		const listed = manifest.files.filter((entry) => !entry.startsWith("!")).map((entry) => entry.split("/")[0]);
-		for (const checkoutOnly of ["src", "test", "scripts", "bench", "node_modules"]) {
-			expect(listed).not.toContain(checkoutOnly);
-		}
+		// When
+		const snapshotDir = await snapshotOf(install);
+
+		// Then: removing glob expansion loses metadata; the pre-#3084 whole-tree copy leaks the other file.
+		expect(readFileSync(join(snapshotDir, "metadata-only.json"), "utf8")).toBe('{"sentinel":3083}\n');
+		expect(existsSync(join(snapshotDir, "unshipped.json"))).toBe(false);
 	});
 });
