@@ -10,6 +10,18 @@
 
 ### Fixed
 
+### Removed
+
+## [2026.10.10-12] - 2026-10-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Benchmark interpreter CPU is sampled by the host after complete result reception, including result encoding and flushing. Saved reports record this boundary and refuse legacy embedded-clock CPU samples that need remeasurement (Refs [#3048](https://github.com/code-yeongyu/senpi/issues/3048)).
 
 ### Removed

@@ -8,6 +8,18 @@
 
 ### Changed
 
+### Fixed
+
+### Removed
+
+## [2026.10.10-12] - 2026-10-10
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`huggingface`, `openrouter`, `vercel-ai-gateway`).
 
 ### Fixed
