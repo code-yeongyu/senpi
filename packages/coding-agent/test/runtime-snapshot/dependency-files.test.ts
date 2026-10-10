@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { prepareRuntimeSnapshot } from "../../src/runtime-snapshot/enter.ts";
@@ -13,6 +13,27 @@ describe("runtime dependency payload (#3083)", () => {
 	const installs: FakeInstall[] = [];
 	afterEach(() => {
 		while (installs.length) installs.pop()?.cleanup();
+	});
+
+	it("copies src TypeScript when the dependency has no built JavaScript entry", async () => {
+		// Given: a source-only dependency whose main imports src, not a manifest entry rooted in src (#3083).
+		const install = createFakeInstall();
+		installs.push(install);
+		const dep = join(install.packageDir, "node_modules/nested-dep");
+		rmSync(join(dep, "index.js"));
+		write(join(dep, "package.json"), JSON.stringify({ name: "nested-dep", main: "index.ts" }));
+		write(join(dep, "index.ts"), 'export { answer } from "./src/helper.ts";\n');
+		write(join(dep, "src/helper.ts"), "export const answer = 42;\n");
+
+		// When: the real snapshot materializer copies the dependency closure.
+		const decision = await prepareRuntimeSnapshot(install.entryPath, install.packageDir, install.agentDir);
+		expect(decision.kind).toBe("hand-off");
+		if (decision.kind !== "hand-off") throw new Error("snapshot was not built");
+
+		// Then: the source imported by the TypeScript entry survives copying.
+		expect(readFileSync(join(decision.snapshotDir, "node_modules/nested-dep/src/helper.ts"), "utf8")).toBe(
+			"export const answer = 42;\n",
+		);
 	});
 
 	it("bounds files and bytes without removing executable entries or runtime-read assets", async () => {

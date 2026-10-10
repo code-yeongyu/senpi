@@ -20,8 +20,7 @@ it("contains every dependency resolved by real Node and Bun entry paths", async 
 		await materializeRuntimeSnapshot(packageDir, snapshot, manifest);
 		for (const runtime of ["node", "bun"]) {
 			const paths = inventoryRuntime(snapshot, join(state, runtime), runtime);
-			// Then: not a frozen package list or static scan; newly resolved paths must exist too.
-			for (const path of paths) expect(existsSync(path), path).toBe(true);
+			// Then: inventoryRuntime enforces existence and containment; SDK resolution must be exercised.
 			expect(paths.some((path) => path.replaceAll("\\", "/").includes("/@anthropic-ai/claude-agent-sdk"))).toBe(
 				true,
 			);

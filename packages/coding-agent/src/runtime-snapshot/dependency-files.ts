@@ -34,6 +34,7 @@ export function dependencyFileExclusions(packageDir: string): (path: string) => 
 	return (path) => {
 		const root = path.split("/")[0] ?? "";
 		if (entryRoots.has(root) || entryRoots.has("*") || entryRoots.has("**")) return false;
+		// Prune only top-level dependency folders; nested doc/ etc. can be runtime code (e.g. yaml/dist/doc).
 		if (INERT_TREE.test(root) || ROOT_NOTES.test(path) || (ROOT_MARKDOWN.test(path) && !LICENSE.test(path)))
 			return true;
 		return built && root === "src" && /\.[cm]?tsx?$/.test(path);
