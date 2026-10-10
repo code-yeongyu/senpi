@@ -44,6 +44,7 @@ import { radiusProvider } from "./radius.ts";
 import { togetherProvider } from "./together.ts";
 import { typesafeProvider } from "./typesafe.ts";
 import { veniceProvider } from "./venice.ts";
+import { veniceE2EEModels } from "./venice-e2ee.ts";
 import { vercelAIGatewayProvider } from "./vercel-ai-gateway.ts";
 import { xaiProvider } from "./xai.ts";
 import { xiaomiProvider } from "./xiaomi.ts";
@@ -123,13 +124,33 @@ type BuiltinClassifierModelId<TProvider extends BuiltinProvider> = keyof Catalog
 /** API ids of catalog entries. Built-in getters return `Model<Api>` shapes, not literal entry types. */
 type CatalogApi<TEntry> = TEntry extends { api: infer TApi extends string } ? TApi : never;
 
+const VENICE_E2EE_MODEL_IDS = [
+	"e2ee-glm-5-3-p",
+	"e2ee-glm-5-3-flash",
+	"e2ee-glm-5-2-p",
+	"e2ee-deepseek-v4-flash",
+	"e2ee-gpt-oss-120b-p",
+] as const;
+
+/** Published Venice E2EE ids. They are not in the generated catalog. */
+export type VeniceE2EEModelId = (typeof VENICE_E2EE_MODEL_IDS)[number];
+
+function veniceE2EECatalogModel(modelId: string): Model<"openai-completions"> | undefined {
+	return veniceE2EEModels().find((model) => model.id === modelId);
+}
+
 /** Typed read of one generated built-in chat model. */
+export function getBuiltinModel(provider: "venice", modelId: VeniceE2EEModelId): Model<"openai-completions">;
 export function getBuiltinModel<TProvider extends BuiltinProvider, TModelId extends BuiltinChatModelId<TProvider>>(
 	provider: TProvider,
 	modelId: TModelId,
-): Model<CatalogApi<BuiltinCatalogs[TProvider][TModelId]>> {
-	const models = BUILTIN_CATALOGS[provider] as Record<string, Model<Api>> | undefined;
-	return normalizeBuiltinModel(models?.[modelId as string]) as Model<CatalogApi<BuiltinCatalogs[TProvider][TModelId]>>;
+): Model<CatalogApi<BuiltinCatalogs[TProvider][TModelId]>>;
+export function getBuiltinModel(provider: string, modelId: string): Model<Api> | undefined {
+	const models = (BUILTIN_CATALOGS as Record<string, Record<string, Model<Api>> | undefined>)[provider];
+	const found = normalizeBuiltinModel(models?.[modelId]);
+	if (found) return found;
+	if (provider === "venice" && !models?.[modelId]) return veniceE2EECatalogModel(modelId);
+	return undefined;
 }
 
 /** Typed read of one generated built-in image model. */
@@ -172,11 +193,16 @@ export function getBuiltinModels<TProvider extends BuiltinProvider>(
 	provider: TProvider,
 ): Model<CatalogApi<BuiltinCatalogs[TProvider][BuiltinChatModelId<TProvider>]>>[] {
 	const models = BUILTIN_CATALOGS[provider] as Record<string, Model<Api>> | undefined;
-	return Object.values(models ?? {})
+	const catalog = Object.values(models ?? {})
 		.map((model) => normalizeBuiltinModel(model))
-		.filter((model): model is Model<Api> => model !== undefined) as Model<
-		CatalogApi<BuiltinCatalogs[TProvider][BuiltinChatModelId<TProvider>]>
-	>[];
+		.filter((model): model is Model<Api> => model !== undefined);
+	if (provider === "venice") {
+		const ids = new Set(catalog.map((model) => model.id));
+		for (const model of veniceE2EEModels()) {
+			if (!ids.has(model.id)) catalog.push(model);
+		}
+	}
+	return catalog as Model<CatalogApi<BuiltinCatalogs[TProvider][BuiltinChatModelId<TProvider>]>>[];
 }
 
 export function getBuiltinImageModels<TProvider extends BuiltinProvider>(

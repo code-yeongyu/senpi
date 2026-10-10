@@ -1,3 +1,25 @@
+## 2026-10-10 - Venice E2EE encrypts prompts before they leave the process
+
+### What changed
+
+- `packages/ai/src/providers/venice.ts`: the Venice factory appends the published `e2ee-*` catalog rows models.dev does not list, and wraps the OpenAI-completions API so those model ids run the E2EE session.
+- `packages/ai/src/providers/venice-e2ee.ts`: client secp256k1 ECDH, HKDF-SHA256, and AES-256-GCM seal every content-bearing message before the request is sent; the SSE and JSON bodies are decrypted locally. Attestation accepts the model signing key only when the Intel TDX quote's REPORTDATA binds that key and the client nonce and the quote is not a debug TD. This is structural binding, not Intel DCAP signature verification.
+- `packages/ai/src/providers/all.ts`: `getBuiltinModel` and `getBuiltinModels` serve those same rows. The generated Venice shard does not contain them, and replacing the shard would drop the models a regeneration owns.
+
+### Why
+
+Venice's `include_venice_system_prompt: false` flag only changes a server-side privacy policy. Prompts were still plaintext on the wire. `e2ee-*` models require the client to encrypt to the attested TEE key and to decrypt the streamed ciphertext. Non-`e2ee-*` Venice models stay plaintext. Prices and context windows are the published E2EE listing as of 2026-10-10; `e2ee-gemma-4-26b-a4b-uncensored-p` is omitted because its max output tokens were not published. Function calling, images, and audio stay unsupported because the TEE does not decrypt those fields.
+
+### Why an extension could not handle it
+
+An extension sees the transcript before the provider builds the HTTP body, and it cannot replace the response stream the OpenAI client parses. Encryption has to run on the payload after message conversion, and decryption has to run on the bytes before that parser. Both sit in the provider request path.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/venice.ts` provider factory (`models` and `api`), against catalog or auth edits to the same factory.
+- `packages/ai/src/providers/all.ts` built-in catalog reads (`getBuiltinModel`, `getBuiltinModels`), against provider-registration edits.
+- Low: `packages/ai/src/providers/venice-e2ee.ts` is fork-owned. A later models.dev listing of these ids should drop the matching factory overlay rather than duplicate the row.
+
 ## 2026-10-09 - Restore providers-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed
