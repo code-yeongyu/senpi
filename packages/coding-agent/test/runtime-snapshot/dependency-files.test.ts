@@ -27,6 +27,7 @@ describe("runtime dependency payload (#3083)", () => {
 			for (let n = 0; n < 10; n++) write(join(dep, dir, `unused-${n}.ts`), "x".repeat(4096));
 		}
 		write(join(dep, "README.md"), "# inert\n");
+		write(join(dep, "CONTRIBUTING.md"), "# inert\n");
 		write(join(dep, "LICENSE.md"), "MIT\n");
 		write(join(dep, "dist/data.json"), '{"answer":42}\n');
 		// An export can legitimately live in a directory otherwise mistaken for documentation.
@@ -57,6 +58,7 @@ describe("runtime dependency payload (#3083)", () => {
 			expect(existsSync(join(copied, "nested-dep", dir)), dir).toBe(false);
 		expect(files.some((file) => file.startsWith("nested-dep/src/"))).toBe(false);
 		expect(existsSync(join(copied, "nested-dep/README.md"))).toBe(false);
+		expect(existsSync(join(copied, "nested-dep/CONTRIBUTING.md"))).toBe(false);
 		expect(readFileSync(join(copied, "nested-dep/LICENSE.md"), "utf8")).toBe("MIT\n");
 		expect(readFileSync(join(copied, "native-helper/docs/index.js"), "utf8")).toContain("kept");
 		expect(readFileSync(join(copied, "nested-dep/dist/data.json"), "utf8")).toBe('{"answer":42}\n');

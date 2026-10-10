@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 const INERT_TREE = /^(?:tests?|__tests__|__fixtures__|fixtures|docs?|examples?|bench(?:marks?)?)$/;
 const ROOT_NOTES = /^(?:readme|changelog|history)(?:\.[^/]*)?$/i;
+const ROOT_MARKDOWN = /^[^/]+\.md$/i;
+const LICENSE = /^licen[cs]e(?:\.[^/]*)?$/i;
 
 /**
  * Keep every package and its runtime assets, but not development payload. Manifest entry roots
@@ -32,7 +34,8 @@ export function dependencyFileExclusions(packageDir: string): (path: string) => 
 	return (path) => {
 		const root = path.split("/")[0] ?? "";
 		if (entryRoots.has(root) || entryRoots.has("*") || entryRoots.has("**")) return false;
-		if (INERT_TREE.test(root) || ROOT_NOTES.test(path)) return true;
+		if (INERT_TREE.test(root) || ROOT_NOTES.test(path) || (ROOT_MARKDOWN.test(path) && !LICENSE.test(path)))
+			return true;
 		return built && root === "src" && /\.[cm]?tsx?$/.test(path);
 	};
 }
