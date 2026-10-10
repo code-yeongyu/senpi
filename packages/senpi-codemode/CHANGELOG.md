@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Julia loads handle helpers at first use and installs globals sizing declarations only when a globals diagnostic is requested, reducing fresh-kernel CPU work. This is a partial fix; the remaining startup regression is tracked separately (Refs [#3048](https://github.com/code-yeongyu/senpi/issues/3048)).
+
 ### Removed
 
 ## [2026.10.10-12] - 2026-10-10
