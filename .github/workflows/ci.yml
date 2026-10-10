@@ -649,8 +649,8 @@ jobs:
             kill "$suite" 2>/dev/null || true
             exit 1
           fi
-          wait "$suite"
-          status=$?
+          status=0
+          wait "$suite" || status=$?
           cat "$out"
           exit "$status"
         working-directory: packages/senpi-codemode

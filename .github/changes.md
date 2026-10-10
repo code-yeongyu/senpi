@@ -19,6 +19,24 @@
 
 - Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
 
+## 2026-10-10 - A failing WebView suite prints its vitest output (senpi#3092)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Run eval kernel WebView suites (Bun)` step captures the background suite's exit status with `wait "$suite" || status=$?` instead of a bare `wait` followed by `status=$?`, then prints the vitest output and exits with that status.
+
+### Why
+
+- `.github/workflows/ci.yml`: the step runs under `bash -eo pipefail` (GitHub `shell: bash` default), so a failing `wait` ended the step before `cat "$out"`. A failing suite showed no test output at all (seen on PR #3091), only the hang path printed it.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI step scripting is repository configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the WebView step's `run` script in the eval-kernel WebView job.
+
 ## 2026-10-10 - Bash-tool grandchildren stay console-free on Windows, and a known upstream window is documented (omo#7691)
 
 ### What changed
