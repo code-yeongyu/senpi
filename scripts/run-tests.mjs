@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { mkdtempSync, opendirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { signalGroup } from "./package-manager.mjs";
+import { reportTempLeaks, tempEntries } from "./test-temp-guard.mjs";
 
 const [runner, ...args] = process.argv.slice(2);
 if (!runner) throw new Error("usage: run-tests.mjs <vitest|executable> [arguments...]");
@@ -12,21 +13,7 @@ const entry = runner === "vitest"
 	? join(dirname(createRequire(import.meta.url).resolve("vitest/package.json")), "vitest.mjs")
 	: undefined;
 const parent = tmpdir();
-// Only enumerate top-level names, with an explicit cap: never walk a shared temp tree.
-function entries() {
-	const directory = opendirSync(parent);
-	const names = [];
-	try {
-		for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
-			if (names.length === 100_000) throw new Error("temp guard exceeded 100000 top-level entries");
-			names.push(entry.name);
-		}
-	} finally {
-		directory.closeSync();
-	}
-	return names.sort();
-}
-const before = process.env.SENPI_TEST_TEMP_GUARD === "1" ? new Set(entries()) : undefined;
+const before = process.env.SENPI_TEST_TEMP_GUARD === "1" ? tempEntries(parent) : undefined;
 // Vitest constructs its core _tmpDir before globalSetup. cacheDir/server.deps do not
 // control forks' makeTmpCopies, so the environment must be scoped before loading Vitest.
 const root = mkdtempSync(join(parent, "st-"));
@@ -56,11 +43,6 @@ try {
 	for (const [signal, handler] of handlers) process.off(signal, handler);
 }
 if (before) {
-	const leaked = entries().filter((name) => !before.has(name));
-	console.log(`[test-temp] new top-level entries after teardown: ${leaked.length}`);
-	if (leaked.length) {
-		for (const name of leaked) console.error(`[test-temp] leftover: ${JSON.stringify(name)}`);
-		process.exitCode = 1;
-	}
+	if (reportTempLeaks(parent, before) !== 0) process.exitCode = 1;
 }
 if (forwarded) process.kill(process.pid, forwarded);

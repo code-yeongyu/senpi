@@ -114,6 +114,11 @@ jobs:
       - name: Build workspace against regenerated catalog
         run: npm run build
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Test ai against regenerated catalog
         working-directory: packages/ai
         env:
@@ -142,6 +147,11 @@ jobs:
             echo "- Status: ${{ job.status }}"
             echo "- Generated drift: ${{ steps.drift.outcome }}"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   local-release-coherence:
     name: Local release coherence

@@ -4,6 +4,7 @@
 
 - `scripts/run-tests.mjs`: launch test processes with a private TMPDIR/TEMP/TMP before Vitest initializes, remove that root after child exit, and forward catchable interrupts to the child's process group before teardown. CI compares sorted top-level temp names after cleanup, bounded at 100000 entries, and fails with each leftover name.
 - `scripts/vitest-temp.ts`: shared file-scoped fixture creation registers teardown even when an assertion fails.
+- `scripts/test-temp-guard.mjs`: the bounded top-level scanner is shared by the launcher and a snapshot/check CLI. A job-final check can report residue even if the launcher itself was killed.
 
 ### Why
 

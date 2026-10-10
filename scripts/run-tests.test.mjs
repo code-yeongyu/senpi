@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,6 +12,34 @@ import { resolveWorkspaceDirectories } from "./run-workspaces.mjs";
 const runner = fileURLToPath(new URL("./run-tests.mjs", import.meta.url));
 const require = createRequire(import.meta.url);
 const vitestRoot = dirname(require.resolve("vitest/package.json"));
+
+test("job-final guard detects new entries without deleting baseline or leaked files (#3064)", () => {
+	const parent = mkdtempSync(join(tmpdir(), "senpi-job-guard-proof-"));
+	try {
+		const directory = join(parent, "scan");
+		mkdirSync(directory);
+		writeFileSync(join(directory, "baseline"), "keep");
+		const guard = fileURLToPath(new URL("./test-temp-guard.mjs", import.meta.url));
+		const receipt = join(parent, "snapshot.json");
+		const options = { env: { ...process.env, TMPDIR: directory, TEMP: directory, TMP: directory }, encoding: "utf8", timeout: 10_000 };
+		const snapshot = spawnSync(process.execPath, [guard, "snapshot", receipt], options);
+		assert.ifError(snapshot.error);
+		assert.equal(snapshot.status, 0, snapshot.stderr);
+		const clean = spawnSync(process.execPath, [guard, "check", receipt], options);
+		assert.ifError(clean.error);
+		assert.equal(clean.status, 0, clean.stderr);
+		assert.match(clean.stdout, /after teardown: 0/);
+		mkdirSync(join(directory, "new-entry"));
+		const leaked = spawnSync(process.execPath, [guard, "check", receipt], options);
+		assert.ifError(leaked.error);
+		assert.equal(leaked.status, 1);
+		assert.match(leaked.stdout, /after teardown: 1/);
+		assert.match(leaked.stderr, /leftover: "new-entry"/);
+		assert.deepEqual(readdirSync(directory).sort(), ["baseline", "new-entry"]);
+	} finally {
+		rmSync(parent, { recursive: true, force: true });
+	}
+});
 
 test("workspace test entrypoints cannot bypass temp ownership (#3064)", async () => {
 	const root = fileURLToPath(new URL("../", import.meta.url));

@@ -55,6 +55,11 @@ jobs:
         run: bun install --ignore-scripts --frozen-lockfile
       - name: Build workspace entries
         run: bun packages/senpi-codemode/scripts/gate-build.ts
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Eval regression gate
         run: node scripts/run-tests.mjs bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
       - name: Codemode package tests (including gate regressions)
@@ -68,6 +73,11 @@ jobs:
           name: codemode-gate-report
           path: packages/senpi-codemode/gate-report.json
           if-no-files-found: error
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   check:
     name: Static checks
@@ -160,6 +170,11 @@ jobs:
         with:
           bun-version: "1.4.2"
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Test shard
         timeout-minutes: 25
         run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/3
@@ -173,6 +188,11 @@ jobs:
             echo "## Test (coding-agent ${{ matrix.shard }}/3)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   grep-native-contract:
     runs-on: ubuntu-latest
@@ -222,6 +242,11 @@ jobs:
         run: npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
         working-directory: crates/senpi-grep
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Test grep with both engines
         run: |
           node_file=$(ls crates/senpi-grep/senpi_grep.*.node)
@@ -240,6 +265,11 @@ jobs:
           NODE
           echo "engine=rg"
           SENPI_GREP_ENGINE=rg node ../../scripts/run-tests.mjs vitest run test/grep
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   hooks-trust-storage-windows:
     name: Hooks trust storage (Windows)
@@ -258,9 +288,19 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Run hooks trust-storage regressions
         run: node ../../scripts/run-tests.mjs vitest run test/suite/hooks-trust.test.ts test/suite/hooks-trust-storage-errors.test.ts test/suite/hooks-trust-storage-release-errors.test.ts test/suite/hooks-trust-storage-aba.test.ts
         working-directory: packages/coding-agent
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   # Durable scheduled prompts: rename claims, runner leases, ungated delivery locks, taskkill
   # timeouts and cmd.exe `--exec` hooks all behave differently on Windows.
@@ -285,9 +325,19 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Run scheduled-prompt suites
         run: node ../../scripts/run-tests.mjs vitest run test/suite/schedule-runner.test.ts test/suite/schedule-extension.test.ts test/suite/schedule-cli.test.ts
         working-directory: packages/coding-agent
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   rpc-windows:
     name: RPC named pipes (Windows)
@@ -316,6 +366,11 @@ jobs:
 
       # Each suite runs in its own process; lifecycle failures are not retried in-process. The verbose
       # reporter names every test in the log, so a Windows-only case is provably run, not just counted.
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Run RPC host ensure tests
         run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-ensure.test.ts --reporter=verbose
         working-directory: packages/coding-agent
@@ -368,6 +423,11 @@ jobs:
             ' "${pair%%:*}" "${pair#*:}"
           done
         working-directory: packages/coding-agent
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   compiled-extensions-windows:
     name: Compiled extensions (Windows)
@@ -397,6 +457,11 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Verify native importer
         shell: bash
         run: node ../../scripts/run-tests.mjs vitest run test/extensions/bun-extension-importer.test.ts test/extensions/bun-extension-regressions.test.ts
@@ -405,6 +470,11 @@ jobs:
       - name: Verify relocated compiled extensions
         shell: bash
         run: node scripts/run-tests.mjs bun test scripts/compiled-extension-platform.test.ts scripts/compiled-extension-load.test.ts
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   # omo#8700: npm installs Claude Code on Windows as a claude.cmd shim around bin\claude.exe. The
   # shim-resolution test only runs on a real Windows host, under Node and under Bun (the omo engine
@@ -431,6 +501,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Run Claude executable resolution tests (Node)
         shell: bash
         run: node ../../scripts/run-tests.mjs vitest run test/anthropic-subscription-executable-path-lookup.test.ts test/anthropic-subscription-executable-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-node.json
@@ -455,6 +530,11 @@ jobs:
             ' "$report"
           done
         working-directory: packages/coding-agent
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   # omo#7691: a bash-tool command whose node starts its own child must not open a visible console when senpi
   # runs without one. The probe detaches its own console (an IDE/GUI-launched host), so only a Windows runner
@@ -481,6 +561,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Run the bash grandchild console probe
         shell: bash
         run: node ../../scripts/run-tests.mjs vitest run test/bash-grandchild-console-windows.test.ts --reporter=verbose --reporter=json --outputFile=vitest-console.json
@@ -502,6 +587,11 @@ jobs:
           echo "--- raw console probe results ---"
           cat console-probe-results.jsonl || echo "(no results file)"
         working-directory: packages/coding-agent
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   # senpi#2248: Bun builds Chrome-backed WebViews only on the process main thread, so eval cells
   # reach them through the main-thread service. The suites need Bun and a real Chrome (preinstalled
@@ -536,6 +626,11 @@ jobs:
       # log, and a runner that stops answering never enforces a step timeout either. The step watches
       # the suite itself and, after 9 minutes (a normal Windows run takes about 3), prints what it has,
       # the processes still running, and the readiness log, then fails.
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Run eval kernel WebView suites (Bun)
         shell: bash
         timeout-minutes: 12
@@ -580,6 +675,11 @@ jobs:
             if (passed < 10 || failed !== 0 || skipped > allowedSkips) process.exit(1);
           '
         working-directory: packages/senpi-codemode
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   process-kernel:
     name: Eval kernel process isolation (${{ matrix.os }})
@@ -619,6 +719,11 @@ jobs:
 
       # Process mode spawns its kernel child with bun on both platforms; a platform where the child cannot start
       # (senpi#2706: a Linux spawn's stdout is a socket) fails here instead of shipping.
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Run the process-mode kernel suite
         timeout-minutes: 12
         run: node ../../scripts/run-tests.mjs vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
@@ -650,6 +755,11 @@ jobs:
             if (passed < 30 || failed !== 0 || unexpected.length !== 0) process.exit(1);
           '
         working-directory: packages/senpi-codemode
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   python-kernel-windows:
     name: Python kernel cold startup (Windows)
@@ -665,6 +775,11 @@ jobs:
           bun-version: "1.4.2"
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: bun scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Slow and hung bootstrap regressions
         working-directory: packages/senpi-codemode
         run: bun ../../scripts/run-tests.mjs vitest run test/py-kernel-startup.test.ts test/py-kernel.test.ts test/py-kernel-child-error.test.ts
@@ -711,6 +826,11 @@ jobs:
         run: |
           bun scripts/run-tests.mjs "$env:RUNNER_TEMP/python-host/python-host.exe"
           exit $LASTEXITCODE
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: bun scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   test-workspaces:
     name: Test (workspaces + scripts)
@@ -743,6 +863,11 @@ jobs:
 
       # Codemode's graph suite rebuilds workspace entries and compile assets itself.
       # Keep both graph checks ahead of script tests, which can invalidate dist.
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Fresh release entry graphs (codemode and exclusions)
         run: |
           npm rebuild canvas --foreground-scripts
@@ -789,6 +914,11 @@ jobs:
             echo "## Test (workspaces + scripts)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   rpc-owner-lifetime:
     name: RPC supervisor exit (${{ matrix.os }})
@@ -815,6 +945,11 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Build workspace package entries
         run: npm run build
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Supervisor owner, normal-stop and compiler regressions
         working-directory: packages/coding-agent
         run: >
@@ -824,6 +959,11 @@ jobs:
           test/suite/regressions/3054-supervisor-child-exit.test.ts
           test/suite/regressions/3054-process-exit-compiler.test.ts
           test/suite/regressions/3054-legacy-drain-deadline.test.ts
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   # Fan-in gate carrying the exact context name branch protection requires
   # ("Check and test"). It succeeds only when every check/test job above passed,
@@ -910,6 +1050,11 @@ jobs:
       # ConPTY/PTY behavior is proven separately by the Native Prebuilds cargo job; here the
       # loader falls back to the child_process pipe backend when no host prebuild is present,
       # so these tests exercise the cross-OS TS layer (loader, session, screen, tools).
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: PTY package tests
         run: npm run test --workspace @earendil-works/pi-pty
 
@@ -917,6 +1062,11 @@ jobs:
         shell: bash
         run: node ../../scripts/run-tests.mjs vitest run test/suite/terminal-extension.test.ts test/suite/terminal-settings-notify.test.ts test/suite/shell-config-kind.test.ts test/suite/regressions/issue-1229-win-fswatch-noncanonical-abort.test.ts
         working-directory: packages/coding-agent
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
 
   inspector-handoff:
     name: Inspector handoff (${{ matrix.os }})
@@ -942,6 +1092,11 @@ jobs:
       - name: Build workspace package entries
         run: npm run build
 
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+
       - name: Run Inspector handoff regression
         run: node ../../scripts/run-tests.mjs vitest run test/suite/regressions/inspector-endpoint-handoff.test.ts
         working-directory: packages/coding-agent
@@ -956,3 +1111,7 @@ jobs:
             echo "- Node: 24"
             echo "- Test: inspector-endpoint-handoff.test.ts"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
