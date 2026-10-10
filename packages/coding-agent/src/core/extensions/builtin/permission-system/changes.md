@@ -1,5 +1,23 @@
 # Permission System Builtin Extension
 
+## 2026-10-08 - Refuse tools after settings load errors (#2624)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts` checks load errors on its fresh SettingsManager before deriving permission rules. Failed global or project settings loads enter the existing setup-error refusal, with the source scope, path and cause.
+
+### Why
+
+- A parse error otherwise replaces restrictive settings with an empty object and silently derives full-access. Valid JSONC and absent settings retain their existing behavior.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts` is already the permission builtin and owns the initialization boundary before tool admission.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`: settings loading inside loadPermissionRules, after CLI preset validation.
+
 ## 2026-10-06 - Invocation-scoped dispatch authorization (#2843)
 
 ### What changed

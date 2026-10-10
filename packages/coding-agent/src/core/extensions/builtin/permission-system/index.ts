@@ -122,6 +122,15 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			);
 		}
 
+		const settingsErrors = settingsManager.drainErrors();
+		if (settingsErrors.length > 0) {
+			throw new Error(
+				settingsErrors
+					.map(({ scope, path, error }) => `Failed to load ${scope} settings (${path}): ${error.message}`)
+					.join("; "),
+			);
+		}
+
 		const loadedSettings = loadPermissionSettings(settingsManager, cliRuleset, cwd, cliPreset);
 		staticRuleset = loadedSettings.staticRuleset;
 		activePreset = loadedSettings.preset;
