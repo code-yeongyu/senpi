@@ -40,6 +40,7 @@ import {
 	type HostTarget,
 	runHostRequest,
 } from "../modes/rpc/host-runner.ts";
+import { emit } from "./host-emit.ts";
 
 const SUBCOMMANDS = ["ensure", "status", "stop", "handoff", "shard-path", "gc"] as const;
 type HostSubcommand = (typeof SUBCOMMANDS)[number];
@@ -56,6 +57,7 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
               (--when idle: the running host hands over to THIS runtime at its next safe idle point)
   shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
   gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
+  session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")
 
   --json   the answer is one JSON line on stdout (always, except shard-path's bare path)`;
 
@@ -137,7 +139,7 @@ function launchSpec(specPath: string | undefined): Promise<ResolvedHostLaunchSpe
 }
 
 /** The endpoint this client would reach: the one it was given, the branded override, or the default. */
-function resolveHostSocket(explicit: string | undefined, agentDir: string): string {
+export function resolveHostSocket(explicit: string | undefined, agentDir: string): string {
 	return explicit ?? envValue("RPC_SOCKET") ?? resolve(agentDir, "rpc", "rpc.sock");
 }
 
@@ -242,11 +244,6 @@ function handoverTerms(flags: Readonly<Record<string, string>>): IdleHandoverTer
 		return `Error: --if-generation must be a non-negative integer.`;
 	}
 	return { operationId, ifInstanceId, ifGeneration, targetRuntimeBuildId };
-}
-
-/** One line, synchronously, so an exit cannot truncate the answer the caller is parsing. */
-function emit(payload: Record<string, unknown>): void {
-	writeSync(1, `${JSON.stringify(payload)}\n`);
 }
 
 function isSubcommand(value: string): value is HostSubcommand {
