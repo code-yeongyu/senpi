@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import { devNull } from "node:os";
+import { join } from "node:path";
 import { terminateProcessTrees } from "../kernels/js/process-tree-host.ts";
 
 export type EnvironmentErrorCode =
@@ -180,7 +182,7 @@ export function isolatedPipEnv(): NodeJS.ProcessEnv {
 	return { ...env, PIP_CONFIG_FILE: process.platform === "win32" ? "nul" : devNull, PYTHONNOUSERSITE: "1" };
 }
 
-export function runPipInstall(input: {
+export async function runPipInstall(input: {
 	readonly interpreter: string;
 	readonly root: string;
 	readonly args: readonly string[];
@@ -200,52 +202,75 @@ export function runPipInstall(input: {
 		input.root,
 		...input.args,
 	];
-	return new Promise((resolve, reject) => {
-		if (input.signal.aborted) {
-			reject(new EnvironmentError("environment_install_cancelled", "the install was cancelled before it started"));
-			return;
-		}
-		const child = spawn(input.interpreter, argv, {
-			cwd: input.cwd,
-			stdio: ["ignore", "pipe", "pipe"],
-			env: isolatedPipEnv(),
-		});
-		let stderrTail = "";
-		child.stdout.setEncoding("utf8").on("data", (data: string) => input.onOutput?.("stdout", data));
-		child.stderr.setEncoding("utf8").on("data", (data: string) => {
-			stderrTail = (stderrTail + data).slice(-STDERR_TAIL_BYTES);
-			input.onOutput?.("stderr", data);
-		});
-		// pip's build backends run in their own subprocesses; stopping only pip would leave them writing.
-		const onAbort = () => {
-			const pid = child.pid;
-			if (pid === undefined) child.kill("SIGKILL");
-			else void terminateProcessTrees([pid], { graceMs: PIP_TREE_GRACE_MS }).catch(() => child.kill("SIGKILL"));
-		};
-		input.signal.addEventListener("abort", onAbort, { once: true });
-		child.once("error", (error) => {
-			input.signal.removeEventListener("abort", onAbort);
-			reject(
-				new EnvironmentError("environment_installer_unavailable", `${input.interpreter} -m pip: ${error.message}`),
-			);
-		});
-		child.once("close", (code, signal) => {
-			input.signal.removeEventListener("abort", onAbort);
+	if (input.signal.aborted) {
+		throw new EnvironmentError("environment_install_cancelled", "the install was cancelled before it started");
+	}
+	const scratch = await mkdtemp(join(input.root, ".pip-"));
+	try {
+		await new Promise<void>((resolve, reject) => {
 			if (input.signal.aborted) {
-				reject(new EnvironmentError("environment_install_cancelled", "the install was cancelled; pip was stopped"));
-			} else if (code === 0) resolve();
-			else if (/No module named pip/.test(stderrTail)) {
-				reject(new EnvironmentError("environment_installer_unavailable", `${input.interpreter} has no pip module`));
-			} else if (/ResolutionImpossible|conflicting dependencies/.test(stderrTail)) {
-				reject(new EnvironmentError("environment_resolution_conflict", stderrTail.trim()));
-			} else {
+				reject(
+					new EnvironmentError("environment_install_cancelled", "the install was cancelled before it started"),
+				);
+				return;
+			}
+			const child = spawn(input.interpreter, argv, {
+				cwd: input.cwd,
+				stdio: ["ignore", "pipe", "pipe"],
+				env: { ...isolatedPipEnv(), TMPDIR: scratch, TEMP: scratch, TMP: scratch },
+			});
+			let termination: Promise<void> | undefined;
+			let stderrTail = "";
+			child.stdout.setEncoding("utf8").on("data", (data: string) => input.onOutput?.("stdout", data));
+			child.stderr.setEncoding("utf8").on("data", (data: string) => {
+				stderrTail = (stderrTail + data).slice(-STDERR_TAIL_BYTES);
+				input.onOutput?.("stderr", data);
+			});
+			// pip's build backends run in their own subprocesses; stopping only pip would leave them writing.
+			const onAbort = () => {
+				const pid = child.pid;
+				if (pid === undefined) child.kill("SIGKILL");
+				else
+					termination = terminateProcessTrees([pid], { graceMs: PIP_TREE_GRACE_MS }).catch(() => {
+						child.kill("SIGKILL");
+					});
+			};
+			input.signal.addEventListener("abort", onAbort, { once: true });
+			child.once("error", (error) => {
+				input.signal.removeEventListener("abort", onAbort);
 				reject(
 					new EnvironmentError(
-						"environment_install_failed",
-						stderrTail.trim() || `pip exited with ${code ?? signal}`,
+						"environment_installer_unavailable",
+						`${input.interpreter} -m pip: ${error.message}`,
 					),
 				);
-			}
+			});
+			child.once("close", async (code, signal) => {
+				input.signal.removeEventListener("abort", onAbort);
+				await termination;
+				if (input.signal.aborted) {
+					reject(
+						new EnvironmentError("environment_install_cancelled", "the install was cancelled; pip was stopped"),
+					);
+				} else if (code === 0) resolve();
+				else if (/No module named pip/.test(stderrTail)) {
+					reject(
+						new EnvironmentError("environment_installer_unavailable", `${input.interpreter} has no pip module`),
+					);
+				} else if (/ResolutionImpossible|conflicting dependencies/.test(stderrTail)) {
+					reject(new EnvironmentError("environment_resolution_conflict", stderrTail.trim()));
+				} else {
+					reject(
+						new EnvironmentError(
+							"environment_install_failed",
+							stderrTail.trim() || `pip exited with ${code ?? signal}`,
+						),
+					);
+				}
+			});
 		});
-	});
+	} finally {
+		// A killed pip/build backend cannot clean Python's tempfile directories itself.
+		await rm(scratch, { recursive: true, force: true });
+	}
 }
