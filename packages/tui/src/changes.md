@@ -61,6 +61,61 @@ Repaint decisions live inside the TUI renderer, below any extension.
 
 # TUI delta rendering fork changes
 
+## 2026-10-04 - @ suggestions match an in-memory file index instead of walking per keystroke
+
+### What changed
+
+- `packages/tui/src/autocomplete.ts`: `CombinedAutocompleteProvider` keeps one background `fd` listing per searched directory (`refreshFileIndex()`: no pattern, `FILE_INDEX_MAX_ENTRIES` 100k, `FILE_INDEX_BUILD_BUDGET_MS` 3 s with partial output kept, refreshed in the background after `FILE_INDEX_REFRESH_MS` 5 s, `FILE_INDEX_MAX_ROOTS` 4). `getFuzzyFileSuggestions()` matches the index in memory with fd's own rules (`matchFileIndex()`: `buildFdPathQuery()` pattern, smart case, filename or full path) and no longer runs a one-level `fd` per keystroke, so typing costs at most one listing per directory root. A subdirectory is answered from a cached ancestor's index (`findFileIndex()`); with no usable index the query waits for the listing (abort-aware). A query also re-lists first when the directory's own mtime differs from when its listing started (one `stat`, not a walk), so a new top-level file or folder shows up at once, as the removed per-keystroke one-level walk (`getBaseDirSuggestions()`) guaranteed. `walkDirectoryWithFd()` takes an optional time budget and `parseFdOutput()` is shared.
+- `AutocompleteProvider.onDidChangeSuggestions?(listener)`: optional; the provider calls it when a finished listing differs from the previous one.
+
+### Why
+
+- Every keystroke walked the tree: `@~/Dev` from `$HOME` took about 7 s, and even a 400 ms walk budget left each update half a second behind typing (#2740).
+
+### Why an extension could not handle it
+
+- The `fd` walk and its scheduling are private to `CombinedAutocompleteProvider`; a stacked provider can only wrap the finished result.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/autocomplete.ts`: the `AutocompleteProvider` interface, the provider's fields and new index methods before `getBaseDirSuggestions()`, `walkDirectoryWithFd()` (signature, `finish`, the `close` handler), the removed `getBaseDirSuggestions()`, and the top of `getFuzzyFileSuggestions()`.
+
+## 2026-10-04 - The editor refreshes an open picker when the provider signals a change
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`: `setAutocompleteProvider()` subscribes to `onDidChangeSuggestions` (unsubscribing the previous provider) and re-queries an open picker with `preserveSelection`, so `applyAutocompleteSuggestions()` keeps the highlighted row when it is still listed.
+
+### Why
+
+- Deeper matches that land after the first answer should appear without another keystroke, and a refresh must not move the row the user was about to pick.
+
+### Why an extension could not handle it
+
+- The picker, its selection and the request sequencing are private to `Editor`.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: `setAutocompleteProvider()`, `AutocompleteRequestOptions`, the end of `runAutocompleteRequest()`, and `applyAutocompleteSuggestions()`.
+
+## 2026-10-04 - A completed directory keeps the picker open on its contents
+
+### What changed
+
+- `packages/tui/src/components/editor.ts`: after Tab, a single-match Tab, or a Tab-started refreshed accept (`AutocompleteRequestOptions.drillIntoDirectory`) applies an item whose label ends with `/`, `continueIntoDirectory()` requests suggestions again, so the picker shows the directory's entries. Enter keeps its meaning: accept and close.
+
+### Why
+
+- Tab on `@~/Developer/` closed the picker, and the next level appeared only after typing another character (#2738; Claude Code re-queries after accepting a directory).
+
+### Why an extension could not handle it
+
+- What happens after an accept is decided inside `Editor`'s private key handling.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/editor.ts`: the Tab and confirm branches of the autocomplete-mode input handler and the accept branches of `runAutocompleteRequest()`.
+
 ## 2026-10-04 - Accepting a suggestion list that predates the text re-queries instead of splicing
 
 ### What changed
