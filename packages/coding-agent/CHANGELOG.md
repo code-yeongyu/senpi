@@ -6,6 +6,7 @@
 
 ### Added
 
+- `senpi host session open|close|model|prompt|steer|abort|read|state|list|wait` drives a session over the shared host from the command line: one JSON line of output per call and typed exit codes, so an orchestrating agent no longer has to write its own RPC client or scrape a terminal pane ([#3073](https://github.com/code-yeongyu/senpi/issues/3073)).
 - RPC hosts can opt into their ensure caller's lifetime with `owner: "caller"`. After that process exits or is killed, the supervisor stops an idle host after a short grace instead of leaving the shard resident for the normal idle timeout. Surviving peers and active turns keep running; ownership is preserved across reuse and generation handoff. Unowned hosts require no owner filesystem watcher, watch exhaustion falls back to polling, owner identities are timezone-independent, and brief activity resets the grace window ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
 
 ### Changed

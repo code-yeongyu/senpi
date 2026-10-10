@@ -566,6 +566,7 @@ senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
+senpi host session <open|close|model|prompt|steer|abort|read|state|list|wait> ...   (see "Driving sessions from the CLI")
 ```
 
 The contract is machine-first: EXACTLY ONE JSON line on stdout and nothing else, diagnostics on stderr,
@@ -797,6 +798,108 @@ sessions:
 
 Both exit non-zero if a daemon, a fixture host or the sandbox survives the run: a host outliving its QA is
 exactly the failure they exist to catch.
+
+### Driving sessions from the CLI
+
+`senpi host session` is a thin client over the wire commands this document already describes: it attaches to a
+session (or starts the shared host, for `open` only) and relays one request, so an orchestrating agent or script
+can drive a session without writing its own RPC client. It changes no host behavior and adds no new wire command.
+
+```
+senpi host session open   --cwd <dir> [--model <provider/id>] [--name <text>] [--prompt <text|@file>]
+                          [--launch-spec <file>] [--socket <path>] [--json]
+senpi host session close  <ref> [--socket <path>] [--json]
+senpi host session model  <ref> <provider/id> [--socket <path>] [--json]
+senpi host session prompt <ref> <text|@file> [--socket <path>] [--json]
+senpi host session steer  <ref> <text|@file> [--socket <path>] [--json]
+senpi host session abort  <ref> [--socket <path>] [--json]
+senpi host session read   <ref> [--tail <N>] [--since <entryId>] [--messages] [--socket <path>] [--json]
+senpi host session state  <ref> [--socket <path>] [--json]
+senpi host session list   [--socket <path>] [--json]
+senpi host session wait   <ref> [--until idle|done] [--timeout <ms>] [--socket <path>] [--json]
+```
+
+The contract is machine-first, exactly like `senpi host` itself: EXACTLY ONE JSON line on stdout per call
+(written synchronously), diagnostics on stderr, and an exit code that classifies the outcome without parsing
+the line.
+
+| Exit | Meaning |
+|---|---|
+| `0` | it happened - the payload's `action` names the subcommand (`open`, `close`, `model`, `prompt`, `steer`, `abort`, `read`, `state`, `list`, `wait`) |
+| `1` | it failed: `{ action: "error", reason, detail }` with `reason` one of `transport_gone`, `host_error`, `wait_timeout` |
+| `2` | the command line is unusable: `{ action: "error", reason: "usage" \| "prompt_file_unreadable", detail }` |
+| `3` | refused: `{ action: "refuse", reason, detail, data? }` - every host error code (`unknown_session`, `session_busy`, `turn_active`, `host_draining`, `session_held` with `holders`, ...) plus the CLI's own `model_not_found`, `unknown_cursor`, `host_unavailable` (no host answers the socket and the verb is not `open`) and `unsupported_endpoint_kind` (the socket is a terminal's control endpoint, refused before any connection) |
+
+Every verb except `list` resolves `<ref>` (a `sessionId`, `durableSessionId`, `name`, or `sessionPath`) through
+`list_sessions` and then ATTACHES to the session before acting - the same `open_session { sessionPath }` call that
+re-opens a parked session transparently. Attaching is what authorizes `close` and what lets `wait` receive events;
+it also resets the host's idle window like any other attached connection (see "Host idle exit" above). `list` is
+the one exception: it calls `list_sessions { observe: true }`, so polling it never counts as host occupancy.
+
+- `open --cwd <dir> [--model <provider/id>] [--name <text>] [--prompt <text|@file>] [--launch-spec <file>]`
+  attaches to or starts the shared host through the same `ensureHost` attach-or-create path as `senpi host ensure`
+  (`--socket` resolution is identical, too), then calls `open_session { cwd, retain_on_disconnect: true, ... }` so
+  the session survives this process's exit. It prints `{ action: "open", socket, pid, sessionId, sessionPath,
+  durableSessionId, cwd, model: { provider, id }, attached, reused, prompt? }`. `--name` sets the session's display
+  name; `--prompt` starts one turn after open and reports its `disposition` without waiting for the turn to finish.
+- `close <ref>` attaches and closes the session. `{ action: "close", sessionId, closed, reason? }`: `closed: false`
+  means another client still holds an attachment (`close_session` only released this call's own attachment), not a
+  failure. The host aborts and drains a mid-turn session within its own grace; the CLI never force-aborts.
+- `model <ref> <provider/id>` changes the model whether the session is idle or mid-turn and prints
+  `{ action: "model", sessionId, requested: { provider, id }, model: { provider, id }, pendingModelSwitch }`
+  (`model` and `pendingModelSwitch` come from `get_state` read right after the call). `set_model` also persists the
+  GLOBAL default model and provider, not just this session's; a switch to a smaller context window can be held as
+  `pendingModelSwitch` instead of applying immediately. An unknown model answers `{ action: "refuse", reason:
+  "model_not_found" }`.
+- `prompt <ref> <text|@file>` starts a turn and prints `{ action: "prompt", sessionId, disposition }`
+  (`"started"` or `"handled"` - a `"handled"` disposition means an input handler consumed it and no model run
+  necessarily follows). A prompt sent while a turn is already running is refused `busy`: this is best-effort,
+  promoted from the host's code-less "Agent is already processing..." message; there is no atomic admission check.
+- `steer <ref> <text|@file>` prints `{ action: "steer", sessionId, disposition, streaming }`. `streaming: false`
+  means the session was idle when the steer arrived: the message is PARKED and delivered with the next `prompt`,
+  it does not start a turn by itself. `streaming: true` means it was queued into the running turn.
+- `abort <ref>` stops the running turn (if any) and prints `{ action: "abort", sessionId, acknowledged: true,
+  aborted }`. `aborted` reflects whether a turn was actually running when the abort was admitted; an abort on an
+  idle session is still exit 0 with `aborted: false` (a no-op, not a failure). Use `wait --until idle` to confirm
+  the session has actually settled afterward.
+- `read <ref> [--tail N] [--since <entryId>] [--messages]` prints `{ action: "read", sessionId, entries, count,
+  total, leafId, nextSince }` (or, with `--messages`, `{ action: "read", sessionId, messages, count }` from
+  `get_messages`, the runtime context rather than the durable log). `--since` is EXCLUSIVE (entries after that id)
+  and is applied before `--tail`; `nextSince` is the id of the LAST entry this call actually returned, in append
+  order - it is the cursor for the next call. `leafId` is the current branch leaf and is informational only; it is
+  never the right value to pass as the next `--since`. An unknown `--since` id is refused `unknown_cursor`.
+- `state <ref>` prints `{ action: "state", sessionId, durableSessionId, state }`, the session's `get_state` object
+  untouched.
+- `list` prints `{ action: "list", socket, sessions }`, an observe-only read of `list_sessions`.
+- `wait <ref> [--until idle|done] [--timeout <ms>]` (defaults: `idle`, `600000`) blocks on the session's real
+  settle events, never on a poll: `--until done` resolves on the first `agent_settled` (or a synthetic one from a
+  sealed session) after the call; `--until idle` resolves only once a settle ALSO leaves `steering`, `followUp` and
+  `pendingMessageCount` empty in `get_state`, so a steer queued mid-turn delays `idle` until its own follow-up turn
+  also settles. `turn_end` and `agent_end` are deliberately never used for either mode: one prompt can produce
+  several `turn_end`s through tool continuations, and `agent_end` may still be followed by a retry. It prints
+  `{ action: "wait", sessionId, until, outcome }` where `outcome` is `"done"`, `"idle"`, `"already_idle"` (the
+  session was already idle when `wait` was called), `"session_closed"` or `"session_parked"`; a timeout is
+  `{ action: "error", reason: "wait_timeout" }` exit 1, and a transport loss while waiting is `transport_gone`.
+
+Session references: `open` and `list` report `sessionId`, `sessionPath` and `durableSessionId` together. `sessionId`
+is a per-host-epoch routing handle that disappears across a park or handoff; `sessionPath` and `durableSessionId`
+survive it, and every subcommand accepts any of the three (plus the session's `name`) as `<ref>` and re-resolves it
+through `list_sessions` on every call.
+
+Retention limits (what `open`'s `retain_on_disconnect: true` does NOT survive): an explicit `close`, the host's own
+idle-eviction window (`SENPI_RPC_SESSION_IDLE_EVICTION_MS`, after which the session is parked - `open_session
+{ sessionPath }` from any client re-opens it transparently), or the host process exiting. A session that has not
+received a message yet may have no JSONL file on disk even though `open` already reported a `sessionPath`.
+
+A minimal orchestration run:
+
+```sh
+id=$(senpi host session open --cwd /work --model anthropic/claude-sonnet | jq -r .sessionId)
+senpi host session prompt "$id" "do the thing"
+senpi host session wait "$id" --until done --timeout 300000
+senpi host session read "$id" --tail 5
+senpi host session close "$id"
+```
 
 ### Child reaping on a socket host (`SENPI_RPC_HOST_REAPER`)
 
