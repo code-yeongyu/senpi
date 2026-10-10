@@ -877,8 +877,9 @@ the one exception: it calls `list_sessions { observe: true }`, so polling it nev
   `pendingMessageCount` empty in `get_state`, so a steer queued mid-turn delays `idle` until its own follow-up turn
   also settles. `turn_end` and `agent_end` are deliberately never used for either mode: one prompt can produce
   several `turn_end`s through tool continuations, and `agent_end` may still be followed by a retry. It prints
-  `{ action: "wait", sessionId, until, outcome }` where `outcome` is `"done"`, `"idle"`, `"already_idle"` (the
-  session was already idle when `wait` was called), `"session_closed"` or `"session_parked"`; a timeout is
+  `{ action: "wait", sessionId, until, outcome }` where `outcome` is `"done"`, `"idle"`, `"already_idle"` (no turn
+  was running when `wait` was called; for `--until idle` the queues must also be empty, so a steer parked on an idle
+  session keeps `idle` waiting until a `prompt` drains it), `"session_closed"` or `"session_parked"`; a timeout is
   `{ action: "error", reason: "wait_timeout" }` exit 1, and a transport loss while waiting is `transport_gone`.
 
 Session references: `open` and `list` report `sessionId`, `sessionPath` and `durableSessionId` together. `sessionId`

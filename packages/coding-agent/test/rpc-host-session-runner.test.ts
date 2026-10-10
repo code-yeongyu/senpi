@@ -367,6 +367,13 @@ describe("host session runner", () => {
 		});
 		expect(await client.getSteeringMessages()).toEqual(["parked"]);
 		expect((await client.getState()).isStreaming).toBe(false);
+		// A parked steer is not idle: `idle` keeps waiting while `done` sees no running turn.
+		expect(await runHostSessionRequest({ action: "wait", target, ref, until: "idle", timeoutMs: 100 })).toMatchObject(
+			{ exitCode: 1, payload: { reason: "wait_timeout" } },
+		);
+		expect(
+			await runHostSessionRequest({ action: "wait", target, ref, until: "done", timeoutMs: 20_000 }),
+		).toMatchObject({ exitCode: 0, payload: { outcome: "already_idle" } });
 	}, 120_000);
 
 	it("acknowledges aborts and changes models both mid-turn and idle", async () => {

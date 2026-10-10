@@ -316,14 +316,7 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 						void attached.getState().then((snapshot) => {
 							state = snapshot;
 							if (request.until === "done") finish("done");
-							else if (
-								!snapshot.isStreaming &&
-								snapshot.steering.length === 0 &&
-								snapshot.followUp.length === 0 &&
-								snapshot.ordered.length === 0 &&
-								snapshot.pendingMessageCount === 0
-							)
-								finish("idle");
+							else if (isDrained(snapshot)) finish("idle");
 						}, fail);
 					});
 					disconnected = fail;
@@ -343,7 +336,9 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 					}, request.timeoutMs);
 					void attached.getState().then((snapshot) => {
 						state = snapshot;
-						if (!snapshot.isStreaming && !observed) finish("already_idle");
+						// A parked steer keeps `idle` waiting: it only drains with the next prompt.
+						if (!observed && (request.until === "done" ? !snapshot.isStreaming : isDrained(snapshot)))
+							finish("already_idle");
 					}, fail);
 				});
 			}
@@ -379,6 +374,16 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 		ensured?.release();
 		await client?.stop();
 	}
+}
+
+function isDrained(state: RpcSessionState): boolean {
+	return (
+		!state.isStreaming &&
+		state.steering.length === 0 &&
+		state.followUp.length === 0 &&
+		state.ordered.length === 0 &&
+		state.pendingMessageCount === 0
+	);
 }
 
 function assertNever(value: never): never {
