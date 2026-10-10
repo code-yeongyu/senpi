@@ -9,6 +9,10 @@ import { buildClaudeOpus48Prompt } from "./claude-opus-4-8.ts";
 import { buildClaudeOpus5Prompt } from "./claude-opus-5.ts";
 import { buildClaudeOpus55Prompt } from "./claude-opus-5-5.ts";
 import { buildClaudeSonnet55Prompt } from "./claude-sonnet-5-5.ts";
+import {
+	type ResolvedPresetName as ContractResolvedPresetName,
+	resolvePresetName as resolveContractPresetName,
+} from "./contract.ts";
 import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
 import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
 import { buildDeepseekV4Flash0731Prompt } from "./deepseek-v4-flash-0731.ts";
@@ -29,37 +33,12 @@ import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
 import { buildKimiK28Prompt } from "./kimi-k2-8.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
-import {
-	extractClaudeOpusVersion,
-	extractGpt5Version,
-	isClaudeFable5Model,
-	isClaudeFable51Model,
-	isClaudeHaiku55Model,
-	isClaudeOpus5Model,
-	isClaudeOpus55Model,
-	isClaudeSonnet55Model,
-	isDeepseekV4Flash0731Model,
-	isDeepseekV4FlashModel,
-	isDeepseekV4ProModel,
-	isDeepseekV41FlashModel,
-	isGlm52Model,
-	isGlm53Model,
-	isGpt6FamilyModel,
-	isGrok45Model,
-	isGrok46Model,
-	isGrok47Model,
-	isKimiK3Model,
-	isKimiK26Model,
-	isKimiK27Model,
-	isKimiK28Model,
-	isSWE2Model,
-	type ModelWithPromptPresetMetadata,
-} from "./matchers.ts";
-import { type PromptPresetName, type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
+import type { ModelWithPromptPresetMetadata } from "./matchers.ts";
+import { type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
 
 export type { PromptPresetSettings } from "./settings.ts";
 
-type ResolvedPresetName = Exclude<PromptPresetName, "auto">;
+type ResolvedPresetName = ContractResolvedPresetName;
 
 export interface ResolvedPromptPreset {
 	name: ResolvedPresetName;
@@ -79,78 +58,7 @@ export function resolvePresetName(
 		return modelPromptPreset;
 	}
 
-	if (isGpt6FamilyModel(model)) {
-		return "gpt-6-astra";
-	}
-	const gpt5Version = extractGpt5Version(model.id);
-	if (gpt5Version) {
-		return gpt5Version;
-	}
-	if (isSWE2Model(model) || isKimiK3Model(model)) {
-		return "kimi-k3";
-	}
-	if (isKimiK28Model(model)) {
-		return "kimi-k2-8";
-	}
-	if (isKimiK27Model(model)) {
-		return "kimi-k2-7";
-	}
-	if (isKimiK26Model(model)) {
-		return "kimi-k2-6";
-	}
-	// The dotted release must resolve before the generic fable-5 substring.
-	if (isClaudeFable51Model(model.id)) {
-		return "claude-fable-5-1";
-	}
-	if (isClaudeFable5Model(model.id)) {
-		return "claude-fable-5";
-	}
-	// The dotted release must resolve before the generic opus-5 substring.
-	if (isClaudeOpus55Model(model.id)) {
-		return "claude-opus-5-5";
-	}
-	if (isClaudeOpus5Model(model.id)) {
-		return "claude-opus-5";
-	}
-	if (isClaudeSonnet55Model(model.id)) {
-		return "claude-sonnet-5-5";
-	}
-	if (isClaudeHaiku55Model(model.id)) {
-		return "claude-haiku-5-5";
-	}
-	const claudeVersion = extractClaudeOpusVersion(model.id);
-	if (claudeVersion) {
-		return claudeVersion;
-	}
-	if (isGlm53Model(model)) {
-		return "glm-5.3";
-	}
-	if (isGlm52Model(model)) {
-		return "glm-5.2";
-	}
-	// The dated snapshot must resolve before the generic flash alias.
-	if (isDeepseekV4Flash0731Model(model)) {
-		return "deepseek-v4-flash-0731";
-	}
-	if (isDeepseekV41FlashModel(model)) {
-		return "deepseek-v4-1-flash";
-	}
-	if (isDeepseekV4FlashModel(model)) {
-		return "deepseek-v4-flash";
-	}
-	if (isDeepseekV4ProModel(model)) {
-		return "deepseek-v4-pro";
-	}
-	if (isGrok47Model(model)) {
-		return "grok-4.7";
-	}
-	if (isGrok46Model(model)) {
-		return "grok-4.6";
-	}
-	if (isGrok45Model(model)) {
-		return "grok-4.5";
-	}
-	return undefined;
+	return resolveContractPresetName({ providerID: model.provider, modelID: model.id, name: model.name });
 }
 
 function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
