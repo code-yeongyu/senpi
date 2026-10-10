@@ -172,13 +172,12 @@ export function replayContextCache(
 			emergencyPruneLatch: createEmergencyPruneLatch(),
 		});
 		if (state.cutIndex !== beforeCut) frontierSteps++;
-		const reduced =
-			"reduceContextWithFrontier" in contextReduction
-				? state.engaged
-				: contextReduction.shouldApplyContextReduction({
-						usageTokens: previousUsage,
-						contextWindow: options.contextWindow,
-					});
+		const reduced = Reflect.has(contextReduction, "reduceContextWithFrontier")
+			? state.engaged
+			: contextReduction.shouldApplyContextReduction({
+					usageTokens: previousUsage,
+					contextWindow: options.contextWindow,
+				});
 		const shape = reduced ? "reduced" : "full";
 		if (lastShape !== undefined && shape !== lastShape) shapeChanges++;
 		lastShape = shape;
