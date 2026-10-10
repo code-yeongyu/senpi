@@ -1,3 +1,22 @@
+## 2026-10-10 - CI and release workflows pin Bun 1.4.3
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `oven-sh/setup-bun` step installs Bun `1.4.3` instead of `1.4.2`.
+- `.github/workflows/ci.yml`, `publish-npm.yml`, `releasability.yml`, `read-summary-binary-parity.yml` and `session-worker-compile.yml`: every `oven-sh/setup-bun` step installs Bun `1.4.3` instead of `1.4.2` (senpi#3078).
+
+### Why
+
+Bun 1.4.3 carries the idle-GC fixes oven-sh/bun#43681 and oven-sh/bun#43174: idle JS threads, Workers included, now run their own full collections. CI and the release binaries must build and test on the runtime users get. The codemode kernel's own idle collection (#2261) already gates itself to Bun `<1.4.3` and Node, so on 1.4.3 it no longer runs.
+
+### Why an extension could not handle it
+
+The toolchain version CI installs is repository workflow configuration.
+
+### Expected merge conflict zones
+
+- LOW: the `bun-version` lines in both workflows, if upstream changes its Bun pin.
+
 ## 2026-10-10 - POSIX supervisor exit tests run on Linux and macOS (senpi#3054)
 
 ### What changed
