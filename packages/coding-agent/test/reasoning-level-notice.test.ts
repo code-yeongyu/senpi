@@ -5,11 +5,12 @@ import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { keyDisplayText, keyText } from "../src/modes/interactive/components/keybinding-hints.ts";
 import {
 	REASONING_LEVEL_TIP_ID,
 	resolveReasoningLevelNotice,
 } from "../src/modes/interactive/tips/reasoning-level-notice.ts";
+import { resolveStartupTips } from "../src/modes/interactive/tips/startup-tips.ts";
 
 const keys = (binding: string): string => (binding === "app.thinking.cycle" ? "Shift+Tab" : "");
 const NOTICE = "Tip: Shift+Tab changes the reasoning level";
@@ -30,10 +31,10 @@ describe("resolveReasoningLevelNotice", () => {
 });
 
 /**
- * The production startup-tip path (`InteractiveMode.resolveStartupTips`) run against a real
- * `SettingsManager` on a temp agent dir: it must record the notice itself, never repeat it after a
- * restart, skip the rotating `thinking-level` tip on the launch the notice shows, and obey the
- * `tips` and `quietStartup` settings.
+ * The production startup-tip path (`resolveStartupTips`, what `InteractiveMode.init` calls) run
+ * against a real `SettingsManager` on a temp agent dir: it must record the notice itself, never
+ * repeat it after a restart, skip the rotating `thinking-level` tip on the launch the notice shows,
+ * and obey the `tips` and `quietStartup` settings.
  */
 describe("one-time reasoning level notice through the startup header (senpi#3090)", () => {
 	let agentDir: string;
@@ -50,20 +51,14 @@ describe("one-time reasoning level notice through the startup header (senpi#3090
 	});
 
 	function startupTips(settingsManager: SettingsManager, reasoning: boolean): string | undefined {
-		const resolve = Reflect.get(InteractiveMode.prototype, "resolveStartupTips");
-		const record = Reflect.get(InteractiveMode.prototype, "recordShownTip");
-		if (typeof resolve !== "function" || typeof record !== "function") {
-			throw new TypeError("InteractiveMode lost its startup tip path");
-		}
-		const host = {
-			settingsManager,
-			session: { state: { model: { reasoning } } },
-			sessionShownTipIds: new Set<string>(),
-			hasRegisteredCommand: () => false,
-			recordShownTip: record,
-		};
-		const tips: unknown = resolve.call(host);
-		return typeof tips === "string" ? tips : undefined;
+		return resolveStartupTips({
+			settings: settingsManager,
+			now: 1_700_000_000_000,
+			modelReasoning: () => reasoning,
+			hasCommand: () => false,
+			keys: keyText,
+			displayKeys: keyDisplayText,
+		})?.text;
 	}
 
 	it("shows the notice once, skips the rotating thinking-level tip that launch, and never repeats after a restart", async () => {
