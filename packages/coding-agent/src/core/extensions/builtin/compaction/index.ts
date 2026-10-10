@@ -13,6 +13,7 @@ import type {
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
 import { buildCompactionContext } from "./context-pipeline.ts";
+import { createContextReductionLatch, resetContextReductionLatch } from "./context-reduction.ts";
 import {
 	createDegradationMonitorState,
 	handleMessageEnd,
@@ -124,6 +125,7 @@ export default function compactionExtension(
 	const lanePolicy = createCompactionLanePolicy();
 	const restorationDirectiveState = checkpointState.createRestorationDirectiveState();
 	const emergencyPruneLatch = createEmergencyPruneLatch();
+	const contextReductionLatch = createContextReductionLatch();
 	const degradationState = createDegradationMonitorState();
 	const restorationState = state.restoration ?? restoration.createRestorationTrackerState();
 	state = { ...state, restoration: restorationState };
@@ -862,10 +864,15 @@ export default function compactionExtension(
 		}),
 	);
 
+	pi.on("session_tree", () => {
+		resetContextReductionLatch(contextReductionLatch);
+	});
+
 	pi.on("session_compact", async (event: SessionCompactEvent, ctx) => {
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);
 		if (compactEvent.accepted) {
+			resetContextReductionLatch(contextReductionLatch);
 			persistAcceptedMetadata(compactEvent.requestId);
 			const branchEntries = ctx.sessionManager.getBranch();
 			const firstKeptIndex = branchEntries.findIndex(
@@ -1069,6 +1076,7 @@ export default function compactionExtension(
 					toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
 					breakerFallback,
 					laneOwnsCompaction,
+					contextReductionLatch,
 					appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
 					emergencyPruneLatch,
 					logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),

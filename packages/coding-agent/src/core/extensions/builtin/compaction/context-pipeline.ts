@@ -2,6 +2,7 @@ import { convertToLlm } from "../../../messages.ts";
 import type { ContextEvent, ExtensionContext } from "../../types.ts";
 import {
 	BUILTIN_CONTEXT_REDUCTION_OPTIONS,
+	type ContextReductionLatch,
 	reduceContextMessages,
 	shouldApplyContextReduction,
 } from "./context-reduction.ts";
@@ -24,6 +25,7 @@ export function buildCompactionContext(input: {
 	toolAdmissionEnabled: boolean;
 	breakerFallback: boolean;
 	laneOwnsCompaction: boolean;
+	contextReductionLatch: ContextReductionLatch;
 	/**
 	 * The lane replays into a resident transcript that only accepts appends, so no per-turn reduction
 	 * runs, including the breaker fallback: a rewrite of an already-sent message diverges it.
@@ -46,11 +48,14 @@ export function buildCompactionContext(input: {
 		!input.laneOwnsCompaction &&
 		input.appendOnlyTranscript !== true &&
 		(input.breakerFallback ||
-			shouldApplyContextReduction({
-				usageTokens: input.ctx.getContextUsage()?.tokens ?? null,
-				contextWindow: input.contextWindow,
-				isProviderNativeCompactionPath: isOpenAiRemoteCompactionModel(input.ctx.model) || input.laneOwnsCompaction,
-			}))
+			shouldApplyContextReduction(
+				{
+					usageTokens: input.ctx.getContextUsage()?.tokens ?? null,
+					contextWindow: input.contextWindow,
+					isProviderNativeCompactionPath: isOpenAiRemoteCompactionModel(input.ctx.model) || input.laneOwnsCompaction,
+				},
+				input.contextReductionLatch,
+			))
 			? reduceContextMessages(admittedMessages, BUILTIN_CONTEXT_REDUCTION_OPTIONS).messages
 			: admittedMessages;
 	const emergency = input.laneOwnsCompaction
