@@ -5,6 +5,7 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 ## Table of Contents
 
 - [Subscriptions](#subscriptions)
+- [AGY CLI sidecar](#agy-cli-sidecar)
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
 - [Provider Specific Config](#provider-specific-config)
@@ -28,6 +29,14 @@ Use `/login` in interactive mode, then select a provider:
 - Cursor (Pro/Ultra/Teams) — authentication only for now, see below
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.senpi/agent/auth.json` and auto-refresh when expired. OpenRouter instead mints a user-controlled API key that does not expire automatically.
+
+## AGY CLI sidecar
+
+The `agy` tool delegates a self-contained task to the official [Antigravity CLI](https://antigravity.google/docs/cli/headless) in headless mode. Install `agy` on your PATH and sign in through an interactive `agy` session first. Senpi launches the CLI in the current workspace and reads its JSON result; it does not read Antigravity credentials, implement Antigravity OAuth or call its backend. This is a separate agent, **not** an Antigravity model in `/model` or a replacement for senpi's own tool loop.
+
+Ask the agent to use `agy` for a bounded task, with an optional AGY model slug. The tool uses AGY's read-only `plan` mode by default; choose `mode: "accept-edits"` when the delegated task should edit files. AGY still applies its own permission settings. In headless mode, commands needing approval can be *soft-denied even when the run exits successfully*; the tool includes CLI diagnostics so the calling agent can report those denials rather than claim completion. It never passes `--dangerously-skip-permissions` or forwards senpi's auth environment. Cancelling the OmO tool call terminates the AGY process.
+
+Google's [terms](https://antigravity.google/terms) and [FAQ](https://antigravity.google/docs/faq/) restrict third-party access to Antigravity. Invoking its official CLI keeps authentication within AGY, but this integration is not a statement that Google has approved third-party orchestration.
 
 ### ChatGPT Subscription
 

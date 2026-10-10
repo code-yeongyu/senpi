@@ -1,5 +1,6 @@
 import type { ExtensionFactory } from "../types.ts";
 import accountExtension from "./account/index.ts";
+import agySidecarExtension from "./agy-sidecar.ts";
 import anthropicBashExtension from "./anthropic-bash/index.ts";
 import anthropicSubscriptionExtension from "./anthropic-subscription/index.ts";
 import anthropicWebSearchExtension from "./anthropic-web-search/index.ts";
@@ -107,6 +108,7 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "webfetch", factory: webfetchExtension },
 	{ id: "video-in", factory: videoInExtension },
 	{ id: "look-at", factory: lookAtExtension },
+	{ id: "agy-sidecar", factory: agySidecarExtension },
 	{ id: "nested-agents-md", factory: nestedAgentsMdExtension },
 	{ id: "rules", factory: piRulesExtension },
 	{ id: "goal", factory: goalExtension },

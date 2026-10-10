@@ -1470,3 +1470,21 @@ The provider id is resolved inside the package before any extension loads, and t
 - `utils/changes.md`: corrected the stale `shortenPath()` note that claimed it backed the `/sessions` HUD picker; `shortenPath()` itself stays (other consumers remain).
 - Neo (the Go TUI) shipped a native port of the same HUD; it was removed in lockstep to satisfy the repo-wide "no /sessions HUD source" contract: `internal/ui/builtinext/{observer,observer_overlay,observer_viewer,observer_test,transcript,transcript_decode,transcript_render}.go`, the `ResolveSessionsCommandOutcome` resolver and its tests, the `app.sessions.observe` keybinding definition/scope/migration/registry-test entries, the qaharness `observer` scenario, the welcome-menu entry that advertised it, the `/sessions` command in the bridge `get_commands` testdata, and the `task-14-session-observer-tail` visual-claims manifest entry plus its triplet.
 - Why: user-requested cleanup. The HUD duplicated `/resume`'s session-picking surface and the `ctrl+s` chord collided with the more useful `app.session.toggleSort` / `app.models.save` chords that already bind `ctrl+s` in other scopes.
+
+## 2026-09-27 - Delegate Antigravity tasks through the official AGY CLI
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` registers the fork-owned `agy-sidecar.ts` extension. It exposes an `agy` task tool that launches the official CLI in headless JSON mode, with bounded output, cancellation and a minimal child environment.
+
+### Why
+
+Antigravity is a separate agent runtime, not a model transport for senpi's tool loop. Delegating a task through its official CLI avoids reusing its OAuth credentials or calling its private backend from senpi.
+
+### Why an extension could not handle it
+
+The sidecar itself is an extension. The builtin registry must include it to ship the tool without requiring every user to install a separate file.
+
+### Expected merge conflict zones
+
+- LOW in `packages/coding-agent/src/core/extensions/builtin/index.ts`: one import and one registration near the other delegation tools.
