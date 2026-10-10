@@ -3,7 +3,8 @@
 ### What changed
 
 - `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
-- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: every test job snapshots the OS temp directory before its first test step and runs a read-only final check with `always()` when that snapshot succeeded. Leftovers fail the job and are named; snapshots live under gitignored local-ignore.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: every test job snapshots the OS temp directory before its first test step and runs final teardown/check with `always()` when that snapshot succeeded. Unowned leftovers fail the job and are named; snapshots live under gitignored local-ignore.
+- `.github/workflows/ci.yml`, `.github/workflows/releasability.yml`: snapshot setup explicitly exports a creator-owned cleanup journal. Final teardown retires only recorded run roots before checking for unowned residue, including a run root recreated by late Windows child activity.
 
 ### Why
 

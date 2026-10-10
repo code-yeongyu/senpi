@@ -42,7 +42,8 @@ function createState(): string {
 
 function hermeticEnv(state: string): Record<string, string> {
 	return {
-		PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state,
+		PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state, TEMP: state, TMP: state,
+		JITI_RESPECT_TMPDIR_ENV: "1",
 		SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1",
 	};
 }

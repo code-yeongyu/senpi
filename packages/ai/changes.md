@@ -3,6 +3,7 @@
 ### What changed
 
 - `packages/ai/package.json`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+- `packages/ai/vitest.config.ts`: always load the fixture teardown adapter, retaining CI diagnostics; plain subprocess helpers do not import framework hooks.
 
 ### Why
 

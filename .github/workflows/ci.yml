@@ -58,7 +58,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Eval regression gate
         run: node scripts/run-tests.mjs bun run --cwd packages/senpi-codemode gate --baseline test/gate/baseline.json
@@ -173,7 +173,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Test shard
         timeout-minutes: 25
@@ -245,7 +245,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Test grep with both engines
         run: |
@@ -291,7 +291,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run hooks trust-storage regressions
         run: node ../../scripts/run-tests.mjs vitest run test/suite/hooks-trust.test.ts test/suite/hooks-trust-storage-errors.test.ts test/suite/hooks-trust-storage-release-errors.test.ts test/suite/hooks-trust-storage-aba.test.ts
@@ -328,7 +328,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run scheduled-prompt suites
         run: node ../../scripts/run-tests.mjs vitest run test/suite/schedule-runner.test.ts test/suite/schedule-extension.test.ts test/suite/schedule-cli.test.ts
@@ -369,7 +369,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run RPC host ensure tests
         run: node ../../scripts/run-tests.mjs vitest run test/rpc-host-ensure.test.ts --reporter=verbose
@@ -460,7 +460,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Verify native importer
         shell: bash
@@ -504,7 +504,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run Claude executable resolution tests (Node)
         shell: bash
@@ -564,7 +564,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run the bash grandchild console probe
         shell: bash
@@ -629,7 +629,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run eval kernel WebView suites (Bun)
         shell: bash
@@ -722,7 +722,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run the process-mode kernel suite
         timeout-minutes: 12
@@ -778,7 +778,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: bun scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: bun scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Slow and hung bootstrap regressions
         working-directory: packages/senpi-codemode
@@ -866,7 +866,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Fresh release entry graphs (codemode and exclusions)
         run: |
@@ -948,7 +948,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Supervisor owner, normal-stop and compiler regressions
         working-directory: packages/coding-agent
@@ -1053,7 +1053,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: PTY package tests
         run: npm run test --workspace @earendil-works/pi-pty
@@ -1095,7 +1095,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Run Inspector handoff regression
         run: node ../../scripts/run-tests.mjs vitest run test/suite/regressions/inspector-endpoint-handoff.test.ts

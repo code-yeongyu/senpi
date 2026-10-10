@@ -3,6 +3,7 @@
 ### What changed
 
 - `packages/coding-agent/package.json`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+- `packages/coding-agent/vitest.config.ts`: register automatic fixture teardown in setup, not in a harness also imported by plain subprocess workers.
 
 ### Why
 

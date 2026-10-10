@@ -12,7 +12,10 @@ export default mergeConfig(
 			globals: true,
 			environment: "node",
 			testTimeout: 30000,
-			setupFiles: ["./test/setup.ts"],
+			setupFiles: [
+				fileURLToPath(new URL("../../scripts/vitest-temp-setup.ts", import.meta.url)),
+				"./test/setup.ts",
+			],
 			// test/manual-qa/ holds real-surface QA drivers, not default-suite tests (test/AGENTS.md).
 			// Run one explicitly with SENPI_MANUAL_QA=1 npx vitest run test/manual-qa/<file>.
 			exclude: [...configDefaults.exclude, ...(process.env.SENPI_MANUAL_QA ? [] : ["test/manual-qa/**"])],

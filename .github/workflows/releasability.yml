@@ -117,7 +117,7 @@ jobs:
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
-        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
       - name: Test ai against regenerated catalog
         working-directory: packages/ai

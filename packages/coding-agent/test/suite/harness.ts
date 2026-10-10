@@ -16,8 +16,7 @@ import type {
 	ToolResultMessage,
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
-import { afterAll } from "vitest";
-import { makeTempDir } from "../../../../scripts/vitest-temp.ts";
+import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
@@ -173,7 +172,7 @@ export interface Harness {
 }
 
 const cleanups = new Set<() => void>();
-afterAll(() => {
+onTempCleanup(() => {
 	for (const cleanup of [...cleanups].reverse()) cleanup();
 });
 

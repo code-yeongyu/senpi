@@ -125,7 +125,10 @@ describe.each(runtimes)("a running bundle under %s", (runtime) => {
 		const child = spawn(runtime, [cli, "--mode", "rpc", "--model", "mock/m"], {
 			cwd: state,
 			stdio: ["pipe", "pipe", "pipe"],
-			env: { PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state, SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1" },
+			env: {
+				PATH: process.env.PATH ?? "", HOME: join(state, "home"), TMPDIR: state, TEMP: state, TMP: state,
+				JITI_RESPECT_TMPDIR_ENV: "1", SENPI_CODING_AGENT_DIR: state, PI_OFFLINE: "1",
+			},
 		});
 		const exit = once(child, "exit", { signal: AbortSignal.timeout(150_000) });
 		let stderr = "";

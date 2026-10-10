@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,29 +13,34 @@ const runner = fileURLToPath(new URL("./run-tests.mjs", import.meta.url));
 const require = createRequire(import.meta.url);
 const vitestRoot = dirname(require.resolve("vitest/package.json"));
 
-test("job-final guard detects new entries without deleting baseline or leaked files (#3064)", () => {
-	const parent = mkdtempSync(join(tmpdir(), "senpi-job-guard-proof-"));
+test("jiti keeps its cache owned when the test cwd equals TMPDIR (#3064)", async () => {
+	const parent = mkdtempSync(join(tmpdir(), "senpi-jiti-proof-"));
 	try {
-		const directory = join(parent, "scan");
-		mkdirSync(directory);
-		writeFileSync(join(directory, "baseline"), "keep");
-		const guard = fileURLToPath(new URL("./test-temp-guard.mjs", import.meta.url));
-		const receipt = join(parent, "snapshot.json");
-		const options = { env: { ...process.env, TMPDIR: directory, TEMP: directory, TMP: directory }, encoding: "utf8", timeout: 10_000 };
-		const snapshot = spawnSync(process.execPath, [guard, "snapshot", receipt], options);
-		assert.ifError(snapshot.error);
-		assert.equal(snapshot.status, 0, snapshot.stderr);
-		const clean = spawnSync(process.execPath, [guard, "check", receipt], options);
-		assert.ifError(clean.error);
-		assert.equal(clean.status, 0, clean.stderr);
-		assert.match(clean.stdout, /after teardown: 0/);
-		mkdirSync(join(directory, "new-entry"));
-		const leaked = spawnSync(process.execPath, [guard, "check", receipt], options);
-		assert.ifError(leaked.error);
-		assert.equal(leaked.status, 1);
-		assert.match(leaked.stdout, /after teardown: 1/);
-		assert.match(leaked.stderr, /leftover: "new-entry"/);
-		assert.deepEqual(readdirSync(directory).sort(), ["baseline", "new-entry"]);
+		const fixture = join(parent, "jiti.mjs");
+		writeFileSync(fixture, `
+			import { createRequire } from "node:module";
+			import { join } from "node:path";
+			const require = createRequire(import.meta.url);
+			// Model the OS fallback inside our own parent, not the shared OS temp directory.
+			require("node:os").tmpdir = () => process.env.TMPDIR ?? process.env.ESCAPE_TEMP;
+			process.chdir(process.env.TMPDIR);
+			process.env.TMPDIR = process.cwd();
+			const { createJiti } = require(${JSON.stringify(require.resolve("jiti"))});
+			createJiti(join(process.cwd(), "extension.ts"));
+		`);
+		const child = spawn(process.execPath, [runner, "node", fixture], {
+			env: { ...process.env, TMPDIR: parent, TEMP: parent, TMP: parent, ESCAPE_TEMP: parent, SENPI_TEST_TEMP_GUARD: "1" },
+			stdio: "pipe",
+		});
+		let output = "";
+		child.stdout.on("data", (data) => { output += data; });
+		child.stderr.on("data", (data) => { output += data; });
+		const code = await new Promise((resolve, reject) => {
+			child.once("error", reject);
+			child.once("close", resolve);
+		});
+		assert.equal(code, 0, output);
+		assert.deepEqual(readdirSync(parent), ["jiti.mjs"]);
 	} finally {
 		rmSync(parent, { recursive: true, force: true });
 	}
@@ -177,6 +182,8 @@ test("helper teardown removes fixtures even after a failing assertion (#3064)", 
 		const receipt = join(parent, "receipt.json");
 		const vitest = pathToFileURL(join(vitestRoot, "dist/index.js")).href;
 		const helper = new URL("../packages/coding-agent/test/support/temp-agent-dir.ts", import.meta.url).href;
+		const setup = fileURLToPath(new URL("./vitest-temp-setup.ts", import.meta.url));
+		writeFileSync(join(parent, "vitest.config.mjs"), `export default { test: { setupFiles: [${JSON.stringify(setup)}] } };`);
 		writeFileSync(join(parent, "proof.test.mjs"), `
 			import { it } from ${JSON.stringify(vitest)};
 			import { writeFileSync } from "node:fs";

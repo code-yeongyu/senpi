@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { signalGroup } from "./package-manager.mjs";
 import { reportTempLeaks, tempEntries } from "./test-temp-guard.mjs";
 
@@ -17,6 +17,7 @@ const before = process.env.SENPI_TEST_TEMP_GUARD === "1" ? tempEntries(parent) :
 // Vitest constructs its core _tmpDir before globalSetup. cacheDir/server.deps do not
 // control forks' makeTmpCopies, so the environment must be scoped before loading Vitest.
 const root = mkdtempSync(join(parent, "st-"));
+if (before) console.log(`[test-temp] owned root: ${JSON.stringify(basename(root))}`);
 let child;
 let forwarded;
 const handlers = new Map(
@@ -27,10 +28,14 @@ const handlers = new Map(
 );
 for (const [signal, handler] of handlers) process.on(signal, handler);
 try {
+	// The job can retire this exact owned root again if late child activity recreates it.
+	if (process.env.SENPI_TEST_TEMP_REGISTRY) {
+		appendFileSync(process.env.SENPI_TEST_TEMP_REGISTRY, `${JSON.stringify(root)}\n`);
+	}
 	child = spawn(entry ? process.execPath : runner, entry ? [entry, ...args] : args, {
 		stdio: "inherit",
 		detached: process.platform !== "win32",
-		env: { ...process.env, TMPDIR: root, TEMP: root, TMP: root },
+		env: { ...process.env, TMPDIR: root, TEMP: root, TMP: root, JITI_RESPECT_TMPDIR_ENV: "1" },
 	});
 	process.exitCode = await new Promise((resolve, reject) => {
 		child.once("error", reject);
