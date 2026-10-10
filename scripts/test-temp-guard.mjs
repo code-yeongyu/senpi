@@ -102,6 +102,9 @@ if (
 			]),
 		);
 		try {
+			// npm enables Node's default compile cache before launching the wrapped test.
+			// This is allocated by job setup and retired with the owned parent, not exempted.
+			if (scope) mkdirSync(join(scope, "node-compile-cache"));
 			writeFileSync(
 				file,
 				JSON.stringify({
@@ -130,7 +133,8 @@ if (
 				!isAbsolute(snapshot.scope) ||
 				!basename(snapshot.scope).startsWith("sj-") ||
 				snapshot.scope !== snapshot.directory ||
-				snapshot.entries.length !== 0)
+				snapshot.entries.length !== 1 ||
+				snapshot.entries[0] !== "node-compile-cache")
 		)
 			throw new Error("invalid exclusive job temp scope");
 		try {

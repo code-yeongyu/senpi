@@ -57,6 +57,7 @@ test("job teardown retires only recorded run roots, including a late recreated r
 		assert.equal(exported.status, 0, exported.stderr);
 		const { registry, scope, environment } = JSON.parse(readFileSync(receipt, "utf8"));
 		assert.equal(readFileSync(environmentFile, "utf8"), `TMPDIR=${scope}\nTEMP=${scope}\nTMP=${scope}\nSENPI_TEST_TEMP_REGISTRY=${registry}\n`);
+		writeFileSync(join(scope, "node-compile-cache", "npm-cache"), "job-owned cache");
 		const ran = spawnSync(process.execPath, [runner, process.execPath, "-e", ""], {
 			...options, env: { ...options.env, TMPDIR: scope, TEMP: scope, TMP: scope, SENPI_TEST_TEMP_REGISTRY: registry },
 		});

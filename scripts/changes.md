@@ -8,6 +8,7 @@
 - `scripts/test-temp-guard.mjs`: the bounded top-level scanner is shared by the launcher and a snapshot/check CLI. A job-final check can report residue even if the launcher itself was killed.
 - `scripts/test-temp-guard.mjs`, `scripts/run-tests.mjs`: snapshot setup creates an ownership journal exported explicitly to subsequent CI steps. Job teardown removes only roots recorded by their creator, including roots recreated after per-invocation teardown; unregistered entries still fail and are never removed.
 - `scripts/test-temp-guard.mjs`: CI snapshot setup gives the job an exclusive, short temp parent instead of counting unrelated macOS daemon directories in the shared host temp tree. It reports remaining job entries, removes only that newly allocated job parent on success or failure, and restores the previous temp environment for post-job actions. No system-directory name exceptions or shared-temp sweeps are used.
+- `scripts/test-temp-guard.mjs`: allocate npm's default Node compile cache inside the owned job parent at setup; it remains enabled during tests and is removed with that parent at teardown rather than becoming an unowned temp entry.
 - `scripts/run-tests.mjs`, `scripts/node-bundle-cursor-exec.test.ts`, `scripts/node-bundle-smoke.test.ts`, `scripts/node-bundle-reinstall.test.ts`: keep jiti's pnpm cwd workaround from ignoring owned TMPDIR via JITI_RESPECT_TMPDIR_ENV; hermetic bundle and compiled-probe child environments preserve TMPDIR/TEMP/TMP on every OS.
 
 ### Why
