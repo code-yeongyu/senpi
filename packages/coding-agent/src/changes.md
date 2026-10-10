@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/runtime-snapshot/layout.ts` (fork-only) keeps the full nested/hoisted dependency closure, applying `packages/coding-agent/src/runtime-snapshot/dependency-files.ts` to each dependency's payload. Development trees and root README/changelog/history files are omitted unless a manifest entry names them. Redundant TypeScript under `src` is omitted only for packages with an existing built JavaScript entry; source-only extensions, source assets, skills, license files, native binaries and wasm remain.
+- `packages/coding-agent/src/runtime-snapshot/layout.ts` (fork-only) keeps the full nested/hoisted dependency closure, applying `packages/coding-agent/src/runtime-snapshot/dependency-files.ts` to each dependency's payload. Development trees, root Markdown and extensionless README/changelog/history files are omitted unless a manifest entry names them; license files remain. Redundant TypeScript under `src` is omitted only for packages with an existing built JavaScript entry; source-only extensions, source assets, skills, native binaries and wasm remain.
 - `packages/coding-agent/src/runtime-snapshot/tree.ts` and `packages/coding-agent/src/runtime-snapshot/package-files.ts` extract tree planning and the existing shipped-package policy from layout, without changing the package-root selection. The real CLI inventory regression observes Node resolution hooks, Bun loads/resolution and transpiler reads across help, external TypeScript/typebox loading, a faux turn, Claude executable resolution, photon, grep and codemode bootstrap. Glob-only shipping is now tested at the snapshot boundary.
 
 ### Why
