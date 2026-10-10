@@ -30,14 +30,21 @@ const EXCLUDED_SEGMENTS = new Set([
 	"docs",
 ]);
 
-// Reviewed allowlist: repo-relative file path -> one-line reason stating
-// where the host comes from. A reason is only valid if the host is
-// "new URL(...).hostname" or a literal. Adding an entry is a reviewed act:
-// name the call sites and the host provenance, and reference senpi#3078.
-const ALLOWLIST = {
-	"packages/ai/src/api/cursor-agent.ts":
-		"http2.connect(baseUrl) at :880 and :4761; Node-only module (node:http2, header note at :15) unreachable under Bun; baseUrl is the CURSOR_API_URL literal or model.baseUrl config, and Node's http2.connect parses the string authority as a URL before TLS (senpi#3078).",
-};
+// Reviewed allowlist. Each entry pins one exact call: the repo-relative
+// file, the detected call's normalized text (whitespace collapsed, exactly
+// as the failure message prints it), the expected occurrence count, and a
+// one-line reason stating where the host comes from. A reason is only
+// valid if the host is "new URL(...).hostname" or a literal. Adding or
+// editing an entry is a reviewed act: name the host provenance and
+// reference senpi#3078.
+const ALLOWLIST = [
+	{
+		file: "packages/ai/src/api/cursor-agent.ts",
+		call: "http2.connect(baseUrl)",
+		count: 2,
+		reason: "Node-only module (node:http2, header note at :15) unreachable under Bun; baseUrl is the CURSOR_API_URL literal or model.baseUrl config, and Node's http2.connect parses the string authority as a URL before TLS (senpi#3078).",
+	},
+];
 
 const OFFENDER_GUIDANCE = [
 	"Shipped source must not gain raw TLS/HTTPS client calls.",
@@ -86,6 +93,35 @@ function httpsImportGrantsRequestGet(clause) {
 	return names.includes("request") || names.includes("get");
 }
 
+function normalizeCallText(text) {
+	return text
+		.replace(/\s+/g, " ")
+		.replace(/\(\s+/g, "(")
+		.replace(/,\s*\)/g, ")")
+		.replace(/\s+\)/g, ")");
+}
+
+// The matched call plus its balanced argument list, normalized, so a
+// reformatted call still matches its pinned allowlist text.
+function callText(content, match) {
+	const open = match.index + match[0].length - 1;
+	let depth = 0;
+	let close = -1;
+	for (let i = open; i < content.length && i < open + 400; i += 1) {
+		const character = content[i];
+		if (character === "(") depth += 1;
+		else if (character === ")") {
+			depth -= 1;
+			if (depth === 0) {
+				close = i;
+				break;
+			}
+		}
+	}
+	if (close === -1) close = Math.min(content.length, open + 400) - 1;
+	return normalizeCallText(content.slice(match.index, close + 1));
+}
+
 function lineNumber(content, index) {
 	let line = 1;
 	for (let i = 0; i < index; i += 1) {
@@ -98,7 +134,7 @@ function findRawTlsClients(content) {
 	const hits = [];
 	for (const [id, pattern] of CALL_PATTERNS) {
 		for (const match of content.matchAll(pattern)) {
-			hits.push({ line: lineNumber(content, match.index), id });
+			hits.push({ line: lineNumber(content, match.index), id, text: callText(content, match) });
 		}
 	}
 	for (const match of content.matchAll(IMPORT_FROM)) {
@@ -107,11 +143,16 @@ function findRawTlsClients(content) {
 		const module = match[3];
 		if (typeClause) continue;
 		if (module.endsWith("tls")) {
-			hits.push({ line: lineNumber(content, match.index), id: 'import from "' + module + '"' });
+			hits.push({
+				line: lineNumber(content, match.index),
+				id: 'import from "' + module + '"',
+				text: normalizeCallText(match[0]),
+			});
 		} else if (httpsImportGrantsRequestGet(clause)) {
 			hits.push({
 				line: lineNumber(content, match.index),
 				id: "import granting request/get from node:https",
+				text: normalizeCallText(match[0]),
 			});
 		}
 	}
@@ -120,7 +161,11 @@ function findRawTlsClients(content) {
 		[DYNAMIC_IMPORT_FORM, "import"],
 	]) {
 		for (const match of content.matchAll(pattern)) {
-			hits.push({ line: lineNumber(content, match.index), id: label + '("' + match[1] + '")' });
+			hits.push({
+				line: lineNumber(content, match.index),
+				id: label + '("' + match[1] + '")',
+				text: normalizeCallText(match[0]),
+			});
 		}
 	}
 	return hits.sort((a, b) => a.line - b.line || a.id.localeCompare(b.id));
@@ -134,6 +179,33 @@ function isScannedSourceFile(relativePath) {
 	const segments = relativePath.split("/");
 	if (segments.some((segment) => EXCLUDED_SEGMENTS.has(segment))) return false;
 	return true;
+}
+
+function evaluateShippedSource(scan, allowlist) {
+	const offenders = [];
+	const stale = [];
+	for (const item of scan) {
+		const hits = findRawTlsClients(item.content);
+		if (hits.length === 0) continue;
+		if (allowlist.some((entry) => entry.file === item.path)) continue;
+		for (const hit of hits) {
+			offenders.push(item.path + ":" + hit.line + "  " + hit.text);
+		}
+	}
+	for (const entry of allowlist) {
+		const item = scan.find((candidate) => candidate.path === entry.file);
+		if (!item) {
+			stale.push(entry.file + ": stale allowlist entry (no longer scanned)");
+			continue;
+		}
+		if (findRawTlsClients(item.content).length === 0) {
+			stale.push(entry.file + ": stale allowlist entry (no raw TLS client calls left in file)");
+		}
+		if (!entry.reason || !entry.reason.trim()) {
+			stale.push(entry.file + ": allowlist entry without a reason");
+		}
+	}
+	return { offenders, stale };
 }
 
 function collectShippedSourceFiles() {
@@ -194,7 +266,9 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 		const positioned = findRawTlsClients(
 			'const a = 1;\n\nawait tls.connect({ host: "x", port: 1 });',
 		);
-		assert.deepEqual(positioned, [{ line: 3, id: "tls.connect(" }]);
+		assert.deepEqual(positioned, [
+			{ line: 3, id: "tls.connect(", text: 'tls.connect({ host: "x", port: 1 })' },
+		]);
 	});
 
 	it("does not flag URL-parsed or inbound-server neighbors", () => {
@@ -229,27 +303,16 @@ describe("no raw TLS client calls in shipped source (CVE-2026-48618, Bun 1.4.2)"
 	it("holds: shipped production source has no raw TLS client calls outside the allowlist", () => {
 		const files = collectShippedSourceFiles();
 		assert.ok(files.length > 100, "scanner lost sight of the monorepo");
-		const offenders = [];
-		const allowlistedHits = new Map(Object.keys(ALLOWLIST).map((entry) => [entry, 0]));
-		for (const relativePath of files) {
-			const hits = findRawTlsClients(readFileSync(path.join(REPO_ROOT, relativePath), "utf8"));
-			if (hits.length === 0) continue;
-			if (Object.hasOwn(ALLOWLIST, relativePath)) {
-				allowlistedHits.set(relativePath, allowlistedHits.get(relativePath) + hits.length);
-				continue;
-			}
-			for (const hit of hits) {
-				offenders.push(relativePath + ":" + hit.line + "  " + hit.id);
-			}
-		}
-		assert.deepEqual(offenders, [], OFFENDER_GUIDANCE);
-		for (const [entry, hits] of allowlistedHits) {
-			assert.ok(files.includes(entry), "stale allowlist entry (no longer scanned): " + entry);
-			assert.ok(
-				hits > 0,
-				"stale allowlist entry (no raw TLS client calls left in file): " + entry,
-			);
-			assert.ok(ALLOWLIST[entry].trim().length > 0, "allowlist entry without a reason: " + entry);
-		}
+		const scan = files.map((relativePath) => ({
+			path: relativePath,
+			content: readFileSync(path.join(REPO_ROOT, relativePath), "utf8"),
+		}));
+		const verdict = evaluateShippedSource(scan, ALLOWLIST);
+		assert.deepEqual(verdict.offenders, [], OFFENDER_GUIDANCE);
+		assert.deepEqual(
+			verdict.stale,
+			[],
+			"Every allowlist entry must match the shipped tree: file scanned, reason present.",
+		);
 	});
 });
