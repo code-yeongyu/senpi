@@ -128,7 +128,11 @@ export async function startMemoryReportHost(env: Readonly<Record<string, string>
 				};
 				const timer = setTimeout(() => {
 					child.stderr.off("data", onData);
-					reject(new Error(`stderr never contained ${JSON.stringify(text)} within ${deadlineMs} ms; got: ${JSON.stringify(stderr)}`));
+					reject(
+						new Error(
+							`stderr never contained ${JSON.stringify(text)} within ${deadlineMs} ms; got: ${JSON.stringify(stderr)}`,
+						),
+					);
 				}, deadlineMs);
 				child.stderr.on("data", onData);
 				onData();
