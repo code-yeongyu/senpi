@@ -1,3 +1,21 @@
+## 2026-10-10 - Public prompt-presets contract export (omo #9851)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new public `./prompt-presets` export subpath serving the shared preset-resolution contract (`resolvePresetName`, `PROMPT_PRESET_MODEL_CASES`, `AUTO_RESOLVED_PRESET_NAMES`).
+
+### Why
+
+Downstream per-model prompt routing (oh-my-openagent #9856) needs to resolve model ids to the same presets as the runtime; the resolution logic was internal and unexported.
+
+### Why an extension could not handle it
+
+The export surface lives in the package manifest; a separate extension cannot add a public subpath.
+
+### Expected merge conflict zones
+
+The `exports` map in `packages/coding-agent/package.json` at the next upstream manifest sync.
+
 ## 2026-10-07 - Claude Agent SDK 0.3.292 (senpi#2545)
 
 ### What changed
