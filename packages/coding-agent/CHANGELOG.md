@@ -8,13 +8,9 @@
 
 - Exported a shared prompt-preset resolution contract on the public `@code-yeongyu/senpi/prompt-presets` subpath: a pure, settings-free `resolvePresetName({ providerID, modelID, name? })` plus `PROMPT_PRESET_MODEL_CASES` and `AUTO_RESOLVED_PRESET_NAMES`, so downstream harnesses can pin model-id-to-preset parity against a single source of truth. The model-id matchers moved into an exported `matchers.ts` that `presets.ts` re-imports; `gpt-5` is a manual-only preset and is intentionally excluded from the auto-resolvable set ([#3074](https://github.com/code-yeongyu/senpi/issues/3074)).
 
-- RPC hosts can opt into their ensure caller's lifetime with `owner: "caller"`. After that process exits or is killed, the supervisor stops an idle host after a short grace instead of leaving the shard resident for the normal idle timeout. Surviving peers and active turns keep running; ownership is preserved across reuse and generation handoff. Unowned hosts require no owner filesystem watcher, watch exhaustion falls back to polling, owner identities are timezone-independent, and brief activity resets the grace window ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
-
 ### Changed
 
 - The runtime snapshot a first launch builds copies the package as npm ships it (the `files` entries of `package.json`, plus `package.json`, README and LICENSE) instead of the whole package directory. Running from a repository checkout no longer copies its sources, tests and scripts: about 1,800 files instead of 11,000 for this package ([#3083](https://github.com/code-yeongyu/senpi/issues/3083)).
-
-- `senpi host stop` followed by `ensure` now waits for the old generation's host child to exit before starting a replacement ([#3054](https://github.com/code-yeongyu/senpi/issues/3054)).
 
 ### Fixed
 
@@ -23,6 +19,20 @@
 ### Removed
 
 ## [2026.10.10-12] - 2026-10-10
+
+### Breaking Changes
+
+### Added
+
+- RPC hosts can opt into their ensure caller's lifetime with `owner: "caller"`. After that process exits or is killed, the supervisor stops an idle host after a short grace instead of leaving the shard resident for the normal idle timeout. Surviving peers and active turns keep running; ownership is preserved across reuse and generation handoff. Unowned hosts require no owner filesystem watcher, watch exhaustion falls back to polling, owner identities are timezone-independent, and brief activity resets the grace window ([#3044](https://github.com/code-yeongyu/senpi/issues/3044)).
+
+### Changed
+
+- `senpi host stop` followed by `ensure` now waits for the old generation's host child to exit before starting a replacement ([#3054](https://github.com/code-yeongyu/senpi/issues/3054)).
+
+### Fixed
+
+- Reloading a session releases the previous extension runner and reuses unchanged module graphs instead of retaining another generation. Edited lazy dependencies now invalidate the graph using the bytes actually compiled, including equal-size edits with preserved timestamps ([#3066](https://github.com/code-yeongyu/senpi/pull/3066) by [@jc01rho](https://github.com/jc01rho), [#3068](https://github.com/code-yeongyu/senpi/issues/3068)).
 
 - RPC supervisors wait for their host child's observed exit and exit record before releasing ownership. A child still unobserved 30 seconds after SIGKILL leaves its generation, pointer and settings intact and produces a non-zero supervisor exit with the child PID in the log. Stop callers allow the full shutdown budget but cancel their deadline on normal exit, and owner-lifetime tests await OS exit events instead of treating pipe EOF as process exit ([#3054](https://github.com/code-yeongyu/senpi/issues/3054)).
 
