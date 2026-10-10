@@ -192,6 +192,7 @@ export function reduceContextWithFrontier(
 		contextWindow: number;
 		ceilingTokens: number;
 		overheadTokens: number;
+		blockBudgetRatio?: number;
 		force: boolean;
 	},
 ): AgentMessage[] {
@@ -231,7 +232,7 @@ export function reduceContextWithFrontier(
 	];
 	let reduced = reducePrefix();
 	const tailTokens = estimateTotalTokens(input.unreducedMessages.slice(state.cutIndex));
-	if (!wasEngaged || tailTokens > input.contextWindow * 0.1 || nearCeiling(reduced)) {
+	if (!wasEngaged || tailTokens > input.contextWindow * (input.blockBudgetRatio ?? 0.1) || nearCeiling(reduced)) {
 		// Keep at least five messages and 3k tokens outside the frontier.
 		// Clearing also retains six clearable results inside the frozen prefix.
 		let cut = Math.max(0, messages.length - DEFAULT_PROTECT_RECENT_MESSAGES);

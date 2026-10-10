@@ -26,6 +26,7 @@ export function buildCompactionContext(input: {
 	laneOwnsCompaction: boolean;
 	contextReductionState?: ContextReductionState;
 	contextOverheadTokens?: number;
+	contextReductionBlockBudgetRatio?: number;
 	/** The smaller of the compaction threshold and the reserved prompt budget. */
 	reductionCeilingTokens?: number;
 	/**
@@ -55,6 +56,7 @@ export function buildCompactionContext(input: {
 					contextWindow: input.contextWindow,
 					ceilingTokens: input.reductionCeilingTokens ?? input.promptContextWindow,
 					overheadTokens: input.contextOverheadTokens ?? 0,
+					blockBudgetRatio: input.contextReductionBlockBudgetRatio,
 					force: input.breakerFallback,
 				})
 			: admittedMessages;

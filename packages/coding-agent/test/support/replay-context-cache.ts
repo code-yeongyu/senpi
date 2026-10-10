@@ -2,6 +2,7 @@
  * Offline #900 cost model. Run from the repository root with Bun:
  *   bun packages/coding-agent/test/support/replay-context-cache.ts --synthetic
  *   bun packages/coding-agent/test/support/replay-context-cache.ts --session /private/session.jsonl
+ * Add --block-budget-percent 5,10,20 to compare budgets on one input snapshot.
  *
  * Copy this support file unchanged into a baseline checkout to compare its real
  * context pipeline. It intentionally imports no new frontier API. No provider
@@ -101,7 +102,7 @@ export function cacheWriteTokens(previous: Buffer | undefined, current: Buffer):
 
 export function replayContextCache(
 	fileEntries: FileEntry[],
-	options: { contextWindow: number; fixedPrefixTokens: number; feedback: boolean },
+	options: { contextWindow: number; fixedPrefixTokens: number; feedback: boolean; blockBudgetRatio?: number },
 ) {
 	const entries = fileEntries.filter((entry): entry is SessionEntry => entry.type !== "session");
 	const byId = new Map(entries.map((entry) => [entry.id, entry]));
@@ -123,6 +124,7 @@ export function replayContextCache(
 	let shapeChanges = 0;
 	let lastShape: string | undefined;
 	let count = 0;
+	let totalOutgoingRequestTokens = 0;
 	const prefix = "s".repeat(options.fixedPrefixTokens * 4);
 	for (const entry of entries) {
 		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
@@ -166,6 +168,7 @@ export function replayContextCache(
 				) - options.fixedPrefixTokens,
 			contextReductionState: state,
 			contextOverheadTokens: options.fixedPrefixTokens,
+			contextReductionBlockBudgetRatio: options.blockBudgetRatio,
 			toolAdmissionEnabled: true,
 			breakerFallback: false,
 			laneOwnsCompaction: false,
@@ -192,16 +195,20 @@ export function replayContextCache(
 		const wire = Buffer.from(JSON.stringify({ system: prefix, messages: payload }));
 		cacheWrites += cacheWriteTokens(caches.get(key), wire);
 		caches.set(key, wire);
+		const outgoingRequestTokens = estimateTotalTokens(outgoing) + options.fixedPrefixTokens;
+		totalOutgoingRequestTokens += outgoingRequestTokens;
 		requests.set(entry.id, {
 			lineage,
 			compaction,
 			state,
 			children: 0,
-			usage: options.feedback ? estimateTotalTokens(outgoing) + options.fixedPrefixTokens : recordedContext,
+			usage: options.feedback ? outgoingRequestTokens : recordedContext,
 		});
 		count++;
 	}
 	return {
+		blockBudgetPercent: (options.blockBudgetRatio ?? 0.1) * 100,
+		averageOutgoingRequestTokens: count === 0 ? 0 : Math.round((totalOutgoingRequestTokens / count) * 100) / 100,
 		requests: count,
 		peakUnreducedContextTokens: peakContext,
 		peakRecordedContextTokens: options.feedback ? null : peakRecordedContext,
@@ -228,24 +235,28 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 		fixedPrefixTokens: args.includes("--fixed-prefix-tokens") ? Number(value("--fixed-prefix-tokens")) : 52_600,
 		feedback: synthetic,
 	};
-	if (args.includes("--compare-repo")) {
-		// The baseline is intentionally selected at runtime; both runs consume
-		// the same in-memory JSONL snapshot, even if the source session is live.
-		const baseline: { replayContextCache: typeof replayContextCache } = await import(
-			pathToFileURL(resolve(value("--compare-repo"), "packages/coding-agent/test/support/replay-context-cache.ts"))
-				.href
-		);
-		console.log(
-			JSON.stringify(
-				{
-					baseline: baseline.replayContextCache(entries, options),
-					branch: replayContextCache(entries, options),
-				},
-				null,
-				2,
-			),
-		);
-	} else {
-		console.log(JSON.stringify(replayContextCache(entries, options), null, 2));
+	const budgets = args.includes("--block-budget-percent")
+		? value("--block-budget-percent").split(",").map(Number)
+		: [10];
+	if (budgets.some((budget) => !Number.isFinite(budget) || budget <= 0 || budget > 100)) {
+		throw new Error("--block-budget-percent must contain percentages greater than 0 and at most 100.");
 	}
+	// Every budget and checkout consumes the same in-memory JSONL snapshot.
+	const baseline: { replayContextCache: typeof replayContextCache } | undefined = args.includes("--compare-repo")
+		? await import(
+				pathToFileURL(
+					resolve(value("--compare-repo"), "packages/coding-agent/test/support/replay-context-cache.ts"),
+				).href
+			)
+		: undefined;
+	const results = budgets.map((budget) => {
+		const replayOptions = { ...options, blockBudgetRatio: budget / 100 };
+		return baseline
+			? {
+					baseline: baseline.replayContextCache(entries, replayOptions),
+					branch: replayContextCache(entries, replayOptions),
+				}
+			: replayContextCache(entries, replayOptions);
+	});
+	console.log(JSON.stringify(results.length === 1 ? results[0] : results, null, 2));
 }
