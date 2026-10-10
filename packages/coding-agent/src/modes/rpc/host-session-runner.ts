@@ -151,9 +151,11 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 			throw error;
 		}
 		let sessionId: string | undefined;
+		let durableSessionId: string | undefined;
 		if ("ref" in request) {
 			const row = await resolveSessionRow(client, request.ref);
 			if (!row) return refusal("refuse", undefined, { reason: "unknown_session", ref: request.ref, socket });
+			durableSessionId = row.durableSessionId;
 			sessionId = (await client.openSession({ sessionPath: row.sessionPath, cwd: row.cwd })).sessionId;
 		}
 		switch (request.action) {
@@ -216,10 +218,42 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 					},
 				};
 			}
-			case "close":
-			case "read":
-			case "state":
 			case "list":
+				return {
+					exitCode: HOST_EXIT_OK,
+					payload: { action: "list", socket, sessions: await client.listSessions({ observe: true }) },
+				};
+			case "state":
+				return {
+					exitCode: HOST_EXIT_OK,
+					payload: { action: "state", sessionId, durableSessionId, state: await client.getState() },
+				};
+			case "read": {
+				if (request.messages) {
+					const all = await client.getMessages();
+					const messages = request.tail === undefined ? all : all.slice(-request.tail);
+					return {
+						exitCode: HOST_EXIT_OK,
+						payload: { action: "read", sessionId, messages, count: messages.length },
+					};
+				}
+				const { entries, leafId } = await client.getEntries(request.since);
+				const slice = request.tail === undefined ? entries : entries.slice(-request.tail);
+				return {
+					exitCode: HOST_EXIT_OK,
+					payload: {
+						action: "read",
+						sessionId,
+						entries: slice,
+						count: slice.length,
+						total: entries.length,
+						leafId,
+						nextSince: slice.at(-1)?.id ?? request.since ?? null,
+						...(request.since !== undefined && { since: request.since }),
+					},
+				};
+			}
+			case "close":
 			case "wait":
 				throw new Error(`Session command not implemented: ${request.action}`);
 			default:

@@ -4,6 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as hostEnsure from "../src/modes/rpc/host-ensure.ts";
 import { DEFAULT_HOST_LAUNCH_SPEC } from "../src/modes/rpc/host-launch-spec.ts";
+import { readHostStatus } from "../src/modes/rpc/host-status.ts";
 import { mapError, resolveSessionRow, runHostSessionRequest } from "../src/modes/rpc/host-session-runner.ts";
 import { RpcClient, type RpcClientEvent, RpcCommandError, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
 import { type FakeModelServer, startFakeModelServer } from "./helpers/rpc-fake-model.ts";
@@ -79,6 +80,53 @@ function nextEvent(client: RpcClient, type: RpcClientEvent["type"]): Promise<Rpc
 
 // #3073: callers distinguish refusal, caller error and broken transport without scraping prose.
 describe("host session runner", () => {
+	it("reads append-order cursors, tails, context messages, state and observe-only listings", async () => {
+		const { client, opened, target, ref } = await rig();
+		await client.openSession({ sessionPath: String(opened.payload.sessionPath) });
+		const idle = nextEvent(client, "agent_idle");
+		await client.prompt("unique-313 read-me");
+		await idle;
+		const read = (options: { tail?: number; since?: string; messages?: boolean } = {}) =>
+			runHostSessionRequest({ action: "read", target, ref, messages: false, ...options });
+		const all = await read();
+		expect(all.exitCode).toBe(0);
+		const entries = all.payload.entries as { id: string }[];
+		expect(entries.length).toBeGreaterThanOrEqual(3);
+		expect(all.payload).toMatchObject({ total: entries.length, count: entries.length, leafId: expect.any(String) });
+		expect((await read({ tail: 2 })).payload).toMatchObject({
+			entries: entries.slice(-2),
+			count: 2,
+			nextSince: entries.at(-1)?.id,
+		});
+		expect((await read({ tail: entries.length + 1 })).payload.entries).toEqual(entries);
+		const middle = Math.floor(entries.length / 2);
+		expect((await read({ since: entries[middle].id })).payload.entries).toEqual(entries.slice(middle + 1));
+		expect((await read({ since: entries[middle].id, tail: 1 })).payload.entries).toEqual(entries.slice(-1));
+		expect((await read({ since: entries.at(-1)?.id })).payload).toMatchObject({
+			count: 0,
+			nextSince: entries.at(-1)?.id,
+		});
+		expect(JSON.stringify((await read({ messages: true })).payload.messages)).toContain("unique-313 read-me");
+		expect((await read({ messages: true, tail: 1 })).payload.count).toBe(1);
+		expect(await read({ since: "nope" })).toMatchObject({ exitCode: 3, payload: { reason: "unknown_cursor" } });
+		expect(await runHostSessionRequest({ action: "state", target, ref })).toMatchObject({
+			exitCode: 0,
+			payload: {
+				durableSessionId: opened.payload.durableSessionId,
+				state: { isStreaming: false, sessionId: opened.payload.durableSessionId },
+			},
+		});
+		const before = (await readHostStatus(target)).sessions;
+		expect((await runHostSessionRequest({ action: "list", target })).payload.sessions).toEqual([
+			expect.objectContaining({ sessionId: ref, attachments: 1 }),
+		]);
+		expect((await readHostStatus(target)).sessions).toEqual(before);
+		expect(await runHostSessionRequest({ action: "read", target, ref: "unknown", messages: false })).toMatchObject({
+			exitCode: 3,
+			payload: { reason: "unknown_session" },
+		});
+	}, 120_000);
+
 	it("reports busy prompts, queued steering and idle steering without starting a turn", async () => {
 		const { client, opened, target, ref, fake } = await rig(true);
 		await client.openSession({ sessionPath: String(opened.payload.sessionPath) });

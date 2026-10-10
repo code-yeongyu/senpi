@@ -514,7 +514,7 @@ export class RpcClient {
 		}
 	}
 
-	async listSessions(): Promise<
+	async listSessions(options?: { observe?: boolean; include_workers?: boolean }): Promise<
 		Array<{
 			sessionId: string;
 			durableSessionId?: string;
@@ -526,7 +526,7 @@ export class RpcClient {
 			attachments?: number;
 		}>
 	> {
-		const response = await this.send({ type: "list_sessions" }, false);
+		const response = await this.send({ type: "list_sessions", ...options }, false);
 		return this.getData<{
 			sessions: Array<{
 				sessionId: string;
