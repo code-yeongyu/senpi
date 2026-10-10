@@ -72,6 +72,7 @@ describe("one-time reasoning level notice through the startup header (senpi#3090
 		expect(firstLaunch).toContain(NOTICE);
 		expect(firstLaunch).not.toContain("/thinking <level>");
 		expect(first.getTipsHistory()).toHaveProperty(REASONING_LEVEL_TIP_ID);
+		expect(first.getTipsHistory()).not.toHaveProperty("thinking-level");
 		await first.flush();
 
 		const restarted = SettingsManager.create(agentDir, agentDir);
