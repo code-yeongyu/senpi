@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { SessionWorkerRequests } from "./session-worker-requests.ts";
 import { SESSION_WORKER_LIMITS } from "./session-worker-protocol.ts";
+import { SessionWorkerRequests } from "./session-worker-requests.ts";
 
 /**
  * senpi#1719: the open deadline was an absolute instant fixed when the queue was constructed,

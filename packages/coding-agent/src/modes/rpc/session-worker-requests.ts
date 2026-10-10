@@ -74,10 +74,7 @@ export class SessionWorkerRequests {
 			const timer =
 				message.type === "command" && !control
 					? undefined
-					: setTimeout(
-							this.timeout,
-							control ? SESSION_WORKER_LIMITS.controlMs : this.remainingOpenMs(),
-						);
+					: setTimeout(this.timeout, control ? SESSION_WORKER_LIMITS.controlMs : this.remainingOpenMs());
 			this.pending.set(request, { resolve, reject, bytes, control, timer });
 			try {
 				this.send({ ...message, request });
