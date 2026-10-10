@@ -49,9 +49,16 @@ if (typeof Bun !== "undefined") {
 	Bun.plugin({
 		name: "runtime-snapshot-inventory",
 		setup(build) {
-			build.onLoad({ filter: /\.[cm]?[jt]s$/, namespace: "file" }, (args) => {
+			build.onLoad({ filter: /\.[cm]?[jt]sx?$/, namespace: "file" }, (args) => {
 				record(args.path);
-				return { contents: read(args.path, "utf8"), loader: /\.[cm]?ts$/.test(args.path) ? "ts" : "js" };
+				const loader = args.path.endsWith(".tsx")
+					? "tsx"
+					: args.path.endsWith(".jsx")
+						? "jsx"
+						: /\.[cm]?ts$/.test(args.path)
+							? "ts"
+							: "js";
+				return { contents: read(args.path, "utf8"), loader };
 			});
 		},
 	});
