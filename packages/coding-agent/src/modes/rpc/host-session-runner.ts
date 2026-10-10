@@ -347,8 +347,26 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 					}, fail);
 				});
 			}
-			case "close":
-				throw new Error(`Session command not implemented: ${request.action}`);
+			case "close": {
+				let reason: string | undefined;
+				const unsubscribe = client.onEvent((record) => {
+					const event = record as RpcClientEvent | RpcSessionClosedEvent;
+					if (event.type === "session_closed") reason = event.reason;
+				});
+				try {
+					await client.closeSession(sessionId);
+					// closeSession tolerates disconnect; this checked read must still succeed.
+					const remaining = (await client.listSessions()).find((row) => row.sessionId === sessionId);
+					return {
+						exitCode: HOST_EXIT_OK,
+						payload: remaining
+							? { action: "close", sessionId, closed: false, attachments: remaining.attachments }
+							: { action: "close", sessionId, closed: true, reason: reason ?? "client_close" },
+					};
+				} finally {
+					unsubscribe();
+				}
+			}
 			default:
 				return assertNever(request);
 		}

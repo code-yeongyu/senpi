@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -5,12 +6,12 @@ import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as hostEnsure from "../src/modes/rpc/host-ensure.ts";
 import { DEFAULT_HOST_LAUNCH_SPEC } from "../src/modes/rpc/host-launch-spec.ts";
+import { mapError, resolveSessionRow, runHostSessionRequest } from "../src/modes/rpc/host-session-runner.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
 import { attachJsonlLineReader } from "../src/modes/rpc/jsonl.ts";
-import { mapError, resolveSessionRow, runHostSessionRequest } from "../src/modes/rpc/host-session-runner.ts";
 import { RpcClient, type RpcClientEvent, RpcCommandError, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
 import { type FakeModelServer, startFakeModelServer } from "./helpers/rpc-fake-model.ts";
-import { HeldAnthropicModel, supervisorLaunch } from "./helpers/rpc-generation-support.ts";
+import { HeldAnthropicModel, JsonlPeer, supervisorLaunch } from "./helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { hostCliSandbox, sweepHostCliSandboxes } from "./suite/host-cli-support.ts";
 
@@ -122,6 +123,65 @@ async function wireRig(
 
 // #3073: callers distinguish refusal, caller error and broken transport without scraping prose.
 describe("host session runner", () => {
+	it("closes idle sessions and refuses a second close", async () => {
+		const { target, ref, client } = await rig();
+		expect(await runHostSessionRequest({ action: "close", target, ref })).toMatchObject({
+			exitCode: 0,
+			payload: { closed: true, reason: "client_close" },
+		});
+		expect(await client.listSessions()).toEqual([]);
+		expect((await readHostStatus(target)).sessions.total).toBe(0);
+		expect(await runHostSessionRequest({ action: "close", target, ref })).toMatchObject({
+			exitCode: 3,
+			payload: { reason: "unknown_session" },
+		});
+	}, 120_000);
+
+	it("reports another holder instead of force-closing its session", async () => {
+		const { target, ref, opened, client } = await rig();
+		await client.openSession({ sessionPath: String(opened.payload.sessionPath) });
+		expect(await runHostSessionRequest({ action: "close", target, ref })).toMatchObject({
+			exitCode: 0,
+			payload: { closed: false, attachments: 1 },
+		});
+		expect(await client.listSessions()).toEqual([expect.objectContaining({ sessionId: ref, attachments: 1 })]);
+	}, 120_000);
+
+	it("closes a running turn and leaves no per-session child process", async () => {
+		const { target, ref, opened, client } = await rig(true);
+		const observer = await JsonlPeer.connect(target.socket);
+		try {
+			const closed = observer.waitFor((event) => event.type === "session_closed" && event.sessionId === ref);
+			await runHostSessionRequest({ action: "prompt", target, ref, text: "close mid-turn" });
+			expect(await runHostSessionRequest({ action: "close", target, ref })).toMatchObject({
+				exitCode: 0,
+				payload: { closed: true },
+			});
+			expect(await closed).toMatchObject({ reason: "client_close" });
+			expect(await client.listSessions()).toEqual([]);
+			// status/open report the supervisor, whose one host child is intentional.
+			const hostPid = await new Promise<string>((resolve, reject) => {
+				execFile("pgrep", ["-P", String(opened.payload.pid)], (error, stdout) =>
+					error ? reject(error) : resolve(stdout.trim()),
+				);
+			});
+			expect(hostPid).toMatch(/^\d+$/);
+			await new Promise<void>((resolve, reject) => {
+				execFile("pgrep", ["-P", hostPid], (error, stdout) => {
+					try {
+						expect(error?.code).toBe(1);
+						expect(stdout).toBe("");
+						resolve();
+					} catch (failure) {
+						reject(failure);
+					}
+				});
+			});
+		} finally {
+			observer.destroy();
+		}
+	}, 120_000);
+
 	it("waits for a real settled run and answers an already idle session", async () => {
 		const { target, ref, fake } = await rig(true);
 		await runHostSessionRequest({ action: "prompt", target, ref, text: "unique-600" });
