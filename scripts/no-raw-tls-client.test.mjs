@@ -53,7 +53,7 @@ const OFFENDER_GUIDANCE = [
 	"outbound TLS path takes its host from a parsed URL - new URL() normalizes the",
 	"dots. If this call site's host provably comes from new URL(...).hostname or a",
 	"literal, add a reviewed entry to ALLOWLIST in scripts/no-raw-tls-client.test.mjs:",
-	'    "packages/<pkg>/src/<file>.ts": "<one-line reason: where the host comes from>",',
+	'    { file: "<path>", call: "<exact normalized call text>", count: <n>, reason: "<where the host comes from>" },',
 	"Otherwise route the request through fetch(), which parses the URL.",
 ].join("\n");
 
@@ -183,23 +183,27 @@ function isScannedSourceFile(relativePath) {
 
 function evaluateShippedSource(scan, allowlist) {
 	const offenders = [];
-	const stale = [];
+	const matched = new Map(allowlist.map((entry) => [entry, 0]));
+	const scannedPaths = new Set(scan.map((item) => item.path));
 	for (const item of scan) {
-		const hits = findRawTlsClients(item.content);
-		if (hits.length === 0) continue;
-		if (allowlist.some((entry) => entry.file === item.path)) continue;
-		for (const hit of hits) {
+		for (const hit of findRawTlsClients(item.content)) {
+			const entry = allowlist.find(
+				(candidate) => candidate.file === item.path && candidate.call === hit.text,
+			);
+			if (entry) {
+				matched.set(entry, matched.get(entry) + 1);
+				continue;
+			}
 			offenders.push(item.path + ":" + hit.line + "  " + hit.text);
 		}
 	}
+	const stale = [];
 	for (const entry of allowlist) {
-		const item = scan.find((candidate) => candidate.path === entry.file);
-		if (!item) {
+		const seen = matched.get(entry) ?? 0;
+		if (!scannedPaths.has(entry.file)) {
 			stale.push(entry.file + ": stale allowlist entry (no longer scanned)");
-			continue;
-		}
-		if (findRawTlsClients(item.content).length === 0) {
-			stale.push(entry.file + ": stale allowlist entry (no raw TLS client calls left in file)");
+		} else if (seen !== entry.count) {
+			stale.push(entry.file + ": expected " + entry.call + " x" + entry.count + ", found x" + seen);
 		}
 		if (!entry.reason || !entry.reason.trim()) {
 			stale.push(entry.file + ": allowlist entry without a reason");
