@@ -150,10 +150,11 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 			}
 			throw error;
 		}
+		let sessionId: string | undefined;
 		if ("ref" in request) {
 			const row = await resolveSessionRow(client, request.ref);
 			if (!row) return refusal("refuse", undefined, { reason: "unknown_session", ref: request.ref, socket });
-			await client.openSession({ sessionPath: row.sessionPath, cwd: row.cwd });
+			sessionId = (await client.openSession({ sessionPath: row.sessionPath, cwd: row.cwd })).sessionId;
 		}
 		switch (request.action) {
 			case "open": {
@@ -184,11 +185,38 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 					},
 				};
 			}
-			case "close":
-			case "model":
 			case "prompt":
-			case "steer":
-			case "abort":
+				return {
+					exitCode: HOST_EXIT_OK,
+					payload: { action: "prompt", sessionId, disposition: await client.prompt(request.text) },
+				};
+			case "steer": {
+				// An idle steer is parked until the next prompt; it does not start a run.
+				const streaming = (await client.getState()).isStreaming;
+				const disposition = await client.steer(request.text);
+				return { exitCode: HOST_EXIT_OK, payload: { action: "steer", sessionId, disposition, streaming } };
+			}
+			case "abort": {
+				const aborted = (await client.getState()).isStreaming;
+				await client.abortStrict();
+				return { exitCode: HOST_EXIT_OK, payload: { action: "abort", sessionId, acknowledged: true, aborted } };
+			}
+			case "model": {
+				// set_model also persists the GLOBAL default. Smaller contexts may defer the switch.
+				await client.setModel(request.model.provider, request.model.id);
+				const state = await client.getState();
+				return {
+					exitCode: HOST_EXIT_OK,
+					payload: {
+						action: "model",
+						sessionId,
+						requested: request.model,
+						model: state.model ? { provider: state.model.provider, id: state.model.id } : null,
+						pendingModelSwitch: state.pendingModelSwitch ?? null,
+					},
+				};
+			}
+			case "close":
 			case "read":
 			case "state":
 			case "list":

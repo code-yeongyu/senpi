@@ -5,15 +5,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as hostEnsure from "../src/modes/rpc/host-ensure.ts";
 import { DEFAULT_HOST_LAUNCH_SPEC } from "../src/modes/rpc/host-launch-spec.ts";
 import { mapError, resolveSessionRow, runHostSessionRequest } from "../src/modes/rpc/host-session-runner.ts";
-import { RpcClient, RpcCommandError, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
+import { RpcClient, type RpcClientEvent, RpcCommandError, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
 import { type FakeModelServer, startFakeModelServer } from "./helpers/rpc-fake-model.ts";
-import { supervisorLaunch } from "./helpers/rpc-generation-support.ts";
+import { HeldAnthropicModel, supervisorLaunch } from "./helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { hostCliSandbox, sweepHostCliSandboxes } from "./suite/host-cli-support.ts";
 
 const dirs: string[] = [];
 const clients: RpcClient[] = [];
-const models: FakeModelServer[] = [];
+const models: (FakeModelServer | HeldAnthropicModel)[] = [];
 function scratch(): string {
 	const dir = mkdtempSync(join(tmpdir(), "hs-unit-"));
 	dirs.push(dir);
@@ -22,18 +22,21 @@ function scratch(): string {
 afterEach(async () => {
 	for (const client of clients.splice(0)) await client.stop();
 	await sweepHostCliSandboxes();
-	for (const model of models.splice(0)) await model.close();
+	for (const model of models.splice(0)) {
+		if (model instanceof HeldAnthropicModel) model.release();
+		await model.close();
+	}
 	vi.restoreAllMocks();
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 }, 120_000);
 
-async function rig() {
+async function rig(held = false) {
 	const qa = await hostCliSandbox("session");
 	const cwd = join(qa.root, "work");
 	mkdirSync(cwd);
-	const fake = await startFakeModelServer();
+	const fake = held ? await HeldAnthropicModel.start() : await startFakeModelServer();
 	models.push(fake);
-	writeRpcModelsJson(qa.agentDir, fake.origin);
+	writeRpcModelsJson(qa.agentDir, fake.origin, ["mock-claude-rpc-2"]);
 	const ensure = hostEnsure.ensureHost;
 	vi.spyOn(hostEnsure, "ensureHost").mockImplementation((options) =>
 		ensure({ ...options, _test: { launch: supervisorLaunch, readinessTimeoutMs: 30_000 } }),
@@ -59,8 +62,86 @@ async function rig() {
 	return { qa, cwd, target, spec, opened, ref, client, fake };
 }
 
+function nextEvent(client: RpcClient, type: RpcClientEvent["type"]): Promise<RpcClientEvent> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			unsubscribe();
+			reject(new Error(`Missing ${type}`));
+		}, 20_000);
+		const unsubscribe = client.onEvent((event) => {
+			if (event.type !== type) return;
+			clearTimeout(timer);
+			unsubscribe();
+			resolve(event);
+		});
+	});
+}
+
 // #3073: callers distinguish refusal, caller error and broken transport without scraping prose.
 describe("host session runner", () => {
+	it("reports busy prompts, queued steering and idle steering without starting a turn", async () => {
+		const { client, opened, target, ref, fake } = await rig(true);
+		await client.openSession({ sessionPath: String(opened.payload.sessionPath) });
+		expect(await runHostSessionRequest({ action: "prompt", target, ref, text: "unique-1" })).toMatchObject({
+			exitCode: 0,
+			payload: { disposition: "started" },
+		});
+		expect(await runHostSessionRequest({ action: "prompt", target, ref, text: "busy" })).toMatchObject({
+			exitCode: 3,
+			payload: { reason: "busy" },
+		});
+		expect(await runHostSessionRequest({ action: "steer", target, ref, text: "unique-2" })).toMatchObject({
+			exitCode: 0,
+			payload: { disposition: "queued", streaming: true },
+		});
+		const idle = nextEvent(client, "agent_idle");
+		if (fake instanceof HeldAnthropicModel) fake.release();
+		await idle;
+		expect(await runHostSessionRequest({ action: "steer", target, ref, text: "parked" })).toMatchObject({
+			exitCode: 0,
+			payload: { disposition: "queued", streaming: false },
+		});
+		expect(await client.getSteeringMessages()).toEqual(["parked"]);
+		expect((await client.getState()).isStreaming).toBe(false);
+	}, 120_000);
+
+	it("acknowledges aborts and changes models both mid-turn and idle", async () => {
+		const { client, opened, target, ref } = await rig(true);
+		await client.openSession({ sessionPath: String(opened.payload.sessionPath) });
+		await runHostSessionRequest({ action: "prompt", target, ref, text: "stop-me" });
+		expect(
+			await runHostSessionRequest({
+				action: "model",
+				target,
+				ref,
+				model: { provider: "anthropic", id: "mock-claude-rpc-2" },
+			}),
+		).toMatchObject({ exitCode: 0, payload: { model: { id: "mock-claude-rpc-2" }, pendingModelSwitch: null } });
+		const ended = nextEvent(client, "agent_end");
+		const idle = nextEvent(client, "agent_idle");
+		expect(await runHostSessionRequest({ action: "abort", target, ref })).toMatchObject({
+			exitCode: 0,
+			payload: { acknowledged: true, aborted: true },
+		});
+		expect(await ended).toMatchObject({ aborted: true, abortSource: "user" });
+		await idle;
+		expect(await runHostSessionRequest({ action: "abort", target, ref })).toMatchObject({
+			exitCode: 0,
+			payload: { aborted: false },
+		});
+		expect(
+			await runHostSessionRequest({
+				action: "model",
+				target,
+				ref,
+				model: { provider: "anthropic", id: "mock-claude-rpc" },
+			}),
+		).toMatchObject({ exitCode: 0, payload: { model: { id: "mock-claude-rpc" } } });
+		expect(
+			await runHostSessionRequest({ action: "model", target, ref, model: { provider: "anthropic", id: "nope" } }),
+		).toMatchObject({ exitCode: 3, payload: { reason: "model_not_found" } });
+	}, 120_000);
+
 	it("opens a retained named session and releases its client attachment", async () => {
 		const { opened, client, ref } = await rig();
 		expect(ref).toMatch(/^rpc-\d+$/);

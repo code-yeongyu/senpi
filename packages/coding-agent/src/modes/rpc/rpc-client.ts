@@ -672,6 +672,11 @@ export class RpcClient {
 		}
 	}
 
+	/** Abort with host refusals and transport loss surfaced to machine callers. */
+	async abortStrict(): Promise<void> {
+		this.getData(await this.send({ type: "abort" }));
+	}
+
 	async abortCompaction(): Promise<void> {
 		await this.send({ type: "abort_compaction" });
 	}
