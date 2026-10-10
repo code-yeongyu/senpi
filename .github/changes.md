@@ -6,7 +6,7 @@
 
 ### Why
 
-- `.github/workflows/ci.yml`: the step runs under `bash -e`, so a failing `wait` ended the step before `cat "$out"`. A failing suite showed no test output at all (seen on PR #3091), only the hang path printed it.
+- `.github/workflows/ci.yml`: the step runs under `bash -eo pipefail` (GitHub `shell: bash` default), so a failing `wait` ended the step before `cat "$out"`. A failing suite showed no test output at all (seen on PR #3091), only the hang path printed it.
 
 ### Why an extension could not handle it
 
