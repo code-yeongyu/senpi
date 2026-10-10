@@ -1,3 +1,22 @@
+## 2026-10-10 - allowed_tools only on the native OpenAI endpoint, with a refusal fallback (senpi#3080)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `getCompat` resolves `supportsAllowedTools` through `supportsAllowedToolChoice`, which now also requires a native OpenAI API host (`api.openai.com` or a regional `*.api.openai.com`). A flagged model behind a Responses-compatible gateway is never sent `allowed_tools`; the session and the agent loop use the same predicate and send only the active tools there.
+- `packages/ai/src/api/openai-responses.ts`: `applyAllowedToolsChoice` and its helpers moved to the fork-only `openai-responses-allowed-tools.ts`. A request carrying `tool_choice: allowed_tools` that is refused with an HTTP 400, or by a WebSocket error event before any content, is sent once more over HTTP with top-level function and custom tools restricted to the allowed ones and no `tool_choice`. The model (api, provider, baseUrl, id) is then remembered for the process, so later requests go straight to the restricted shape. A retry that fails too records nothing, and outer provider retries resend the restricted request. Tools that transcript items load in place are not filtered.
+
+### Why
+
+An `openai/gpt-6.1-sol` session whose `openai` provider pointed at a Responses-compatible gateway failed every turn with `Invalid value: 'allowed_tools'` (param `tool_choice.type`) until its goal hit the continuation cap. A provider `baseUrl` override keeps the catalog compat, which flags every cache-write-priced `openai` row `supportsAllowedTools`, and nothing recovered when an endpoint rejected the choice.
+
+### Why an extension could not handle it
+
+`tool_choice` is built after `onPayload` returns, and the retry depends on the provider's response, so a `before_provider_request` hook can neither see nor recover the refused request.
+
+### Expected merge conflict zones
+
+- The request send block in `stream` (the WebSocket catch, `createRequest` and the `start` push), and the import list.
+
 ## 2026-10-09 - Restore api-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

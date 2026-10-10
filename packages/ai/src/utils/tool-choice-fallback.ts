@@ -63,7 +63,7 @@ function markInBandBeforeContent(error: unknown): unknown {
  * A request refusal: the HTTP 400 that rejects the request, or the same refusal a gateway that has
  * already answered 200 (a keepalive stream) sends in-band before any content (senpi#2801).
  */
-function isRequestRefusal(error: unknown): boolean {
+export function isRequestRefusal(error: unknown): boolean {
 	const status = extractHttpStatus(error);
 	return status === 400 || (status === undefined && isInBandBeforeContent(error));
 }

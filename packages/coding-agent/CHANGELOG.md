@@ -10,7 +10,11 @@
 
 ### Changed
 
+- The runtime snapshot a first launch builds copies the package as npm ships it (the `files` entries of `package.json`, plus `package.json`, README and LICENSE) instead of the whole package directory. Running from a repository checkout no longer copies its sources, tests and scripts: about 1,800 files instead of 11,000 for this package ([#3083](https://github.com/code-yeongyu/senpi/issues/3083)).
+
 ### Fixed
+
+- Reloading a session releases the previous extension runner and reuses unchanged module graphs instead of retaining another generation. Edited lazy dependencies now invalidate the graph using the bytes actually compiled, including equal-size edits with preserved timestamps ([#3066](https://github.com/code-yeongyu/senpi/pull/3066) by [@jc01rho](https://github.com/jc01rho), [#3068](https://github.com/code-yeongyu/senpi/issues/3068)).
 
 ### Removed
 

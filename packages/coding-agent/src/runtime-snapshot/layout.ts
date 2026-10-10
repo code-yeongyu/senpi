@@ -49,6 +49,8 @@ function planTree(
 	files: FilePairs,
 	skipModules: boolean,
 	seen = new Set<string>(),
+	excluded: (relativePath: string) => boolean = () => false,
+	relativeDir = "",
 ): void {
 	const real = realpathSync(source);
 	if (seen.has(real)) return;
@@ -56,10 +58,12 @@ function planTree(
 	mkdirSync(target, { recursive: true });
 	for (const entry of readdirSync(real, { withFileTypes: true })) {
 		if (skipModules && entry.name === "node_modules") continue;
+		const relativePath = relativeDir === "" ? entry.name : `${relativeDir}/${entry.name}`;
+		if (excluded(relativePath)) continue;
 		const from = join(real, entry.name);
 		const to = join(target, entry.name);
 		if (entry.isDirectory()) {
-			planTree(from, to, files, skipModules, seen);
+			planTree(from, to, files, skipModules, seen, excluded, relativePath);
 		} else if (entry.isFile()) {
 			if (!UNLOADED_FILE.test(entry.name)) files.push([from, to]);
 		} else if (entry.isSymbolicLink()) {
@@ -71,11 +75,93 @@ function planTree(
 				if (isMissing(error)) continue;
 				throw error;
 			}
-			if (isDirectory) planTree(from, to, files, skipModules, seen);
+			if (isDirectory) planTree(from, to, files, skipModules, seen, excluded, relativePath);
 			else if (!UNLOADED_FILE.test(entry.name)) files.push([realpathSync(from), to]);
 		}
 	}
 	seen.delete(real);
+}
+
+/** npm ships these from the package root whether or not `files` lists them. */
+const ALWAYS_SHIPPED = /^(?:package\.json|readme(?:\..*)?|licen[cs]e(?:\..*)?)$/i;
+
+function globToRegExp(glob: string): RegExp {
+	let source = "";
+	for (let index = 0; index < glob.length; index++) {
+		const char = glob[index];
+		if (glob.startsWith("**/", index)) {
+			source += "(?:.*/)?";
+			index += 2;
+		} else if (glob.startsWith("**", index)) {
+			source += ".*";
+			index += 1;
+		} else if (char === "*") source += "[^/]*";
+		else if (char === "?") source += "[^/]";
+		else source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+	}
+	// An entry names a file or a whole directory.
+	return new RegExp(`^${source}(?:/.*)?$`);
+}
+
+function shippedEntries(packageDir: string): { readonly include: string[]; readonly exclude: RegExp[] } | undefined {
+	const manifest: unknown = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+	const listed =
+		typeof manifest === "object" && manifest !== null ? (manifest as { files?: unknown }).files : undefined;
+	if (!Array.isArray(listed) || !listed.every((entry) => typeof entry === "string")) return undefined;
+	const normalize = (entry: string) => entry.replace(/^\.\//, "").replace(/\/+$/, "");
+	return {
+		include: listed.filter((entry) => !entry.startsWith("!")).map(normalize),
+		exclude: listed.filter((entry) => entry.startsWith("!")).map((entry) => globToRegExp(normalize(entry.slice(1)))),
+	};
+}
+
+/**
+ * The package itself, as npm ships it (#3083): the entries its `files` field lists, minus its `!`
+ * exclusions, plus the files npm always includes. A repository checkout then snapshots what a
+ * published install would instead of its sources and tests. A package without `files` ships its
+ * whole directory, and so does its snapshot.
+ */
+function planPackageRoot(packageDir: string, target: string, files: FilePairs): void {
+	const shipped = shippedEntries(packageDir);
+	if (shipped === undefined) {
+		planTree(packageDir, target, files, true);
+		return;
+	}
+	const root = realpathSync(packageDir);
+	const excluded = (relativePath: string) => shipped.exclude.some((pattern) => pattern.test(relativePath));
+	const planned = new Set<string>();
+	const plan = (relativePath: string): void => {
+		if (planned.has(relativePath) || excluded(relativePath)) return;
+		const from = join(root, relativePath);
+		let isDirectory: boolean;
+		try {
+			isDirectory = statSync(from).isDirectory();
+		} catch (error) {
+			if (isMissing(error)) return;
+			throw error;
+		}
+		planned.add(relativePath);
+		const to = join(target, relativePath);
+		if (isDirectory) planTree(from, to, files, true, new Set([root]), excluded, relativePath);
+		else if (!UNLOADED_FILE.test(relativePath)) {
+			mkdirSync(dirname(to), { recursive: true });
+			files.push([realpathSync(from), to]);
+		}
+	};
+	mkdirSync(target, { recursive: true });
+	const topLevel = readdirSync(root).filter((name) => name !== "node_modules");
+	for (const name of topLevel) if (ALWAYS_SHIPPED.test(name)) plan(name);
+	for (const entry of shipped.include) {
+		const segments = entry.split("/");
+		const wildcard = segments.findIndex((segment) => /[*?]/.test(segment));
+		if (wildcard === -1) plan(entry);
+		else if (wildcard > 0)
+			plan(segments.slice(0, wildcard).join("/")); // the directory a nested glob lives in: a superset
+		else {
+			const pattern = globToRegExp(segments[0] ?? "");
+			for (const name of topLevel) if (pattern.test(name)) plan(name);
+		}
+	}
 }
 
 /** The node_modules directories Node's resolver walks from `dir`, nearest first. */
@@ -205,7 +291,7 @@ export async function materializeRuntimeSnapshot(
 	rmSync(staging, { recursive: true, force: true });
 	try {
 		const files: FilePairs = [];
-		planTree(packageDir, staging, files, true);
+		planPackageRoot(packageDir, staging, files);
 		const placed = planModules(packageDir, staging, manifest.externals, files);
 		await copyFiles(files, copier);
 		verifyExternals(packageDir, join(staging, "dist", "bundle", "chunks"), manifest.externals, placed);

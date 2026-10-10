@@ -1,3 +1,21 @@
+## 2026-10-10 - The runtime snapshot copies the shipped package files only (#3083)
+
+### What changed
+
+- `packages/coding-agent/src/runtime-snapshot/layout.ts` (fork-only): `materializeRuntimeSnapshot` plans the package root with `planPackageRoot`, which copies the entries of the package's `files` field (honouring its `!` exclusions, including nested ones such as `!dist/experimental`) plus the files npm always ships (`package.json`, `README*`, `LICENSE*`). A package without `files` is still copied whole. The dependency closure is unchanged.
+
+### Why
+
+From a repository checkout the snapshot copied the package's sources, tests and scripts too: 11,080 files and 508 MB for `packages/coding-agent`. That made the bundle smoke tests' cold start take 2.9 s on CI with Bun 1.4.2 and exceed the 5 s test timeout with Bun 1.4.3 (#3078). A published install already holds only the `files` entries, so it is unaffected.
+
+### Why an extension could not handle it
+
+The snapshot is built before any extension loads, by the launcher that decides where the session runs from.
+
+### Expected merge conflict zones
+
+- None upstream: `runtime-snapshot/` is fork-only.
+
 ## 2026-10-09 - `--session <id>` opens a session recorded under a folder the OmO desktop moved here (senpi#2990)
 
 ### What changed

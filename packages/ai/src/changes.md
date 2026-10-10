@@ -1,3 +1,21 @@
+## 2026-10-10 - allowed_tools only on native OpenAI API hosts (senpi#3080)
+
+### What changed
+
+- `packages/ai/src/types.ts`: the `Context.activeToolNames` doc names the predicate that now gates it, `supportsAllowedToolChoice`, which requires the compat flag and a native OpenAI API host.
+
+### Why
+
+A flagged model behind a Responses-compatible gateway was sent `tool_choice: allowed_tools`, which the gateway rejects on every turn.
+
+### Why an extension could not handle it
+
+The doc describes the core request contract between the session and the provider adapters.
+
+### Expected merge conflict zones
+
+- The `activeToolNames` doc comment on `Context`.
+
 ## 2026-10-07 - Claude Agent SDK 0.3.292 (senpi#2545)
 
 ### What changed
