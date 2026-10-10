@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseHostSessionArgs, runHostSessionCommand } from "../src/cli/host-session-command.ts";
-import * as runner from "../src/modes/rpc/host-session-runner.ts";
+import { parseHostSessionArgs, runHostSessionCommand } from "../../src/cli/host-session-command.ts";
+import * as runner from "../../src/modes/rpc/host-session-runner.ts";
 
 vi.mock("node:fs", async (importOriginal) => ({
 	...(await importOriginal<typeof import("node:fs")>()),

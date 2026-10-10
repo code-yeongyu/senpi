@@ -38,7 +38,8 @@ host-daemon-paths.ts, host-daemon-state.ts, host-daemon-registration.ts
                           Per-socket daemon directory, pointer pidfile, generations (I3)
 host-launch-spec.ts       `--launch-spec` parse + trust proof; host-daemon-env.ts = env allowlist
 host-runner.ts            The `senpi host` requests -> { payload, exitCode }
-host-session-runner.ts    Short-lived attached clients for `senpi host session`
+host-session-runner.ts    Short-lived attached clients for `senpi host session`; host-session-ref.ts resolves a
+                          session reference, host-session-wait.ts the event-driven `wait`, host-session-errors.ts the exit mapping
 host-status.ts, host-process-metrics.ts   status report: identity, sessions, generations, tree
 host-status-rows.ts       status detail: listed session rows, reservations/ claim rows
 host-endpoints.ts, host-status-all.ts     `status --all`: enumerate endpoint dirs (`endpoint_kind` rpc_host | tui), report without pruning

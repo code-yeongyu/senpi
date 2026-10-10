@@ -1,32 +1,18 @@
 /** Short-lived, attach-before-act clients for `senpi host session`. */
-import { existsSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
 import { daemonEnvKeys, daemonEnvOverrides, writeDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { HostEnsureRefusedError } from "./host-decision.ts";
 import { endpointKindOfSocket } from "./host-endpoints.ts";
 import { type EnsuredHost, ensureHost } from "./host-ensure.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
-import {
-	HOST_EXIT_ERROR,
-	HOST_EXIT_OK,
-	HOST_EXIT_REFUSED,
-	HOST_EXIT_USAGE,
-	type HostOutcome,
-	refusal,
-} from "./host-outcome.ts";
+import { HOST_EXIT_OK, type HostOutcome, refusal } from "./host-outcome.ts";
 import type { HostTarget } from "./host-runner.ts";
-import {
-	isTransportGoneError,
-	RpcClient,
-	type RpcClientEvent,
-	RpcCommandError,
-	type RpcTransportGoneError,
-} from "./rpc-client.ts";
-import type { RpcSessionClosedEvent, RpcSessionState } from "./rpc-types.ts";
+import { mapError } from "./host-session-errors.ts";
+import { resolveSessionRow, type SessionRef } from "./host-session-ref.ts";
+import { type HostSessionWait, waitForHostSession } from "./host-session-wait.ts";
+import { RpcClient, type RpcClientEvent, type RpcTransportGoneError } from "./rpc-client.ts";
+import type { RpcSessionClosedEvent } from "./rpc-types.ts";
 
-/** Routing handles last one host epoch; keep a durable id or path across parking and handoff. */
-export type SessionRef = string;
 type Model = { provider: string; id: string };
 export type HostSessionRequest = { target: HostTarget } & (
 	| {
@@ -46,83 +32,8 @@ export type HostSessionRequest = { target: HostTarget } & (
 	| { action: "read"; ref: SessionRef; tail?: number; since?: string; messages: boolean }
 	| { action: "state"; ref: SessionRef }
 	| { action: "list" }
-	| { action: "wait"; ref: SessionRef; until: "idle" | "done"; timeoutMs: number }
+	| ({ action: "wait"; ref: SessionRef } & HostSessionWait)
 );
-
-type SessionRow = Awaited<ReturnType<RpcClient["listSessions"]>>[number];
-
-/** Resolve anew on every invocation: a durable session can have a new routing handle. */
-export async function resolveSessionRow(
-	client: Pick<RpcClient, "listSessions">,
-	ref: SessionRef,
-): Promise<SessionRow | undefined> {
-	const rows = await client.listSessions();
-	return (
-		rows.find((row) => row.sessionId === ref) ??
-		rows.find((row) => row.durableSessionId === ref) ??
-		rows.find((row) => row.name === ref) ??
-		rows.find((row) => row.sessionPath !== undefined && samePath(row.sessionPath, ref))
-	);
-}
-
-function samePath(left: string, right: string): boolean {
-	const canonical = (path: string) => (existsSync(path) ? realpathSync(path) : resolve(path));
-	return canonical(left) === canonical(right);
-}
-
-const USAGE_CODES = new Set([
-	"missing_session_id",
-	"invalid_path",
-	"invalid_session_context",
-	"invalid_session_kind",
-	"invalid_launch_profile",
-	"invalid_session_id",
-	"invalid_release_reason",
-	"empty",
-	"unknown_command",
-]);
-const FAILURE_CODES = new Set(["open_failed", "warm_failed", "release_failed"]);
-
-export function mapError(error: unknown, socket: string): HostOutcome {
-	const detail = error instanceof Error ? error.message : String(error);
-	if (error instanceof RpcCommandError) {
-		const reason = error.errorCode ?? codeFromMessage(detail);
-		const exitCode = USAGE_CODES.has(reason)
-			? HOST_EXIT_USAGE
-			: FAILURE_CODES.has(reason)
-				? HOST_EXIT_ERROR
-				: HOST_EXIT_REFUSED;
-		return {
-			exitCode,
-			payload: {
-				action: exitCode === HOST_EXIT_REFUSED ? "refuse" : "error",
-				reason,
-				detail,
-				socket,
-				...(error.errorData !== undefined && { data: error.errorData }),
-			},
-		};
-	}
-	return {
-		exitCode: HOST_EXIT_ERROR,
-		payload: {
-			action: "error",
-			reason: isTransportGoneError(error) ? "transport_gone" : "host_error",
-			detail,
-			socket,
-		},
-	};
-}
-
-function codeFromMessage(message: string): string {
-	if (message.startsWith("Model not found:")) return "model_not_found";
-	if (message.startsWith("Entry not found:")) return "unknown_cursor";
-	if (message.startsWith("Agent is already processing")) return "busy";
-	// SessionCommandRouter puts its stable code in `error` when no errorData is needed.
-	const code = /^([a-z][a-z_]+)(?::|$)/.exec(message)?.[1];
-	if (code) return code;
-	return "host_error";
-}
 
 export async function runHostSessionRequest(request: HostSessionRequest): Promise<HostOutcome> {
 	const { socket, agentDir } = request.target;
@@ -261,87 +172,10 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 					},
 				};
 			}
-			case "wait": {
-				const attached = client;
-				const started = Date.now();
-				return await new Promise<HostOutcome>((resolveWait, reject) => {
-					let finished = false;
-					let observed = false;
-					let state: RpcSessionState | undefined;
-					let timer: ReturnType<typeof setTimeout> | undefined;
-					const cleanup = () => {
-						finished = true;
-						clearTimeout(timer);
-						unsubscribe();
-						disconnected = undefined;
-					};
-					const fail = (error: unknown) => {
-						if (finished) return;
-						cleanup();
-						reject(error);
-					};
-					const finish = (outcome: string) => {
-						if (finished) return;
-						cleanup();
-						resolveWait({
-							exitCode: HOST_EXIT_OK,
-							payload: {
-								action: "wait",
-								sessionId,
-								until: request.until,
-								outcome,
-								waited_ms: Date.now() - started,
-								state: {
-									isStreaming: state?.isStreaming ?? false,
-									pendingMessageCount: state?.pendingMessageCount ?? 0,
-									lastAbortSource: state?.lastAbortSource ?? null,
-								},
-							},
-						});
-					};
-					// Subscribe BEFORE the snapshot, including when settlement arrives with that reply.
-					const unsubscribe = attached.onEvent((record) => {
-						const event = record as RpcClientEvent | RpcSessionClosedEvent;
-						if (event.type === "session_closed" || event.type === "session_parked") {
-							finish(event.type);
-							return;
-						}
-						if (event.type === "agent_settled" && "reason" in event && event.reason === "session_closed") {
-							finish("session_closed");
-							return;
-						}
-						if (event.type !== "agent_idle" && !(request.until === "done" && event.type === "agent_settled"))
-							return;
-						observed = true;
-						void attached.getState().then((snapshot) => {
-							state = snapshot;
-							if (request.until === "done") finish("done");
-							else if (isDrained(snapshot)) finish("idle");
-						}, fail);
-					});
-					disconnected = fail;
-					timer = setTimeout(() => {
-						if (finished) return;
-						cleanup();
-						resolveWait({
-							exitCode: HOST_EXIT_ERROR,
-							payload: {
-								action: "error",
-								reason: "wait_timeout",
-								sessionId,
-								until: request.until,
-								timeoutMs: request.timeoutMs,
-							},
-						});
-					}, request.timeoutMs);
-					void attached.getState().then((snapshot) => {
-						state = snapshot;
-						// A parked steer keeps `idle` waiting: it only drains with the next prompt.
-						if (!observed && (request.until === "done" ? !snapshot.isStreaming : isDrained(snapshot)))
-							finish("already_idle");
-					}, fail);
+			case "wait":
+				return await waitForHostSession(client, sessionId, request, (handler) => {
+					disconnected = handler;
 				});
-			}
 			case "close": {
 				let reason: string | undefined;
 				const unsubscribe = client.onEvent((record) => {
@@ -374,16 +208,6 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 		ensured?.release();
 		await client?.stop();
 	}
-}
-
-function isDrained(state: RpcSessionState): boolean {
-	return (
-		!state.isStreaming &&
-		state.steering.length === 0 &&
-		state.followUp.length === 0 &&
-		state.ordered.length === 0 &&
-		state.pendingMessageCount === 0
-	);
 }
 
 function assertNever(value: never): never {
