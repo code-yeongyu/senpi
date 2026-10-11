@@ -1,14 +1,12 @@
 import { createHash } from "node:crypto";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildCompactionContext } from "../../../src/core/extensions/builtin/compaction/context-pipeline.ts";
-import { createEmergencyPruneLatch } from "../../../src/core/extensions/builtin/compaction/emergency-prune.ts";
-import compactionExtension from "../../../src/core/extensions/builtin/compaction/index.ts";
+import { readContextReductionState } from "../../../src/core/extensions/builtin/compaction/context-reduction-state.ts";
 import { estimateTotalTokens } from "../../../src/core/extensions/builtin/compaction/overflow-retry.ts";
 import { convertToLlm } from "../../../src/core/messages.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
-import { OPENAI_NATIVE_LEGACY_MODEL } from "../../compaction/openai-remote-test-models.ts";
-import { createHarness, type Harness } from "../harness.ts";
+import { createReductionHarness, renderReduction } from "../../support/context-reduction-fixture.ts";
+import type { Harness } from "../harness.ts";
 
 const harnesses: Harness[] = [];
 const stateType = "senpi.context-reduction.v1";
@@ -68,16 +66,9 @@ function history(clearableName = "write"): StoredMessage[] {
 }
 
 async function harness(options: { maxTokens?: number; sessionManager?: SessionManager; siblingOf?: Harness } = {}) {
-	const value = await createHarness({
-		models: [{ id: "frontier", contextWindow: window, maxTokens: options.maxTokens ?? 4_000 }],
-		settings: { compaction: { enabled: false, toolAdmissionEnabled: false, restorationEnabled: false } },
-		extensionFactories: [compactionExtension],
-		persistSession: true,
-		...options,
-	});
-	harnesses.push(value);
-	await value.session.bindExtensions({});
-	return value;
+	const { h, compactions, aborts } = await createReductionHarness(options);
+	harnesses.push(h);
+	return Object.assign(h, { compactions, aborts });
 }
 
 function append(h: Harness, messages: StoredMessage[]) {
@@ -85,11 +76,20 @@ function append(h: Harness, messages: StoredMessage[]) {
 }
 
 function render(h: Harness) {
-	return h.getExtensionRunner().emitContext(h.sessionManager.buildSessionContext().messages);
+	return renderReduction(h);
 }
 
 function frontierRecords(h: Harness) {
-	return h.sessionManager.getBranch().filter((entry) => entry.type === "custom" && entry.customType === stateType);
+	let previous = "";
+	return h.sessionManager.getBranch().filter((entry) => {
+		if (entry.type !== "custom" || entry.customType !== stateType) return false;
+		const state = readContextReductionState(entry.data);
+		if (!state) return false;
+		const key = `${state.cutIndex}:${state.prefixHash}`;
+		if (key === previous) return false;
+		previous = key;
+		return true;
+	});
 }
 
 function bytes(value: unknown) {
@@ -107,7 +107,7 @@ describe("stable request-local reduction prefix", () => {
 		let stable = 0;
 		let steps = 0;
 		for (let turn = 0; turn < 40; turn++) {
-			append(h, pair(100 + turn, name === "read" ? "read" : turn % 4 === 0 ? "read" : "eval", 300));
+			append(h, pair(100 + turn, name === "read" ? "read" : turn % 4 === 0 ? "read" : "write", 300));
 			const current = await render(h);
 			const nextRecords = frontierRecords(h).length;
 			if (nextRecords === records) {
@@ -123,29 +123,6 @@ describe("stable request-local reduction prefix", () => {
 		expect(stable).toBeGreaterThan(30);
 		expect(steps).toBeGreaterThan(0);
 		expect(steps).toBeLessThan(4);
-	});
-
-	it("bypasses reduction on native and append-only paths even with an engaged latch", async () => {
-		const h = await harness();
-		const messages = history();
-		const ctx = h.getExtensionRunner().createContext();
-		for (const lane of ["native", "external", "append-only"]) {
-			const state = { engaged: true, cutIndex: 5, prefixHash: "already-engaged" };
-			const outgoing = buildCompactionContext({
-				event: { type: "context", messages },
-				ctx: { ...ctx, model: lane === "native" ? OPENAI_NATIVE_LEGACY_MODEL : h.getModel() },
-				contextWindow: window,
-				promptContextWindow: window,
-				contextReductionState: state,
-				toolAdmissionEnabled: false,
-				breakerFallback: true,
-				laneOwnsCompaction: lane === "external",
-				appendOnlyTranscript: lane === "append-only",
-				emergencyPruneLatch: createEmergencyPruneLatch(),
-			});
-			expect(bytes(outgoing)).toBe(bytes(convertToLlm(messages)));
-			expect(state).toEqual({ engaged: true, cutIndex: 5, prefixHash: "already-engaged" });
-		}
 	});
 
 	it("uses unreduced history and never alternates with the previous request usage", async () => {
@@ -171,7 +148,7 @@ describe("stable request-local reduction prefix", () => {
 		expect(bytes(await render(h))).toBe(bytes(previous));
 	});
 
-	it("forces a ceiling step below the block budget before the output-reserved window overflows", async () => {
+	it("hands off below the block budget when a ceiling step cannot buy enough headroom", async () => {
 		const h = await harness({ maxTokens: 48_000 });
 		append(h, history());
 		await render(h);
@@ -180,7 +157,9 @@ describe("stable request-local reduction prefix", () => {
 		// Less than the 10k block budget, but near the 52k prompt window.
 		append(h, [...pair(200, "write", 1_000), ...pair(201, "write", 1_000), ...pair(202, "write", 1_000)]);
 		const outgoing = await render(h);
-		expect(frontierRecords(h).length).toBeGreaterThan(initialRecords);
+		expect(frontierRecords(h).length).toBe(initialRecords);
+		expect(h.compactions).toHaveBeenCalledTimes(1);
+		expect(h.aborts).toHaveBeenCalled();
 		expect(estimateTotalTokens(outgoing)).toBeLessThan(52_000);
 	});
 

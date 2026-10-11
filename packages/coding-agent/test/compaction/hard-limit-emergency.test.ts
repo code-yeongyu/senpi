@@ -197,7 +197,7 @@ function collectToolPairIds(messages: AgentMessage[]): { toolCallIds: Set<string
 describe("compaction hard-limit emergency behavior", () => {
 	describe("Given hard-limit context can fit after tool-output truncation", () => {
 		describe("When context hook runs", () => {
-			it("Then no LLM compaction is requested and tool pairs remain intact", async () => {
+			it("Then prune-only recovery requests compaction and tool pairs remain intact", async () => {
 				// Given
 				const handler = createContextHandler();
 				const compact = vi.fn();
@@ -214,7 +214,7 @@ describe("compaction hard-limit emergency behavior", () => {
 
 				// Then
 				expect(estimateContextTokens(pruned).tokens).toBeLessThanOrEqual(2_000);
-				expect(compact).not.toHaveBeenCalled();
+				expect(compact).toHaveBeenCalledTimes(1);
 				const { toolCallIds, toolResultIds } = collectToolPairIds(pruned);
 				expect(toolCallIds).toEqual(toolResultIds);
 			});

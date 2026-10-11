@@ -18,11 +18,9 @@
  * {@link reduceContextMessages} composes the three transforms in order.
  */
 
-import { createHash } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ImageContent, TextContent, ToolResultMessage } from "@earendil-works/pi-ai";
 import { inheritSessionContextEntryId } from "../../../session-manager.ts";
-import { estimateTotalTokens } from "./overflow-retry.ts";
 
 const DEFAULT_READ_TOOL_NAMES = ["read", "Read", "read_file"];
 const DEFAULT_SEARCH_TOOL_NAMES = ["grep", "Grep", "glob", "Glob"];
@@ -146,109 +144,6 @@ export const BUILTIN_CONTEXT_REDUCTION_OPTIONS: ReduceContextOptions = {
 };
 
 export const BUILTIN_CONTEXT_REDUCTION_GATE_RATIO = 0.5;
-
-export const CONTEXT_REDUCTION_ENTRY_TYPE = "senpi.context-reduction.v1";
-
-/** Persisted per branch, not per request. Extends codeg-dev's sticky latch from #901. */
-export interface ContextReductionState {
-	engaged: boolean;
-	cutIndex: number;
-	prefixHash: string;
-}
-
-export function createContextReductionState(): ContextReductionState {
-	return { engaged: false, cutIndex: 0, prefixHash: "" };
-}
-
-export function readContextReductionState(data: unknown): ContextReductionState | undefined {
-	if (
-		typeof data !== "object" ||
-		data === null ||
-		!("engaged" in data) ||
-		typeof data.engaged !== "boolean" ||
-		!("cutIndex" in data) ||
-		typeof data.cutIndex !== "number" ||
-		!Number.isSafeInteger(data.cutIndex) ||
-		data.cutIndex < 0 ||
-		!("prefixHash" in data) ||
-		typeof data.prefixHash !== "string"
-	) {
-		return undefined;
-	}
-	return { engaged: data.engaged, cutIndex: data.cutIndex, prefixHash: data.prefixHash };
-}
-
-/**
- * All tail-relative decisions run on the frozen prefix alone. Ten percent of
- * the window amortizes a rewrite over a substantial block (100k on a 1M model),
- * while the ceiling can advance earlier, including before the ordinary gate.
- * The caller persists state changes before returning the outgoing request.
- */
-export function reduceContextWithFrontier(
-	messages: AgentMessage[],
-	state: ContextReductionState,
-	input: {
-		unreducedMessages: AgentMessage[];
-		contextWindow: number;
-		ceilingTokens: number;
-		overheadTokens: number;
-		blockBudgetRatio?: number;
-		force: boolean;
-	},
-): AgentMessage[] {
-	const fingerprint = (cut: number) =>
-		createHash("sha256")
-			.update(JSON.stringify(input.unreducedMessages.slice(0, cut)))
-			.digest("hex");
-	if (state.cutIndex > messages.length || (state.cutIndex > 0 && fingerprint(state.cutIndex) !== state.prefixHash)) {
-		Object.assign(state, createContextReductionState());
-	}
-	const wasEngaged = state.engaged;
-	const nearCeiling = (projected: AgentMessage[]) =>
-		estimateTotalTokens(projected) >= Math.max(0, input.ceilingTokens * 0.95);
-	if (
-		!state.engaged &&
-		!input.force &&
-		!nearCeiling(messages) &&
-		!shouldApplyContextReduction({
-			usageTokens: estimateTotalTokens(input.unreducedMessages) + input.overheadTokens,
-			contextWindow: input.contextWindow,
-		})
-	) {
-		return messages;
-	}
-	state.engaged = true;
-	const reducePrefix = () => [
-		...reduceContextMessages(messages.slice(0, state.cutIndex), {
-			collapse: { minGroupSize: DEFAULT_MIN_GROUP_SIZE, protectRecentMessages: 0 },
-			shrinkAssistant: {
-				protectRecentTokens: 0,
-				maxAssistantTextTokens: 800,
-				minSavingsTokens: DEFAULT_MIN_SAVINGS_TOKENS,
-			},
-			clearToolResults: { keepRecent: 6 },
-		}).messages,
-		...messages.slice(state.cutIndex),
-	];
-	let reduced = reducePrefix();
-	const tailTokens = estimateTotalTokens(input.unreducedMessages.slice(state.cutIndex));
-	if (!wasEngaged || tailTokens > input.contextWindow * (input.blockBudgetRatio ?? 0.1) || nearCeiling(reduced)) {
-		// Keep at least five messages and 3k tokens outside the frontier.
-		// Clearing also retains six clearable results inside the frozen prefix.
-		let cut = Math.max(0, messages.length - DEFAULT_PROTECT_RECENT_MESSAGES);
-		let recentTokens = 0;
-		for (let index = messages.length - 1; index >= 0 && recentTokens < 3_000; index--) {
-			recentTokens += estimateTotalTokens([input.unreducedMessages[index]]);
-			cut = Math.min(cut, index);
-		}
-		if (cut > state.cutIndex) {
-			state.cutIndex = cut;
-			state.prefixHash = fingerprint(cut);
-			reduced = reducePrefix();
-		}
-	}
-	return reduced;
-}
 
 export interface ShouldApplyContextReductionInput {
 	usageTokens: number | null;

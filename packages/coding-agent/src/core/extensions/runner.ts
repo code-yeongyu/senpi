@@ -4,19 +4,11 @@
 
 import { basename } from "node:path";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import {
-	type Api,
-	getCurrentSystemMessage,
-	type ImageContent,
-	type Model,
-	type Provider,
-	type ProviderHeaders,
-} from "@earendil-works/pi-ai";
+import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
-import { markTransientMessage } from "../compaction/estimate-cache-key.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
@@ -24,7 +16,7 @@ import type { KeybindingsConfig } from "../keybindings.ts";
 import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
-import { getSessionContextEntryId, SESSION_CONTEXT_ENTRY_ID, type SessionManager } from "../session-manager.ts";
+import type { SessionManager } from "../session-manager.ts";
 import {
 	DEFAULT_SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS,
 	DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
@@ -34,6 +26,7 @@ import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type { VirtualModelDefinition } from "../virtual-models.ts";
 import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
+import { dispatchContextMessages } from "./context-dispatch.ts";
 import { kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
@@ -47,7 +40,6 @@ import type {
 	BoundaryResult,
 	CompactOptions,
 	ContextEvent,
-	ContextEventResult,
 	ContextUsage,
 	ContextWithSystemEvent,
 	EntryRenderer,
@@ -241,14 +233,6 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 					? SessionBeforeTreeResult | undefined
 					: undefined;
 
-function cloneJsonValue<T>(value: T): T {
-	const serialized = JSON.stringify(value);
-	if (serialized === undefined) {
-		throw new Error("Expected JSON-serializable value");
-	}
-	return JSON.parse(serialized);
-}
-
 export type ExtensionErrorListener = (error: ExtensionError) => void;
 
 function boundedToolHookStatusMessage(message: string): string {
@@ -364,28 +348,6 @@ export async function emitSessionShutdownEvent(
 
 function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["type"]) {
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
-}
-
-function sameMessages(left: AgentMessage[], right: AgentMessage[]): boolean {
-	return left.length === right.length && left.every((message, index) => message === right[index]);
-}
-
-/**
- * Re-attach the prompt and tool state after a `context` handler. Handlers only see the
- * conversation; the system messages belong to Pi. An unchanged conversation keeps every
- * system message in place, so models with mid-conversation support keep their cached
- * prefix. A changed one gets the replayed prompt sections and tool declarations as one
- * leading system message, so pruning, windowing, or slicing from a compaction summary
- * cannot drop them.
- */
-function restoreSystemMessages(
-	current: AgentMessage[],
-	visible: AgentMessage[],
-	returned: AgentMessage[],
-): AgentMessage[] {
-	if (sameMessages(returned, visible)) return current;
-	const head = getCurrentSystemMessage(current);
-	return head ? [head, ...returned] : returned;
 }
 
 export async function emitProjectTrustEvent(
@@ -1975,111 +1937,26 @@ export class ExtensionRunner {
 	 * only and the runner restores the prompt and tool state after each; `context_with_system`
 	 * handlers then see the full transcript and their output is used as returned.
 	 */
-	async emitContext(messages: AgentMessage[], excludeExtensionPath?: string): Promise<AgentMessage[]> {
-		// The deep copy exists to isolate the transcript from in-place handler edits
-		// (senpi#2525). Handlers registered with `{ mutatesMessages: false }` forgo in-place
-		// edits, so when every handler of both context phases about to run declares it, the
-		// live transcript objects are shared and per-turn cost is proportional to what the
-		// handlers actually change. Any undeclared handler keeps the historical clone.
-		// Both phases are snapshotted once, here: a handler registered while an earlier one runs must
-		// not join this pass, or it could see the shared live transcript without having declared
-		// `mutatesMessages: false` (review of senpi#2884, H1). It runs from the next request on.
-		const contextHandlers = snapshotEventHandlers(this.extensions, "context");
-		const contextWithSystemHandlers = snapshotEventHandlers(this.extensions, "context_with_system");
-		const handlersShareTranscript = [contextHandlers, contextWithSystemHandlers].every((snapshot) =>
-			snapshot.every(
-				({ ext, handlers }) =>
-					ext.path === excludeExtensionPath ||
-					handlers.every((handler) => ext.nonMutatingContextHandlers?.has(handler) === true),
-			),
-		);
-		let currentMessages = handlersShareTranscript
-			? messages.slice()
-			: cloneJsonValue(messages).map((message, index) => {
-					const entryId = getSessionContextEntryId(messages[index]!);
-					// A per-turn clone never repeats, so the estimators skip their caches for it.
-					return markTransientMessage(
-						entryId ? Object.assign(message, { [SESSION_CONTEXT_ENTRY_ID]: entryId }) : message,
-					);
-				});
-
-		for (const { ext, handlers } of contextHandlers) {
-			if (ext.path === excludeExtensionPath) continue;
-			for (const handler of handlers) {
-				try {
-					// Without system messages there is nothing to hide or restore, so the handler gets the
-					// working list itself and the list it sees is the list the request carries.
-					const hasSystemMessages = currentMessages.some((message) => message.role === "system");
-					const visibleMessages = hasSystemMessages
-						? currentMessages.filter((message) => message.role !== "system")
-						: currentMessages;
-					const visibleSnapshot = visibleMessages.slice();
-					const event: ContextEvent = { type: "context", messages: visibleMessages };
-					const handlerResult = (await handler(event, this.createContext(ext.path))) as
-						| ContextEventResult
-						| undefined;
-
-					// Handlers may return a new list or edit event.messages in place.
-					const returned =
-						handlerResult?.messages ??
-						(sameMessages(visibleMessages, visibleSnapshot) ? undefined : visibleMessages);
-					if (!returned) continue;
-					currentMessages = hasSystemMessages
-						? restoreSystemMessages(currentMessages, visibleSnapshot, returned)
-						: returned;
-				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "context",
-						error: message,
-						stack,
-					});
-				}
-			}
-		}
-
-		for (const { ext, handlers } of contextWithSystemHandlers) {
-			if (ext.path === excludeExtensionPath) continue;
-			for (const handler of handlers) {
-				try {
-					const hadLeadingSystemMessage = currentMessages[0]?.role === "system";
-					const event: ContextWithSystemEvent = { type: "context_with_system", messages: currentMessages };
-					const handlerResult = (await handler(event, this.createContext(ext.path))) as
-						| ContextEventResult
-						| undefined;
-					currentMessages = handlerResult?.messages ?? currentMessages;
-					// Providers read the prompt and initial tools from the leading system message.
-					// Losing it is never intended; report it but honor the handler's output.
-					if (hadLeadingSystemMessage && currentMessages[0]?.role !== "system") {
-						this.emitError({
-							extensionPath: ext.path,
-							event: "context_with_system",
-							error: "Handler removed the leading system message; the request has no prompt or initial tool declarations. Keep it at index 0 or replace a dropped prefix with getCurrentSystemMessage().",
-						});
-					}
-				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
-						extensionPath: ext.path,
-						event: "context_with_system",
-						error: message,
-						stack,
-					});
-				}
-			}
-		}
-
-		return currentMessages;
+	async emitContext(
+		messages: AgentMessage[],
+		excludeExtensionPath?: string,
+		source: ContextEvent["source"] = "agent",
+	): Promise<AgentMessage[]> {
+		return dispatchContextMessages(messages, {
+			contextHandlers: snapshotEventHandlers(this.extensions, "context"),
+			contextWithSystemHandlers: snapshotEventHandlers(this.extensions, "context_with_system"),
+			createContext: (path) => this.createContext(path),
+			emitError: (error) => this.emitError(error),
+			excludeExtensionPath,
+			source,
+		});
 	}
 
 	async prepareProviderRequest(
 		messages: AgentMessage[],
 		excludeExtensionPath?: string,
 	): Promise<ProviderRequestPreparation> {
-		const transformedMessages = await this.emitContext(messages, excludeExtensionPath);
+		const transformedMessages = await this.emitContext(messages, excludeExtensionPath, "projection");
 		return {
 			messages: transformedMessages,
 			transformPayload: async (payload) => await this.emitBeforeProviderRequest(payload, excludeExtensionPath),

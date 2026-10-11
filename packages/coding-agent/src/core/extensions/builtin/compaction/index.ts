@@ -12,12 +12,7 @@ import type {
 } from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
-import { buildCompactionContext } from "./context-pipeline.ts";
-import {
-	CONTEXT_REDUCTION_ENTRY_TYPE,
-	createContextReductionState,
-	readContextReductionState,
-} from "./context-reduction.ts";
+import { registerContextReductionLifecycle } from "./context-reduction-lifecycle.ts";
 import {
 	createDegradationMonitorState,
 	handleMessageEnd,
@@ -63,7 +58,6 @@ import {
 	resolveReminderSystemPrompt,
 	shouldDeferGraceBand,
 } from "./orchestration.ts";
-import { estimateTotalTokens } from "./overflow-retry.ts";
 import * as cap from "./per-turn-cap.ts";
 import * as policy from "./policy.ts";
 import {
@@ -100,7 +94,6 @@ import {
 	createBlockingRemoteCompactionEvent,
 	endCompactionFeedback,
 	estimatePendingPromptTokens,
-	getPromptContextWindow,
 	isAbortedAssistantMessage,
 	isMonitorableMessageEvent,
 	linkAbortSignal,
@@ -130,8 +123,6 @@ export default function compactionExtension(
 	const lanePolicy = createCompactionLanePolicy();
 	const restorationDirectiveState = checkpointState.createRestorationDirectiveState();
 	const emergencyPruneLatch = createEmergencyPruneLatch();
-	let contextReductionState = createContextReductionState();
-	let reductionSessionId: string | undefined;
 	const degradationState = createDegradationMonitorState();
 	const restorationState = state.restoration ?? restoration.createRestorationTrackerState();
 	state = { ...state, restoration: restorationState };
@@ -870,28 +861,11 @@ export default function compactionExtension(
 		}),
 	);
 
-	function resetContextReduction(): void {
-		contextReductionState = createContextReductionState();
-		reductionSessionId = undefined;
-	}
-
-	pi.on("session_start", (event) => {
-		resetContextReduction();
-		if (event.reason === "fork") {
-			pi.appendEntry(CONTEXT_REDUCTION_ENTRY_TYPE, { ...contextReductionState });
-		}
-	});
-
-	pi.on("session_tree", () => {
-		resetContextReduction();
-		pi.appendEntry(CONTEXT_REDUCTION_ENTRY_TYPE, { ...contextReductionState });
-	});
-
 	pi.on("session_compact", async (event: SessionCompactEvent, ctx) => {
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);
 		if (compactEvent.accepted) {
-			resetContextReduction();
+			contextReduction.reset();
 			persistAcceptedMetadata(compactEvent.requestId);
 			const branchEntries = ctx.sessionManager.getBranch();
 			const firstKeptIndex = branchEntries.findIndex(
@@ -1067,78 +1041,20 @@ export default function compactionExtension(
 	};
 	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
-	pi.on(
-		"context",
-		(event, ctx) => {
-			const usage = ctx.getContextUsage();
-			const settings = ctx.getCompactionSettings();
-			const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-			const laneOwnsCompaction = lanePolicy.disablesSenpiCompaction(ctx);
-			if (reductionSessionId !== ctx.sessionManager.getSessionId()) {
-				contextReductionState = createContextReductionState();
-				const branch = ctx.sessionManager.getBranch();
-				for (let index = branch.length - 1; index >= 0; index--) {
-					const entry = branch[index];
-					if (entry.type === "compaction") break;
-					if (entry.type === "custom" && entry.customType === CONTEXT_REDUCTION_ENTRY_TYPE) {
-						contextReductionState = readContextReductionState(entry.data) ?? createContextReductionState();
-						break;
-					}
-				}
-				reductionSessionId = ctx.sessionManager.getSessionId();
-			}
-			const previousReduction = JSON.stringify(contextReductionState);
-			const contextOverheadTokens = estimateTotalTokens([
-				{
-					role: "user",
-					content: `${ctx.getSystemPrompt()}\n${JSON.stringify(getSummarizationTools())}`,
-					timestamp: 0,
-				},
-			]);
-			const promptContextWindow = getPromptContextWindow(contextWindow, ctx.model?.maxTokens);
-			const { thresholdTokens, reserveTokens } = resolveCompactionGeometry({
-				contextWindow,
-				settings,
-				lastYield: state.lastYield ?? undefined,
-			});
-			const breakerFallback =
-				!laneOwnsCompaction &&
-				breaker.isTripped(state, Date.now()) &&
-				usage?.tokens !== null &&
-				usage !== undefined &&
-				usage.tokens >=
-					contextWindow * policy.computeEffectiveThreshold(contextWindow, state.lastYield ?? undefined);
-			if (breakerFallback)
-				getLogger(ctx).debug("breaker_deterministic_fallback", {
-					route: "context-event",
-					tokens: usage.tokens ?? 0,
-				});
-			const messages = buildCompactionContext({
-				event,
-				ctx,
-				contextWindow,
-				promptContextWindow,
-				contextReductionState,
-				contextOverheadTokens,
-				reductionCeilingTokens: Math.min(
-					promptContextWindow - contextOverheadTokens,
-					contextWindow - reserveTokens - contextOverheadTokens,
-					thresholdTokens - contextOverheadTokens,
-				),
-				toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
-				breakerFallback,
-				laneOwnsCompaction,
-				appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
-				emergencyPruneLatch,
-				logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),
-			});
-			if (JSON.stringify(contextReductionState) !== previousReduction) {
-				pi.appendEntry(CONTEXT_REDUCTION_ENTRY_TYPE, { ...contextReductionState });
-			}
-			return { messages };
-		},
-		{ mutatesMessages: false },
-	);
+	const contextReduction = registerContextReductionLifecycle(pi, {
+		emergencyPruneLatch,
+		emergencyInstructions: EMERGENCY_COMPACTION_INSTRUCTIONS,
+		getTools: getSummarizationTools,
+		getPolicy: (ctx) => ({
+			lastYield: state.lastYield ?? undefined,
+			breakerTripped: breaker.isTripped(state, Date.now()),
+			laneOwnsCompaction: lanePolicy.disablesSenpiCompaction(ctx),
+			appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
+		}),
+		logEmergencyPrune: (ctx, fields) => getLogger(ctx).debug("emergency_prune", fields),
+		logBreakerFallback: (ctx, tokens) =>
+			getLogger(ctx).debug("breaker_deterministic_fallback", { route: "context-event", tokens }),
+	});
 
 	pi.on("before_provider_request", async (event, ctx) => {
 		const model = event.model ?? ctx.model;

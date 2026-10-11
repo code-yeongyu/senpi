@@ -1,8 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { estimateTotalTokens } from "../../src/core/extensions/builtin/compaction/overflow-retry.ts";
-import { cacheWriteTokens, replayContextCache, syntheticCacheSession } from "../support/replay-context-cache.ts";
+import type { FileEntry } from "../../src/core/session-manager.ts";
+import { syntheticCacheSession } from "../support/cache-replay-fixture.ts";
+import { cacheWriteTokens, replayContextCache } from "../support/cache-replay-model.ts";
 
 describe("offline cache cost model", () => {
+	it.each([true, false])("uses recorded ceiling anchors only when their cut matches: %s", (matches) => {
+		const entries = syntheticCacheSession().slice(0, 5);
+		const response = entries.at(-1);
+		if (response?.type !== "message") throw new Error("Missing response fixture");
+		const saved: FileEntry = {
+			type: "custom",
+			id: "anchor",
+			parentId: response.parentId,
+			timestamp: response.timestamp,
+			customType: "senpi.context-reduction.v1",
+			data: {
+				engaged: false,
+				cutIndex: 0,
+				prefixHash: "",
+				anchorCount: 1,
+				anchorCut: matches ? 0 : 1,
+				anchorHash: "",
+				anchorTokens: 99_000,
+			},
+		};
+		response.parentId = saved.id;
+		entries.splice(entries.length - 1, 0, saved);
+		const result = replayContextCache(entries, { contextWindow: 100_000, fixedPrefixTokens: 0, feedback: false });
+		expect(result.recordedUsageAnchors).toBe(matches ? 1 : 0);
+		expect(result.compactionRequiredRequests).toBe(matches ? 1 : 0);
+	});
+
 	it("averages both outgoing request sizes including the fixed prompt prefix", () => {
 		const entries = syntheticCacheSession().slice(0, 5);
 		const messages = entries.flatMap((entry) => (entry.type === "message" ? [entry.message] : []));

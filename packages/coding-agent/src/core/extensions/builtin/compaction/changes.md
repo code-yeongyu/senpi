@@ -2,16 +2,21 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts`: builds on @codeg-dev's #901 latch with a cut index and SHA-256 fingerprint of the unreduced prefix. Collapse, assistant shrinking, and clearing see only that prefix. The cut protects five messages and 3,000 recent tokens; clearing also keeps six clearable results within the prefix. Appends below the block budget leave the serialized prefix unchanged.
-- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: gates on the unreduced outgoing estimate, including prompt/tool overhead, rather than the previous provider request's reduced usage. A 10% window tail budget advances the frontier in blocks. A projected request at 95% of the smaller compaction threshold or reserved prompt budget forces an earlier step. The existing emergency prune remains after reduction. Native and append-only lanes bypass reduction, including breaker fallback.
-- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: persists the latch, cut, and fingerprint as `senpi.context-reduction.v1` custom entries before returning changed context. Reload/resume restores the latest record on the active branch after its last compaction. Accepted compaction resets it; navigation and forks persist a reset. Rejected compaction does not release the latch.
-- Tests drive the extension runner through consecutive turns, low reported usage, model-window growth, forced ceiling steps, native bypass, persisted reopen, and branch/compaction resets. Offline replay support compares the real pipeline on recorded or synthetic JSONL without printing transcript content.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-frontier.ts`: builds on @codeg-dev's #901 latch with a cut index and SHA-256 fingerprint of the unreduced prefix. The existing reducers in `context-reduction.ts` see only that prefix. The cut protects five messages and 3,000 recent tokens; clearing also keeps six clearable results within the prefix.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-state.ts`: persists the latch, cut, fingerprint, and same-lineage provider-usage anchor in `senpi.context-reduction.v1`. Projection takes the maximum of the reduced estimate plus overhead and the matching request's reported input usage plus estimated growth. In-flight handoff flags are not persisted.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: gates on the unreduced estimate plus overhead. The frontier normally uses a 10% window tail budget. At 95% of the ceiling, a step must advance at least a full 10% block, save at least 2% of the window, and reach 85% or less; otherwise it requests compaction. The final post-prune size is checked too, and a request legal only because emergency pruning changed its prefix also requires compaction. Provider-native models bypass the latch but retain their deterministic breaker fallback; external-owner and append-only lanes retain their ownership rules.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`: owns live-request capture and branch persistence. Summarizer/cache-friendly projections run on scratch state without borrowing a live usage anchor or persisting changes. Resume, forks, and tree navigation restore the destination branch's saved frontier when its fingerprint matches. Accepted compaction resets it; rejection does not release the latch.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-handoff.ts`: uses the existing system-abort/compaction action, fences callbacks to their branch, and requests continuation only after acceptance when no work is already queued. Rejection stops the current request but does not persist an orphaned handoff that would block future requests.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` delegates frontier lifecycle wiring to the extracted modules. Tests cover 60-turn near-ceiling growth, byte stability, overflow, gain and block guards, persisted anchors, scratch projections, native fallback, branch restoration, and accepted/rejected/stale handoffs.
 - The replay's `--block-budget-percent` accepts one percentage or a comma-separated sensitivity sweep on the same in-memory input snapshot, and reports mean outgoing request tokens including the fixed prompt prefix. The internal pipeline accepts an optional budget ratio for this measurement; normal extension calls retain the 10% default, covered by a boundary test distinguishing it from 5% and 20%.
+- Replay modules use static imports. Baseline comparison runs the same JSONL snapshot through a separate process. Historical usage is never assigned an invented frontier: only matching persisted anchors can supply the corrected ceiling bound. Replay output identifies compaction-required projections; it does not generate counterfactual summaries. Cache reads and summary requests are excluded, so the dollar estimates describe projected cache writes, not the total bill.
+- The SDK-alignment controls now exceed the unreduced gate and include the protected recent tail. Their resident-transcript assertions are retained, and the delta test crosses the actual estimate gate rather than changing only a mocked usage number.
 
 ### Why
 
 - Reports by @daehwanahn and @ddotz establish two independent costs: alternating full/reduced requests around the 50% usage gate, and tail-relative reducer decisions rewriting an already-warm reduced prefix. A latch alone fixes only the first.
-- Persisting the actual cut preserves the exact decision across restarts, including ceiling-driven steps and model-window changes. Deriving it from history alone would have to reconstruct request boundaries and past model/budget settings. The 10% block budget is 100k on a 1M window: large enough to amortize rewrites, with the independent ceiling overriding it when space is tight.
+- Persisting the actual cut preserves the exact decision across restarts, including ceiling-driven steps and model-window changes. Deriving it from history alone would have to reconstruct request boundaries and past model/budget settings. The 10% block budget is 100k on a 1M window; hysteresis and the gain guard prevent repeated small rewrites near the ceiling.
+- Prefix hashing remains linear in prefix bytes per request. Message IDs and object identity do not guarantee immutable content across prior context handlers, so caching the hash without a content-version contract could silently accept a rewritten prefix. Full validation is retained rather than claiming an unsafe incremental optimization.
 
 ### Why an extension could not handle it
 
@@ -19,9 +24,10 @@
 
 ### Expected merge conflict zones
 
-- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts`: reduction gate and frontier helpers.
-- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: reduction inputs and native bypass.
-- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: context hook and session lifecycle handlers.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts`: stateless reducers and the initial gate.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-frontier.ts`, `context-reduction-state.ts`, `context-reduction-lifecycle.ts`, and `context-reduction-handoff.ts`: frontier geometry, persistence, and callback ownership.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: reduction inputs, native fallback, and post-prune handoff.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: lifecycle registration and accepted-compaction reset.
 - Eval clearability is deliberately unchanged; it belongs to #3100.
 
 ## 2026-10-07 - Compaction context hook declares non-mutation (senpi#2525)
