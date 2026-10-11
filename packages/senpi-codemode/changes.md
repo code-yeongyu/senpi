@@ -1,5 +1,25 @@
 # senpi-codemode fork changes
 
+## 2026-10-10 - Pip scratch belongs to the install revision (senpi#3064)
+
+### What changed
+
+- `packages/senpi-codemode/test/gate/allowlist.json`: register the three additive pip scratch lifetime regression contracts without changing the frozen compatibility baseline.
+
+- `packages/senpi-codemode/src/environments/py-installer.ts`: create a per-install scratch directory inside the staged revision, pass it as TMPDIR/TEMP/TMP to Python and build backends, and remove it in finally after success, failure or cancellation.
+
+### Why
+
+- Cancellation kills pip's process tree before Python can clean its own temporary directories. Inheriting the OS temp directory leaked pip-install/pip-target/build-tracker/wheel-cache directories in real cancelled %pip installs as well as tests.
+
+### Why an extension could not handle it
+
+- The installer owns the subprocess environment and the revision's lifetime.
+
+### Expected merge conflict zones
+
+- Pip subprocess spawn and settlement. Preserve environment isolation, cancellation errors and process-tree termination.
+
 ## 2026-10-10 - Install Julia globals sizing only on request (Refs senpi#3048)
 
 ### What changed

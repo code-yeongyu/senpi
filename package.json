@@ -44,7 +44,7 @@
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
 		"test": "npm run test:scripts && node scripts/run-workspaces.mjs --if-present test",
-		"test:scripts": "node --test scripts/*.test.mjs scripts/model-catalog-protocol.test.ts",
+		"test:scripts": "node scripts/run-tests.mjs node --test scripts/*.test.mjs scripts/model-catalog-protocol.test.ts",
 		"version:patch": "npm version patch --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts && node scripts/regenerate-bun-lock-isolated.mjs",
 		"version:minor": "npm version minor --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts && node scripts/regenerate-bun-lock-isolated.mjs",
 		"version:major": "npm version major --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts && node scripts/regenerate-bun-lock-isolated.mjs",

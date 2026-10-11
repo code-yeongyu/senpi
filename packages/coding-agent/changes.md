@@ -1,3 +1,22 @@
+## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
+
+### What changed
+
+- `packages/coding-agent/package.json`: test invocations use scripts/run-tests.mjs so TMPDIR/TEMP/TMP are scoped before the test runtime starts and cleaned after exit.
+- `packages/coding-agent/vitest.config.ts`: register automatic fixture teardown in setup, not in a harness also imported by plain subprocess workers.
+
+### Why
+
+- Vitest SSR copies and interrupted fixture writes must not accumulate in the OS temp directory.
+
+### Why an extension could not handle it
+
+- Test-process bootstrap is repository tooling, before runtime extensions load.
+
+### Expected merge conflict zones
+
+- Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
+
 ## 2026-10-10 - Runtime auto-routing delegates to the shared contract (omo #9851)
 
 ### What changed

@@ -16,6 +16,7 @@ import type {
 	ToolResultMessage,
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
+import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
@@ -170,14 +171,13 @@ export interface Harness {
 	cleanup: () => void;
 }
 
-function createTempDir(): string {
-	const tempDir = join(tmpdir(), `pi-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-	mkdirSync(tempDir, { recursive: true });
-	return tempDir;
-}
+const cleanups = new Set<() => void>();
+onTempCleanup(() => {
+	for (const cleanup of [...cleanups].reverse()) cleanup();
+});
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
-	const tempDir = createTempDir();
+	const tempDir = makeTempDir(join(tmpdir(), "pi-suite-"));
 	const sibling = options.siblingOf;
 	const sharedRegistry = options.siblingFreshRuntime ? undefined : sibling?.modelRegistry;
 	const fauxProvider: FauxProviderRegistration =
@@ -321,6 +321,13 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		events.push(event);
 	});
 
+	const cleanup = () => {
+		if (!cleanups.delete(cleanup)) return;
+		session.dispose();
+		if (!sibling) fauxProvider.unregister();
+		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
+	};
+	cleanups.add(cleanup);
 	return {
 		agent,
 		session,
@@ -344,12 +351,6 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			return events.filter((event): event is Extract<AgentSessionEvent, { type: T }> => event.type === type);
 		},
 		tempDir,
-		cleanup() {
-			session.dispose();
-			if (!sibling) fauxProvider.unregister();
-			if (existsSync(tempDir)) {
-				rmSync(tempDir, { recursive: true });
-			}
-		},
+		cleanup,
 	};
 }

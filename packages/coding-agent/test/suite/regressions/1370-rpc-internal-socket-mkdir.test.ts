@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { terminateProcessTrees } from "../../../../senpi-codemode/src/kernels/js/process-tree-host.ts";
 import { createInternalSocketPath, runHostSupervisor } from "../../../src/modes/rpc/host-lifecycle.ts";
 import {
 	createSocketSecret,
@@ -55,8 +56,9 @@ describe("createInternalSocketPath", () => {
 	});
 
 	it("starts the real direct supervisor route on a fresh profile and serves the public endpoint", async () => {
-		// Keep the private hop below macOS sun_path's limit and out of other tests' OS-temp scans.
-		const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "rpc1370-"));
+		// The private hop uses the short outer run root, not this deeper fixture directory.
+		const temporaryDirectory = tmpdir();
+		const root = mkdtempSync(join(temporaryDirectory, "rpc1370-"));
 		created.push(root);
 		const agentDir = join(root, "agent");
 		const socketPath = join(root, "rpc.sock");
@@ -84,9 +86,9 @@ describe("createInternalSocketPath", () => {
 					...process.env,
 					...hermeticProviderEnv(),
 					PI_OFFLINE: "1",
-					TMPDIR: root,
-					TMP: root,
-					TEMP: root,
+					TMPDIR: temporaryDirectory,
+					TMP: temporaryDirectory,
+					TEMP: temporaryDirectory,
 					SENPI_CODING_AGENT_DIR: agentDir,
 					SENPI_CODING_AGENT_SESSION_DIR: join(root, "sessions"),
 					SENPI_RPC_HOST_COLD_START: "persistent",
@@ -130,12 +132,12 @@ describe("createInternalSocketPath", () => {
 			}
 		} finally {
 			clearTimeout(timer);
-			supervisor.kill();
-			const killTimer = setTimeout(() => supervisor.kill("SIGKILL"), 10_000);
 			try {
+				if (supervisor.pid !== undefined) {
+					await terminateProcessTrees([supervisor.pid], { ownerPid: process.pid, graceMs: 1000 });
+				}
 				await exited;
 			} finally {
-				clearTimeout(killTimer);
 				stderr.close();
 			}
 		}

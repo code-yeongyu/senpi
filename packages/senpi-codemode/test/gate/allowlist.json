@@ -1,6 +1,14 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#3064": {
+			"additions": [
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after success (#3064)",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after failure (#3064)",
+				"legacyContracts/test/environments/py-environment.test.ts/Given a Python environment root pip scratch is owned and removed after cancel (#3064)"
+			],
+			"reason": "senpi#3064 adds real pip subprocess contracts proving scratch containment and removal after success, failure, and cancellation. The frozen baseline and every existing contract remain unchanged."
+		},
 		"senpi#3048": {
 			"additions": [
 				"legacyContracts/test/kernels/jl/lazy-globals.test.ts/Julia lazy globals declarations (Refs senpi#3048) installs zero sizing declarations before a below-threshold first result",
