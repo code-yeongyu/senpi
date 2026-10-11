@@ -1,3 +1,21 @@
+## 2026-10-11 - A busy prompt throws a typed AgentBusyError (senpi#3073 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the "Agent is already processing. Specify streamingBehavior ..." refusal in `prompt()` throws `AgentBusyError` (new `src/core/agent-busy-error.ts`, `code: "streaming"`) instead of a plain `Error`. The message text is unchanged, so every existing message comparison keeps matching.
+
+### Why
+
+- The RPC host answered a busy `prompt` with message text only, so `senpi host session` could tell "busy" apart from any other failure only by matching English prose. With the typed error, `client-input-handler.ts` puts `errorCode: "streaming"` on the response and clients classify the refusal by its code.
+
+### Why an extension could not handle it
+
+- The refusal is raised inside `AgentSession.prompt()` before any extension hook, and the RPC response is built from the thrown error.
+
+### Expected merge conflict zones
+
+- LOW: the one `throw` in the streaming branch of `AgentSession.prompt()` and one import line in `packages/coding-agent/src/core/agent-session.ts`.
+
 ## 2026-10-10 - A resource-loader reload no longer drops the extension module generation
 
 ### What changed

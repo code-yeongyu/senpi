@@ -101,7 +101,7 @@ import type {
 	RpcSessionReplacedEvent,
 	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
-import { RPC_ERROR_MEDIA_NOT_FOUND } from "./rpc-types.ts";
+import { RPC_ERROR_ENTRY_NOT_FOUND, RPC_ERROR_MEDIA_NOT_FOUND, RPC_ERROR_MODEL_NOT_FOUND } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn, unsupportedThinkingLevel } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
 
@@ -1119,7 +1119,12 @@ export function createRpcConnectionHandler(
 				const models = await session.modelRegistry.getAvailable();
 				const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
 				if (!model) {
-					return error(id, "set_model", `Model not found: ${command.provider}/${command.modelId}`);
+					return error(
+						id,
+						"set_model",
+						`Model not found: ${command.provider}/${command.modelId}`,
+						RPC_ERROR_MODEL_NOT_FOUND,
+					);
 				}
 				const systemPromptChange = await session.setModel(model, { source: "rpc" });
 				return success(id, "set_model", { ...model, systemPromptName: systemPromptChange?.systemPromptName });
@@ -1536,7 +1541,7 @@ export function createRpcConnectionHandler(
 				if (command.since !== undefined) {
 					const sinceIndex = entries.findIndex((e) => e.id === command.since);
 					if (sinceIndex === -1) {
-						return error(id, "get_entries", `Entry not found: ${command.since}`);
+						return error(id, "get_entries", `Entry not found: ${command.since}`, RPC_ERROR_ENTRY_NOT_FOUND);
 					}
 					entries = entries.slice(sinceIndex + 1);
 				}

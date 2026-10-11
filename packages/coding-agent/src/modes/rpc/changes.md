@@ -1,3 +1,22 @@
+## 2026-10-11 - Typed error codes for `set_model`, `get_entries` and a busy `prompt` (senpi#3073 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: adds `RPC_ERROR_MODEL_NOT_FOUND = "model_not_found"` to the RPC error-code constants and the `RpcErrorCode` union.
+- Fork-only consumers: `connection-handler.ts` sets `errorCode: "model_not_found"` on a `set_model` refusal and `errorCode: "not_found"` (the existing `RPC_ERROR_ENTRY_NOT_FOUND`) on a `get_entries` refusal for an unknown `since` cursor; `client-input-handler.ts` sets `errorCode: "streaming"` when `prompt` is refused because a turn is running (`AgentBusyError`, `src/core/changes.md`, same date). The `error` text of all three is unchanged.
+
+### Why
+
+- `senpi host session` classified these three refusals by matching their English messages. The review of senpi#3081 rejected parsing message text, so the host now types them and the CLI classifies by `errorCode` alone.
+
+### Why an extension could not handle it
+
+- These are the RPC host's own responses to wire commands; the code set lives in the shared RPC types.
+
+### Expected merge conflict zones
+
+- LOW: one new constant beside `RPC_ERROR_ENTRY_NOT_FOUND` and one union member in `packages/coding-agent/src/modes/rpc/rpc-types.ts`.
+
 ## 2026-10-10 - `rpc-client.ts` additions for the `senpi host session` CLI (senpi#3073)
 
 ### What changed
