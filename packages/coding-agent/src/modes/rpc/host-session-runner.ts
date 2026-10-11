@@ -8,22 +8,15 @@ import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
 import { HOST_EXIT_OK, type HostOutcome, refusal } from "./host-outcome.ts";
 import type { HostTarget } from "./host-runner.ts";
 import { mapError } from "./host-session-errors.ts";
-import { resolveSessionRow, type SessionRef } from "./host-session-ref.ts";
+import { type HostSessionOpen, openHostSession } from "./host-session-open.ts";
+import { resolveSessionRef, type SessionRef } from "./host-session-ref.ts";
 import { type HostSessionWait, waitForHostSession } from "./host-session-wait.ts";
 import { RpcClient, type RpcClientEvent, type RpcTransportGoneError } from "./rpc-client.ts";
 import type { RpcSessionClosedEvent } from "./rpc-types.ts";
 
 type Model = { provider: string; id: string };
 export type HostSessionRequest = { target: HostTarget } & (
-	| {
-			action: "open";
-			cwd: string;
-			model?: Model;
-			name?: string;
-			prompt?: string;
-			spec: ResolvedHostLaunchSpec;
-			launchSpecPath?: string;
-	  }
+	| ({ action: "open"; spec: ResolvedHostLaunchSpec; launchSpecPath?: string } & HostSessionOpen)
 	| { action: "close"; ref: SessionRef }
 	| { action: "model"; ref: SessionRef; model: Model }
 	| { action: "prompt"; ref: SessionRef; text: string }
@@ -72,40 +65,25 @@ export async function runHostSessionRequest(request: HostSessionRequest): Promis
 		let sessionId: string | undefined;
 		let durableSessionId: string | undefined;
 		if ("ref" in request) {
-			const row = await resolveSessionRow(client, request.ref);
-			if (!row) return refusal("refuse", undefined, { reason: "unknown_session", ref: request.ref, socket });
-			durableSessionId = row.durableSessionId;
-			sessionId = (await client.openSession({ sessionPath: row.sessionPath, cwd: row.cwd })).sessionId;
+			const found = await resolveSessionRef(client, request.ref, agentDir);
+			if (found.kind === "unknown") {
+				return refusal("refuse", undefined, { reason: "unknown_session", ref: request.ref, socket });
+			}
+			if (found.kind === "ambiguous") {
+				const detail = { reason: "ambiguous_session", ref: request.ref, candidates: found.candidates, socket };
+				return refusal("refuse", undefined, detail);
+			}
+			// A parked session resumes from its transcript and stays retained past this short-lived client.
+			const reopen =
+				found.kind === "parked"
+					? { sessionPath: found.sessionPath, cwd: found.cwd, retain_on_disconnect: true }
+					: { sessionPath: found.row.sessionPath, cwd: found.row.cwd };
+			durableSessionId = found.kind === "parked" ? found.durableSessionId : found.row.durableSessionId;
+			sessionId = (await client.openSession(reopen)).sessionId;
 		}
 		switch (request.action) {
-			case "open": {
-				const opened = await client.openSession({
-					cwd: request.cwd,
-					retain_on_disconnect: true,
-					...(request.model && { provider: request.model.provider, modelId: request.model.id }),
-				});
-				ensured?.release();
-				if (request.name !== undefined) await client.setSessionName(request.name);
-				const disposition = request.prompt === undefined ? undefined : await client.prompt(request.prompt);
-				const row = (await client.listSessions()).find((row) => row.sessionId === opened.sessionId);
-				const { state } = opened;
-				return {
-					exitCode: HOST_EXIT_OK,
-					payload: {
-						action: "open",
-						socket,
-						pid: ensured?.pid,
-						reused: ensured?.reused,
-						sessionId: opened.sessionId,
-						sessionPath: state.sessionFile,
-						durableSessionId: row?.durableSessionId,
-						cwd: state.cwd,
-						model: state.model ? { provider: state.model.provider, id: state.model.id } : null,
-						attached: opened.attached ?? false,
-						...(disposition !== undefined && { prompt: { disposition } }),
-					},
-				};
-			}
+			case "open":
+				return await openHostSession(client, request, socket, ensured);
 			case "prompt":
 				return {
 					exitCode: HOST_EXIT_OK,

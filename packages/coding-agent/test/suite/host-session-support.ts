@@ -34,7 +34,7 @@ export async function cleanupHostSessionRigs(): Promise<void> {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 }
 
-export async function rig(held = false) {
+export async function rig(held = false, hostEnv: Readonly<Record<string, string>> = {}) {
 	const qa = await hostCliSandbox("session");
 	const cwd = join(qa.root, "work");
 	mkdirSync(cwd);
@@ -56,6 +56,7 @@ export async function rig(held = false) {
 			PI_TELEMETRY: "0",
 			HOME: qa.root,
 			USERPROFILE: qa.root,
+			...hostEnv,
 		},
 	};
 	const opened = await runHostSessionRequest({

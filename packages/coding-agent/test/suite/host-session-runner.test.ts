@@ -208,6 +208,29 @@ describe("host session runner", () => {
 		expect(await client.listSessions()).toHaveLength(before.length);
 	}, 120_000);
 
+	// #3073 review H2: a refusal after the session exists must not leave it retained and unaddressable.
+	it("closes the session it opened when a later open step fails, and names it", async () => {
+		const { client, target, spec, cwd } = await rig();
+		const ids = async () => (await client.listSessions()).map((row) => row.sessionId);
+		const before = await ids();
+		const result = await runHostSessionRequest({ action: "open", target, spec, cwd, prompt: "x".repeat(1_000_001) });
+		expect(result.exitCode).not.toBe(0);
+		expect(result.payload).toMatchObject({ sessionId: expect.any(String), closed: true });
+		expect(before).not.toContain(result.payload.sessionId);
+		expect(await ids()).toEqual(before);
+	}, 120_000);
+
+	it("refuses a name that matches more than one session", async () => {
+		const { target, spec, cwd } = await rig();
+		expect(await runHostSessionRequest({ action: "open", target, spec, cwd, name: "lane-1" })).toMatchObject({
+			exitCode: 0,
+		});
+		expect(await runHostSessionRequest({ action: "state", target, ref: "lane-1" })).toMatchObject({
+			exitCode: 3,
+			payload: { reason: "ambiguous_session", candidates: [expect.any(String), expect.any(String)] },
+		});
+	}, 120_000);
+
 	it("refuses an unavailable host without starting one", async () => {
 		const agentDir = scratch();
 		expect(
