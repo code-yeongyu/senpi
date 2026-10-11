@@ -1,5 +1,109 @@
 # senpi-codemode fork changes
 
+## 2026-10-10 - Install Julia globals sizing only on request (Refs senpi#3048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`: load the sizing asset once from the serialized memory-globals handler and resolve newly installed bindings in the latest world. If the asset cannot be loaded, return an empty globals result, preserving the diagnostic reply contract rather than emitting `init-failed`.
+- `packages/senpi-codemode/src/kernels/jl/globals.jl`: retain the original sizing constants, type, constructors, traversal and largest-globals implementation verbatim.
+- `packages/senpi-codemode/test/kernels/memory-globals-harness.ts`, `test/kernels/jl/lazy-globals.test.ts` and `test/gate/allowlist.json`: instrument the defining asset and protect zero installed sizing bindings before a below-threshold first result.
+
+### Why
+
+- Below-threshold cells already avoided globals walks, but each fresh interpreter still paid to lower and install the unused sizing implementation.
+
+### Why an extension could not handle it
+
+- Julia binding installation and the read-only diagnostic request belong to the embedded runner.
+
+### Expected merge conflict zones
+
+- Runner sizing definitions and memory-globals dispatch. Host thresholds, ceilings, hysteresis, stop settlement, reply ownership and sizing budgets remain unchanged.
+
+## 2026-10-10 - Include Julia handles at first use (Refs senpi#3048)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/jl/prelude.jl`: serialize the first handles include under a lock, resolve the asset relative to the prelude directory even inside a child task, and resolve newly installed bindings in the latest world.
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`: load named handle bindings before evaluation and serialize newly created handles in the latest world.
+- `packages/senpi-codemode/test/kernels/jl/lazy-handles.test.ts` and `test/gate/allowlist.json`: retain the reviewed zero-installation, concurrent first-use, annotation, display, completion and reset regressions. Run fixtures from an empty cwd and cover indirect first use inside `@async` and `Threads.@spawn`, plus missing/invalid globals assets.
+
+### Why
+
+- A fresh interpreter otherwise installs handle types and Base extensions before any handle is requested.
+- Known limitation: pre-eval installation uses lexical triggers. A cell that first reaches `handle` indirectly (for example, `getproperty(Main, Symbol("han" * "dle"))`) can load methods mid-cell and then hit a world-age "method too new" error when it uses the handle later in that cell. Use a direct `handle` reference to preload the bindings, or use the returned handle in a subsequent cell.
+
+### Why an extension could not handle it
+
+- Julia binding installation and world age belong to the embedded runner.
+
+### Expected merge conflict zones
+
+- Prelude handle producer and runner evaluation/result encoding. Handle implementation and wait semantics are unchanged; indirect mid-cell access retains the world-age limitation above.
+
+## 2026-10-09 - Benchmark CPU includes result serialization (Refs senpi#3048)
+
+### What changed
+
+- `packages/senpi-codemode/scripts/bench-session.ts`, `scripts/bench-process-cpu.ts`, `scripts/bench-process-cpu.py`: obtain interpreter identity from the completed probe result, then read cumulative process CPU on the host. Darwin converts native Mach units; Linux converts process ticks; Node uses the already-required Python reader.
+- `packages/senpi-codemode/scripts/bench-cpu-contract.ts`, `scripts/bench-runtime.ts`, `scripts/bench-worker.ts`, `scripts/bench-eval.ts`, `scripts/bench-rescore.ts`: tag post-result CPU reports and reject legacy saved samples that cannot reconstruct serialization work.
+- `packages/senpi-codemode/scripts/bench-measure.ts`, `scripts/bench-scenarios-latency.ts`, `scripts/bench-scenarios-crash.ts`, `scripts/bench-compare.ts`, `scripts/bench-head-budget.ts`, `scripts/bench-validate.ts`, `scripts/bench-inject.ts`: retain PID-delta aggregation, millisecond units, comparator/budget arithmetic and injection semantics on complete post-result snapshots.
+- Tests cover cold work before evaluation and during encoding, flush/receive ordering, legacy-report refusal and updated runtime-report fixtures.
+
+### Why
+
+- An interpreter's embedded CPU clock is evaluated before its result is encoded. Startup reporting moved cold heterogeneous-Dict encoding before that clock, so old live samples compared different boundaries.
+
+### Why an extension could not handle it
+
+- The benchmark owns CPU sampling and saved-report provenance; runtime behavior is unchanged.
+
+### Expected merge conflict zones
+
+- Benchmark probe, report schemas and saved-report fixture metadata. No kernel protocol, progress, interrupt or runtime encoder changes.
+
+## 2026-10-09 - Reduce Python per-cell queue and capture bookkeeping (senpi#3034)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/prelude.py`: the control-reader/main FIFO uses `queue.SimpleQueue` instead of `queue.Queue`; cell and callback execution share one combined stdout/stderr capture scope, retaining both thread-local targets and inherited context variables.
+- `packages/senpi-codemode/test/py-kernel-bookkeeping.test.ts`, `packages/senpi-codemode/test/py-kernel-bookkeeping.py`: count actual FIFO operations, Python queue condition entries/notifications, capture setups and owner acquisition/release on successful and raised cells. The real reader finishes admission before dispatch so scheduler-dependent waits do not enter the count.
+- `packages/senpi-codemode/test/gate/allowlist.json`: add the new regression key under `senpi#3034`; the baseline remains unchanged.
+
+### Why
+
+- The FIFO only needs put/get. Per cell, two Python queue lock entries and two notifications disappear, and capture setups fall from two to one. The reader thread and owner token remain in place.
+
+### Why an extension could not handle it
+
+- Control-frame dispatch and interpreter output routing belong to the embedded Python kernel.
+
+### Expected merge conflict zones
+
+- Python stream capture and main-loop queue construction; no ownership, scope, cancellation or descriptor changes.
+
+## 2026-10-09 - Ruby and Julia globals diagnostics are requested only above host thresholds (senpi#3028)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/shared/kernel-memory-host.ts`: keep current-footprint accounting on every result, collect globals at or above either enabled notice/ceiling threshold regardless of notice hysteresis, and omit ordinary below-threshold result payloads.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-memory-globals.ts`: bound the read-only diagnostic request to five seconds and fence replies by interpreter, pending run, and cell identity.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts`, `packages/senpi-codemode/src/kernels/shared/subprocess-queue.ts`: retain FIFO ownership until diagnostics settle, settle an already-finished result without globals when stop arrives during that optional request, and clear the pending request on retirement.
+- `packages/senpi-codemode/src/bridge/memory-protocol.ts`, `packages/senpi-codemode/src/bridge/protocol.ts`: advertise runner support and validate the cell-owned globals request/reply.
+- `packages/senpi-codemode/src/kernels/jl/runner.jl`, `packages/senpi-codemode/src/kernels/rb/runner.rb`: replace eager post-cell sizing and nested result serialization with a read-only request using the unchanged bounded sizers. Successful and raised cells both receive globals when their host-read footprint reaches a threshold.
+
+### Why
+
+- Every successful scalar cell previously walked all globals and serialized a memory payload even below the default 1024 MiB notice threshold. Work-count tests prove zero walks/payloads below threshold, and snapshots captured from main preserve above-threshold notices and sizing.
+
+### Why an extension could not handle it
+
+- Interpreter protocol, result settlement, footprint accounting, and kernel ownership belong to codemode itself.
+
+### Expected merge conflict zones
+
+- Shared subprocess result/retirement paths and Ruby/Julia runner dispatch; no peak-RSS gate, eval schema, or threshold changes.
+
 
 ## 2026-10-04 - The pi codemode sandbox runtime is vendored with streaming output and a store policy (codemode plan node 18, part 1)
 

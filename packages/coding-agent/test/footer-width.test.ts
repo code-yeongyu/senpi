@@ -1,7 +1,6 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
-import { type FooterSegment, planFooterLayout } from "../src/modes/interactive/components/footer-layout.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 import {
@@ -73,7 +72,7 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[0]);
 
-		expect(statsLine).toContain("auto:high \u2192 gpt-5.6-luna:medium");
+		expect(statsLine).toContain("auto \u2192 gpt-5.6-luna:medium \u2022 effort high");
 	});
 
 	it("updates usage totals after an entry is appended", () => {
@@ -175,74 +174,6 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
-		expect(plain).toContain("(test) test-model:high");
-	});
-});
-
-function seg(plain: string): FooterSegment {
-	return { plain, colored: plain };
-}
-
-describe("planFooterLayout provider priority", () => {
-	const anchor: [FooterSegment, ...FooterSegment[]] = [seg("~/local-workspaces/senpi"), seg("main")];
-	const middle = [seg("session-name"), seg("↑1.2M"), seg("↓45K"), seg("CH92.3%"), seg("$12.345")];
-	const tail = seg("120K/1M (12.0%) (auto)");
-	const right = { minimal: seg("claude-opus-5:low"), full: seg("(anthropic) claude-opus-5:low") };
-	const baseInput = {
-		anchor,
-		pwdIndex: 0,
-		middle,
-		tail,
-		right,
-		separator: " • ",
-		minPadding: 2,
-		ellipsisMarker: seg("…"),
-	};
-
-	it("keeps the provider prefix once a middle stat has to elide", () => {
-		const plan = planFooterLayout({ ...baseInput, width: 124 });
-		expect(plan.kind).toBe("middle-elided");
-		if (plan.kind !== "middle-elided") throw new Error("unexpected plan");
-		expect(plan.keptMiddleCount).toBe(3);
-		expect(plan.showMarker).toBe(true);
-		expect(plan.useFullRight).toBe(true);
-	});
-
-	it("falls back to the bare model label when even empty middle cannot fit the full label", () => {
-		const plan = planFooterLayout({ ...baseInput, width: 75 });
-		expect(plan.kind).toBe("middle-elided");
-		if (plan.kind !== "middle-elided") throw new Error("unexpected plan");
-		expect(plan.keptMiddleCount).toBe(0);
-		expect(plan.showMarker).toBe(false);
-		expect(plan.useFullRight).toBe(false);
-	});
-
-	it("keeps the existing pwd-elided and anchor/tail guarantees untouched", () => {
-		const plan = planFooterLayout({ ...baseInput, width: 60 });
-		expect(plan.kind).toBe("pwd-elided");
-		if (plan.kind !== "pwd-elided") throw new Error("unexpected plan");
-		expect(plan.pwdPlain.length).toBeGreaterThan(0);
-	});
-
-	it("marks explicitly identified subscription auth", () => {
-		const session = createFooterSession({ sessionName: "", provider: "anthropic" });
-		Object.assign(session, { modelRuntime: { isUsingSubscription: () => true } });
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		expect(stripAnsi(footer.render(120)[0])).toContain("$0.000 (sub)");
-	});
-
-	it("does not mark non-subscription auth as a subscription", () => {
-		const session = createFooterSession({
-			sessionName: "",
-			provider: "openrouter",
-			usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 1.234 } },
-		});
-		Object.assign(session, { modelRuntime: { isUsingSubscription: () => false } });
-		const footer = new FooterComponent(session, createFooterData(1));
-		const stats = stripAnsi(footer.render(120)[0]);
-
-		expect(stats).toContain("$1.234");
-		expect(stats).not.toContain("(sub)");
+		expect(plain).toContain("(test) test-model \u2022 effort high");
 	});
 });

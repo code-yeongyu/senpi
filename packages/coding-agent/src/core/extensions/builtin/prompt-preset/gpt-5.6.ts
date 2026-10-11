@@ -147,7 +147,7 @@ That line is your preamble; it commits you to finish the named work this turn, a
 };
 
 function buildGpt56Core(context: DynamicPromptCoreContext): string {
-	return `You are ${APP_NAME}, a coding agent and autonomous deep worker: you receive goals, not step-by-step instructions, and execute them end-to-end.
+	return `You are ${context.appName ?? APP_NAME}, a coding agent and autonomous deep worker: you receive goals, not step-by-step instructions, and execute them end-to-end.
 
 ## Intent Gate
 

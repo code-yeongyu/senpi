@@ -1,3 +1,40 @@
+## 2026-10-10 - allowed_tools only on the native OpenAI endpoint, with a refusal fallback (senpi#3080)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: `getCompat` resolves `supportsAllowedTools` through `supportsAllowedToolChoice`, which now also requires a native OpenAI API host (`api.openai.com` or a regional `*.api.openai.com`). A flagged model behind a Responses-compatible gateway is never sent `allowed_tools`; the session and the agent loop use the same predicate and send only the active tools there.
+- `packages/ai/src/api/openai-responses.ts`: `applyAllowedToolsChoice` and its helpers moved to the fork-only `openai-responses-allowed-tools.ts`. A request carrying `tool_choice: allowed_tools` that is refused with an HTTP 400, or by a WebSocket error event before any content, is sent once more over HTTP with top-level function and custom tools restricted to the allowed ones and no `tool_choice`. The model (api, provider, baseUrl, id) is then remembered for the process, so later requests go straight to the restricted shape. A retry that fails too records nothing, and outer provider retries resend the restricted request. Tools that transcript items load in place are not filtered.
+
+### Why
+
+An `openai/gpt-6.1-sol` session whose `openai` provider pointed at a Responses-compatible gateway failed every turn with `Invalid value: 'allowed_tools'` (param `tool_choice.type`) until its goal hit the continuation cap. A provider `baseUrl` override keeps the catalog compat, which flags every cache-write-priced `openai` row `supportsAllowedTools`, and nothing recovered when an endpoint rejected the choice.
+
+### Why an extension could not handle it
+
+`tool_choice` is built after `onPayload` returns, and the retry depends on the provider's response, so a `before_provider_request` hook can neither see nor recover the refused request.
+
+### Expected merge conflict zones
+
+- The request send block in `stream` (the WebSocket catch, `createRequest` and the `start` push), and the import list.
+
+## 2026-10-09 - Gemini 3+ replays unsigned tool-call steps as text (Vertex 400 fix)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: `convertMessages` gains `requiresThoughtSignatureReplay` (Gemini major version >= 3). When an assistant step in the current turn (after the last user message carrying content) lacks a valid thought signature on its first tool call, the step is replayed as text rather than unsigned `functionCall` parts: each call becomes `[Tool Call: <name> (id: <id>)]` and its paired result `[Tool Result: <name> (id: <id>)]` (`textToolCallIds` preserves pairing). Earlier turns retain structured function calls. If tool results contain images and the model supports them, `inlineData` parts are appended in the same user turn; if images exist but the model does not support them, `transform-messages.ts` has already replaced them with placeholder text before this converter runs, so the unreachable non-vision placeholder branch was dropped. The current-turn boundary is the last user message that carries content, so a user turn holding only an image (a pasted screenshot) also ends the current turn; empty user messages are not boundaries.
+
+### Why
+
+Gemini 3+ strictly validates replayed tool calls: the first `functionCall` part of every step in the current turn must carry the thought signature the model returned, or Vertex/AI Studio answer 400 "Function call is missing a thought_signature in functionCall parts" (enforced even at MINIMAL thinking; https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures). A session that switches to a Gemini 3 model mid-thread replays tool-call steps recorded by other models, which carry no signature, causing every subsequent Gemini turn to fail with this 400 (reproduced from cross-provider history replayed after a mid-session model switch). The documented `skip_thought_signature_validator` escape hatch is rejected by Vertex, which is why upstream removed it (pi-mono #4032); text replay is the remaining documented-safe shape ("either include the full context or omit it entirely"). Earlier turns do not require thought signatures and remain structured.
+
+### Why an extension could not handle it
+
+The signature replay decision lives in the provider adapter's message conversion, which runs after every extension hook; extensions only see the already-built request.
+
+### Expected merge conflict zones
+
+- LOW: the `block.type === "toolCall"` branch and the new `textToolCallIds` set in `convertMessages`, plus the top of the `msg.role === "toolResult"` branch, in `packages/ai/src/api/google-shared.ts`.
+
 ## 2026-10-09 - Restore api-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

@@ -58,10 +58,13 @@ export class ClientOccupancy {
 		client.on("data", classify);
 	}
 
-	release(client: Socket): void {
+	/** Returns whether this peer left without ever proving it was an observing read. */
+	release(client: Socket): boolean {
+		const unclassified = this.clients.has(client) && !this.observers.has(client) && !this.attached.has(client);
 		this.clients.delete(client);
 		this.observers.delete(client);
 		this.attached.delete(client);
+		return unclassified;
 	}
 
 	destroyAll(): void {

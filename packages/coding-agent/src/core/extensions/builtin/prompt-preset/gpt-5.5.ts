@@ -44,7 +44,7 @@ That line is your preamble; after it, act. Derive intent from the latest user me
 };
 
 function buildGpt55Core(context: DynamicPromptCoreContext): string {
-	return `You are ${APP_NAME}, a coding agent. Ship work indistinguishable from a careful senior engineer's.
+	return `You are ${context.appName ?? APP_NAME}, a coding agent. Ship work indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 

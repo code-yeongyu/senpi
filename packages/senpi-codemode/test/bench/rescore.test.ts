@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CPU_BOUNDARY } from "../../scripts/bench-cpu-contract.ts";
 import { noisyBlocks, REPS } from "./noisy-fixture.ts";
 
 const script = fileURLToPath(new URL("../../scripts/bench-eval.ts", import.meta.url));
@@ -17,6 +18,7 @@ afterEach(async () => {
 });
 
 const saved = {
+	cpuBoundary: CPU_BOUNDARY,
 	reps: REPS,
 	injections: [],
 	blockLoads: [3, 4, 3],
@@ -57,6 +59,17 @@ async function rescore(...extra: string[]) {
 }
 
 describe("rescoring a saved measurement", () => {
+	it("refuses legacy embedded-clock samples instead of treating them as post-result CPU", async () => {
+		// Refs senpi#3048: aggregated legacy samples cannot reconstruct serialization CPU.
+		const source = join(dir, "legacy.json");
+		await writeFile(source, JSON.stringify({ ...saved, cpuBoundary: undefined }));
+		const out = join(dir, "legacy-rescored.json");
+		const result = await bench(["--rescore", source, "--out", out]);
+		const report = JSON.parse(await readFile(out, "utf8"));
+		expect(result.code).toBe(2);
+		expect(report.decision.verdict).toBe("REFUSED");
+	}, 30_000);
+
 	it("passes identical code and prints the per-row table without new samples", async () => {
 		// Given a saved self-vs-self measurement.
 		const result = await rescore();

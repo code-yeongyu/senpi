@@ -20,12 +20,7 @@
  */
 
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
-import {
-	provenOwner,
-	readHostRegistration,
-	releaseGeneration,
-	releaseRegistrationPointer,
-} from "./host-daemon-registration.ts";
+import { provenOwner, readHostRegistration, releaseGeneration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { provenLegacyOwner } from "./host-legacy.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
@@ -86,13 +81,9 @@ export async function stopHost(options: StopHostOptions): Promise<StopHostResult
 		at: new Date().toISOString(),
 	});
 	const delivered = signalGeneration(owner.pid, "SIGTERM");
-	// The signal ended this generation, so the pointer and boot settings go now: a pointer left behind
-	// names a process nobody serves with, and the next ensure would read it as a host to probe. The
-	// generation DIRECTORY stays for the supervisor, which records its child's end from the intent in
-	// it and releases it itself (senpi#2566); one that was already gone leaves it to this call. A
-	// DRAINING host keeps its registration - it is still serving - and drops it on the way out itself.
-	if (delivered) await releaseRegistrationPointer(paths, owner.instanceId);
-	else await releaseGeneration(paths, { instanceId: owner.instanceId, pid: owner.pid });
+	// A signal is not an exit: only the supervisor may release ownership after reaping its host.
+	// Its circuit breaker deliberately leaves these records intact while the child might be alive.
+	if (!delivered) await releaseGeneration(paths, { instanceId: owner.instanceId, pid: owner.pid });
 	return { action: "stopped", pid: owner.pid };
 }
 

@@ -1,3 +1,75 @@
+## 2026-10-11 - Require the real CLI text-tool recovery self-test (senpi#3109)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the Ubuntu `Static checks` job runs the 22-assertion Anthropic real-CLI mock-loop self-test with a five-minute timeout. The existing required `Check and test` fan-in includes this job; the step has no skip condition or failure tolerance.
+
+### Why
+
+- `.github/workflows/ci.yml`: the leaked-call scenario stopped declaring its scripted shell tool after eval-only routing became the default, but no CI step ran it. The scenario now selects the direct `bash` tool surface explicitly. This required self-test covers complete and truncated leaked calls, the Anthropic API round-trip, credential isolation, sandbox cleanup, and command dispatch.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: required checks and their failure propagation are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `check` job's steps between static validation and the workspace build.
+
+## 2026-10-10 - A failing WebView suite prints its vitest output (senpi#3092)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `Run eval kernel WebView suites (Bun)` step captures the background suite's exit status with `wait "$suite" || status=$?` instead of a bare `wait` followed by `status=$?`, then prints the vitest output and exits with that status.
+
+### Why
+
+- `.github/workflows/ci.yml`: the step runs under `bash -eo pipefail` (GitHub `shell: bash` default), so a failing `wait` ended the step before `cat "$out"`. A failing suite showed no test output at all (seen on PR #3091), only the hang path printed it.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI step scripting is repository configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the WebView step's `run` script in the eval-kernel WebView job.
+
+## 2026-10-10 - Bash-tool grandchildren stay console-free on Windows, and a known upstream window is documented (omo#7691)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a new job, `bash-grandchild-console-windows` (`Bash grandchild consoles (Windows)`), runs `test/bash-grandchild-console-windows.test.ts` on `windows-latest` with the JSON reporter. A following step fails unless all 12 cases ran, and prints the raw console-probe measurements. The required `Check and test` fan-in includes the job.
+
+### Why
+
+- `.github/workflows/ci.yml`: omo#7691 reported focus-stealing console windows from bash-tool commands. The suite proves on a real Windows runner that a bash command's node and its children stay console-free in every common launch shape, with a no-windowsHide control that must show a window. It also documents firebase-tools' detached shell spawn (firebase/firebase-tools#11261), which opens a window that no flag on senpi's spawn can reach. Only a Windows runner can measure console windows.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection and required-status fan-in are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job definitions, the `check-and-test.needs` array and its summary list.
+
+## 2026-10-10 - POSIX supervisor exit tests run on Linux and macOS (senpi#3054)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-owner-lifetime` matrix runs the owner-lifetime, owner-review, child-exit, missing-compiler and legacy-drain regressions on `ubuntu-latest` and `macos-latest`. A compiler preflight fails explicitly when `cc` is absent; tests compile the native exit waiter on demand. The required `Check and test` fan-in includes this matrix. Windows is excluded from this POSIX job.
+
+### Why
+
+- `.github/workflows/ci.yml`: the normal coding-agent shards cover Linux only. The kqueue branch also needs macOS coverage, and a missing C compiler must fail rather than silently skipping exit observation.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection, compiler availability and required-status fan-in are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: job definitions, the `check-and-test.needs` array and its summary list.
+
 ## 2026-10-09 - The changelog gate audits the whole tree against the upstream pin (senpi#3006)
 
 ### What changed

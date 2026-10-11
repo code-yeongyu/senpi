@@ -1,4 +1,5 @@
 import type { Goal, GoalStatus } from "../../../core/extensions/builtin/goal/types.ts";
+import { goalDisplayStatus } from "../../../core/extensions/builtin/goal/types.ts";
 import type { ThreadGoal } from "../protocol/index.ts";
 
 const GOAL_STATUS_TO_THREAD_STATUS = {
@@ -13,7 +14,7 @@ export function toThreadGoal(goal: Goal): ThreadGoal {
 	return {
 		threadId: goal.threadId,
 		objective: goal.objective,
-		status: GOAL_STATUS_TO_THREAD_STATUS[goal.status],
+		status: GOAL_STATUS_TO_THREAD_STATUS[goalDisplayStatus(goal)],
 		tokenBudget: goal.tokenBudget ?? null,
 		tokensUsed: goal.tokensUsed,
 		timeUsedSeconds: goal.timeUsedSeconds,

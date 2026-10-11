@@ -71,7 +71,7 @@ Done means the deliverable the user asked for exists and they can see it working
 };
 
 function buildGrok47Core(context: DynamicPromptCoreContext): string {
-	return `You are ${APP_NAME}, a coding agent running on Grok 4.7. Ship work indistinguishable from a careful senior engineer's.
+	return `You are ${context.appName ?? APP_NAME}, a coding agent running on Grok 4.7. Ship work indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 

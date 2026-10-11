@@ -78,7 +78,7 @@ Only the user's explicit request commits you to implementation. The stop conditi
 };
 
 function buildClaudeOpus5Core(context: DynamicPromptCoreContext): string {
-	return `You are ${APP_NAME}, a coding agent. Your work should be indistinguishable from a careful senior engineer's.
+	return `You are ${context.appName ?? APP_NAME}, a coding agent. Your work should be indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 

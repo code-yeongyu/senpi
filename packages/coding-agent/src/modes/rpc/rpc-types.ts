@@ -287,6 +287,8 @@ export const RPC_ERROR_WARM_FAILED = "warm_failed";
 // rather than a per-command type.
 export const RPC_ERROR_STREAMING = "streaming";
 export const RPC_ERROR_ENTRY_NOT_FOUND = "not_found";
+/** `set_model` named a provider/model pair the session's registry does not offer. */
+export const RPC_ERROR_MODEL_NOT_FOUND = "model_not_found";
 export const RPC_ERROR_NOT_ASSISTANT = "not_assistant";
 export const RPC_ERROR_NOT_USER = "not_user";
 export const RPC_ERROR_EMPTY_TEXT = "empty";
@@ -336,6 +338,7 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_WARM_FAILED
 	| typeof RPC_ERROR_STREAMING
 	| typeof RPC_ERROR_ENTRY_NOT_FOUND
+	| typeof RPC_ERROR_MODEL_NOT_FOUND
 	| typeof RPC_ERROR_NOT_ASSISTANT
 	| typeof RPC_ERROR_NOT_USER
 	| typeof RPC_ERROR_EMPTY_TEXT

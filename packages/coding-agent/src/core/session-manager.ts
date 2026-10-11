@@ -30,6 +30,7 @@ import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
@@ -834,6 +835,25 @@ function projectSession(
 					: projectContextEntry(sourceEntry, edits.get(sourceEntry.id)),
 		}),
 	);
+	const recoveryIndex = path.findLastIndex(
+		(entry) =>
+			entry.type === "compaction" &&
+			entry.details !== null &&
+			typeof entry.details === "object" &&
+			"retainedMessagePolicy" in entry.details &&
+			entry.details.retainedMessagePolicy === "omit-unsafe-v1",
+	);
+	if (recoveryIndex >= 0) {
+		// Only entries retained by this checkpoint are repaired. Later messages
+		// retain their normal semantics, and the source transcript is never edited.
+		const retainedIds = new Set(path.slice(0, recoveryIndex).map((entry) => entry.id));
+		const retained = projectedEntries.filter((entry) => retainedIds.has(entry.sourceEntry.id));
+		const repaired = projectRetainedMessages(retained.flatMap((entry) => entry.messages));
+		let index = 0;
+		for (const entry of retained) {
+			entry.messages = entry.messages.map(() => withContextEntryId(entry.sourceEntry.id, repaired[index++]));
+		}
+	}
 	return {
 		projection: {
 			entries: projectedEntries,

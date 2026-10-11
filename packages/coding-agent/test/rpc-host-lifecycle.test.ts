@@ -10,6 +10,7 @@ import { VERSION } from "../src/config.ts";
 import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
 import { readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { createHostDaemonPaths, ensureHost, type HostLifecyclePolicyInput } from "../src/modes/rpc/host-ensure.ts";
+import { STOP_WAIT_BUDGET_MS } from "../src/modes/rpc/host-ensure-stop.ts";
 import {
 	DEFAULT_HOST_IDLE_EXIT_MS,
 	findInternalSupervisorArgs,
@@ -48,20 +49,21 @@ const collisionChildFixture = join(import.meta.dirname, "fixtures", "rpc-collisi
 // consistent within the watchdog fallback bound, so the affected waits allow 30s.
 const WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS = 30_000;
 
-afterEach(async () => {
-	for (const peer of peers.splice(0)) peer.destroy();
-	for (const model of models.splice(0)) await model.close();
-	for (const entry of managed.splice(0)) await stopHostProcess(entry.pidFile, entry.pidFilePath);
-	for (const root of roots.splice(0)) {
-		// Supervisors are detached and a failed ensure leaves no registration to stop them by; the
-		// sandbox path names every process this file started, so nothing outlives its directory.
-		await reapProcessesUnder(root);
-		rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-	}
-	// Budget: teardown liveness probe (~1s) + SIGTERM exit wait (30s) + SIGKILL
-	// escalation (2s) per host, with headroom; the old 30s cap already sat below
-	// the pre-existing 33s worst case.
-}, 60_000);
+afterEach(
+	async () => {
+		for (const peer of peers.splice(0)) peer.destroy();
+		for (const model of models.splice(0)) await model.close();
+		for (const entry of managed.splice(0)) await stopHostProcess(entry.pidFile, entry.pidFilePath);
+		for (const root of roots.splice(0)) {
+			// Supervisors are detached and a failed ensure leaves no registration to stop them by; the
+			// sandbox path names every process this file started, so nothing outlives its directory.
+			await reapProcessesUnder(root);
+			rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+		}
+		// Each managed supervisor can use its stalled-child grace and post-SIGKILL exit breaker.
+	},
+	STOP_WAIT_BUDGET_MS * 2 + 30_000,
+);
 
 type RecordValue = Record<string, unknown>;
 
@@ -976,13 +978,13 @@ async function stopHostProcess(pidFile: { pid: number; processStartTime: string 
 				// Detached Win32 supervisors require Stop-Process; process.kill does not
 				// reliably terminate them and can leak handles into the next test.
 				terminateSupervisor(pidFile.pid, "SIGTERM");
-				await waitForHostExit({ pidFile, pidFilePath }, WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS).catch(async () => {
+				await waitForHostExit({ pidFile, pidFilePath }, STOP_WAIT_BUDGET_MS).catch(async () => {
 					terminateSupervisor(pidFile.pid, "SIGKILL");
 					await waitForHostExit({ pidFile, pidFilePath }, 2_000).catch(() => undefined);
 				});
 			} else {
 				signalIfAlive(pidFile.pid, "SIGTERM");
-				await waitForHostExit({ pidFile, pidFilePath }, 5_000).catch(async () => {
+				await waitForHostExit({ pidFile, pidFilePath }, STOP_WAIT_BUDGET_MS).catch(async () => {
 					// A host that idle-exits on its own between the SIGTERM and this
 					// escalation is a normal teardown, not a failure: signal only if the
 					// pid is still ours, so teardown can never fail with ESRCH.

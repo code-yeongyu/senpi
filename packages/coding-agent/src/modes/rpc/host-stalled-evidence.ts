@@ -12,11 +12,17 @@
  */
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { processIsLive } from "../app-server/daemon/process.ts";
+import {
+	processIsLive,
+	processStartTimeMs,
+	readProcessIdentity,
+	sameProcessStartMs,
+} from "../app-server/daemon/process.ts";
 import { HOST_DAEMON_DIR_ENV, type HostGenerationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { parseIdleExitMs } from "./host-lifecycle-policy.ts";
 import { ageOf, readJsonObject, writeJsonAtomic } from "./host-state-json.ts";
+import { supervisorLog } from "./host-supervisor-log.ts";
 
 /** How recent stall evidence keeps an unreachable generation from being replaced. */
 export const STALL_REFUSAL_WINDOW_MS_ENV = "SENPI_RPC_STALL_REFUSAL_MS";
@@ -103,8 +109,18 @@ export async function hostLoopStalled(
 
 /** Whether the generation's host CHILD is running, from its own pid record; `undefined` when unrecorded. */
 export async function hostChildAlive(generation: HostGenerationPaths): Promise<boolean | undefined> {
-	const pid = (await readJsonObject(generation.childPidFile))?.pid;
-	return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? processIsLive(pid) : undefined;
+	const record = await readJsonObject(generation.childPidFile);
+	const pid = record?.pid;
+	if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return undefined;
+	if (!processIsLive(pid)) return false;
+	const observed = await readProcessIdentity(pid, process.platform, 1_000, processIsLive, "UTC");
+	if (!processIsLive(pid)) return false;
+	const recordedMs =
+		typeof record?.processStartTime === "string" ? processStartTimeMs(record.processStartTime) : undefined;
+	const observedMs = observed.kind === "present" ? processStartTimeMs(observed.identity) : undefined;
+	if (recordedMs !== undefined && observedMs !== undefined) return sameProcessStartMs(recordedMs, observedMs);
+	supervisorLog(`host child pid ${pid} start time unreadable; preserving generation`);
+	return true;
 }
 
 /**

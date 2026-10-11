@@ -27,11 +27,20 @@ import {
 	writeGenerationRecord,
 	writeHostRegistration,
 } from "./host-daemon-registration.ts";
-import { readFileOrUndefined, readHostSettings, writeHostSettings } from "./host-daemon-state.ts";
+import {
+	callerHostOwner,
+	readFileOrUndefined,
+	readHostOwner,
+	readHostSettings,
+	sameHostOwner,
+	writeHostOwner,
+	writeHostSettings,
+} from "./host-daemon-state.ts";
 import { announceStop, recordEscalation, type StopTarget, signalPid } from "./host-ensure-stop.ts";
 import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
+import { keepOwnerPipe, OWNER_WATCH_FD } from "./host-lifecycle-launch.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { successorHostEnvironment } from "./host-spawn-environment.ts";
@@ -76,6 +85,8 @@ export async function startSuccessor(context: {
 	// A handoff replaces the ENGINE, not the operator's lifecycle policy: the successor inherits
 	// what the running generation was started with unless this caller states its own.
 	const running = await readHostSettings(paths);
+	const lifetimeOwner = host.instanceId ? await readHostOwner(generationPaths(paths, host.instanceId).dir) : null;
+	const inheritOwnerPipe = lifetimeOwner?.pid === process.pid && sameHostOwner(lifetimeOwner, await callerHostOwner());
 	const bootSettings = await readFileOrUndefined(paths.settingsFile);
 	await writeHostSettings(paths, {
 		socket: options.socket,
@@ -91,6 +102,7 @@ export async function startSuccessor(context: {
 	let child: ChildProcess | undefined;
 	let exited: Promise<void> | undefined;
 	try {
+		await writeHostOwner(generationPaths(paths, instanceId).dir, lifetimeOwner ?? null);
 		await options._test?.beforeSpawn?.();
 		const argv = [
 			"--socket",
@@ -99,6 +111,7 @@ export async function startSuccessor(context: {
 			bindSocket,
 			"--replace",
 			`${replaced.dev}:${replaced.ino}`,
+			...(inheritOwnerPipe ? ["--owner-fd", String(OWNER_WATCH_FD)] : []),
 			...(options.hostArgs ?? []),
 		];
 		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? defaultHostLaunch(argv);
@@ -114,11 +127,12 @@ export async function startSuccessor(context: {
 				generation,
 				instanceId,
 			}),
-			stdio: ["ignore", "ignore", stderr.fd],
+			stdio: inheritOwnerPipe ? ["ignore", "ignore", stderr.fd, "pipe"] : ["ignore", "ignore", stderr.fd],
 		});
-		await stderr.close();
 		child = spawned;
 		exited = new Promise<void>((resolve) => spawned.once("exit", () => resolve()));
+		await stderr.close();
+		if (inheritOwnerPipe) keepOwnerPipe(spawned);
 		if (child.pid === undefined) throw new Error("failed to spawn the successor generation");
 		const processStartTime = (await waitForStartTime(child.pid, 10_000).catch(() => undefined)) ?? null;
 		const registration = {

@@ -101,7 +101,7 @@ const hostToKernelMessageSchema = Type.Union([
 const kernelStateSchema = Type.Union([Type.Literal("lost"), Type.Literal("restarted"), Type.Literal("not-run")]);
 
 const kernelToHostMessageSchema = Type.Union([
-	Type.Object({ type: Type.Literal("ready") }),
+	Type.Object({ type: Type.Literal("ready"), memoryGlobals: Type.Optional(Type.Boolean()) }),
 	Type.Object({ type: Type.Literal("init-failed"), error: bridgeErrorSchema }),
 	Type.Object({
 		type: Type.Literal("text"),

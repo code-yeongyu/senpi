@@ -12,12 +12,33 @@ import {
 } from "../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
 import { requiresDeterministicCompactionFallback } from "../../src/core/extensions/builtin/compaction/extension-wiring.ts";
 import { resolveCompactionGeometry } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
+import { hasUnsafeRetainedContent } from "../../src/core/extensions/builtin/compaction/retained-message-safety.ts";
 import { SummaryRequestError } from "../../src/core/extensions/builtin/compaction/speculative.ts";
 import type { CompactionReason, ContextUsage } from "../../src/core/extensions/types.ts";
 import { convertToLlm } from "../../src/core/messages.ts";
+import { buildSessionContext, type SessionEntry } from "../../src/core/session-manager.ts";
 import { createBlockingContext, createCompactionHandlers } from "../helpers/blocking-compaction-harness.ts";
 
 const validSig = "c2lnbmF0dXJlMTIzNA==";
+
+function replayFallback(branch: SessionEntry[], result: ReturnType<typeof createRequiredCompactionFallback>) {
+	expect(result).toBeDefined();
+	if (!result) throw new Error("Expected replay-safe fallback");
+	const messages = convertToLlm(
+		buildSessionContext([
+			...branch,
+			{
+				type: "compaction",
+				id: "fallback-replay",
+				parentId: branch.at(-1)?.id ?? null,
+				timestamp: new Date(0).toISOString(),
+				...result,
+			},
+		]).messages,
+	);
+	expect(hasUnsafeRetainedContent(messages)).toBe(false);
+	return messages;
+}
 
 function createGeminiAssistantMessage(
 	content: AssistantMessage["content"],
@@ -328,7 +349,7 @@ describe("required compaction deterministic fallback", () => {
 		);
 	});
 
-	it("advances past unsafe split-turn content to the earliest replay-safe suffix", () => {
+	it("omits unsafe split-turn payloads without sacrificing the prepared request or safe tail", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		const preparedBoundaryId = harness.sessionManager.appendMessage({
 			role: "user",
@@ -362,9 +383,16 @@ describe("required compaction deterministic fallback", () => {
 		const result = createRequiredCompactionFallback(preparation, 100_000, "summarization-timeout", {}, branchEntries);
 
 		expect(result).toMatchObject({
-			firstKeptEntryId: safeTailId,
-			details: { retainedSuffix: "later-safe-boundary" },
+			firstKeptEntryId: preparedBoundaryId,
+			details: { retainedSuffix: "prepared" },
 		});
+		const replay = replayFallback(branchEntries, result);
+		expect(replay).toContainEqual(
+			expect.objectContaining({ role: "toolResult", toolCallId: "unsafe-tool", isError: true }),
+		);
+		expect(JSON.stringify(replay)).not.toContain("image/png");
+		expect(branchEntries.find((entry) => entry.id === safeTailId)).toBeDefined();
+		expect(JSON.stringify(replay)).toContain("Work continued safely.");
 	});
 
 	it("rejects truncation-looking generic errors and requires structured summary-request provenance", () => {
@@ -427,6 +455,7 @@ describe("required compaction deterministic fallback", () => {
 			schema: "senpi.compaction.deterministic-fallback.v1",
 			origin: "required-compaction-recovery",
 			failureKind: "summarization-timeout",
+			retainedMessagePolicy: "omit-unsafe-v1",
 			taskIntent: "Finish the current repair",
 			retainedSuffix: "prepared",
 		});
@@ -493,7 +522,7 @@ describe("required compaction deterministic fallback", () => {
 		expect(diagnostics).toEqual({ candidatesChecked: 1 });
 	});
 
-	it("rejects malformed image blocks in retained tool results", () => {
+	it("replaces malformed image results while preserving their tool pairing", () => {
 		for (const image of [
 			{ type: "image", mimeType: "image/png" },
 			{ type: "image", mimeType: "text/plain", data: "not-an-image" },
@@ -537,19 +566,14 @@ describe("required compaction deterministic fallback", () => {
 				diagnostics,
 			);
 
-			expect(result).toBeUndefined();
-			expect(diagnostics.rejectionReason).toBe("unsafe-retained-content");
-			expect(diagnostics.candidateRejections).toContainEqual({
-				firstKeptEntryId: preparedBoundaryId,
-				rejectionReason: "unsafe-retained-content",
-				unsafeEntryId: branchEntries.at(-1)?.id,
-				unsafeMessageIndex: 6,
-				unsafeMessageRole: "toolResult",
-			});
+			const replay = replayFallback(branchEntries, result);
+			expect(replay).toContainEqual(expect.objectContaining({ role: "toolResult", toolCallId: "t", isError: true }));
+			expect(JSON.stringify(replay)).not.toContain('"type":"image"');
+			expect(diagnostics).toEqual({ candidatesChecked: 1 });
 		}
 	});
 
-	it("fails closed instead of throwing on malformed retained content blocks", () => {
+	it("omits malformed retained content without replaying it or inventing tool pairs", () => {
 		for (const malformedMessage of [
 			{ role: "user", content: [null], timestamp: 4 },
 			{ role: "user", content: [{ type: "text" }], timestamp: 4 },
@@ -599,7 +623,14 @@ describe("required compaction deterministic fallback", () => {
 					branchEntries,
 				);
 			}).not.toThrow();
-			expect(result!).toBeUndefined();
+			if (malformedMessage.role === "toolResult" && "toolCallId" in malformedMessage) {
+				// A result with no declaring call remains a genuine structural rejection.
+				expect(result!).toBeUndefined();
+			} else {
+				const replay = replayFallback(branchEntries, result!);
+				expect(replay.at(-1)).toMatchObject({ role: "user" });
+				expect(replay.at(-1)).not.toEqual(malformedMessage);
+			}
 		}
 	});
 
@@ -771,7 +802,7 @@ describe("required compaction deterministic fallback", () => {
 		}
 	});
 
-	it("rejects malformed non-Google thinking signatures and unsigned redacted thinking", () => {
+	it("omits malformed non-Google thinking instead of replaying unsigned state", () => {
 		for (const content of [
 			[{ type: "thinking" as const, thinking: "hidden", thinkingSignature: 123 }],
 			[{ type: "thinking" as const, thinking: "hidden", redacted: true }],
@@ -786,15 +817,16 @@ describe("required compaction deterministic fallback", () => {
 			const branchEntries = harness.sessionManager.getBranch();
 			const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
 
-			expect(
-				createRequiredCompactionFallback(
-					{ ...preparation, firstKeptEntryId: assistantId },
-					100_000,
-					"summarization-timeout",
-					{},
-					branchEntries,
-				),
-			).toBeUndefined();
+			const result = createRequiredCompactionFallback(
+				{ ...preparation, firstKeptEntryId: assistantId },
+				100_000,
+				"summarization-timeout",
+				{},
+				branchEntries,
+			);
+			const replay = replayFallback(branchEntries, result);
+			expect(JSON.stringify(replay)).not.toContain("hidden");
+			expect(replay.some((message) => message.role === "assistant")).toBe(false);
 		}
 	});
 
@@ -898,7 +930,8 @@ describe("required compaction deterministic fallback", () => {
 		);
 		const elapsedMs = performance.now() - startedAt;
 
-		expect(result).toBeUndefined();
+		expect(result?.firstKeptEntryId).toBe(malformedBoundary);
+		expect(JSON.stringify(replayFallback(branchEntries, result))).not.toContain("not-base64");
 		expect(elapsedMs).toBeLessThan(10_000);
 	});
 
@@ -998,7 +1031,7 @@ describe("required compaction deterministic fallback", () => {
 		).toBeUndefined();
 	});
 
-	it("rejects accessor-bearing retained tool-call arguments without executing them", () => {
+	it("normalizes accessor-bearing arguments like persistence but still rejects a missing result", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		const branchEntries = harness.sessionManager.getBranch();
 		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
@@ -1030,7 +1063,7 @@ describe("required compaction deterministic fallback", () => {
 		);
 
 		expect(result).toBeUndefined();
-		expect(getterCalls).toBe(0);
+		expect(getterCalls).toBe(1);
 	});
 });
 
@@ -1276,7 +1309,7 @@ describe("deterministic compaction fallback Gemini signed state and recovery cas
 		expect(result.details.retainedSuffix).toBe("earlier-safe-boundary");
 	});
 
-	it("Case E: fails closed on genuinely unsafe / malformed provider signatures", () => {
+	it("Case E: omits malformed signed calls and their results together", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		const badSigId = harness.sessionManager.appendMessage(
 			createGeminiAssistantMessage([
@@ -1309,7 +1342,10 @@ describe("deterministic compaction fallback Gemini signed state and recovery cas
 			branchEntries,
 		);
 
-		expect(result).toBeUndefined();
+		const replay = replayFallback(branchEntries, result);
+		expect(replay.some((message) => message.role === "assistant" || message.role === "toolResult")).toBe(false);
+		expect(JSON.stringify(replay)).not.toContain("bad content");
+		expect(JSON.stringify(replay)).not.toContain("not!base64!valid!sig");
 	});
 
 	it("Case F: budget exhaustion cleanly rejects without unbounded boundary search", () => {
@@ -1512,7 +1548,7 @@ describe("deterministic fallback failed-turn normalization", () => {
 		});
 	});
 
-	it("still rejects a malformed image part retained beside failed fragments", () => {
+	it("replaces a malformed image result retained beside failed fragments", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		appendFailedFragments(harness);
 		const imageBoundaryId = harness.sessionManager.appendMessage({
@@ -1548,13 +1584,11 @@ describe("deterministic fallback failed-turn normalization", () => {
 			diagnostics,
 		);
 
-		expect(result).toBeUndefined();
-		expect(diagnostics.candidateRejections).toContainEqual({
-			firstKeptEntryId: imageBoundaryId,
-			rejectionReason: "unsafe-retained-content",
-			unsafeEntryId: branchEntries.at(-1)?.id,
-			unsafeMessageIndex: 8,
-			unsafeMessageRole: "toolResult",
-		});
+		const replay = replayFallback(branchEntries, result);
+		expect(replay).toContainEqual(
+			expect.objectContaining({ role: "toolResult", toolCallId: "image-call", isError: true }),
+		);
+		expect(JSON.stringify(replay)).not.toContain("not-an-image");
+		expect(diagnostics).toEqual({ candidatesChecked: 1 });
 	});
 });

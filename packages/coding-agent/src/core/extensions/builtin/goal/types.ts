@@ -56,7 +56,9 @@ export type GoalUpdate = {
 export type GoalToolSnapshot = {
 	threadId: string;
 	objective: string;
+	/** Display status; a stale-stopped active store goal is presented as paused. */
 	status: GoalStatus;
+	continuationStoppedAt?: number;
 	tokensUsed: number;
 	timeUsedSeconds: number;
 	createdAt: number;
@@ -67,7 +69,16 @@ export type GoalToolSnapshot = {
 
 export type GoalToolResponse = {
 	goal: GoalToolSnapshot | null;
+	continuation?: {
+		status: "stale_stopped";
+		message: string;
+	};
 };
+
+/** Preserve the store's resumable active state while displaying its closed window as paused. */
+export function goalDisplayStatus(goal: Pick<Goal, "status" | "continuationStoppedAt">): GoalStatus {
+	return goal.status === "active" && goal.continuationStoppedAt !== undefined ? "paused" : goal.status;
+}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;

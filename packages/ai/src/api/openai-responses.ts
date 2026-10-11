@@ -1,6 +1,5 @@
 import OpenAI from "openai";
 import type {
-	Tool as OpenAITool,
 	ResponseCreateParamsNonStreaming,
 	ResponseCreateParamsStreaming,
 	ResponseStreamEvent,
@@ -12,6 +11,7 @@ import {
 	supportsMax,
 	supportsXhigh,
 } from "../models.ts";
+import { supportsAllowedToolChoice } from "../openai-responses-compat.ts";
 import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	Api,
@@ -44,13 +44,20 @@ import {
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sendWithForcedToolChoiceFallback } from "../utils/tool-choice-fallback.ts";
-import { getCurrentTools, getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
+import { getDeclaredTools, normalizeContext, resolveTranscript } from "../utils/transcript.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { withGitHubCopilotFailureNote } from "./github-copilot-errors.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import {
+	applyAllowedToolsChoice,
+	hasRefusedAllowedToolsChoice,
+	isAllowedToolsChoiceRefusal,
+	rememberAllowedToolsChoiceRefusal,
+	restrictToAllowedTools,
+} from "./openai-responses-allowed-tools.ts";
 import {
 	findPromptCacheComparisonResponseId,
 	type OpenAIPromptCacheOptionsPayload,
@@ -146,7 +153,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsConfigurationUpdate: model.compat?.supportsConfigurationUpdate ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
 		supportsForcedToolChoice: model.compat?.supportsForcedToolChoice ?? true,
-		supportsAllowedTools: model.compat?.supportsAllowedTools ?? false,
+		supportsAllowedTools: supportsAllowedToolChoice(model),
 	};
 }
 
@@ -232,64 +239,6 @@ function sanitizeUnsupportedNativeTools(
 	return sanitized ? (sanitized as ResponseCreateParamsStreaming) : params;
 }
 
-type AllowedToolReference = { [key: string]: unknown };
-
-function allowedReference(tool: OpenAITool): AllowedToolReference {
-	if (tool.type === "function" || tool.type === "custom") return { type: tool.type, name: tool.name };
-	if (tool.type === "mcp") return { type: "mcp", server_label: tool.server_label };
-	return { type: tool.type };
-}
-
-/**
- * senpi#2095: `tools` carries every tool declared this session, so removing a tool never rewrites the
- * cached prefix; the callable subset rides `tool_choice: allowed_tools` instead. Hosted tools a payload
- * hook added stay callable, and deferred tools (declared by transcript items rather than `tools`) are
- * referenced by name. A declared tool a payload hook removed from `tools` is not referenced (senpi#2234).
- * An empty subset forbids tool calls. An explicit `tool_choice` always wins.
- */
-function applyAllowedToolsChoice<TParams extends ResponseCreateParamsStreaming>(
-	params: TParams,
-	context: TranscriptContext,
-	activeToolNames: readonly string[] | undefined,
-	compat: Required<OpenAIResponsesCompat>,
-): TParams {
-	if (!compat.supportsAllowedTools || activeToolNames === undefined || params.tool_choice !== undefined) {
-		return params;
-	}
-	const active = new Set(activeToolNames);
-	const declaredTools = getCurrentTools(context.messages);
-	if (declaredTools.every((tool) => active.has(tool.name))) return params;
-
-	const allowed: AllowedToolReference[] = [];
-	const namedInTools = new Set<string>();
-	for (const tool of params.tools ?? []) {
-		if (tool.type === "function" || tool.type === "custom") {
-			namedInTools.add(tool.name);
-			if (!active.has(tool.name)) continue;
-		}
-		allowed.push(allowedReference(tool));
-	}
-	// Tools missing from the request-level `tools` placement are the ones transcript items load in place.
-	const requestToolNames = new Set(
-		resolveResponsesToolPlacement(
-			context.messages,
-			resolveResponsesDeferredToolsMode(compat) !== undefined,
-		).requestTools.map((tool) => tool.name),
-	);
-	for (const tool of declaredTools) {
-		if (namedInTools.has(tool.name) || !active.has(tool.name) || requestToolNames.has(tool.name)) continue;
-		const [converted] = convertResponsesTools([tool], {
-			supportsStrictMode: compat.supportsStrictMode,
-			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
-		});
-		if (converted) allowed.push(allowedReference(converted));
-	}
-
-	const toolChoice: ResponseCreateParamsStreaming["tool_choice"] =
-		allowed.length > 0 ? { type: "allowed_tools", mode: "auto", tools: allowed } : "none";
-	return { ...params, tool_choice: toolChoice };
-}
-
 function formatOpenAIResponsesError(error: unknown, provider: string): string {
 	const errorMessage = formatProviderError(
 		normalizeProviderError(error),
@@ -366,12 +315,14 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 
 			params = sanitizeUnsupportedNativeTools(params, compat);
 			params = applyAllowedToolsChoice(params, normalizedContext, context.activeToolNames, compat);
+			if (hasRefusedAllowedToolsChoice(model)) params = restrictToAllowedTools(params);
 			const limitedTools = limitGitHubCopilotTools(model.provider, params.tools, params.tool_choice);
 			if (limitedTools.omittedCount > 0) {
 				params = { ...params, tools: limitedTools.tools };
 				recordGitHubCopilotToolLimit(output, limitedTools.omittedCount);
 			}
 			const transport = options?.transport ?? "sse";
+			let refusedAllowedToolsOverWebSocket = false;
 			if (transport !== "sse" && compat.supportsWebSocket) {
 				let websocketStarted = false;
 				try {
@@ -405,8 +356,16 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 					stream.end();
 					return;
 				} catch (error) {
-					if (transport === "websocket" || websocketStarted) {
+					const refusedAllowedTools =
+						output.content.length === 0 && isAllowedToolsChoiceRefusal(error, params, { beforeContent: true });
+					if (!refusedAllowedTools && (transport === "websocket" || websocketStarted)) {
 						throw error;
+					}
+					if (refusedAllowedTools) {
+						params = restrictToAllowedTools(params);
+						refusedAllowedToolsOverWebSocket = true;
+						output.stopReason = "pending";
+						delete output.errorMessage;
 					}
 				}
 			}
@@ -416,22 +375,37 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
 			};
-			const createRequest = async () => {
+			const sendOnce = async (body: MutableResponsesPayload) => {
 				const sent = await sendWithForcedToolChoiceFallback({
 					target: model,
-					params,
+					params: body,
 					acceptsForcedToolChoice: compat.supportsForcedToolChoice,
 					isForced: isForcedOpenAIResponsesToolChoice,
-					send: (body: MutableResponsesPayload) =>
+					send: (request: MutableResponsesPayload) =>
 						model.provider === "github-copilot"
 							? awaitProviderTransport(
-									() => client.responses.create(body, requestOptions).withResponse(),
+									() => client.responses.create(request, requestOptions).withResponse(),
 									openAICompatibleProviderDiagnosticFromError,
 								)
-							: client.responses.create(body, requestOptions).withResponse(),
+							: client.responses.create(request, requestOptions).withResponse(),
 				});
 				params = sent.params;
 				return sent.result;
+			};
+			// senpi#3080: an endpoint that refuses `allowed_tools` gets the request restricted to the active
+			// tools; the model is remembered once that restricted request is accepted.
+			const createRequest = async () => {
+				try {
+					const result = await sendOnce(params);
+					if (refusedAllowedToolsOverWebSocket) rememberAllowedToolsChoiceRefusal(model);
+					return result;
+				} catch (error) {
+					if (!isAllowedToolsChoiceRefusal(error, params)) throw error;
+					params = restrictToAllowedTools(params);
+					const result = await sendOnce(params);
+					rememberAllowedToolsChoiceRefusal(model);
+					return result;
+				}
 			};
 			const { data: openaiStream, response } = await retryProviderRequest(() => createRequest(), {
 				maxRetries: options?.maxRetries,
@@ -439,7 +413,8 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				signal: options?.signal,
 			});
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
-			stream.push({ type: "start", partial: output });
+			// A WebSocket attempt that fell through after its refusal already pushed `start`.
+			if (!refusedAllowedToolsOverWebSocket) stream.push({ type: "start", partial: output });
 
 			await processResponsesStream(openaiStream, output, stream, model, {
 				onProviderStreamEvent: options?.onProviderStreamEvent,

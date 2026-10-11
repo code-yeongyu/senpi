@@ -661,25 +661,6 @@ class ThreadRoutedStream(io.TextIOBase):
         )
         self.cell_target: io.StringIO | None = None
 
-    @contextlib.contextmanager
-    def capture(self, buffer: io.StringIO, *, cell: bool) -> Iterator[None]:
-        me = threading.get_ident()
-        previous = self._targets.get(me)
-        self._targets[me] = buffer
-        inherited = self._inherited.set(buffer)
-        if cell:
-            self.cell_target = buffer
-        try:
-            yield
-        finally:
-            self._inherited.reset(inherited)
-            if previous is None:
-                self._targets.pop(me, None)
-            else:
-                self._targets[me] = previous
-            if cell:
-                self.cell_target = None
-
     def write(self, text: str) -> int:
         target = self._targets.get(threading.get_ident()) or self._inherited.get() or self.cell_target
         if target is None:
@@ -692,6 +673,38 @@ class ThreadRoutedStream(io.TextIOBase):
     @property
     def encoding(self) -> None:
         return None
+
+
+@contextlib.contextmanager
+def capture_streams(
+    streams: tuple[ThreadRoutedStream, ThreadRoutedStream],
+    buffers: tuple[io.StringIO, io.StringIO],
+    *,
+    cell: bool,
+) -> Iterator[None]:
+    stdout, stderr = streams
+    out, err = buffers
+    me = threading.get_ident()
+    previous_out, previous_err = stdout._targets.get(me), stderr._targets.get(me)
+    stdout._targets[me], stderr._targets[me] = out, err
+    inherited_out, inherited_err = stdout._inherited.set(out), stderr._inherited.set(err)
+    if cell:
+        stdout.cell_target, stderr.cell_target = out, err
+    try:
+        yield
+    finally:
+        stderr._inherited.reset(inherited_err)
+        stdout._inherited.reset(inherited_out)
+        if previous_err is None:
+            stderr._targets.pop(me, None)
+        else:
+            stderr._targets[me] = previous_err
+        if previous_out is None:
+            stdout._targets.pop(me, None)
+        else:
+            stdout._targets[me] = previous_out
+        if cell:
+            stdout.cell_target, stderr.cell_target = None, None
 
 
 @dataclass
@@ -905,8 +918,7 @@ class KernelToolRunner:
                 if invocation.cancelled.is_set():
                     raise Cancelled(CANCELLED_BEFORE_START)
                 CURRENT.set(invocation)
-                stdout, stderr = self._streams
-                with stdout.capture(output, cell=False), stderr.capture(output, cell=False):
+                with capture_streams(self._streams, (output, output), cell=False):
                     value = self._call(invocation, entry.fn, args)
             finally:
                 CURRENT.set(None)
@@ -2218,8 +2230,7 @@ def run_cell(
     cell_scope = CURRENT_CELL_TOKEN.set(cell_token)
     try:
         KERNEL_TOOL_TOKEN.acquire()
-        cell_stdout, cell_stderr = KERNEL_TOOL_STREAMS
-        with cell_stdout.capture(stdout, cell=True), cell_stderr.capture(stderr, cell=True):
+        with capture_streams(KERNEL_TOOL_STREAMS, (stdout, stderr), cell=True):
             apply_preludes(preludes)
             leave_source_file = _enter_source_file(source_file)
             body, expression = compile_cell(code, source_file or "<cell>")
@@ -2373,7 +2384,7 @@ def _start_parent_watch() -> None:
         ).start()
 
 
-def _read_control(commands: queue.Queue[tuple[str, Any]]) -> None:
+def _read_control(commands: queue.SimpleQueue[tuple[str, Any]]) -> None:
     # Kernel-tool frames are served here, so a callback can be admitted while the main thread is inside a cell.
     for raw in sys.stdin:
         try:
@@ -2392,7 +2403,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     _start_parent_watch()
     sys.stdout, sys.stderr = KERNEL_TOOL_STREAMS
-    commands: queue.Queue[tuple[str, Any]] = queue.Queue()
+    commands: queue.SimpleQueue[tuple[str, Any]] = queue.SimpleQueue()
     threading.Thread(target=_read_control, args=(commands,), name="senpi-control-reader", daemon=True).start()
     host_closed = False
     while True:

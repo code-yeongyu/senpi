@@ -15,6 +15,7 @@ import { median } from "./bench-stats.ts";
 export type Observation = string | number | boolean | null;
 
 export interface BudgetRep {
+	/** Complete post-result CPU; the ceiling is not an embedded interpreter timestamp. */
 	readonly cpuMs: number;
 	readonly wallMs: number;
 	readonly observations?: Readonly<Record<string, Observation>>;

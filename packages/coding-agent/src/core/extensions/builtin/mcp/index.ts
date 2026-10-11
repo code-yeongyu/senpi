@@ -176,7 +176,10 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 						await service.handleSessionShutdown(event);
 						return;
 					}
-					if (event.reason !== "reload") disposeControlInventory();
+					// A reload builds a new runner whose factory subscribes again, so this generation's listeners go
+					// now too: left on the process-wide service they keep the old runner and its whole extension
+					// graph reachable, one generation per reload.
+					disposeControlInventory();
 					// The shared service outlives any one session: release only this session's binding,
 					// and dispose only when the last live session quits (#2514).
 					await service.releaseSession(pi, event.reason === "quit" ? "quit" : undefined);

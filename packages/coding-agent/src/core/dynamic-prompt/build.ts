@@ -26,11 +26,14 @@ export function resolvePromptSurface(env: Readonly<Record<string, string | undef
 export interface DynamicPromptCoreContext {
 	tools: AvailableTool[];
 	surface: PromptSurface;
+	appName?: string;
 	/** Rendered "## Available Tools" (+ "## Tool Guidelines") section. */
 	toolSection: string;
 }
 
 export interface BuildDynamicSystemPromptOptions {
+	/** Host identity; omitted preserves the Native runtime's configured brand. */
+	appName?: string;
 	/**
 	 * Session working directory. Not rendered: cwd and date reach the model as an
 	 * append-only environment-context message so this prompt stays byte-stable
@@ -91,9 +94,9 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 
 	const surface = options.surface ?? "terminal";
 	const sections = options.corePrompt
-		? [options.corePrompt({ tools, toolSection, surface })]
+		? [options.corePrompt({ tools, toolSection, surface, appName: options.appName })]
 		: [
-				buildIdentitySection(),
+				buildIdentitySection(options.appName),
 				"",
 				buildIntentGate({ tools, surface }),
 				"",

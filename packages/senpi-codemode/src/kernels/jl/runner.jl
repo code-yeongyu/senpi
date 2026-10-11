@@ -16,6 +16,7 @@ include("prelude.jl")
 const senpi_connection = Dict{String, Any}()
 const senpi_write_lock = ReentrantLock()
 global senpi_current_cell = nothing
+global senpi_memory_cell = nothing
 
 function senpi_escape(text::AbstractString)
     out = IOBuffer()
@@ -290,150 +291,31 @@ function senpi_set_connection(value)
     end
 end
 
-const senpi_memory = Ref{Any}(nothing)
+const SENPI_GLOBALS_INCLUDED = Ref(false)
 
-const SENPI_MEMORY_INTERNALS = Set([:senpi_current_cell, :senpi_memory, :senpi_connection, :senpi_frame_io, :senpi_stdout_capture, :senpi_stderr_capture, :senpi_protocol_stdin])
-
-const SENPI_SIZER_SAMPLE = 1_000
-const SENPI_SIZER_NODE_BUDGET = 5_000
-const SENPI_SIZER_MAX_DEPTH = 64
-const SENPI_SIZER_POINTER = 8
-const SENPI_SIZER_OBJECT = 16
-const SENPI_SIZER_MIN_REPORTED = 1024 * 1024
-
-# Sizes a global with sampling and a node budget per global (leaves count too), so one deep global
-# never hides the ones measured after it and a huge container costs a bounded walk. Only concrete Base
-# containers are iterated; any other AbstractDict or AbstractSet is sized as an opaque struct, so no user
-# length or iterate method runs during a memory report.
-mutable struct SenpiSizer
-    seen::IdDict{Any, Nothing}
-    nodes::Int
-    approximate::Bool
-end
-SenpiSizer() = SenpiSizer(IdDict{Any, Nothing}(), 0, false)
-
-senpi_over_budget(sizer::SenpiSizer) = sizer.nodes >= SENPI_SIZER_NODE_BUDGET
-
-function senpi_size(sizer::SenpiSizer, value, depth::Int)::Int
-    sizer.nodes += 1
-    value isa Type && return 0
-    value isa Union{Number, Char, Bool, Symbol, Nothing} && return isbits(value) ? sizeof(value) : 0
-    value isa String && return SENPI_SIZER_OBJECT + sizeof(value)
-    if ismutable(value)
-        haskey(sizer.seen, value) && return 0
-        sizer.seen[value] = nothing
-    end
-    if depth >= SENPI_SIZER_MAX_DEPTH || senpi_over_budget(sizer)
-        sizer.approximate = true
-        return SENPI_SIZER_OBJECT
-    end
-    if value isa Array
-        isbitstype(eltype(value)) && return SENPI_SIZER_OBJECT + sizeof(value)
-        return SENPI_SIZER_OBJECT + length(value) * SENPI_SIZER_POINTER +
-            senpi_sampled(sizer, length(value), depth) do index
-                isassigned(value, index) ? value[index] : nothing
-            end
-    elseif value isa Union{Dict, IdDict}
-        count = length(value)
-        total = 0
-        taken = 0
-        for (key, item) in value
-            senpi_over_budget(sizer) && break
-            total += senpi_size(sizer, key, depth + 1) + senpi_size(sizer, item, depth + 1)
-            taken += 1
-            taken >= SENPI_SIZER_SAMPLE && break
+function senpi_memory_globals(limit::Int)
+    if !SENPI_GLOBALS_INCLUDED[]
+        try
+            include(joinpath(@__DIR__, "globals.jl"))
+            SENPI_GLOBALS_INCLUDED[] = true
+        catch
+            return Dict{String, Any}[]
         end
-        taken < count && (sizer.approximate = true)
-        return SENPI_SIZER_OBJECT + count * 2 * SENPI_SIZER_POINTER + (taken == 0 ? 0 : div(total * count, taken))
-    elseif value isa Union{Set, Tuple}
-        count = length(value)
-        total = 0
-        taken = 0
-        for item in value
-            senpi_over_budget(sizer) && break
-            total += senpi_size(sizer, item, depth + 1)
-            taken += 1
-            taken >= SENPI_SIZER_SAMPLE && break
-        end
-        taken < count && (sizer.approximate = true)
-        return SENPI_SIZER_OBJECT + count * SENPI_SIZER_POINTER + (taken == 0 ? 0 : div(total * count, taken))
     end
-    isbits(value) && return sizeof(value)
-    fields = fieldcount(typeof(value))
-    return SENPI_SIZER_OBJECT + fields * SENPI_SIZER_POINTER +
-        senpi_sampled(sizer, fields, depth) do index
-            isdefined(value, index) ? getfield(value, index) : nothing
-        end
+    Base.invokelatest(() -> senpi_largest_globals(limit))
 end
 
-# Up to SENPI_SIZER_SAMPLE evenly spaced elements; once the budget runs out part-way, the elements measured
-# so far stand in for the rest.
-function senpi_sampled(at, sizer::SenpiSizer, count::Int, depth::Int)::Int
-    count == 0 && return 0
-    picks = min(count, SENPI_SIZER_SAMPLE)
-    picks < count && (sizer.approximate = true)
-    step = count / picks
-    total = 0
-    measured = 0
-    for sample in 1:picks
-        if senpi_over_budget(sizer)
-            sizer.approximate = true
-            break
-        end
-        total += senpi_size(sizer, at(1 + floor(Int, (sample - 1) * step)), depth + 1)
-        measured += 1
+function senpi_needs_handles(expression)
+    if expression isa Symbol
+        expression in (:handle, :completion, :eval, :include, :getfield, :getglobal, :deserialize) && return true
+        name = string(expression)
+        return startswith(name, "SenpiHandle") || startswith(name, "senpi_handle") ||
+            startswith(name, "senpi_wait") ||
+            (startswith(name, "SENPI_") && (occursin("HANDLE", name) || occursin("WAIT", name)))
     end
-    return measured == 0 ? 0 : round(Int, total / measured * count)
-end
-
-function senpi_largest_globals(limit::Int)
-    try
-        sizer = SenpiSizer()
-        candidates = Tuple{String, Int, Bool}[]
-        Base.invokelatest() do
-            for name in names(Main, all = true)
-                name in SENPI_MEMORY_INTERNALS && continue
-                name in (:Main, :Base, :Core, :Ans, :ans) && continue
-                lowered = lowercase(string(name))
-                startswith(lowered, "senpi_") && continue
-                startswith(string(name), "Senpi") && continue
-                startswith(string(name), "#") && continue
-                isdefined(Main, name) || continue
-                value = getfield(Main, name)
-                value isa Module && continue
-                value isa IO && continue
-                value isa Type && continue
-                value isa Function && continue
-                sizer.approximate = false
-                sizer.nodes = 0
-                bytes = try
-                    senpi_size(sizer, value, 0) + SENPI_SIZER_POINTER
-                catch
-                    0
-                end
-                bytes >= SENPI_SIZER_MIN_REPORTED && push!(candidates, (string(name), bytes, sizer.approximate))
-            end
-        end
-        sort!(candidates, by = entry -> entry[2], rev = true)
-        [approximate ? Dict{String, Any}("name" => name, "bytes" => bytes, "approximate" => true) : Dict{String, Any}("name" => name, "bytes" => bytes) for (name, bytes, approximate) in candidates[1:min(limit, end)]]
-    catch
-        Dict{String, Any}[]
-    end
-end
-
-function senpi_memory_report()
-    try
-        senpi_memory[] === nothing && return nothing
-        # The host reads the interpreter's current footprint and decides on the notice; the runner only
-        # names its largest globals, with a bounded walk, so a cell never pays for an unbounded scan.
-        named = senpi_largest_globals(5)
-        # The host replaces liveBytes with the interpreter footprint it reads itself; only globals is used.
-        report = Dict{String, Any}("liveBytes" => 0, "measure" => "footprint")
-        isempty(named) || (report["globals"] = named)
-        report
-    catch
-        nothing
-    end
+    expression isa QuoteNode && return senpi_needs_handles(expression.value)
+    expression isa Expr && return any(senpi_needs_handles, expression.args)
+    false
 end
 
 function senpi_run_cell(message)
@@ -446,19 +328,23 @@ function senpi_run_cell(message)
         if parsed isa Expr && parsed.head === :error
             error(string(parsed.args[1]))
         end
+        # Install bindings before user functions/type annotations capture their world.
+        !SENPI_HANDLES_INCLUDED[] && senpi_needs_handles(parsed) && senpi_ensure_handles()
         value = Core.eval(Main, parsed)
         flush(stdout)
         flush(stderr)
         yield()
         frame = Dict{String, Any}("type" => "result", "cellId" => cell_id, "ok" => true, "durationMs" => round(Int, (time() - started) * 1000))
-        value !== nothing && senpi_should_display_result(parsed) && (frame["valueRepr"] = senpi_json(value))
-        memory = senpi_memory_report()
-        memory !== nothing && (frame["memory"] = memory)
+        if value !== nothing && senpi_should_display_result(parsed)
+            # Core.eval does not advance this caller's world after a first lazy include.
+            frame["valueRepr"] = SENPI_HANDLES_INCLUDED[] ? Base.invokelatest(senpi_json, value) : senpi_json(value)
+        end
         senpi_emit(frame)
     catch error
         senpi_emit(Dict("type" => "result", "cellId" => cell_id, "ok" => false, "error" => senpi_error(error), "durationMs" => round(Int, (time() - started) * 1000)))
     finally
         global senpi_current_cell = nothing
+        global senpi_memory_cell = cell_id
     end
 end
 
@@ -472,10 +358,16 @@ while !eof(SENPI_ORIGINAL_STDIN)
         if kind == "init"
             senpi_emit(Dict("type" => "status", "event" => Dict("op" => "kernel-startup", "stage" => "host-init")))
             senpi_set_connection(get(message, "connection", nothing))
-            senpi_memory[] = get(message, "memory", nothing)
-            senpi_emit(Dict("type" => "ready"))
+            senpi_emit(Dict("type" => "ready", "memoryGlobals" => true))
         elseif kind == "run"
+            global senpi_memory_cell = nothing
             senpi_run_cell(message)
+        elseif kind == "memory-globals"
+            cell_id = get(message, "cellId", nothing)
+            if cell_id == senpi_memory_cell && senpi_current_cell === nothing
+                senpi_emit(Dict("type" => "memory-globals-result", "cellId" => cell_id, "globals" => senpi_memory_globals(5)))
+                global senpi_memory_cell = nothing
+            end
         elseif kind == "close"
             senpi_emit(Dict("type" => "closed"))
             break

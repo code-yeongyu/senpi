@@ -81,6 +81,10 @@
 					"path": "prompt-templates.md"
 				},
 				{
+					"title": "Shared Prompt Generation",
+					"path": "prompt-presets.md"
+				},
+				{
 					"title": "Themes",
 					"path": "themes.md"
 				},

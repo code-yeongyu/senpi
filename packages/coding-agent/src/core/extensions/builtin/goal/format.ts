@@ -1,4 +1,5 @@
 import type { Goal, GoalStatus, GoalToolResponse, GoalToolSnapshot } from "./types.ts";
+import { goalDisplayStatus } from "./types.ts";
 
 export function formatGoalElapsedSeconds(value: number): string {
 	const seconds = Math.max(0, Math.trunc(value));
@@ -26,7 +27,10 @@ export function formatTokensCompact(value: number): string {
 	return `${Math.trunc(value)}`;
 }
 
-export function goalStatusLabel(status: GoalStatus): string {
+export function goalStatusLabel(status: GoalStatus, continuationStoppedAt?: number): string {
+	if (continuationStoppedAt !== undefined && (status === "active" || status === "paused")) {
+		return "stopped: no progress (send a message or /goal resume)";
+	}
 	switch (status) {
 		case "active":
 			return "active";
@@ -43,7 +47,7 @@ export function formatGoalForTool(goal: Goal | null): string {
 	if (!goal) return "No active goal is set.";
 	const lines = [
 		`Objective: ${goal.objective}`,
-		`Status: ${goalStatusLabel(goal.status)}`,
+		`Status: ${goalStatusLabel(goal.status, goal.continuationStoppedAt)}`,
 		`Time used: ${formatGoalElapsedSeconds(goal.timeUsedSeconds)}`,
 		`Tokens used: ${formatTokensCompact(goal.tokensUsed)}`,
 	];
@@ -65,7 +69,18 @@ export function goalToolRenderDetails(goal: Goal | null, notice?: string): GoalT
 }
 
 export function goalToolResponse(goal: Goal | null): GoalToolResponse {
-	return { goal: goal === null ? null : goalToolSnapshot(goal) };
+	return {
+		goal: goal === null ? null : goalToolSnapshot(goal),
+		...(goal?.status === "active" && goal.continuationStoppedAt !== undefined
+			? {
+					continuation: {
+						status: "stale_stopped" as const,
+						message:
+							"The goal stopped because progress was stale. It resumes when the user sends a message or runs /goal resume.",
+					},
+				}
+			: {}),
+	};
 }
 
 export function formatGoalToolResponse(goal: Goal | null, notice?: string): string {
@@ -77,7 +92,8 @@ function goalToolSnapshot(goal: Goal): GoalToolSnapshot {
 	return {
 		threadId: goal.threadId,
 		objective: goal.objective,
-		status: goal.status,
+		status: goalDisplayStatus(goal),
+		...(goal.continuationStoppedAt === undefined ? {} : { continuationStoppedAt: goal.continuationStoppedAt }),
 		tokensUsed: goal.tokensUsed,
 		timeUsedSeconds: goal.timeUsedSeconds,
 		createdAt: goal.createdAt,

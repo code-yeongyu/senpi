@@ -4,6 +4,7 @@
  * supervisor's orchestration; every name stays re-exported there for existing importers.
  */
 import { type ChildProcess, spawn } from "node:child_process";
+import { Socket } from "node:net";
 import { extname } from "node:path";
 import { isBunBinary } from "../../config.ts";
 import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
@@ -28,6 +29,8 @@ export interface SupervisorLaunch {
 	readonly childArgs?: readonly string[];
 	/** Explicit ownership directory for callers whose environment is not yet branded. */
 	readonly agentDir?: string;
+	/** Inherited caller-lifetime pipe, distinct from the supervisor-to-host watchdog pipe. */
+	readonly ownerFd?: number;
 	/**
 	 * Where this supervisor BINDS, when it is a successor generation: `<socket>.next-<gen>`.
 	 * It renames that entry over `socket` once its host answers - and never binds the live
@@ -86,10 +89,16 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	let childCommand: string | undefined;
 	let childArgs: readonly string[] | undefined;
 	let agentDir: string | undefined;
+	let ownerFd: number | undefined;
 	let bindSocket: string | undefined;
 	let replaceIdentity: SocketFileIdentity | undefined;
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
+		if (arg === "--owner-fd" && index + 1 < argv.length) {
+			ownerFd = Number(argv[++index]);
+			if (!Number.isSafeInteger(ownerFd) || ownerFd < 3) return undefined;
+			continue;
+		}
 		if (arg === "--socket" && index + 1 < argv.length) {
 			socket = argv[++index];
 			continue;
@@ -123,7 +132,23 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	}
 	return socket === undefined
 		? undefined
-		: { socket, hostArgs, childCommand, childArgs, agentDir, bindSocket, replaceIdentity };
+		: { socket, hostArgs, childCommand, childArgs, agentDir, ownerFd, bindSocket, replaceIdentity };
+}
+
+export const OWNER_WATCH_FD = 3;
+// Strongly retain the write end until that supervisor exits, but never keep the caller alive.
+const ownerPipes = new Set<Socket>();
+
+export function keepOwnerPipe(child: ChildProcess): void {
+	const pipe = child.stdio[OWNER_WATCH_FD];
+	if (!(pipe instanceof Socket)) throw new Error("RPC owner pipe was not inherited");
+	ownerPipes.add(pipe);
+	pipe.on("error", () => {});
+	pipe.unref();
+	child.once("exit", () => {
+		ownerPipes.delete(pipe);
+		pipe.destroy();
+	});
 }
 
 /** `<dev>:<ino>` as the ensure captured it; anything else is no identity at all, never a guess. */

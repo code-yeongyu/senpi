@@ -99,24 +99,21 @@ export async function waitForPidGone(pid: number, timeoutMs: number): Promise<bo
 }
 
 export function processAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-	} catch {
-		return false;
+	if (process.platform === "win32") {
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch {
+			return false;
+		}
 	}
-	// A process whose parent died before reaping it stays addressable as a ZOMBIE: it is gone,
-	// only its exit status has not been collected, so a teardown must not wait for it.
-	return !isZombie(pid);
-}
-
-function isZombie(pid: number): boolean {
-	if (process.platform === "win32") return false;
+	// Use one snapshot: a zombie can be reaped between kill(pid, 0) and ps (#3044).
+	// Both a zombie and a now-absent PID mean the observed process has exited.
 	try {
-		return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" })
-			.trim()
-			.startsWith("Z");
-	} catch {
-		// `ps` exits non-zero once the pid is gone entirely.
-		return false;
+		const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim();
+		return state.length > 0 && !state.startsWith("Z");
+	} catch (cause) {
+		if (cause instanceof Error && "status" in cause && cause.status === 1) return false;
+		throw cause;
 	}
 }

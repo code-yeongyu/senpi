@@ -449,7 +449,7 @@ internal-error path; a listed method is not silently treated as unsupported.
 | `thread/unsubscribe` | Detaches only the calling connection; a now-idle thread may unload later. |
 | `thread/compact/start` | Acknowledges immediately and compacts the loaded thread. Context-compaction items carry progress; Senpi intentionally does not emit `thread/compacted`. |
 | `thread/goal/set` | Persists a goal and broadcasts `thread/goal/updated` after the response. Accepts `active`, `paused`, and `complete`; `blocked`, `usageLimited`, and `budgetLimited` are rejected. `tokenBudget` follows omit/keep, `null`/clear, number/set semantics. |
-| `thread/goal/get` | Reads the persisted thread goal or `null`. |
+| `thread/goal/get` | Reads the thread goal or `null`. A stale-stopped goal is projected as `paused`; its committed usage remains unchanged and reopening does not restart it. |
 | `thread/goal/clear` | Clears a goal and broadcasts `thread/goal/cleared` only when a goal existed. |
 | `thread/metadata/update` | Persists `gitInfo` in an app-server sidecar and returns the updated wire thread. |
 | `turn/start` | Starts a turn on a loaded thread. |

@@ -2,7 +2,11 @@ import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
+import {
+	processStartTimeMs,
+	readProcessStartTime,
+	sameProcessStartMs,
+} from "../src/modes/app-server/daemon/process.ts";
 import { parseJson, readFileOrUndefined } from "../src/modes/rpc/host-daemon-state.ts";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
@@ -55,7 +59,11 @@ afterEach(async () => {
 		const observed = await readProcessStartTime(pid);
 		// A child can follow its stopped supervisor out while the async identity probe runs.
 		if (!processAlive(pid)) continue;
-		if (startedAt === undefined || observed !== startedAt)
+		if (
+			startedAt === undefined ||
+			observed === undefined ||
+			!sameProcessStartMs(processStartTimeMs(startedAt), processStartTimeMs(observed))
+		)
 			throw new Error("Owned generation PID identity changed; refusing to signal it");
 		// Never `kill` on the strength of a liveness READ: a drained generation can exit between the
 		// check and the signal, and the raw ESRCH that follows fails the hook - and therefore the case

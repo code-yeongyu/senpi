@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BlockAttempt } from "../../scripts/bench-block.ts";
 import { decide } from "../../scripts/bench-compare.ts";
+import { CPU_BOUNDARY } from "../../scripts/bench-cpu-contract.ts";
 import { type RunPlan, runBlocks, SPIKE_RETRIES, settleTarget } from "../../scripts/bench-run.ts";
 import type { RuntimeReport } from "../../scripts/bench-worker.ts";
 
@@ -28,6 +29,7 @@ afterEach(() => {
 });
 
 const report = (marker: number): RuntimeReport => ({
+	cpuBoundary: CPU_BOUNDARY,
 	runtimeVersion: "v",
 	hostRuntime: "bun",
 	hostVersion: "1",

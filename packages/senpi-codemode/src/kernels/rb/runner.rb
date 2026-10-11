@@ -9,6 +9,7 @@ $stdout.flush
 $__senpi_binding = TOPLEVEL_BINDING
 $__senpi_frame_mutex = Mutex.new
 $__senpi_current_cell = nil
+$__senpi_memory_cell = nil
 $__senpi_capture_cell = nil
 $__senpi_connection = nil
 $__senpi_frame_io = STDOUT.dup
@@ -122,8 +123,6 @@ def __senpi_value_repr(value)
 rescue JSON::GeneratorError
   value.inspect
 end
-
-$__senpi_memory = nil
 
 SENPI_SIZER_SAMPLE = 1_000
 SENPI_SIZER_NODE_BUDGET = 5_000
@@ -239,19 +238,6 @@ rescue StandardError
   []
 end
 
-# The host reads the interpreter's footprint and decides on the notice; the runner only names its
-# largest globals. Nothing here spawns a process, so the user's `$?` is left alone.
-def __senpi_memory_report
-  return nil if $__senpi_memory.nil?
-  named = __senpi_largest_globals(5)
-  # The host replaces liveBytes with the interpreter footprint it reads itself; only globals is used.
-  report = { "liveBytes" => 0, "measure" => "footprint" }
-  report["globals"] = named unless named.empty?
-  report
-rescue StandardError
-  nil
-end
-
 SENPI_NON_DISPLAY_NODES = %i[
   LASGN IASGN GASGN CVASGN DASGN OP_ASGN OP_CDECL CDECL MASGN CASGN
   DEFN DEFS CLASS MODULE SCLASS ALIAS UNDEF
@@ -305,8 +291,6 @@ def __senpi_run_cell(message)
       "durationMs" => ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round,
     }
     frame["valueRepr"] = __senpi_value_repr(value) if !value.nil? && __senpi_should_display_result?(source)
-    memory = __senpi_memory_report
-    frame["memory"] = memory unless memory.nil?
     __senpi_emit(frame)
   rescue Exception => error
     __senpi_emit({
@@ -319,6 +303,7 @@ def __senpi_run_cell(message)
   ensure
     $__senpi_capture_cell = nil
     $__senpi_current_cell = nil
+    $__senpi_memory_cell = cell_id
   end
 end
 
@@ -332,10 +317,15 @@ $__senpi_protocol_stdin.each_line do |line|
   when "init"
     __senpi_emit({ "type" => "status", "event" => { "op" => "kernel-startup", "stage" => "host-init" } })
     $__senpi_connection = message["connection"]
-    $__senpi_memory = message["memory"]
-    __senpi_emit({ "type" => "ready" })
+    __senpi_emit({ "type" => "ready", "memoryGlobals" => true })
   when "run"
+    $__senpi_memory_cell = nil
     __senpi_run_cell(message)
+  when "memory-globals"
+    if message["cellId"] == $__senpi_memory_cell && $__senpi_current_cell.nil?
+      __senpi_emit({ "type" => "memory-globals-result", "cellId" => message["cellId"], "globals" => __senpi_largest_globals(5) })
+      $__senpi_memory_cell = nil
+    end
   when "close"
     __senpi_emit({ "type" => "closed" })
     exit 0

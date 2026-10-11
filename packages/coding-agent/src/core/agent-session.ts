@@ -96,6 +96,7 @@ import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
+import { AgentBusyError } from "./agent-busy-error.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -182,11 +183,11 @@ import {
 	type ModelUsabilityBudgetProjection,
 	projectModelUsabilityBudget,
 } from "./extensions/builtin/compaction/model-usability-budget.ts";
+import { resolveEffectiveReserveTokens, shouldTriggerCompaction } from "./extensions/builtin/compaction/policy.ts";
 import {
-	resolveEffectiveReserveTokens,
-	resolveReserveTokens,
-	shouldTriggerCompaction,
-} from "./extensions/builtin/compaction/policy.ts";
+	isAutomaticCompactionBlocked,
+	wouldCompactionOverflow,
+} from "./extensions/builtin/compaction/rejected-recovery.ts";
 import {
 	createResumeCompactionRequirement,
 	type ResumeCompactionRequirement,
@@ -311,7 +312,6 @@ import { computeSessionFailureReport, type SessionFailureReport } from "./sessio
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjection } from "./session-manager.ts";
 import {
-	buildSessionContext,
 	CURRENT_SESSION_VERSION,
 	getLatestCompactionEntry,
 	type SessionHeader,
@@ -4965,7 +4965,7 @@ export class AgentSession {
 			// If streaming, queue via steer() or followUp() based on option
 			if (this.isStreaming) {
 				if (!options?.streamingBehavior) {
-					throw new Error(
+					throw new AgentBusyError(
 						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
 					);
 				}
@@ -7839,41 +7839,13 @@ export class AgentSession {
 		fromExtension: boolean,
 		model: Model<Api>,
 	): Promise<boolean> {
-		const currentLeaf = pathEntries[pathEntries.length - 1];
-		if (!currentLeaf) return false;
-
-		const simulatedCompactionEntry: CompactionEntry = {
-			type: "compaction",
-			id: `simulated-${randomUUID()}`,
-			parentId: currentLeaf.id,
-			timestamp: new Date().toISOString(),
-			summary: compactionResult.summary,
-			firstKeptEntryId: compactionResult.firstKeptEntryId,
-			tokensBefore: compactionResult.tokensBefore,
-			details: compactionResult.details,
-			fromHook: fromExtension,
-		};
-
-		let simulatedMessages = buildSessionContext(
-			[...pathEntries, simulatedCompactionEntry],
-			simulatedCompactionEntry.id,
-		).messages;
-		// Size the same retained context that will be admitted to Cursor. Persisted JSONL
-		// remains verbatim, but the in-memory request representation is bounded first.
-		if (model.provider === "cursor" || model.provider === "cursor-cli-oauth") {
-			simulatedMessages =
-				admitCursorHistory({
-					messages: simulatedMessages,
-					budgetBytes: cursorAdmissionBudgetBytes(model.contextWindow),
-				}).messages ?? simulatedMessages;
-		}
-		const contextTokens = estimateMessagesTokens(filterContextExcludedMessages(simulatedMessages));
-		const settings = this._getCompactionSettings();
-		const reserveTokens =
-			settings.reserveScalingEnabled === false
-				? settings.reserveTokens
-				: resolveReserveTokens(model.contextWindow, settings.reserveTokens);
-		return contextTokens > model.contextWindow - reserveTokens;
+		return wouldCompactionOverflow(
+			pathEntries,
+			compactionResult,
+			fromExtension,
+			model,
+			this._getCompactionSettings(),
+		);
 	}
 
 	/**
@@ -8502,6 +8474,9 @@ export class AgentSession {
 		// The flag reports THIS attempt's "nothing to compact" outcome only; a value left by an earlier attempt
 		// must not make a caller treat a cancelled or rejected compaction as too small (senpi#2925 review).
 		this._compactionSkippedTooSmall = false;
+		if (isAutomaticCompactionBlocked(this.sessionManager.getBranch(), this.model, this._getCompactionSettings())) {
+			return false;
+		}
 		// An earlier external-owner rejection never answers for a rejected request
 		// awaiting its retry: whether the owner can recover it depends on the request
 		// that failed, so ask again. A completed turn keeps the sticky delegation (#1174).
@@ -8752,6 +8727,9 @@ export class AgentSession {
 		willRetry: boolean,
 		options: { keepRecentTokensOverride?: number } = {},
 	): Promise<boolean> {
+		if (isAutomaticCompactionBlocked(this.sessionManager.getBranch(), this.model, this._getCompactionSettings())) {
+			return false;
+		}
 		if (!(reason === "overflow" && willRetry) && this._isCompactionDelegated()) return false;
 		const { keepRecentTokensOverride } = options;
 		// Model identity is captured before the auth await below: a model switch during

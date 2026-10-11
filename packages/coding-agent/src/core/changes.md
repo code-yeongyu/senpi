@@ -54,6 +54,43 @@ Keybinding defaults and the builtin command list are core tables; an extension-r
 
 - LOW: the `Keybindings` id list and `KEYBINDINGS` defaults next to `app.models.toggleFavorite`; `BUILTIN_SLASH_COMMANDS` after `model`.
 
+## 2026-10-11 - A busy prompt throws a typed AgentBusyError (senpi#3073 review)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the "Agent is already processing. Specify streamingBehavior ..." refusal in `prompt()` throws `AgentBusyError` (new `src/core/agent-busy-error.ts`, `code: "streaming"`) instead of a plain `Error`. The message text is unchanged, so every existing message comparison keeps matching.
+
+### Why
+
+- The RPC host answered a busy `prompt` with message text only, so `senpi host session` could tell "busy" apart from any other failure only by matching English prose. With the typed error, `client-input-handler.ts` puts `errorCode: "streaming"` on the response and clients classify the refusal by its code.
+
+### Why an extension could not handle it
+
+- The refusal is raised inside `AgentSession.prompt()` before any extension hook, and the RPC response is built from the thrown error.
+
+### Expected merge conflict zones
+
+- LOW: the one `throw` in the streaming branch of `AgentSession.prompt()` and one import line in `packages/coding-agent/src/core/agent-session.ts`.
+
+## 2026-10-10 - A resource-loader reload no longer drops the extension module generation
+
+### What changed
+
+- `packages/coding-agent/src/core/resource-loader.ts`: `reload()` no longer calls `clearExtensionCache()` when the loader has loaded before. Package resolution still refreshes (`refresh` is unchanged).
+
+### Why
+
+- Since senpi#1948 the module cache invalidates itself: `cachedExtensionFactory()` drops the generation as soon as any source file it compiled changed or disappeared. Clearing it on every reload therefore compiled a new module graph for unchanged sources, and a module registry cannot evict, so each reload left a whole graph resident: about 180 `ModuleRecord`s and 2MB of heap per reload with the builtin set, measured over 30 reloads. With the clear removed the heap grows about 0.08MB per reload.
+- An edited extension is still picked up on reload by the cache's own fingerprint check (`extension-factory-lifecycle.test.ts` "picks up an edited extension on reload").
+
+### Why an extension could not handle it
+
+- The clear is in the core resource loader's reload path.
+
+### Expected merge conflict zones
+
+- The opening of `DefaultResourceLoader.reload()` and the `./extensions/loader.ts` import block in `packages/coding-agent/src/core/resource-loader.ts`.
+
 ## 2026-10-09 - Durable engine self-stop signals (senpi#3007)
 
 ### What changed
@@ -9533,3 +9570,40 @@ The `promptSurface` plumbing in `agent-session.ts`, `agent-session-services.ts` 
 ### Expected merge conflict zones
 
 - LOW: the documented model set and warning text in `packages/coding-agent/src/core/ultrafast-lanes.ts`.
+## 2026-10-10 - Replay-safe retained recovery and durable rejection admission (senpi#3060)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-manager.ts`: a deterministic checkpoint's `retainedMessagePolicy` applies JSON-normalized safe replacements to retained model context, carrying entry provenance onto copies. The policy survives later checkpoints and reopen, without rewriting source entries or applying to messages after the recovery boundary.
+- `packages/coding-agent/src/core/agent-session.ts`: pre-prompt and automatic compaction consult the persisted identical-recovery rejection latch before emitting an attempt. Manual compaction remains an explicit retry.
+
+### Why
+
+An unsafe newest result poisoned every retained suffix. Repeated automatic admission retried an unchanged impossible recovery, including after session reopen.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/session-manager.ts` owns canonical replay, resume, and compaction admission projections. `packages/coding-agent/src/core/agent-session.ts` emits automatic attempt events before extension hooks run; both must honor the same durable policy.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/session-manager.ts`: `projectSession` provenance mapping.
+- `packages/coding-agent/src/core/agent-session.ts`: `_runPrePromptCompaction` and `_runAutoCompaction` admission.
+
+## 2026-10-10 - Share actual compaction admission with terminal rejection classification (senpi#3061)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_wouldCompactionOverflow` delegates the existing projection, Cursor history admission and effective-reserve calculation to `wouldCompactionOverflow` in the compaction builtin's rejection helper.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: a generated summary that core would accept must not be vetoed by the deterministic fallback's more conservative envelope estimator. The same calculation now gates both acceptance and terminal no-safe-suffix classification.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts` owns final acceptance. Sharing its existing calculation avoids a second, divergent implementation in the builtin.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: rejection-helper import and `_wouldCompactionOverflow` delegation.

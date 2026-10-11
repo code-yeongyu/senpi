@@ -1,3 +1,36 @@
+## 2026-10-10 - Stable request-local reduction frontier (senpi#900)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-frontier.ts`: builds on @codeg-dev's #901 latch with a cut index and SHA-256 fingerprint of the unreduced prefix. The existing reducers in `context-reduction.ts` see only that prefix. The cut protects five messages and 3,000 recent tokens; clearing also keeps six clearable results within the prefix.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-state.ts`: persists the latch, cut, fingerprint, and same-lineage provider-usage anchor in `senpi.context-reduction.v1`. After engagement, projection takes the maximum of the reduced estimate plus overhead and the matching request's reported input usage plus estimated growth. In-flight handoff flags are not persisted.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: gates on the unreduced estimate plus overhead. The frontier normally uses a 10% window tail budget. At 95% of the ceiling, a step must advance at least a full 10% block, save at least 2% of the window, and reach 85% or less. An already-engaged frontier requests compaction when it cannot advance; an initial attempt retains provider fallback when no cut exists or its prefix is smaller than a full ceiling block. An eligible block that fails the gain/headroom guard still requests compaction, including on initial engagement. The final post-prune size is checked after engagement or an actual prune, and a request legal only because emergency pruning changed its prefix also requires compaction. Provider-native models bypass the latch but retain their deterministic breaker fallback; external-owner and append-only lanes retain their ownership rules.
+- Before engagement, no provider-usage anchor is recorded: the ceiling is estimate-only (character estimate plus known overhead), emergency pruning retains the full prompt-window budget, and an unprunable request can reach the existing provider-overflow/compaction/retry route. Unknown provider overhead is not bounded by the estimate. Post-prune recovery uses engagement or an actual prune, not anchor availability; advancing the frontier clears its anchor without disabling admission.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`: owns live-request capture and branch persistence. Summarizer/cache-friendly projections run on scratch state without borrowing a live usage anchor or persisting changes. Resume, forks, and tree navigation restore the destination branch's saved frontier when its fingerprint matches. Accepted compaction resets it; rejection does not release the latch.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-handoff.ts`: uses the existing system-abort/compaction action, fences callbacks to their branch, and requests continuation only after acceptance when no work is already queued. Rejection stops the current request but does not persist an orphaned handoff that would block future requests.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` delegates frontier lifecycle wiring to the extracted modules. Tests cover 60-turn near-ceiling growth, byte stability, overflow, gain and block guards, persisted anchors, scratch projections, native fallback, branch restoration, and accepted/rejected/stale handoffs.
+- The replay's `--block-budget-percent` accepts one percentage or a comma-separated sensitivity sweep on the same in-memory input snapshot, and reports mean outgoing request tokens including the fixed prompt prefix. The internal pipeline accepts an optional budget ratio for this measurement; normal extension calls retain the 10% default, covered by a boundary test distinguishing it from 5% and 20%.
+- Replay modules use static imports. Baseline comparison runs the same JSONL snapshot through a separate process. Historical usage is never assigned an invented frontier: only matching persisted anchors can supply the corrected ceiling bound. Replay output identifies compaction-required projections; it does not generate counterfactual summaries. Cache reads and summary requests are excluded, so the dollar estimates describe projected cache writes, not the total bill.
+- The SDK-alignment controls now exceed the unreduced gate and include the protected recent tail. Their resident-transcript assertions are retained, and the delta test crosses the actual estimate gate rather than changing only a mocked usage number.
+
+### Why
+
+- Reports by @daehwanahn and @ddotz establish two independent costs: alternating full/reduced requests around the 50% usage gate, and tail-relative reducer decisions rewriting an already-warm reduced prefix. A latch alone fixes only the first.
+- Persisting the actual cut preserves the exact decision across restarts, including ceiling-driven steps and model-window changes. Deriving it from history alone would have to reconstruct request boundaries and past model/budget settings. The 10% block budget is 100k on a 1M window; hysteresis and the gain guard prevent repeated small rewrites near the ceiling.
+- Prefix hashing remains linear in prefix bytes per request. Message IDs and object identity do not guarantee immutable content across prior context handlers, so caching the hash without a content-version contract could silently accept a rewritten prefix. Full validation is retained rather than claiming an unsafe incremental optimization.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts`, `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`, and `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts` are the builtin extension that owns request-local reductions and compaction lifecycle state. This change stays within that boundary.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts`: stateless reducers and the initial gate.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-frontier.ts`, `context-reduction-state.ts`, `context-reduction-lifecycle.ts`, and `context-reduction-handoff.ts`: frontier geometry, persistence, and callback ownership.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts`: reduction inputs, native fallback, and post-prune handoff.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: lifecycle registration and accepted-compaction reset.
+- Eval clearability is deliberately unchanged; it belongs to #3100.
+
 ## 2026-10-07 - Compaction context hook declares non-mutation (senpi#2525)
 
 ### What changed
@@ -2119,3 +2152,74 @@ untouched. Expected upstream conflict zones: `builtin/compaction/speculative.ts`
 ### Expected merge conflict zones
 
 - LOW: `lane-policy.ts` `LaneContext` and `disablesSenpiCompaction()` provider-scoping logic.
+## 2026-10-10 - Recover unsafe newest entries without retrying identical rejections (senpi#3060)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: fallback checkpoints select a replay policy that repairs unsafe messages before candidate sizing and pairing checks; rejection diagnostics describe RPC-capable recovery rather than requiring a new session.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/retained-message-projection.ts`: normalize through the session writer's `transformJson` before bounded replay classification. Unsafe results retain their call ID as error placeholders. Unsafe signed assistants and their associated results are omitted together; readable user text survives malformed attachments. Active incomplete, duplicate, reversed and orphaned tool chains still fail structural admission.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/rejected-recovery.ts`: persisted retained-context fingerprint plus reason/entry records stop repeated impossible recovery until context, model or compaction settings change. Summarized history, mirror-reconnected parent IDs and bookkeeping entries do not release the latch on reopen.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: record failed recovery and gate blocking/speculative automatic routes on that durable state.
+
+### Why
+
+The cumulative unsafe suffix check rejected all 246 candidates when the newest eval result was unsafe. Live non-plain details could also fail bounded classification although their persisted JSON was safe. Time-based circuit breakers could not stop identical retries permanently.
+
+### Why an extension could not handle it
+
+This is the owning builtin. The projection must also be applied by the session manager, and core automatic admission must check the latch before opening another attempt.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: recovery details, sizing and diagnostics.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: recovery helper and blocking/speculative admission.
+- `retained-message-projection.ts` and `rejected-recovery.ts` are new fork-owned helpers.
+
+## 2026-10-10 - Distinguish terminal retained-context rejection from summarizer failure (senpi#3061)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: only a successful provider summary that core admission would reject, followed by a failed zero-summary suffix viability probe, produces a typed terminal rejection. A failed summarizer may still use deterministic recovery, but a rejected recovery from that path never writes the durable latch.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: add `UnsafeRetainedSuffixError`, carry its diagnostics separately from provider failure kinds, and support a zero-summary viability probe. Only latched terminal diagnostics claim automatic compaction is paused.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/rejected-recovery.ts`: read only records carrying the deterministic `unsafe-retained-content` failure kind. Older untyped records and unrelated failure kinds cannot suppress a recovered provider or overwrite a valid context latch. Core and the extension share the existing projected-overflow calculation, including Cursor admission, so a conservative fallback estimate cannot overrule a usable generated summary.
+
+### Why
+
+- A rejected emergency checkpoint after a failed provider request does not establish that the next provider summary would fail: a short successful summary may fit where the recovery marker does not. Network, timeout, abort, rate-limit, empty-summary and other summarizer errors retain their existing retry/backoff behavior.
+- The deterministic terminal decision is made only after successful summary generation fails the exact core admission calculation and tests suffix viability without summary text or previous-checkpoint overhead. Structural, pairing and retained-token failures are terminal; missing boundaries and reconstruction errors are not promoted to a durable context fault.
+- Explicit manual retry remains allowed. A provider failure during that retry neither clears the earlier deterministic context finding nor writes a replacement; a changed context/model/budget still releases it.
+
+### Why an extension could not handle it
+
+- This is the owning builtin. Core delegates its existing projected-overflow calculation to the shared helper; there is no public extension API change.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: local summary generation and recovery decision points.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: failure-kind classifier, candidate summary construction and diagnostic formatting.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/rejected-recovery.ts`: persisted rejection selection.
+
+## 2026-10-11 - Preserve fallback before the reduction frontier commits
+
+### What changed
+
+- `context-reduction-frontier.ts`: an initial reduction attempt rolls back `engaged` when the protected tail leaves no candidate cut or the candidate prefix is below one ceiling block, regardless of message count. The gain/headroom guard still requests compaction under ceiling pressure; failing to commit a cut there does not roll back engagement.
+- `context-pipeline.ts`: emergency pruning subtracts known overhead when `state.engaged`; post-prune handoff requires engagement or an actual prune-only rewrite. A freshly advanced frontier remains protected before its next usage anchor arrives.
+- `context-reduction-state.ts`: provider usage is not recorded before the frontier engages.
+- Fixture coverage: `test/fixtures/compaction/context-reduction/pre-engagement-short-history.jsonl` and its owner regression encode the no-reducible-prefix transition.
+- `test/compaction/cache-replay.test.ts`: the persisted-anchor case now uses a long enough synthetic branch to represent an actually engaged frontier.
+- `test/suite/regressions/900-fallback-admission.test.ts` covers six short messages before a large history and preserves model fallback with a tiny candidate prefix. `test/compaction/context-reduction-admission.test.ts` covers final request overflow after an unanchored frontier step and distinguishes an actual prune from an unprunable pre-engagement request.
+
+### Why
+
+Ceiling pressure could mark a fresh frontier engaged even when the protected recent tail left no reducible prefix. That disabled the fallback path and requested compaction before deterministic reduction had changed the request.
+
+### Why an extension could not handle it
+
+This is private state and request-assembly policy inside the owning builtin compaction extension; no public hook can safely repair the frontier after the context event.
+
+### Expected merge conflict zones
+
+- `context-reduction-frontier.ts` around initial engagement and failed cut admission.
+- `context-pipeline.ts` around emergency-prune budgeting and handoff detection.
+- `context-reduction-state.ts` around request usage anchors.

@@ -17,6 +17,84 @@ The picker is not an extension surface; the adapter is the extension-facing seam
 
 - LOW: `types.ts` immediately above `ExtensionUIContext` and the end of that interface; the export lists in `index.ts`.
 
+## 2026-10-10 - Identify prepared context projections (senpi#900)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts` labels context events from `prepareProviderRequest` as projections; normal agent dispatch is labeled separately. The unchanged two-phase transformation, cloning, snapshot, and system-message restoration logic now lives in `packages/coding-agent/src/core/extensions/context-dispatch.ts`.
+- `packages/coding-agent/src/core/extensions/types.ts` re-exports `ContextEvent` from `packages/coding-agent/src/core/extensions/context-event.ts` with an optional read-only `source` marker. `packages/coding-agent/docs/extensions.md` documents its ownership meaning.
+
+### Why
+
+- A real agent request can reach the context hook before its current user message reaches the session journal. Comparing those lists misclassifies the live request; a prepared projection can also exactly match the journal.
+
+### Why an extension could not handle it
+
+- Only the host dispatcher knows whether it is preparing a separate projection or handling the agent's request. The compaction extension uses that provenance to keep projections on scratch state.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitContext` delegation and `prepareProviderRequest` origin argument. `packages/coding-agent/src/core/extensions/types.ts`: the `ContextEvent` type re-export.
+
+## 2026-10-10 - Retired runners stop boundary dispatch (senpi#2785)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBoundary` checks the active lease before each handler, after awaited handlers, in both the handler and boundary-rebuild failure paths, and before returning a valid result. A local `retired()` helper keeps the five stand-down results in sync.
+
+### Why
+
+- Session disposal or replacement during boundary preview or handler awaits let later obsolete handlers run on a context whose getters correctly reject the retired runner. Obsolete drafts and continuation could also survive retirement.
+- A handler or rebuild that was already in flight when the runner retired then failed on that retired state, and the failure paths reported it, so the stale-context stack still reached the user through `emitError` even though the dispatch itself had already lost its lease.
+
+### Why an extension could not handle it
+
+- The host dispatcher owns the runner lease and invokes subsequent handlers. An extension cannot prevent another retired handler from being dispatched.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBoundary` dispatch and result validation. Context getter guards and intentional `session_shutdown` dispatch remain unchanged.
+
+## 2026-10-10 - Reload validates the bytes actually compiled (senpi#3068)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: `compiledSources()` reports SHA-256 fingerprints captured from the exact source strings passed to the transpiler, including lazy imports.
+- `packages/coding-agent/src/core/extensions/extension-module-cache.ts`: checks every importer-owned fingerprint before reusing a factory, retiring the whole generation when any source changes or disappears. It no longer assigns disk snapshots to already compiled dependencies.
+
+### Why
+
+- A command can import a dependency after its factory was cached, then that dependency can be edited before reload. Recording its fingerprint at reload time incorrectly blessed the old module with the new file's identity. Content hashes also detect equal-size edits with preserved timestamps, while unchanged reloads still reuse one generation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts` owns the transpiler input; `packages/coding-agent/src/core/extensions/extension-module-cache.ts` decides whether the host reuses the compiled graph, before the extension factory runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/bun-extension-importer.ts`: source bookkeeping and importer result.
+- `packages/coding-agent/src/core/extensions/extension-module-cache.ts`: importer contract and freshness check.
+
+## 2026-10-10 — Shared prompt-preset resolution contract (omo #9851)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts` (new): the model-id matchers and `extract*` helpers moved out of `presets.ts`, now exported. `presets.ts` re-imports them; behavior is unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts` (new): a pure, settings-free `resolvePresetName({ providerID, modelID, name? })` replicating the auto-resolution branch, plus `PROMPT_PRESET_MODEL_CASES` (one representative id per auto-resolvable preset) and `AUTO_RESOLVED_PRESET_NAMES`.
+- `packages/coding-agent/package.json`: new public `./prompt-presets` export subpath serving the contract.
+
+### Why
+
+The OmO plugin's per-model prompt routing (oh-my-openagent #9856) must resolve model ids to the same presets as the runtime. The resolution logic was internal to this package and not exported, so there was no shared source of truth to pin a cross-repo parity test against. The contract module is the single source of truth; `gpt-5` is a manual-only preset (no model matcher), so the auto-resolvable set intentionally excludes it.
+
+### Why an extension could not handle it
+
+The matchers and precedence live in the builtin prompt-preset extension's own resolution path; exporting them is a change to that module's public surface, not something a separate extension can provide.
+
+### Expected merge conflict zones
+
+The matcher/helper block that moved from `presets.ts` to `matchers.ts`, and the `exports` map in `package.json`.
+
 ## 2026-10-08 - A required question never tells the model to proceed without an answer (senpi#2949)
 
 ### What changed

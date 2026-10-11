@@ -173,7 +173,15 @@ export function createSessionPathReservations(options: {
 							: undefined;
 					}
 					const current = await readProcessStartTime(pid, process.platform, 1_000).catch(() => undefined);
-					return current !== undefined && owners.some((owner) => owner.processStartTime === current)
+					// Recorded identities may carry an explicit UTC tag (host-child.pid, #3054) while this probe
+					// reads the local form: compare the parsed instant, never the raw text.
+					const observed = current === undefined ? undefined : processStartTimeMs(current);
+					return observed !== undefined &&
+						owners.some(
+							(owner) =>
+								owner.processStartTime !== null &&
+								sameProcessStartMs(processStartTimeMs(owner.processStartTime), observed),
+						)
 						? pid
 						: undefined;
 				}),

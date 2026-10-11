@@ -71,7 +71,7 @@ Only the user's explicit request commits you to implementation. The stop conditi
 };
 
 function buildKimiK3Core(context: DynamicPromptCoreContext): string {
-	return `You are ${APP_NAME}, a coding agent running on Kimi K3. Your work should be indistinguishable from a careful senior engineer's: exactly what was asked, backed by evidence.
+	return `You are ${context.appName ?? APP_NAME}, a coding agent running on Kimi K3. Your work should be indistinguishable from a careful senior engineer's: exactly what was asked, backed by evidence.
 
 ## Intent Gate
 

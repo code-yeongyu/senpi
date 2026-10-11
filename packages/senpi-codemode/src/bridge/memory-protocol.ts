@@ -24,7 +24,7 @@ export const kernelMemoryReportSchema = Type.Object({
 	approximate: Type.Optional(Type.Boolean()),
 	/** `liveBytes` was measured right after a full collection in this cell. */
 	gcRan: Type.Optional(Type.Boolean()),
-	/** Largest user globals, measured only when live memory after collection reached the notice threshold. */
+	/** Largest user globals, measured after collection or on demand when the host footprint reaches a threshold. */
 	globals: Type.Optional(Type.Array(kernelMemoryGlobalSchema, { maxItems: 8 })),
 	/** Host-set: live memory after collection reached the ceiling; the kernel restarts once its queue drains. */
 	overCeiling: Type.Optional(Type.Boolean()),
@@ -37,6 +37,8 @@ export const kernelMemoryReportSchema = Type.Object({
 /** On-demand heap reading between cells (JS kernels): no cell runs and no collection is forced. */
 export const kernelMemoryQueryHostToKernelSchemas = [
 	Type.Object({ type: Type.Literal("memory-query"), requestId: Type.String({ minLength: 1 }) }),
+	/** Ruby/Julia only: bounded, read-only globals sizing before the owning cell settles. */
+	Type.Object({ type: Type.Literal("memory-globals"), cellId: Type.String({ minLength: 1 }) }),
 ] as const;
 
 export const kernelMemoryQueryKernelToHostSchemas = [
@@ -45,6 +47,11 @@ export const kernelMemoryQueryKernelToHostSchemas = [
 		requestId: Type.String({ minLength: 1 }),
 		liveBytes: Type.Integer({ minimum: 0 }),
 		measure: Type.Literal("heap"),
+	}),
+	Type.Object({
+		type: Type.Literal("memory-globals-result"),
+		cellId: Type.String({ minLength: 1 }),
+		globals: Type.Array(kernelMemoryGlobalSchema, { maxItems: 8 }),
 	}),
 ] as const;
 

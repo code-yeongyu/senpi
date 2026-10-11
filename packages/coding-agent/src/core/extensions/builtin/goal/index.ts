@@ -10,7 +10,7 @@ import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import { GoalDirectInputLifecycle } from "./direct-input-lifecycle.ts";
 import { GoalElapsedTicker } from "./elapsed-ticker.ts";
 import { formatGoalForTool, goalStatusLabel } from "./format.ts";
-import { isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
+import { GOAL_STALE_STOP_NOTICE, isResumeOfStoppedGoal, queueGoalContinuation } from "./lifecycle-helpers.ts";
 import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
@@ -137,6 +137,16 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			clearAgentGoalAccounting();
 		}
 		refreshGoalUi(ctx, goal);
+		// Opening the session earns one reminder; renders and extension reloads do not.
+		// Stale stops retain active status, unlike user-paused or blocking stops.
+		if (
+			(event.reason === "startup" || event.reason === "resume") &&
+			goal?.status === "active" &&
+			goal.continuationStoppedAt !== undefined
+		) {
+			if (ctx.hasUI) ctx.ui.notify(GOAL_STALE_STOP_NOTICE, "info");
+			return;
+		}
 		if (await maybePromptResumeStoppedGoal(pi, ctx, event.reason, goal)) {
 			return;
 		}
@@ -354,6 +364,8 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	}
 
 	function beginAgentGoalAccounting(goal: Goal): void {
+		// Goal usage accrues only while its accounting window is open. A stale stop
+		// excludes extension-driven turns, like other inactive goals, until input or resume.
 		if (goal.status !== "active" || goal.continuationStoppedAt !== undefined) return;
 		if (agentGoalAccounting?.goalId === goal.id) return;
 		turnUsage.discardPending();

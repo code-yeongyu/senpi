@@ -49,6 +49,48 @@ class FakeInterpreter extends EventEmitter {
 	}
 }
 
+class PendingGlobalsInterpreter extends FakeInterpreter {
+	readonly globalsRequested = Promise.withResolvers<void>();
+	#state = 0;
+	#globalsRequests = 0;
+
+	override readonly stdin = {
+		write: (chunk: string): boolean => {
+			const decoded = decodeBridgeFrame(chunk);
+			if (!decoded.ok) return true;
+			const message = decoded.message;
+			if (message.type === "init") this.emitFrame({ type: "ready", memoryGlobals: true });
+			if (message.type === "run") {
+				this.ranCellIds.push(message.cellId);
+				if (message.code === "state = 41") this.#state = 41;
+				this.emitFrame({
+					type: "result",
+					cellId: message.cellId,
+					ok: true,
+					valueRepr: message.code === "state + 1" ? String(this.#state + 1) : "nil",
+					durationMs: 1,
+				});
+			}
+			if (message.type === "memory-globals") {
+				this.#globalsRequests += 1;
+				if (this.#globalsRequests === 1) this.globalsRequested.resolve();
+				else {
+					this.emitFrame({
+						type: "memory-globals-result",
+						cellId: message.cellId,
+						globals: [],
+					});
+				}
+			}
+			return true;
+		},
+	};
+
+	private emitFrame(message: KernelToHostMessage): void {
+		setImmediate(() => this.stdout.write(encodeBridgeFrame(message)));
+	}
+}
+
 describe.each(["rb", "jl"] as const)("SubprocessKernel (%s) memory ceiling", (language) => {
 	it("Given an interpreter footprint over the ceiling with a cell queued behind it when both settle then the queued cell runs on the same interpreter and the next cell on a fresh one", async () => {
 		const spawned: FakeInterpreter[] = [];
@@ -116,6 +158,63 @@ describe.each(["rb", "jl"] as const)("SubprocessKernel (%s) memory ceiling", (la
 			expect(result.memory?.recycled).toBeUndefined();
 		} finally {
 			await kernel.close();
+		}
+	});
+
+	it("Given a finished cell waiting for globals when it is stopped then its result settles and kernel state survives", async () => {
+		const spawned: PendingGlobalsInterpreter[] = [];
+		const kernel = new SubprocessKernel({
+			command: language === "rb" ? "ruby" : "julia",
+			args: [],
+			sessionId: `${language}-memory-stop`,
+			connection: { port: 1, token: "t" },
+			spawn: () => {
+				const interpreter = new PendingGlobalsInterpreter(FAKE_PID_BASE + spawned.length);
+				spawned.push(interpreter);
+				return interpreter;
+			},
+			memory: {
+				language,
+				thresholds: lowered,
+				readFootprint: (pid) => ({ bytes: pid === FAKE_PID_BASE ? 100 * MIB : 10 * MIB }),
+			},
+		});
+		const originalKill = process.kill;
+		let groupSignalAttempts = 0;
+		process.kill = (pid, signal) => {
+			if (pid < 0) {
+				groupSignalAttempts += 1;
+				const error = new Error("no such process");
+				Object.assign(error, { code: "ESRCH" });
+				throw error;
+			}
+			return originalKill(pid, signal);
+		};
+		try {
+			const cell = kernel.run({ cellId: "finished", code: "state = 41" });
+			const first = spawned[0];
+			if (!first) throw new Error("missing first interpreter");
+			await first.globalsRequested.promise;
+			const interrupted = await kernel.interrupt("stopped", "finished");
+			const result = await cell;
+			const retained = await interrupted.stateRetained;
+			const next = await kernel.run({ cellId: "next", code: "state + 1" });
+
+			console.log(
+				`STOP ${language} ok=${result.ok} retained=${retained} groupSignals=${groupSignalAttempts} next=${next.ok ? next.valueRepr : "error"}`,
+			);
+			expect(result).toMatchObject({
+				ok: true,
+				memory: { liveBytes: 100 * MIB, notice: expect.any(String) },
+			});
+			expect(result.memory?.globals).toBeUndefined();
+			expect(retained).toBe(true);
+			expect(groupSignalAttempts).toBe(0);
+			expect(next).toMatchObject({ ok: true, valueRepr: "42" });
+			expect(spawned).toHaveLength(1);
+		} finally {
+			await kernel.close();
+			process.kill = originalKill;
 		}
 	});
 });

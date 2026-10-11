@@ -52,7 +52,8 @@ const DRAIN_POLL_MS = 50;
 export async function retireIdleLegacyHost(
 	paths: HostDaemonPaths,
 	probe: (pid: number) => Promise<string | undefined>,
-	drainTimeoutMs: number,
+	// A legacy drain has no supervised-child breaker: preserve its existing refusal bound.
+	drainTimeoutMs: number = LEGACY_PROBE_TIMEOUT_MS,
 ): Promise<string | undefined> {
 	const judged = await judgeLegacyHost(paths, probe);
 	if (judged.verdict === "absent") return undefined;

@@ -1,3 +1,39 @@
+## 2026-10-09 - Stale goal display projects paused status (senpi#3026)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/threads/goal-wire.ts`: uses the builtin goal's display-status projection so a stale-stopped goal reports `ThreadGoal.status: "paused"` while retaining its committed tokens/time. Other statuses and the generated protocol shape are unchanged.
+
+### Why
+
+The app-server wire shape has no separate stale-stop status. Reporting active while goal accounting and continuation are stopped misleads desktop clients.
+
+### Why an extension could not handle it
+
+The thread-goal adapter owns the app-server response and notification projection outside the extension renderer.
+
+### Expected merge conflict zones
+
+`threads/goal-wire.ts` status mapping. Keep this projection read-only; the stored active-plus-marker state still governs accepted-input/resume behavior.
+
+## 2026-10-09 - Explicit UTC process identity probes (senpi#3045)
+
+### What changed
+
+- `packages/coding-agent/src/modes/app-server/daemon/process.ts`: `readProcessIdentity` accepts an opt-in UTC timezone, pins `TZ=UTC` and the C locale for that OS query, and marks POSIX timestamps as UTC. Existing daemon callers keep their local-time format; Windows identities remain FILETIME.
+
+### Why
+
+RPC owner records cross launch environments. A supervisor that drops its caller's TZ must not read the same live process as a different start time.
+
+### Why an extension could not handle it
+
+The OS process-identity query is shared engine infrastructure outside extension callbacks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/app-server/daemon/process.ts`: `readProcessIdentity` parameters, query environment and timestamp projection.
+
 ## 2026-10-08 - Shared start-time identity parser and tolerance (senpi#2951)
 
 ### What changed

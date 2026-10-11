@@ -1,3 +1,22 @@
+## 2026-10-10 - Unsubscribe the control-inventory listeners on a reload, not only on quit
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the shared-service (`sessionOwned === false`) `session_shutdown` handler now runs `disposeControlInventory()` for every reason, including `reload`. It used to skip it on a reload.
+
+### Why
+
+- The reload builds a new runner, and the new factory subscribes `onWireStatusChanged` and the control-inventory request again. The old subscription stayed in the process-wide service's `#wireStatusListeners`, and its closure holds the old `pi`, so the old `ExtensionRunner` and everything it reaches stayed alive: one extension generation per reload. A heap snapshot after 20 reloads showed all 20 old runners reachable from the service's listener set; with every other builtin enabled and `mcp` disabled none were.
+- Every config-reload (any watched settings or `omo.jsonc` edit) reloads every live session, so a long-lived RPC worker grew by tens of MB per reload. Workers that went through a reload loop held 15GB.
+
+### Why an extension could not handle it
+
+- The leak is the MCP builtin's own subscription lifetime; nothing outside it can unsubscribe its listeners.
+
+### Expected merge conflict zones
+
+- The `session_shutdown` handler in `createMcpExtension` in `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`.
+
 ## 2026-10-08 - Resolve and spawn each session's MCP servers with its own trust, env and agent dir (senpi#2986)
 
 ### What changed

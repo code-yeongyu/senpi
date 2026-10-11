@@ -83,7 +83,7 @@ describe("on-demand memory report (#2561)", () => {
 		const reply = await host.request({ type: "memory_report" });
 
 		expect(reply).toMatchObject({ success: false, command: "memory_report" });
-		expect(host.stderr()).toContain("memory report");
+		await host.waitForStderr("memory report", 10_000);
 		await expect(host.request({ type: "get_state" })).resolves.toMatchObject({ success: true });
 	}, 120_000);
 

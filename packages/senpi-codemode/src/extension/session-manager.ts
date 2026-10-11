@@ -24,7 +24,7 @@ import {
 } from "./kernel-registration.ts";
 import type { RegisteredKernelSource } from "./kernel-registry.ts";
 import { ReplaceableKernel } from "./kernel-replacement.ts";
-import { assertSessionCwdAvailable } from "./session-cwd.ts";
+import { assertSessionCwdAvailable, assertSessionCwdAvailableSync } from "./session-cwd.ts";
 import type {
 	BridgeEndpoint,
 	CodemodeSessionManager,
@@ -114,7 +114,7 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 		this.#onMessageRefs.set(language, onMessage);
 		const existing = this.#kernels.get(language);
 		if (existing) {
-			await assertSessionCwdAvailable(this.#options.cwd);
+			assertSessionCwdAvailableSync(this.#options.cwd);
 			return existing;
 		}
 		const pending = this.#kernelCreations.get(language);

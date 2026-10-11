@@ -4,6 +4,7 @@ import { createInterface } from "node:readline";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
 import type { RequiredRuntime, RunPlan } from "./bench-run.ts";
+import { CPU_BOUNDARY } from "./bench-cpu-contract.ts";
 
 const repSchema = Type.Object({
 	cpuMs: Type.Number(),
@@ -16,6 +17,7 @@ const repSchema = Type.Object({
 	),
 });
 const runtimeReportSchema = Type.Object({
+	cpuBoundary: Type.Literal(CPU_BOUNDARY),
 	hostRuntime: Type.Union([Type.Literal("bun"), Type.Literal("node")]),
 	hostVersion: Type.String(),
 	runtimeVersion: Type.String(),

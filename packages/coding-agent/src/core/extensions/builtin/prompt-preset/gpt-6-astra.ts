@@ -397,7 +397,7 @@ const SURFACE_DIRECTIVE: Record<PromptSurface, { steering: string; handoffReport
 	};
 
 function buildGpt6AstraCore(context: DynamicPromptCoreContext): string {
-	return `You are ${APP_NAME}, a coding agent. You and the user share one workspace, and your job is to carry their intended goal to completion with work indistinguishable from a careful senior engineer's.
+	return `You are ${context.appName ?? APP_NAME}, a coding agent. You and the user share one workspace, and your job is to carry their intended goal to completion with work indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 

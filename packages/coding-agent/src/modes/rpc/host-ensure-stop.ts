@@ -17,14 +17,21 @@ import type { HostStopSender } from "./host-crash-record.ts";
 import type { HostGenerationPaths } from "./host-daemon-paths.ts";
 import type { ChildExit } from "./host-readiness.ts";
 import { activeStopProgress, childStalledStopMaxMs } from "./host-stalled-evidence.ts";
-import { type HostStopIntent, readStopIntent, writeStopIntent } from "./host-stop-intent.ts";
+import {
+	CHILD_KILL_EXIT_TIMEOUT_MS,
+	CHILD_STOP_TIMEOUT_MS,
+	type HostStopIntent,
+	readStopIntent,
+	writeStopIntent,
+} from "./host-stop-intent.ts";
 
-export const DEFAULT_STOP_TIMEOUT_MS = 10_000;
+export const DEFAULT_STOP_TIMEOUT_MS =
+	Math.max(CHILD_STOP_TIMEOUT_MS, childStalledStopMaxMs()) + CHILD_KILL_EXIT_TIMEOUT_MS + 5_000;
 export const SIGKILL_GRACE_MS = 2_000;
 /** A stop-progress report older than this is a supervisor that stopped reporting, not one still waiting. */
 const STOP_PROGRESS_FRESH_MS = 10_000;
 /** After a reported stall wait ends, the supervisor still escalates, records and exits: one more window. */
-const AFTER_STALL_WAIT_GRACE_MS = 5_000;
+const AFTER_STALL_WAIT_GRACE_MS = CHILD_KILL_EXIT_TIMEOUT_MS + 5_000;
 /**
  * The longest a SIGTERM wait here can run: the ordinary window, or a supervisor's reported stall wait. The
  * stall wait is read from the same `SENPI_RPC_CHILD_STALLED_STOP_MAX_MS` the supervisor bounds itself by, so
@@ -93,7 +100,19 @@ export async function stopSpawnedChild(
 	const exited = () => child.exitCode !== null || child.signalCode !== null;
 	const pid = child.pid;
 	if (exited() || pid === undefined) return;
-	const waitFor = (ms: number) => Promise.race([childExit.then(() => true), delay(ms).then(() => exited())]);
+	const waitFor = async (ms: number): Promise<boolean> => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			return await Promise.race([
+				childExit.then(() => true),
+				new Promise<boolean>((resolve) => {
+					timer = setTimeout(() => resolve(exited()), ms);
+				}),
+			]);
+		} finally {
+			clearTimeout(timer);
+		}
+	};
 	const announced = await announceStop(target, pid);
 	signalPid(pid, "SIGTERM");
 	if (await waitWhileSupervisorReports(target, termTimeoutMs, waitFor)) return;

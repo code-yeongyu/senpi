@@ -1,3 +1,22 @@
+## 2026-10-10 - Session control CLI over the shared host (senpi#3073)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command.ts`: `resolveHostSocket` is exported (no behavior change) and the usage text gains one `session <open|close|model|prompt|steer|abort|read|state|list|wait> ...` line.
+- `packages/coding-agent/src/cli/deferred-commands.ts`: `dispatchHostCommand` routes `senpi host session <sub>` to a lazily-imported `host-session-command.ts` before falling into the existing `host-command.ts` path, keeping the RPC client graph out of every other `host` subcommand's module load.
+
+### Why
+
+An orchestrating agent or script that drives senpi sessions had to write its own RPC client against `packages/coding-agent/src/modes/rpc/rpc-client.ts` and scrape terminal panes; `senpi host session <sub>` gives it one process-level command per operation with one JSON line of output.
+
+### Why an extension could not handle it
+
+Command routing, process exit codes and the lazy-import boundary that keeps `senpi host status` from loading the RPC client graph are CLI dispatch concerns that run before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `session` dispatch branch in `deferred-commands.ts` and the one `session` USAGE line plus the `resolveHostSocket` export in `host-command.ts`.
+
 ## 2026-10-08 - Selected-session startup warning (senpi#2951)
 
 ### What changed

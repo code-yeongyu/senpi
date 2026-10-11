@@ -35,8 +35,8 @@ describe("FooterComponent fast mode indicator", () => {
 		const rendered = renderFooter(footer, 120);
 
 		// then
-		expect(rendered).toContain(`${LIGHTNING} gpt-5.6-sol:medium`);
-		expect(rendered).toContain(`(chatgpt-subscription) ${LIGHTNING} gpt-5.6-sol:medium`);
+		expect(rendered).toContain(`${LIGHTNING} gpt-5.6-sol • effort medium`);
+		expect(rendered).toContain(`(chatgpt-subscription) ${LIGHTNING} gpt-5.6-sol • effort medium`);
 	});
 
 	it("leaves the model label alone while fast mode is off", () => {
@@ -55,7 +55,7 @@ describe("FooterComponent fast mode indicator", () => {
 		const rendered = renderFooter(footer, 120);
 
 		// then
-		expect(rendered).toContain("gpt-5.6-sol:medium");
+		expect(rendered).toContain("gpt-5.6-sol • effort medium");
 		expect(rendered).not.toContain(LIGHTNING);
 	});
 

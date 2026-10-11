@@ -159,6 +159,8 @@ export async function readProcessIdentity(
 	platform: NodeJS.Platform = process.platform,
 	timeoutMs?: number,
 	isLive: (pid: number) => boolean = processIsLive,
+	/** Owner records cross launch environments; legacy pidfiles keep their existing local-time format. */
+	timeZone?: "UTC",
 ): Promise<ProcessIdentityResult> {
 	const command =
 		platform === "win32"
@@ -180,7 +182,9 @@ export async function readProcessIdentity(
 			{
 				windowsHide: true,
 				...(effectiveTimeoutMs === undefined ? {} : { timeout: effectiveTimeoutMs }),
-				...(platform === "win32" ? {} : { env: { ...process.env, LC_ALL: "C", LANG: "C" } }),
+				...(platform === "win32" && timeZone === undefined
+					? {}
+					: { env: { ...process.env, LC_ALL: "C", LANG: "C", ...(timeZone ? { TZ: timeZone } : {}) } }),
 			},
 			(error, stdout) => {
 				if (error) {
@@ -199,7 +203,7 @@ export async function readProcessIdentity(
 				if (output === "__SENPI_ABSENT__") return resolve({ kind: "absent" });
 				if (!output || (platform === "win32" && !/^\d+$/.test(output)))
 					return resolve({ kind: "error", error: new Error("invalid process identity output") });
-				resolve({ kind: "present", identity: output });
+				resolve({ kind: "present", identity: timeZone && platform !== "win32" ? `${output} UTC` : output });
 			},
 		).once("error", (error) => resolve({ kind: "error", error }));
 	});

@@ -94,7 +94,7 @@ describe("tool_schema('eval:*') virtual entries", () => {
 		]) {
 			expect(description).toContain(text);
 		}
-		const properties = (parameters as { properties: Record<string, unknown> }).properties;
+		const properties = propertiesOf(parameters);
 		expect(properties["packages.install"]).toEqual({
 			description: "js and py: packages.install(manager, requirements, {timeout?}) (py: timeout=...)",
 		});

@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readProcessStartTime } from "../app-server/daemon/process.ts";
+import { readProcessIdentity, readProcessStartTime } from "../app-server/daemon/process.ts";
 import { writeJsonAtomic } from "./host-state-json.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
 
@@ -49,7 +49,9 @@ export async function createInternalSocketPath(
 /** Best-effort, 0600, by rename; released with the generation directory. */
 export async function recordChildPid(file: string, pid: number): Promise<void> {
 	try {
-		const processStartTime = (await readProcessStartTime(pid).catch(() => undefined)) ?? null;
+		const identity = await readProcessIdentity(pid, process.platform, 1_000, undefined, "UTC");
+		const processStartTime = identity.kind === "present" ? identity.identity : null;
+		if (processStartTime === null) supervisorLog(`host child pid ${pid} start time unreadable at recording`);
 		await writeJsonAtomic(file, { pid, processStartTime });
 	} catch (cause) {
 		supervisorLog(`could not record the host child pid: ${errorMessage(cause)}`);

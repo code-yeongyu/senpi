@@ -34,7 +34,6 @@ import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts"
 import { createMcpExtension } from "./extensions/builtin/mcp/index.ts";
 import { McpService } from "./extensions/builtin/mcp/service.ts";
 import {
-	clearExtensionCache,
 	createExtensionRuntime,
 	type ExtensionFactoryResolver,
 	loadExtensionFromFactory,
@@ -749,12 +748,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		resetTimings("extensions");
 
 		// A re-load of this loader is the signal that disk may have changed - it
-		// discards the extension cache, and it must not read package resolution
-		// through the host memo either (a package's own manifest is not in the key).
+		// must not read package resolution through the host memo (a package's own
+		// manifest is not in the key). The extension module cache needs no clearing:
+		// it drops its generation itself when a compiled source file changes, and
+		// clearing it here compiled an unevictable module graph on every reload.
 		const refresh = this.loaded;
-		if (refresh) {
-			clearExtensionCache();
-		}
 		this.ensureGlobalDefaultExtensions();
 		let preTrustExtensions: LoadExtensionsResult | undefined;
 		if (options?.resolveProjectTrust) {

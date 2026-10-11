@@ -60,7 +60,7 @@ The line keeps your reading transparent; only the user's explicit request commit
 };
 
 function buildClaudeFable5Core(context: DynamicPromptCoreContext): string {
-	return `You are ${APP_NAME}, a coding agent. Your work should be indistinguishable from a careful senior engineer's.
+	return `You are ${context.appName ?? APP_NAME}, a coding agent. Your work should be indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 

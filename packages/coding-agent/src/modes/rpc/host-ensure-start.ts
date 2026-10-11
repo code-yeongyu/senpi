@@ -6,7 +6,7 @@ import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../app-server/daemon/process.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
-import { writeHostSettings } from "./host-daemon-state.ts";
+import { callerHostOwner, writeHostOwner, writeHostSettings } from "./host-daemon-state.ts";
 import { HOST_PROTOCOL_VERSION, REQUIRED_HOST_CAPABILITIES } from "./host-decision.ts";
 import { hostChildArgv, isCompatible } from "./host-ensure-client.ts";
 import {
@@ -24,6 +24,7 @@ import {
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
+import { keepOwnerPipe, OWNER_WATCH_FD } from "./host-lifecycle-launch.ts";
 import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
@@ -43,6 +44,7 @@ export async function startHost(
 	generation = 0,
 ): Promise<EnsuredHost> {
 	const testOptions = options._test;
+	const lifetimeOwner = options.owner ? await callerHostOwner() : null;
 	// The generation this ensure is about to spawn, chosen HERE so its directory exists before the
 	// host boots and the pointer can name it the moment the host is registered.
 	const instanceId = randomUUID();
@@ -64,6 +66,7 @@ export async function startHost(
 		generation,
 		instanceId,
 	});
+	await writeHostOwner(generationPaths(paths, instanceId).dir, lifetimeOwner);
 	// A stranded generation is still writing its diagnostics here; only a fresh endpoint starts over.
 	const stderr = await open(paths.stderrLog, generation === 0 ? "w" : "a", 0o600);
 	let pidFile: DaemonPidFile | undefined;
@@ -71,7 +74,12 @@ export async function startHost(
 	let exitedEarly: ChildExit | undefined;
 	let childExit: Promise<ChildExit> | undefined;
 	try {
-		const supervisorArgs = ["--socket", socket, ...(options.hostArgs ?? [])];
+		const supervisorArgs = [
+			"--socket",
+			socket,
+			...(options.owner ? ["--owner-fd", String(OWNER_WATCH_FD)] : []),
+			...(options.hostArgs ?? []),
+		];
 		const launch = testOptions?.spawn ?? testOptions?.launch?.(supervisorArgs) ?? defaultHostLaunch(supervisorArgs);
 		child = spawn(launch.command, [...launch.args], {
 			detached: true,
@@ -83,7 +91,7 @@ export async function startHost(
 				instanceId,
 				generation,
 			}),
-			stdio: ["ignore", "ignore", stderr.fd],
+			stdio: options.owner ? ["ignore", "ignore", stderr.fd, "pipe"] : ["ignore", "ignore", stderr.fd],
 		});
 		childExit = new Promise((resolveExit) => {
 			child!.once("exit", (code, signal) => {
@@ -91,6 +99,7 @@ export async function startHost(
 				resolveExit(exitedEarly);
 			});
 		});
+		if (options.owner) keepOwnerPipe(child);
 		if (child.pid === undefined) throw new Error("failed to spawn RPC socket host");
 		const probe = testOptions?.readProcessStartTime ?? readProcessStartTime;
 		const observedStartTime = await Promise.race([

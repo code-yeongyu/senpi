@@ -8,7 +8,7 @@ import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
-import { SupervisorActivity } from "./host-lifecycle-activity.ts";
+import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import {
 	HOST_CHILD_WATCH_FD,
@@ -100,11 +100,13 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		publicSocketIdentity: undefined,
 		endpointReplaced: false,
 	};
+	const owner = new SupervisorOwner(generation.dir);
 	const activity = new SupervisorActivity({
 		idleExitMs: policy.coldStart === "persistent" ? Number.POSITIVE_INFINITY : policy.idleExitMs,
 		internalSocket,
 		...(internalSecret ? { internalSecret } : {}),
 		settled: () => state.shuttingDown,
+		onActivity: () => owner.activity(),
 	});
 	const watchers: Array<() => void> = [];
 
@@ -159,16 +161,30 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		clients: activity.clients,
 		refusing: () => state.shuttingDown || drain.active,
 		onDetach: () => activity.refresh(),
+		onAdmit: () => owner.activity(),
 	});
 	server.once("error", (cause) => {
 		if (!state.shuttingDown) void shutdown(`public socket listener failed: ${errorMessage(cause)}`, 1);
 	});
 	const tickIntervalMs = Math.max(20, Math.min(1_000, policy.idleExitMs / 4));
+	let ownerCheck = false;
 	const ticker = setInterval(() => {
 		if (!drain.active && activity.refresh() === "exit" && activity.clients.unclassifiedCount === 0)
 			void shutdown("idle", 0);
+		if (!ownerCheck && !state.shuttingDown && !drain.active) {
+			ownerCheck = true;
+			void owner
+				.shouldExit(activity)
+				.then((exit) => {
+					if (exit && !state.shuttingDown && !drain.active) void shutdown("owner_gone", 0);
+				})
+				.finally(() => {
+					ownerCheck = false;
+				});
+		}
 	}, tickIntervalMs);
 	watchers.push(() => clearInterval(ticker));
+	watchers.push(() => owner.stop());
 
 	const teardown: SupervisorShutdown = {
 		paths,
@@ -198,6 +214,11 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
 	try {
+		// Direct supervisor launches predate owner records and may have no generation directory.
+		// Ensured starts create it before spawning and always carry an explicit owner/null record.
+		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
+			await owner.start(launch.ownerFd);
+		}
 		await waitForListener(internalSocket, 30_000, internalSecret);
 		await activity.openObserver();
 		await prepareSocketPath(bindSocket);

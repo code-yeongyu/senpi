@@ -604,3 +604,21 @@ All changes are within `extensions/builtin/prompt-preset/` and the matching test
 ### Expected merge conflict zones
 
 - `presets.ts`, `settings.ts`: If upstream renames or reshapes the preset settings. Resolution: keep the model-named taxonomy.
+
+## 2026-10-11 - Public Native prompt generation for adapters (#3104)
+
+### What changed
+
+`packages/coding-agent/src/core/dynamic-prompt/build.ts` forwards an optional host name to model cores, and `packages/coding-agent/src/core/dynamic-prompt/identity.ts` preserves the configured Native brand when it is omitted.
+
+### Why
+
+Hosts must reuse Native content without mutating global branding.
+
+### Why an extension could not handle it
+
+Core rendering receives these inputs before extension appends.
+
+### Expected merge conflict zones
+
+The builder option/context interfaces and default identity construction.

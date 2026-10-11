@@ -23,6 +23,7 @@ export type Verdict = "PASS" | "FAIL" | "INCONCLUSIVE" | "REFUSED";
 export type RowVerdict = "PASS" | "FAIL" | "NOISE-LIMITED";
 
 export interface Rep {
+	/** Host CPU plus per-interpreter post-result live/exit deltas, all in milliseconds. */
 	readonly cpuMs: number;
 	readonly wallMs: number;
 	readonly p95Ms?: number;

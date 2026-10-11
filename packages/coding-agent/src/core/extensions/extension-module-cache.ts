@@ -15,12 +15,13 @@
  * @module core/extensions/extension-module-cache
  */
 
-import { statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 export type ExtensionModuleImporter = {
 	import(path: string, options: { default: true }): Promise<unknown>;
-	/** Source files this importer compiled; absent on importers that cannot report them. */
-	compiledFiles?: () => readonly string[];
+	/** SHA-256 of the exact source strings compiled, including dependencies imported later. */
+	compiledSources?: () => ReadonlyMap<string, string>;
 	dispose?: () => void;
 };
 
@@ -31,7 +32,6 @@ type CachedFactory = (...args: never[]) => unknown;
 interface Generation {
 	readonly importer: ExtensionModuleImporter;
 	readonly factories: Map<string, CachedFactory>;
-	readonly fingerprints: Map<string, string>;
 }
 
 let generation: Generation | undefined;
@@ -40,8 +40,7 @@ let generationsCreated = 0;
 
 function fingerprintOf(file: string): string | undefined {
 	try {
-		const stats = statSync(file, { bigint: true });
-		return `${stats.mtimeNs}:${stats.size}`;
+		return createHash("sha256").update(readFileSync(file, "utf8")).digest("hex");
 	} catch {
 		return undefined;
 	}
@@ -49,7 +48,7 @@ function fingerprintOf(file: string): string | undefined {
 
 /** Stale means a file this generation already compiled changed or disappeared. */
 function sourcesUnchanged(live: Generation): boolean {
-	for (const [file, fingerprint] of live.fingerprints) {
+	for (const [file, fingerprint] of live.importer.compiledSources?.() ?? []) {
 		if (fingerprintOf(file) !== fingerprint) return false;
 	}
 	return true;
@@ -67,18 +66,6 @@ function dropGeneration(): void {
 }
 
 /**
- * The compiled set GROWS during normal use - extensions import lazily long after their factory was
- * built - so newly seen files join the fingerprint instead of counting as a change.
- */
-function absorbNewlyCompiled(live: Generation): void {
-	for (const file of live.importer.compiledFiles?.() ?? []) {
-		if (live.fingerprints.has(file)) continue;
-		const fingerprint = fingerprintOf(file);
-		if (fingerprint !== undefined) live.fingerprints.set(file, fingerprint);
-	}
-}
-
-/**
  * The cached factory for this source, or `undefined` when it must be compiled.
  *
  * A source change invalidates the whole generation: its modules already reference each other, so
@@ -90,7 +77,6 @@ export function cachedExtensionFactory(resolvedPath: string): CachedFactory | un
 		dropGeneration();
 		return undefined;
 	}
-	absorbNewlyCompiled(generation);
 	return generation.factories.get(resolvedPath);
 }
 
@@ -100,7 +86,7 @@ export async function extensionModuleImporter(
 ): Promise<ExtensionModuleImporter> {
 	if (generation) return generation.importer;
 	pendingImporter ??= create().then((importer) => {
-		generation = { importer, factories: new Map(), fingerprints: new Map() };
+		generation = { importer, factories: new Map() };
 		generationsCreated++;
 		pendingImporter = undefined;
 		return importer;
@@ -109,7 +95,8 @@ export async function extensionModuleImporter(
 }
 
 /**
- * Remember a freshly compiled factory and re-read the generation's source fingerprints.
+ * Remember a freshly compiled factory. Source identity belongs to the importer: reading disk
+ * here would label an old compiled module with newer bytes if a dependency changed meanwhile.
  *
  * `compiledBy` is the importer that produced the factory: a load already in flight when a source
  * change dropped the generation must not file its result under the successor, whose fingerprint
@@ -121,9 +108,8 @@ export function rememberExtensionFactory(
 	compiledBy: ExtensionModuleImporter,
 ): void {
 	if (!generation || generation.importer !== compiledBy) return;
-	if (generation.importer.compiledFiles === undefined) return;
+	if (generation.importer.compiledSources === undefined) return;
 	generation.factories.set(resolvedPath, factory);
-	absorbNewlyCompiled(generation);
 }
 
 export function clearExtensionCache(): void {

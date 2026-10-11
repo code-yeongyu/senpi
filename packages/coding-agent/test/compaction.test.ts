@@ -274,6 +274,7 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		isProjectTrusted: () => true,
 		sessionManager: Object.assign(Object.create(null), {
 			getEntries: () => [],
+			getBranch: () => [],
 		}) as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,

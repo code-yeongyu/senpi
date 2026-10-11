@@ -29,6 +29,9 @@ import type { Goal } from "./types.ts";
 
 type ContinuingGoalContinuationVerdict = Extract<GoalContinuationVerdict, { kind: "continue" }>;
 
+export const GOAL_STALE_STOP_NOTICE =
+	"Goal auto-continuation stopped because progress is stale. Send a message or run /goal resume to continue.";
+
 type GoalContinuationDeliveryOptions = {
 	readonly input: Omit<GoalContinuationInput, "goal">;
 	readonly content: (verdict: ContinuingGoalContinuationVerdict) => string;
@@ -195,6 +198,7 @@ async function handleDeniedContinuation(
 	);
 	if (!stopped.recorded) return stopped.goal;
 	// Preserve the guard's existing side effects even if publishing the additive entries fails.
+	if (reason === "stale" && ctx.hasUI) ctx.ui.notify(GOAL_STALE_STOP_NOTICE, "info");
 	if (blockedReason !== undefined) {
 		if (ctx.hasUI) ctx.ui.notify(continuationCapRecoveryHint(blockedReason), "warning");
 		pi.events?.emit("goal_continuation_guard_tripped", {

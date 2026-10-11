@@ -67,7 +67,8 @@ describe("daemon state directory v2", () => {
 		expect(stopped.action).toBe("stopped");
 		if (stopped.action === "stopped") expect(await waitForPidGone(stopped.pid, 10_000)).toBe(true);
 
-		await expect(stat(join(qa.daemonDir, "host.pid"))).rejects.toMatchObject({ code: "ENOENT" });
+		// This fixture is not a supervisor: stop leaves its pointer until a later ensure prunes it.
+		await stat(join(qa.daemonDir, "host.pid"));
 		expect(await readFile(identity, "utf8")).toBe(written);
 		// A later ensure re-asserts the identity without rewriting it.
 		await ensureFixtureHost(qa);
@@ -101,7 +102,7 @@ describe("daemon state directory v2", () => {
 		expect(await permissions(join(qa.daemonDir, pointer.generation_dir as string, "host.pid"))).toBe(0o600);
 	}, 20_000);
 
-	it("clears the pointer when the host is stopped and leaves the generation its stop intent", async () => {
+	it("leaves ownership and the stop intent for the supervisor to release after child exit", async () => {
 		const qa = await sandbox("stop");
 		const running = await registerManagedHost(qa);
 
@@ -109,7 +110,7 @@ describe("daemon state directory v2", () => {
 
 		expect(result).toEqual({ action: "stopped", pid: running.pid });
 		expect(await waitForPidGone(running.pid, 10_000)).toBe(true);
-		await expect(stat(join(qa.daemonDir, "host.pid"))).rejects.toMatchObject({ code: "ENOENT" });
+		await stat(join(qa.daemonDir, "host.pid"));
 		// senpi#2566: the generation directory is the stopped supervisor's to release, after it has recorded its
 		// child's end from this intent; this fixture host is no supervisor, so gc reaps the directory instead.
 		expect(await readJson(join(qa.daemonDir, "generations", running.instanceId, "stop-intent.json"))).toMatchObject({

@@ -99,6 +99,10 @@ jobs:
       - name: Check
         run: npm run check
 
+      - name: Real CLI text-tool recovery self-test
+        timeout-minutes: 5
+        run: node .agents/skills/senpi-qa/scripts/mock-loop.mjs --self-test --api anthropic-messages
+
       - name: Build workspace package entries
         run: npm run build
 
@@ -453,6 +457,53 @@ jobs:
           done
         working-directory: packages/coding-agent
 
+  # omo#7691: a bash-tool command whose node starts its own child must not open a visible console when senpi
+  # runs without one. The probe detaches its own console (an IDE/GUI-launched host), so only a Windows runner
+  # can measure it; the JSON check fails the job if the suite was skipped instead of run.
+  bash-grandchild-console-windows:
+    name: Bash grandchild consoles (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run the bash grandchild console probe
+        shell: bash
+        run: bunx vitest run test/bash-grandchild-console-windows.test.ts --reporter=verbose --reporter=json --outputFile=vitest-console.json
+        working-directory: packages/coding-agent
+        env:
+          SENPI_CONSOLE_PROBE_RESULTS: console-probe-results.jsonl
+
+      - name: Require the console probe to have executed
+        if: always()
+        shell: bash
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-console.json", "utf8"));
+            const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith("bash-grandchild-console-windows.test.ts"));
+            const ran = file ? file.assertionResults.filter((a) => a.status === "passed" || a.status === "failed").length : 0;
+            console.log("bash grandchild console probe cases run=" + ran);
+            if (ran !== 12) process.exit(1);
+          '
+          echo "--- raw console probe results ---"
+          cat console-probe-results.jsonl || echo "(no results file)"
+        working-directory: packages/coding-agent
+
   # senpi#2248: Bun builds Chrome-backed WebViews only on the process main thread, so eval cells
   # reach them through the main-thread service. The suites need Bun and a real Chrome (preinstalled
   # on hosted runners) and are skipped elsewhere; the JSON check fails the job if they were skipped.
@@ -504,8 +555,8 @@ jobs:
             kill "$suite" 2>/dev/null || true
             exit 1
           fi
-          wait "$suite"
-          status=$?
+          status=0
+          wait "$suite" || status=$?
           cat "$out"
           exit "$status"
         working-directory: packages/senpi-codemode
@@ -740,6 +791,41 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  rpc-owner-lifetime:
+    name: RPC supervisor exit (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Require the POSIX exit-event compiler
+        shell: bash
+        run: |
+          command -v cc >/dev/null || { echo "::error::Missing C compiler 'cc' on PATH for POSIX process-exit tests"; exit 1; }
+          cc --version
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Build workspace package entries
+        run: npm run build
+      - name: Supervisor owner, normal-stop and compiler regressions
+        working-directory: packages/coding-agent
+        run: >
+          npx vitest run
+          test/suite/regressions/3044-rpc-owner-lifetime.test.ts
+          test/suite/regressions/3045-owner-review.test.ts
+          test/suite/regressions/3054-supervisor-child-exit.test.ts
+          test/suite/regressions/3054-process-exit-compiler.test.ts
+          test/suite/regressions/3054-legacy-drain-deadline.test.ts
+
   # Fan-in gate carrying the exact context name branch protection requires
   # ("Check and test"). It succeeds only when every check/test job above passed,
   # so the required-status contract is unchanged while the work runs in parallel.
@@ -750,6 +836,7 @@ jobs:
         check,
         codemode-gate,
         test-coding-agent,
+        rpc-owner-lifetime,
         grep-native-contract,
         hooks-trust-storage-windows,
         schedule-windows,
@@ -758,6 +845,7 @@ jobs:
         claude-executable-windows,
         webview-kernel,
         python-kernel-windows,
+        bash-grandchild-console-windows,
         test-workspaces,
       ]
     if: always()
@@ -785,6 +873,7 @@ jobs:
             echo "- check: ${{ needs.check.result }}"
             echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- rpc-owner-lifetime: ${{ needs.rpc-owner-lifetime.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"
             echo "- hooks-trust-storage-windows: ${{ needs.hooks-trust-storage-windows.result }}"
             echo "- schedule-windows: ${{ needs.schedule-windows.result }}"
@@ -793,6 +882,7 @@ jobs:
             echo "- claude-executable-windows: ${{ needs.claude-executable-windows.result }}"
             echo "- webview-kernel: ${{ needs.webview-kernel.result }}"
             echo "- python-kernel-windows: ${{ needs.python-kernel-windows.result }}"
+            echo "- bash-grandchild-console-windows: ${{ needs.bash-grandchild-console-windows.result }}"
             echo "- test-workspaces: ${{ needs.test-workspaces.result }}"
           } >> "$GITHUB_STEP_SUMMARY"
 

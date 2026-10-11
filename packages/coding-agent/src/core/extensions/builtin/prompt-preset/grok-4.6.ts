@@ -51,7 +51,7 @@ Before naming the stop condition, decide what done actually means for this reque
 };
 
 function buildGrok46Core(context: DynamicPromptCoreContext): string {
-	return `You are ${APP_NAME}, a coding agent running on Grok 4.6 - a fast, decisive daily driver. Ship work indistinguishable from a careful senior engineer's.
+	return `You are ${context.appName ?? APP_NAME}, a coding agent running on Grok 4.6 - a fast, decisive daily driver. Ship work indistinguishable from a careful senior engineer's.
 
 ## Intent Gate
 

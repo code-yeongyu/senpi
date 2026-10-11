@@ -9,6 +9,29 @@ import { fileURLToPath } from "node:url";
 import { checkPrChangelog } from "./check-pr-changelog.mjs";
 import { CHANGELOGS, reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
 
+// #3126: restoring shipped section bytes is the only exception to released immutability.
+describe("tagged released section restoration", () => {
+	const path = "packages/ai/CHANGELOG.md";
+	const tagged = "## [2026.9.20] - 2026-09-20\n\n### Fixed\n\n- published\n";
+	const before = `${tagged}- accidentally added after release\n`;
+	for (const [name, after, taggedSections, pass] of [
+		["restores the exact tagged section", tagged, { "2026.9.20": tagged }, true],
+		["rejects a section matching neither base nor tag", tagged.replace("- published", "- changed"), { "2026.9.20": tagged }, false],
+		["rejects restoration without a tag", tagged, {}, false],
+		["rejects a whitespace difference from the tag", `${tagged}\n`, { "2026.9.20": tagged }, false],
+	]) {
+		it(name, () => {
+			const result = checkPrChangelog({
+				changedFiles: [path],
+				labels: [],
+				changelogChanges: [{ path, before, after, taggedSections }],
+			});
+			assert.equal(result.pass, pass, result.reason);
+			if (!pass) assert.match(result.reason, /released section \[2026\.9\.20\] changed/);
+		});
+	}
+});
+
 describe("check-pr-changelog gate", () => {
 	it("fails when runtime package source changes without a changelog entry", () => {
 		// Given
@@ -31,6 +54,7 @@ describe("check-pr-changelog gate", () => {
 
 		// Then
 		assert.equal(result.pass, true);
+		assert.deepEqual(result.violations, []);
 	});
 
 	it("passes when runtime source changes carry the no-changelog label", () => {
@@ -131,6 +155,37 @@ describe("check-pr-changelog gate", () => {
 	});
 });
 
+it("returns every released-section, tracker, and Unreleased-removal violation", () => {
+	const paths = ["packages/ai/CHANGELOG.md", "packages/tui/CHANGELOG.md"];
+	const before = "## [Unreleased]\n- pending\n## [1.0.0]\n- first\n## [0.9.0]\n- second\n";
+	const after = before
+		.replace("- pending\n", "")
+		.replace("- first", "- changed first")
+		.replace("- second", "- changed second");
+	const result = checkPrChangelog({
+		changedFiles: paths,
+		labels: [],
+		changelogChanges: paths.map((path) => ({ path, before, after })),
+		trackerRemovals: [
+			{ path: "packages/ai/src/changes.md", removed: 6 },
+			{ path: "packages/tui/src/changes.md", removed: 2 },
+			{ path: "scripts/changes.md", removed: 0 },
+		],
+	});
+	assert.equal(result.pass, false);
+	assert.deepEqual(result.violations, [
+		"packages/ai/CHANGELOG.md:3: released section [1.0.0] changed",
+		"packages/ai/CHANGELOG.md:5: released section [0.9.0] changed",
+		"packages/tui/CHANGELOG.md:3: released section [1.0.0] changed",
+		"packages/tui/CHANGELOG.md:5: released section [0.9.0] changed",
+		"packages/ai/src/changes.md: removes 6 existing line(s); tracker entries may only be added",
+		"packages/tui/src/changes.md: removes 2 existing line(s); tracker entries may only be added",
+		"packages/ai/CHANGELOG.md: removes 1 existing [Unreleased] entry, first: - pending",
+		"packages/tui/CHANGELOG.md: removes 1 existing [Unreleased] entry, first: - pending",
+	]);
+	assert.equal(result.reason, result.violations.join("; "));
+});
+
 // A released history past spawnSync's default 1 MiB buffer must not fail every PR with ENOBUFS.
 it("gates a PR whose changelog has grown past one mebibyte", (t) => {
 	const root = mkdtempSync(join(tmpdir(), "changelog-gate-large-"));
@@ -201,23 +256,49 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 	}
 	git("add", tracker, changelog);
 	git("commit", "-qm", "upstream fixture");
+	git("tag", "v2026.9.20");
 	mkdirSync(join(root, ".github"));
 	writeFileSync(join(root, ".github/upstream.json"), JSON.stringify({ sha: git("rev-parse", "HEAD") }));
 	git("add", ".github/upstream.json");
 	git("commit", "-qm", "base fixture");
-	const base = git("rev-parse", "HEAD");
+	let base = git("rev-parse", "HEAD");
 	const cli = fileURLToPath(new URL("./check-pr-changelog.mjs", import.meta.url));
-	const check = (file, text, expected, pattern) => {
+	const check = (file, text, expected, pattern, additionalChanges = []) => {
 		git("reset", "-q", "--soft", base);
 		for (const [path, original] of [[tracker, trackerOriginal], [changelog, changelogOriginal]]) writeFileSync(join(root, path), original);
 		if (text === null) rmSync(join(root, file));
 		else writeFileSync(join(root, file), text);
+		for (const [path, content] of additionalChanges) writeFileSync(join(root, path), content);
 		git("add", "-A");
 		git("commit", "--allow-empty", "-qm", "scenario fixture");
 		const result = spawnSync(process.execPath, [cli, "--base", base, "--labels", ""], { cwd: root, env, encoding: "utf8", timeout: 30_000 });
 		assert.equal(result.status, expected, result.stdout + result.stderr);
 		if (pattern) assert.match(result.stdout + result.stderr, pattern);
+		return result.stdout + result.stderr;
 	};
+	// #3055: a released-section edit must not mask a tracker removal in the same PR.
+	await t.test("released section edited and existing tracker lines removed", () => {
+		const output = check(
+			changelog,
+			changelogOriginal.replace("- published", "- misplaced PR fix\n- published"),
+			1,
+			/packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed/,
+			[[tracker, entry("New")]],
+		);
+		assert.match(
+			output,
+			/packages\/ai\/src\/changes\.md: removes \d+ existing line\(s\); tracker entries may only be added/,
+		);
+		assert.match(
+			output,
+			/^changelog-gate: FAIL - packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed\n/,
+		);
+		assert.match(output, /^ {2}violation: packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed$/m);
+		assert.match(
+			output,
+			/^ {2}violation: packages\/ai\/src\/changes\.md: removes \d+ existing line\(s\); tracker entries may only be added$/m,
+		);
+	});
 	await t.test("tracker rewritten to only its new entry", () =>
 		check(tracker, entry("New"), 1, /packages\/ai\/src\/changes\.md: removes \d+ existing line/));
 	await t.test("deleted tracker", () => check(tracker, null, 1, /packages\/ai\/src\/changes\.md: removes \d+ existing line/));
@@ -250,6 +331,53 @@ it("fails a PR that removes existing change-log lines through the PR gate CLI", 
 	await t.test("Unreleased entry stamped into a release", () =>
 		check(changelog, changelogOriginal.replace("## [Unreleased]\n", "## [Unreleased]\n\n## [2026.10.1] - 2026-10-01\n"), 0));
 	await t.test("Unreleased prepend", () => check(changelog, changelogOriginal.replace(pending, `- new fix\n${pending}`), 0));
+	writeFileSync(join(root, changelog), `${changelogOriginal}- accidentally added after release\n`);
+	git("add", changelog);
+	git("commit", "-qm", "incorrect released base");
+	base = git("rev-parse", "HEAD");
+	await t.test("released section restored to its real tag", () => check(changelog, changelogOriginal, 0));
+	await t.test("released section differs from base and tag", () =>
+		check(changelog, changelogOriginal.replace("- published", "- changed"), 1, /released section \[2026\.9\.20\] changed/));
+	await t.test("released restoration without its tag fails closed", () => {
+		git("tag", "-d", "v2026.9.20");
+		check(changelog, changelogOriginal, 1, /released section \[2026\.9\.20\] changed/);
+	});
+	const commitChangelog = (text, message) => {
+		writeFileSync(join(root, changelog), text);
+		git("add", changelog);
+		git("commit", "-qm", message);
+		return git("rev-parse", "HEAD");
+	};
+	const withBase = (text, run) => {
+		const saved = base;
+		base = commitChangelog(`${text}- accidentally added after release\n`, "incorrect base");
+		try {
+			run();
+		} finally {
+			base = saved;
+		}
+	};
+	// A section name carrying revision syntax must not resolve through the tag (`v2026.9.20~1` is the tag's parent).
+	await t.test("revision syntax in a section name gets no tag exemption", () => {
+		const parentShaped = changelogOriginal.replace("## [2026.9.20]", "## [2026.9.20~1]");
+		commitChangelog(parentShaped, "tag parent holding the parent-shaped section");
+		git("tag", "v2026.9.20", commitChangelog(changelogOriginal, "tagged release"));
+		withBase(parentShaped, () => check(changelog, parentShaped, 1, /released section \[2026\.9\.20~1\] changed/));
+	});
+	// Only CalVer release names are exempt, even when a matching `v<name>` tag exists.
+	await t.test("non-CalVer section name with a matching tag gets no exemption", () => {
+		const named = changelogOriginal.replace("## [2026.9.20]", "## [next]");
+		git("tag", "vnext", commitChangelog(named, "non-CalVer tag"));
+		withBase(named, () => check(changelog, named, 1, /released section \[next\] changed/));
+	});
+	// A tag that lacks the changelog gives the normal FAIL, not a git error.
+	await t.test("tag without the changelog file fails the normal way", () => {
+		git("tag", "-d", "v2026.9.20");
+		const emptyTree = git("hash-object", "-t", "tree", "/dev/null");
+		git("tag", "v2026.9.20", git("commit-tree", emptyTree, "-m", "tag without the changelog"));
+		const output = check(changelog, changelogOriginal, 1, /^changelog-gate: FAIL - packages\/ai\/CHANGELOG\.md:\d+: released section \[2026\.9\.20\] changed$/m);
+		assert.doesNotMatch(output, /fatal:|ERROR/);
+	});
 });
 
 // #1884: drive the real CLI over committed diffs, including the actual release transformation.

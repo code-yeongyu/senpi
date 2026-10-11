@@ -3,11 +3,12 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
 import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
 import { accountLabel, listSlots } from "@earendil-works/pi-ai/auth/pool/slots";
-import { type Component, stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { theme } from "../theme/theme.ts";
 import { type FooterSegment, planFooterLayout } from "./footer-layout.ts";
+import { buildRightLabel, colorRightSide } from "./footer-right-label.ts";
 
 const FAST_MODE_INDICATOR = "\u26a1 ";
 
@@ -85,37 +86,6 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 
 	if (!isInsideHome) return cwd;
 	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
-}
-
-/** One coloured run of the right side, in render order. */
-type RightSideRun = { readonly text: string; readonly color: "muted" | "warning" | "accent" | "dim" };
-
-/**
- * Color the right side of the footer: (provider) muted, model accent, :thinking dim.
- *
- * The runs come from the values that produced the text, never from re-parsing
- * the rendered string: an account display name may legally contain `)` or `:`,
- * and a regex over the rendered segment would then colour the provider prefix
- * as the model, or cut the model id into a "thinking level".
- *
- * `plain` is the rendered segment, which the layout pass may have truncated at
- * the tail (and whose truncation can append reset sequences); each run is
- * clipped to the visible text that survived, so a run boundary can never cut
- * an escape sequence in half.
- */
-function colorRightSide(runs: readonly RightSideRun[], plain: string): string {
-	const text = stripTerminalSequences(plain);
-	if (!text) return "";
-	let offset = 0;
-	let colored = "";
-	for (const run of runs) {
-		if (offset >= text.length) break;
-		const visible = text.slice(offset, offset + run.text.length);
-		if (visible.length === 0) break;
-		colored += theme.fg(run.color, visible);
-		offset += visible.length;
-	}
-	return colored;
 }
 
 /**
@@ -242,31 +212,11 @@ export class FooterComponent implements Component {
 		});
 		let tail: FooterSegment = makeTail(delegationIndicator !== "");
 
-		// Model label pinned to the right edge; the provider prefix stays only when
-		// the full line fits.
+		// Model label pinned to the right edge; the forms ladder and what each form
+		// may cost the left side live in ./footer-right-label.ts.
 		const modelName = state.model?.id || "no-model";
 		const fastIndicator = this.session.isFastModeActive() ? FAST_MODE_INDICATOR : "";
-		let minimalRight = `${fastIndicator}${modelName}`;
-		if (state.model?.reasoning) {
-			const thinkingLevel = state.thinkingLevel || "off";
-			minimalRight = thinkingLevel === "off" ? `${minimalRight}:off` : `${minimalRight}:${thinkingLevel}`;
-		}
-		const thinkingSuffix = state.model?.reasoning ? `:${state.thinkingLevel || "off"}` : "";
-		const modelRuns: RightSideRun[] = [
-			...(fastIndicator ? [{ text: fastIndicator, color: "warning" as const }] : []),
-			{ text: modelName, color: "accent" as const },
-			...(thinkingSuffix ? [{ text: thinkingSuffix, color: "dim" as const }] : []),
-		];
-		// A virtual model routes each request; show where the latest response went.
 		const routed = this.session.routedModel;
-		if (routed) {
-			const routedSuffix = ` → ${routed.model.id}`;
-			const routedLevel = routed.thinkingLevel ? `:${routed.thinkingLevel}` : "";
-			minimalRight += `${routedSuffix}${routedLevel}`;
-			modelRuns.push({ text: routedSuffix, color: "accent" });
-			if (routedLevel) modelRuns.push({ text: routedLevel, color: "dim" });
-		}
-		const minimal: FooterSegment = { plain: minimalRight, colored: colorRightSide(modelRuns, minimalRight) };
 		let accountSuffix = "";
 		if (state.model) {
 			try {
@@ -282,15 +232,16 @@ export class FooterComponent implements Component {
 			(this.footerData.getAvailableProviderCount() > 1 || accountSuffix !== "") && state.model
 				? `(${state.model.provider}${accountSuffix}) `
 				: "";
-		const full: FooterSegment | undefined = providerPrefix
-			? {
-					plain: `${providerPrefix}${minimalRight}`,
-					colored: colorRightSide(
-						[{ text: providerPrefix, color: "muted" }, ...modelRuns],
-						`${providerPrefix}${minimalRight}`,
-					),
-				}
-			: undefined;
+		const rightLabel = buildRightLabel({
+			modelName,
+			fastIndicator,
+			routed: routed ? { modelId: routed.model.id, thinkingLevel: routed.thinkingLevel } : undefined,
+			reasoning: state.model?.reasoning === true,
+			thinkingLevel: state.thinkingLevel || "off",
+			providerPrefix,
+			separator,
+		});
+		const { forms, floor: floorRight, floorRuns } = rightLabel;
 
 		const marker: FooterSegment = { plain: "…", colored: theme.fg("dim", "…") };
 		const planWithTail = (tailSegment: FooterSegment) =>
@@ -300,7 +251,7 @@ export class FooterComponent implements Component {
 				pwdIndex,
 				middle,
 				tail: tailSegment,
-				right: { minimal, full },
+				right: { forms },
 				separator,
 				minPadding: 2,
 				ellipsisMarker: marker,
@@ -326,16 +277,16 @@ export class FooterComponent implements Component {
 		let left: { colored: string; width: number };
 		let right: FooterSegment;
 		if (plan.kind === "full") {
-			right = plan.useFullRight && full ? full : minimal;
+			right = forms[plan.rightForm] ?? floorRight;
 			left = joinSegments([...anchor, ...middle, tail]);
 		} else if (plan.kind === "middle-elided") {
-			right = plan.useFullRight && full ? full : minimal;
+			right = forms[plan.rightForm] ?? floorRight;
 			const segments = [...anchor, ...middle.slice(0, plan.keptMiddleCount)];
 			if (plan.showMarker) segments.push(marker);
 			segments.push(tail);
 			left = joinSegments(segments);
 		} else if (plan.kind === "pwd-elided") {
-			right = plan.useFullRight && full ? full : minimal;
+			right = forms[plan.rightForm] ?? floorRight;
 			const segments: FooterSegment[] = [
 				...anchor.map((segment, index) =>
 					index === pwdIndex ? { plain: plan.pwdPlain, colored: theme.fg("accent", plan.pwdPlain) } : segment,
@@ -346,11 +297,11 @@ export class FooterComponent implements Component {
 			segments.push(tail);
 			left = joinSegments(segments);
 		} else if (plan.kind === "left-elided") {
-			right = minimal;
+			right = floorRight;
 			left = { colored: theme.fg("muted", plan.leftPlain), width: visibleWidth(plan.leftPlain) };
 		} else {
 			left = { colored: "", width: 0 };
-			right = { plain: plan.rightPlain, colored: colorRightSide(modelRuns, plan.rightPlain) };
+			right = { plain: plan.rightPlain, colored: colorRightSide(floorRuns, plan.rightPlain) };
 		}
 
 		const rightWidth = visibleWidth(right.plain);

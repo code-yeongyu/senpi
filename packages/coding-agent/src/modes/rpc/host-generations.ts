@@ -18,6 +18,7 @@ import { generationPaths, type HostDaemonDirectory, type HostDaemonPaths } from 
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
 import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";
+import { hostChildAlive } from "./host-stalled-evidence.ts";
 
 /** One generation that is still running, as the daemon directory and the OS describe it. */
 export interface HostGenerationRow {
@@ -58,6 +59,7 @@ export async function pruneDeadGenerations(paths: HostDaemonPaths): Promise<Prun
 	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
 		const record = parseJson(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
 		if (typeof record?.pid !== "number" || processIsLive(record.pid)) continue;
+		if (await hostChildAlive(generationPaths(paths, instanceId))) continue;
 		await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true }).catch(() => undefined);
 		generations.push(instanceId);
 	}
@@ -94,7 +96,7 @@ export async function readGenerationRows(
 	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
 		const record = parseJson(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
 		if (typeof record?.pid !== "number") continue;
-		const alive = processIsLive(record.pid);
+		const alive = processIsLive(record.pid) || (await hostChildAlive(generationPaths(paths, instanceId))) === true;
 		if (!alive && options.includeDead !== true) continue;
 		rows.push({
 			instanceId,

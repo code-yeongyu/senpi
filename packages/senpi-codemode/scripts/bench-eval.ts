@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Check } from "typebox/value";
+import { CPU_BOUNDARY } from "./bench-cpu-contract.ts";
 import { admitHost, type Decision, decide } from "./bench-compare.ts";
 import {
 	injectCalibrationOffset,
@@ -187,7 +188,8 @@ async function finish(decision: Decision, out: string, context: Readonly<Record<
 	const { run, ...rest } = context;
 	const runResult: RunResult | undefined = isRunResult(run) ? run : undefined;
 	const report = {
-		schemaVersion: 1,
+		schemaVersion: 2,
+		cpuBoundary: CPU_BOUNDARY,
 		suite: "senpi-codemode-eval",
 		package: "@code-yeongyu/senpi-codemode",
 		createdAt: new Date().toISOString(),

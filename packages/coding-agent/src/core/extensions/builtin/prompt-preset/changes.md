@@ -1511,3 +1511,21 @@ Per-model prompt preset extension. Selects a tuned system prompt based on the ac
 ### Expected merge conflict zones on next upstream sync
 - LOW: `gpt-5{,.2,.3-codex,.4,.5}.ts` `tuningSection` template literals - upstream has no equivalent helper. If upstream adds its own tuning lines, append rather than overwrite the file-operations block.
 - LOW: `file-operations.ts` is new and additive; no upstream counterpart.
+
+## 2026-10-11 - Public Native prompt generation for adapters (#3104)
+
+### What changed
+
+The model cores and `presets.ts` forward optional host branding without changing Native defaults, while `public.ts` exposes the same generators through the narrowed type views in `generation.ts`.
+
+### Why
+
+Hosts need Native's actual model bodies without duplicate templates or process-global branding changes.
+
+### Why an extension could not handle it
+
+The package export and generator input types are engine-owned contracts.
+
+### Expected merge conflict zones
+
+Builder exports, option forwarding, and application-name interpolations in the model cores.

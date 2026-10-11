@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
+import { CPU_BOUNDARY } from "./bench-cpu-contract.ts";
 
 const repSchema = Type.Object({
 	cpuMs: Type.Number(),
@@ -11,6 +12,7 @@ const blockSchema = Type.Object({ first: Type.Array(repSchema), second: Type.Arr
 const sideSchema = Type.Object({ available: Type.Boolean(), version: Type.Optional(Type.String()) });
 
 const savedReportSchema = Type.Object({
+	cpuBoundary: Type.Literal(CPU_BOUNDARY),
 	reps: Type.Number(),
 	injections: Type.Array(Type.Unknown()),
 	calibrationOffset: Type.Optional(Type.Number()),
@@ -38,6 +40,8 @@ export class RescoreError extends Error {
 /** A measured report re-judged without new samples; it must hold the raw, un-injected measurements. */
 export async function loadSavedReport(path: string): Promise<SavedReport> {
 	const value: unknown = JSON.parse(await readFile(path, "utf8"));
+	if (typeof value === "object" && value !== null && Reflect.get(value, "cpuBoundary") !== CPU_BOUNDARY)
+		throw new RescoreError(`${path} has legacy CPU boundaries; remeasure instead of relabeling saved CPU samples`);
 	if (!Check(savedReportSchema, value)) throw new RescoreError(`${path} is not a measured bench report`);
 	if (value.injections.length > 0 || (value.calibrationOffset ?? 1) !== 1)
 		throw new RescoreError(`${path} already carries injected samples; rescore its un-injected source report`);

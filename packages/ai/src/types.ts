@@ -918,8 +918,9 @@ export interface Context {
 	tools?: Tool[];
 	/**
 	 * Names from `tools` the model may call on this request; absent means every tool is callable.
-	 * Set only for models whose compat declares `supportsAllowedTools`: the adapter keeps `tools`
-	 * byte-stable and restricts callability through `tool_choice` (senpi#2095).
+	 * Set only for models that `supportsAllowedToolChoice` accepts (the compat flag on a native OpenAI API
+	 * host): the adapter keeps `tools` byte-stable and restricts callability through `tool_choice`
+	 * (senpi#2095, senpi#3080).
 	 */
 	activeToolNames?: string[];
 }

@@ -12,7 +12,7 @@ import type {
 } from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
-import { buildCompactionContext } from "./context-pipeline.ts";
+import { registerContextReductionLifecycle } from "./context-reduction-lifecycle.ts";
 import {
 	createDegradationMonitorState,
 	handleMessageEnd,
@@ -28,6 +28,7 @@ import {
 	formatRequiredCompactionFallbackRejection,
 	type RequiredCompactionFallbackFailure,
 	stripTurnRetrySuppressionPrefix,
+	UnsafeRetainedSuffixError,
 } from "./deterministic-fallback.ts";
 import * as idle from "./idle.ts";
 import * as idleRetry from "./idle-retry.ts";
@@ -59,6 +60,12 @@ import {
 } from "./orchestration.ts";
 import * as cap from "./per-turn-cap.ts";
 import * as policy from "./policy.ts";
+import {
+	compactionRecoveryStateKey,
+	isAutomaticCompactionBlocked,
+	REJECTED_RECOVERY_ENTRY,
+	wouldCompactionOverflow,
+} from "./rejected-recovery.ts";
 import * as restoration from "./restoration-tracker.ts";
 import {
 	applyGeneratedCompaction,
@@ -87,7 +94,6 @@ import {
 	createBlockingRemoteCompactionEvent,
 	endCompactionFeedback,
 	estimatePendingPromptTokens,
-	getPromptContextWindow,
 	isAbortedAssistantMessage,
 	isMonitorableMessageEvent,
 	linkAbortSignal,
@@ -339,6 +345,7 @@ export default function compactionExtension(
 
 	function startSpeculativeCompaction(ctx: ExtensionContext, customInstructions: string): void {
 		if (speculativeJob) return;
+		if (isAutomaticCompactionBlocked(ctx.sessionManager.getBranch(), ctx.model, ctx.getCompactionSettings())) return;
 		const generation = ++speculativeGeneration;
 		const snapshot = createSpeculativeCompactionSnapshot(ctx, {
 			generation,
@@ -349,7 +356,7 @@ export default function compactionExtension(
 		if (!snapshot) return;
 		getLogger(ctx).debug("speculative_started", { generation, origin: "speculative" });
 		const controller = new AbortController();
-		const settled = runExtensionCompaction(ctx, snapshot, controller.signal).then(
+		const settled = generateCompaction(ctx, snapshot, controller.signal).then(
 			(result) => ({ result, error: undefined }),
 			(error: unknown) => ({ result: undefined, error: error instanceof Error ? error : new Error(String(error)) }),
 		);
@@ -383,22 +390,94 @@ export default function compactionExtension(
 		todoBridge.persistTodoSnapshot(pi, metadata.todoSnapshot);
 	}
 
+	async function generateCompaction(
+		ctx: ExtensionContext,
+		snapshot: SpeculativeCompactionSnapshot,
+		signal?: AbortSignal,
+		onProgress?: (delta: string) => void,
+	): Promise<CompactionResult | undefined> {
+		const compaction = await runExtensionCompaction(ctx, snapshot, signal, onProgress);
+		if (!compaction || signal?.aborted) return compaction;
+		if (
+			!wouldCompactionOverflow(
+				snapshot.branchEntries ?? [],
+				compaction,
+				true,
+				snapshot.model,
+				snapshot.preparation.settings,
+			)
+		)
+			return compaction;
+		if (
+			!wouldCompactionOverflow(
+				snapshot.branchEntries ?? [],
+				{ ...compaction, summary: "" },
+				true,
+				snapshot.model,
+				snapshot.preparation.settings,
+			)
+		)
+			return compaction;
+
+		// #3061: only a SUCCESSFUL summary can establish a terminal context fault.
+		// A failed summary plus a rejected emergency checkpoint says nothing about
+		// whether a recovered provider could produce a smaller, usable summary.
+		// Probe with zero summary text so marker/previous-summary overhead alone
+		// cannot turn a provider failure or an oversized summary into a durable latch.
+		const diagnostics: DeterministicFallbackDiagnostic = {};
+		const viable = createRequiredCompactionFallback(
+			snapshot.preparation,
+			snapshot.contextWindow,
+			"unsafe-retained-content",
+			{ summary: "" },
+			snapshot.branchEntries,
+			diagnostics,
+		);
+		if (
+			!viable &&
+			(diagnostics.rejectionReason === "unsafe-retained-content" ||
+				diagnostics.rejectionReason === "atomic-tool-chain-cut" ||
+				diagnostics.rejectionReason === "retained-token-budget-exceeded")
+		) {
+			throw new UnsafeRetainedSuffixError(diagnostics);
+		}
+		return compaction;
+	}
+
 	function recoverRequiredCompaction(
 		ctx: ExtensionContext,
 		snapshot: SpeculativeCompactionSnapshot,
 		failureKind: RequiredCompactionFallbackFailure,
 		cause: unknown,
 	): { compaction?: CompactionResult; rejectionReason?: string } {
-		const diagnostics: DeterministicFallbackDiagnostic = {};
-		const compaction = createRequiredCompactionFallback(
-			snapshot.preparation,
-			snapshot.contextWindow,
-			failureKind,
-			{ taskIntent: resolveInheritedTaskIntent(snapshot.branchEntries ?? []) },
-			snapshot.branchEntries,
-			diagnostics,
-		);
-		if (!compaction) return { rejectionReason: formatRequiredCompactionFallbackRejection(diagnostics) };
+		const terminal = cause instanceof UnsafeRetainedSuffixError;
+		const diagnostics: DeterministicFallbackDiagnostic = terminal ? cause.diagnostics : {};
+		const compaction = terminal
+			? undefined
+			: createRequiredCompactionFallback(
+					snapshot.preparation,
+					snapshot.contextWindow,
+					failureKind,
+					{ taskIntent: resolveInheritedTaskIntent(snapshot.branchEntries ?? []) },
+					snapshot.branchEntries,
+					diagnostics,
+				);
+		if (!compaction) {
+			const branch = snapshot.branchEntries ?? [];
+			// Provider/timeout/abort/empty-summary failures never create or replace
+			// this record, even when their opportunistic deterministic fallback fails.
+			if (terminal && !isAutomaticCompactionBlocked(branch, snapshot.model, ctx.getCompactionSettings())) {
+				pi.appendEntry(REJECTED_RECOVERY_ENTRY, {
+					failureKind: "unsafe-retained-content",
+					stateKey: compactionRecoveryStateKey(branch, snapshot.model, ctx.getCompactionSettings()),
+					reason: diagnostics.rejectionReason,
+					entryId:
+						diagnostics.candidateRejections?.at(-1)?.unsafeEntryId ??
+						diagnostics.candidateRejections?.at(-1)?.firstKeptEntryId,
+				});
+			}
+			return { rejectionReason: formatRequiredCompactionFallbackRejection(diagnostics, terminal) };
+		}
 		// The compaction itself succeeds, so nothing else tells the user their
 		// transcript was reduced without a provider summary. Say it plainly here,
 		// and never with the internal retry-suppression marker (#1741).
@@ -410,6 +489,9 @@ export default function compactionExtension(
 		ctx: ExtensionContext,
 		customInstructions: string,
 	): Promise<SpeculativeCompactionResult> {
+		if (isAutomaticCompactionBlocked(ctx.sessionManager.getBranch(), ctx.model, ctx.getCompactionSettings())) {
+			return { applied: false, reason: "rejected" };
+		}
 		const provider = ctx.model?.provider;
 		if ((provider === "cursor" || provider === "cursor-cli-oauth") && !ctx.isIdle()) {
 			getLogger(ctx).debug("skip_cursor_mid_turn", { route: "blocking" });
@@ -554,7 +636,7 @@ export default function compactionExtension(
 			}
 			let compaction: CompactionResult | undefined;
 			try {
-				compaction = await runExtensionCompaction(ctx, snapshot, feedbackSignal, (delta) =>
+				compaction = await generateCompaction(ctx, snapshot, feedbackSignal, (delta) =>
 					ctx.updateCompaction?.({
 						reason: "extension",
 						signal: feedbackSignal,
@@ -724,14 +806,15 @@ export default function compactionExtension(
 			let compaction: CompactionResult | undefined;
 			try {
 				if (inheritedWarmFailure) throw inheritedWarmFailure;
-				compaction = await runExtensionCompaction(ctx, snapshot, event.signal, (delta) =>
+				compaction = await generateCompaction(ctx, snapshot, event.signal, (delta) =>
 					ctx.updateCompaction?.({ reason: event.reason, signal: event.signal, delta }),
 				);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const failureKind = classifyRequiredCompactionFallbackFailure(error);
 				if (
-					requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) &&
+					(requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) ||
+						failureKind === "unsafe-retained-content") &&
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {
@@ -782,6 +865,7 @@ export default function compactionExtension(
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);
 		if (compactEvent.accepted) {
+			contextReduction.reset();
 			persistAcceptedMetadata(compactEvent.requestId);
 			const branchEntries = ctx.sessionManager.getBranch();
 			const firstKeptIndex = branchEntries.findIndex(
@@ -957,42 +1041,20 @@ export default function compactionExtension(
 	};
 	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
-	pi.on(
-		"context",
-		(event, ctx) => {
-			const usage = ctx.getContextUsage();
-			const settings = ctx.getCompactionSettings();
-			const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-			const laneOwnsCompaction = lanePolicy.disablesSenpiCompaction(ctx);
-			const breakerFallback =
-				!laneOwnsCompaction &&
-				breaker.isTripped(state, Date.now()) &&
-				usage?.tokens !== null &&
-				usage !== undefined &&
-				usage.tokens >=
-					contextWindow * policy.computeEffectiveThreshold(contextWindow, state.lastYield ?? undefined);
-			if (breakerFallback)
-				getLogger(ctx).debug("breaker_deterministic_fallback", {
-					route: "context-event",
-					tokens: usage.tokens ?? 0,
-				});
-			return {
-				messages: buildCompactionContext({
-					event,
-					ctx,
-					contextWindow,
-					promptContextWindow: getPromptContextWindow(contextWindow, ctx.model?.maxTokens),
-					toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
-					breakerFallback,
-					laneOwnsCompaction,
-					appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
-					emergencyPruneLatch,
-					logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),
-				}),
-			};
-		},
-		{ mutatesMessages: false },
-	);
+	const contextReduction = registerContextReductionLifecycle(pi, {
+		emergencyPruneLatch,
+		emergencyInstructions: EMERGENCY_COMPACTION_INSTRUCTIONS,
+		getTools: getSummarizationTools,
+		getPolicy: (ctx) => ({
+			lastYield: state.lastYield ?? undefined,
+			breakerTripped: breaker.isTripped(state, Date.now()),
+			laneOwnsCompaction: lanePolicy.disablesSenpiCompaction(ctx),
+			appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
+		}),
+		logEmergencyPrune: (ctx, fields) => getLogger(ctx).debug("emergency_prune", fields),
+		logBreakerFallback: (ctx, tokens) =>
+			getLogger(ctx).debug("breaker_deterministic_fallback", { route: "context-event", tokens }),
+	});
 
 	pi.on("before_provider_request", async (event, ctx) => {
 		const model = event.model ?? ctx.model;

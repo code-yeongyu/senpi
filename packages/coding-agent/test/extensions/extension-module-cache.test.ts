@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -42,7 +43,10 @@ function fakeImporter(files: string[], options: { reportsFiles?: boolean } = {})
 		},
 	};
 	if (options.reportsFiles !== false) {
-		importer.compiledFiles = () => files;
+		const fingerprints = new Map(
+			files.map((file) => [file, createHash("sha256").update(readFileSync(file, "utf8")).digest("hex")]),
+		);
+		importer.compiledSources = () => fingerprints;
 	}
 	return { importer, state };
 }

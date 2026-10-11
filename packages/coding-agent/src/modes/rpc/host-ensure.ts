@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import { readProcessStartTime } from "../app-server/daemon/process.ts";
+import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
 import {
 	createDaemonDirectories,
 	createHostDaemonPaths,
@@ -16,6 +16,7 @@ import {
 	readHostRegistration,
 	writtenByThisProcess,
 } from "./host-daemon-registration.ts";
+import { claimHostOwner } from "./host-daemon-state.ts";
 import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
 import { ensureClient } from "./host-ensure-client.ts";
 import { publicEndpointAccepts, refuseIfStalled } from "./host-ensure-liveness.ts";
@@ -30,6 +31,7 @@ import { retireIdleLegacyHost } from "./host-legacy.ts";
 import type { HostColdStart, HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
+import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 
 export {
@@ -103,6 +105,13 @@ async function ensureHostLocked(
 	// makes that structural, and the field stays as the second guard for a directory that was
 	// somehow reused: a second socket must never read the first socket's daemon as its own.
 	const registeredHere = registersSocket(registered, socket);
+	if (
+		registeredHere &&
+		registered &&
+		!processIsLive(registered.record.pid) &&
+		(await hostChildAlive(generationPaths(paths, registered.instanceId)))
+	)
+		throw new HostEnsureRefusedError(socket, "host_stalled", undefined);
 	// A reusable host is held from the connection that proved it compatible, never re-probed later.
 	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
 	const protocol = held?.info;
@@ -110,6 +119,16 @@ async function ensureHostLocked(
 		registeredHere && (await writtenByThisProcess(registered?.writer, testOptions?.readProcessStartTime));
 	const attachedPid = registeredHere ? (registered?.record.pid ?? 0) : 0;
 	const decision = decide(options, startedByUs, protocol);
+	if (options.owner && held && (decision.action === "reuse" || decision.action === "handoff")) {
+		try {
+			if (!registeredHere || !registered || registered.instanceId !== held.info.instanceId)
+				throw new Error("RPC host has no matching registered owner-lifetime generation");
+			await claimHostOwner(generationPaths(paths, registered.instanceId).dir);
+		} catch (cause) {
+			held.hold.release();
+			throw cause;
+		}
+	}
 	if (decision.action === "reuse" && held) {
 		// A compatible socket is attachable even when another client surface
 		// started it. Only hosts we spawned are eligible for lifecycle management.
@@ -170,11 +189,7 @@ async function ensureHostLocked(
 	// A host from before this layout registered itself in the FLAT directory. Its files are another
 	// process's state: never read as ours, never removed. While it is alive this ensure never starts
 	// beside it: an idle one is drained and waited out (#2423), a busy or unprovable one is refused.
-	const legacyRefusal = await retireIdleLegacyHost(
-		paths,
-		probe,
-		testOptions?.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
-	);
+	const legacyRefusal = await retireIdleLegacyHost(paths, probe, testOptions?.stopTimeoutMs);
 	if (legacyRefusal !== undefined) throw new HostEnsureRefusedError(socket, "legacy_host", protocol, legacyRefusal);
 	if (stranded !== undefined) return startHost(paths, socket, options, stranded.generation + 1);
 	if (registeredHere) await clearHostRegistration(paths);

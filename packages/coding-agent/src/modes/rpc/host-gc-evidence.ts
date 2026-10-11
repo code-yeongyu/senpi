@@ -19,6 +19,7 @@ import {
 import { generationPaths, type HostDaemonDirectory } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";
+import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { readSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
 
 export type EndpointInUse = "live_generation" | "live_claim" | "reachable";
@@ -65,6 +66,7 @@ export async function socketSiblings(socket: string): Promise<readonly string[]>
  */
 export async function anyGenerationLive(paths: HostDaemonDirectory): Promise<boolean> {
 	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
+		if (await hostChildAlive(generationPaths(paths, instanceId))) return true;
 		const record = generationRecord(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
 		if (record !== undefined && (await recordIsLive(record))) return true;
 	}
