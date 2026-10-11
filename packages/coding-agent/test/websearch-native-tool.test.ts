@@ -38,14 +38,20 @@ function nativeModel(provider: string, id: string, api: Api, baseUrl: string): M
 	};
 }
 
-function toolContext(model: Model<Api> | undefined, modelRegistry: ModelRegistry): ExtensionContext {
+function toolContext(
+	model: Model<Api> | undefined,
+	modelRegistry: ModelRegistry,
+	sessionId?: string,
+): ExtensionContext {
 	return {
 		ui: Object.create(null) as ExtensionContext["ui"],
 		mode: "print",
 		hasUI: false,
 		cwd: process.cwd(),
 		agentDir: AGENT_DIR,
-		sessionManager: Object.create(null) as ExtensionContext["sessionManager"],
+		sessionManager: {
+			getSessionId: () => sessionId ?? "test-session",
+		} as unknown as ExtensionContext["sessionManager"],
 		modelRegistry,
 		model,
 		serviceTier: undefined,
@@ -227,5 +233,38 @@ describe("vendored websearch native tool", () => {
 		// then
 		await expect(execution).rejects.toBe(abortReason);
 		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("#given an active OpenCode-hosted native model and a session id #when the real tool is executed #then sends the x-opencode-session header on the hosted search request", async () => {
+		// given
+		const activeModel = nativeModel(
+			"opencode-go",
+			"claude-haiku-5-5",
+			"anthropic-messages",
+			"https://opencode.ai/zen/go",
+		);
+		const modelRegistry = ModelRegistry.inMemory(AuthStorage.inMemory());
+		vi.spyOn(modelRegistry, "getApiKeyAndHeaders").mockResolvedValue({ ok: true, apiKey: "opencode-key" });
+		vi.spyOn(modelRegistry, "getAvailable").mockReturnValue([]);
+		const fetchMock = vi.fn<typeof fetch>(async () => successfulSearchResponse());
+		vi.stubGlobal("fetch", fetchMock);
+		const tool = createWebSearchTool(() => ({ ok: true, config: autoConfig(), source: "test" }));
+
+		// when
+		await tool.execute(
+			"opencode-session-header",
+			{ query: "opencode session header" },
+			undefined,
+			undefined,
+			toolContext(activeModel, modelRegistry, "ses_0123456789abcdef") as ExtensionToolContext,
+		);
+
+		// then
+		const openCodeCall = fetchMock.mock.calls.find((call) => String(call[0]).startsWith("https://opencode.ai/"));
+		expect(openCodeCall).toBeDefined();
+		const requestInit = openCodeCall?.[1] as RequestInit | undefined;
+		const headers = new Headers(requestInit?.headers);
+		expect(headers.get("x-opencode-session")).toBe("ses_0123456789abcdef");
+		expect(headers.get("x-opencode-client")).toBe("pi");
 	});
 });
