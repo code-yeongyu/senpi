@@ -17,6 +17,44 @@
 
 - Test command arguments and runtime selection; preserve existing reporters, shards and test filters.
 
+## 2026-10-10 - Runtime auto-routing delegates to the shared contract (omo #9851)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/presets.ts`: after the settings and `model.promptPreset` branches, `resolvePresetName` returns `resolveContractPresetName({ providerID, modelID, name })` instead of re-walking its own copy of the 22-branch precedence chain.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: dropped the unused `PROMPT_PRESET_NAMES` export (duplicated `VALID_PRESETS` minus `auto`) and the redundant `as const` on readonly-annotated arrays.
+- `packages/coding-agent/test/suite/prompt-presets-contract.test.ts`: the whole `models.generated.ts` catalog resolves through both the runtime resolver and the contract and must match exactly, plus probe ids that fail when routing changes in only one resolver.
+
+### Why
+
+The matchers were single-source but the precedence order was duplicated between `presets.ts` and `contract.ts`, so a routing change made in only one of them (the past dotted-before-generic and snapshot-before-alias bugs) shipped silently. One resolver now owns the order.
+
+### Why an extension could not handle it
+
+The precedence lives inside the builtin prompt-preset extension's own dispatch; an external extension can only re-implement it, which is the drift this removes.
+
+### Expected merge conflict zones
+
+`presets.ts` `resolvePresetName` at the next upstream sync that touches prompt-preset routing.
+
+## 2026-10-10 - Public prompt-presets contract export (omo #9851)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new public `./prompt-presets` export subpath serving the shared preset-resolution contract (`resolvePresetName`, `PROMPT_PRESET_MODEL_CASES`, `AUTO_RESOLVED_PRESET_NAMES`).
+
+### Why
+
+Downstream per-model prompt routing (oh-my-openagent #9856) needs to resolve model ids to the same presets as the runtime; the resolution logic was internal and unexported.
+
+### Why an extension could not handle it
+
+The export surface lives in the package manifest; a separate extension cannot add a public subpath.
+
+### Expected merge conflict zones
+
+The `exports` map in `packages/coding-agent/package.json` at the next upstream manifest sync.
+
 ## 2026-10-07 - Claude Agent SDK 0.3.292 (senpi#2545)
 
 ### What changed
