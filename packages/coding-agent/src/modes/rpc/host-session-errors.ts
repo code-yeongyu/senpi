@@ -13,44 +13,37 @@ const USAGE_CODES = new Set([
 	"unknown_command",
 ]);
 const FAILURE_CODES = new Set(["open_failed", "warm_failed", "release_failed"]);
+const REASON_FOR_CODE: Readonly<Record<string, string>> = { streaming: "busy", not_found: "unknown_cursor" };
+/** The session router answers with its bare stable code as the whole `error` string. */
+const BARE_CODE = /^[a-z][a-z0-9_]*$/;
 
 export function mapError(error: unknown, socket: string): HostOutcome {
 	const detail = error instanceof Error ? error.message : String(error);
 	if (error instanceof RpcCommandError) {
-		const reason = error.errorCode ?? codeFromMessage(detail);
-		const exitCode = USAGE_CODES.has(reason)
+		const code = error.errorCode ?? (BARE_CODE.test(detail) ? detail : undefined);
+		if (code === undefined) return hostError(detail, socket);
+		const exitCode = USAGE_CODES.has(code)
 			? HOST_EXIT_USAGE
-			: FAILURE_CODES.has(reason)
+			: FAILURE_CODES.has(code)
 				? HOST_EXIT_ERROR
 				: HOST_EXIT_REFUSED;
 		return {
 			exitCode,
 			payload: {
 				action: exitCode === HOST_EXIT_REFUSED ? "refuse" : "error",
-				reason,
+				reason: REASON_FOR_CODE[code] ?? code,
 				detail,
 				socket,
 				...(error.errorData !== undefined && { data: error.errorData }),
 			},
 		};
 	}
-	return {
-		exitCode: HOST_EXIT_ERROR,
-		payload: {
-			action: "error",
-			reason: isTransportGoneError(error) ? "transport_gone" : "host_error",
-			detail,
-			socket,
-		},
-	};
+	if (isTransportGoneError(error)) {
+		return { exitCode: HOST_EXIT_ERROR, payload: { action: "error", reason: "transport_gone", detail, socket } };
+	}
+	return hostError(detail, socket);
 }
 
-function codeFromMessage(message: string): string {
-	if (message.startsWith("Model not found:")) return "model_not_found";
-	if (message.startsWith("Entry not found:")) return "unknown_cursor";
-	if (message.startsWith("Agent is already processing")) return "busy";
-	// SessionCommandRouter puts its stable code in `error` when no errorData is needed.
-	const code = /^([a-z][a-z_]+)(?::|$)/.exec(message)?.[1];
-	if (code) return code;
-	return "host_error";
+function hostError(detail: string, socket: string): HostOutcome {
+	return { exitCode: HOST_EXIT_ERROR, payload: { action: "error", reason: "host_error", detail, socket } };
 }
