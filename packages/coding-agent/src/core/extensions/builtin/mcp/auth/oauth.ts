@@ -32,13 +32,52 @@ export async function assertAuthorizable(
 	return info;
 }
 
+/**
+ * The scope sent on the authorization request.
+ *
+ * The SDK's scope selection (SEP-835) ranks the resource metadata's
+ * `scopes_supported` above the client's configured scope, so a resource
+ * document that advertises narrower scopes silently drops the rest: Vercel's
+ * advertises only `openid`, `offline_access` was never requested, and its
+ * authorization server then issues a 1-hour access token with no refresh token
+ * (can1357/oh-my-pi#9909), forcing a browser re-authentication every hour.
+ *
+ * An explicitly configured scope is operator intent and is sent verbatim.
+ * Without one, the resource's advertised scopes are extended with
+ * `offline_access` when the authorization server advertises that scope, so the
+ * grant carries a refresh token and renews silently. The `refresh_token` grant
+ * alone is deliberately not enough to add it: servers can issue refresh tokens
+ * without the scope (Neon) and may reject a scope they never advertised.
+ */
+export function resolveAuthorizationScope(
+	provider: McpOAuthProvider,
+	info: {
+		authorizationServerMetadata?: { scopes_supported?: string[] | undefined } | undefined;
+		resourceMetadata?: { scopes_supported?: string[] | undefined } | undefined;
+	},
+): string | undefined {
+	const configured = provider.scopes?.join(" ");
+	if (configured !== undefined && configured.length > 0) return configured;
+	const asScopes = info.authorizationServerMetadata?.scopes_supported;
+	const scopes = [...(info.resourceMetadata?.scopes_supported ?? [])];
+	if (asScopes?.includes("offline_access") === true && !scopes.includes("offline_access")) {
+		scopes.push("offline_access");
+	}
+	return scopes.length > 0 ? scopes.join(" ") : undefined;
+}
+
 export async function beginAuthorization(
 	provider: McpOAuthProvider,
 	options: OAuthFlowOptions = {},
 ): Promise<BeginAuthResult> {
-	await assertAuthorizable(provider, options);
+	const info = await assertAuthorizable(provider, options);
+	const scope = resolveAuthorizationScope(provider, info);
 	const { auth } = await loadMcpSdkAuth();
-	const result = await auth(provider, { serverUrl: provider.serverUrl, fetchFn: oauthFetch(options.fetchFn) });
+	const result = await auth(provider, {
+		serverUrl: provider.serverUrl,
+		fetchFn: oauthFetch(options.fetchFn),
+		...(scope === undefined ? {} : { scope }),
+	});
 	return {
 		status: result === "AUTHORIZED" ? "authorized" : "redirect",
 		authorizationUrl: provider.lastAuthorizationUrl,
