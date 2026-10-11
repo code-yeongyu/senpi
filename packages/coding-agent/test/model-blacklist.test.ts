@@ -17,6 +17,12 @@ const save = (models: unknown) => writeFileSync(file(), JSON.stringify({ models 
 const savedRules = () => (JSON.parse(readFileSync(file(), "utf8")) as { models: string[] }).models;
 const model = (provider: string, id: string) => ({ provider, id });
 
+async function loadStore(path: string): Promise<ModelBlacklistStore> {
+	const store = new ModelBlacklistStore(path);
+	await store.refreshSaved();
+	return store;
+}
+
 describe("ModelBlacklistPolicy", () => {
 	it("blocks nothing without rules", () => {
 		expect(ModelBlacklistPolicy.empty().isBlocked(model("openai", "gpt-5"))).toBe(false);
@@ -79,7 +85,7 @@ describe("ModelBlacklistPolicy", () => {
 });
 
 describe("ModelBlacklistStore", () => {
-	it("treats a missing file as an empty policy", () => {
+	it("treats a missing file as an empty policy", async () => {
 		const store = new ModelBlacklistStore(file());
 		expect(store.active.isEmpty).toBe(true);
 		expect(store.saved().isBlocked(model("bl", "alpha"))).toBe(false);
@@ -87,7 +93,7 @@ describe("ModelBlacklistStore", () => {
 
 	it("fails closed on a malformed saved file and refuses to overwrite it", async () => {
 		writeFileSync(file(), "{broken");
-		const store = new ModelBlacklistStore(file());
+		const store = await loadStore(file());
 		expect(store.active.error).toContain("model-blacklist.json");
 		expect(store.active.isBlocked(model("bl", "alpha"))).toBe(true);
 		await expect(store.toggle(model("bl", "alpha"))).rejects.toThrow(/malformed/);
@@ -103,12 +109,13 @@ describe("ModelBlacklistStore", () => {
 		expect(statSync(file()).mode & 0o777).toBe(0o600);
 		expect(readdirSync(directory)).toEqual(["model-blacklist.json"]);
 		expect(store.active.isBlocked(model("bl", "alpha"))).toBe(true);
+		expect(store.active.rules).toEqual(["bl/*"]);
 		expect(store.saved().isBlocked(model("bl", "alpha"))).toBe(false);
-		expect(new ModelBlacklistStore(file()).active.isBlocked(model("bl", "alpha"))).toBe(false);
+		expect((await loadStore(file())).active.isBlocked(model("bl", "alpha"))).toBe(false);
 	});
 
 	it("serializes concurrent toggles and creates the directory on first write", async () => {
-		const store = new ModelBlacklistStore(join(directory, "nested", "model-blacklist.json"));
+		const store = await loadStore(join(directory, "nested", "model-blacklist.json"));
 		await Promise.all([store.toggle(model("bl", "a")), store.toggle(model("bl", "b"))]);
 		expect(store.saved().rules).toEqual(["bl/a", "bl/b"]);
 	});

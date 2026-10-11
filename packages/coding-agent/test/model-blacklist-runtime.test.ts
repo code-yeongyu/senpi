@@ -119,6 +119,24 @@ describe("ModelRuntime native model blacklist", () => {
 		expect(runtime.getModel("bl", "beta")).toBeUndefined();
 		expect(runtime.getModelOfType("chat", "bl", "beta")).toBeUndefined();
 		expect(runtime.getModel("bl", "alpha")).toBeDefined();
+
+		// Synchronous construction cannot read the policy: deny access until explicitly initialized.
+		const synchronous = ModelRuntime.createSync({
+			credentials: new InMemoryCredentialStore(),
+			modelsPath: null,
+			agentDir,
+		});
+		const { provider, transportCalls } = createProvider();
+		await synchronous.registerNativeProvider(provider, { refresh: false });
+		expect(ids(synchronous.getModels())).toEqual([]);
+		await expect(synchronous.prepareSimpleRequest(chatModel("beta"))).rejects.toThrow(/model blacklist/);
+		const refreshing = synchronous.refresh({ allowNetwork: false });
+		expect(ids(synchronous.getModels())).toEqual([]);
+		await expect(synchronous.prepareSimpleRequest(chatModel("beta"))).rejects.toThrow(/model blacklist/);
+		await refreshing;
+		expect(ids(synchronous.getModels())).toEqual(["alpha"]);
+		await expect(synchronous.prepareSimpleRequest(chatModel("beta"))).rejects.toThrow(/model blacklist/);
+		expect(transportCalls).toEqual([]);
 	});
 
 	it("fails closed on a malformed saved policy and reports it", async () => {
@@ -170,6 +188,27 @@ describe("ModelRuntime native model blacklist", () => {
 		await adapter?.toggle(chatModel("alpha"));
 		expect(savedRules()).toEqual(["bl/*", "!bl/alpha"]);
 		expect(adapter?.getState(chatModel("alpha"))).toEqual({ blocked: false, activeBlocked: true, rule: "!bl/alpha" });
+	});
+
+	it("refreshes external saved changes asynchronously while retaining active enforcement", async () => {
+		saveRules(["bl/alpha"]);
+		const { runtime } = await createRuntime();
+		const adapter = runtime.getModelBlacklistAdapter();
+		if (!adapter) throw new Error("expected an adapter");
+		const beta = chatModel("beta");
+
+		saveRules(["bl/beta"]);
+		expect(adapter.getState(beta)).toEqual({ blocked: false, activeBlocked: false });
+		await runtime.refresh({ allowNetwork: false });
+		expect(adapter.getState(beta)).toEqual({ blocked: true, activeBlocked: false, rule: "bl/beta" });
+		expect(ids(runtime.getModels())).toEqual(["beta"]);
+
+		// A toggle reads the latest file even when no runtime refresh has observed that edit.
+		saveRules(["bl/*"]);
+		await adapter.toggle(beta);
+		expect(savedRules()).toEqual(["bl/*", "!bl/beta"]);
+		expect(adapter.getState(beta)).toEqual({ blocked: false, activeBlocked: false, rule: "!bl/beta" });
+		expect(ids(runtime.getModels())).toEqual(["beta"]);
 	});
 
 	it("exposes pre-filter rows through the adapter and filters models discovered by refresh", async () => {

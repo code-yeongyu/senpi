@@ -361,6 +361,8 @@ export class ModelRuntime implements Models {
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
 		installClaudeCodeVersionCache(modelsPath);
 		const config = await ModelConfig.load(modelsPath);
+		const blacklist = openModelBlacklist(options.agentDir, modelsPath);
+		await blacklist?.refreshSaved();
 		const modelsStore =
 			options.modelsStore ??
 			(modelsPath
@@ -387,7 +389,7 @@ export class ModelRuntime implements Models {
 				: options.authPath
 					? join(dirname(options.authPath), "credential-pool-state.json")
 					: undefined,
-			openModelBlacklist(options.agentDir, modelsPath),
+			blacklist,
 		);
 		runtime.rebuildProviders();
 		if (options.settingsManager) runtime.setSettingsManager(options.settingsManager);
@@ -410,7 +412,12 @@ export class ModelRuntime implements Models {
 		return runtime;
 	}
 
-	/** Synchronous compatibility constructor for legacy ModelRegistry callers. */
+	/**
+	 * Synchronous compatibility constructor for legacy ModelRegistry callers.
+	 * An existing native blacklist starts fail-closed: await refresh() before catalog reads
+	 * or dispatch. A missing file is a no-op. Use create() for initialized policy snapshots.
+	 * An isolated in-memory runtime (modelsPath: null, no agentDir) needs no policy load.
+	 */
 	static createSync(options: CreateModelRuntimeOptions = {}): ModelRuntime {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
@@ -1323,6 +1330,7 @@ export class ModelRuntime implements Models {
 
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		this.config = await ModelConfig.load(this.modelsPath);
+		await this.blacklist?.refreshSaved();
 		if (options.providers) {
 			for (const providerId of new Set(options.providers)) this.recomposeProvider(providerId);
 			this.updateModelSnapshot();

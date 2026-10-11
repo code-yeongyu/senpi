@@ -6,7 +6,7 @@
 
 ### Added
 
-- Native model blocking persists ordered provider/model rules and `!` exceptions in the agent directory's `model-blacklist.json`, without requiring a user extension. The `/models` picker alias offers Ctrl+Alt+B block/unblock beside favorites and shows saved changes pending a fresh runtime. Blocked models are excluded from catalog-based selection and rejected before transport, including stale model objects ([#3120](https://github.com/code-yeongyu/senpi/pull/3120) by [@trac3r00](https://github.com/trac3r00)).
+- Native model blocking persists ordered provider/model rules and `!` exceptions in the agent directory's `model-blacklist.json`, without requiring a user extension. The `/models` picker alias offers Ctrl+Alt+B block/unblock beside favorites and shows saved changes pending a fresh runtime. Blocked models are excluded from catalog-based selection and rejected before transport, including stale model objects. Policy bytes load asynchronously; synchronous SDK factories with an existing policy file require an awaited `refresh()` before use, while a missing file remains a no-op ([#3120](https://github.com/code-yeongyu/senpi/pull/3120) by [@trac3r00](https://github.com/trac3r00)).
 
 ### Changed
 

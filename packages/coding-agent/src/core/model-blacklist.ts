@@ -11,8 +11,8 @@
  * file is fixed or removed.
  */
 import { randomBytes } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import { statSync } from "node:fs";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import type { ModelBlacklistAdapter, ModelBlacklistState } from "./extensions/types.ts";
@@ -151,10 +151,10 @@ export class ModelBlacklistPolicy {
 	}
 }
 
-function readPolicySync(path: string): ModelBlacklistPolicy {
+async function readPolicy(path: string): Promise<ModelBlacklistPolicy> {
 	let text: string;
 	try {
-		text = readFileSync(path, "utf8");
+		text = await readFile(path, "utf8");
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return ModelBlacklistPolicy.empty();
 		return ModelBlacklistPolicy.failClosed(
@@ -163,15 +163,6 @@ function readPolicySync(path: string): ModelBlacklistPolicy {
 	}
 	const policy = ModelBlacklistPolicy.parse(text);
 	return policy.error === undefined ? policy : ModelBlacklistPolicy.failClosed(`${path}: ${policy.error}`);
-}
-
-function fileSignature(path: string): string {
-	try {
-		const stats = statSync(path);
-		return `${stats.ino}:${stats.size}:${stats.mtimeMs}`;
-	} catch {
-		return "missing";
-	}
 }
 
 /** Atomic 0600 write: temp file in the same directory, fsync, rename. */
@@ -197,41 +188,73 @@ async function writePolicyAtomic(path: string, policy: ModelBlacklistPolicy): Pr
 }
 
 /**
- * The saved policy file plus the policy the running process loaded. `active` never changes;
- * `saved` follows the file, so a toggle shows up as saved-vs-active drift until restart.
+ * The saved policy file plus the policy the running process loaded. Existing files
+ * fail closed until their first async read; a missing file is immediately a no-op.
+ * After initialization `active` never changes;
+ * `saved` is refreshed asynchronously, so picker reads never perform I/O. A toggle shows
+ * up as saved-vs-active drift until restart.
  */
 export class ModelBlacklistStore {
 	readonly path: string;
-	readonly active: ModelBlacklistPolicy;
-	private cached: { signature: string; policy: ModelBlacklistPolicy } | undefined;
+	private activePolicy = ModelBlacklistPolicy.failClosed("model blacklist not loaded; await runtime.refresh()");
+	private initialized = false;
+	private cached = this.activePolicy;
 	private writeQueue: Promise<unknown> = Promise.resolve();
 
 	constructor(path: string) {
 		this.path = path;
-		this.active = this.saved();
+		// Bootstrap may establish absence from metadata, but never reads policy bytes.
+		// Existing or inaccessible files stay fail-closed until asynchronous initialization.
+		try {
+			statSync(path);
+		} catch (error) {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+				this.activePolicy = ModelBlacklistPolicy.empty();
+				this.cached = this.activePolicy;
+				this.initialized = true;
+			}
+		}
+	}
+
+	get active(): ModelBlacklistPolicy {
+		return this.activePolicy;
 	}
 
 	static forDirectory(directory: string): ModelBlacklistStore {
 		return new ModelBlacklistStore(join(directory, MODEL_BLACKLIST_FILE_NAME));
 	}
 
-	/** The saved policy; re-read only when the file changed on disk. */
+	/** Last saved snapshot, updated by refreshSaved() or a completed toggle. */
 	saved(): ModelBlacklistPolicy {
-		const signature = fileSignature(this.path);
-		if (this.cached?.signature === signature) return this.cached.policy;
-		const policy = readPolicySync(this.path);
-		this.cached = { signature, policy };
-		return policy;
+		return this.cached;
+	}
+
+	/** Refresh saved state without changing active enforcement; ordered with local writes. */
+	refreshSaved(): Promise<void> {
+		const run = async () => {
+			this.cached = await readPolicy(this.path);
+			if (!this.initialized) {
+				this.activePolicy = this.cached;
+				this.initialized = true;
+			}
+		};
+		const result = this.writeQueue.then(run, run);
+		this.writeQueue = result.catch(() => undefined);
+		return result;
 	}
 
 	/** Persist the opposite of the model's saved state. Rejects on a malformed saved file. */
 	toggle(model: ModelRef): Promise<void> {
 		const run = async () => {
 			// Re-read: another process may have edited the file since the cache filled.
-			this.cached = undefined;
-			const next = ModelBlacklistPolicy.fromRules(this.saved().toggledRules(model));
+			this.cached = await readPolicy(this.path);
+			if (!this.initialized) {
+				this.activePolicy = this.cached;
+				this.initialized = true;
+			}
+			const next = ModelBlacklistPolicy.fromRules(this.cached.toggledRules(model));
 			await writePolicyAtomic(this.path, next);
-			this.cached = undefined;
+			this.cached = next;
 		};
 		const result = this.writeQueue.then(run, run);
 		this.writeQueue = result.catch(() => undefined);

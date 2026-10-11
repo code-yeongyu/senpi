@@ -85,6 +85,8 @@ A toggle saves immediately but does not change the current runtime. The picker m
 
 The native runtime excludes blocked models from model catalogs, automatic selection and retry candidates, and rejects requests made with stale blocked model objects. OmO subagent selection consumes that same filtered catalog. A missing or empty file excludes nothing; invalid saved rules fail closed. Favorites, credentials and conversation memory are separate from this file.
 
+Policy bytes are loaded asynchronously. Normal CLI and async SDK startup return with the policy initialized. SDK callers using `ModelRuntime.createSync()` or `ModelRegistry.create()` with an existing policy file must await `refresh()` before using model catalogs or dispatch; the runtime denies access until that load finishes. A missing file remains a no-op for synchronous callers. Picker saved state is refreshed asynchronously when catalogs refresh or a toggle completes.
+
 ### Reasoning and Fast Mode Commands
 
 **Changing the thinking level.** `/thinking <level>` sets it for this session and `/thinking` alone opens a picker. Shift+Tab cycles through the levels the model supports, and `/efforts <level>` sets the reasoning effort for graded models; both remember the level for the current model. The footer shows the active level after the model name.
