@@ -28,6 +28,10 @@
 		"./client": {
 			"types": "./dist/client/index.d.ts",
 			"import": "./dist/client/index.js"
+		},
+		"./prompt-presets": {
+			"types": "./dist/core/extensions/builtin/prompt-preset/contract.d.ts",
+			"import": "./dist/core/extensions/builtin/prompt-preset/contract.js"
 		}
 	},
 	"files": [
