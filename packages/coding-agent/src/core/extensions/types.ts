@@ -8,6 +8,10 @@
  * - Interact with the user via UI primitives
  */
 
+import type { ContextEvent } from "./context-event.ts";
+
+export type { ContextEvent } from "./context-event.ts";
+
 import type {
 	AgentMessage,
 	AgentTool,
@@ -1338,18 +1342,6 @@ export type SessionEvent =
 // ============================================================================
 // Agent Events
 // ============================================================================
-
-/**
- * Fired before each LLM call. Can modify messages.
- *
- * `messages` holds the conversation without system messages. The prompt and tool state
- * belong to Pi: it restores them after the handler returns, so a handler cannot drop
- * them and does not need to preserve them.
- */
-export interface ContextEvent {
-	type: "context";
-	messages: AgentMessage[];
-}
 
 /**
  * Fired before each LLM call, after every `context` handler has run and Pi has restored

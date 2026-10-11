@@ -12,7 +12,7 @@ import type {
 } from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
-import { buildCompactionContext } from "./context-pipeline.ts";
+import { registerContextReductionLifecycle } from "./context-reduction-lifecycle.ts";
 import {
 	createDegradationMonitorState,
 	handleMessageEnd,
@@ -94,7 +94,6 @@ import {
 	createBlockingRemoteCompactionEvent,
 	endCompactionFeedback,
 	estimatePendingPromptTokens,
-	getPromptContextWindow,
 	isAbortedAssistantMessage,
 	isMonitorableMessageEvent,
 	linkAbortSignal,
@@ -866,6 +865,7 @@ export default function compactionExtension(
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);
 		if (compactEvent.accepted) {
+			contextReduction.reset();
 			persistAcceptedMetadata(compactEvent.requestId);
 			const branchEntries = ctx.sessionManager.getBranch();
 			const firstKeptIndex = branchEntries.findIndex(
@@ -1041,42 +1041,20 @@ export default function compactionExtension(
 	};
 	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
-	pi.on(
-		"context",
-		(event, ctx) => {
-			const usage = ctx.getContextUsage();
-			const settings = ctx.getCompactionSettings();
-			const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-			const laneOwnsCompaction = lanePolicy.disablesSenpiCompaction(ctx);
-			const breakerFallback =
-				!laneOwnsCompaction &&
-				breaker.isTripped(state, Date.now()) &&
-				usage?.tokens !== null &&
-				usage !== undefined &&
-				usage.tokens >=
-					contextWindow * policy.computeEffectiveThreshold(contextWindow, state.lastYield ?? undefined);
-			if (breakerFallback)
-				getLogger(ctx).debug("breaker_deterministic_fallback", {
-					route: "context-event",
-					tokens: usage.tokens ?? 0,
-				});
-			return {
-				messages: buildCompactionContext({
-					event,
-					ctx,
-					contextWindow,
-					promptContextWindow: getPromptContextWindow(contextWindow, ctx.model?.maxTokens),
-					toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
-					breakerFallback,
-					laneOwnsCompaction,
-					appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
-					emergencyPruneLatch,
-					logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),
-				}),
-			};
-		},
-		{ mutatesMessages: false },
-	);
+	const contextReduction = registerContextReductionLifecycle(pi, {
+		emergencyPruneLatch,
+		emergencyInstructions: EMERGENCY_COMPACTION_INSTRUCTIONS,
+		getTools: getSummarizationTools,
+		getPolicy: (ctx) => ({
+			lastYield: state.lastYield ?? undefined,
+			breakerTripped: breaker.isTripped(state, Date.now()),
+			laneOwnsCompaction: lanePolicy.disablesSenpiCompaction(ctx),
+			appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
+		}),
+		logEmergencyPrune: (ctx, fields) => getLogger(ctx).debug("emergency_prune", fields),
+		logBreakerFallback: (ctx, tokens) =>
+			getLogger(ctx).debug("breaker_deterministic_fallback", { route: "context-event", tokens }),
+	});
 
 	pi.on("before_provider_request", async (event, ctx) => {
 		const model = event.model ?? ctx.model;

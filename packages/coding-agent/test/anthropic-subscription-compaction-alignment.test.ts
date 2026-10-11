@@ -18,6 +18,7 @@ import {
 	ANTHROPIC_SUBSCRIPTION_COMPACT_BOUNDARY_DIAGNOSTIC,
 	SDK_NATIVE_LANE_REJECTION_REASON,
 } from "../src/core/extensions/builtin/compaction/lane-policy.ts";
+import { estimateTotalTokens } from "../src/core/extensions/builtin/compaction/overflow-retry.ts";
 import type {
 	AgentEndEvent,
 	BeforeAgentStartEvent,
@@ -30,6 +31,7 @@ import type {
 } from "../src/core/extensions/index.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { sdkAlignmentReductionHistory } from "./support/sdk-alignment-reduction-fixture.ts";
 
 const registrations: FauxProviderRegistration[] = [];
 afterEach(() => {
@@ -255,11 +257,8 @@ describe("claude-sdk-oauth lane: senpi compaction stands down (compactionOwner: 
 	);
 
 	it("leaves context messages untouched while the same load reduces them for other providers", () => {
-		const reductionMessages = () => [
-			{ role: "user" as const, content: [{ type: "text" as const, text: "u1" }], timestamp: 1 },
-			bigAssistantMessage("assistant answer ".repeat(4_000)),
-			{ role: "user" as const, content: [{ type: "text" as const, text: "u2" }], timestamp: 3 },
-		];
+		const reductionMessages = () =>
+			sdkAlignmentReductionHistory(bigAssistantMessage("assistant answer ".repeat(16_000)));
 		const lane = createHarness({ provider: "anthropic-subscription", usageTokens: 95_000 });
 		const other = createHarness({ usageTokens: 95_000 });
 
@@ -282,11 +281,8 @@ describe("claude-sdk-oauth lane: senpi compaction stands down (compactionOwner: 
 		"keeps the resident transcript append-only when %s makes senpi own the lane",
 		(_label, compactionModel, owner) => {
 			if (owner) vi.stubEnv("SENPI_CLAUDE_SDK_OAUTH_COMPACTION_OWNER", owner);
-			const reductionMessages = () => [
-				{ role: "user" as const, content: [{ type: "text" as const, text: "u1" }], timestamp: 1 },
-				bigAssistantMessage("assistant answer ".repeat(4_000)),
-				{ role: "user" as const, content: [{ type: "text" as const, text: "u2" }], timestamp: 3 },
-			];
+			const reductionMessages = () =>
+				sdkAlignmentReductionHistory(bigAssistantMessage("assistant answer ".repeat(16_000)));
 			const lane = createHarness({ provider: "anthropic-subscription", usageTokens: 95_000, compactionModel });
 			const other = createHarness({ usageTokens: 95_000, compactionModel });
 
@@ -294,7 +290,7 @@ describe("claude-sdk-oauth lane: senpi compaction stands down (compactionOwner: 
 			const otherResult = other.context({ type: "context", messages: reductionMessages() }, other.ctx);
 
 			expect(JSON.stringify(otherResult?.messages).length).toBeLessThan(JSON.stringify(laneResult?.messages).length);
-			expect(JSON.stringify(laneResult?.messages)).toContain("assistant answer ".repeat(4_000));
+			expect(JSON.stringify(laneResult?.messages)).toContain("assistant answer ".repeat(16_000));
 		},
 	);
 
@@ -311,7 +307,7 @@ describe("claude-sdk-oauth lane: senpi compaction stands down (compactionOwner: 
 				role: "toolResult" as const,
 				toolCallId: `call-${index}`,
 				toolName: "read",
-				content: [{ type: "text" as const, text: `contents of file ${index} `.repeat(400) }],
+				content: [{ type: "text" as const, text: `contents of file ${index} `.repeat(1_000) }],
 				isError: false,
 				timestamp: 11 + index * 2,
 			},
@@ -320,10 +316,13 @@ describe("claude-sdk-oauth lane: senpi compaction stands down (compactionOwner: 
 			{ role: "user" as const, content: [{ type: "text" as const, text: "read the files" }], timestamp: 1 },
 			...readPairs,
 		];
+		const followUp = "now summarize them ".repeat(3_000);
 		const secondTurn = [
 			...firstTurn,
-			{ role: "user" as const, content: [{ type: "text" as const, text: "now summarize them" }], timestamp: 99 },
+			{ role: "user" as const, content: [{ type: "text" as const, text: followUp }], timestamp: 99 },
 		];
+		expect(estimateTotalTokens(firstTurn)).toBeLessThan(50_000);
+		expect(estimateTotalTokens(secondTurn)).toBeGreaterThanOrEqual(50_000);
 		const lane = { provider: "anthropic-subscription", compactionModel: "anthropic-subscription/claude-test" };
 		const belowGate = createHarness({ ...lane, usageTokens: 30_000 });
 		const aboveGate = createHarness({ ...lane, usageTokens: 95_000 });

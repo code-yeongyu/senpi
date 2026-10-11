@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Context reduction no longer rewrites the prompt cache every turn on long sessions. Reduction stays engaged and holds a stable prefix between large frontier steps, survives restarts, and advances early near the context limit ([#900](https://github.com/code-yeongyu/senpi/issues/900), building on [#901](https://github.com/code-yeongyu/senpi/pull/901) by [@codeg-dev](https://github.com/codeg-dev); thanks to [@daehwanahn](https://github.com/daehwanahn) and [@ddotz](https://github.com/ddotz) for the reports and measurements).
 - Reloading a session releases the previous extension runner and reuses unchanged module graphs instead of retaining another generation. Edited lazy dependencies now invalidate the graph using the bytes actually compiled, including equal-size edits with preserved timestamps ([#3066](https://github.com/code-yeongyu/senpi/pull/3066) by [@jc01rho](https://github.com/jc01rho), [#3068](https://github.com/code-yeongyu/senpi/issues/3068)).
 
 - Boundary handlers no longer run after their extension runner retires during awaited context previews or handlers, and retired boundary drafts and continuation are discarded. A handler or boundary rebuild that was already in flight and then fails on the retired runner stands down instead of reporting an extension error ([#3071](https://github.com/code-yeongyu/senpi/pull/3071) by [@MoerAI](https://github.com/MoerAI)).

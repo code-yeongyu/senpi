@@ -81,11 +81,38 @@ function seedTranscript(harness: Harness): SeededTranscript {
 	return { anchor };
 }
 
-function respondOk(harness: Harness): void {
+function respondOk(harness: Harness, count = 1): void {
 	const model = harness.getModel();
-	harness.setResponses([
-		Object.assign(fauxAssistantMessage("ok"), { api: model.api, provider: model.provider, model: model.id }),
-	]);
+	harness.setResponses(
+		Array.from({ length: count }, () =>
+			Object.assign(fauxAssistantMessage("ok"), { api: model.api, provider: model.provider, model: model.id }),
+		),
+	);
+}
+
+async function runToOk(harness: Harness): Promise<void> {
+	respondOk(harness, 3);
+	const completed = Promise.withResolvers<void>();
+	const unsubscribe = harness.session.subscribe((event) => {
+		if (
+			event.type === "agent_end" &&
+			event.messages.some(
+				(message) =>
+					message.role === "assistant" &&
+					message.stopReason === "stop" &&
+					message.content.some((block) => block.type === "text" && block.text === "ok"),
+			)
+		)
+			completed.resolve();
+	});
+	const timeout = setTimeout(() => completed.reject(new Error("Compaction did not resume the turn")), 10_000);
+	try {
+		await Promise.all([harness.session.prompt("hello"), completed.promise]);
+		await harness.agent.waitForIdle();
+	} finally {
+		clearTimeout(timeout);
+		unsubscribe();
+	}
 }
 
 describe("issue #2525: context hooks share an uncloned transcript with declared handlers", () => {
@@ -98,11 +125,14 @@ describe("issue #2525: context hooks share an uncloned transcript with declared 
 	it("runs the builtin pipeline on frozen transcript objects without cloning or mutating them", async () => {
 		// Given a deep-frozen seeded transcript and only mutation-free declared handlers
 		const capturedMessages: AgentMessage[][] = [];
+		const residentAtRequest: string[][] = [];
 		const captureExtension = (pi: ExtensionAPI) => {
 			pi.on(
 				"context",
 				(event) => {
+					if (event.source === "projection") return;
 					capturedMessages.push(event.messages);
+					residentAtRequest.push(harness.session.agent.state.messages.map((message) => JSON.stringify(message)));
 				},
 				{ mutatesMessages: false },
 			);
@@ -124,10 +154,8 @@ describe("issue #2525: context hooks share an uncloned transcript with declared 
 		const seeded = [...harness.session.agent.state.messages];
 		const snapshotsBefore = seeded.map((message) => JSON.stringify(message));
 		for (const message of seeded) deepFreeze(message);
-		respondOk(harness);
-
 		// When a real turn runs the request through the context hooks
-		await harness.session.prompt("hello");
+		await runToOk(harness);
 
 		// Then the untouched anchor reached the post-pipeline list by reference: no clone
 		expect(capturedMessages.length).toBeGreaterThan(0);
@@ -135,9 +163,10 @@ describe("issue #2525: context hooks share an uncloned transcript with declared 
 		// And no handler mutated a frozen transcript object (a mutation throws or
 		// shows in the snapshot, whichever the runtime's strictness allows)
 		expect(extensionErrors).toEqual([]);
-		expect(
-			harness.session.agent.state.messages.slice(0, snapshotsBefore.length).map((m) => JSON.stringify(m)),
-		).toEqual(snapshotsBefore);
+		// Compare the resident history before the required compaction handoff;
+		// accepted compaction may subsequently replace it with a summary.
+		expect(residentAtRequest[0]?.slice(0, snapshotsBefore.length)).toEqual(snapshotsBefore);
+		expect(seeded.map((message) => JSON.stringify(message))).toEqual(snapshotsBefore);
 		// And the pipeline did its real work on the frozen input
 		const delivered = capturedMessages[0] ?? [];
 		expect(delivered.some((message) => message.role === "toolResult" && message.toolCallId === "call-dangling")).toBe(
@@ -178,10 +207,8 @@ describe("issue #2525: context hooks share an uncloned transcript with declared 
 		harnesses.push(harness);
 		await harness.session.bindExtensions({});
 		const { anchor } = seedTranscript(harness);
-		respondOk(harness);
-
 		// When the turn runs
-		await harness.session.prompt("hello");
+		await runToOk(harness);
 
 		// Then handlers worked on clones: the transcript object never left the runtime
 		expect(capturedMessages.length).toBeGreaterThan(0);

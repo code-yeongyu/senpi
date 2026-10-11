@@ -148,7 +148,9 @@ describe("compaction context pipeline on frozen input (senpi#2525)", () => {
 
 	it("clearing old tool results, the last reduction step, derives its replacement messages", () => {
 		const messages: AgentMessage[] = [];
-		for (let index = 0; index < 10; index += 1) {
+		// Six clearable results inside the frontier plus the protected 3k tail
+		// remain intact; supply enough older results to exercise clearing too.
+		for (let index = 0; index < 20; index += 1) {
 			messages.push(...readPair(index, `file ${index} `.repeat(300)));
 			messages.push({ role: "user", content: `next ${index}`, timestamp: index * 2 + 1.5 } as AgentMessage);
 		}
