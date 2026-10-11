@@ -6,6 +6,8 @@
 
 ### Added
 
+- Venice `e2ee-*` models (`e2ee-glm-5-3-p`, `e2ee-glm-5-3-flash`, `e2ee-glm-5-2-p`, `e2ee-deepseek-v4-flash`, `e2ee-gpt-oss-120b-p`) encrypt prompts before they are sent and decrypt the streamed reply. The default Venice model stays `z-ai-glm-5-3`. Images, audio, and tool schemas are omitted on that path ([#3086](https://github.com/code-yeongyu/senpi/pull/3086) by [@audreyt](https://github.com/audreyt)).
+
 ### Changed
 
 ### Fixed

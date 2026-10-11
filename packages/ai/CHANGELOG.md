@@ -6,6 +6,8 @@
 
 ### Added
 
+- Venice `e2ee-*` models encrypt each chat message before it leaves the process and decrypt the streamed reply locally. The TEE signing key is accepted when the Intel TDX quote binds that key and the attestation nonce and the quote is not a debug TD. The parser checks quote layout and REPORTDATA. Intel DCAP signature verification is left to a verifier this client does not run ([#3086](https://github.com/code-yeongyu/senpi/pull/3086) by [@audreyt](https://github.com/audreyt)).
+
 ### Changed
 
 ### Fixed
