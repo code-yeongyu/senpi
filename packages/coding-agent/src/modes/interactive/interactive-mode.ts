@@ -304,7 +304,7 @@ import { buildFavoriteCycleStatusMessage } from "./tips/favorite-messages.ts";
 import { recordTipShown } from "./tips/history-writer.ts";
 import { TIP_DEFINITIONS } from "./tips/registry.ts";
 import { appendStartupHeader } from "./tips/startup-header.ts";
-import { resolveStartupTipLine } from "./tips/startup-tip.ts";
+import { resolveStartupTips } from "./tips/startup-tips.ts";
 import { appendTipLine } from "./tips/tip-line.ts";
 import { resolveWorkingTipLine, WorkingTipCache, type WorkingTipLine } from "./tips/working-tip.ts";
 import { buildTmuxSetupWarning } from "./tmux-setup.ts";
@@ -1719,20 +1719,16 @@ export class InteractiveMode {
 					"dim",
 					`Press ${keyText("app.tools.expand")} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
 				);
-			const startupTip = resolveStartupTipLine({
-				tipsEnabled: this.settingsManager.getTipsEnabled(),
-				// Header-only quiet startup keeps the header but not the startup details, tips included.
-				quietStartup: this.settingsManager.getQuietStartup() !== false,
-				history: this.settingsManager.getTipsHistory(),
+			const startupTips = resolveStartupTips({
+				settings: this.settingsManager,
 				now: Date.now(),
-				definitions: TIP_DEFINITIONS,
-				keys: keyText,
+				modelReasoning: () => this.session.state.model?.reasoning === true,
 				hasCommand: (command) => this.hasRegisteredCommand(command),
+				keys: keyText,
+				displayKeys: keyDisplayText,
 			});
-			if (startupTip) {
-				this.recordShownTip(startupTip.tipId);
-			}
-			const tipLine = startupTip ? theme.fg("dim", startupTip.line) : undefined;
+			for (const tipId of startupTips?.tipIds ?? []) this.sessionShownTipIds.add(tipId);
+			const tipLine = startupTips ? theme.fg("dim", startupTips.text) : undefined;
 			const onboarding = () =>
 				theme.fg("dim", `Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`);
 			this.builtInHeader = new ExpandableText(

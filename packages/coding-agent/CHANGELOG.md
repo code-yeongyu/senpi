@@ -6,6 +6,8 @@
 
 ### Added
 
+- The footer shows a reasoning model's level as `effort <level>` with the key bound to `app.thinking.cycle` beside it (`shift+tab` by default, your own key when rebound, nothing when unbound) whenever the whole footer fits; on a narrower terminal the key drops first, then the label falls back to the compact `model:<level>` the footer always showed, so no stat or path character is lost to the hint. A one-time tip, `Shift+Tab changes the reasoning level`, is shown once per agent directory for reasoning models ([#3090](https://github.com/code-yeongyu/senpi/issues/3090), requested by @devxoul).
+
 - Exported a shared prompt-preset resolution contract on the public `@code-yeongyu/senpi/prompt-presets` subpath: a pure, settings-free `resolvePresetName({ providerID, modelID, name? })` plus `PROMPT_PRESET_MODEL_CASES` and `AUTO_RESOLVED_PRESET_NAMES`, so downstream harnesses can pin model-id-to-preset parity against a single source of truth. The model-id matchers moved into an exported `matchers.ts` that `presets.ts` re-imports; `gpt-5` is a manual-only preset and is intentionally excluded from the auto-resolvable set ([#3074](https://github.com/code-yeongyu/senpi/issues/3074)).
 
 ### Changed

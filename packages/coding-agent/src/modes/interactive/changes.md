@@ -1,3 +1,27 @@
+## 2026-10-10 - The footer shows the reasoning level and its cycle key (senpi#3090)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer-right-label.ts` (new): `buildRightLabel` owns the right-side ladder and the run colouring (`RightSideRun`, `colorRightSide` moved here from `footer.ts`). For a reasoning model the ladder is: `(provider) <model> • effort <level> (<key>)` and `(provider) <model> • effort <level>`, both used only when the whole footer fits as is; then the compact `(provider) <model>:<level>` while middle stats may elide; then `<model>:<level>` as the floor with pwd elision - the last two are exactly the forms the footer had before. `<key>` is `keyText("app.thinking.cycle")` (the user's own binding; an unbound action yields no hint form). The virtual-model routing suffix stays after the model id in every form. So the key hint drops first, then the readable label, then the provider; stats, path and `model:level` are visible at exactly the widths they were before (measured 40-200 columns against main, three fixtures, zero differences).
+- `packages/coding-agent/src/modes/interactive/components/footer-layout.ts`: `FooterRightLabel` is `{ forms: [richest, ..., floor] }` of `FooterRightForm`s instead of `{ minimal, full }`; each form carries `fitsWith: "everything" | "middle-elision" | "pwd-elision"` (default) saying how much the left side may give up for it, and the `full` / `middle-elided` / `pwd-elided` plans carry `rightForm` (index into `forms`) instead of `useFullRight`. Head elision and right truncation use the floor form.
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: builds the provider prefix and calls `buildRightLabel`; the model-label block, run type and colouring left the file (273 -> 234 pure LOC).
+- `packages/coding-agent/src/modes/interactive/tips/reasoning-level-notice.ts` (new): `resolveReasoningLevelNotice` returns the one-time `Tip: <Key> changes the reasoning level` line for a reasoning model when `app.thinking.cycle` is bound and the tip id `reasoning-level-key` is not yet in the settings tip history.
+- `packages/coding-agent/src/modes/interactive/tips/startup-tips.ts` (new): `resolveStartupTips({ settings, now, modelReasoning, hasCommand, keys, displayKeys })` is the startup tip block as a free function over a settings port (`getTipsEnabled` / `getQuietStartup` / `getTipsHistory` / `setTipShown`): it resolves that notice before the rotating startup tip, records each shown tip in `tipsHistory` (so the notice never repeats from that agent directory), excludes the rotating `thinking-level` tip on the launch the notice shows, and returns the joined lines plus the shown tip ids. The same `tips` / `quietStartup` gates apply.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `init()` calls `resolveStartupTips` with its settings manager and lazy thunks for the model and registered commands, adds the shown ids to `sessionShownTipIds`, and puts the text in the one tip slot under the header. Hand-built `init` fixtures (the grok characterization tests) keep working because nothing new is required of `this`. Two sessions starting for the very first time at the same moment can each show the notice once (same race the rotating tips have).
+- Tests: `test/footer-reasoning-level.test.ts` (default/rebound/unbound key, non-reasoning, `off`, routed model; a 60-200 sweep proving the hint never evicts a stat; cost/CH at 100-119 as on main; `model:level` down to 45 columns), `test/reasoning-level-notice.test.ts` (pure resolver, plus `resolveStartupTips` on a real `SettingsManager`: recorded once, no `thinking-level` entry that launch, silent after a restart, obeys `tips=false` / quiet startup); `footer-width` ladder tests use `fitsWith`.
+
+### Why
+
+- Users did not discover that Shift+Tab cycles the reasoning level: the only sign was a dim `:high` glued to the model id with nothing saying a key changes it (senpi#3090, requested by @devxoul). The readable forms must not cost live stats or path, which is why they are gated on a full fit and the compact form takes over below.
+
+### Why an extension could not handle it
+
+- The footer's right-side label, its width ladder and the startup tip slot are the interactive mode's own rendering; an extension can add a status line but cannot change how the model label is composed or truncated.
+
+### Expected merge conflict zones
+
+- LOW: the model-label block of `footer.ts` `render()` and the `FooterRightLabel` / `FooterLayout` types in `footer-layout.ts` (both fork-only); the startup-tip block in `interactive-mode.ts` (fork-only tips).
+
 ## 2026-10-08 - In-session resume warns about foreign holders (senpi#2951)
 
 ### What changed
