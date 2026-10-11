@@ -1,7 +1,16 @@
 import { providerUrl } from "../provider-endpoints.ts";
 import type { BuiltSearchRequest, JsonObject, SearchResultItem } from "../types.ts";
 import type { BuildContext, ProviderModule } from "./shared.ts";
-import { appendDomainFilters, collect, contentHeaders, getArray, getObject, getString, result } from "./shared.ts";
+import {
+	appendDomainFilters,
+	collect,
+	contentHeaders,
+	getArray,
+	getObject,
+	getString,
+	result,
+	withConfigHeaders,
+} from "./shared.ts";
 
 function searchOnlyPrompt(query: string): string {
 	return `Find web pages matching any of these search terms or quoted phrases. If the query contains OR, search each alternative independently. Return only relevant source URLs, one per line. Query: ${query}`;
@@ -26,7 +35,10 @@ export function buildResponsesRequest({
 
 	return {
 		url: providerUrl(config),
-		init: { method: "POST", headers: contentHeaders({ Authorization: `Bearer ${config.apiKey ?? ""}` }) },
+		init: {
+			method: "POST",
+			headers: withConfigHeaders(config, contentHeaders({ Authorization: `Bearer ${config.apiKey ?? ""}` })),
+		},
 		body: {
 			model: config.model ?? "gpt-5.5",
 			input,
