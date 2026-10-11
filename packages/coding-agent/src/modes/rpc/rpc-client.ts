@@ -514,7 +514,7 @@ export class RpcClient {
 		}
 	}
 
-	async listSessions(): Promise<
+	async listSessions(options?: { observe?: boolean; include_workers?: boolean }): Promise<
 		Array<{
 			sessionId: string;
 			durableSessionId?: string;
@@ -526,7 +526,7 @@ export class RpcClient {
 			attachments?: number;
 		}>
 	> {
-		const response = await this.send({ type: "list_sessions" }, false);
+		const response = await this.send({ type: "list_sessions", ...options }, false);
 		return this.getData<{
 			sessions: Array<{
 				sessionId: string;
@@ -670,6 +670,11 @@ export class RpcClient {
 		} catch (error) {
 			if (!isTransportGoneError(error)) throw error;
 		}
+	}
+
+	/** Abort with host refusals and transport loss surfaced to machine callers. */
+	async abortStrict(): Promise<void> {
+		this.getData(await this.send({ type: "abort" }));
 	}
 
 	async abortCompaction(): Promise<void> {

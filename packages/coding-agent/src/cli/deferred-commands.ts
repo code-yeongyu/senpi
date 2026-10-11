@@ -68,6 +68,10 @@ export async function dispatchAppServerCommand(args: readonly string[]): Promise
  */
 export async function dispatchHostCommand(args: readonly string[]): Promise<number | undefined> {
 	if (args[0] !== HOST_COMMAND_ARGV) return undefined;
+	if (args[1] === "session") {
+		const { runHostSessionCommand } = await import("./host-session-command.ts");
+		return await runHostSessionCommand(args.slice(2));
+	}
 	const { runHostCommand } = await import("./host-command.ts");
 	return await runHostCommand(args.slice(1));
 }
