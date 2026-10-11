@@ -80,6 +80,8 @@ import { envValue } from "./brand.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
 import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry.ts";
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
+import type { ModelBlacklistAdapter } from "./extensions/types.ts";
+import { createModelBlacklistAdapter, ModelBlacklistStore } from "./model-blacklist.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
 import {
@@ -131,6 +133,23 @@ interface ModelRuntimeSnapshot {
 	configuredProviders: ReadonlySet<string>;
 	storedProviders: ReadonlySet<string>;
 	auth: ReadonlyMap<string, AuthCheck | undefined>;
+}
+
+interface BlacklistableModel {
+	provider: string;
+	id: string;
+}
+
+/**
+ * The blacklist lives beside the agent's other saved state. A runtime with neither an explicit
+ * `agentDir` nor a models.json path (`modelsPath: null`) is intentionally isolated and has none.
+ */
+function openModelBlacklist(
+	agentDir: string | undefined,
+	modelsPath: string | undefined,
+): ModelBlacklistStore | undefined {
+	const directory = agentDir ?? (modelsPath === undefined ? undefined : dirname(modelsPath));
+	return directory === undefined ? undefined : ModelBlacklistStore.forDirectory(directory);
 }
 
 /**
@@ -303,6 +322,8 @@ export class ModelRuntime implements Models {
 	 * ModelRuntime, which the import-graph guard forbids.
 	 */
 	private readonly poolStatePath: string | undefined;
+	private readonly blacklist: ModelBlacklistStore | undefined;
+	private readonly blacklistAdapter: ModelBlacklistAdapter | undefined;
 	private credentialPoolModules:
 		| Promise<{
 				rotation: typeof import("./credential-pool/rotation-stream.ts");
@@ -318,9 +339,12 @@ export class ModelRuntime implements Models {
 		modelNetworkEnabled: boolean,
 		modelRefreshTimeoutMs: number,
 		poolStatePath?: string,
+		blacklist?: ModelBlacklistStore,
 	) {
 		this.credentials = credentials;
 		this.poolStatePath = poolStatePath;
+		this.blacklist = blacklist;
+		this.blacklistAdapter = blacklist && createModelBlacklistAdapter(blacklist, () => this.snapshot.available);
 		this.config = config;
 		this.modelsPath = modelsPath;
 		this.modelNetworkEnabled = modelNetworkEnabled;
@@ -337,6 +361,8 @@ export class ModelRuntime implements Models {
 			options.modelsPath === null ? undefined : (options.modelsPath ?? join(getAgentDir(), "models.json"));
 		installClaudeCodeVersionCache(modelsPath);
 		const config = await ModelConfig.load(modelsPath);
+		const blacklist = openModelBlacklist(options.agentDir, modelsPath);
+		await blacklist?.refreshSaved();
 		const modelsStore =
 			options.modelsStore ??
 			(modelsPath
@@ -363,6 +389,7 @@ export class ModelRuntime implements Models {
 				: options.authPath
 					? join(dirname(options.authPath), "credential-pool-state.json")
 					: undefined,
+			blacklist,
 		);
 		runtime.rebuildProviders();
 		if (options.settingsManager) runtime.setSettingsManager(options.settingsManager);
@@ -385,7 +412,12 @@ export class ModelRuntime implements Models {
 		return runtime;
 	}
 
-	/** Synchronous compatibility constructor for legacy ModelRegistry callers. */
+	/**
+	 * Synchronous compatibility constructor for legacy ModelRegistry callers.
+	 * An existing native blacklist starts fail-closed: await refresh() before catalog reads
+	 * or dispatch. A missing file is a no-op. Use create() for initialized policy snapshots.
+	 * An isolated in-memory runtime (modelsPath: null, no agentDir) needs no policy load.
+	 */
 	static createSync(options: CreateModelRuntimeOptions = {}): ModelRuntime {
 		const credentials = new RuntimeCredentials(options.credentials ?? DefaultAuthStorage.create(options.authPath));
 		const modelsPath =
@@ -417,6 +449,7 @@ export class ModelRuntime implements Models {
 				: options.authPath
 					? join(dirname(options.authPath), "credential-pool-state.json")
 					: undefined,
+			openModelBlacklist(options.agentDir, modelsPath),
 		);
 		runtime.rebuildProviders();
 		if (options.settingsManager) runtime.setSettingsManager(options.settingsManager);
@@ -610,15 +643,40 @@ export class ModelRuntime implements Models {
 	getProvider(providerId: string): Provider | undefined {
 		return this.models.getProvider(providerId);
 	}
+	/**
+	 * Policy adapter for the model picker's blacklist key, backed by the native saved policy.
+	 * Undefined for an intentionally isolated runtime (no agent directory).
+	 */
+	getModelBlacklistAdapter(): ModelBlacklistAdapter | undefined {
+		return this.blacklistAdapter;
+	}
+
+	private allowedModels<T extends BlacklistableModel>(models: readonly T[]): readonly T[] {
+		const policy = this.blacklist?.active;
+		return policy === undefined || policy.isEmpty ? models : models.filter((model) => !policy.isBlocked(model));
+	}
+
+	private allowedModel<T extends BlacklistableModel>(model: T | undefined): T | undefined {
+		return model !== undefined && this.blacklist?.active.isBlocked(model) ? undefined : model;
+	}
+
+	/** Rejects a model the active blacklist blocks, including stale objects held across a reload. */
+	private assertModelAllowed(model: BlacklistableModel): void {
+		const decision = this.blacklist?.active.decide(model);
+		if (!decision?.blocked) return;
+		const rule = decision.rule === undefined ? "" : ` (rule: ${decision.rule})`;
+		throw new ModelsError("provider", `Model ${model.provider}/${model.id} is blocked by the model blacklist${rule}`);
+	}
+
 	getModels(providerId?: string): readonly Model<Api>[] {
-		return this.models.getModels(providerId);
+		return this.allowedModels(this.models.getModels(providerId));
 	}
 	getModel(providerId: string, modelId: string): Model<Api> | undefined {
-		return this.models.getModel(providerId, modelId);
+		return this.allowedModel(this.models.getModel(providerId, modelId));
 	}
 
 	getModelsOfType<TType extends ModelType>(type: TType, providerId?: string): readonly ModelTypeMap[TType][] {
-		return this.models.getModelsOfType(type, providerId);
+		return this.allowedModels(this.models.getModelsOfType(type, providerId));
 	}
 
 	getModelOfType<TType extends ModelType>(
@@ -626,23 +684,23 @@ export class ModelRuntime implements Models {
 		providerId: string,
 		modelId: string,
 	): ModelTypeMap[TType] | undefined {
-		return this.models.getModelOfType(type, providerId, modelId);
+		return this.allowedModel(this.models.getModelOfType(type, providerId, modelId));
 	}
 
 	getAllModels(providerId?: string): readonly AnyModel[] {
-		return this.models.getAllModels(providerId);
+		return this.allowedModels(this.models.getAllModels(providerId));
 	}
 
-	getAvailableOfType<TType extends ModelType>(
+	async getAvailableOfType<TType extends ModelType>(
 		type: TType,
 		providerId?: string,
 		options?: AuthOperationOptions,
 	): Promise<readonly ModelTypeMap[TType][]> {
-		return this.models.getAvailableOfType(type, providerId, options);
+		return this.allowedModels(await this.models.getAvailableOfType(type, providerId, options));
 	}
 
-	getAllAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly AnyModel[]> {
-		return this.models.getAllAvailable(providerId, options);
+	async getAllAvailable(providerId?: string, options?: AuthOperationOptions): Promise<readonly AnyModel[]> {
+		return this.allowedModels(await this.models.getAllAvailable(providerId, options));
 	}
 
 	async checkAuth(providerId: string, options?: AuthOperationOptions): Promise<AuthCheck | undefined> {
@@ -655,7 +713,7 @@ export class ModelRuntime implements Models {
 			try {
 				const available = await this.models.getAvailable(providerId, options);
 				if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
-				return available;
+				return this.allowedModels(available);
 			} catch (error) {
 				if (errorSeq === this.availabilityErrorSeq && !options?.signal?.aborted) {
 					this.availabilityError = error instanceof Error ? error.message : String(error);
@@ -664,11 +722,11 @@ export class ModelRuntime implements Models {
 			}
 		}
 		await this.queueAvailabilityRefresh(options?.signal);
-		return this.snapshot.available;
+		return this.allowedModels(this.snapshot.available);
 	}
 
 	getAvailableSnapshot(): readonly Model<Api>[] {
-		return this.snapshot.available;
+		return this.allowedModels(this.snapshot.available);
 	}
 
 	/** True only when the most recent availability refresh completed without error. */
@@ -689,6 +747,8 @@ export class ModelRuntime implements Models {
 		const errors: string[] = [];
 		const configError = this.config.getError();
 		if (configError) errors.push(configError);
+		const blacklistError = this.blacklist?.active.error;
+		if (blacklistError) errors.push(`Model blacklist: ${blacklistError}. Every model is blocked until it is fixed.`);
 		for (const [providerId, error] of this.compositionErrors) {
 			errors.push(`Provider "${providerId}": ${error}`);
 		}
@@ -879,6 +939,7 @@ export class ModelRuntime implements Models {
 		options: TOptions | undefined,
 		slotAuth?: { apiKey?: string; slotName?: string; rejectedAccess?: string },
 	): Promise<PreparedRequest<TModel, TOptions>> {
+		this.assertModelAllowed(model);
 		const provider = this.models.getProvider(model.provider);
 		if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
 		const resolution = await this.getAuth(model, {
@@ -1002,6 +1063,7 @@ export class ModelRuntime implements Models {
 	): AssistantMessageEventStream {
 		const transcript = normalizeContext(context);
 		return lazyStream(model, async () => {
+			this.assertModelAllowed(model);
 			assertChatModel(model);
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
 			const sources = this.couldRotateCredentials(model, streamOptions)
@@ -1109,6 +1171,7 @@ export class ModelRuntime implements Models {
 			});
 		}
 		return lazyStream(model, async () => {
+			this.assertModelAllowed(model);
 			assertChatModel(model);
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
 			const sources = this.couldRotateCredentials(model, streamOptions)
@@ -1267,6 +1330,7 @@ export class ModelRuntime implements Models {
 
 	async refresh(options: ModelsRefreshOptions = {}): Promise<ModelsRefreshResult> {
 		this.config = await ModelConfig.load(this.modelsPath);
+		await this.blacklist?.refreshSaved();
 		if (options.providers) {
 			for (const providerId of new Set(options.providers)) this.recomposeProvider(providerId);
 			this.updateModelSnapshot();
@@ -1475,6 +1539,7 @@ export class ModelRuntime implements Models {
 			state?: unknown;
 		},
 	): Promise<ModelRoute> {
+		this.assertModelAllowed(model);
 		const name = `Virtual model ${model.provider}/${model.id}`;
 		const virtual = this.virtualModels.get(model.provider)?.get(model.id);
 		if (!virtual) throw new Error(`${name} is not registered.`);
@@ -1490,6 +1555,7 @@ export class ModelRuntime implements Models {
 			failed: failedModel && failed && { model: failedModel, thinkingLevel: failed.thinkingLevel, message: failed },
 			messages,
 		});
+		this.assertModelAllowed(route.model);
 		const target = this.getPhysicalModel(route.model.provider, route.model.id);
 		const routed = `${name} routed to ${route.model.provider}/${route.model.id}`;
 		if (!target) throw new Error(`${routed}, which is not a physical model.`);
@@ -1499,7 +1565,7 @@ export class ModelRuntime implements Models {
 
 	/** A catalog chat model that is not virtual. */
 	getPhysicalModel(providerId: string, modelId: string): Model<Api> | undefined {
-		const model = this.models.getModel(providerId, modelId);
+		const model = this.allowedModel(this.models.getModel(providerId, modelId));
 		return model && !isVirtualModel(model) ? model : undefined;
 	}
 }

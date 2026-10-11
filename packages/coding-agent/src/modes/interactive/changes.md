@@ -1,3 +1,60 @@
+## 2026-10-11 - Native blocklist picker without user extensions
+
+### What changed
+
+- `interactive-mode.ts`: the model picker uses the native runtime blocklist adapter whenever no extension override is installed. Clearing or reloading extension UI restores that native adapter.
+- `docs/usage.md`: documents native persistence, ordered exceptions and runtime snapshot semantics.
+
+### Why
+
+OmO users without `omo-mods` need the same persistent picker controls and enforcement.
+
+### Why an extension could not handle it
+
+Native policy must work before extensions load and when no user extension is installed.
+
+### Expected merge conflict zones
+
+- LOW: `showModelSelector` adapter argument.
+
+## 2026-10-11 - Display the Herdr-safe blacklist shortcut
+
+### What changed
+
+- The picker resolves `ctrl+alt+b` from its native binding and shows block/unblock immediately after the favorite hint. Tests exercise the new chord and prove plain Ctrl+B does not toggle a model.
+
+### Why
+
+The visible shortcut must match the chord that reaches the picker without entering Herdr prefix mode.
+
+### Why an extension could not handle it
+
+The key hint and picker input handler are native interactive components.
+
+### Expected merge conflict zones
+
+- LOW: picker shortcut regression tests.
+
+## 2026-10-11 - Model picker blacklist key and `/models` alias
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/model-selector.ts`: `ModelSelectorComponent` takes an optional `ModelBlacklistAdapter` (10th constructor argument). With it, the picker merges `adapter.getModels()` into the runtime's available models (the runtime's copy wins), marks each row from `adapter.getState()` (`blocked`, `blocked (restart required)`, `unblocked (restart required)`), and `app.models.toggleBlacklist` (Ctrl+B) calls `adapter.toggle()` for the highlighted row with a pending state and an error line. Models absent from the runtime snapshot stay listed and searchable but `handleSelect` refuses them until a fresh process. The highlighted row is kept by id across a toggle and across the background catalog refresh (which used to snap back to the current model). Without an adapter the picker, its hints and Ctrl+B (search-box cursor-left) are unchanged.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `createExtensionUIContext` implements `setModelBlacklist`, storing the adapter on the mode (shared by every UI context it creates, cleared when extension UI state resets) and `showModelSelector` passes it to the picker. `/models` routes to `handleModelCommand` exactly like `/model`, and its argument completion matches `/model`.
+
+### Why
+
+The blacklist policy lives in an extension, but the model picker is interactive-mode internal: only the host can add a key to it, list models the runtime filtered out, and refuse to select them.
+
+### Why an extension could not handle it
+
+The picker component, `/model` routing and the `ExtensionUIContext` implementation are interactive-mode internals; an extension can only reach them through the new optional `ctx.ui.setModelBlacklist` adapter.
+
+### Expected merge conflict zones
+
+- `model-selector.ts`: the constructor signature, `loadModelsFromSnapshot`, `refreshModels`, `updateList`, `handleInput` and `handleSelect`.
+- `interactive-mode.ts`: the `ExtensionUIContext` import list, the `autocompleteProviderWrappers` field neighborhood, the model argument completion loop, the extension UI reset, `createExtensionUIContext`, the `/model` submit branch and `showModelSelector`.
+
 ## 2026-10-10 - The footer shows the reasoning level and its cycle key (senpi#3090)
 
 ### What changed

@@ -42,7 +42,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 |---------|-------------|
 | `/login`, `/logout` | Manage OAuth or API-key credentials |
 | [`/llama`](llama-cpp.md) | Download, load, and unload llama.cpp router models |
-| `/model` | Switch this session's model; Ctrl+S in the picker, or `/model <id> --default`, also makes it the startup default |
+| `/model`, `/models` | Switch this session's model; Ctrl+S in the picker, or `/model <id> --default`, also makes it the startup default |
 | `/thinking [level]` | Set the thinking level for this session (`/thinking high`), or open the picker with no argument; Ctrl+S in the picker saves it as the startup default |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/reasoning [on\|off]` | Show or toggle reasoning for the current model |
@@ -68,6 +68,24 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/keybindings` | Open your `keybindings.json` in `$EDITOR` (seeded with current bindings when missing) and reload it live |
 | `/changelog` | Display version history |
 | `/quit`, `/exit` | Quit senpi |
+
+### Model Blocklist
+
+The `/models` picker includes a block/unblock action after the favorite action, bound to Ctrl+Alt+B (Ctrl+Option+B on macOS). This is native functionality and needs no user extension.
+
+Rules are saved in `model-blacklist.json` in the agent directory (`~/.omo/agent` for OmO, `~/.senpi/agent` for Senpi). The file contains ordered provider/model glob rules; the last matching rule wins, and `!` rules allow exceptions:
+
+```json
+{
+  "models": ["opencode-go/*", "!opencode-go/deepseek-*"]
+}
+```
+
+A toggle saves immediately but does not change the current runtime. The picker marks differences between saved and active rules as "restart required". A fresh runtime reads the saved file; reloading extensions or reusing a host runtime keeps its active snapshot. Blocked models remain visible in the picker for unblocking, but cannot be selected while actively blocked.
+
+The native runtime excludes blocked models from model catalogs, automatic selection and retry candidates, and rejects requests made with stale blocked model objects. OmO subagent selection consumes that same filtered catalog. A missing or empty file excludes nothing; invalid saved rules fail closed. Favorites, credentials and conversation memory are separate from this file.
+
+Policy bytes are loaded asynchronously. Normal CLI and async SDK startup return with the policy initialized. SDK callers using `ModelRuntime.createSync()` or `ModelRegistry.create()` with an existing policy file must await `refresh()` before using model catalogs or dispatch; the runtime denies access until that load finishes. A missing file remains a no-op for synchronous callers. Picker saved state is refreshed asynchronously when catalogs refresh or a toggle completes.
 
 ### Reasoning and Fast Mode Commands
 
