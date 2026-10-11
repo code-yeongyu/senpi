@@ -1,3 +1,23 @@
+## 2026-10-11 - Native hosted search sends the OpenCode session header (senpi#3065)
+
+### What changed
+
+- `websearch/websearch/native.ts`: `buildNativeEntryForModel` now accepts a `sessionId` in its options and, for an OpenCode-hosted model (provider `opencode`/`opencode-go` or a baseUrl whose host is `opencode.ai`), adds `x-opencode-session` and `x-opencode-client: pi` to the entry headers, mirroring `provider-attribution.ts` `getSessionHeaders`. `buildNativeEntries` and `buildNativeEntry` thread the `sessionId` through.
+- `websearch/websearch/tool.ts`: `configWithNativeRoute` takes the session id (`ctx.sessionManager.getSessionId()`, when the context has one) and passes it into `buildNativeEntries`.
+- `websearch/websearch/providers/anthropic.ts` and `providers/openai-responses.ts`: the hosted-search builders now merge `config.headers` (the native entry's credential and session headers) underneath their own request headers via the existing `withConfigHeaders` helper, so the session header actually reaches the request.
+
+### Why
+
+- The hosted-search path built its own HTTP request and never passed through the attribution-header step, so `web_search` on an OpenCode-hosted model sent no `x-opencode-session` and the gateway returned 400 MissingSessionID. Chat turns already send the header; the search route did not.
+
+### Why an extension could not handle it
+
+- The native entry builder and the hosted-search request builders are private to this builtin; the executor uses plain `fetch`, so no `before_provider_headers` hook runs for this request.
+
+### Expected merge conflict zones
+
+- LOW: one line per provider in `providers/anthropic.ts` and `providers/openai-responses.ts`; the `sessionId` plumbing in `native.ts` and `tool.ts`.
+
 ## 2026-10-05 - Keenable web search provider, keyed and keyless-public
 
 ### What changed

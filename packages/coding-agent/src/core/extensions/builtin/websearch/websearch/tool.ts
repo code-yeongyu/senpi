@@ -41,13 +41,14 @@ async function configWithNativeRoute(
 	config: WebsearchConfig,
 	ctx: { model: NativeModelInfo | undefined; modelRegistry: NativeModelRegistry } | undefined,
 	signal: AbortSignal | undefined,
+	sessionId?: string,
 ): Promise<WebsearchConfig> {
 	if (!config.auto) return config;
 	const choice = resolveNativeSearchModel(ctx?.model, ctx?.modelRegistry, config.nativeModel);
 	const searchModel = choice?.fallbackModel
 		? { model: choice.model, fallbackModel: choice.fallbackModel }
 		: choice && { model: choice.model };
-	const nativeEntries = await buildNativeEntries(ctx?.model, ctx?.modelRegistry, signal, searchModel);
+	const nativeEntries = await buildNativeEntries(ctx?.model, ctx?.modelRegistry, signal, searchModel, sessionId);
 	return nativeEntries.length > 0 ? { ...config, providers: [...nativeEntries, ...config.providers] } : config;
 }
 
@@ -93,7 +94,7 @@ export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearc
 
 			const maxResults = loaded.config.providers[0]?.maxResults ?? 10;
 			const listed = await resolveSessionLoginEntries(loaded.config, ctx, signal);
-			const config = await configWithNativeRoute(listed, ctx, signal);
+			const config = await configWithNativeRoute(listed, ctx, signal, ctx?.sessionManager?.getSessionId?.());
 			if (config.providers.length === 0 && loaded.config.providers.length > 0) {
 				const message =
 					"No web search provider is usable: the websearch.json entries that rely on a senpi login have no matching login.";
