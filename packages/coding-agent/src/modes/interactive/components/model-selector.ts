@@ -1,5 +1,6 @@
 import { type Model, modelsAreEqual } from "@earendil-works/pi-ai";
 import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import type { ModelBlacklistAdapter, ModelBlacklistState } from "../../../core/extensions/types.ts";
 import { ModelRegistry } from "../../../core/model-registry.ts";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import { createAmbientProviderCheck } from "../../../core/provider-default-selection.ts";
@@ -26,6 +27,15 @@ interface ScopedModelItem {
 type ModelScope = "all" | "narrowed";
 type ModelSelectorTui = Pick<TUI, "requestRender"> & { terminal?: { rows: number } };
 type ModelSelectorSource = ModelRuntime | ModelRegistry;
+type BlacklistStatusKind = "pending" | "saved" | "error";
+
+function toModelItem(model: Model<any>): ModelItem {
+	return { fullId: getModelFullId(model), provider: model.provider, id: model.id, model };
+}
+
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
 
 export interface ModelSelection {
 	/** Also make it the default model for new sessions (the select-as-default key). */
@@ -72,6 +82,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	// whole session; live `favoriteIds` only drives markers and callbacks.
 	private readonly favoriteIdsAtOpen: FavoriteModelIds;
 	private onFavoriteChangeCallback?: ModelSelectorFavoriteOptions["onFavoriteChange"];
+	// Native runtime policy by default; extensions may supply a picker adapter override.
+	private readonly blacklist?: ModelBlacklistAdapter;
+	private readonly blacklistStates = new Map<string, ModelBlacklistState>();
+	// Models the runtime actually offers in this process. Blacklist-only rows are listed but never selectable.
+	private availableIds = new Set<string>();
+	private readonly pendingBlacklistIds = new Set<string>();
+	private blacklistStatus?: { kind: BlacklistStatusKind; text: string };
 	private errorMessage?: string;
 	private refreshStatusMessage = "Refreshing model catalogs…";
 	private refreshStatusSuccess = false;
@@ -95,6 +112,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		onCancel: () => void,
 		initialSearchInput?: string,
 		favorites?: ModelSelectorFavoriteOptions,
+		blacklist?: ModelBlacklistAdapter,
 	) {
 		super();
 
@@ -108,6 +126,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.favoriteIds = favorites?.favoriteModelIds === null ? null : [...(favorites?.favoriteModelIds ?? [])];
 		this.favoriteIdsAtOpen = this.favoriteIds === null ? null : [...this.favoriteIds];
 		this.onFavoriteChangeCallback = favorites?.onFavoriteChange;
+		this.blacklist = blacklist;
 
 		// Add top border
 		this.addChild(new DynamicBorder());
@@ -124,13 +143,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		}
 		this.addChild(new Spacer(1));
-		this.addChild(
-			new Text(
-				`${keyHint("tui.select.confirm", "select")} ${keyHint("app.models.save", "select as default")} ${keyHint("app.models.toggleFavorite", "favorite")}`,
-				0,
-				0,
-			),
-		);
+		const hints = [
+			keyHint("tui.select.confirm", "select"),
+			keyHint("app.models.save", "select as default"),
+			keyHint("app.models.toggleFavorite", "favorite"),
+		];
+		if (this.blacklist) hints.push(keyHint("app.models.toggleBlacklist", "block/unblock (applies after restart)"));
+		this.addChild(new Text(hints.join(" "), 0, 0));
 		this.addChild(new Spacer(1));
 
 		// Create search input
@@ -170,13 +189,20 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.modelRuntime instanceof ModelRegistry
 				? this.modelRuntime.getAvailable()
 				: this.modelRuntime.getAvailableSnapshot();
-		const models = availableModels.map((model: Model<any>) => ({
-			fullId: getModelFullId(model),
-			provider: model.provider,
-			id: model.id,
-			model,
-		}));
-		this.allModels = this.sortModels(models);
+		const models = availableModels.map(toModelItem);
+		this.availableIds = new Set(models.map((item) => item.fullId));
+		// The blacklist adapter also lists models the runtime filtered out at startup; the runtime's own
+		// (available) version of a model always wins over the adapter's copy.
+		const listed = [...models];
+		const listedIds = new Set(this.availableIds);
+		for (const model of this.blacklist?.getModels() ?? []) {
+			const item = toModelItem(model);
+			if (listedIds.has(item.fullId)) continue;
+			listedIds.add(item.fullId);
+			listed.push(item);
+		}
+		this.refreshBlacklistStates(listed);
+		this.allModels = this.sortModels(listed);
 		const modelsById = new Map(models.map((model) => [model.fullId, model]));
 		this.scopedModels = this.scopedModels.map((scoped) => {
 			const refreshed =
@@ -226,8 +252,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 					this.refreshStatusSuccess = true;
 				}
 			}
+			const highlighted = this.filteredModels[this.selectedIndex]?.fullId;
 			this.loadModelsFromSnapshot();
 			this.filterModels(this.searchInput.getValue());
+			this.restoreHighlight(highlighted);
 			this.tui.requestRender();
 		} catch (error) {
 			if (this.closed) return;
@@ -354,7 +382,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				line = `${modelText} ${providerBadge}${checkmark}`;
 			}
 
-			this.listContainer.addChild(new Text(line, 0, 0));
+			this.listContainer.addChild(new Text(line + this.getBlacklistBadge(item), 0, 0));
 		}
 
 		if (endIndex < this.filteredModels.length) {
@@ -382,6 +410,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.listContainer.addChild(
 				new Text(theme.fg(this.refreshStatusSuccess ? "success" : "muted", `  ${this.refreshStatusMessage}`), 0, 0),
 			);
+		}
+		if (this.blacklistStatus) {
+			const color =
+				this.blacklistStatus.kind === "error"
+					? "error"
+					: this.blacklistStatus.kind === "saved"
+						? "success"
+						: "muted";
+			this.listContainer.addChild(new Spacer(1));
+			for (const line of this.blacklistStatus.text.split("\n")) {
+				this.listContainer.addChild(new Text(theme.fg(color, `  ${line}`), 0, 0));
+			}
 		}
 	}
 
@@ -427,6 +467,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		else if (kb.matches(keyData, "app.models.toggleFavorite")) {
 			this.handleToggleFavorite();
 		}
+		// Block/unblock the highlighted model. Only claimed when a policy adapter is available, so the
+		// chord keeps editing the search box otherwise.
+		else if (this.blacklist && kb.matches(keyData, "app.models.toggleBlacklist")) {
+			void this.handleToggleBlacklist();
+		}
 		// Escape or Ctrl+C
 		else if (kb.matches(keyData, "tui.select.cancel")) {
 			this.dispose();
@@ -441,6 +486,16 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	// A selection applies to this session; only an explicit select-as-default changes the default for new sessions (senpi#2870).
 	private handleSelect(model: Model<any>, selection: ModelSelection): void {
+		const fullId = getModelFullId(model);
+		if (!this.availableIds.has(fullId)) {
+			// Listed through the blacklist adapter only: this process never loaded it.
+			const reason = this.blacklistStates.get(fullId)?.activeBlocked ? "blocked when senpi started" : "not loaded";
+			this.setBlacklistStatus(
+				"error",
+				`${fullId} is ${reason} and cannot be selected in this process. Restart senpi to use it.`,
+			);
+			return;
+		}
 		this.dispose();
 		this.onSelectCallback(model, selection);
 	}
@@ -466,6 +521,71 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			selectedModel.model,
 		);
 		this.tui.requestRender();
+	}
+
+	private restoreHighlight(fullId: string | undefined): void {
+		if (!fullId) return;
+		const index = this.filteredModels.findIndex((item) => item.fullId === fullId);
+		if (index < 0) return;
+		this.selectedIndex = index;
+		this.updateList();
+	}
+
+	private setBlacklistStatus(kind: BlacklistStatusKind, text: string): void {
+		this.blacklistStatus = { kind, text };
+		this.updateList();
+		this.tui.requestRender();
+	}
+
+	private refreshBlacklistStates(items: readonly ModelItem[]): void {
+		this.blacklistStates.clear();
+		if (!this.blacklist) return;
+		for (const item of items) this.blacklistStates.set(item.fullId, this.blacklist.getState(item.model));
+	}
+
+	private getBlacklistBadge(item: ModelItem): string {
+		if (!this.blacklist) return "";
+		if (this.pendingBlacklistIds.has(item.fullId)) return theme.fg("muted", " saving…");
+		const state = this.blacklistStates.get(item.fullId);
+		if (!state) return "";
+		if (state.blocked && state.activeBlocked) return theme.fg("error", " blocked");
+		if (state.blocked) return theme.fg("warning", " blocked (restart required)");
+		if (state.activeBlocked) return theme.fg("warning", " unblocked (restart required)");
+		return "";
+	}
+
+	// Persists through the adapter only. The running process keeps the models it loaded, so the result
+	// always says whether a restart is still needed.
+	private async handleToggleBlacklist(): Promise<void> {
+		const adapter = this.blacklist;
+		const target = this.filteredModels[this.selectedIndex];
+		if (!adapter || !target || this.pendingBlacklistIds.has(target.fullId)) return;
+		this.pendingBlacklistIds.add(target.fullId);
+		this.setBlacklistStatus("pending", `Saving blacklist change for ${target.fullId}…`);
+		try {
+			await adapter.toggle(target.model);
+		} catch (error) {
+			this.pendingBlacklistIds.delete(target.fullId);
+			if (this.closed) return;
+			this.setBlacklistStatus("error", `Could not save blacklist change for ${target.fullId}: ${errorText(error)}`);
+			return;
+		}
+		this.pendingBlacklistIds.delete(target.fullId);
+		if (this.closed) return;
+		// Re-read the saved state from a fresh snapshot, keeping whichever row is highlighted now.
+		const highlighted = this.filteredModels[this.selectedIndex]?.fullId;
+		this.loadModelsFromSnapshot();
+		this.filterModels(this.searchInput.getValue());
+		this.restoreHighlight(highlighted);
+		const state = this.blacklistStates.get(target.fullId);
+		const restart =
+			state && state.blocked !== state.activeBlocked
+				? " Restart senpi to apply it; this process keeps its current models."
+				: "";
+		this.setBlacklistStatus(
+			"saved",
+			`Saved ${target.fullId} as ${state?.blocked ? "blocked" : "unblocked"}.${restart}`,
+		);
 	}
 
 	getSearchInput(): Input {

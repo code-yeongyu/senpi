@@ -104,6 +104,7 @@ import type {
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 	MarkdownTransformer,
+	ModelBlacklistAdapter,
 	ProjectTrustContext,
 	UserBashEventResult,
 	WorkingIndicatorOptions,
@@ -946,6 +947,8 @@ export class InteractiveMode {
 	private editorComponentFactory: EditorFactory | undefined;
 	private autocompleteProvider: AutocompleteProvider | undefined;
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
+	// Installed through `ctx.ui.setModelBlacklist`; every ExtensionUIContext this mode creates shares it.
+	private modelBlacklistAdapter: ModelBlacklistAdapter | undefined;
 	private fdPath: string | undefined;
 	private editorContainer: Container;
 	private footer: InteractiveFooter;
@@ -1318,8 +1321,10 @@ export class InteractiveMode {
 			...(command.requiresArguments !== undefined && { requiresArguments: command.requiresArguments }),
 		}));
 
-		const modelCommand = slashCommands.find((command) => command.name === "model");
-		if (modelCommand) {
+		// `/models` is an alias of `/model`, so it completes the same arguments.
+		for (const modelCommand of slashCommands.filter(
+			(command) => command.name === "model" || command.name === "models",
+		)) {
 			modelCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
 				const models =
 					this.session.scopedModels.length > 0
@@ -3461,6 +3466,7 @@ export class InteractiveMode {
 		this.footerDataProvider.clearExtensionStatuses();
 		this.footer.invalidate();
 		this.autocompleteProviderWrappers = [];
+		this.modelBlacklistAdapter = undefined;
 		this.setCustomEditorComponent(undefined);
 		this.setupAutocompleteProvider();
 		this.defaultEditor.onExtensionShortcut = undefined;
@@ -3699,6 +3705,9 @@ export class InteractiveMode {
 			},
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
+			setModelBlacklist: (adapter) => {
+				this.modelBlacklistAdapter = adapter;
+			},
 		};
 	}
 
@@ -4845,8 +4854,12 @@ export class InteractiveMode {
 					this.showScopedModelsSelector();
 					return;
 				}
-				if (text === "/model" || text.startsWith("/model ")) {
-					const searchTerm = text.startsWith("/model ") ? text.slice(7).trim() : undefined;
+				// `/models` is an alias of `/model`.
+				const modelCommandName = ["/model", "/models"].find((name) => text === name || text.startsWith(`${name} `));
+				if (modelCommandName) {
+					const searchTerm = text.startsWith(`${modelCommandName} `)
+						? text.slice(modelCommandName.length + 1).trim()
+						: undefined;
 					this.editor.setText("");
 					await this.handleModelCommand(searchTerm);
 					return;
@@ -8275,6 +8288,7 @@ export class InteractiveMode {
 						await this.applyFavoriteSelection(favoriteIds, allModels, true, await favoritePatternSnapshot);
 					},
 				},
+				this.modelBlacklistAdapter ?? this.session.modelRuntime.getModelBlacklistAdapter(),
 			);
 			return {
 				component: selector,

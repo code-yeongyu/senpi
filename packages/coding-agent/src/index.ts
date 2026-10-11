@@ -164,6 +164,8 @@ export type {
 	MessageRenderOptions,
 	MessageStartEvent,
 	MessageUpdateEvent,
+	ModelBlacklistAdapter,
+	ModelBlacklistState,
 	ModelSelectEvent,
 	ModelSelectSource,
 	NormalizedBuildSystemPromptOptions,

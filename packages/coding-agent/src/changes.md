@@ -1,3 +1,40 @@
+## 2026-10-11 - Standalone native model blocklist
+
+### What changed
+
+- Native model runtimes own `model-blacklist.json` in the agent directory, catalog exclusions and dispatch enforcement.
+- Interactive model selection uses the native adapter by default, independently of user extensions.
+
+### Why
+
+Native OmO users must retain blocklist choices across runtime restarts without installing `omo-mods`.
+
+### Why an extension could not handle it
+
+CLI model listing and startup model selection run before user extension session hooks.
+
+### Expected merge conflict zones
+
+- Model runtime initialization and catalog methods; interactive picker adapter wiring.
+
+## 2026-10-11 - SDK exports the model-blacklist adapter types
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `ModelBlacklistAdapter` and `ModelBlacklistState` next to the other extension types.
+
+### Why
+
+SDK consumers and extensions type their `ctx.ui.setModelBlacklist` adapter against the public package entry.
+
+### Why an extension could not handle it
+
+The package entry barrel is core.
+
+### Expected merge conflict zones
+
+- LOW: the extension type export list near `ModelSelectEvent`.
+
 ## 2026-10-09 - `--session <id>` opens a session recorded under a folder the OmO desktop moved here (senpi#2990)
 
 ### What changed

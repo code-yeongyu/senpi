@@ -1,3 +1,22 @@
+## 2026-10-11 - `ExtensionUIContext.setModelBlacklist` (model picker blacklist adapter)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: new `ModelBlacklistState` (`blocked`, `activeBlocked`, `rule?`) and `ModelBlacklistAdapter` (`getModels`, `getState`, `toggle`) types, and an optional `ExtensionUIContext.setModelBlacklist?(adapter | undefined)`. Only interactive mode implements it; RPC, app-server and the no-op context leave it absent, so extensions feature-detect it.
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports the two new types.
+
+### Why
+
+An extension that owns a model-blacklist policy needs to list, mark and toggle models in the interactive `/model` picker, including models the runtime filtered out at startup.
+
+### Why an extension could not handle it
+
+The picker is not an extension surface; the adapter is the extension-facing seam that lets the policy stay in the extension.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` immediately above `ExtensionUIContext` and the end of that interface; the export lists in `index.ts`.
+
 ## 2026-10-08 - A required question never tells the model to proceed without an answer (senpi#2949)
 
 ### What changed

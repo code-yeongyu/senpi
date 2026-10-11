@@ -1,3 +1,59 @@
+## 2026-10-11 - Native model blacklist (saved policy, runtime enforcement)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-blacklist.ts`: fork-owned. Ordered `provider/model` glob rules with `!` exceptions (last match wins), saved as `<agentDir>/model-blacklist.json` (atomic temp+rename, 0600). A missing file blocks nothing; an unreadable or malformed file blocks every model (fail closed). Exposes the picker's `ModelBlacklistAdapter`.
+- `packages/coding-agent/src/core/model-runtime.ts`: `create()`/`createSync()` load the policy once (the active snapshot) from `agentDir`, else beside `modelsPath`; `modelsPath: null` without `agentDir` stays isolated. `getModels`, `getModel`, `getAllModels`, the `*OfType` getters, `getAvailable`, `getAvailableSnapshot`, `getAllAvailable` and `getPhysicalModel` filter blocked models; `prepareRequest`, `stream`, `streamSimple` and `resolveModel` reject a blocked model (including stale objects) before any transport. New `getModelBlacklistAdapter()` returns the adapter (pre-filter available rows, saved-vs-active `getState`, `toggle`); `getError()` reports a malformed policy.
+
+### Why
+
+Users without any blacklist extension need the same block/unblock behavior, enforced from startup (including `--list-models`), and a toggle must survive restart without changing the running process.
+
+### Why an extension could not handle it
+
+Catalog filtering and the pre-transport dispatch guard belong to the runtime that owns the catalog and transport, and must apply before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the getter bodies, `prepareRequest`/`stream`/`streamSimple`/`resolveModel` entry lines, and the constructor tail in `model-runtime.ts`; `model-blacklist.ts` is fork-only.
+
+## 2026-10-11 - Avoid Herdr's prefix in the blacklist picker
+
+### What changed
+
+- `keybindings.ts`: `app.models.toggleBlacklist` defaults to `ctrl+alt+b` instead of `ctrl+b`.
+
+### Why
+
+Herdr consumes Ctrl+B as its prefix before the model picker sees it.
+
+### Why an extension could not handle it
+
+The default keybinding table belongs to the native host.
+
+### Expected merge conflict zones
+
+- LOW: the blacklist default next to the favorite binding.
+
+## 2026-10-11 - Model picker blacklist key and `/models` alias entry
+
+### What changed
+
+- `packages/coding-agent/src/core/keybindings.ts`: configurable `app.models.toggleBlacklist`, default `ctrl+b`, used by the model picker only when an extension installed a blacklist adapter.
+- `packages/coding-agent/src/core/slash-commands.ts`: builtin `models` entry, an alias of `/model` (same argument hint), listed in help and autocomplete and reserved like the other builtin names.
+
+### Why
+
+The model picker needs a rebindable block/unblock chord, and users of the blacklist expect `/models` to open the same picker as `/model`.
+
+### Why an extension could not handle it
+
+Keybinding defaults and the builtin command list are core tables; an extension-registered `/models` would also be shadowed by or race the builtin picker routing.
+
+### Expected merge conflict zones
+
+- LOW: the `Keybindings` id list and `KEYBINDINGS` defaults next to `app.models.toggleFavorite`; `BUILTIN_SLASH_COMMANDS` after `model`.
+
 ## 2026-10-09 - Durable engine self-stop signals (senpi#3007)
 
 ### What changed

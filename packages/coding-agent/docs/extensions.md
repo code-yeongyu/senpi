@@ -3355,6 +3355,14 @@ const wasExpanded = ctx.ui.getToolsExpanded();
 ctx.ui.setToolsExpanded(true);
 ctx.ui.setToolsExpanded(wasExpanded);
 
+// Model picker blacklist (interactive mode only; absent on older engines, so feature-detect it)
+ctx.ui.setModelBlacklist?.({
+  getModels: () => allModelsBeforeFiltering,       // readonly Model[]
+  getState: (model) => ({ blocked, activeBlocked, rule }),
+  toggle: async (model) => { /* persist the opposite saved state */ },
+});
+ctx.ui.setModelBlacklist?.(undefined);  // Remove
+
 // Custom editor (vim mode, emacs mode, etc.)
 ctx.ui.setEditorComponent((tui, theme, keybindings) => new VimEditor(tui, theme, keybindings));
 const currentEditor = ctx.ui.getEditorComponent();
@@ -3375,6 +3383,20 @@ ctx.ui.theme.fg("accent", "styled text");  // Access current theme
 ```
 
 Custom working-indicator frames are rendered verbatim. If you want colors, add them to the frame strings yourself, for example with `ctx.ui.theme.fg(...)`.
+
+### Model Picker Blacklist
+
+The `/model` (alias `/models`) picker uses the native runtime blocklist without an extension. `ctx.ui.setModelBlacklist(adapter)` lets an extension override the picker adapter. The method is optional on `ExtensionUIContext`: only interactive mode implements it, and older engines lack it, so call it as `ctx.ui.setModelBlacklist?.(...)`. Pass `undefined` to restore the native adapter; a reload also clears the override, so install an override again from `session_start` if needed. An override cannot bypass native runtime exclusions.
+
+The adapter is `ModelBlacklistAdapter`:
+
+| Member | Contract |
+|--------|----------|
+| `getModels()` | Every model the picker should list, captured before the blacklist filtered them. The picker merges these into the runtime's available models; for a model both report, the runtime's copy wins. |
+| `getState(model)` | `{ blocked, activeBlocked, rule? }`. `blocked` is the saved policy; `activeBlocked` is what the running process excluded when it started; `rule` is informational. |
+| `toggle(model)` | Persist the opposite saved state. May return a promise. A throw or rejection is shown in the picker. |
+
+The native adapter shows a block/unblock hint immediately after the favorite hint and `app.models.toggleBlacklist` (default `ctrl+alt+b`) toggles the highlighted row. This avoids Herdr's `ctrl+b` prefix. A toggle only saves: rows whose saved and active states differ are marked "restart required", and actively blocked models stay listed and searchable but cannot be selected until a fresh runtime starts. Intentionally isolated in-memory runtimes without a persistence path have no native adapter.
 
 ### Autocomplete Providers
 

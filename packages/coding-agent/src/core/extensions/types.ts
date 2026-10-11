@@ -194,6 +194,28 @@ export interface QuestionResponse {
 	autoResolvedAfterMs?: number;
 }
 
+/** Saved/active blacklist state of one model, as reported by a `ModelBlacklistAdapter`. */
+export interface ModelBlacklistState {
+	/** The saved policy blocks the model: it stays blocked after a restart. */
+	blocked: boolean;
+	/** The running process excluded the model when it loaded. Differs from `blocked` once a toggle is saved. */
+	activeBlocked: boolean;
+	/** Informational: the saved rule that decides the state. */
+	rule?: string;
+}
+
+/**
+ * Policy adapter behind the model picker's blacklist key (`app.models.toggleBlacklist`, Ctrl+Alt+B).
+ * The native runtime supplies the default; extensions may override the picker adapter.
+ */
+export interface ModelBlacklistAdapter {
+	/** Every model the picker should list, captured before the blacklist filtered them. Models the runtime also reports as available win over these. */
+	getModels: () => readonly Model<any>[];
+	getState: (model: Model<any>) => ModelBlacklistState;
+	/** Persist the opposite of the model's saved state. Rejecting or throwing is shown to the user. Never changes the running process. */
+	toggle: (model: Model<any>) => void | Promise<void>;
+}
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
@@ -360,6 +382,13 @@ export interface ExtensionUIContext {
 
 	/** Set tool output expansion state. */
 	setToolsExpanded(expanded: boolean): void;
+
+	/**
+	 * Override the interactive `/model` picker adapter; `undefined` restores the native runtime adapter.
+	 * Optional: only the interactive mode implements it, and older engines lack it, so feature-detect before calling.
+	 * A toggle is saved only; the running process keeps the models it loaded until a fresh process starts.
+	 */
+	setModelBlacklist?(adapter: ModelBlacklistAdapter | undefined): void;
 }
 
 // ============================================================================

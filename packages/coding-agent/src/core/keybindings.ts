@@ -50,6 +50,7 @@ export interface AppKeybindings {
 	"app.session.deleteNoninvasive": true;
 	"app.models.save": true;
 	"app.models.toggleFavorite": true;
+	"app.models.toggleBlacklist": true;
 	"app.models.enableAll": true;
 	"app.models.clearAll": true;
 	"app.models.toggleProvider": true;
@@ -214,6 +215,10 @@ export const KEYBINDINGS = {
 	"app.models.toggleFavorite": {
 		defaultKeys: "ctrl+f",
 		description: "Toggle favorite model",
+	},
+	"app.models.toggleBlacklist": {
+		defaultKeys: "ctrl+alt+b",
+		description: "Block or unblock model in the model picker",
 	},
 	"app.models.enableAll": {
 		defaultKeys: "ctrl+a",

@@ -130,3 +130,40 @@ describe("InteractiveMode /exit routing", () => {
 		expect(context.shutdown).not.toHaveBeenCalled();
 	});
 });
+
+describe("InteractiveMode /models alias routing", () => {
+	function createModelContext() {
+		const context = createSubmitContext();
+		const handleModelCommand = vi.fn(async (_argument?: string) => {});
+		Object.assign(context, { handleModelCommand });
+		interactiveModePrototype.setupEditorSubmitHandler.call(context);
+		return { context, handleModelCommand };
+	}
+
+	it("opens the model command for /models like /model", async () => {
+		const { context, handleModelCommand } = createModelContext();
+
+		await context.defaultEditor.onSubmit?.("/models");
+		await context.defaultEditor.onSubmit?.("/model");
+
+		expect(handleModelCommand.mock.calls).toEqual([[undefined], [undefined]]);
+		expect(context.session.prompt).not.toHaveBeenCalled();
+	});
+
+	it("passes the search term through /models and /model alike", async () => {
+		const { context, handleModelCommand } = createModelContext();
+
+		await context.defaultEditor.onSubmit?.("/models  opus --default");
+		await context.defaultEditor.onSubmit?.("/model sonnet");
+
+		expect(handleModelCommand.mock.calls).toEqual([["opus --default"], ["sonnet"]]);
+	});
+
+	it("does not treat /models-suffixed text as the model command", async () => {
+		const { context, handleModelCommand } = createModelContext();
+
+		await context.defaultEditor.onSubmit?.("/modelsx");
+
+		expect(handleModelCommand).not.toHaveBeenCalled();
+	});
+});
