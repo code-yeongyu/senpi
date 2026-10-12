@@ -1,3 +1,21 @@
+## 2026-10-12 - Qwen Token Plan's provider default is Qwen3.8-Max
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` rows `qwen-token-plan` and `qwen-token-plan-cn` are `qwen3.8-max` (was `qwen3.7-max`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the bundled `qwen-token-plan` and `qwen-token-plan-cn` catalogs list `qwen3.8-max`, which `qwen-token-plan-individual` already defaults to, while both still started on `qwen3.7-max`. The default applies only when no model is saved in settings and none is passed on the command line.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `qwen-token-plan` and `qwen-token-plan-cn` rows of `defaultModelPerProvider`.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed
