@@ -1,3 +1,23 @@
+## 2026-10-12 - Example tickers stop on a retired extension ctx (Refs senpi#2549)
+
+### What changed
+
+- `packages/coding-agent/examples/extensions/titlebar-spinner.ts`: the animation interval and the settling title reset write the title through a `setTitle()` guard that recognizes the error a retired extension ctx throws (session replacement, reload) and returns `false`; a tick that hits it stops the interval instead of letting the throw escape the callback.
+- `packages/coding-agent/examples/extensions/mac-system-theme.ts`: the 2s appearance poll uses the same guard, so a stale render stops the poll instead of rejecting inside the async interval callback.
+- `packages/coding-agent/test/examples/titlebar-spinner-stale-ctx.test.ts`, `packages/coding-agent/test/examples/mac-system-theme-stale-ctx.test.ts`: retire a ctx with each retirement message, prove the ticker/poll retires without rearming, and prove the live path still renders and still surfaces an unrelated failure.
+
+### Why
+
+- Both examples capture a lifecycle ctx (`agent_start`, `session_start`) and reuse it from a timer. The host retires that ctx as soon as the session is replaced (`/sessions`, `/resume`, new/fork/switch) or reloaded, and the throw lands in a timer callback where nothing can catch it: with `titlebar-spinner.ts` loaded, replacing a session while the agent works exits the process with `This extension ctx is stale after session replacement or reload`. Its own `stopAnimation` cannot save it, because `agent_settled` is a boundary step that stands down on a retired runner and `session_shutdown` is not guaranteed to run. This is the class the host's builtin footer tickers were fixed for in senpi#2549.
+
+### Why an extension could not handle it
+
+- The retained ctx and the interval are the example's own; only the code that owns the timer can catch its callback's throw, and the host keeps the stale-context detector internal to its builtins, so each example carries the two retirement messages locally.
+
+### Expected merge conflict zones
+
+- `examples/extensions/titlebar-spinner.ts` and `examples/extensions/mac-system-theme.ts` factory bodies around the timer and the title/theme render; both files also exist in upstream pi-mono, so a synced upstream copy must keep the guard.
+
 ## 2026-10-12 - Host CLI fixtures own their spawned processes (Refs senpi#3064)
 
 ### What changed
