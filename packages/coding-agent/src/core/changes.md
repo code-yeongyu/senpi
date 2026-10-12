@@ -1,3 +1,21 @@
+## 2026-10-12 - Account summaries carry the block reason and reset time (senpi#3216)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: `CredentialAccountSummary` gains `blockReason` and, for a `rate_limit` block, `blockedUntil`; `describeAccountHealth` renders them (usage limit with its reset time, auth or billing with the re-login command); `replaceCredentialAccountMaterial` moves a fresh login's material onto an existing account.
+
+### Why
+
+Listings reduced an account-wide block to a boolean, so the cause and the fix were invisible.
+
+### Why an extension could not handle it
+
+The summary is the shared core read model every account command uses.
+
+### Expected merge conflict zones
+
+- None upstream: `credential-accounts.ts` is fork-only.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed

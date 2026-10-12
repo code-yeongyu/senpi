@@ -6,6 +6,8 @@
 
 ### Added
 
+- `/gpt-account` and `/account <provider> list` say why an account is blocked: a usage limit with the time it lifts, or a rejected login or disabled account with the command that fixes it. `/gpt-account login <id>` logs an existing account in again in place, keeping its id, display name and pin ([#3216](https://github.com/code-yeongyu/senpi/issues/3216)).
+
 - RPC clients now see a goal's deliberate wait: `goal_continuation_scheduled`, `goal_continuation_timer_state` (with `dueAtMs` while armed) and `goal_continuation_resumed` arrive as `extension_event`s, and a `goal_continuation_fire_now` extension request runs the armed continuation at once through the timer's own eligibility checks ([#3196](https://github.com/code-yeongyu/senpi/issues/3196), requested by @code-yeongyu).
 
 ### Changed
@@ -13,6 +15,8 @@
 - Tip history, changelog acknowledgments and per-model reasoning/fast-mode memories now live in `state.json` instead of the global settings file, keeping version-controlled config clean during normal use. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without saving the startup default; `/thinking` Ctrl+S and `/settings` still explicitly save it. Existing global keys migrate silently without overwriting saved state; project settings are untouched, corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3178](https://github.com/code-yeongyu/senpi/issues/3178), requested by @devxoul).
 
 ### Fixed
+
+- Credential-pool accounts are no longer taken out for a day or more by an ordinary rate limit. A served request now ends an account's failure streak, without a reset time from the provider a block lasts at most an hour, and a throttle that two accounts in one request both answer is treated as a limit on the request rather than on every account; before, accounts that had seen enough transient 429s over their lifetime were blocked for 31-34 hours although their quota was fine. Every block now writes one line to the debug log with its reason, where its length came from, and a redacted excerpt of the provider's message ([#3216](https://github.com/code-yeongyu/senpi/issues/3216), reported in the OmO community).
 
 - Help, version, model/tip listings, session export, and one-shot package/host/schedule commands no longer enable the startup compile cache, avoiding Bun 1.4.3's slower cold-cache write at exit. Root version requests stay parser-free, and cache decisions do not change argument errors. Interactive, RPC and prompt-processing sessions, schedule watchers, and multi-session RPC hosts (even with `--help`) retain caching. An externally supplied `NODE_COMPILE_CACHE` remains untouched ([#3166](https://github.com/code-yeongyu/senpi/issues/3166)).
 

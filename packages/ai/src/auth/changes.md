@@ -1,3 +1,21 @@
+## 2026-10-12 - Replace an account's material in place (senpi#3216)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: `replaceSlotMaterial(credential, name, fromName)` gives an existing slot the material of another slot (a fresh login) and drops that slot, keeping the target's id, display name, source and pin; the flat projection follows when it carried either slot.
+
+### Why
+
+A re-login appended a new slot, so an account could only be refreshed by removing it and adding a new one with a new id.
+
+### Why an extension could not handle it
+
+Slot bookkeeping lives in the pool module every store write goes through.
+
+### Expected merge conflict zones
+
+- None upstream: `auth/pool/` is fork-only.
+
 ## 2026-10-09 - Restore auth-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

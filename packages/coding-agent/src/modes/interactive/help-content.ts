@@ -80,6 +80,7 @@ export function buildHelpMarkdown(input: { extensionCommands: SlashCommandInfo[]
 		"## Account display names",
 		"Use `/gpt-account rename <id> <display name...>`, `/claude-account rename <id> <display name...>`, or `/account <provider> rename <id> <display name...>`. Use `clear-name <id>` on the same command to remove the label.",
 		"Labels display as `displayName (id)`; pins, removal, refresh and session affinity always use the unchanged ID. Labels are Unicode-normalized (NFC) with internal whitespace collapsed, limited to 32 terminal columns, must contain at least one visible character, and cannot contain control or formatting characters. Two labels that render identically cannot coexist in one provider: comparison folds case, compatibility forms, invisible code points, and Cyrillic lookalikes. Environment accounts cannot be renamed.",
+		"`/gpt-account` and `/account <provider> list` show why an account is blocked: a usage limit with the time it lifts, or a rejected login or disabled account with the command that fixes it. `/gpt-account login <id>` logs an existing account in again and keeps its id, display name and pin.",
 		"`/gpt-account add` offers an optional display name after saving the account, when Senpi generated the account ID itself. The Claude lane asks for the account name through its own login prompt, so it never asks twice. Leave it blank or cancel to keep the successful login without a label. Legacy accounts display only their ID.",
 	].join("\n\n");
 }

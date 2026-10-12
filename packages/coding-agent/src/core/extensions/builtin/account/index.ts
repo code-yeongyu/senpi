@@ -1,6 +1,8 @@
+import { normalizeProviderId } from "@earendil-works/pi-ai";
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import {
 	type CredentialAccountSummary,
+	describeAccountHealth,
 	getCredentialAccounts,
 	pinCredentialAccount,
 	removeCredentialAccount,
@@ -19,8 +21,15 @@ function usage(ctx: ExtensionCommandContext): void {
 	);
 }
 
-function statusOf(account: CredentialAccountSummary): string {
-	const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
+/** The command that logs an existing account in again: in place for ChatGPT, a fresh /login elsewhere. */
+function reloginCommandFor(provider: string): (name: string) => string {
+	return normalizeProviderId(provider) === "chatgpt-subscription"
+		? (name) => `/gpt-account login ${name}`
+		: (name) => `/login ${provider}, then /account ${provider} remove ${name}`;
+}
+
+function statusOf(account: CredentialAccountSummary, provider: string): string {
+	const states = [accountLabel(account), account.source, describeAccountHealth(account, reloginCommandFor(provider))];
 	for (const { model, until } of account.blockedModels ?? []) {
 		states.push(`blocked for ${model} until ${new Date(until).toISOString()}`);
 	}
@@ -32,7 +41,7 @@ async function showAccounts(ctx: ExtensionCommandContext, provider: string): Pro
 	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, provider);
 	const lines = [`Credential accounts for ${provider}:`];
 	if (accounts.length === 0) lines.push("  (none)");
-	for (const account of accounts) lines.push(`  ${statusOf(account)}`);
+	for (const account of accounts) lines.push(`  ${statusOf(account, provider)}`);
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 

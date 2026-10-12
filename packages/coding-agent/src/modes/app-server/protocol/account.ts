@@ -31,6 +31,10 @@ export type ProviderAccount = {
 	readonly displayName?: string;
 	readonly source: ProviderAccountSource;
 	readonly blocked: boolean;
+	/** Why an account-wide block holds; absent while the account is available. */
+	readonly blockReason?: "rate_limit" | "auth_error" | "account_disabled";
+	/** When a `rate_limit` block lifts on its own (epoch ms); auth and billing blocks have none. */
+	readonly blockedUntil?: number;
 	readonly pinned: boolean;
 };
 export type ProviderAccountsReadParams = { readonly provider: string };

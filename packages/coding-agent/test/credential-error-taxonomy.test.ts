@@ -129,6 +129,8 @@ describe("credential error taxonomy", () => {
 					reason: "rate_limit",
 					cooldownMs: Math.min(cooldownMs ?? COOLDOWN_BASE_MS, COOLDOWN_CAP_MS),
 					retryAfterWasCapped: (cooldownMs ?? COOLDOWN_BASE_MS) > COOLDOWN_CAP_MS,
+					cooldownSource: cooldownMs === undefined ? "backoff" : "hint",
+					scope: "account",
 					...(modelFamily === undefined ? {} : { modelFamily }),
 				},
 			});

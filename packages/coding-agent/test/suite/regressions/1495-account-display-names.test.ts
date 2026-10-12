@@ -133,7 +133,14 @@ describe.each(["chatgpt-subscription", "anthropic-subscription"])("%s display na
 		const summaries = await getCredentialAccounts(storage, provider, {});
 		expect(summaries).toEqual([
 			{ name: "default", displayName: "Personal", source: "login", blocked: false, pinned: true },
-			{ name: "second", source: "import", blocked: true, pinned: false },
+			{
+				name: "second",
+				source: "import",
+				blocked: true,
+				blockReason: "rate_limit",
+				blockedUntil: 4102444800000,
+				pinned: false,
+			},
 		]);
 		if (provider === "anthropic-subscription") expect(getProviderAccounts(storage, provider, {})).toEqual(summaries);
 		expect(JSON.stringify(summaries)).not.toMatch(/fake-|access|refresh|expires|headers/);

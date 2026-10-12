@@ -7,6 +7,7 @@ import {
 	pinSlot,
 	removeSlot,
 	renameSlotDisplayName,
+	replaceSlotMaterial,
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import type { AuthStorage } from "./auth-storage.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
@@ -23,10 +24,45 @@ export type CredentialAccountSummary = {
 	readonly displayName?: string;
 	readonly source: CredentialAccountSource;
 	readonly blocked: boolean;
+	/** Why an account-wide block holds (senpi#3216); absent while the account is available. */
+	readonly blockReason?: "rate_limit" | "auth_error" | "account_disabled";
+	/** When a `rate_limit` block lifts on its own; auth and billing blocks have no expiry. */
+	readonly blockedUntil?: number;
 	readonly pinned: boolean;
 	/** Usage limits binding one model (family) while the account serves the rest (senpi#2555). */
 	readonly blockedModels?: readonly { readonly model: string; readonly until: number }[];
 };
+
+/**
+ * How a listing shows an account's health (senpi#3216): a usage limit with the time it lifts, an
+ * auth or billing block with the action that clears it. `reauthCommand` names the provider's
+ * in-place re-login, e.g. `/gpt-account login <id>`.
+ */
+export function describeAccountHealth(
+	account: Pick<CredentialAccountSummary, "name" | "blocked" | "blockReason" | "blockedUntil"> & {
+		readonly source?: CredentialAccountSource;
+	},
+	reauthCommand?: (name: string) => string,
+): string {
+	if (!account.blocked) return "available";
+	// An environment account is fixed by changing its variable; no command can log it in again.
+	const relogin =
+		account.source === "env"
+			? "a new key in its environment variable"
+			: reauthCommand === undefined
+				? "log in again"
+				: reauthCommand(account.name);
+	switch (account.blockReason) {
+		case "auth_error":
+			return `blocked: login rejected, fix with ${relogin}`;
+		case "account_disabled":
+			return `blocked: account or billing disabled, check the provider account, then ${relogin}`;
+		default:
+			return account.blockedUntil === undefined
+				? "blocked: usage limit"
+				: `blocked: usage limit until ${new Date(account.blockedUntil).toISOString()}`;
+	}
+}
 
 const ACCOUNT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
@@ -68,11 +104,23 @@ function stringField(value: object, key: string): string | undefined {
  * only one would silently downgrade a real block to "available".
  */
 function slotBlocked(slot: object, sidecar: CredentialSlotState | undefined, now: number): boolean {
-	if (slotHealth(sidecar, now) === "blocked") return true;
+	return slotBlock(slot, sidecar, now) !== undefined;
+}
+
+type SlotBlock = Pick<CredentialAccountSummary, "blockReason" | "blockedUntil">;
+
+/** The account-wide block that holds now, from the pool sidecar first, then the stored slot. */
+function slotBlock(slot: object, sidecar: CredentialSlotState | undefined, now: number): SlotBlock | undefined {
+	if (slotHealth(sidecar, now) === "blocked") return describedBlock(sidecar?.blockReason, sidecar?.blockedUntil);
 	const reason = stringField(slot, "blockReason");
-	if (reason === "auth_error" || reason === "account_disabled") return true;
+	if (reason === "auth_error" || reason === "account_disabled") return { blockReason: reason };
 	const blockedUntil = numberField(slot, "blockedUntil");
-	return blockedUntil !== undefined && blockedUntil > now;
+	return blockedUntil !== undefined && blockedUntil > now ? describedBlock(reason, blockedUntil) : undefined;
+}
+
+function describedBlock(reason: string | undefined, blockedUntil: number | undefined): SlotBlock {
+	if (reason === "auth_error" || reason === "account_disabled") return { blockReason: reason };
+	return { blockReason: "rate_limit", ...(blockedUntil === undefined ? {} : { blockedUntil }) };
 }
 
 function storedModelBlocks(slot: object): ModelBlocks | undefined {
@@ -152,6 +200,7 @@ export async function summarizeCredentialAccounts(
 				...(displayName === undefined ? {} : { displayName }),
 				source: slot.source ?? "login",
 				blocked: slotBlocked(slot, applicable, now),
+				...slotBlock(slot, applicable, now),
 				pinned: pinned === slot.name,
 				...blockedModels(now, applicable?.modelBlocks, storedModelBlocks(slot)),
 			});
@@ -169,6 +218,9 @@ export async function summarizeCredentialAccounts(
 			name: slot.name,
 			source: "env",
 			blocked: slotHealth(applicable, now) === "blocked",
+			...(slotHealth(applicable, now) === "blocked"
+				? describedBlock(applicable?.blockReason, applicable?.blockedUntil)
+				: {}),
 			pinned: pinned === slot.name,
 			...blockedModels(now, applicable?.modelBlocks),
 		});
@@ -240,6 +292,31 @@ export async function pinCredentialAccount(
  * the environment, and deleting one here would silently disagree with the
  * variable that still defines it.
  */
+/**
+ * Moves the material of a just-committed login (`loginName`) onto an existing account (`name`), so a
+ * re-login keeps the account's id, display name and pin (senpi#3216). The new material gives the
+ * account a new credential revision, which clears any block it carried. One store write; the
+ * temporary login slot is gone afterwards.
+ */
+export async function replaceCredentialAccountMaterial(
+	storage: AuthStorage,
+	provider: string,
+	name: string,
+	loginName: string,
+	repository?: CredentialSlotRepository,
+): Promise<void> {
+	if (loginName === name) return;
+	await storage.modify(provider, async (current) => {
+		if (current === undefined) throw new Error(`No stored credential for provider: ${provider}`);
+		return replaceSlotMaterial(current as PooledCredential, name, loginName);
+	});
+	const repo = repository ?? defaultRepository(storage);
+	await repo.mutateSlotState(provider, "stored", loginName, () => undefined);
+	// New material starts with a clean record: no block, no failure streak, no model blocks.
+	await repo.mutateSlotState(provider, "stored", name, () => undefined);
+	emitProviderAccountsChanged(provider);
+}
+
 export async function removeCredentialAccount(
 	storage: AuthStorage,
 	provider: string,

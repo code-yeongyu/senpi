@@ -1,4 +1,22 @@
 
+## 2026-10-12 - A ChatGPT throttle no longer reads as a spent usage limit (senpi#3216)
+
+### What changed
+
+- `packages/ai/src/api/openai-codex-responses.ts`: `parseErrorResponse` words only `usage_limit_reached` / `usage_not_included` as "You have hit your ChatGPT usage limit"; a `rate_limit_exceeded` or code-less 429 now reads "ChatGPT is rate limiting requests (<code>)", with the same "Try again in ~N min" when `resets_at` is present. The raw code now appears in that text, so a 429 whose code is `insufficient_quota` matches the pool's billing pattern and becomes an `account_disabled` block instead of a rate limit, which matches what the code means.
+
+### Why
+
+Every 429 with a JSON error became usage-limit prose, so the credential pool classified a request throttle as a spent account and blocked every account it rotated through until the throttle's reset (31-34 h).
+
+### Why an extension could not handle it
+
+The adapter turns the response into error text before any extension or the credential pool sees it; the original code is gone by then.
+
+### Expected merge conflict zones
+
+- `parseErrorResponse` in `openai-codex-responses.ts` (upstream-owned): the code test inside the `if (err)` block.
+
 ## 2026-10-12 - Recover from expired native web search payloads (senpi#3201)
 
 ### What changed

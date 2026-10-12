@@ -217,4 +217,45 @@ describe("codex 429 retry-hint marker", () => {
 		expect(result.errorMessage).toBeTruthy();
 		expect(result.errorMessage).not.toMatch(/\(retry-after-ms: \d+\)$/);
 	});
+
+	// senpi#3216: a throttle must not read as a spent quota, or the credential pool blocks every
+	// account it rotates through until the throttle's reset.
+	it.each([
+		["rate_limit_exceeded with resets_at", { code: "rate_limit_exceeded", message: "rate limited", resets_at: 0 }],
+		["429 without a code", { message: "slow down" }],
+	])("HTTP 429 %s is reported as a rate limit, not a usage limit", async (_label, error) => {
+		const body = JSON.stringify({
+			error: "resets_at" in error ? { ...error, resets_at: Math.floor(Date.now() / 1000) + 2048 * 60 } : error,
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(body, { status: 429, headers: { "content-type": "application/json" } })),
+		);
+
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(makeContext()), {
+			apiKey: mockToken(),
+			transport: "sse",
+			maxRetries: 0,
+		}).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toMatch(/rate limiting/i);
+		expect(result.errorMessage).not.toMatch(/usage limit/i);
+	});
+
+	it("usage_limit_reached is still reported as the account's usage limit", async () => {
+		const body = JSON.stringify({ error: { type: "usage_limit_reached", message: "limit", plan_type: "Plus" } });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(body, { status: 429, headers: { "content-type": "application/json" } })),
+		);
+
+		const result = await streamOpenAICodexResponses(makeModel(), normalizeContext(makeContext()), {
+			apiKey: mockToken(),
+			transport: "sse",
+			maxRetries: 0,
+		}).result();
+
+		expect(result.errorMessage).toMatch(/You have hit your ChatGPT usage limit \(plus plan\)/);
+	});
 });

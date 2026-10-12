@@ -188,7 +188,14 @@ describe("app-server account reads", () => {
 						blocked: false,
 						pinned: false,
 					},
-					{ name: "work", source: "import", blocked: true, pinned: true },
+					{
+						name: "work",
+						source: "import",
+						blocked: true,
+						blockReason: "rate_limit",
+						blockedUntil: 4102444800000,
+						pinned: true,
+					},
 				],
 			});
 			expect(resultOf(fixture.sent[2], 3)).toEqual({});

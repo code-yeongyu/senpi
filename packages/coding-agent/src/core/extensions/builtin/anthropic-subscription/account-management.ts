@@ -18,6 +18,8 @@ export type ProviderAccountSummary = {
 	readonly displayName?: string;
 	readonly source: AccountSlot["source"];
 	readonly blocked: boolean;
+	readonly blockReason?: "rate_limit" | "auth_error";
+	readonly blockedUntil?: number;
 	readonly pinned: boolean;
 };
 
@@ -31,12 +33,16 @@ export function getProviderAccounts(
 	const now = Date.now();
 	return listAccounts(credential, (name) => env[name]).map((account) => {
 		const displayName = accountDisplayName(account.displayName);
+		const authBlocked = account.blockReason === "auth_error";
+		const rateLimited = !authBlocked && account.blockedUntil !== undefined && account.blockedUntil > now;
 		return {
 			name: account.name,
 			...(displayName === undefined ? {} : { displayName }),
 			source: account.source,
-			blocked:
-				account.blockReason === "auth_error" || (account.blockedUntil !== undefined && account.blockedUntil > now),
+			blocked: authBlocked || rateLimited,
+			// Same block description as the generic account summary (senpi#3216).
+			...(authBlocked ? { blockReason: "auth_error" as const } : {}),
+			...(rateLimited ? { blockReason: "rate_limit" as const, blockedUntil: account.blockedUntil } : {}),
 			pinned: credential.pinned === account.name,
 		};
 	});

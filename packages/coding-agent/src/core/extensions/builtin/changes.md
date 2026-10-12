@@ -1,3 +1,22 @@
+## 2026-10-12 - Account listings say why an account is blocked; /gpt-account login re-authenticates in place (senpi#3216)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-account.ts`: `login <id>` runs the normal OAuth login and moves the new material onto the existing account (`replaceCredentialAccountMaterial`), keeping its id, display name and pin; the listing renders `describeAccountHealth` with `/gpt-account login <id>` as the fix.
+- `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: `/account <provider> list` renders the same health text.
+
+### Why
+
+A blocked account showed a bare "blocked": the user could not tell a usage limit that lifts by itself from a rejected login, and had no command to log an account in again without removing and re-adding it.
+
+### Why an extension could not handle it
+
+Both commands are builtin extensions; the change is confined to them and the shared summary in `credential-accounts.ts`.
+
+### Expected merge conflict zones
+
+- None upstream: both commands are fork-only.
+
 ## 2026-10-11 - Restore shipped defaults and cache-preserving search policy (senpi#3125 delta)
 
 ### What changed

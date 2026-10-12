@@ -76,7 +76,13 @@ describe("a usage limit's reset time becomes that account's cooldown (senpi#1768
 		});
 		expect(action).toEqual({
 			kind: "failover",
-			block: { reason: "rate_limit", cooldownMs: COOLDOWN_CAP_MS, retryAfterWasCapped: true },
+			block: {
+				reason: "rate_limit",
+				cooldownMs: COOLDOWN_CAP_MS,
+				retryAfterWasCapped: true,
+				cooldownSource: "hint",
+				scope: "account",
+			},
 		});
 	});
 

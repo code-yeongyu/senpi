@@ -131,6 +131,7 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 	const classify = options.classify ?? classifyCredentialFailure;
 	const attempted = new Set<string>();
 	const retriesBySlot = new Map<string, number>();
+	let unknownScopeThrottles = 0;
 	let lastError: CredentialFailoverError | undefined;
 	let lastOriginal: unknown;
 	let lastTerminalEvent: TEvent | undefined;
@@ -201,6 +202,19 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 				throw new CredentialFailoverError(action, error);
 			}
 
+			// senpi#3216: a throttle that does not say the account is spent, answered the same way by a
+			// second account in this request, is about the request, not the accounts. Rotating on would
+			// block every account in the pool for it, so the request stops here with the provider's error
+			// and this account is left unblocked; the session's own retry handles the throttle.
+			const unknownScopeThrottle = action.block.reason === "rate_limit" && action.block.scope === "unknown";
+			if (unknownScopeThrottle && unknownScopeThrottles > 0) {
+				if (terminalEvent !== undefined) {
+					yield terminalEvent;
+					return;
+				}
+				throw new CredentialFailoverError(action, error);
+			}
+			if (unknownScopeThrottle) unknownScopeThrottles += 1;
 			await options.persistBlock(slot, action.block);
 			attempted.add(slot.name);
 			const failure = new CredentialFailoverError(action, error);

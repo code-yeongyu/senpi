@@ -1700,13 +1700,16 @@ async function parseErrorResponse(response: Response): Promise<{ message: string
 		const err = parsed?.error;
 		if (err) {
 			const code = err.code || err.type || "";
-			if (/usage_limit_reached|usage_not_included|rate_limit_exceeded/i.test(code) || response.status === 429) {
+			const mins = err.resets_at ? Math.max(0, Math.round((err.resets_at * 1000 - Date.now()) / 60000)) : undefined;
+			const when = mins !== undefined ? ` Try again in ~${mins} min.` : "";
+			// Only these codes say the account's quota is spent. Any other 429 (`rate_limit_exceeded`, no
+			// code) is a throttle that may be about this request, so it must not read as a usage limit:
+			// the credential pool would block every account it rotated through for the full reset (senpi#3216).
+			if (/usage_limit_reached|usage_not_included/i.test(code)) {
 				const plan = err.plan_type ? ` (${err.plan_type.toLowerCase()} plan)` : "";
-				const mins = err.resets_at
-					? Math.max(0, Math.round((err.resets_at * 1000 - Date.now()) / 60000))
-					: undefined;
-				const when = mins !== undefined ? ` Try again in ~${mins} min.` : "";
 				friendlyMessage = `You have hit your ChatGPT usage limit${plan}.${when}`.trim();
+			} else if (/rate_limit_exceeded/i.test(code) || response.status === 429) {
+				friendlyMessage = `ChatGPT is rate limiting requests (${code || "429"}).${when}`.trim();
 			}
 			message = err.message || friendlyMessage || message;
 		}

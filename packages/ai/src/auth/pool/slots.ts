@@ -258,6 +258,29 @@ export function removeSlot(credential: PooledCredential | undefined, name: strin
 	return next;
 }
 
+/**
+ * Gives an existing account the material of another slot (a fresh login) and drops that slot, so the
+ * account keeps its id, display name, source and pin. The flat top-level fields are re-projected when
+ * they carried either slot's material, so a downgrade build authenticates with the new login too.
+ */
+export function replaceSlotMaterial(credential: PooledCredential, name: string, fromName: string): PooledCredential {
+	const existing = listSlots(credential);
+	const target = existing.find((slot) => slot.name === name);
+	const from = existing.find((slot) => slot.name === fromName);
+	if (!target) throw new Error(`Provider account not found: ${name}`);
+	if (!from) throw new Error(`Provider account not found: ${fromName}`);
+	const { key: _key, access: _access, refresh: _refresh, expires: _expires, env: _env, ...identity } = target;
+	const { name: _fromName, displayName: _fromDisplayName, source: _fromSource, ...material } = from;
+	const replaced: CredentialSlot = { ...identity, ...material };
+	const accounts = existing
+		.filter((slot) => slot.name !== fromName)
+		.map((slot) => (slot.name === name ? replaced : slot));
+	const flatMoved = slotMirrorsFlat(credential, from) || slotMirrorsFlat(credential, target);
+	const next: PooledCredential = { ...(flatMoved ? projectFlatFields(credential, replaced) : credential), accounts };
+	if (next.pinned === fromName) next.pinned = name;
+	return next;
+}
+
 export function pinSlot(credential: PooledCredential, name: string): PooledCredential {
 	assertValidSlotName(name);
 	return { ...credential, pinned: name };

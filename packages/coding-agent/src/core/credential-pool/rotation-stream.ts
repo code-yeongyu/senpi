@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import { logCredentialBlock } from "./block-log.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
@@ -101,6 +102,8 @@ export function streamWithCredentialRotation(
 	const affinityKey = options.affinityKey ?? randomUUID();
 	const useAffinity = sources.policy?.affinity !== false;
 	const now = sources.now ?? Date.now;
+	// The provider text the last classification read; the block it produces is logged with it.
+	let classifiedText: string | undefined;
 
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
@@ -117,13 +120,15 @@ export function streamWithCredentialRotation(
 		isCommittedOutput: isCommittedRotationOutput,
 		isStreamStart: isRotationStreamStart,
 		errorFromEvent: rotationErrorFromEvent,
-		classify: (error, context) =>
-			classifyCredentialFailure(error, {
+		classify: (error, context) => {
+			classifiedText = error instanceof Error ? error.message : String(error);
+			return classifyCredentialFailure(error, {
 				...context,
 				nowMs: now(),
 				cooldownBaseMs: sources.policy?.cooldownBaseMs,
 				cooldownCapMs: sources.policy?.cooldownCapMs,
-			}),
+			});
+		},
 		onSuccess: async (slot) => {
 			await sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) =>
 				current
@@ -133,6 +138,9 @@ export function streamWithCredentialRotation(
 							lease: undefined,
 							blockedUntil: undefined,
 							blockReason: undefined,
+							// A served request ends the failure streak: the next failure starts the backoff over
+							// instead of inheriting every transient failure in the account's history (senpi#3216).
+							failureCount: undefined,
 							// Serving one model says nothing about another model's quota:
 							// only the blocks on the model that just served are lifted.
 							modelBlocks: pruneModelBlocks(current.modelBlocks, now(), options.modelId),
@@ -145,9 +153,27 @@ export function streamWithCredentialRotation(
 				slot.lane === "env" && slot.envVarName !== undefined && slot.envKey !== undefined
 					? await sources.repository.envCredentialRevision(slot.envVarName, slot.envKey)
 					: slot.storedRevision;
-			await sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) =>
-				blockPatch(block, current, now(), revision, sources.policy, options.modelId),
-			);
+			let failureCount: number | undefined;
+			let blockedUntil: number | undefined;
+			await sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) => {
+				const patch = blockPatch(block, current, now(), revision, sources.policy, options.modelId);
+				failureCount = patch.failureCount;
+				blockedUntil =
+					block.reason === "rate_limit" && block.modelFamily !== undefined && options.modelId !== undefined
+						? patch.modelBlocks?.[modelBlockKey(block.modelFamily, options.modelId)]?.blockedUntil
+						: patch.blockedUntil;
+				return patch;
+			});
+			logCredentialBlock({
+				providerId: sources.providerId,
+				slot,
+				block,
+				...(options.modelId === undefined ? {} : { modelId: options.modelId }),
+				...(failureCount === undefined ? {} : { failureCount }),
+				...(blockedUntil === undefined ? {} : { blockedUntil }),
+				nowMs: now(),
+				...(classifiedText === undefined ? {} : { providerText: classifiedText }),
+			});
 		},
 		now,
 	});
