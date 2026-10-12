@@ -745,6 +745,11 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("moonshotai defaults track current model", () => {
+		expect(defaultModelPerProvider.moonshotai).toBe("kimi-k3");
+		expect(defaultModelPerProvider["moonshotai-cn"]).toBe("kimi-k3");
+	});
+
 	test("ollama defaults to its current coding model", () => {
 		expect(defaultModelPerProvider.ollama).toBe("qwen3.5:397b");
 	});
