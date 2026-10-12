@@ -7,6 +7,7 @@
 ### Added
 
 - RPC effect ledger (capability `effect_ledger`): `abort`, `set_model` and `set_thinking_level` take an optional `effectId` and get a durable receipt written before the effect is applied; a retry with the same id replays the receipt instead of acting twice, and a different request under that id is refused with `effect_id_conflict`. `get_effect_status` answers any receipt by id, including inputs by `clientMessageId`, from a loaded session or from a transcript on disk. Input receipts now say how their turn ended (completed, aborted and by whom, error), a reopened session seals receipts its dead process left running, and queued input dropped by `new_session`/`switch_session` reads `failed` instead of vanishing ([#3199](https://github.com/code-yeongyu/senpi/issues/3199)).
+- Themes can color inline markdown bold, italic, and strikethrough text with the optional `mdBold`, `mdItalic`, and `mdStrikethrough` tokens. Omitted tokens keep the surrounding color, so existing themes render unchanged ([#3195](https://github.com/code-yeongyu/senpi/pull/3195)).
 
 ### Changed
 
