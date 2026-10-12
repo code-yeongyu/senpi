@@ -64,7 +64,7 @@ async function handleMcpCommand(
 	const subcommand = args[0] ?? "";
 	if (subcommand === "") {
 		if (!ctx.hasUI || ctx.mode !== "tui") {
-			ctx.ui.notify(await renderStatus("MCP servers", service));
+			ctx.ui.notify(await renderStatus("MCP servers", pi, service));
 		} else {
 			await showMcpManager(ctx, pi, service, (command, name, commandCtx, commandNotify) =>
 				handleMcpCommand([command, name], commandCtx, pi, service, commandNotify),
@@ -77,7 +77,7 @@ async function handleMcpCommand(
 		return;
 	}
 	if (subcommand === "status") {
-		await notifyStatus(ctx, service);
+		await notifyStatus(ctx, pi, service);
 		return;
 	}
 	if (subcommand === "add") {
@@ -89,11 +89,11 @@ async function handleMcpCommand(
 		return;
 	}
 	if (subcommand === "test") {
-		await testServer(args[1] ?? "", ctx, service, notify);
+		await testServer(args[1] ?? "", ctx, pi, service, notify);
 		return;
 	}
 	if (subcommand === "logs") {
-		showLogs(args[1] ?? "", ctx, service);
+		showLogs(args[1] ?? "", ctx, pi, service);
 		return;
 	}
 	if (subcommand === "reconnect") {
@@ -105,12 +105,15 @@ async function handleMcpCommand(
 
 type McpCommandService = ReturnType<typeof getMcpService>;
 
-async function notifyStatus(ctx: ExtensionCommandContext, service: McpCommandService): Promise<void> {
-	ctx.ui.notify(await renderStatus("MCP status", service));
+async function notifyStatus(ctx: ExtensionCommandContext, pi: object, service: McpCommandService): Promise<void> {
+	ctx.ui.notify(await renderStatus("MCP status", pi, service));
 }
 
-async function renderStatus(title: string, service: McpCommandService): Promise<string> {
-	const rows = await buildMcpStatusRows(service.getServerSnapshots(), (name) => service.getServerExposureStatus(name));
+/** Render only this session's declared servers (senpi#3001). */
+async function renderStatus(title: string, pi: object, service: McpCommandService): Promise<string> {
+	const rows = await buildMcpStatusRows(service.getServerSnapshots(pi), (name) =>
+		service.getServerExposureStatus(name, pi),
+	);
 	return formatMcpStatus(title, rows);
 }
 
@@ -147,7 +150,7 @@ async function setServerEnabled(
 	name: string,
 	enabled: boolean,
 ): Promise<void> {
-	if (!ensureKnown(name, ctx, service)) return;
+	if (!ensureKnown(name, ctx, pi, service)) return;
 	if (!setGlobalMcpServerEnabled(name, enabled)) {
 		ctx.ui.notify(`MCP server ${name} is not in the global config file`, "error");
 		return;
@@ -160,12 +163,24 @@ async function setServerEnabled(
 async function testServer(
 	name: string,
 	ctx: ExtensionCommandContext,
+	pi: object,
 	service: McpCommandService,
 	notify: Notify = (text, type) => ctx.ui.notify(text, type),
 ): Promise<void> {
-	if (!ensureKnown(name, ctx, service, notify)) return;
-	const connection = service.getConnection(name);
-	if (connection === undefined) return;
+	if (!ensureKnown(name, ctx, pi, service, notify)) return;
+	const connection = service.getConnection(name, pi);
+	if (connection === undefined) {
+		// Uptime identifies this session's stale connection; without it, the connection belongs to another session.
+		const snapshot = service.getServerSnapshots(pi).find((candidate) => candidate.name === name);
+		const reason =
+			snapshot !== undefined && snapshot.configState !== "enabled"
+				? `is ${snapshot.configState}`
+				: snapshot !== undefined && snapshot.uptimeMs !== null
+					? `needs auth: run /mcp auth ${name}`
+					: "has no connection for this session";
+		notify(`MCP server ${name} ${reason}`, "error");
+		return;
+	}
 	const started = Date.now();
 	try {
 		await connection.connect();
@@ -181,9 +196,9 @@ async function testServer(
 	}
 }
 
-function showLogs(name: string, ctx: ExtensionCommandContext, service: McpCommandService): void {
-	if (!ensureKnown(name, ctx, service)) return;
-	const lines = service.getLogLines(name, 20);
+function showLogs(name: string, ctx: ExtensionCommandContext, pi: object, service: McpCommandService): void {
+	if (!ensureKnown(name, ctx, pi, service)) return;
+	const lines = service.getLogLines(name, 20, pi);
 	ctx.ui.notify(lines.length === 0 ? `MCP logs for ${name}: (empty)` : lines.join("\n"));
 }
 
@@ -194,7 +209,7 @@ async function reconnectServer(
 	service: McpCommandService,
 	notify: Notify = (text, type) => ctx.ui.notify(text, type),
 ): Promise<void> {
-	if (!ensureKnown(name, ctx, service, notify)) return;
+	if (!ensureKnown(name, ctx, pi, service, notify)) return;
 	try {
 		await service.reconnectServer(name);
 		await service.attachSession({ type: "session_start", reason: "reload" }, ctx, pi);
@@ -208,14 +223,13 @@ async function reconnectServer(
 function ensureKnown(
 	name: string,
 	ctx: ExtensionCommandContext,
+	pi: object,
 	service: McpCommandService,
 	notify: Notify = (text, type) => ctx.ui.notify(text, type),
 ): boolean {
-	if (name.length > 0 && service.getServerSnapshots().some((snapshot) => snapshot.name === name)) return true;
-	const known = service
-		.getServerSnapshots()
-		.map((snapshot) => snapshot.name)
-		.join(", ");
+	const snapshots = service.getServerSnapshots(pi);
+	if (name.length > 0 && snapshots.some((snapshot) => snapshot.name === name)) return true;
+	const known = snapshots.map((snapshot) => snapshot.name).join(", ");
 	notify(`Unknown MCP server: ${name || "<missing>"}\nKnown MCP servers: ${known || "(none)"}`, "error");
 	return false;
 }

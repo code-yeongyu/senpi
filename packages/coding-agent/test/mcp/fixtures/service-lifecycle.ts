@@ -55,10 +55,12 @@ export async function attach(
 	root: TestRoot,
 	reason: "startup" | "reload" | "new",
 	projectTrusted = true,
-): Promise<void> {
-	await service.attachSession(sessionStart(reason), contextFor(root, projectTrusted), fakePi(), {
+): Promise<FakePi> {
+	const pi = fakePi();
+	await service.attachSession(sessionStart(reason), contextFor(root, projectTrusted), pi, {
 		agentDir: root.agentDir,
 	});
+	return pi;
 }
 
 export function fakePi(activeTools: string[] = []): FakePi {

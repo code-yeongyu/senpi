@@ -8,10 +8,11 @@ import { McpTokenStore } from "../../../src/core/extensions/builtin/mcp/auth/tok
 import { registerMcpCommands } from "../../../src/core/extensions/builtin/mcp/commands.ts";
 import { McpManagerView } from "../../../src/core/extensions/builtin/mcp/manager-view.ts";
 import { McpService } from "../../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
 import { initTheme, theme } from "../../../src/modes/interactive/theme/theme.ts";
 import { createUi } from "../../mcp/fixtures/commands.ts";
-import { cleanupRoots, fakePi, makeRoot, setConfig, stdioServer } from "../../mcp/fixtures/service-lifecycle.ts";
+import { cleanupRoots, makeRoot, setConfig, stdioServer } from "../../mcp/fixtures/service-lifecycle.ts";
 import { waitForSignalBeforeCompletion } from "../../promise-test-utils.ts";
 import { createHarness } from "../harness.ts";
 
@@ -39,14 +40,15 @@ async function setup(name: string, oauth = false) {
 	});
 	const service = new McpService();
 	cleanup.push(() => service.dispose("quit"));
-	await service.attachSession(
-		{ type: "session_start", reason: "startup" },
-		{ cwd: root.cwd, isProjectTrusted: () => true },
-		fakePi(),
-		{ agentDir: root.agentDir },
-	);
-	expect(await service.whenAttachSettled()).toBe("settled");
-	const harness = await createHarness({ extensionFactories: [(pi) => registerMcpCommands(pi, service)] });
+	const command: { pi?: ExtensionAPI } = {};
+	const harness = await createHarness({
+		extensionFactories: [
+			(pi) => {
+				command.pi = pi;
+				registerMcpCommands(pi, service);
+			},
+		],
+	});
 	cleanup.push(async () => harness.cleanup());
 	const ui = createUi();
 	const tui = new TUI(new VirtualTerminal(120, 36));
@@ -65,7 +67,17 @@ async function setup(name: string, oauth = false) {
 			}, reject);
 		});
 	await harness.session.bindExtensions({ uiContext: ui, mode: "tui" });
-	return { root, service, harness, ui };
+	const pi = command.pi;
+	if (pi === undefined) throw new Error("The /mcp command extension never loaded");
+	// Attach through the /mcp command API (senpi#3001).
+	await service.attachSession(
+		{ type: "session_start", reason: "startup" },
+		{ cwd: root.cwd, isProjectTrusted: () => true },
+		pi,
+		{ agentDir: root.agentDir },
+	);
+	expect(await service.whenAttachSettled()).toBe("settled");
+	return { root, service, harness, ui, pi };
 }
 
 // senpi#2716, PR #2747: exercise the registered slash command and real manager,
@@ -75,7 +87,7 @@ describe("MCP manager structured dispatch", () => {
 		// senpi#2716, PR #2747 owner item 2: observe the registered command and
 		// real service attach, not a copied context or a mocked attach result.
 		const name = "owner-context";
-		const { root, service, harness, ui } = await setup(name);
+		const { root, service, harness, ui, pi } = await setup(name);
 		const initialPid = service.getConnection(name)?.getRootPid();
 		if (!initialPid) throw new Error("Initial fixture did not spawn");
 		const runner = harness.getExtensionRunner();
@@ -136,6 +148,7 @@ describe("MCP manager structured dispatch", () => {
 			expect(details.some((text) => /^MCP test owner-context ok \(\d+ms\): 1 tools$/.test(text))).toBe(true);
 			expect(details).toContain(`MCP reconnect ${name} connected`);
 			expect(service.getConnection(name)?.state).toBe("connected");
+			expect(binding.pi).toBe(pi);
 			expect(binding.pi.getActiveTools()).toContain("mcp_owner-context_tool_1");
 			const reconnectPid = service.getConnection(name)?.getRootPid();
 			if (!reconnectPid) throw new Error("Reconnect fixture did not spawn");
@@ -249,6 +262,6 @@ describe("MCP manager structured dispatch", () => {
 		// When: a textual subcommand uses the existing quoting/escaping syntax.
 		await harness.session.prompt(`/mcp ${args}`);
 		// Then: parsing still resolves the same server identity.
-		expect(logs).toHaveBeenCalledExactlyOnceWith(name, 20);
+		expect(logs).toHaveBeenCalledExactlyOnceWith(name, 20, expect.anything());
 	});
 });

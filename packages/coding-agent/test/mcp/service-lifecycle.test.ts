@@ -48,13 +48,14 @@ describe("McpService session lifecycle", () => {
 		await awaitMcpConnected(service, "shared");
 		const firstPid = service.getConnection("shared")?.getRootPid();
 		await service.handleSessionShutdown({ type: "session_shutdown", reason: "new" });
-		await attach(service, root, "new");
+		const second = await attach(service, root, "new");
 		const secondPid = service.getConnection("shared")?.getRootPid();
 
 		expect(firstPid).toEqual(expect.any(Number));
 		expect(secondPid).toBe(firstPid);
 		expect(await readCounter(counterFile)).toBe(1);
-		expect(service.getServerSnapshots()).toMatchObject([
+		// The first session's binding was never released here, so a read naming no session sees neither (senpi#3001).
+		expect(service.getServerSnapshots(second)).toMatchObject([
 			{ name: "shared", lifecycleState: "connected", pid: firstPid, configState: "enabled" },
 		]);
 	});
