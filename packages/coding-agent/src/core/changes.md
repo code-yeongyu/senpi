@@ -1,3 +1,21 @@
+## 2026-10-12 - OpenCode Zen's provider default is Kimi K3
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` row `opencode` is `kimi-k3` (was `kimi-k2.6`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the bundled `opencode` catalog lists `kimi-k3`, and `opencode-go` already defaults to it, while `opencode` still started on K2.6. The default applies only when no model is saved in settings and none is passed on the command line.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `opencode` row of `defaultModelPerProvider`.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed
