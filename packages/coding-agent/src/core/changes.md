@@ -1,3 +1,21 @@
+## 2026-10-12 - Baseten's provider default is GLM-5.3
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` row `baseten` is `zai-org/GLM-5.3` (was `zai-org/GLM-5.2`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the bundled `baseten` catalog lists `zai-org/GLM-5.3`, which `zai`, `zai-coding-cn` and `venice` already default to, while Baseten still started on GLM-5.2. The default applies only when no model is saved in settings and none is passed on the command line.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `baseten` row of `defaultModelPerProvider`.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed

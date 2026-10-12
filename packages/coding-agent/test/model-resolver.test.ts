@@ -745,6 +745,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("baseten default tracks current model", () => {
+		expect(defaultModelPerProvider.baseten).toBe("zai-org/GLM-5.3");
+	});
+
 	test("ollama defaults to its current coding model", () => {
 		expect(defaultModelPerProvider.ollama).toBe("qwen3.5:397b");
 	});
