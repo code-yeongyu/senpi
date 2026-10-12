@@ -40,6 +40,8 @@
 
 ### Changed
 
+- The built-in default model for `openrouter` is now `moonshotai/kimi-k3` (was `moonshotai/kimi-k2.6`). It applies only when no model is saved in settings and none is passed on the command line ([#3183](https://github.com/code-yeongyu/senpi/pull/3183)).
+
 - ChatGPT subscription GPT-6.1 Sol, Fast and Ultrafast now default to a 500,000-token context budget, with compaction and context-usage accounting following that window ([#3150](https://github.com/code-yeongyu/senpi/issues/3150), requested by @code-yeongyu).
 
 - Web search uses the active model's in-turn server tool first on enabled routes. Existing direct Anthropic/Claude OAuth and OpenAI/Azure defaults are preserved; ChatGPT subscription search is enabled, and newly supported xAI Responses, Google Vertex and AI Studio, OpenRouter and compatible Anthropic gateways require explicit opt-in. Search-specific failures enable one standalone fallback and record its reason; cheaper auxiliary models remain defaults only on routes without an enabled server tool ([#3122](https://github.com/code-yeongyu/senpi/issues/3122), requested by @code-yeongyu).
