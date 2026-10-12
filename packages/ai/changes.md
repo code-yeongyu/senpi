@@ -1,3 +1,22 @@
+## 2026-10-13 - Muse Wonder family on the Meta provider
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: fills published Meta Model API pricing ($4.00 input / $0.20 cache read / $20.00 output per MTok) when models.dev lists `muse-wonder-1.0` without costs, and clones the fully processed Wonder row into `muse-wonder-1.0-contributor`, `muse-wonder-full-1.0`, and `muse-wonder-full-1.0-contributor` after metadata application. Each clone is skipped once models.dev carries the id natively. The generated Meta shard and manifest are regenerated with `--strict --providers meta`.
+
+### Why
+
+- Meta launched Muse Wonder on 2026-10-12; Wonder Full is Muse subscription-only and neither it nor the Wonder contributor rows appear on models.dev yet, so a plain regeneration would ship only `muse-wonder-1.0` at $0.
+- Wonder Full has no published per-token rate, so it preserves Wonder's base rates (the Sol Ultrafast precedent); contributor rows mirror the Muse Spark contributor program rates until Meta publishes Wonder contributor pricing.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts` owns the shipped builtin catalog; a local extension cannot make the Wonder rows selectable in every installation or correct the generated pricing.
+
+### Expected merge conflict zones
+
+- LOW: the temporary-overrides loop and the variant emission block after metadata application in `packages/ai/scripts/generate-models.ts`. Regenerate catalog JSON and its manifest rather than hand-merging.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed

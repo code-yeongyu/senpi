@@ -8,7 +8,11 @@
 
 - RPC clients now see a goal's deliberate wait: `goal_continuation_scheduled`, `goal_continuation_timer_state` (with `dueAtMs` while armed) and `goal_continuation_resumed` arrive as `extension_event`s, and a `goal_continuation_fire_now` extension request runs the armed continuation at once through the timer's own eligibility checks ([#3196](https://github.com/code-yeongyu/senpi/issues/3196), requested by @code-yeongyu).
 
+- Meta provider gains the Muse Wonder family: `muse-wonder-1.0` (Meta Model API at $4.00 input / $0.20 cached input / $20.00 output per MTok), subscription-only `muse-wonder-full-1.0`, and both `-contributor` variants. All four carry a 1,048,576-token context window, 131,072 output tokens, text + image input, and `minimal`..`max` reasoning. Wonder Full preserves Wonder's rates until Meta publishes per-token pricing; contributor rows mirror the Muse Spark contributor rates until Wonder contributor pricing is published.
+
 ### Changed
+
+- The Meta provider default is now `meta/muse-wonder-1.0` instead of `meta/muse-spark-1.3`. Saved model selections are unaffected.
 
 - Tip history, changelog acknowledgments and per-model reasoning/fast-mode memories now live in `state.json` instead of the global settings file, keeping version-controlled config clean during normal use. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without saving the startup default; `/thinking` Ctrl+S and `/settings` still explicitly save it. Existing global keys migrate silently without overwriting saved state; project settings are untouched, corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3178](https://github.com/code-yeongyu/senpi/issues/3178), requested by @devxoul).
 

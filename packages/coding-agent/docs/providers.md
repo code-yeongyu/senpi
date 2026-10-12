@@ -212,7 +212,7 @@ If your Claude Pro/Max subscription usage through `anthropic-subscription` feels
 
 ### Meta (Muse subscription)
 
-- Run `/login meta`, then select **Sign in with Meta** to use Muse Spark models with your Muse subscription; the Model API key is refreshed automatically
+- Run `/login meta`, then select **Sign in with Meta** to use Muse Spark and Muse Wonder models (including subscription-only Muse Wonder Full) with your Muse subscription; the Model API key is refreshed automatically
 - `META_API_KEY` remains available through **Use an API key**
 
 ### OpenRouter

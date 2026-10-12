@@ -178,3 +178,29 @@ describe("ambient cloud credentials never outrank configured providers", () => {
 		expect(result.model).toBe(deepseek);
 	});
 });
+
+describe("Meta provider defaults", () => {
+	test("prefers Muse Wonder automatically while preserving explicit Muse Spark", async () => {
+		const metaModels = getModels("meta");
+		const availableModels: Model<Api>[] = [
+			metaModels.find((model) => model.id === "muse-spark-1.3"),
+			metaModels.find((model) => model.id === "muse-wonder-full-1.0"),
+			metaModels.find((model) => model.id === "muse-wonder-1.0"),
+		].filter((model) => model !== undefined);
+		const runtime = runtimeFor(availableModels);
+
+		const automatic = await findInitialModel({ scopedModels: [], isContinuing: false, modelRuntime: runtime });
+		const explicit = await findInitialModel({
+			scopedModels: [],
+			isContinuing: false,
+			defaultProvider: "meta",
+			defaultModelId: "muse-spark-1.3",
+			modelRuntime: runtime,
+		});
+
+		expect(automatic.model?.id).toBe("muse-wonder-1.0");
+		expect(automatic.provenance).toBe("provider-default");
+		expect(explicit.model?.id).toBe("muse-spark-1.3");
+		expect(explicit.provenance).toBe("settings");
+	});
+});

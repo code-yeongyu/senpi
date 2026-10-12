@@ -3503,6 +3503,21 @@ async function generateModels() {
 
 	// Temporary overrides until upstream model metadata is corrected.
 	for (const candidate of allModels) {
+		// models.dev lists muse-wonder-1.0 without pricing; Meta's published
+		// Model API rates are $4.00 input / $0.20 cached input / $20.00 output
+		// per MTok (2026-10-12 launch pricing).
+		if (
+			candidate.provider === "meta" &&
+			candidate.id === "muse-wonder-1.0" &&
+			candidate.cost.input === 0 &&
+			candidate.cost.output === 0
+		) {
+			candidate.cost.input = 4;
+			candidate.cost.output = 20;
+			candidate.cost.cacheRead = 0.2;
+			candidate.cost.cacheWrite = 0;
+		}
+
 		if (candidate.provider === "github-copilot" && GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS.has(candidate.id)) {
 			candidate.contextWindow = 1000000;
 		}
@@ -4313,6 +4328,29 @@ async function generateModels() {
 		});
 	}
 	allModels.push(...codexUltrafastVariants);
+
+	// Muse Wonder Full (Muse subscription-only) and the Wonder
+	// contributor rows are served through the Meta provider, but models.dev
+	// does not list them yet. Clone the fully processed muse-wonder-1.0 row,
+	// just like the Priority variants above; each clone is skipped once
+	// models.dev carries the id natively. Wonder Full has no published
+	// per-token rate, so it preserves Wonder's base rates; contributor rows
+	// mirror the Muse Spark contributor program rates until Meta publishes
+	// Wonder contributor pricing.
+	const metaWonderVariants: Model<Api>[] = [];
+	const metaWonderBase = allModels.find((model) => model.provider === "meta" && model.id === "muse-wonder-1.0");
+	if (metaWonderBase) {
+		const contributorCost = { input: 0.1, output: 0.2, cacheRead: 0.002, cacheWrite: 0 };
+		for (const clone of [
+			{ id: "muse-wonder-1.0-contributor", name: "Muse Wonder Contributor", cost: contributorCost },
+			{ id: "muse-wonder-full-1.0", name: "Muse Wonder Full", cost: metaWonderBase.cost },
+			{ id: "muse-wonder-full-1.0-contributor", name: "Muse Wonder Full Contributor", cost: contributorCost },
+		]) {
+			if (allModels.some((model) => model.provider === "meta" && model.id === clone.id)) continue;
+			metaWonderVariants.push({ ...metaWonderBase, id: clone.id, name: clone.name, cost: { ...clone.cost } });
+		}
+	}
+	allModels.push(...metaWonderVariants);
 
 	// Keep chat and image catalogs separate so one upstream ID can expose both
 	// operations with different API implementations.

@@ -6,6 +6,8 @@
 
 ### Added
 
+- Meta provider gains the Muse Wonder family: `muse-wonder-1.0` (Meta Model API at $4.00 input / $0.20 cached input / $20.00 output per MTok), subscription-only `muse-wonder-full-1.0`, and both `-contributor` variants. All four carry a 1,048,576-token context window, 131,072 output tokens, text + image input, and `minimal`..`max` reasoning. Wonder Full preserves Wonder's rates until Meta publishes per-token pricing; contributor rows mirror the Muse Spark contributor rates until Wonder contributor pricing is published.
+
 ### Changed
 
 ### Fixed

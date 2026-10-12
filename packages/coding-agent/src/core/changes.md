@@ -1,3 +1,21 @@
+## 2026-10-13 - Meta default moves to Muse Wonder
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider.meta` is `muse-wonder-1.0` instead of `muse-spark-1.3`.
+
+### Why
+
+- Muse Wonder is Meta's current frontier model (2026-10-12) and the Muse catalog's default; new Meta sessions should start on it. Explicit `defaultProvider`/`defaultModel` settings and saved Spark selections are unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts` owns the shipped per-provider defaults consulted before extensions load; an extension cannot change the out-of-box Meta pick.
+
+### Expected merge conflict zones
+
+- LOW: the `defaultModelPerProvider` table in `packages/coding-agent/src/core/model-resolver.ts`; keep a value that names a model present in the generated Meta catalog.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed
