@@ -742,7 +742,7 @@ describe("default model selection", () => {
 	});
 
 	test("ai-gateway default tracks current model", () => {
-		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
+		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.3");
 	});
 
 	test("ollama defaults to its current coding model", () => {
@@ -841,8 +841,8 @@ describe("default model selection", () => {
 
 	test("findInitialModel selects ai-gateway default when available", async () => {
 		const aiGatewayModel: Model<"anthropic-messages"> = {
-			id: "zai/glm-5.1",
-			name: "GLM-5.1",
+			id: "zai/glm-5.3",
+			name: "GLM-5.3",
 			api: "anthropic-messages",
 			provider: "vercel-ai-gateway",
 			baseUrl: "https://ai-gateway.vercel.sh",
@@ -864,7 +864,7 @@ describe("default model selection", () => {
 		});
 
 		expect(result.model?.provider).toBe("vercel-ai-gateway");
-		expect(result.model?.id).toBe("zai/glm-5.1");
+		expect(result.model?.id).toBe("zai/glm-5.3");
 	});
 
 	test("findInitialModel selects the Z.AI provider default when available", async () => {
