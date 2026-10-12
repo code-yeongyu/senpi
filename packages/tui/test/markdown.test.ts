@@ -1291,6 +1291,48 @@ bar`,
 			assert.ok(!joinedPlain.includes("~~strikethrough~~"), "Should not render delimiters as text");
 		});
 
+		it("should style inline emphasis through the optional hooks without touching headings", () => {
+			const theme = {
+				...defaultMarkdownTheme,
+				strong: (text: string) => `<strong>${text}</strong>`,
+				emphasis: (text: string) => `<em>${text}</em>`,
+				deleted: (text: string) => `<del>${text}</del>`,
+			};
+			const markdown = new Markdown("# Title\n\n**a** *b* ~~c~~", 0, 0, theme);
+
+			const plain = markdown
+				.render(80)
+				.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""))
+				.join("\n");
+
+			for (const tag of ["<strong>a", "<em>b", "<del>c"]) assert.ok(plain.includes(tag), plain);
+			assert.ok(!plain.includes("<strong>Title"), "Headings must keep the generic bold style");
+		});
+
+		it("should let emphasis hook colors win over heading and default text colors", () => {
+			const lastForegroundBefore = (line: string, needle: string): string | undefined =>
+				[...line.slice(0, line.indexOf(needle)).matchAll(/\x1b\[(?:3\d(?:;[\d;]*)?|39)m/g)].at(-1)?.[0];
+			const theme = {
+				...defaultMarkdownTheme,
+				heading: (text: string) => `\x1b[36m${text}\x1b[39m`,
+				strong: (text: string) => `\x1b[35m${chalk.bold(text)}\x1b[39m`,
+				emphasis: (text: string) => `\x1b[34m${chalk.italic(text)}\x1b[39m`,
+				deleted: (text: string) => `\x1b[32m${chalk.strikethrough(text)}\x1b[39m`,
+			};
+			const markdown = new Markdown("# Head **zap** tail\n\nplain **zip** *zed* ~~zot~~ end", 0, 0, theme, {
+				color: (text: string) => `\x1b[33m${text}\x1b[39m`,
+			});
+
+			const output = markdown.render(80).join("\n");
+
+			assert.strictEqual(lastForegroundBefore(output, "zap"), "\x1b[35m");
+			assert.strictEqual(lastForegroundBefore(output, "tail"), "\x1b[36m");
+			assert.strictEqual(lastForegroundBefore(output, "zip"), "\x1b[35m");
+			assert.strictEqual(lastForegroundBefore(output, "zed"), "\x1b[34m");
+			assert.strictEqual(lastForegroundBefore(output, "zot"), "\x1b[32m");
+			assert.strictEqual(lastForegroundBefore(output, "end"), "\x1b[33m");
+		});
+
 		it("should keep ~text~ as plain text", () => {
 			const markdown = new Markdown("Use ~strikethrough~ literally", 0, 0, defaultMarkdownTheme);
 
