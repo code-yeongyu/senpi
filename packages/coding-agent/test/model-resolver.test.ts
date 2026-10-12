@@ -745,6 +745,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("azure-openai-responses default tracks current model", () => {
+		expect(defaultModelPerProvider["azure-openai-responses"]).toBe("gpt-6.1-sol");
+	});
+
 	test("ollama defaults to its current coding model", () => {
 		expect(defaultModelPerProvider.ollama).toBe("qwen3.5:397b");
 	});
