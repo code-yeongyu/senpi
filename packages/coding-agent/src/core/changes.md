@@ -1,3 +1,21 @@
+## 2026-10-12 - MiniMax's provider default is MiniMax-M3
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` rows `minimax` and `minimax-cn` are `MiniMax-M3` (was `MiniMax-M2.7`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the bundled `minimax` and `minimax-cn` catalogs list `MiniMax-M3`, while both still started on `MiniMax-M2.7`. The default applies only when no model is saved in settings and none is passed on the command line.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `minimax` and `minimax-cn` rows of `defaultModelPerProvider`.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed
