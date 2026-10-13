@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- A model switch that persists the default (`/model <id> --default`, the picker's Ctrl+S save chord, or a default-persisting cycle) now flushes the queued settings write before the switch resolves, so the new default model is on disk for the next session instead of reverting to the previous one.
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed
