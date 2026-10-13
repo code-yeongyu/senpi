@@ -6727,7 +6727,10 @@ export class AgentSession {
 					{ origin: opts.origin, duringTurn },
 				);
 			}
-			if (opts.persistDefault) this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+			if (opts.persistDefault) {
+				this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+				await this.settingsManager.flush();
+			}
 			this._sessionLogger.info(
 				"model_change",
 				modelChangeLogFields({
@@ -6935,7 +6938,10 @@ export class AgentSession {
 				currentModel?.id,
 				{ origin: cycle.origin, duringTurn },
 			);
-			if (cycle.persistDefault) this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+			if (cycle.persistDefault) {
+				this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+				await this.settingsManager.flush();
+			}
 			this._sessionLogger.info(
 				"model_change",
 				modelChangeLogFields({

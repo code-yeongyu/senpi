@@ -1,3 +1,21 @@
+## 2026-10-13 - A persisted default model is flushed before the switch resolves
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_switchActiveModel()` and `_cycleFavoriteModel()` now `await this.settingsManager.flush()` right after `settingsManager.setDefaultModelAndProvider(...)` whenever the switch persists the default, so the queued settings write has landed before the switch resolves.
+
+### Why
+
+- `SettingsManager.save()` queues the write on `writeQueue` and returns; nothing awaited that queue on the model-default path. A `/model` selection with Ctrl+S (`/model <id> --default`, the picker's save chord, or a default-persisting cycle) updated the running session from memory, but if the process exited before the queued write drained, `settings.json` kept the previous `defaultModel` and the next session opened on the old model. `flush()` closes that gap. Regression: `test/suite/regressions/default-model-persistence-flush.test.ts`.
+
+### Why an extension could not handle it
+
+- The pending write is owned by the core `SettingsManager` instance inside `AgentSession`; an extension has no handle on that instance or its write queue, and the `model_changed` event is emitted after the persistence call returns.
+
+### Expected merge conflict zones
+
+- LOW: the `persistDefault` branches in `_switchActiveModel()` and `_cycleFavoriteModel()` in `packages/coding-agent/src/core/agent-session.ts` (one statement each).
+
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
 ### What changed
