@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The built-in default model for `alibaba-token-plan` is now `qwen3.8-max` (was `qwen3.7-max`). It applies only when no model is saved in settings and none is passed on the command line ([#3191](https://github.com/code-yeongyu/senpi/pull/3191)).
+
 - Tip history, changelog acknowledgments, and per-model reasoning/fast-mode memories now live in `state.json`, keeping automatically written bookkeeping out of version-controlled global settings. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without changing the startup default; Ctrl+S in `/thinking` and the `/settings` thinking option still save it explicitly. Existing global keys migrate without overwriting saved state or changing project settings. Corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3213](https://github.com/code-yeongyu/senpi/pull/3213), requested by @devxoul).
 
 ### Fixed

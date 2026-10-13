@@ -745,6 +745,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("alibaba-token-plan default tracks current model", () => {
+		expect(defaultModelPerProvider["alibaba-token-plan"]).toBe("qwen3.8-max");
+	});
+
 	test("ollama defaults to its current coding model", () => {
 		expect(defaultModelPerProvider.ollama).toBe("qwen3.5:397b");
 	});
