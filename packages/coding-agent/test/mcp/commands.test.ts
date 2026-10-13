@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { createEventBus } from "../../src/core/event-bus.ts";
@@ -18,12 +18,12 @@ import { attachHarnessSession, awaitMcpToolRegistration, toolResultTexts } from 
 import {
 	awaitMcpConnected,
 	cleanupRoots,
-	fakePi,
 	makeRoot,
 	setConfig,
 	stdioServer,
 	type TestRoot,
 } from "./fixtures/service-lifecycle.ts";
+import { sharingHttpFixture } from "./fixtures/sharing-http.ts";
 import { stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
@@ -247,10 +247,10 @@ describe("/mcp command suite", () => {
 			isProjectTrusted: () => true,
 			getRegisteredMcpServers: () => [decl],
 		};
-		const pi = fakePi();
-		await getMcpService().attachSession({ type: "session_start", reason: "startup" }, ctxWithDecl, pi, {
-			agentDir: root.agentDir,
-		});
+		// The session attaches through the API its /mcp command runs with, as the MCP builtin does (senpi#3001).
+		const commandActiveTools: string[] = [];
+		const { command, extension } = await loadCommand(commandActiveTools);
+		await emitSessionStart(extension, root, ctxWithDecl);
 		await awaitMcpToolRegistration("fixture");
 		expect(
 			getMcpService()
@@ -278,8 +278,8 @@ describe("/mcp command suite", () => {
 		runner.setUIContext(createUi(), "tui");
 		const ctx = runner.createCommandContext();
 
-		const commandActiveTools: string[] = [];
-		const { command } = await loadCommand(commandActiveTools);
+		// The seed attach above activated the tool already; only reconnect's own attach may put it back.
+		commandActiveTools.length = 0;
 		await command.handler("reconnect fixture", ctx);
 		await awaitMcpToolRegistration("fixture");
 
@@ -287,8 +287,7 @@ describe("/mcp command suite", () => {
 			.getServerSnapshots()
 			.find((s) => s.name === "fixture");
 		expect(snapshot?.source).toBe("extension");
-		// Reconnect attaches through the /mcp command extension's API, not the
-		// fake API used to seed the service before the command runner exists.
+		// Reconnect attaches through the /mcp command extension's API.
 		expect(commandActiveTools).toContain("mcp_fixture_tool_1");
 	});
 
@@ -303,6 +302,39 @@ describe("/mcp command suite", () => {
 		await command.handler("test fx", createCtx(root, ui));
 
 		expect(lastNotification(ui)?.message).toMatch(/^MCP test fx ok \(\d+ms\): 3 tools$/);
+	});
+
+	// senpi#3001: /mcp test says why the session has no connection.
+	it("says a disabled server is disabled when /mcp test names it", async () => {
+		const root = makeCommandRoot("test-disabled");
+		setConfig(root, { off: { ...stdioServer(["--tools", "1"]), enabled: false } });
+		const { command, extension } = await loadCommand();
+		const ui = createUi();
+		await emitSessionStart(extension, root);
+
+		await command.handler("test off", createCtx(root, ui));
+
+		expect(lastNotification(ui)).toEqual({ message: "MCP server off is disabled", type: "error" });
+	});
+
+	// senpi#3001: /mcp test says why the session has no connection.
+	it("says a server whose own credentials went stale needs auth when /mcp test names it", async () => {
+		const root = makeCommandRoot("test-stale");
+		const fixture = await sharingHttpFixture();
+		cleanupTasks.push(() => fixture.close());
+		setConfig(root, {
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_3001_TOKEN", lifecycle: "eager" },
+		});
+		vi.stubEnv("SENPI_3001_TOKEN", "one");
+		const { command, extension } = await loadCommand();
+		const ui = createUi();
+		await emitSessionStart(extension, root);
+		await awaitMcpConnected(getMcpService(), "fx");
+
+		vi.stubEnv("SENPI_3001_TOKEN", "two");
+		await command.handler("test fx", createCtx(root, ui));
+
+		expect(lastNotification(ui)).toEqual({ message: "MCP server fx needs auth: run /mcp auth fx", type: "error" });
 	});
 
 	it("bounds wedged fixture tests and keeps the command route responsive", async () => {
@@ -382,9 +414,13 @@ function loadMcpExtension(activeTools: string[] = []): Promise<Extension> {
 	return loadExtensionFromFactory(mcpExtension, process.cwd(), createEventBus(), runtime, "<mcp-command-test>");
 }
 
-async function emitSessionStart(extension: Extension, root: TestRoot): Promise<void> {
+async function emitSessionStart(
+	extension: Extension,
+	root: TestRoot,
+	ctx: object = { cwd: root.cwd, isProjectTrusted: () => true },
+): Promise<void> {
 	const event: SessionStartEvent = { type: "session_start", reason: "startup" };
 	for (const handler of extension.handlers.get("session_start") ?? []) {
-		await handler(event, { cwd: root.cwd, isProjectTrusted: () => true });
+		await handler(event, ctx);
 	}
 }

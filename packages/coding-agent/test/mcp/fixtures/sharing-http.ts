@@ -12,7 +12,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 /** Real, stateful HTTP/SSE MCP fixture. All changes are explicitly triggered. */
-export async function sharingHttpFixture(port = 0) {
+export async function sharingHttpFixture(port = 0, options: { readonly instructions?: string } = {}) {
 	const sessions = new Map<string, { server: Server; transport: StreamableHTTPServerTransport }>();
 	let connects = 0;
 	let toolName = "echo";
@@ -47,7 +47,10 @@ export async function sharingHttpFixture(port = 0) {
 				const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID });
 				const server = new Server(
 					{ name: "sharing-fixture", version: "1.0.0" },
-					{ capabilities: { tools: { listChanged: true }, resources: { subscribe: true }, logging: {} } },
+					{
+						capabilities: { tools: { listChanged: true }, resources: { subscribe: true }, logging: {} },
+						instructions: options.instructions,
+					},
 				);
 				server.setRequestHandler(ListToolsRequestSchema, async () => {
 					listEntered?.();
