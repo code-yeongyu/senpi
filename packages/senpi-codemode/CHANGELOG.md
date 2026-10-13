@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- A JavaScript `eval` cell is prepared on the shared RPC host without a Babel parse when its text has no `import` keyword (data such as `import-1` or `import.meta` no longer parses; a comment or non-ASCII name after `import` still rewrites), and the whole-AST walk runs only when `import` can be followed by `(`. A 1.4 MB data cell took 1.5-2.7 s of host-loop time and now takes under 1 ms ([#3205](https://github.com/code-yeongyu/senpi/issues/3205)).
+- Large JavaScript `eval` data cells no longer stall the shared RPC host on unnecessary import parsing. Cells without possible import syntax skip Babel, and the whole-AST walk runs only when a dynamic import is possible. The dynamic-import check stays linear on comment-heavy data; imports with comments or non-ASCII bindings still rewrite correctly ([#3206](https://github.com/code-yeongyu/senpi/pull/3206)).
 
 ### Removed
 

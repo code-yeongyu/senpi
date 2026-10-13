@@ -197,6 +197,47 @@ describe("zero-session host trim", () => {
 		expect(harness.collections()).toBe(2);
 	});
 
+	it("trims once the interval ends for a drop that landed inside it, with no new drop", () => {
+		// Given: a busy 3 GB host that just trimmed.
+		const harness = createTrimmer();
+		harness.setSessions(5);
+		harness.allocate(3 * 1024);
+		harness.setSessions(4);
+		harness.tick();
+		expect(harness.collections()).toBe(1);
+		// When: its children close inside the interval and the rest keep running at a steady count.
+		harness.allocate(3 * 1024);
+		harness.advance(10_000);
+		harness.setSessions(1);
+		expect(harness.collections()).toBe(1);
+		harness.advance(ZERO_SESSION_TRIM_MIN_INTERVAL_MS - 10_000 - 1);
+		harness.tick();
+		expect(harness.collections()).toBe(1);
+		// Then: the held drop is answered on the first tick after the interval.
+		harness.advance(1);
+		harness.tick();
+		expect(harness.collections()).toBe(2);
+		harness.tick();
+		expect(harness.records[1]).toMatchObject({ sessions: 1 });
+		// And: it is answered once, not on every later tick.
+		harness.allocate(3 * 1024);
+		harness.advance(10 * ZERO_SESSION_TRIM_MIN_INTERVAL_MS);
+		harness.tick();
+		expect(harness.collections()).toBe(2);
+	});
+
+	it("never trims a busy host above the floor whose session count stays flat or rises", () => {
+		const harness = createTrimmer();
+		harness.allocate(3 * 1024);
+		harness.setSessions(2);
+		harness.advance(10 * ZERO_SESSION_TRIM_MIN_INTERVAL_MS);
+		harness.tick();
+		harness.setSessions(4);
+		harness.advance(10 * ZERO_SESSION_TRIM_MIN_INTERVAL_MS);
+		harness.tick();
+		expect(harness.collections()).toBe(0);
+	});
+
 	it("still reports, uncollected, where the runtime exposes no full collection", () => {
 		const harness = createTrimmer({ collect: () => false });
 		harness.setSessions(1);

@@ -15,7 +15,8 @@
  * {@link DECLINE_TRIM_FLOOR_BYTES}: a small host never pays the collection pause. With sessions still
  * running, the pause blocks them, so each collection is timed and the next busy-host trim waits at
  * least {@link DECLINE_TRIM_PAUSE_FACTOR} times that pause, which keeps collection near 1% of a busy
- * host's loop in steady state. The first busy-host trim has no earlier pause to wait on, and one
+ * host's loop in steady state. A drop that lands inside that wait is kept and answered when it ends.
+ * The zero-session trim keeps the plain one-minute spacing: no session is left to block. The first busy-host trim has no earlier pause to wait on, and one
  * collection on a multi-GB live heap can itself pass the stall threshold (measured: 63 ms at 0.5 GB live
  * and 149 ms at 1.5 GB on one machine, 5.2 s at 3 GB live on a slower one); that costs a `host_stalled`
  * record and ~120 s of refused ensures, never a session, and beats holding tens of GB of freed pages.
@@ -56,7 +57,11 @@ export class ZeroSessionTrimmer {
 	private readonly now: () => number;
 	private heldSessions = false;
 	private lastSessionCount = 0;
-	/** A drop the registry reported between ticks; a backfill in the same second must not hide it. */
+	/**
+	 * A drop not yet answered: kept across ticks until the busy interval has elapsed and the footprint
+	 * was checked, so children closing inside the cooldown still get their trim once it ends. A backfill
+	 * in the same second must not hide it either.
+	 */
 	private declined = false;
 	private lastTrimAt: number | undefined;
 	/** A collection that ran on the previous tick; its record waits for the allocator to return the pages. */
@@ -92,16 +97,16 @@ export class ZeroSessionTrimmer {
 	check(): void {
 		if (this.pending !== undefined) this.report(this.pending);
 		const sessions = this.options.sessions();
-		const declined = this.declined || sessions < this.lastSessionCount;
-		this.declined = false;
+		if (sessions < this.lastSessionCount) this.declined = true;
 		this.lastSessionCount = sessions;
 		if (sessions > 0) {
 			this.heldSessions = true;
-			if (declined && this.busyIntervalElapsed() && this.readFootprint().bytes >= DECLINE_TRIM_FLOOR_BYTES) {
-				this.trim(sessions);
-			}
+			if (!this.declined || !this.busyIntervalElapsed()) return;
+			this.declined = false;
+			if (this.readFootprint().bytes >= DECLINE_TRIM_FLOOR_BYTES) this.trim(sessions);
 			return;
 		}
+		this.declined = false;
 		if (!this.heldSessions) return;
 		this.heldSessions = false;
 		if (!this.intervalElapsed(ZERO_SESSION_TRIM_MIN_INTERVAL_MS)) return;

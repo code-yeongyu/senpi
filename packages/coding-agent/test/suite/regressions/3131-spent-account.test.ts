@@ -12,6 +12,8 @@ import { createHarness, type Harness } from "../harness.ts";
 
 const accountLimit =
 	'429 {"error":{"type":"rate_limit_error","message":"You have hit your session limit; resets 11pm"}}';
+// Serialized records carry timestamps and ids whose digits can contain "429"; match the raw payload itself.
+const rawAccountPayload = /429 \{|rate_limit_error/;
 
 describe("#3131 spent account", () => {
 	const harnesses: Harness[] = [];
@@ -447,7 +449,7 @@ describe("#3131 spent account", () => {
 					]),
 				},
 			});
-			expect(JSON.stringify(history)).not.toMatch(/429|rate_limit_error/);
+			expect(JSON.stringify(history)).not.toMatch(rawAccountPayload);
 			const appendedEntries = harness.eventsOfType("entry_appended");
 			const unsubscribeEntries = harness.session.subscribe((event) => {
 				if (event.type === "entry_appended") appendedEntries.push(event);
@@ -467,13 +469,13 @@ describe("#3131 spent account", () => {
 			expect(appended).toMatchObject({
 				entry: { message: { errorCause: { type: "usage_limit", scope: "account" } } },
 			});
-			expect(JSON.stringify(appended)).not.toMatch(/429|rate_limit_error/);
+			expect(JSON.stringify(appended)).not.toMatch(rawAccountPayload);
 			for (const command of ["get_entries", "get_tree"]) {
 				await handler.handleInputLine(JSON.stringify({ type: command, id: command }));
 				const response = records.find((record) => record.id === command);
 				expect(response).toMatchObject({ success: true });
 				expect(JSON.stringify(response)).toContain('"scope":"account"');
-				expect(JSON.stringify(response)).not.toMatch(/429|rate_limit_error/);
+				expect(JSON.stringify(response)).not.toMatch(rawAccountPayload);
 			}
 			expect(harness.sessionManager.getEntry("raw-account-copy")).toMatchObject({
 				message: { errorMessage: accountLimit },

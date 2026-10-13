@@ -35,9 +35,11 @@ import type {
 import {
 	assertExactModelIds,
 	createModelDataManifest,
+	type ModelDataManifest,
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
+	stableGeneratedAt,
 	readModelDataStructure,
 	validateGeneratedModelData,
 	validateModelDataDirectory,
@@ -4432,9 +4434,25 @@ async function generateModels() {
 				fileContents[filename] = content;
 				writeFileSync(join(stagedDataDir, filename), content);
 			}
+
+			// Idempotent timestamp: when the regenerated content (the whole manifest except generatedAt)
+			// equals the committed catalog, keep its generatedAt so a content-unchanged regeneration is
+			// byte-identical and the drift check stays green. An explicit --generatedAt always wins.
+			let stableTs = generatedAt;
+			if (generatorOptions.generatedAt === undefined) {
+				const newManifest = createModelDataManifest(modelDataStructure, fileContents, generatedAt);
+				try {
+					const committedManifestPath = join(packageRoot, "src/providers/data", MODEL_DATA_MANIFEST_FILE);
+					const committedManifest = JSON.parse(readFileSync(committedManifestPath, "utf8")) as ModelDataManifest;
+					stableTs = stableGeneratedAt(newManifest, committedManifest);
+				} catch (error) {
+					// No committed manifest yet, or it is corrupt: fall back to the fresh timestamp.
+					console.warn(`generate-models: no readable committed manifest (${error instanceof Error ? error.message : String(error)}); using the fresh timestamp.`);
+				}
+			}
 			writeJson(
 				join(stagedDataDir, MODEL_DATA_MANIFEST_FILE),
-				createModelDataManifest(modelDataStructure, fileContents, generatedAt),
+				createModelDataManifest(modelDataStructure, fileContents, stableTs),
 			);
 			validateModelDataDirectory(modelDataStructure, stagedDataDir);
 

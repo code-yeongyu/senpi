@@ -1712,7 +1712,8 @@ REPORT: nothing here aborts a turn, kills a session, or refuses an `open_session
 - **Busy-host trim**: a host whose footprint is at least 2 GB also collects when its session count drops while other
   sessions still run (`sessions` > 0 in the record), because a host whose sessions keep allocating never idles long
   enough to return freed pages (#3218). Each collection is timed (`pauseMs`), and the next busy-host trim waits at least
-  60 s and at least 100 times that pause, which keeps collection near 1% of a busy host's loop in steady state. The
+  60 s and at least 100 times that pause, which keeps collection near 1% of a busy host's loop in steady state. A drop that
+  lands inside that wait is held and collected when it ends. The
   first busy-host trim has no earlier pause to wait on, and one collection on a multi-GB live heap can itself exceed
   the stall threshold (a `host_stalled` record and ~120 s of refused ensures, never a lost session).
   These collections are the only synchronous work the no-sync rule allows, and the record is their log.

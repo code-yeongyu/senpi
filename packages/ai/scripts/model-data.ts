@@ -164,6 +164,29 @@ export function createModelDataManifest(
 	};
 }
 
+// Catalog generation is idempotent: when the regenerated content (the model set AND every per-file
+// value, i.e. the whole manifest except generatedAt) equals the committed catalog, keep the committed
+// generatedAt instead of stamping a new one, so a content-unchanged regeneration is byte-identical and
+// the releasability drift check stays green. The timestamp moves when ANY content moves (a new/removed
+// model, or a field like cost/contextWindow/baseUrl), and never when only the timestamp would differ.
+export function stableGeneratedAt(
+	newManifest: ModelDataManifest,
+	committedManifest: ModelDataManifest | undefined,
+): string {
+	if (
+		committedManifest &&
+		typeof committedManifest.generatedAt === "string" &&
+		manifestEqualExceptTimestamp(newManifest, committedManifest)
+	) {
+		return committedManifest.generatedAt;
+	}
+	return newManifest.generatedAt;
+}
+
+function manifestEqualExceptTimestamp(a: ModelDataManifest, b: ModelDataManifest): boolean {
+	return a.structureHash === b.structureHash && JSON.stringify(a.files) === JSON.stringify(b.files);
+}
+
 function validateModelValue(
 	value: unknown,
 	providerId: string,

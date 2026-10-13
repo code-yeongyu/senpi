@@ -9,10 +9,42 @@ import {
 	MODEL_DATA_SCHEMA_VERSION,
 	type ModelDataStructure,
 	readModelDataStructure,
+	stableGeneratedAt,
 	validateModelDataDirectory,
 } from "../scripts/model-data.ts";
 
 const GENERATED_AT = "2026-07-23T10:00:00.000Z";
+
+describe("stableGeneratedAt (idempotent catalog generation)", () => {
+	const structure: ModelDataStructure = { "test-provider": { "chat:model-a": "openai-completions" } };
+	const newer = "2026-10-13T04:00:00.000Z";
+
+	it("keeps the committed generatedAt when the content is unchanged", () => {
+		const committed = createModelDataManifest(structure, {}, GENERATED_AT);
+		const regenerated = createModelDataManifest(structure, {}, newer);
+		expect(stableGeneratedAt(regenerated, committed)).toBe(GENERATED_AT);
+		// regenerate twice with unchanged data -> byte-identical, so the drift check stays green
+		expect(stableGeneratedAt(createModelDataManifest(structure, {}, "2026-10-14T00:00:00.000Z"), committed)).toBe(
+			GENERATED_AT,
+		);
+	});
+
+	it("moves the timestamp when a model is added or removed", () => {
+		const committed = createModelDataManifest(structure, {}, GENERATED_AT);
+		const changed: ModelDataStructure = { "test-provider": { "chat:model-b": "openai-completions" } };
+		expect(stableGeneratedAt(createModelDataManifest(changed, {}, newer), committed)).toBe(newer);
+	});
+
+	it("moves the timestamp when only a model field changes (cost, context, baseUrl)", () => {
+		const committed = createModelDataManifest(structure, { "a.json": "old" }, GENERATED_AT);
+		// same model set, different file contents: the timestamp must move, not stay stale
+		expect(stableGeneratedAt(createModelDataManifest(structure, { "a.json": "new" }, newer), committed)).toBe(newer);
+	});
+
+	it("uses the fresh timestamp when there is no committed manifest", () => {
+		expect(stableGeneratedAt(createModelDataManifest(structure, {}, newer), undefined)).toBe(newer);
+	});
+});
 const temporaryRoots: string[] = [];
 
 afterEach(() => {

@@ -1,3 +1,23 @@
+## 2026-10-13 - Idempotent catalog generation (whole-manifest key)
+
+### What changed
+
+- `packages/ai/scripts/model-data.ts`: `stableGeneratedAt(newManifest, committedManifest)` keeps the committed `generatedAt` when the new manifest equals the committed one on `structureHash` AND every `files` hash; otherwise the fresh timestamp.
+- `packages/ai/scripts/generate-models.ts`: builds the new manifest after `fileContents` is populated and applies the stable timestamp only when no explicit `--generatedAt` was passed.
+- The committed catalog (`.manifest.json`, `opencode.json`, `openrouter.json`) is refreshed from the live providers.
+
+### Why
+
+The releasability drift check regenerated the catalog with a fresh `generatedAt` and diffed the whole file, so it always failed on the timestamp. An idempotent key that covers the whole manifest except the timestamp keeps the drift check green on unchanged content while still tripping on a real change (a new/removed model, or a field edit).
+
+### Why an extension could not handle it
+
+The catalog's `generatedAt` and the manifest comparison are build-time constants in the generator, not something an extension can override at runtime.
+
+### Expected merge conflict zones
+
+The manifest's `generatedAt` and `structureHash` lines.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed
