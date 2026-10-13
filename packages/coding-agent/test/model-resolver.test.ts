@@ -745,6 +745,13 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("xiaomi defaults track current model", () => {
+		expect(defaultModelPerProvider.xiaomi).toBe("mimo-v2.6-pro");
+		expect(defaultModelPerProvider["xiaomi-token-plan-cn"]).toBe("mimo-v2.6-pro");
+		expect(defaultModelPerProvider["xiaomi-token-plan-ams"]).toBe("mimo-v2.6-pro");
+		expect(defaultModelPerProvider["xiaomi-token-plan-sgp"]).toBe("mimo-v2.6-pro");
+	});
+
 	test("ollama defaults to its current coding model", () => {
 		expect(defaultModelPerProvider.ollama).toBe("qwen3.5:397b");
 	});
