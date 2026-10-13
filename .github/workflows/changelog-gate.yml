@@ -4,6 +4,13 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # The merge queue requires every required check on the commit it is about to merge. The per-PR
+  # changelog check needs the pull request's base, head and labels, which a merge_group event does
+  # not carry, and it already passed on the PR; on the queue commit this job runs the whole-tree
+  # changes.md audit, which needs no PR metadata and still catches a queue-time merge that breaks
+  # tracker coverage.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -26,7 +33,7 @@ jobs:
         with:
           # Audit only this PR; refs/pull/*/merge may include newer main commits
           # than the event's base.sha and falsely attribute their changes here.
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -35,6 +42,7 @@ jobs:
           node-version: '24'
 
       - name: Check PR changelog and changes.md coverage
+        if: github.event_name == 'pull_request'
         env:
           CHANGELOG_GATE_BASE: ${{ github.event.pull_request.base.sha }}
           CHANGELOG_GATE_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}

@@ -1,3 +1,22 @@
+## 2026-10-12 - Required checks also run on the merge queue
+
+### What changed
+
+- `.github/workflows/ci.yml`, `.github/workflows/changelog-gate.yml`, `.github/workflows/review-claims.yml`: each triggers on `merge_group` (`checks_requested`) and reports under the same required check name. The changelog gate checks out `github.sha` there and runs only the whole-tree changes.md audit; the review claim gate reads the queued PR number from the merge group head ref, fails closed without one, and runs with a read-only token.
+- `.github/required-checks.json`, `scripts/merge-queue-workflows.test.mjs`: the required-check list and a test that every listed workflow keeps its `merge_group` trigger and exact job name.
+
+### Why
+
+- PRs kept falling behind `main` while slow jobs ran, and every merge needed a manual branch update and a full re-run. GitHub's merge queue re-tests each PR on the latest `main` itself, but it only works when every required check also runs on `merge_group`.
+
+### Why an extension could not handle it
+
+- Branch protection and workflow triggers are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- The `on:` blocks of the three workflows and the changelog gate's checkout `ref`.
+
 ## 2026-10-12 - The Windows zip install fails in its own step when Chocolatey is down (senpi#3088)
 
 ### What changed

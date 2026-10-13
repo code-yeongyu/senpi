@@ -1,0 +1,20 @@
+{
+	"$comment": "The status checks branch protection requires on main (Settings > Branches > main > Require status checks; read with: gh api repos/code-yeongyu/senpi/branches/main/protection --jq .required_status_checks.contexts). Keep this list equal to that setting: scripts/merge-queue-workflows.test.mjs fails when a listed check's workflow lacks a merge_group trigger or its job name drifts.",
+	"checks": [
+		{
+			"context": "Check and test",
+			"workflow": "ci.yml",
+			"job": "check-and-test"
+		},
+		{
+			"context": "Changelog gate",
+			"workflow": "changelog-gate.yml",
+			"job": "changelog-gate"
+		},
+		{
+			"context": "Review claim gate",
+			"workflow": "review-claims.yml",
+			"job": "gate"
+		}
+	]
+}

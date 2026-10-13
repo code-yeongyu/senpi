@@ -37,6 +37,34 @@ upstream.json  Accepted upstream baseline recorded by merges (read by scripts)
   audit passes on that tip, and `scripts/upstream-release-worthy.mjs` finds `## [Unreleased]`
   package changelog entries.
 
+## MERGE QUEUE
+
+The workflows behind every check that branch protection requires on `main` also run on `merge_group`
+(`types: [checks_requested]`), under the same job names. `.github/required-checks.json` lists those
+checks and their jobs, and `scripts/merge-queue-workflows.test.mjs` fails when a listed workflow loses
+its `merge_group` trigger, a job name drifts from the required context, or an event filter would skip
+the job on the queue. Keep that file equal to the branch-protection setting.
+
+- `Check and test` (`ci.yml`) runs the full CI on the queue's merge commit.
+- `Changelog gate` (`changelog-gate.yml`) runs only the whole-tree `changes.md` audit there; the per-PR
+  check needs the PR's base, head and labels, which a merge group does not carry, and it already passed on the PR.
+- `Review claim gate` (`review-claims.yml`) re-reads the queued PR's claim labels (PR number from the
+  `gh-readonly-queue/<base>/pr-<n>-<sha>` head ref) and fails closed when it cannot tell which PR it is for.
+
+Until a maintainer enables the queue, nothing changes for PRs or pushes.
+
+Queue runs execute the queued PR's own workflow files in this repository's context, with its secrets and
+with whatever `permissions:` those files ask for. Queuing a PR therefore runs its workflow changes with
+secrets before it merges, even if the queue then rejects it. Before enabling the queue, the `main` rule must
+require at least one approval, code-owner review for `.github/**`, and approval of the most recent push, so a
+workflow change cannot reach the queue unreviewed.
+
+To enable it: Settings > Branches > `main` rule (or a ruleset) > Require merge queue, keep the same three
+required checks, merge method "merge commit". Once enabled, a PR is ready when its own checks are green and it
+is approved; the queue re-tests it on top of the latest `main`, so nobody updates branches by hand. With merge
+groups larger than one, the claim gate checks the newest PR in the group; keep the group size at 1 or rely on
+each PR's own gate run.
+
 ## ANTI-PATTERNS
 
 - NEVER rebase, force-push, or rewrite history; never bypass hooks (`--no-verify`).

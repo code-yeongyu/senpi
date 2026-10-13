@@ -6,6 +6,11 @@ on:
   # Every pull request runs CI, whatever its base: a PR stacked on another feature branch must not reach main untested
   # (senpi#2759).
   pull_request:
+  # The merge queue runs CI on the commit it is about to merge (senpi merge queue), under the same
+  # "Check and test" name branch protection requires. Its ref is unique per queue entry, so the
+  # concurrency group below never cancels or merges two entries.
+  merge_group:
+    types: [checks_requested]
 
 # A pull request has one run group (its ref is refs/pull/<n>/merge): a push or restack cancels the run it
 # supersedes. A main push gets its own group per commit, so its run never waits behind another main run and is

@@ -14,6 +14,10 @@ on:
   schedule:
     - cron: "23 * * * *"
   workflow_dispatch:
+  # The merge queue requires "Review claim gate" on the commit it is about to merge, so the gate
+  # re-checks the queued pull request's claim labels there (a claim added after queueing still blocks).
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -32,7 +36,11 @@ jobs:
     needs: release-claim
     if: >-
       !cancelled() &&
-      (github.event_name == 'pull_request_target' || github.event_name == 'pull_request_review')
+      (github.event_name == 'pull_request_target' || github.event_name == 'pull_request_review' || github.event_name == 'merge_group')
+    # The gate only lists labels, so its token is read-only whatever the workflow-level permissions say.
+    permissions:
+      issues: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -41,8 +49,16 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
+            // A merge_group event carries no pull_request; its head ref is
+            // refs/heads/gh-readonly-queue/<base>/pr-<number>-<sha> for the newest PR in the group.
+            const queued = /\/pr-(\d+)-[0-9a-f]+$/.exec(context.payload.merge_group?.head_ref ?? "");
+            const issue_number = context.payload.pull_request?.number ?? (queued ? Number(queued[1]) : undefined);
+            if (issue_number === undefined) {
+              core.setFailed("Merge blocked: could not tell which pull request this run is for.");
+              return;
+            }
             const live = await github.paginate(github.rest.issues.listLabelsOnIssue, {
-              owner, repo, issue_number: context.payload.pull_request.number, per_page: 100,
+              owner, repo, issue_number, per_page: 100,
             });
             const labels = live.map((l) => l.name);
             const claims = labels.filter((l) => l === 'will-review' || l === 'in-review');
@@ -61,7 +77,7 @@ jobs:
             echo "| Field | Value |"
             echo "| --- | --- |"
             echo "| Job status | ${{ job.status }} |"
-            echo "| PR | #${{ github.event.pull_request.number }} |"
+            echo "| PR | #${{ github.event.pull_request.number || github.event.merge_group.head_ref }} |"
             echo "| Event | ${{ github.event_name }} / ${{ github.event.action }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
