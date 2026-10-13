@@ -1,3 +1,24 @@
+## 2026-10-11 - Carry the configured OAuth scope and `offline_access` into the authorize request
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`: `beginAuthorization` now resolves the authorize-request scope with the new `resolveAuthorizationScope` and passes it to the SDK `auth()` as its `scope` option. A configured `oauth.scopes` is sent verbatim. Without one, the scope is the resource metadata's `scopes_supported` plus `offline_access` when the authorization server advertises that scope; with neither, no `scope` parameter is sent, exactly as before. The token exchange (`finishAuthorization`) is unchanged.
+- `packages/coding-agent/test/mcp/fixtures/oauth-idp-core.ts` (fixture only): the OAuth IdP accepts `--prm-scopes a,b` (PRM `scopes_supported`) and `--as-scopes a,b` (AS `scopes_supported`) so tests can model a resource that advertises narrower scopes than its authorization server and an authorization server without `offline_access`.
+
+### Why
+
+- The SDK's scope selection (SEP-835: WWW-Authenticate scope, then resource metadata `scopes_supported`, then client metadata) ranks the resource document above the configured scope, so a resource that advertises narrower scopes silently drops the rest. Vercel's `https://mcp.vercel.com/.well-known/oauth-protected-resource` advertises only `["openid"]` while its authorization server offers `offline_access`: the authorize request went out scope-less, Vercel issued a 1-hour access token with no refresh token, and every expiry forced a full browser re-authentication (can1357/oh-my-pi#9909, reproduced with `https://mcp.vercel.com`).
+- Requesting `offline_access` when the authorization server advertises it makes the grant carry a refresh token (the SDK adds `prompt=consent` per OIDC), so `McpRefreshManager` renews silently at expiry minus five minutes instead of surfacing `needs_auth: has no refresh token`.
+- The `refresh_token` grant alone deliberately does not trigger `offline_access`: servers such as Neon issue refresh tokens without that scope and may reject a scope they never advertised. A server that advertises neither keeps today's request shape.
+
+### Why an extension could not handle it
+
+- The scope is composed inside the MCP builtin's own `beginAuthorization`, which owns the SDK call; an extension cannot see or rewrite the authorize request.
+
+### Expected merge conflict zones
+
+- `beginAuthorization` and the new `resolveAuthorizationScope` in `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts`.
+
 ## 2026-10-10 - Unsubscribe the control-inventory listeners on a reload, not only on quit
 
 ### What changed
