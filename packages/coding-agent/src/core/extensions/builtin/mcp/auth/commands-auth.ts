@@ -68,6 +68,23 @@ function buildProvider(
 	return plan.provider;
 }
 
+// A stored dynamic registration names the redirect URI it was created with. A
+// flow may bind another one (background placeholder vs. interactive loopback
+// port), and authorization servers that validate `redirect_uri` exactly reject
+// the mismatch with "Invalid redirect URI", so drop such a registration and let
+// the SDK register one that matches this flow.
+async function dropStaleRegistration(provider: McpOAuthProvider, redirectUrl: string): Promise<void> {
+	const info = provider.clientInformation();
+	const redirectUris = info === undefined ? undefined : "redirect_uris" in info ? info.redirect_uris : undefined;
+	if (
+		redirectUris !== undefined &&
+		redirectUris.length > 0 &&
+		!redirectUris.some((uri) => String(uri) === String(redirectUrl))
+	) {
+		await provider.invalidateCredentials("client");
+	}
+}
+
 // `/mcp auth <server>`: client_credentials M2M, or interactive loopback flow.
 // Non-UI callers fail fast with an actionable headless hint (no browser).
 export async function runAuth(deps: AuthCommandDeps): Promise<void> {
@@ -133,6 +150,7 @@ async function runInteractive(deps: AuthCommandDeps): Promise<void> {
 				deps.notify(`Browser launch failed: ${message}\n${announcement}`, "warning");
 			}
 		});
+		await dropStaleRegistration(provider, channel.redirectUrl);
 		const begin = await beginAuthorization(provider, deps.flow);
 		if (!channel.usesLoopback) {
 			deps.pending.set(deps.serverName, provider);
@@ -162,6 +180,7 @@ async function runInteractive(deps: AuthCommandDeps): Promise<void> {
 export async function runAuthStart(deps: AuthCommandDeps): Promise<string> {
 	ensureOAuth(deps);
 	const provider = buildProvider(deps, deps.callbackUrl ?? PASTE_REDIRECT);
+	await dropStaleRegistration(provider, deps.callbackUrl ?? PASTE_REDIRECT);
 	const begin = await beginAuthorization(provider, deps.flow);
 	const url = begin.authorizationUrl;
 	if (url === undefined) {
