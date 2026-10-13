@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The built-in default model for `opencode` is now `kimi-k3` (was `kimi-k2.6`). It applies only when no model is saved in settings and none is passed on the command line ([#3185](https://github.com/code-yeongyu/senpi/pull/3185)).
+
 - Tip history, changelog acknowledgments, and per-model reasoning/fast-mode memories now live in `state.json`, keeping automatically written bookkeeping out of version-controlled global settings. `/reasoning`, `/efforts`, and thinking cycles remember the model's level without changing the startup default; Ctrl+S in `/thinking` and the `/settings` thinking option still save it explicitly. Existing global keys migrate without overwriting saved state or changing project settings. Corrupt state no longer disables config, and no-value-change saves preserve config bytes. Restart older sessions during upgrades: their legacy bookkeeping writes can still trigger config reloads ([#3213](https://github.com/code-yeongyu/senpi/pull/3213), requested by @devxoul).
 
 ### Fixed
@@ -39,8 +41,6 @@
 - Extensions can use `ctx.getCompactionModel()` to resolve a usable summary model without changing the active session selection. Healthy builtin compaction retains the current model; a spent account can use the held target, configured summary override, or an authenticated alternate with sufficient context capacity ([#3131](https://github.com/code-yeongyu/senpi/issues/3131)).
 
 ### Changed
-
-- The built-in default model for `opencode` is now `kimi-k3` (was `kimi-k2.6`). It applies only when no model is saved in settings and none is passed on the command line ([#3185](https://github.com/code-yeongyu/senpi/pull/3185)).
 
 - ChatGPT subscription GPT-6.1 Sol, Fast and Ultrafast now default to a 500,000-token context budget, with compaction and context-usage accounting following that window ([#3150](https://github.com/code-yeongyu/senpi/issues/3150), requested by @code-yeongyu).
 
