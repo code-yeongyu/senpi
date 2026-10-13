@@ -1,3 +1,22 @@
+## 2026-10-13 - Relay-layer provenance threaded through the input path (omo#10096)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: threads optional `origin`/`originSender` from `QueuedInputOptions` and `PromptOptions` through both `emitInput` call sites (`_runInputHandlers` and the queued-input path), so a relay layer can mark an external message's provenance on the `input` event extensions observe.
+
+### Why
+
+The ultrawork keyword hook armed on relayed chat text with no speaker distinction. A relayed message is textually identical to the owner typing it, and source `rpc` is a legitimate user path, so arming must key on relay-layer provenance, not transport or a header heuristic. The host threads the provenance the relay layer supplies; only the host can attach it to the event.
+
+### Why an extension could not handle it
+
+The `input` event is built by `runner.ts` `emitInput` and threaded through `agent-session.ts`; an extension sees only the already-built event, so only the host can attach provenance to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the two `emitInput` call sites (`_runInputHandlers`, the queued-input path) and the `QueuedInputOptions`/`PromptOptions` input options types.
+
+
 ## 2026-10-12 - Stamp no-op thinking effects only at thinking setters (senpi#3199)
 
 ### What changed

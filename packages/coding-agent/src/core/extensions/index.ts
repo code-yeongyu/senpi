@@ -122,6 +122,7 @@ export type {
 	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,
+	InputOrigin,
 	InputSource,
 	KernelPreludeContribution,
 	KeybindingsManager,

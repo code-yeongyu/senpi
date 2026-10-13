@@ -6,6 +6,8 @@
 
 ### Added
 
+- The `input` extension event carries optional relay-layer provenance (`origin`, `originSender`) so a relay layer (the chat/channel gateway injecting external messages) can mark an external message's provenance on any transport; absent for the session owner's own input. This is the host contract the omo gateway sets and the ultrawork relayed-origin gate (omo #10096) reads. (omo#10096)
+
 - RPC effect ledger (capability `effect_ledger`): `abort`, `set_model` and `set_thinking_level` take an optional `effectId` and get a durable receipt written before the effect is applied; a retry with the same id replays the receipt instead of acting twice, and a different request under that id is refused with `effect_id_conflict`. `get_effect_status` answers any receipt by id, including inputs by `clientMessageId`, from a loaded session or from a transcript on disk. Input receipts now say how their turn ended (completed, aborted and by whom, error), a reopened session seals receipts its dead process left running, and queued input dropped by `new_session`/`switch_session` reads `failed` instead of vanishing ([#3199](https://github.com/code-yeongyu/senpi/issues/3199)).
 
 ### Changed

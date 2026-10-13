@@ -220,6 +220,7 @@ import {
 	ExtensionRunner,
 	type ExtensionToolHookLifecycleEvent,
 	type ExtensionUIContext,
+	type InputOrigin,
 	type InputSource,
 	type MessageEndEvent,
 	type MessageStartEvent,
@@ -953,6 +954,10 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 	enqueueOrder?: number;
 	/** Input provenance reported to `input` extension handlers; defaults to "interactive". */
 	source?: InputSource;
+	/** Relay-layer provenance reported to `input` extension handlers; absent for the session owner's own input. */
+	origin?: InputOrigin;
+	/** The external sender, when the relay layer knows it. Informational only. */
+	originSender?: string;
 	/** Persist the prepared queue record before publishing or enqueuing it. */
 	onQueuedInput?: (input: PreparedClientInput) => void;
 }
@@ -970,6 +975,10 @@ export interface PromptOptions extends ClientMessageIdentity {
 	thinkingLevel?: ThinkingLevel;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
+	/** Relay-layer provenance reported to `input` extension handlers; absent for the session owner's own input. */
+	origin?: InputOrigin;
+	/** The external sender, when the relay layer knows it. Informational only. */
+	originSender?: string;
 	/**
 	 * Send command-shaped text that no command handles to the model as plain text. Without it, such
 	 * interactive or RPC input is rejected with `UnknownCommandError`.
@@ -4756,13 +4765,21 @@ export class AgentSession {
 		images: ImageContent[] | undefined,
 		source: InputSource,
 		streamingBehavior?: "steer" | "followUp",
+		provenance?: { origin?: InputOrigin; originSender?: string },
 	): Promise<{ text: string; images: ImageContent[] | undefined; inputId?: string } | undefined> {
 		if (!this._extensionRunner.hasHandlers("input")) {
 			return { text, images };
 		}
 
 		const inputId = `${this.sessionManager.getSessionId()}:${++this._nextInputId}`;
-		const inputResult = await this._extensionRunner.emitInput(text, images, source, streamingBehavior, inputId);
+		const inputResult = await this._extensionRunner.emitInput(
+			text,
+			images,
+			source,
+			streamingBehavior,
+			inputId,
+			provenance,
+		);
 		if (inputResult.action === "handled") {
 			await this._emitInputDisposition(inputId, "handled");
 			return undefined;
@@ -5023,6 +5040,7 @@ export class AgentSession {
 					options?.source ?? "interactive",
 					this.isStreaming ? options?.streamingBehavior : undefined,
 					inputId,
+					{ origin: options?.origin, originSender: options?.originSender },
 				);
 				throwIfCancelled();
 				if (inputResult.action === "handled") {
@@ -5462,6 +5480,7 @@ export class AgentSession {
 			images,
 			options?.source ?? "interactive",
 			this.isStreaming ? behavior : undefined,
+			{ origin: options?.origin, originSender: options?.originSender },
 		);
 		if (!processedInput) return "handled";
 

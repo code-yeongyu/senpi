@@ -95,6 +95,32 @@ describe("Input Event", () => {
 		}
 	});
 
+	it("passes relay-layer provenance (origin/originSender) for every transport", async () => {
+		// The relay layer (e.g. the chat/channel gateway injecting external messages) marks
+		// provenance on the input event; the session owner's own input carries none. A relayed
+		// message can arrive over any transport, so origin is independent of source.
+		const r = await createRunner(
+			`export default p => p.on("input", async e => { globalThis.testVar = { origin: e.origin, originSender: e.originSender }; return { action: "continue" }; });`,
+		);
+		for (const source of ["interactive", "rpc", "extension"] as const) {
+			await r.emitInput("x", undefined, source, undefined, "input", {
+				origin: "relayed",
+				originSender: "someone-else",
+			});
+			expect((globalThis as any).testVar).toEqual({ origin: "relayed", originSender: "someone-else" });
+		}
+	});
+
+	it("leaves origin undefined for the session owner's own input", async () => {
+		const r = await createRunner(
+			`export default p => p.on("input", async e => { globalThis.testVar = e.origin; return { action: "continue" }; });`,
+		);
+		await r.emitInput("x", undefined, "interactive");
+		expect((globalThis as any).testVar).toBeUndefined();
+		await r.emitInput("x", undefined, "rpc");
+		expect((globalThis as any).testVar).toBeUndefined();
+	});
+
 	it("passes streamingBehavior correctly", async () => {
 		const r = await createRunner(
 			`export default p => p.on("input", async e => { globalThis.testVar = e.streamingBehavior; return { action: "continue" }; });`,

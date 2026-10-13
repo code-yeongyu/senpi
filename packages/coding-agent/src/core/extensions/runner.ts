@@ -62,6 +62,7 @@ import type {
 	ExtensionUIContext,
 	InputEvent,
 	InputEventResult,
+	InputOrigin,
 	InputSource,
 	LoadExtensionsResult,
 	MarkdownTransformer,
@@ -2227,6 +2228,7 @@ export class ExtensionRunner {
 		source: InputSource,
 		streamingBehavior?: "steer" | "followUp",
 		inputId = "input",
+		provenance?: { origin?: InputOrigin; originSender?: string },
 	): Promise<InputEventResult> {
 		let currentText = text;
 		let currentImages = images;
@@ -2241,6 +2243,8 @@ export class ExtensionRunner {
 						images: currentImages,
 						source,
 						streamingBehavior,
+						...(provenance?.origin !== undefined ? { origin: provenance.origin } : {}),
+						...(provenance?.originSender !== undefined ? { originSender: provenance.originSender } : {}),
 					};
 					const result = (await handler(event, this.createContext(ext.path))) as InputEventResult | undefined;
 					if (result?.action === "handled") return result;

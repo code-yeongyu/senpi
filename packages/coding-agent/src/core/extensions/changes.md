@@ -1,3 +1,28 @@
+## 2026-10-13 - Relay-layer provenance on the input event (omo#10096)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: adds `InputOrigin = "relayed"` and optional `origin`/`originSender` to `InputEvent`, so a relay layer (the chat/channel gateway injecting external messages) can mark provenance on the input it delivers, on every transport. Absent means the session owner's own input.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitInput` accepts a trailing provenance object and copies `origin`/`originSender` onto the emitted event, without changing its positional callers.
+- `packages/coding-agent/src/core/agent-session.ts`: threads `origin`/`originSender` from `QueuedInputOptions`/`PromptOptions` through both `emitInput` call sites (`_runInputHandlers` and the queued-input path).
+- `packages/coding-agent/src/core/extensions/index.ts`: re-exports `InputOrigin`.
+- `packages/coding-agent/test/extensions-input-event.test.ts`: covers provenance reaching handlers for every transport and the owner-input undefined case.
+
+### Why
+
+The ultrawork keyword hook armed on relayed chat text with no speaker distinction, so a chat bot printed ULTRAWORK banners when a third party typed the keyword. A relayed message is textually identical to the owner typing it, and source `rpc` is a legitimate user path, so arming must key on relay-layer provenance, not transport or a header heuristic. The host contract is what the omo gateway sets and omo #10100 reads.
+
+### Why an extension could not handle it
+
+The input event is built by the host (`runner.ts` `emitInput`) and threaded through `agent-session.ts`; only the host can attach provenance to the event extensions observe. An extension sees only the already-built event.
+
+### Expected merge conflict zones
+
+- `types.ts`: the `InputSource`/`InputEvent` block (very high upstream churn).
+- `runner.ts`: the `emitInput` signature and event literal.
+- `agent-session.ts`: the two `emitInput` call sites and the input options types.
+- `index.ts`: the type re-export list.
+
 ## 2026-10-11 - Typed missing extension RPC handler (senpi#3072 review)
 
 ### What changed

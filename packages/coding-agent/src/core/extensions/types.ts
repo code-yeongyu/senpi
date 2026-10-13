@@ -1697,6 +1697,14 @@ export interface UserBashEvent {
 /** Source of user input */
 export type InputSource = "interactive" | "rpc" | "extension";
 
+/**
+ * Provenance of user input, marked by the relay layer that delivered it (for
+ * example the chat/channel gateway injecting external messages). Independent of
+ * `source`: a relayed message can arrive over any transport. Absent means the
+ * session owner's own input.
+ */
+export type InputOrigin = "relayed";
+
 /** Fired when user input is received, before agent processing */
 export interface InputEvent {
 	type: "input";
@@ -1710,6 +1718,10 @@ export interface InputEvent {
 	source: InputSource;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
+	/** Relay-layer provenance, when the input was relayed from an external sender. */
+	origin?: InputOrigin;
+	/** The external sender, when the relay layer knows it. Informational only. */
+	originSender?: string;
 }
 
 /** Fired after interception and admission determine ownership of an input. */
