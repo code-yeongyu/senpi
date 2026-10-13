@@ -6,6 +6,8 @@
 
 ### Added
 
+- The footer's `watching` indicator now pulses gently while the agent idles on monitors, so a long wait no longer looks frozen. Set `reducedMotion: true` to keep it static ([#3281](https://github.com/code-yeongyu/senpi/pull/3281), requested by @devxoul).
+
 ### Changed
 
 ### Fixed

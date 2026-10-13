@@ -61,6 +61,8 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 }
 
 export function registerTerminalExtension(pi: ExtensionAPI): void {
+	let reducedMotion = false;
+	let agentBusy = false;
 	const state: TerminalExtensionState = {
 		bundle: null,
 		settings: TERMINAL_SETTINGS_DEFAULTS,
@@ -76,6 +78,9 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 						: ctx.ui.theme.bg("selectedBg", ctx.ui.theme.fg("text", status)),
 				);
 			},
+			// Pulse only in the TUI while the agent idles on its monitors; a busy turn already has
+			// the working spinner, and non-TUI hosts would just receive extra status events.
+			animate: () => !reducedMotion && !agentBusy && state.ctx?.mode === "tui",
 		}),
 		ctx: undefined,
 		shellPath: undefined,
@@ -106,6 +111,8 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 		const settingsManager = SettingsManager.create(ctx.cwd);
 		state.settings = loadTerminalSettings(settingsManager);
 		state.shellPath = settingsManager.getShellPath();
+		reducedMotion = settingsManager.getReducedMotion();
+		agentBusy = false;
 		state.notifier = new TerminalNotifier({
 			sendMessage: (message, options) => pi.sendMessage(message, options),
 			getContext: () => state.ctx,
@@ -149,6 +156,14 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			await startPersistence({ pi, state, toolCtx, sessionKey });
 		}
 		syncToolset(pi, state);
+	});
+
+	pi.on("agent_start", () => {
+		agentBusy = true;
+	});
+
+	pi.on("agent_end", () => {
+		agentBusy = false;
 	});
 
 	pi.on("session_parked", () => {
