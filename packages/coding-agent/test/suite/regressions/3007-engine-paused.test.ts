@@ -71,39 +71,6 @@ function checkReplay(harness: Harness) {
 }
 
 describe("senpi#3007 durable engine pause signals", () => {
-	it.each([
-		["cap-per-message", { maxPerUserInput: 2, maxToolFreePerMinute: 0 }],
-		["cap-per-minute", { maxPerUserInput: 0, maxToolFreePerMinute: 2 }],
-	] as const)("emits %s once alongside the engine turn limit and replays it", async (reason, engineTurns) => {
-		let sent = 0;
-		const harness = await setup({
-			settings: { engineTurns },
-			extensionFactories: [
-				(pi) => {
-					pi.on("agent_settled", () => {
-						if (++sent > 4) return;
-						pi.sendMessage(
-							{ customType: "auto-work", content: "continue", display: false },
-							{ triggerTurn: true },
-						);
-					});
-				},
-			],
-		});
-		harness.setResponses(Array.from({ length: 5 }, (_, n) => fauxAssistantMessage(`distinct response ${n}`)));
-		await promptToIdle(harness, "start");
-		expect(paused(harness)).toHaveLength(1);
-		expect(paused(harness)[0]).toMatchObject({
-			data: { reason, customType: "auto-work", count: 2, at: expect.any(Number) },
-		});
-		expect(
-			harness.sessionManager
-				.getEntries()
-				.filter((entry) => entry.type === "custom" && entry.customType === "engine-turn-limit"),
-		).toHaveLength(1);
-		checkReplay(harness);
-	});
-
 	it("emits repetition once when a stream rule repeats after its correction", async () => {
 		const harness = await setup({ extensionFactories: [ttsrExtension] });
 		harness.setResponses([

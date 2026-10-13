@@ -17,8 +17,7 @@ function nudgedRules(entry: SessionEntry): readonly unknown[] {
 
 /**
  * Whether this rule already sent its one corrective follow-up since the user's last message. Read from the
- * session, so a host that rebuilds the extension between turns cannot re-arm it (senpi#2967); the engine-wide
- * turn bound covers every other source.
+ * session, so a host that rebuilds the extension between turns cannot re-arm it (senpi#2967).
  */
 export function ruleAlreadyCorrected(entries: readonly SessionEntry[], rule: string): boolean {
 	for (let index = entries.length - 1; index >= 0; index--) {

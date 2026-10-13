@@ -28,6 +28,8 @@
 
 ### Removed
 
+- The engine turn limit is removed: the engine no longer pauses itself after a count of automatic turns, and an always-on session keeps running without waiting for a user message. The `engineTurns.maxPerUserInput` and `engineTurns.maxToolFreePerMinute` settings are retired and ignored on load, and the `engine-turn-limit` entry, the `engine:turn-limit` bus event, the "Paused: the agent started ... turns on its own" notice, and the `cap-per-message`/`cap-per-minute` pause reasons are gone. Goal and stream-rule self-stops (`goal-stale`, `goal-repeat`, `repetition`) are unchanged ([#3168](https://github.com/code-yeongyu/senpi/issues/3168), requested by @code-yeongyu).
+
 ## [2026.10.12] - 2026-10-12
 
 ### Breaking Changes

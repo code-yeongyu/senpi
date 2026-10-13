@@ -6,7 +6,11 @@ import type { SettingsScope, SettingsStorage } from "./settings-manager.ts";
  * Settings keys whose feature no longer exists. Each entry is `[parent, key]`: the key is deleted
  * from the parent object, and the parent is dropped once nothing is left in it.
  */
-const RETIRED_NESTED_KEYS: ReadonlyArray<readonly [parent: string, key: string]> = [["experimental", "sharedHost"]];
+const RETIRED_NESTED_KEYS: ReadonlyArray<readonly [parent: string, key: string]> = [
+	["experimental", "sharedHost"],
+	["engineTurns", "maxPerUserInput"],
+	["engineTurns", "maxToolFreePerMinute"],
+];
 
 /** Deletes every retired key from a raw parsed settings object in place; true when one was present. */
 export function removeRetiredSettingsKeys(raw: Record<string, unknown>): boolean {

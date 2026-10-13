@@ -1,3 +1,27 @@
+## 2026-10-12 - The engine turn limit is removed entirely (senpi#3168)
+
+### What changed
+
+- `packages/coding-agent/src/core/engine-turn-limit.ts` (deleted): `engineTurnStop`, `engineTurnLimitNotice`, the limit constants and entry/event names. `ENGINE_TURN_START_ENTRY_TYPE` and `isUserDirectedTurn` move to `packages/coding-agent/src/core/engine-paused.ts`, whose surviving scans need them.
+- `packages/coding-agent/src/core/agent-session.ts`: `sendCustomMessage` starts every admitted `triggerTurn` turn; there is no count-based refusal. `_stopEngineTurn`, `_recordRefusedEngineTurnMessage`, `_observeEngineTurnMessage` and the in-process turn records go with the limit; `_recordEngineTurnStart` keeps writing the best-effort `engine-turn-start` marker that `engine-paused.ts` reads for its repetitive-turns scan. No `engine-turn-limit` entry, `engine:turn-limit` bus event, "Paused: ... turns on its own" notice, or `cap-per-message`/`cap-per-minute` pause reason is produced anymore. Goal (`goal-stale`, `goal-repeat`) and TTSR (`repetition`) pause entries are unchanged.
+- `packages/coding-agent/src/core/settings-manager.ts`: the `engineTurns` settings field and `getEngineTurnSettings` are removed.
+- `packages/coding-agent/src/core/settings-retired-keys.ts`: `engineTurns.maxPerUserInput` and `engineTurns.maxToolFreePerMinute` join `RETIRED_NESTED_KEYS`; a saved key is ignored in memory, the global file gets the one raw rewrite, and a failed rewrite never fails the load.
+- Tests: `test/suite/regressions/2967-engine-turn-limit.test.ts` and `2967-engine-turn-limit-delivery.test.ts` deleted (they pinned only this feature); the `cap-*` pair in `test/suite/regressions/3007-engine-paused.test.ts` removed, its goal/TTSR cases kept; `test/suite/regressions/3168-engine-turns-retired.test.ts` (new) pins the retired-key handling.
+- Docs: `docs/settings.md` loses the Automatic Turns section; `docs/session-format.md` and `docs/rpc.md` lose the `cap-per-message`/`cap-per-minute` reasons.
+
+### Why
+
+- senpi#3168: an always-on host (omocat mode) runs hundreds of engine-originated turns without user messages, so the #2967 bound paused unattended work by design and a human had to send a message to resume it. The feature is removed entirely, tests included; the #2967 cost-burn trade-off is accepted as the lesser evil for unattended hosts.
+- Released changelog sections and the historical ledger entries for #2967/#3007 are kept as history; the removal is recorded in `[Unreleased]` and in this entry instead of rewriting released text.
+
+### Why an extension could not handle it
+
+- The gate lived in the session's own `sendCustomMessage` turn-admission path; no extension can remove core behavior.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-session.ts` `sendCustomMessage` `triggerTurn` branch and its imports; LOW: `settings-manager.ts` `Settings` fields, `engine-paused.ts`, `settings-retired-keys.ts`.
+
 ## 2026-10-12 - Review repairs for config/state separation (senpi#3178)
 
 ### What changed
@@ -43,6 +67,7 @@
 
 - `packages/coding-agent/src/core/settings-manager.ts`: storage interface/file lock methods, `loadFromStorage`, `persistScopedSettings` and `save`; keep state outside settings source selection.
 - `packages/coding-agent/src/core/settings-state.ts`: fork-only new migration module.
+
 
 ## 2026-10-12 - Pre-prompt gates use projected context after compaction (senpi#3137)
 

@@ -37,7 +37,6 @@ import {
 	compactionReserveTokens,
 } from "./compaction-settings-access.ts";
 import { type ResolvedCompactionSettings, resolveCompactionSettings } from "./compaction-settings-resolver.ts";
-import { MAX_ENGINE_TURNS_PER_USER_INPUT, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW } from "./engine-turn-limit.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import {
 	CredentialStoreBusyError,
@@ -227,8 +226,6 @@ export interface Settings {
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
-	/** Bounds on turns the engine starts without a user message (senpi#2967). */
-	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number };
 	todo?: TodoSettings;
 	recommendedModels?: string[]; // Preferred default model ids, in priority order
 	favoriteModels?: string[]; // Model patterns for Ctrl+P cycling (same format as --models CLI flag)
@@ -1084,16 +1081,6 @@ export class SettingsManager {
 			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
 			timeoutMinutes: resolveAskUserTimeoutMinutes(configured?.timeoutMinutes),
 			bell: typeof configured?.bell === "boolean" ? configured.bell : true,
-		};
-	}
-
-	getEngineTurnSettings(): { maxPerUserInput: number; maxToolFreePerMinute: number } {
-		const configured = this.settings.engineTurns;
-		const limit = (value: unknown, fallback: number): number =>
-			typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
-		return {
-			maxPerUserInput: limit(configured?.maxPerUserInput, MAX_ENGINE_TURNS_PER_USER_INPUT),
-			maxToolFreePerMinute: limit(configured?.maxToolFreePerMinute, MAX_TOOL_FREE_ENGINE_TURNS_PER_WINDOW),
 		};
 	}
 

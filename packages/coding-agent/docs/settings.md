@@ -539,15 +539,6 @@ await tool.monitor({ description: "build", command: "bun run build", filter: "^d
 
 This is the default and has no setting. Tools may declare `exposure: "eval"` to join this policy; `bash`, `powershell` and `grep` use that declaration. They remain registered and discoverable through `tool_schema` inside eval. Hooks and permission checks apply unchanged to calls made this way, and the prompt surfaces that document these tools render the `tool.<name>(` form to match. If the model attempts a direct call anyway, the call returns a hint naming the eval form instead of executing the tool. When the `eval` tool is unavailable (codemode not loaded, or a child agent whose allowlist omits it), the policy stays inert and otherwise enabled tools remain directly callable, so shell, text search, workflow and monitor access is never lost.
 
-### Automatic Turns
-
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `engineTurns.maxPerUserInput` | number | `150` | Turns the agent may start on its own (stream-rule nudges, goal continuations, other extension follow-ups) after one user message before it pauses; `0` turns the limit off |
-| `engineTurns.maxToolFreePerMinute` | number | `12` | Turns started on its own within 60 s that called no tool before it pauses; `0` turns the limit off |
-
-When a limit is reached the session pauses with a notice instead of starting another turn; any message you send continues it, because only turns since your last message count.
-
 ### Ask User
 
 | Setting | Type | Default | Description |
