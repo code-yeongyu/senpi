@@ -85,7 +85,6 @@ describe("senpi#3306 network blips never strand a session on a fallback", () => 
 		const harness = await flakyHarness(harnesses, 1);
 		harness.setResponses([
 			rateLimitedTimeout(),
-			rateLimitedTimeout(),
 			fauxAssistantMessage("fallback answer"),
 			fauxAssistantMessage("fallback again"),
 		]);
