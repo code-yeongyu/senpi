@@ -6,6 +6,8 @@
 
 ### Added
 
+- The footer's `watching` indicator now pulses gently while the agent idles on monitors, so a long wait no longer looks frozen. Set `reducedMotion: true` to keep it static ([#3281](https://github.com/code-yeongyu/senpi/pull/3281), requested by @devxoul).
+
 - RPC effect ledger (capability `effect_ledger`): `abort`, `set_model` and `set_thinking_level` take an optional `effectId` and get a durable receipt written before the effect is applied; a retry with the same id replays the receipt instead of acting twice, and a different request under that id is refused with `effect_id_conflict`. `get_effect_status` answers any receipt by id, including inputs by `clientMessageId`, from a loaded session or from a transcript on disk. Input receipts now say how their turn ended (completed, aborted and by whom, error), a reopened session seals receipts its dead process left running, and queued input dropped by `new_session`/`switch_session` reads `failed` instead of vanishing ([#3199](https://github.com/code-yeongyu/senpi/issues/3199)).
 
 ### Changed
