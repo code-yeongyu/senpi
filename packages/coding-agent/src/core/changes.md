@@ -1,3 +1,21 @@
+## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-registry.ts`: `getProviderAuthStatus()` now runs `retryBusyCredentialRead()` first, and while the runtime has no availability snapshot it answers from the live store through `AuthStorage.getAuthStatus()` (stored, `--api-key` runtime override, or environment key, each with its own source label), the same credentials `getAvailable()` already counts through `hasAuth()`. A configured runtime answer, and every answer once an availability pass has succeeded, is returned unchanged.
+
+### Why
+
+- When `auth.json` was locked on the store's first read (#2487), the runtime's stored-provider set stays empty until an availability pass succeeds. `hasConfiguredAuth()` and `getAvailable()` re-read the store live, so the provider's models worked, but `getProviderAuthStatus()` read only the empty set. The desktop provider card (fed by RPC `get_auth_providers`) therefore showed the provider as "Not connected" while its models ran (omo-desktop-app#2249). Regression: `test/suite/regressions/2249-auth-status-busy-store.test.ts`.
+
+### Why an extension could not handle it
+
+- The answer is computed inside `ModelRegistry`, which every auth consumer (RPC `get_auth_providers`, `authMethodStatus`, the selectors) calls directly; no hook sits between the store read and the status.
+
+### Expected merge conflict zones
+
+- LOW: `getProviderAuthStatus()` in `packages/coding-agent/src/core/model-registry.ts` (one method body).
+
 ## 2026-10-13 - A fallback rung is identified by its model AND its thinking level
 
 ### What changed
@@ -18,24 +36,6 @@ A chain could not walk to a second rung of the same model at another thinking le
 ### Expected merge conflict zones
 
 - MEDIUM: `packages/coding-agent/src/core/retry-fallback/candidates.ts` (self/tried checks), `chains.ts` (`candidatesAfter`, `baseSelector`/`rungSelector`), `controller.ts` (`triedSelectors` writes), `validate.ts` (same-model warning).
-
-## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
-
-### What changed
-
-- `packages/coding-agent/src/core/model-registry.ts`: `getProviderAuthStatus()` now runs `retryBusyCredentialRead()` first, and while the runtime has no availability snapshot it answers from the live store through `AuthStorage.getAuthStatus()` (stored, `--api-key` runtime override, or environment key, each with its own source label), the same credentials `getAvailable()` already counts through `hasAuth()`. A configured runtime answer, and every answer once an availability pass has succeeded, is returned unchanged.
-
-### Why
-
-- When `auth.json` was locked on the store's first read (#2487), the runtime's stored-provider set stays empty until an availability pass succeeds. `hasConfiguredAuth()` and `getAvailable()` re-read the store live, so the provider's models worked, but `getProviderAuthStatus()` read only the empty set. The desktop provider card (fed by RPC `get_auth_providers`) therefore showed the provider as "Not connected" while its models ran (omo-desktop-app#2249). Regression: `test/suite/regressions/2249-auth-status-busy-store.test.ts`.
-
-### Why an extension could not handle it
-
-- The answer is computed inside `ModelRegistry`, which every auth consumer (RPC `get_auth_providers`, `authMethodStatus`, the selectors) calls directly; no hook sits between the store read and the status.
-
-### Expected merge conflict zones
-
-- LOW: `getProviderAuthStatus()` in `packages/coding-agent/src/core/model-registry.ts` (one method body).
 
 ## 2026-10-12 - Stamp no-op thinking effects only at thinking setters (senpi#3199)
 
