@@ -15,6 +15,7 @@ export interface CursorModelCapability {
 	readonly evidence: CursorCapabilityEvidence;
 	readonly window: number;
 	readonly maxWindow?: number;
+	readonly maxTokens?: number;
 	readonly parameterOrder: readonly CursorParameterId[];
 	readonly defaultContext?: string;
 	/** Context token matching `window`; cursor truncates to whatever this asks for. */
@@ -134,6 +135,19 @@ export const CURSOR_MODEL_CAPABILITIES: Record<string, CursorModelCapability> = 
 		maxWindow: undefined,
 		defaultContext: undefined,
 		levels: ladder(["none", "low", "medium", "high", "xhigh"]),
+	},
+	"gemini-4-argon": {
+		evidence: "cli-live",
+		window: 1_048_576,
+		maxTokens: 1_000_000,
+		parameterOrder: ["effort"],
+		levels: ladder(["low", "medium", "high"]),
+	},
+	"gemini-3.8-flash": {
+		evidence: "cli-live",
+		window: 1_048_576,
+		parameterOrder: ["effort"],
+		levels: ladder(["low", "medium", "high"]),
 	},
 	"gemini-3.7-flash": {
 		evidence: "cli-live",

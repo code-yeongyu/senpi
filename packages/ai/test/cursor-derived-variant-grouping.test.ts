@@ -112,10 +112,29 @@ describe("normalizeCursorCatalog (derived variant grouping, senpi#2038)", () => 
 
 		const gemini = byId.get("gemini-3.8-flash");
 		expect(gemini?.thinkingLevelMap).toEqual(levelMap({ low: "low", medium: "medium", high: "high" }));
+		expect(gemini?.window).toBe(1048576);
 		expect(gemini?.variantIds).toEqual({
 			low: "gemini-3.8-flash-low",
 			medium: "gemini-3.8-flash-medium",
 			high: "gemini-3.8-flash-high",
+		});
+
+		const argon = normalizeCursorCatalog(
+			["gemini-4-argon-low", "gemini-4-argon-medium", "gemini-4-argon-high"].map((id) => ({
+				id,
+				name: `Gemini 4 Argon ${id.split("-").at(-1)}`,
+				input: ["text", "image"] as const,
+				cursorMaxMode: true,
+			})),
+		)[0];
+		expect(argon?.id).toBe("gemini-4-argon");
+		expect(argon?.window).toBe(1048576);
+		expect(argon?.maxTokens).toBe(1000000);
+		expect(argon?.thinkingLevelMap).toEqual(levelMap({ low: "low", medium: "medium", high: "high" }));
+		expect(argon?.variantIds).toEqual({
+			low: "gemini-4-argon-low",
+			medium: "gemini-4-argon-medium",
+			high: "gemini-4-argon-high",
 		});
 
 		const muse = byId.get("muse-spark-1.3");
@@ -482,5 +501,39 @@ describe("regroupStoredCursorModels (derived families, senpi#2038)", () => {
 			storedFlat("grok-4.7-high-fast"),
 		]);
 		expect(out.map((model) => model.id)).toEqual(["zzz-custom-thing", "grok-4.7", "grok-4.7-high-fast"]);
+	});
+
+	it("upgrades stored gemini-4-argon fallback window and maxTokens from capability metadata", () => {
+		const staleArgon: Model<"cursor-agent"> = {
+			id: "gemini-4-argon",
+			name: "Gemini 4 Argon",
+			api: "cursor-agent",
+			provider: "cursor",
+			baseUrl: "https://api2.cursor.sh",
+			reasoning: true,
+			thinkingLevelMap: levelMap({ low: "low", medium: "medium", high: "high" }),
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 200000,
+			maxTokens: 64000,
+			upstreamModelId: "gemini-4-argon-medium",
+			compat: {
+				cursorMaxMode: true,
+				cursorReasoning: {
+					capabilityId: "gemini-4-argon",
+					representativeVariantId: "gemini-4-argon-medium",
+					variantIds: {
+						low: "gemini-4-argon-low",
+						medium: "gemini-4-argon-medium",
+						high: "gemini-4-argon-high",
+					},
+				},
+			},
+		};
+		const out = regroupStoredCursorModels([staleArgon]);
+		expect(out).toHaveLength(1);
+		expect(out[0]?.contextWindow).toBe(1048576);
+		expect(out[0]?.maxTokens).toBe(1000000);
+		expect(regroupStoredCursorModels(out)).toEqual(out);
 	});
 });

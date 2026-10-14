@@ -1,3 +1,21 @@
+## 2026-10-14 - Cursor provider respects capability `maxTokens` override
+
+### What changed
+
+- `packages/ai/src/providers/cursor.ts`: `fetchCursorModels` prefers `entry.maxTokens` from the normalized Cursor capability entry before falling back to the uniform `maxTokensByVariant` discovery placeholder (`64000`).
+
+### Why
+
+`fetchCursorUsableModels` stamps `maxTokens: 64_000` on every discovered variant because `GetUsableModels` has no output-token field; without preferring `entry.maxTokens`, `cursor/gemini-4-argon`'s 1,000,000 output limit was overwritten by `64000`.
+
+### Why an extension could not handle it
+
+The builtin `cursor` provider constructs `Model<"cursor-agent">` records during `Models.refresh` inside `packages/ai/src/providers/cursor.ts`.
+
+### Expected merge conflict zones
+
+- `fetchCursorModels` `maxTokens` assignment in `packages/ai/src/providers/cursor.ts`.
+
 ## 2026-10-11 - Keep unverified xAI search opt-in (senpi#3122 review)
 
 ### What changed

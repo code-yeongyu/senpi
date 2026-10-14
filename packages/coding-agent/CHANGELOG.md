@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- `cursor-cli-oauth` catalog entries now preserve per-model `maxTokens` overrides from the shared Cursor capability table (such as `gemini-4-argon`'s 1M output limit) instead of clamping every model to 64K.
 - A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
 
 ### Removed

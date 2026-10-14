@@ -92,7 +92,7 @@ function normalizeEntries(raw: readonly { id: string; label: string }[]): Provid
 		input: ["text"] as ("text" | "image")[],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: resolveCursorContextWindow(entry.id, entry.window),
-		maxTokens: 64_000,
+		maxTokens: entry.maxTokens ?? 64_000,
 		...(entry.representativeVariantId !== undefined && entry.representativeVariantId !== entry.id
 			? { upstreamModelId: entry.representativeVariantId }
 			: {}),

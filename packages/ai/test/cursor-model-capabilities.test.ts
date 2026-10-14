@@ -19,6 +19,8 @@ describe("cursor model capabilities", () => {
 			"glm-5.2": 1000000,
 			"gemini-3.6-flash": 1048576,
 			"gemini-3.7-flash": 1048576,
+			"gemini-3.8-flash": 1048576,
+			"gemini-4-argon": 1048576,
 			"gpt-5.1": 400000,
 			"gpt-5.2": 400000,
 			"gpt-5.3-codex": 400000,
@@ -60,6 +62,9 @@ describe("cursor model capabilities", () => {
 		const kimi = getCursorCapabilityForBase("kimi-k3");
 		expect(kimi?.window).toBe(1048576);
 		expect(kimi?.maxWindow).toBeUndefined();
+		const argon = getCursorCapabilityForBase("gemini-4-argon");
+		expect(argon?.window).toBe(1048576);
+		expect(argon?.maxTokens).toBe(1000000);
 	});
 
 	it("resolves a variant id to its base capability with the same window", () => {

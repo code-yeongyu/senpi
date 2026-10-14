@@ -62,6 +62,21 @@ describe("parseCursorAgentModelsListing", () => {
 		expect(models.find((model) => model.id === "composer-2.5-fast")?.reasoning).toBe(false);
 	});
 
+	it("preserves capability maxTokens for gemini-4-argon", () => {
+		const models = parseCursorAgentModelsListing(
+			"gemini-4-argon-low - Gemini 4 Argon Low\ngemini-4-argon-medium - Gemini 4 Argon\ngemini-4-argon-high - Gemini 4 Argon High\n",
+		);
+		expect(models).toEqual([
+			expect.objectContaining({
+				id: "gemini-4-argon",
+				name: "Gemini 4 Argon",
+				reasoning: true,
+				contextWindow: 1_048_576,
+				maxTokens: 1_000_000,
+			}),
+		]);
+	});
+
 	it("strips ANSI and ignores malformed, blank, header, and duplicate lines", () => {
 		const models = parseCursorAgentModelsListing(
 			"Available models:\n\n\u001b[36mclaude-opus-5-thinking-max-fast\u001b[0m - \u001b[1mClaude Opus 5 Thinking Max Fast (300K context)\u001b[0m\nnot a model\nclaude-opus-5-thinking-max-fast - Duplicate\n",

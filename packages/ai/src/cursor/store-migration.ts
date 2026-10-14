@@ -1,7 +1,7 @@
 import type { Model, ModelThinkingLevel } from "../types.ts";
 import { type CursorCatalogEntry, deriveCursorVariantAliases, normalizeCursorCatalog } from "./catalog-grouping.ts";
 import { resolveCursorContextWindow } from "./context-limit-store.ts";
-import { getCursorVariantAlias, parseCursorVariantId } from "./model-capabilities.ts";
+import { CURSOR_MODEL_CAPABILITIES, getCursorVariantAlias, parseCursorVariantId } from "./model-capabilities.ts";
 
 /**
  * Fill levels a stored static group lacks from flat alias rows regrouped beside it;
@@ -20,7 +20,7 @@ function absorbStaticLevels(
 
 function entryToModel(entry: CursorCatalogEntry, maxTokensById: ReadonlyMap<string, number>): Model<"cursor-agent"> {
 	const representative = entry.representativeVariantId ?? entry.legacyAliases[0] ?? entry.id;
-	const maxTokens = maxTokensById.get(representative) ?? maxTokensById.get(entry.id) ?? 64000;
+	const maxTokens = entry.maxTokens ?? maxTokensById.get(representative) ?? maxTokensById.get(entry.id) ?? 64000;
 	return {
 		id: entry.id,
 		name: entry.name,
@@ -113,13 +113,26 @@ export function regroupStoredCursorModels(models: readonly Model<"cursor-agent">
 			thinkingLevelMap[alias.level] = parseCursorVariantId(model.id).level;
 			changed = true;
 		}
+		const capability = CURSOR_MODEL_CAPABILITIES[kept.capabilityId];
+		const nextWindow =
+			capability !== undefined && current.contextWindow === 200_000 && capability.window !== 200_000
+				? resolveCursorContextWindow(targetId, capability.window)
+				: current.contextWindow;
+		const nextMaxTokens = capability?.maxTokens ?? current.maxTokens;
+		const limitsUpgraded = nextWindow !== current.contextWindow || nextMaxTokens !== current.maxTokens;
 		merged.set(
 			targetId,
-			changed
+			changed || limitsUpgraded
 				? {
 						...current,
-						thinkingLevelMap,
-						compat: { ...current.compat, cursorReasoning: { ...kept, variantIds } },
+						...(nextWindow !== current.contextWindow ? { contextWindow: nextWindow } : {}),
+						...(nextMaxTokens !== current.maxTokens ? { maxTokens: nextMaxTokens } : {}),
+						...(changed
+							? {
+									thinkingLevelMap,
+									compat: { ...current.compat, cursorReasoning: { ...kept, variantIds } },
+								}
+							: {}),
 					}
 				: current,
 		);

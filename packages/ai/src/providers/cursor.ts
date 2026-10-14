@@ -36,7 +36,8 @@ async function fetchCursorModels(context: RefreshModelsContext): Promise<Model<"
 	const maxTokensByVariant = new Map(discovered.map((model) => [model.id, model.maxTokens]));
 	return normalized.map((entry): Model<"cursor-agent"> => {
 		const representative = entry.representativeVariantId ?? entry.legacyAliases[0] ?? entry.id;
-		const maxTokens = maxTokensByVariant.get(representative) ?? maxTokensByVariant.get(entry.id) ?? 64000;
+		const maxTokens =
+			entry.maxTokens ?? maxTokensByVariant.get(representative) ?? maxTokensByVariant.get(entry.id) ?? 64000;
 		return {
 			id: entry.id,
 			name: entry.name,

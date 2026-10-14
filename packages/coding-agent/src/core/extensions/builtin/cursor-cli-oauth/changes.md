@@ -1,5 +1,23 @@
 # cursor-cli-oauth extension changes
 
+## 2026-10-14 - `normalizeEntries` preserves capability `maxTokens`
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`: `normalizeEntries` uses `entry.maxTokens ?? 64_000` instead of a hardcoded `64_000`.
+
+### Why
+
+- `CURSOR_MODEL_CAPABILITIES` now declares per-model `maxTokens` overrides (such as `1_000_000` for `gemini-4-argon`), and the CLI fallback lane shares `normalizeCursorCatalog`.
+
+### Why an extension could not handle it
+
+- `normalizeEntries` is this builtin extension's private model catalog normalizer.
+
+### Expected merge conflict zones
+
+- `normalizeEntries` in `packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models.ts`.
+
 ## 2026-09-25 - The turn prompt keeps the user's request when hidden messages follow it (senpi#2139)
 
 ### What changed

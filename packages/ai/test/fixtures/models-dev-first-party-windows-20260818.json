@@ -79,7 +79,9 @@
 		"gpt-5.6-luna": 1000000,
 		"gpt-5.6-sol": 1000000,
 		"kimi-k2.7-code": 200000,
-		"kimi-k3": 200000
+		"kimi-k3": 200000,
+		"gemini-3.8-flash": 200000,
+		"gemini-4-argon": 200000
 	},
 	"firstParty": {
 		"claude-4.5-opus": {
@@ -181,6 +183,14 @@
 		"kimi-k3": {
 			"context": 1048576,
 			"provider": "moonshotai"
+		},
+		"gemini-3.8-flash": {
+			"context": 1048576,
+			"provider": "google"
+		},
+		"gemini-4-argon": {
+			"context": 1048576,
+			"provider": "google"
 		}
 	},
 	"notes": "gpt-5.6-terra and the legacy gpt families are offered no 1m context option, so their advertised window is capped at the largest token cursor will accept for them | claude-4.5-sonnet is 1M upstream but cursor offers it only the 200k context option, so senpi advertises 200000: a window it cannot request would break compaction.",

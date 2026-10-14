@@ -24,6 +24,7 @@ export interface CursorCatalogEntry {
 	readonly thinkingLevelMap?: ThinkingLevelMap;
 	readonly window: number;
 	readonly maxWindow?: number;
+	readonly maxTokens?: number;
 	readonly input: ("text" | "image")[];
 	readonly cursorMaxMode: boolean;
 	readonly capabilityId?: string;
@@ -270,6 +271,7 @@ export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntr
 				thinkingLevelMap: derivedGroup ? buildDerivedLevelMap(members) : buildLevelMap(members, capability),
 				window: capability?.window ?? FALLBACK_WINDOW,
 				...(capability?.maxWindow !== undefined ? { maxWindow: capability.maxWindow } : {}),
+				...(capability?.maxTokens !== undefined ? { maxTokens: capability.maxTokens } : {}),
 				input: [...new Set(members.flatMap((member) => member.raw.input))],
 				cursorMaxMode: members.some((member) => member.raw.cursorMaxMode),
 				capabilityId: baseId,
@@ -290,6 +292,7 @@ export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntr
 				reasoning: false,
 				window: memberCapability?.window ?? FALLBACK_WINDOW,
 				...(memberCapability?.maxWindow !== undefined ? { maxWindow: memberCapability.maxWindow } : {}),
+				...(memberCapability?.maxTokens !== undefined ? { maxTokens: memberCapability.maxTokens } : {}),
 				input: [...member.raw.input],
 				cursorMaxMode: member.raw.cursorMaxMode,
 				legacyAliases: [member.alias.legacyVariantId],
