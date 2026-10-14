@@ -388,6 +388,10 @@ export class Theme {
 	}
 
 	/** Color inline markdown emphasis; returns the text unchanged when the theme omits the token. */
+	hasMarkdownEmphasis(token: MarkdownEmphasisColor): boolean {
+		return this.markdownEmphasisAnsi.has(token);
+	}
+
 	markdownEmphasis(token: MarkdownEmphasisColor, text: string): string {
 		const ansi = this.markdownEmphasisAnsi.get(token);
 		return ansi === undefined ? text : `${ansi}${text}\x1b[39m`;
@@ -1134,9 +1138,16 @@ export function getMarkdownTheme(): MarkdownTheme {
 		italic: (text: string) => theme.italic(text),
 		underline: (text: string) => theme.underline(text),
 		strikethrough: (text: string) => theme.strikethrough(text),
-		strong: (text: string) => theme.markdownEmphasis("mdBold", theme.bold(text)),
-		emphasis: (text: string) => theme.markdownEmphasis("mdItalic", theme.italic(text)),
-		deleted: (text: string) => theme.markdownEmphasis("mdStrikethrough", theme.strikethrough(text)),
+		// Install emphasis hooks only for tokens the theme sets, so unset tokens keep the plain bold/italic/strikethrough path.
+		strong: theme.hasMarkdownEmphasis("mdBold")
+			? (text: string) => theme.markdownEmphasis("mdBold", theme.bold(text))
+			: undefined,
+		emphasis: theme.hasMarkdownEmphasis("mdItalic")
+			? (text: string) => theme.markdownEmphasis("mdItalic", theme.italic(text))
+			: undefined,
+		deleted: theme.hasMarkdownEmphasis("mdStrikethrough")
+			? (text: string) => theme.markdownEmphasis("mdStrikethrough", theme.strikethrough(text))
+			: undefined,
 		highlightCode: (code: string, lang?: string): string[] => {
 			// Validate language before highlighting to avoid stderr spam from cli-highlight
 			const validLang = lang && supportsLanguage(lang) ? lang : undefined;
