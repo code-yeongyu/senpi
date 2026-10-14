@@ -237,8 +237,10 @@ describe("retry fallback engine", () => {
 
 		await harness.session.prompt("hello");
 
-		// One leading primary call, then maxRetries same-model attempts per rung.
-		expect(harness.faux.state.callCount).toBe(1 + (chain.length + 1) * maxRetries);
+		// Each rung keeps its existing retry budget, including the single wrap
+		// to the original head. The tried set prevents another chain traversal.
+		expect(harness.faux.state.callCount).toBe(1 + (chain.length + 2) * maxRetries);
+		expect(harness.eventsOfType("retry_fallback_reverted")).toHaveLength(1);
 		expect(harness.eventsOfType("retry_fallback_applied").map((event) => event.to)).toEqual(chain);
 		expect(harness.eventsOfType("retry_fallback_exhausted").map((event) => event.chainKey)).toEqual([primary]);
 		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([false]);

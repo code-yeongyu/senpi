@@ -5997,16 +5997,8 @@ export class AgentSession {
 		// Turn boundary: restore the primary model if the fallback cooldown expired.
 		if (!this.isStreaming) {
 			try {
-				await this._maybeRestoreFallbackPrimary();
-				const model = this.model;
-				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
-					this._retryFallback.resetTurn();
-					const errorMessage = this._retryFallback.accountError(model.provider);
-					// Routing around a remembered failure did not observe another provider failure.
-					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
-						throw new AccountUsageLimitError(model.provider, errorMessage);
-					}
-				}
+				await this._prepareFallbackForTurn();
+				throwIfCancelled();
 			} catch (error) {
 				releaseStart(false);
 				throw error;
@@ -7408,6 +7400,11 @@ export class AgentSession {
 				try {
 					if (this._extensionBindingPromptReadiness === undefined && !this._lifecycleBinding.isRestored)
 						await this._lifecycleBinding.restore();
+					await this._prepareFallbackForTurn();
+					if (userAbortGeneration !== this._userAbortGeneration) {
+						queueTriggerForLater();
+						return;
+					}
 					await this._assertModelReadyForTurn();
 					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 					this._refreshToolDeclarationsForModel();
@@ -9090,6 +9087,19 @@ export class AgentSession {
 			invalidateCompaction: true,
 			origin,
 		});
+	}
+
+	private async _prepareFallbackForTurn(): Promise<void> {
+		this._retryFallback.resetTurn();
+		await this._maybeRestoreFallbackPrimary();
+		const model = this.model;
+		if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+			const errorMessage = this._retryFallback.accountError(model.provider);
+			// Routing around a remembered failure did not observe another provider failure.
+			if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
+				throw new AccountUsageLimitError(model.provider, errorMessage);
+			}
+		}
 	}
 
 	private async _maybeRestoreFallbackPrimary(boundary: "turn" | "continuation" = "turn"): Promise<void> {
