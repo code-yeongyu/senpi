@@ -1,3 +1,22 @@
+## 2026-10-14 - Recover fallback models on automatic wakes and chain exhaustion
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: ordinary prompts and admitted idle custom-trigger turns share fallback restoration, circuit routing and spent-account preparation before authentication and compaction. Queued messages do not prepare a turn; cancellation during preparation retains the wake.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts` and `packages/coding-agent/src/core/retry-fallback/controller-types.ts`: an exhausted fallback tail considers its original primary once, using existing candidate filters and circuit probe semantics. Pins, manual selections and the never policy remain authoritative.
+
+### Why
+
+Automatic monitor and messenger wakes could keep calling a spent fallback after the primary recovered. A chain tail also had no route back to a recovered head within its failing turn.
+
+### Why an extension could not handle it
+
+Model selection must precede core authentication, compaction and provider admission; the controller owns turn-scoped candidate and probe accounting.
+
+### Expected merge conflict zones
+
+Prompt and idle custom-trigger admission in `packages/coding-agent/src/core/agent-session.ts`; original-primary restoration and candidate scanning in `packages/coding-agent/src/core/retry-fallback/controller.ts`.
+
 ## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
 
 ### What changed

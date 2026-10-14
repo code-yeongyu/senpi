@@ -25,6 +25,7 @@ export type CircuitFailure = { errorMessage?: string; retryAfterMs?: number };
 export interface FallbackSettings {
 	modelFallback: boolean;
 	chains: Readonly<Record<string, readonly string[]>>;
+	revertPolicy?: "cooldown-expiry" | "never";
 }
 
 export interface RetryFallbackControllerDeps {

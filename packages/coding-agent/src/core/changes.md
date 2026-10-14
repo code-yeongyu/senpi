@@ -1,3 +1,25 @@
+## 2026-10-14 - Recover fallback models on automatic wakes and chain exhaustion
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: extract shared turn-boundary fallback preparation for prompts and admitted idle custom wakes. Recheck cancellation before authentication; retain cancelled or refused wakes using the existing queue contract.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: consider the original primary once after tail candidates are exhausted, excluding spent heads and retaining cooldown/circuit filters. Reuse primary restoration to preserve thinking overrides and emit one revert event.
+- `packages/coding-agent/src/core/retry-fallback/controller-types.ts`: expose the existing revert policy to candidate selection.
+
+### Why
+
+Idle custom wakes skipped primary recovery and spent-account routing. Tail failures could terminate despite a recovered primary; an open head now receives the existing bounded chain probe rather than creating a retry loop.
+
+### Why an extension could not handle it
+
+Extensions cannot change core admission ordering, private fallback state or circuit probe ownership.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: prompt preparation and idle `sendCustomMessage` admission.
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: primary restoration and `nextCandidate`.
+- `packages/coding-agent/src/core/retry-fallback/controller-types.ts`: fallback settings shape.
+
 ## 2026-10-13 - Provider auth status re-reads a store that was busy on its first read (omo-desktop-app#2249)
 
 ### What changed
