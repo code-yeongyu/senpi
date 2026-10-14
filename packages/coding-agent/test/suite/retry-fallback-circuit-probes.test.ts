@@ -49,11 +49,11 @@ describe("fallback circuit probes and failure classes (senpi#2201 review)", () =
 
 	it("opens the final chain entry when it fails with a billing error", async () => {
 		const harness = await make();
-		harness.setResponses([failure(), failure("400 invalid_request_error: Your credit balance is too low")]);
+		harness.setResponses([failure(), failure("400 invalid_request_error: Your credit balance is too low"), answer()]);
 
 		await harness.session.prompt("exhaust both entries");
 
-		expect(calledModels(harness)).toEqual(["faux-1", "faux-2"]);
+		expect(calledModels(harness)).toEqual(["faux-1", "faux-2", "faux-1"]);
 		expect(breaker(harness).isOpen(fallback, now, "sibling")).toBe(true);
 	});
 

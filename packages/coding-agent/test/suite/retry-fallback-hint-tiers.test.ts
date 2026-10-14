@@ -172,6 +172,7 @@ describe("hint-aware 429 tier routing", () => {
 		// The primary should be suppressed (cooldown with remaining hint = 1_258_000ms).
 		// Advance time past the 30s default rate-limit cooldown but NOT past 1_258_000ms.
 		now += 60_000;
+		harness.setResponses([fauxAssistantMessage("still on fallback")]);
 		await harness.session.prompt("again");
 		// Primary should NOT have reverted — cooldown is 1_258_000ms.
 		expect(harness.eventsOfType("retry_fallback_reverted")).toEqual([]);
