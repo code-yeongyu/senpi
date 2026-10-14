@@ -105,7 +105,7 @@ async function runLongSession(
 	const summary = deferred<ReturnType<typeof fauxAssistantMessage>>();
 	harness.setResponses([() => summary.promise, fauxAssistantMessage("normal response")]);
 	const runner = harness.getExtensionRunner();
-	// Idle speculation is gated on a PERSISTENT extension mode (idle.ts: tui/rpc/app-server).
+	// Idle speculation is gated on a PERSISTENT extension mode (idle.ts: tui/rpc).
 	// The suite harness leaves the runner at its "print" default, where agent_end can never
 	// reach startSpeculativeCompaction - which made any invalidation bound vacuous. Pin a
 	// real interactive mode so the speculative lifecycle actually runs.

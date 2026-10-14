@@ -17,7 +17,7 @@ import {
 	processStartTimeMs,
 	readProcessIdentity,
 	sameProcessStartMs,
-} from "../app-server/daemon/process.ts";
+} from "../../utils/process-identity.ts";
 import { HOST_DAEMON_DIR_ENV, type HostGenerationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { parseIdleExitMs } from "./host-lifecycle-policy.ts";

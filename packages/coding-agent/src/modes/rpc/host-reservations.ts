@@ -27,7 +27,7 @@ import {
 	processStartTimeMs,
 	readProcessStartTime,
 	sameProcessStartMs,
-} from "../app-server/daemon/process.ts";
+} from "../../utils/process-identity.ts";
 import { createHostDaemonPaths, HOST_DAEMON_DIR_ENV, hostDaemonDirectoryPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
@@ -37,6 +37,7 @@ export const SESSION_PATH_RETRY_AFTER_MS = 2_000;
 
 export interface SessionPathOwner {
 	readonly instanceId: string;
+	readonly host_socket?: string;
 	readonly pid: number;
 	readonly processStartTime: string | null;
 	readonly sessionPath: string;
@@ -79,6 +80,7 @@ export function createEndpointReservations(host: {
 	readonly socket: string | undefined;
 	readonly instanceId: string;
 	readonly onFailure?: (message: string) => void;
+	readonly publicSocket?: string;
 }): SessionPathReservations | undefined {
 	const told = process.env[HOST_DAEMON_DIR_ENV];
 	const dir =
@@ -91,6 +93,7 @@ export function createEndpointReservations(host: {
 	return createSessionPathReservations({
 		daemonDir: dir,
 		instanceId: host.instanceId,
+		...(host.publicSocket === undefined ? {} : { publicSocket: host.publicSocket }),
 		...(host.onFailure ? { onFailure: host.onFailure } : {}),
 	});
 }
@@ -100,6 +103,7 @@ export function createSessionPathReservations(options: {
 	readonly daemonDir: string;
 	readonly instanceId: string;
 	readonly pid?: number;
+	readonly publicSocket?: string;
 	readonly onFailure?: (message: string) => void;
 }): SessionPathReservations {
 	const paths = hostDaemonDirectoryPaths(options.daemonDir);
@@ -115,6 +119,7 @@ export function createSessionPathReservations(options: {
 	const publish = async (sessionPath: string, attached: boolean, stillHeld?: () => boolean): Promise<void> => {
 		const owner: SessionPathOwner = {
 			instanceId: options.instanceId,
+			...(options.publicSocket === undefined ? {} : { host_socket: options.publicSocket }),
 			pid,
 			processStartTime: await startTime,
 			sessionPath,
@@ -268,13 +273,14 @@ async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
 		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null) return undefined;
-	const { instanceId, pid, processStartTime, sessionPath, attached } = parsed as Record<string, unknown>;
+	const { instanceId, pid, processStartTime, sessionPath, attached, host_socket } = parsed as Record<string, unknown>;
 	if (typeof instanceId !== "string" || typeof pid !== "number" || typeof sessionPath !== "string") return undefined;
 	return {
 		instanceId,
 		pid,
 		processStartTime: typeof processStartTime === "string" ? processStartTime : null,
 		sessionPath,
+		...(typeof host_socket === "string" ? { host_socket } : {}),
 		...(typeof attached === "boolean" ? { attached } : {}),
 	};
 }

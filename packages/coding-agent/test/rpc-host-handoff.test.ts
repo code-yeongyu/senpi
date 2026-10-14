@@ -2,16 +2,12 @@ import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	processStartTimeMs,
-	readProcessStartTime,
-	sameProcessStartMs,
-} from "../src/modes/app-server/daemon/process.ts";
 import { parseJson, readFileOrUndefined } from "../src/modes/rpc/host-daemon-state.ts";
 import { createHostDaemonPaths, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { signalGeneration, stopHost } from "../src/modes/rpc/host-stop.ts";
+import { processStartTimeMs, readProcessStartTime, sameProcessStartMs } from "../src/utils/process-identity.ts";
 import {
 	GENERATION_HOST_ARGS,
 	type GenerationScratch,

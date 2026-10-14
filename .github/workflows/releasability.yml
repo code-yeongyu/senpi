@@ -94,8 +94,8 @@ jobs:
         run: npm --prefix packages/ai run generate-models
 
       # #698: regeneration removed a model and the drift only surfaced at release time. Drift is
-      # recorded here but fails the job only in the last step, so the checks below still report
-      # what the drift breaks (senpi#2584: a drift step that stopped the job hid every later check).
+      # recorded here and reported as an advisory warning after the checks below, which run on the
+      # regenerated catalog either way (senpi#2584: a drift step that stopped the job hid every later check).
       - name: Record generated drift
         id: drift
         continue-on-error: true
@@ -132,11 +132,16 @@ jobs:
           CI: '1'
         run: node ../../scripts/run-tests.mjs vitest run
 
-      - name: Fail on generated drift
+      # Drift alone is advisory. Provider listings and prices move within hours, so a catalog
+      # committed before this job starts is often stale by the time its tests finish (2026-10-13:
+      # three data PRs and two blocked release cuts in one day). The release does not ship the committed catalog: scripts/release.mjs
+      # regenerates it, commits any change to main and waits for that commit's CI before tagging.
+      # What blocks a release is a regenerated catalog that breaks the checks, build or tests above.
+      - name: Report generated drift
         if: steps.drift.outcome == 'failure'
         run: |
-          echo "::error::The committed model catalog is stale: regeneration changed it (see 'Record generated drift')."
-          exit 1
+          echo "::warning::The committed model catalog is stale: regeneration changed it (diff below). The release regenerates and commits it before tagging."
+          git diff packages/ai/src/models.generated.ts packages/ai/src/providers/data | head -n 400
 
       - name: Workflow summary
         if: always()
@@ -145,7 +150,17 @@ jobs:
           {
             echo "## Model catalog regeneration"
             echo "- Status: ${{ job.status }}"
-            echo "- Generated drift: ${{ steps.drift.outcome }}"
+            if [ "${{ steps.drift.outcome }}" = "failure" ]; then
+              echo "- Generated drift: present (advisory; the release regenerates and commits the catalog before tagging)"
+              echo "<details><summary>Changed catalog files</summary>"
+              echo
+              echo '```'
+              git diff --stat packages/ai/src/models.generated.ts packages/ai/src/providers/data
+              echo '```'
+              echo "</details>"
+            else
+              echo "- Generated drift: none"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Check OS temp after tests
         if: always() && steps.test_temp_snapshot.outcome == 'success'

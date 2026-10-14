@@ -24,10 +24,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../../src/config.ts";
-import { processMatchesPidFile } from "../../src/modes/app-server/daemon/process.ts";
 import { readHostRegistration } from "../../src/modes/rpc/host-daemon-registration.ts";
 import { createHostDaemonPaths, ensureHost } from "../../src/modes/rpc/host-ensure.ts";
 import { HOST_COLD_START_ENV } from "../../src/modes/rpc/host-lifecycle.ts";
+import { processMatchesPidFile } from "../../src/utils/process-identity.ts";
 import {
 	cleanupAllAndWait,
 	hermeticEnv,

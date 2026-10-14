@@ -33,7 +33,7 @@ import {
 	processStartTimeMs,
 	readProcessStartTime,
 	sameProcessStartMs,
-} from "../app-server/daemon/process.ts";
+} from "../../utils/process-identity.ts";
 import {
 	createGenerationDirectory,
 	generationPaths,

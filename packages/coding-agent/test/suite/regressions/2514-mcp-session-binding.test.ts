@@ -766,7 +766,7 @@ function configureExtraForRootProject(): TestRoot {
 	return makeRoot("2597-peer", cleanupTasks);
 }
 
-/** Attach an app-server session in `project` whose session id is `sessionId`, sharing the agent dir. */
+/** Attach an RPC session in `project` whose session id is `sessionId`, sharing the agent dir. */
 async function attachInProject(
 	pi: CapturingPi,
 	project: TestRoot,
@@ -778,7 +778,7 @@ async function attachInProject(
 		{
 			cwd: project.cwd,
 			isProjectTrusted: () => true,
-			mode: "app-server",
+			mode: "rpc",
 			sessionManager: { getEntries: () => [], getSessionId: () => sessionId },
 		},
 		pi,
@@ -990,7 +990,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 				{
 					cwd: owner.cwd,
 					isProjectTrusted: () => true,
-					mode: "app-server",
+					mode: "rpc",
 					sessionManager: { getEntries: () => [], getSessionId: () => "alpha" },
 					// Read just before the attach binds; the rest of its turn runs to the cache read before this resolves.
 					getRegisteredMcpServers: () => {

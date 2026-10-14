@@ -22,6 +22,7 @@ import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../c
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ClientMessageAdmission } from "./client-admission-record.ts";
+import type { EffectState, EffectStatus } from "./effect-record.ts";
 import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
@@ -82,7 +83,11 @@ type RpcSessionCommand =
 			images?: ImageContent[];
 			enqueueOrder?: number;
 	  } & ClientMessageIdentity)
-	| { id?: string; type: "abort" }
+	/**
+	 * `effectId` (1-256 chars, capability `effect_ledger`) records the abort as a durable effect BEFORE it is
+	 * dispatched and makes a retry with the same id a replay; without it the abort behaves exactly as before.
+	 */
+	| { id?: string; type: "abort"; effectId?: string }
 	| { id?: string; type: "interrupt"; turnId?: string }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
@@ -101,16 +106,22 @@ type RpcSessionCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	/**
+	 * The newest receipt of one effect (capability `effect_ledger`). With `sessionId` it answers from the
+	 * loaded session; with `sessionPath` (and no `sessionId`) from that transcript on disk, searching the
+	 * whole file before answering `found: false`. For inputs `effectId` is the `clientMessageId`.
+	 */
+	| { id?: string; type: "get_effect_status"; effectId: string; sessionPath?: string }
 
 	// Model
-	| { id?: string; type: "set_model"; provider: string; modelId: string }
+	| { id?: string; type: "set_model"; provider: string; modelId: string; effectId?: string }
 	| { id?: string; type: "set_favorite_models"; models: RpcSessionModelEntry[] }
 	| { id?: string; type: "set_scoped_models"; models: RpcSessionModelEntry[] }
 	| { id?: string; type: "cycle_model"; direction?: "forward" | "backward" }
 	| { id?: string; type: "get_available_models" }
 
 	// Thinking
-	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel; scope?: "turn" }
+	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel; scope?: "turn"; effectId?: string }
 	| { id?: string; type: "cycle_thinking_level" }
 	| { id?: string; type: "get_available_thinking_levels" }
 
@@ -261,6 +272,8 @@ export const RPC_ERROR_MISSING_SESSION_ID = "missing_session_id";
 export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
+export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
+export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
 export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
@@ -292,6 +305,14 @@ export const RPC_ERROR_STREAMING = "streaming";
 export const RPC_ERROR_ENTRY_NOT_FOUND = "not_found";
 /** `set_model` named a provider/model pair the session's registry does not offer. */
 export const RPC_ERROR_MODEL_NOT_FOUND = "model_not_found";
+/** An `effectId` was reused for a different request; `errorData` carries `reason` and `action`. */
+export const RPC_ERROR_EFFECT_ID_CONFLICT = "effect_id_conflict";
+/** `get_effect_status { sessionPath }` could not read the transcript; this is never a `found: false`. */
+export const RPC_ERROR_TRANSCRIPT_UNREADABLE = "transcript_unreadable";
+/** `set_model { effectId }` was refused because the model's provider cannot serve it now. */
+export const RPC_ERROR_PROVIDER_UNAVAILABLE = "provider_unavailable";
+/** `set_model { effectId }` was refused because the target cannot hold the session context. */
+export const RPC_ERROR_CONTEXT_BUDGET = "context_budget";
 export const RPC_ERROR_EVAL_CELL_NOT_FOUND = "eval_cell_not_found";
 export const RPC_ERROR_INVALID_EVAL_CELL_REQUEST = "invalid_eval_cell_request";
 export const RPC_ERROR_EVAL_CELLS_UNAVAILABLE = "eval_cells_unavailable";
@@ -327,6 +348,8 @@ export const RPC_ERROR_HOST_DRAINING = "host_draining";
 export const RPC_ERROR_HOST_STOPPING = "host_stopping";
 
 export type RpcErrorCode =
+	| typeof RPC_ERROR_OWNER_CHANGED
+	| typeof RPC_ERROR_SESSION_NOT_HELD
 	| typeof RPC_ERROR_HOST_STOPPING
 	| typeof RPC_ERROR_UNKNOWN_SESSION
 	| typeof RPC_ERROR_SESSION_CLOSING
@@ -348,6 +371,10 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_STREAMING
 	| typeof RPC_ERROR_ENTRY_NOT_FOUND
 	| typeof RPC_ERROR_MODEL_NOT_FOUND
+	| typeof RPC_ERROR_EFFECT_ID_CONFLICT
+	| typeof RPC_ERROR_TRANSCRIPT_UNREADABLE
+	| typeof RPC_ERROR_PROVIDER_UNAVAILABLE
+	| typeof RPC_ERROR_CONTEXT_BUDGET
 	| typeof RPC_ERROR_EVAL_CELL_NOT_FOUND
 	| typeof RPC_ERROR_INVALID_EVAL_CELL_REQUEST
 	| typeof RPC_ERROR_EVAL_CELLS_UNAVAILABLE
@@ -364,6 +391,15 @@ export type RpcErrorCode =
 	| typeof RPC_ERROR_RELEASE_FAILED
 	| typeof RPC_ERROR_HOST_DRAINING;
 
+/** What an effect command (`abort`/`set_model`/`set_thinking_level` with `effectId`) answers about its receipt. */
+export interface RpcEffectAnswer {
+	effectId: string;
+	state: EffectState;
+	effect: EffectStatus;
+	/** The id was seen before with the same request: nothing was performed again. */
+	replayed?: true;
+}
+
 /** Every established command accepts an additive routing envelope. */
 export type RpcCommand =
 	| (RpcSessionCommand & { sessionId?: string })
@@ -376,6 +412,12 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			/**
+			 * Attach only to an existing session on this host generation. Requires
+			 * `expected_host_instance`; mismatch returns `owner_changed`, a released
+			 * session returns `session_not_held`. Neither refusal creates a writer.
+			 */
+			expectedHostInstance?: string;
 			sessionPath?: string;
 			cwd?: string;
 			provider?: string;
@@ -469,6 +511,14 @@ export type RpcCommand =
 			reason: "takeover";
 			interrupt?: boolean;
 			force?: boolean;
+	  }
+	| {
+			id?: string;
+			/**
+			 * Meant as the connection's last request: release every session attachment it holds, then answer.
+			 * Advertised as `detach_connection`. Closing the socket afterwards releases nothing more.
+			 */
+			type: "detach_connection";
 	  }
 	| {
 			id?: string;
@@ -743,6 +793,17 @@ export type RpcResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "detach_connection";
+			success: true;
+			/**
+			 * Sessions that still count this connection: releasing it would end a turn still running (it
+			 * releases when the turn settles), or the host is draining. Empty when every attachment is gone.
+			 */
+			data: { deferred: string[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "list_sessions";
 			success: true;
 			data: {
@@ -787,7 +848,7 @@ export type RpcResponse =
 			success: true;
 			data?: ClientMessageIdentity & { disposition?: QueuedInputDisposition; admission?: ClientMessageAdmission };
 	  }
-	| { id?: string; type: "response"; command: "abort"; success: true }
+	| { id?: string; type: "response"; command: "abort"; success: true; data?: RpcEffectAnswer }
 	| {
 			id?: string;
 			type: "response";
@@ -826,7 +887,15 @@ export type RpcResponse =
 			type: "response";
 			command: "set_model";
 			success: true;
-			data: Model<any> & { systemPromptName?: string };
+			/** With `effectId`: the effect fields beside the model, or only them on a replay. */
+			data: (Model<any> & { systemPromptName?: string } & Partial<RpcEffectAnswer>) | RpcEffectAnswer;
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_effect_status";
+			success: true;
+			data: { found: true; effect: EffectStatus } | { found: false; searched: "complete" };
 	  }
 	| { id?: string; type: "response"; command: "set_favorite_models"; success: true }
 	| { id?: string; type: "response"; command: "set_scoped_models"; success: true }
@@ -849,7 +918,7 @@ export type RpcResponse =
 	  }
 
 	// Thinking
-	| { id?: string; type: "response"; command: "set_thinking_level"; success: true }
+	| { id?: string; type: "response"; command: "set_thinking_level"; success: true; data?: RpcEffectAnswer }
 	| {
 			id?: string;
 			type: "response";

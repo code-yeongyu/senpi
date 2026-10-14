@@ -42,6 +42,16 @@ export function openStalledMessage(position: unknown): string {
 	return `open_session was accepted by the host${queued} but not answered within ${minutes} minutes`;
 }
 
+/** A request the host did not answer within its deadline: the host is not responding on this connection. */
+export class RpcRequestTimeoutError extends Error {
+	readonly code = "rpc_request_timeout" as const;
+
+	constructor(message: string) {
+		super(message);
+		this.name = "RpcRequestTimeoutError";
+	}
+}
+
 export interface RequestDeadline {
 	/** Restarts the wait with a new budget and the message it fails with. */
 	extend(ms: number, message: () => string): void;
@@ -49,11 +59,11 @@ export interface RequestDeadline {
 }
 
 export function armRequestDeadline(ms: number, message: () => string, expire: (error: Error) => void): RequestDeadline {
-	let timer = setTimeout(() => expire(new Error(message())), ms);
+	let timer = setTimeout(() => expire(new RpcRequestTimeoutError(message())), ms);
 	return {
 		extend(nextMs, nextMessage) {
 			clearTimeout(timer);
-			timer = setTimeout(() => expire(new Error(nextMessage())), nextMs);
+			timer = setTimeout(() => expire(new RpcRequestTimeoutError(nextMessage())), nextMs);
 		},
 		clear() {
 			clearTimeout(timer);

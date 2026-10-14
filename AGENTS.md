@@ -60,7 +60,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 | Change Cursor transport or exec bridging | `packages/ai/src/api/cursor-agent/`, `packages/coding-agent/src/core/cursor-exec-bridge.ts` |
 | Change agent-loop semantics or the harness | `packages/agent/src/agent-loop.ts`, `packages/agent/src/harness/` |
 | Change interactive rendering | `packages/coding-agent/src/modes/interactive/` and `packages/tui/src/` |
-| Change app-server/RPC | `packages/coding-agent/src/modes/app-server/` or `.../modes/rpc/` |
+| Change RPC | `packages/coding-agent/src/modes/rpc/` |
 | Add or change coding-agent tests or examples | `packages/coding-agent/test/`, `packages/coding-agent/examples/` |
 | Change PTY behavior | `packages/pty/` and, for native behavior, `crates/senpi-pty/` |
 | Change model/provider runtime or docs | `packages/ai/src/{models.ts,auth,providers}`, `packages/coding-agent/docs/providers.md` |
@@ -71,7 +71,7 @@ Senpi is an extension-first coding-agent monorepo. Keep changes scoped, preserve
 
 ## CODE MAP
 
-Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop.ts`, driven by `coding-agent/src/core` into interactive | print | RPC | app-server; `tui` renders, `pty` -> `crates/senpi-pty` runs terminals, `protocol` (framed CBOR) links `server` and `client`.
+Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop.ts`, driven by `coding-agent/src/core` into interactive | print | RPC; `tui` renders, `pty` -> `crates/senpi-pty` runs terminals, `protocol` (framed CBOR) links `server` and `client`.
 
 | Symbol / file | Role | Notes |
 |---|---|---|
@@ -87,7 +87,7 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - Install dependencies: `bun install --ignore-scripts`. After an approved dependency change, `bun run refresh-lock` (lockfile + registry metadata + install-lock).
 - Full static validation after code changes: `bun run check` (biome, pinned-deps/ts-imports/install-lock checks, `check:claude-sdk-platform-lock`, `tsc --noEmit`, browser-smoke). It runs no tests; CI runs the same commands, so keep them in sync. Broad validation: `bun run test` runs `test:scripts`, then `scripts/run-workspaces.mjs` runs every workspace `test` script sequentially in path order with the package manager you invoked, so `bun run test`, `npm run test`, and `pnpm run test` run the same suites the same way.
 - Narrow tests run from the package root using that package's test command (`bun run --cwd packages/<pkg> test -- <args>`), or from the repository root through the runner (`bun run test --workspace packages/<pkg> -- <args>`, which runs the scripts tests first). Runners differ: Vitest for `ai`, `coding-agent`, `senpi-codemode`, `server`, `session-backends`, `telemetry`; `node --test --import tsx` for `tui`; `node --test` for `scripts/` (`bun run test:scripts`) and `.agents/skills/senpi-qa/scripts/lib/`.
-- App-server transport QA is its own channel: `bun run qa:app-server` (`packages/coding-agent/scripts/qa-app-server/`), not part of `bun run test`. Model catalog data: `bun run hydrate:model-data`, verified by `check:model-data`, from the repository root.
+- Model catalog data: `bun run hydrate:model-data`, verified by `check:model-data`, from the repository root.
 - Never run `bun run dev` in this repository.
 
 ## CONVENTIONS
@@ -96,7 +96,7 @@ Runtime flow: `ai` (models/auth -> providers -> api) feeds `agent/src/agent-loop
 - TypeScript under `packages/*/src`, `packages/*/test`, and `packages/coding-agent/examples` must use erasable syntax. Avoid `any` and verify external types in `node_modules`.
 - Imports are top-level by default. Inline or dynamic imports are forbidden except existing documented lazy/browser-safe boundaries such as `packages/ai/src/api/*.lazy.ts` and credential probes.
 - Do not hardcode TUI keys; add defaults to `packages/tui/src/keybindings.ts` or `packages/coding-agent/src/core/keybindings.ts`.
-- Never hand-edit generated sources: `packages/ai/src/{models,image-models}.generated.ts` and `src/providers/data/*.json` (regenerate via `packages/ai/scripts/generate-models.ts`), `packages/ai/src/api/cursor-agent/gen/agent_pb.ts` (`buf generate` + `scripts/transform-cursor-agent-proto.mjs`), `crates/senpi-pty/index.{js,d.ts}` (napi-rs), `packages/coding-agent/install-lock/*`, and `packages/coding-agent/src/modes/app-server/protocol/generated/`. Builtin extension registration order is authoritative only in `builtin/index.ts` — never quote a registration number from prose.
+- Never hand-edit generated sources: `packages/ai/src/{models,image-models}.generated.ts` and `src/providers/data/*.json` (regenerate via `packages/ai/scripts/generate-models.ts`), `packages/ai/src/api/cursor-agent/gen/agent_pb.ts` (`buf generate` + `scripts/transform-cursor-agent-proto.mjs`), `crates/senpi-pty/index.{js,d.ts}` (napi-rs), and `packages/coding-agent/install-lock/*`. Builtin extension registration order is authoritative only in `builtin/index.ts` — never quote a registration number from prose.
 - Root `package.json` scripts reach workspaces only through `node scripts/run-workspaces.mjs`; never `npm run --workspaces`, `npm --workspace=<name> run`, `npm --prefix <dir> run`, or `cd <dir> && npm run` (`scripts/root-workspace-scripts.test.mjs` fails the manifest). Those shapes hardcode npm, and under bun the flag-after-name form re-entered the root script forever.
 - Ask before removing intentional functionality; backward compatibility is opt-in, not automatic.
 - Changing fork-specific source behavior means reading the nearest `changes.md` first and updating it in the same verified increment, not in a follow-up. Merges resolve tracker files to `ours`, so a stale entry misleads the next upstream sync.

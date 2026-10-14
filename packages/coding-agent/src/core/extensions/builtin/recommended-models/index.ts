@@ -138,9 +138,7 @@ export default function recommendedModelsExtension(pi: ExtensionAPI): void {
 		disabled = pi.getFlag(FLAG_NAME) === true || settingsManager.getWarnings().offRecommendedModel === true;
 		recommendations = recommendationsFor(settingsManager.getRecommendedModels());
 		canAutoSwitch =
-			ctx.mode !== "app-server" &&
-			event.initialModelProvenance !== undefined &&
-			AUTO_SWITCH_PROVENANCE.has(event.initialModelProvenance);
+			event.initialModelProvenance !== undefined && AUTO_SWITCH_PROVENANCE.has(event.initialModelProvenance);
 		if (disabled || !canAutoSwitch || isRecommended(ctx.model, recommendations)) {
 			return;
 		}

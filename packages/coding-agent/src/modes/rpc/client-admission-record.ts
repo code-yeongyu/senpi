@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+import { effectOutcomeSchema } from "./effect-record.ts";
 import type { RpcCommand } from "./rpc-types.ts";
 
 export const CLIENT_ADMISSION_ENTRY = "rpc_client_message_admission";
@@ -24,7 +25,12 @@ const preparedInputSchema = clientMessageIdentitySchema.extend({
 export const clientAdmissionRecordSchema = z.discriminatedUnion("state", [
 	admissionIdentitySchema.extend({ state: z.literal("queued"), prepared: preparedInputSchema }),
 	admissionIdentitySchema.extend({ state: z.literal("running"), prepared: z.undefined().optional() }),
-	admissionIdentitySchema.extend({ state: z.literal("completed"), prepared: z.undefined().optional() }),
+	// `outcome` is additive: an older host strips it and still reads the record as completed.
+	admissionIdentitySchema.extend({
+		state: z.literal("completed"),
+		prepared: z.undefined().optional(),
+		outcome: effectOutcomeSchema.optional(),
+	}),
 ]);
 
 export type ClientAdmissionRecord = z.infer<typeof clientAdmissionRecordSchema>;

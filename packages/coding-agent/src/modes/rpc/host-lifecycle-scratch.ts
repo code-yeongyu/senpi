@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readProcessIdentity, readProcessStartTime } from "../app-server/daemon/process.ts";
+import { readProcessIdentity, readProcessStartTime } from "../../utils/process-identity.ts";
 import { writeJsonAtomic } from "./host-state-json.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
 

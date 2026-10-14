@@ -612,7 +612,7 @@ export class McpService {
 
 	/**
 	 * Return the attach-time inventory captured for one session. This is the
-	 * handoff consumed by the app-server's session-owned adapter; it deliberately
+	 * handoff consumed by RPC's session-owned adapter; it deliberately
 	 * does not expose or derive from the lifecycle-only server snapshots.
 	 */
 	getWireStatusSnapshot(sessionId?: string): McpWireStatusSnapshot {
@@ -1086,7 +1086,7 @@ function wireAuthStatus(
 }
 
 function shouldCaptureWireStatus(ctx: McpSessionContext): boolean {
-	return ctx.mode === "app-server" || ctx.mode === "rpc";
+	return ctx.mode === "rpc";
 }
 
 function mapWireServerInfo(info: NonNullable<ReturnType<Client["getServerVersion"]>>): McpWireServerInfo {

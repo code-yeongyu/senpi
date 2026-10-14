@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
-import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../app-server/daemon/process.ts";
+import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
 import { callerHostOwner, writeHostOwner, writeHostSettings } from "./host-daemon-state.ts";

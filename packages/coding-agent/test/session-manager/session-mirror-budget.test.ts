@@ -224,8 +224,7 @@ describe("SessionManager resident mirror", () => {
 		const blobsDir = session.getResidentStore().resolvedBlobsDir()!;
 		const sessionFile = session.getSessionFile()!;
 
-		// A second manager over the same file (the app-server loads a thread that is
-		// already open). Neither its open nor its disposal may take the cache the
+		// A second manager opens the same file. Neither its open nor its disposal may take the cache the
 		// first manager is still hydrating from.
 		const sibling = SessionManager.open(sessionFile, tempDir);
 		expect(readdirSync(blobsDir).some((name) => name.endsWith(".blob"))).toBe(true);

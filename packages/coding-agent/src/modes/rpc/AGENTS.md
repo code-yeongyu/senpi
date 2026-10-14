@@ -47,6 +47,12 @@ host-endpoints.ts, host-status-all.ts     `status --all`: enumerate endpoint dir
 host-endpoint-liveness.ts `classifyEndpointLiveness`: routable | live_unresponsive | dead; per-kind probe budget (tui 1.5 s)
 tui-socket.ts             Terminal control socket name `t-<16hex>.sock`; a client sends the secret first on every platform
 rpc-session-state.ts      `buildRpcSessionState`: the one wire projection of a session (RPC `get_state`, `open_session`, TUI endpoint)
+client-admissions.ts, client-admission-record.ts
+                          Input receipts (`rpc_client_message_admission`): replay/conflict, queue restore, reopen seal, turn outcome
+effect-ledger.ts, effect-record.ts
+                          `rpc_effect` receipts for abort/set_model (accepted before applied, reopen seal) + one EffectStatus;
+                          effect-commands.ts (handlers), effect-transcript-lookup.ts (`get_effect_status { sessionPath }`), effect-status.ts,
+                          effect-outcome-copy.ts (reason/action copy), effect-crash-point.ts (test-only SIGKILL hook)
 host-gc.ts, host-gc-evidence.ts           `host gc`: remove dead endpoint dirs on three-part evidence
 host-gc-pass.ts, host-gc-pass-marker.ts   The budgeted gc pass ensure schedules after returning (`gc-last-run.json`)
 host-ensure-{start,stop,client,types}.ts, host-internal-dir-reaper.ts, host-ensure-liveness.ts   ensureHost's start + readiness gate, the recorded stop path, client identity, options, tmpdir reaper, stall refusal

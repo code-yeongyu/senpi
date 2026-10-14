@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
 import { readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { createHostDaemonPaths, ensureHost, type HostLifecyclePolicyInput } from "../src/modes/rpc/host-ensure.ts";
 import { STOP_WAIT_BUDGET_MS } from "../src/modes/rpc/host-ensure-stop.ts";
@@ -37,6 +36,7 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "../src/modes/rpc/socket-transport.ts";
+import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/utils/process-identity.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { processAlive, reapProcessesUnder } from "./helpers/spawned-host-reaper.ts";
 

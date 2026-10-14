@@ -13,7 +13,7 @@
  * cannot be asked how many sessions it has.
  */
 import { readdir, rm } from "node:fs/promises";
-import { processIsLive } from "../app-server/daemon/process.ts";
+import { processIsLive } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonDirectory, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";

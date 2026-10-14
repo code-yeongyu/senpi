@@ -472,7 +472,7 @@ export type FilesystemPolicyChecker = (request: Readonly<FilesystemPolicyRequest
 /**
  * Context passed to extension event handlers.
  */
-export type ExtensionMode = "tui" | "rpc" | "app-server" | "json" | "print";
+export type ExtensionMode = "tui" | "rpc" | "json" | "print";
 
 export interface ExtensionContext {
 	/** UI methods for user interaction */

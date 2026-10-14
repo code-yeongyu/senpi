@@ -114,6 +114,7 @@ export function createHostCore(
 		agentDir: options.agentDir,
 		socket: listenSocketPath(options),
 		instanceId: hostInstanceId(),
+		publicSocket: hostContext?.host_socket,
 		onFailure: hostLog,
 	});
 	const registry = options.workerConfiguration

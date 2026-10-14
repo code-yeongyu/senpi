@@ -29,7 +29,7 @@ const FAST_MODEL_ID = `${BASE_MODEL_ID}-fast`;
 
 /**
  * The request tier is a SESSION property, not an extension feature: an embedded/SDK session that
- * loads no builtin extensions (a delegated child, an app-server host) must still send the tier a
+ * loads no builtin extensions (for example, a delegated child) must still send the tier a
  * `-fast` catalog variant or session fast mode asks for. Every session here is extension-less.
  */
 describe("createAgentSession request service tier without extensions", () => {

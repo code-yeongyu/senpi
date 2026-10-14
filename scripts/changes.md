@@ -1,3 +1,23 @@
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the retired generated protocol-tree example from the runtime dependency auditor comment; the audit rules are unchanged.
+
+- `scripts/check-runtime-deps.mjs`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - System-temp scan safeguards have mutation-tested contracts (Refs senpi#3064)
 
 ### What changed

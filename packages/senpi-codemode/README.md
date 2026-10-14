@@ -456,7 +456,7 @@ so providers can interpret it independently.
 ## Detached cells
 
 `eval` accepts `on_timeout: "detach"|"error"`. The default is `"detach"` in
-interactive TUI, RPC, and app-server sessions; print and JSON one-shot runs
+interactive TUI and RPC sessions; print and JSON one-shot runs
 default to `"error"` so their result is never silently detached. A detached
 cell keeps only its own language kernel busy. New same-language cells are admitted
 into its FIFO queue; calls in other languages continue normally. Queued cells may

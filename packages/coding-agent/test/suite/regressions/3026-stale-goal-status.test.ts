@@ -7,7 +7,6 @@ import {
 import { renderGoalToolResult } from "../../../src/core/extensions/builtin/goal/renderers.ts";
 import type { Goal } from "../../../src/core/extensions/builtin/goal/types.ts";
 import { updateGoalUi } from "../../../src/core/extensions/builtin/goal/ui.ts";
-import { toThreadGoal } from "../../../src/modes/app-server/threads/goal-wire.ts";
 import { getThemeByName } from "../../../src/modes/interactive/theme/theme.ts";
 import { cleanupGoalMonitorTempDirs, createGoalStatusHarness, makeGoalContext } from "../goal-monitor-test-harness.ts";
 
@@ -79,13 +78,5 @@ describe("senpi#3026 stale-stopped goal displays", () => {
 		expect(JSON.parse(text)).toMatchObject({
 			goal: { status: "paused", continuationStoppedAt: stopped.continuationStoppedAt },
 		});
-	});
-
-	it("projects stale-stopped goals as paused for app-server clients without changing stored state", () => {
-		for (const state of ["active", "paused", "complete"] as const) {
-			expect(toThreadGoal(goal({ status: state })).status).toBe(state);
-		}
-		expect(toThreadGoal(stopped)).toMatchObject({ status: "paused", tokensUsed: 23, timeUsedSeconds: 17 });
-		expect(stopped.status).toBe("active");
 	});
 });

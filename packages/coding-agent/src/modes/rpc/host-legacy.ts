@@ -24,7 +24,7 @@ import {
 	processIsLive,
 	processMatchesPidFile,
 	readProcessStartTime,
-} from "../app-server/daemon/process.ts";
+} from "../../utils/process-identity.ts";
 import { type HostDaemonPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";

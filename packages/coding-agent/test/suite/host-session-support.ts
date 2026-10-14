@@ -116,6 +116,9 @@ export async function wireRig(
 					sessions: [{ sessionId: "rpc-1", cwd: dir, sessionPath: join(dir, "session.jsonl"), status: "open" }],
 				});
 			else if (command.type === "open_session") reply({ sessionId: "rpc-1", state: {} });
+			// Answered like a host without `detach_connection`, so the client's closing probe gets an answer.
+			else if (command.type === "get_protocol_info")
+				reply({ protocolVersion: 1, capabilities: ["multi_session"], mode: "multi" });
 			else if (command.type === "get_state") onState(++stateReads, send, reply, peer);
 			else throw new Error(`Unexpected wire request ${command.type}`);
 		});

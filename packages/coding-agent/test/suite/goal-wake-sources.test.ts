@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AgentSession } from "../../src/core/agent-session.ts";
 import {
 	GOAL_CONTINUATION_RESUMED_EVENT,
 	GOAL_CONTINUATION_SCHEDULED_EVENT,
@@ -13,11 +12,6 @@ import { writeGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/types.ts";
-import {
-	cleanupRoots,
-	createHarness as createAppServerHarness,
-	threadIdFromResponse,
-} from "./app-server-thread-handlers-harness.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
@@ -84,7 +78,7 @@ function emitted(events: TestEventBus, channel: string): Record<string, unknown>
 describe("goal wake sources", () => {
 	afterEach(async () => {
 		vi.useRealTimers();
-		await Promise.all([cleanupGoalMonitorTempDirs(), cleanupRoots()]);
+		await cleanupGoalMonitorTempDirs();
 	});
 
 	it("defers an active goal while a background bash session is registered", async () => {
@@ -243,41 +237,6 @@ describe("goal wake sources", () => {
 		});
 	});
 
-	it("queues a continuation when thread/goal/set activates an idle session", async () => {
-		const { connection, registry, root, threads } = await createAppServerHarness();
-		const threadId = threadIdFromResponse(
-			await registry.dispatch(connection, { id: 1, method: "thread/start", params: { cwd: root } }),
-		);
-		const session = threads.getLoadedThread(threadId).session;
-		if (!(session instanceof AgentSession)) throw new Error("Expected the real session");
-		expect(session.onExtensionEvent).toBeTypeOf("function");
-		const scheduled = Promise.withResolvers<unknown>();
-		const unsubscribe = session.onExtensionEvent(GOAL_CONTINUATION_SCHEDULED_EVENT, scheduled.resolve);
-		const delivered = Promise.withResolvers<void>();
-		const sendCustomMessage = session.sendCustomMessage.bind(session);
-		const delivery = vi.spyOn(session, "sendCustomMessage").mockImplementation(async (...args) => {
-			try {
-				return await sendCustomMessage(...args);
-			} finally {
-				delivered.resolve();
-			}
-		});
-
-		await registry.dispatch(connection, {
-			id: 2,
-			method: "thread/goal/set",
-			params: { threadId, objective: "Resume from RPC" },
-		});
-
-		await expect(Promise.race([scheduled.promise, timeoutAfter(2_000)])).resolves.toMatchObject({
-			goalId: expect.any(String),
-			reason: "goal_store_changed",
-		});
-		await Promise.race([delivered.promise, timeoutAfter(2_000)]);
-		expect(delivery).toHaveBeenCalledTimes(1);
-		unsubscribe();
-	});
-
 	it("sums a terminal monitor with a background session and keeps waiting when only one drains", async () => {
 		vi.useFakeTimers();
 		const ctx = await makeGoalContext([], "thread-mixed-wakes");
@@ -310,9 +269,3 @@ describe("goal wake sources", () => {
 		});
 	});
 });
-
-function timeoutAfter(ms: number): Promise<never> {
-	return new Promise((_, reject) => {
-		setTimeout(() => reject(new Error("Timed out waiting for goal continuation scheduling")), ms);
-	});
-}

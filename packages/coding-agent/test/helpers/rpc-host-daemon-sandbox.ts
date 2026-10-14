@@ -14,8 +14,8 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { VERSION } from "../../src/config.ts";
-import { readProcessStartTime, waitForStartTime } from "../../src/modes/app-server/daemon/process.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
+import { readProcessStartTime, waitForStartTime } from "../../src/utils/process-identity.ts";
 import { killAndWait, reapProcessesUnder } from "./spawned-host-reaper.ts";
 
 const roots: string[] = [];

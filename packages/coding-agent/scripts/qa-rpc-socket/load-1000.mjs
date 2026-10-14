@@ -4,7 +4,7 @@
  *
  * Boots a host the way the daemon runs (`--mode rpc --multi-session --listen
  * unix://...`, whose default session runtime is in-process), points it at the
- * fake model server from `scripts/qa-app-server/lib/env.mjs` through a generated
+ * fake model server from `scripts/qa-shared/lib/env.mjs` through a generated
  * `models.json`, and drives two cells over ONE socket connection:
  *
  *   (i)   SCALE       open `--sessions` sessions, then `list_sessions

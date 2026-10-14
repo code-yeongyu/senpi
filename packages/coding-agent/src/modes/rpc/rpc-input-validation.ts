@@ -101,6 +101,19 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "enqueueOrder must be a finite number.";
 	}
+	if (
+		(value.type === "abort" ||
+			value.type === "set_model" ||
+			value.type === "set_thinking_level" ||
+			value.type === "get_effect_status") &&
+		(value.effectId !== undefined || value.type === "get_effect_status") &&
+		!(typeof value.effectId === "string" && value.effectId.length > 0 && value.effectId.length <= 256)
+	) {
+		return "effectId must be a non-empty string of at most 256 characters.";
+	}
+	if (value.type === "get_effect_status" && value.sessionPath !== undefined && typeof value.sessionPath !== "string") {
+		return "sessionPath must be a string.";
+	}
 	if (value.type === "append_user_message" && !validContent(value.content)) {
 		return "append_user_message content must be a string or text/image content array.";
 	}

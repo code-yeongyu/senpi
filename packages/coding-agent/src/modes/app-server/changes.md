@@ -1,3 +1,21 @@
+## 2026-10-12 - Archive retired app-server history (senpi#3167)
+
+### What changed
+
+The executable app-server runtime, protocol and dedicated tests have been removed. Only this historical change record remains in this directory.
+
+### Why
+
+Retiring the runtime must not erase its audit trail.
+
+### Why an extension could not handle it
+
+This is repository history, not runtime behavior.
+
+### Expected merge conflict zones
+
+Preserve the records below without restoring the retired runtime.
+
 ## 2026-10-09 - Stale goal display projects paused status (senpi#3026)
 
 ### What changed

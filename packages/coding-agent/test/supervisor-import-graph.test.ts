@@ -61,7 +61,7 @@ function loadedModules(entries: readonly { phase: string; url: string }[]): stri
 }
 
 describe("RPC host supervisor import graph", () => {
-	it("stays inside its module budget: no core module beyond the allowlist, no interactive or app-server module but the daemon process reader", () => {
+	it("stays inside its module budget: no core module beyond the allowlist, no interactive or retired app-server module", () => {
 		const modules = loadedModules(
 			probeImportGraph(repoRoot, `${repoRoot}/packages/coding-agent/dist/modes/rpc/host-lifecycle.js`).entries,
 		);
@@ -72,13 +72,7 @@ describe("RPC host supervisor import graph", () => {
 			core.filter((url) => !SUPERVISOR_CORE_ALLOWLIST.has(url.slice("packages/coding-agent/dist/core/".length))),
 		).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/interactive/"))).toEqual([]);
-		expect(
-			modules.filter(
-				(url) =>
-					url.startsWith("packages/coding-agent/dist/modes/app-server/") &&
-					url !== "packages/coding-agent/dist/modes/app-server/daemon/process.js",
-			),
-		).toEqual([]);
+		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/app-server/"))).toEqual([]);
 		expect(modules.length).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 

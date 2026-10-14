@@ -55,8 +55,7 @@
 		"copy-binary-assets": "shx mkdir -p dist && shx rm -f dist/package.json && shx cp README.md dist/ && shx cp CHANGELOG.md dist/ && shx mkdir -p dist/theme && shx cp src/modes/interactive/theme/*.json dist/theme/ && shx mkdir -p dist/assets && shx cp src/modes/interactive/assets/*.png dist/assets/ && shx mkdir -p dist/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/export-html/ && shx cp -r docs dist/ && shx cp -r examples dist/ && node ../../scripts/copy-codemode-sidecar.mjs dist && shx cp package.json dist/ && shx cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm dist/ && shx mkdir -p dist/native/darwin dist/native/win32 && shx cp -r ../../packages/tui/native/darwin/prebuilds dist/native/darwin/ && shx cp -r ../../packages/tui/native/win32/prebuilds dist/native/win32/ && shx mkdir -p dist/core/extensions/builtin/imagegen/skill && shx cp src/core/extensions/builtin/imagegen/skill/SKILL.md dist/core/extensions/builtin/imagegen/skill/ && node ../../scripts/copy-pty-native.mjs",
 		"test": "node ../../scripts/run-tests.mjs vitest --run",
 		"prepublishOnly": "npm run clean && npm run build",
-		"dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
-		"qa:app-server": "node scripts/qa-app-server/run-all.mjs"
+		"dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput"
 	},
 	"dependencies": {
 		"@earendil-works/chord": "0.99.1",
@@ -92,7 +91,6 @@
 		"picomatch": "4.0.7",
 		"signal-exit": "3.0.7",
 		"turndown": "7.2.4",
-		"ws": "8.21.3",
 		"zod": "4.6.5"
 	},
 	"overrides": {
@@ -113,8 +111,7 @@
 		"typescript": "7.0.2",
 		"vitest": "5.0.1",
 		"@types/picomatch": "4.0.3",
-		"@types/turndown": "5.0.6",
-		"@types/ws": "8.18.1"
+		"@types/turndown": "5.0.6"
 	},
 	"keywords": [
 		"coding-agent",

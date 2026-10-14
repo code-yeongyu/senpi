@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as probes from "../../../src/core/extensions/builtin/terminal/process-start-probe.ts";
-import { processStartTimeMs, sameProcessStartMs } from "../../../src/modes/app-server/daemon/process.ts";
 import { hostDaemonDirectoryPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { createSessionPathReservations, readSessionPathClaims } from "../../../src/modes/rpc/host-reservations.ts";
 import { sessionHeldCheck } from "../../../src/modes/rpc/session-held.ts";
+import { processStartTimeMs, sameProcessStartMs } from "../../../src/utils/process-identity.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
 vi.mock("node:child_process", { spy: true });

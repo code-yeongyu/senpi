@@ -2,9 +2,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { readProcessIdentity, readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { createSessionPathReservations } from "../../../src/modes/rpc/host-reservations.ts";
 import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
+import { readProcessIdentity, readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { startSessionHolder } from "./issue-2951-holder-support.ts";
 
 // The child's start time is recorded UTC-tagged but probed in local form: same instant, still a holder.

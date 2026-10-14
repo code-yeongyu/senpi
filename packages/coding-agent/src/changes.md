@@ -1,3 +1,23 @@
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove app-server dispatch and its mode/trust special cases from CLI startup. The parser refuses the retired command rather than treating it as a prompt.
+
+- `packages/coding-agent/src/main.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - Print-then-exit commands skip startup compile caching (senpi#3166)
 
 ### What changed

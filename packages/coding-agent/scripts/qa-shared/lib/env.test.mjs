@@ -3,8 +3,6 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "vitest";
-import * as legacyCleanup from "../../qa-app-server/lib/cleanup.mjs";
-import * as legacyEnv from "../../qa-app-server/lib/env.mjs";
 import {
 	cleanupAllAndWait,
 	hermeticEnv,
@@ -23,10 +21,8 @@ test("neutral QA helpers retain package roots and hermetic environment", () => {
 	assert.equal(inherited.OPENAI_API_KEY, "not-a-real-key");
 });
 
-test("existing QA imports share scratch ownership with the neutral cleanup module", async () => {
-	assert.equal(legacyEnv.makeScratch, makeScratch);
-	assert.equal(legacyCleanup.cleanupAllAndWait, cleanupAllAndWait);
-	const scratch = legacyEnv.makeScratch("shared-qa-ownership");
+test("neutral QA cleanup owns scratch directories", async () => {
+	const scratch = makeScratch("shared-qa-ownership");
 	try {
 		assert.equal(existsSync(scratch.cwd), true);
 		assert.equal(scratch.env.SENPI_CODING_AGENT_DIR, scratch.agentDir);
@@ -37,7 +33,7 @@ test("existing QA imports share scratch ownership with the neutral cleanup modul
 	}
 });
 
-test("neutral model fixture serves requests without the app-server client", async () => {
+test("neutral model fixture serves streaming completion requests", async () => {
 	const fake = await startFakeModelServer([{ text: "shared-helper-ok" }]);
 	try {
 		const response = await fetch(`${fake.url}/chat/completions`, {

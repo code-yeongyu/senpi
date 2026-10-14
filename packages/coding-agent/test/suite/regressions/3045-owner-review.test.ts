@@ -3,7 +3,6 @@ import { once } from "node:events";
 import { access, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { readHostCrashRecords } from "../../../src/modes/rpc/host-crash-record.ts";
 import {
 	createDaemonDirectories,
@@ -18,6 +17,7 @@ import {
 	writeHostSettings,
 } from "../../../src/modes/rpc/host-daemon-state.ts";
 import { hostLaunchProfile } from "../../../src/modes/rpc/protocol-identity.ts";
+import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import {
 	type GenerationScratch,
 	generationEnv,

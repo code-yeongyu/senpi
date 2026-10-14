@@ -3,10 +3,10 @@ import { once } from "node:events";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { HostEnsureRefusedError } from "../../../src/modes/rpc/host-decision.ts";
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
+import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
 
 // #3054: a legacy drain cannot inherit the supervised child's 95-second circuit breaker.

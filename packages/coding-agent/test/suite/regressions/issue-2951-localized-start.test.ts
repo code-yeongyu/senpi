@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { processMatchesPidFile, processStartTimeMs } from "../../../src/modes/app-server/daemon/process.ts";
+import { processMatchesPidFile, processStartTimeMs } from "../../../src/utils/process-identity.ts";
 
 afterEach(() => vi.unstubAllEnvs());
 

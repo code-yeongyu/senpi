@@ -6,7 +6,7 @@
 import { readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../app-server/daemon/process.ts";
+import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../../utils/process-identity.ts";
 
 export async function reapOrphanedInternalHostDirs(): Promise<void> {
 	try {

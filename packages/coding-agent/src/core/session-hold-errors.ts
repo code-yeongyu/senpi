@@ -3,6 +3,14 @@ import { APP_NAME } from "../config.ts";
 export interface SessionHolder {
 	readonly pid: number;
 	readonly cwd: string | undefined;
+	readonly host_socket?: string;
+	readonly host_instance?: string;
+}
+
+/** Public RPC identity, supplied by the host rather than the client's opaque context. */
+export interface SessionHolderEndpoint {
+	readonly host_socket?: string;
+	readonly host_instance: string;
 }
 
 export class SessionHeldError extends Error {

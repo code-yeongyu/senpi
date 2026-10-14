@@ -27,13 +27,13 @@ export default mergeConfig(
 			silent: "passed-only",
 			// Cap fork concurrency when CI is set. This suite's subprocess-lifecycle tests
 			// (MCP keep-alive/ping-on-call fixtures, the default-on terminal PTY builtin,
-			// and the app-server daemon/websocket listeners) each spawn several real child
+			// and the Native RPC daemon listeners) each spawn several real child
 			// processes. On the 4-vCPU GitHub runner, running these in parallel oversubscribes
 			// CPU/IO and — worse in the release publish job — leaves child processes unreaped
 			// long enough that the forks pool cannot exit, hanging the whole `npm test` step
 			// (observed: coding-agent RUN never summarizes, orphan senpi/esbuild processes).
 			// The same oversubscription flakes the local owner release, whose parallel forks
-			// contend with the release build for CPU (app-server spawn timeouts, perf-bound
+			// contend with the release build for CPU (daemon spawn timeouts, perf-bound
 			// and race-control tests). A per-test timeout cannot fix a pool-shutdown hang.
 			// Cap the forks pool to two workers whenever `CI` is set — GitHub Actions sets it,
 			// and `scripts/release.mjs` sets it for its test gate so the local release

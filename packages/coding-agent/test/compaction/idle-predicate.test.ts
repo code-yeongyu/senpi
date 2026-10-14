@@ -29,9 +29,8 @@ describe("shouldRunIdleCompaction", () => {
 		expect(shouldRunIdleCompaction(baseInput())).toBe(true);
 	});
 
-	it("runs in rpc and app-server modes too", () => {
+	it("runs in rpc mode too", () => {
 		expect(shouldRunIdleCompaction(baseInput({ mode: "rpc" }))).toBe(true);
-		expect(shouldRunIdleCompaction(baseInput({ mode: "app-server" }))).toBe(true);
 	});
 
 	it("does not run when the run will auto-continue", () => {

@@ -8,11 +8,19 @@ import { STOP_WAIT_BUDGET_MS } from "./host-ensure-stop.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
 import { HOST_EXIT_OK, type HostOutcome, refusal } from "./host-outcome.ts";
 import type { HostTarget } from "./host-runner.ts";
+import { detachBeforeClose } from "./host-session-detach.ts";
 import { mapError } from "./host-session-errors.ts";
 import { type HostSessionOpen, openHostSession } from "./host-session-open.ts";
 import { resolveSessionRef, type SessionRef } from "./host-session-ref.ts";
 import { type HostSessionWait, waitForHostSession } from "./host-session-wait.ts";
-import { RpcClient, type RpcClientEvent, RpcCommandError, type RpcTransportGoneError } from "./rpc-client.ts";
+import {
+	isTransportGoneError,
+	RpcClient,
+	type RpcClientEvent,
+	RpcCommandError,
+	type RpcTransportGoneError,
+} from "./rpc-client.ts";
+import { RpcRequestTimeoutError } from "./rpc-request-deadline.ts";
 import type { RpcSessionClosedEvent } from "./rpc-types.ts";
 
 type Model = { provider: string; id: string };
@@ -52,6 +60,8 @@ async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTi
 	let client: RpcClient | undefined;
 	let ensured: EnsuredHost | undefined;
 	let disconnected: ((error: RpcTransportGoneError) => void) | undefined;
+	// A host that stopped answering or a lost transport cannot confirm a detach; the socket close releases.
+	let connectionUnusable = false;
 	try {
 		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {
 			return refusal("refuse", undefined, { reason: "unsupported_endpoint_kind", socket, endpoint_kind: "tui" });
@@ -73,7 +83,13 @@ async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTi
 				);
 			}
 		}
-		client = new RpcClient({ socketPath: socket, onDisconnect: (error) => disconnected?.(error) });
+		client = new RpcClient({
+			socketPath: socket,
+			onDisconnect: (error) => {
+				connectionUnusable = true;
+				disconnected?.(error);
+			},
+		});
 		try {
 			await client.start();
 		} catch (error) {
@@ -198,6 +214,7 @@ async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTi
 				return assertNever(request);
 		}
 	} catch (error) {
+		if (error instanceof RpcRequestTimeoutError || isTransportGoneError(error)) connectionUnusable = true;
 		// Only an explicit open owns a launch spec. No other operation may invent one.
 		if (request.action === "open" && error instanceof RpcCommandError && error.errorCode === "host_stopping")
 			throw error;
@@ -207,6 +224,8 @@ async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTi
 		return mapError(error, socket);
 	} finally {
 		ensured?.release();
+		if (client && !connectionUnusable)
+			await detachBeforeClose(client, (line) => process.stderr.write(`senpi host session: ${line}\n`));
 		await client?.stop();
 	}
 }

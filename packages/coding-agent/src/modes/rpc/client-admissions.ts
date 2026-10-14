@@ -1,4 +1,6 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AgentSession, PromptDisposition } from "../../core/agent-session.ts";
+import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import {
 	clientMessageIdentity,
 	type PreparedClientInput,
@@ -14,6 +16,8 @@ import {
 	clientInputFingerprint,
 	type RpcClientInput,
 } from "./client-admission-record.ts";
+import { EFFECT_OUTCOMES, turnErrorOutcome } from "./effect-outcome-copy.ts";
+import type { EffectActor, EffectOutcome } from "./effect-record.ts";
 
 type AdmissionHooks = {
 	readonly queued: (input: PreparedClientInput) => void;
@@ -30,6 +34,10 @@ export class ClientAdmissions {
 		{ readonly fingerprint: string; readonly result: Promise<ClientMessageAdmission> }
 	>();
 	private restoring = true;
+	/** How the current turn ended, read at its final `agent_end` and written by the `agent_idle` seal. */
+	private turnOutcome: EffectOutcome | undefined;
+	/** The client whose `abort` reached the current turn, for `outcome.abortedBy`. */
+	private turnAbortedBy: EffectActor | undefined;
 	private readonly session: AgentSession;
 	private readonly durableSessionId: string;
 	private readonly unsubscribeAgent: () => void;
@@ -52,6 +60,13 @@ export class ClientAdmissions {
 			}
 		}
 		this.hasIdentities = this.records.size > 0;
+		// A ledger is built once per loaded session, so no turn can be live for a `running` record it
+		// reads: that turn belonged to a process or load that is gone. Seal it before queued input is
+		// restored, or the receipt reads `running` forever.
+		for (const record of [...this.records.values()]) {
+			if (record.state === "running")
+				this.save({ ...record, state: "completed", outcome: EFFECT_OUTCOMES.inputInterruptedByReopen });
+		}
 		// Agent listeners are awaited before the next provider call; a crash cannot turn a
 		// consumed queue record back into a replayable queued admission.
 		this.unsubscribeAgent = session.agent.subscribe((event) => {
@@ -63,9 +78,14 @@ export class ClientAdmissions {
 		});
 		this.unsubscribeSession = session.subscribe((event) => {
 			if (this.restoring || this.durableSessionId !== session.sessionManager.getSessionId()) return;
-			if (event.type === "agent_idle") {
+			if (event.type === "agent_end") {
+				if (!event.willRetry) this.turnOutcome = this.endOutcome(event.messages);
+			} else if (event.type === "agent_idle") {
+				const outcome = this.turnOutcome ?? { kind: "completed" as const };
+				this.turnOutcome = undefined;
+				this.turnAbortedBy = undefined;
 				for (const record of this.records.values()) {
-					if (record.state === "running") this.save({ ...record, state: "completed" });
+					if (record.state === "running") this.save({ ...record, state: "completed", outcome });
 				}
 			} else if (event.type === "queue_update") {
 				const queuedIds = new Set(event.ordered.map((input) => input.clientMessageId));
@@ -85,6 +105,15 @@ export class ClientAdmissions {
 		this.ready = Promise.resolve().then(() => this.restore());
 	}
 
+	/**
+	 * Whenever `runtime` replaces its session, give the outgoing session's still-queued inputs a
+	 * `dropped_by_replace` receipt. Only a ledger that already exists is touched: building one now would
+	 * restore (replay) persisted queued input into a session that is being torn down.
+	 */
+	static sealQueuedOnReplace(runtime: AgentSessionRuntime): () => void {
+		return runtime.onBeforeSessionReplace(() => sessions.get(runtime.session)?.dropQueuedByReplace());
+	}
+
 	static forSession(session: AgentSession): ClientAdmissions {
 		let admissions = sessions.get(session);
 		if (admissions && admissions.durableSessionId !== session.sessionManager.getSessionId()) {
@@ -97,6 +126,50 @@ export class ClientAdmissions {
 			sessions.set(session, admissions);
 		}
 		return admissions;
+	}
+
+	/** The newest record for `clientMessageId` in this session, for effect status queries. */
+	record(clientMessageId: string): ClientAdmissionRecord | undefined {
+		return this.records.get(clientMessageId);
+	}
+
+	/** Remember who aborted the running turn; the turn's receipts name them once it ends. */
+	noteAbort(by: EffectActor): void {
+		if (this.session.isStreaming) this.turnAbortedBy = by;
+	}
+
+	/**
+	 * The session is being replaced (`new_session`, `switch_session`, `fork`) and its queue is about to be
+	 * discarded with it: give every still-queued input an honest terminal receipt in its own transcript, so
+	 * a reopen of that file neither restores it nor reports it as delivered.
+	 */
+	dropQueuedByReplace(): void {
+		if (this.durableSessionId !== this.session.sessionManager.getSessionId()) return;
+		for (const record of [...this.records.values()]) {
+			if (record.state !== "queued") continue;
+			this.save({
+				...record,
+				state: "completed",
+				prepared: undefined,
+				outcome: EFFECT_OUTCOMES.inputDroppedByReplace,
+			});
+		}
+	}
+
+	private endOutcome(messages: readonly AgentMessage[]): EffectOutcome {
+		const abortSource = this.session.currentAbortSource;
+		if (abortSource !== undefined) {
+			return {
+				kind: "aborted",
+				reason: "aborted",
+				detail: "the turn was aborted before it finished",
+				abortSource,
+				...(this.turnAbortedBy === undefined ? {} : { abortedBy: this.turnAbortedBy }),
+			};
+		}
+		const last = messages.at(-1);
+		if (last?.role === "assistant" && last.stopReason === "error") return turnErrorOutcome(last.errorMessage);
+		return { kind: "completed" };
 	}
 
 	private async restore(): Promise<void> {

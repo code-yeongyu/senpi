@@ -4,7 +4,6 @@ import { rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { writeHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { writeHostSettings } from "../../../src/modes/rpc/host-daemon-state.ts";
@@ -15,6 +14,7 @@ import { runHostSessionRequest } from "../../../src/modes/rpc/host-session-runne
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
 import * as ownershipLock from "../../../src/modes/rpc/ownership-safe-lock.ts";
 import { RpcClient, RpcCommandError } from "../../../src/modes/rpc/rpc-client.ts";
+import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { generationEnv, generationScratch, JsonlPeer } from "../../helpers/rpc-generation-support.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-stopping-supervisor.ts");

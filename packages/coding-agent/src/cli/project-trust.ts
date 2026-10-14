@@ -12,8 +12,6 @@ function toExtensionMode(mode: AppMode): ExtensionMode {
 		case "json":
 		case "rpc":
 			return mode;
-		case "app-server":
-			return "print";
 	}
 }
 

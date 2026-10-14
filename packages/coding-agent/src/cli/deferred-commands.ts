@@ -1,17 +1,16 @@
 /**
  * Route-first dispatch for the one-shot commands whose implementations are heavy module graphs.
  *
- * `main()` calls the package, config and app-server handlers unconditionally, and each of them
+ * `main()` calls the package and config handlers unconditionally, and each of them
  * starts by rejecting argv that does not select it. Statically importing them to ask that question
- * made every launch - interactive, print, RPC - evaluate `package-manager-cli.ts` and the whole
- * `modes/app-server/` tree (70 modules) before argv was even parsed. The rejection is a single
+ * made every launch - interactive, print, RPC - evaluate `package-manager-cli.ts`
+ * before argv was even parsed. The rejection is a single
  * argv[0] comparison, so it happens here and the implementation stays behind an `await import(...)`
  * that only the selected command pays for.
  *
  * The argv[0] conditions below mirror the ones inside the implementations: `parsePackageCommand()`
- * and `handleConfigCommand()` in `../package-manager-cli.ts`, `handleAppServerCommand()` in
- * `./app-server-command.ts`. The package verbs are pinned to the `PackageCommand` union at compile
- * time; the two string literals are pinned by `test/suite/regressions/1781-main-lazy-modes.test.ts`.
+ * and `handleConfigCommand()` in `../package-manager-cli.ts`. The package verbs are pinned to
+ * the `PackageCommand` union at compile time.
  */
 import type { PackageCommand, PackageCommandRuntimeOptions } from "../package-manager-cli.ts";
 
@@ -27,7 +26,6 @@ const PACKAGE_COMMAND_ARGV = {
 const PACKAGE_COMMAND_ALIAS = "uninstall";
 
 export const CONFIG_COMMAND_ARGV = "config";
-export const APP_SERVER_COMMAND_ARGV = "app-server";
 export const HOST_COMMAND_ARGV = "host";
 export const SCHEDULE_COMMAND_ARGV = "schedule";
 
@@ -53,12 +51,6 @@ export async function dispatchConfigCommand(
 	if (args[0] !== CONFIG_COMMAND_ARGV) return false;
 	const { handleConfigCommand } = await import("../package-manager-cli.ts");
 	return await handleConfigCommand(args, runtimeOptions);
-}
-
-export async function dispatchAppServerCommand(args: readonly string[]): Promise<boolean> {
-	if (args[0] !== APP_SERVER_COMMAND_ARGV) return false;
-	const { handleAppServerCommand } = await import("./app-server-command.ts");
-	return await handleAppServerCommand(args);
 }
 
 /**

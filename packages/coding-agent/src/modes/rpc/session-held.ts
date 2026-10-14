@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readProcessStartMs } from "../../core/extensions/builtin/terminal/process-start-probe.ts";
 import { foreignSessionHolders } from "../../core/foreign-session-holders.ts";
-import { processStartTimeMs } from "../app-server/daemon/process.ts";
+import { processStartTimeMs } from "../../utils/process-identity.ts";
 import type { RpcInboundRecord } from "./rpc-types.ts";
 import { RPC_ERROR_SESSION_HELD } from "./rpc-types.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
@@ -11,6 +11,7 @@ import { type RpcSessionEntry, RpcSessionRegistryError } from "./session-registr
 // a read or a control needed to finish/cancel an already-admitted turn.
 const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
 	"get_state",
+	"get_effect_status",
 	"get_steering_messages",
 	"get_follow_up_messages",
 	"get_available_models",
@@ -115,7 +116,12 @@ export function sessionHeldCheck(
 		const foreign = holders.filter((holder) => !family.includes(holder.pid));
 		if (foreign.length > 0)
 			throw new RpcSessionRegistryError(RPC_ERROR_SESSION_HELD, undefined, {
-				holders: foreign.map(({ pid, cwd }) => ({ pid, ...(cwd === undefined ? {} : { cwd }) })),
+				holders: foreign.map(({ pid, cwd, host_socket, host_instance }) => ({
+					pid,
+					...(cwd === undefined ? {} : { cwd }),
+					...(host_socket === undefined ? {} : { host_socket }),
+					...(host_instance === undefined ? {} : { host_instance }),
+				})),
 			});
 	};
 }

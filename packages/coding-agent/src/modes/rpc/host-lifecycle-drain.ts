@@ -5,7 +5,7 @@
  * which keeps the supervisor's orchestration (senpi#2566). Nothing here sends a terminating signal.
  */
 import type { ChildProcess } from "node:child_process";
-import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
+import { processIsLive, readProcessStartTime } from "../../utils/process-identity.ts";
 import { DEFAULT_HANDOFF_GRACE_MS, HANDOFF_GRACE_MS_ENV, parseIdleExitMs } from "./host-lifecycle-policy.ts";
 import { watchForSupersession } from "./host-supersession.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";

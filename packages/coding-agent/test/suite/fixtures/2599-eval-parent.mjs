@@ -1,12 +1,11 @@
 import childProcess from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultSpawnWorker } from "../../../src/beta/omo-local-update-worker.ts";
 import { runPasses } from "../../../src/cli/schedule-watch.ts";
 import { createScheduledJob } from "../../../src/core/extensions/builtin/schedule/store.ts";
-import { spawnDaemon } from "../../../src/modes/app-server/daemon/spawn.ts";
 
 const root = process.env.SENPI_ARGV_REPRO_ROOT;
 const kind = process.env.SENPI_ARGV_REPRO_CASE;
@@ -43,14 +42,7 @@ if (process.env.SENPI_ARGV_REPRO_PARENT_PID) {
 	let launchError;
 	try {
 		try {
-			if (kind === "daemon") {
-				const socket = process.platform === "win32" ? `\\\\.\\pipe\\${basename(root)}` : join(root, "d.sock");
-				await spawnDaemon(
-					{ pidFile: join(root, "pid.json"), settingsFile: join(root, "settings.json"), stderrLog: join(root, "daemon.log") },
-					{ listen: { kind: "unix", url: `unix://${socket}`, path: socket }, extensions: [] },
-					entry,
-				);
-			} else if (kind === "update") {
+			if (kind === "update") {
 				const outcome = defaultSpawnWorker({ agentDir: root, force: false });
 				if (!outcome.ok) throw new Error(outcome.message);
 			} else {

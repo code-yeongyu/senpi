@@ -18,6 +18,69 @@
 - The dependency pin line in `packages/coding-agent/package.json` and the matching `bun.lock` entries.
 - The SDK entries in the root `package-lock.json` and `packages/coding-agent/install-lock/package-lock.json` at the next dependency sync.
 
+## 2026-10-13 - Cover retired commands after leading options (senpi#3167)
+
+### What changed
+
+Extend `test/suite/regressions/3167-retired-app-server.test.ts` with leading boolean and valued options, early rejection before model-runtime creation, and positive controls for explicit modes, print values, delimiter-separated text, ordinary prompts and option values.
+
+### Why
+
+The first retirement guard missed legacy commands when a recognized option came first.
+
+### Why an extension could not handle it
+
+These tests verify CLI parsing before extensions or a model runtime are initialized.
+
+### Expected merge conflict zones
+
+The invocation tables and main-entry assertion in the retirement regression.
+
+## 2026-10-13 - Keep shared TPS regressions on supported modes (senpi#3167)
+
+### What changed
+
+Remove the retired app-server value from the context fixture and negative-mode cases in `test/suite/regressions/3236-tps-notify-tui-only.test.ts`, introduced by the main merge. Preserve the TUI notice and zero-output/elapsed assertions, and the RPC, JSON and print no-notice cases.
+
+### Why
+
+The retired protocol has no runnable mode; the shared TPS regression must continue covering every surviving mode.
+
+### Why an extension could not handle it
+
+This updates a repository test fixture, not runtime behavior.
+
+### Expected merge conflict zones
+
+The context mode union and `it.each` mode array in the TPS regression.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Remove the dedicated app-server QA command, direct ws and @types/ws dependencies, and the deleted generated-tree build exclusion. Keep Native RPC QA on qa-shared, with a protocol-neutral fake API key.
+
+- `packages/coding-agent/package.json`
+- `packages/coding-agent/scripts/qa-rpc-socket/ensure-host.mjs`
+- `packages/coding-agent/scripts/qa-rpc-socket/host-lifecycle.mjs`
+- `packages/coding-agent/scripts/qa-rpc-socket/load-1000.mjs`
+- `packages/coding-agent/scripts/qa-shared/lib/env.mjs`
+- `packages/coding-agent/tsconfig.build.json`
+- `packages/coding-agent/vitest.config.ts`
+- `packages/coding-agent/test/compile-cache-invocation.test.ts`: retain session-cache coverage with JSON print mode instead of the retired command; preserve the legacy OpenAI provider argument cases.
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - Native RPC QA owns neutral helper imports (Refs senpi#3167)
 
 ### What changed

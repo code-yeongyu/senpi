@@ -1,3 +1,62 @@
+## 2026-10-14 - Pulse the footer watching glyph while idling on monitors (senpi#3270)
+
+### What changed
+
+- `monitor-status.ts`: `formatMonitorStatus()` takes an optional `animate` flag; when set, the `watching` glyph pulses through a width-1 frame set (`◉◎○`) derived from the clock.
+- `monitor-status-ticker.ts`: `tick()` now calls `formatMonitorStatus()` and re-reads the animate gate inside the stale-context `try` (#2549), so a stale context during formatting or gating is swallowed the same way as the status write. The pulse advances on the existing tick; no new timer.
+- `extension.ts`: passes the animate gate (TUI mode, agent idle, `reducedMotion` off) to the ticker. `reducedMotion` is read once per session.
+
+### Why
+
+A long idle wait on monitors looked frozen; the pulse shows the session is alive.
+
+### Why an extension could not handle it
+
+The footer monitor status and its ticker are owned by this builtin.
+
+### Expected merge conflict zones
+
+`monitor-status-ticker.ts` `tick()` body; `formatMonitorStatus()` signature and glyph selection in `monitor-status.ts`.
+
+## 2026-10-13 - Session workers share the host process start instant (senpi#3255)
+
+### What changed
+
+- `process-identity.ts` accepts the host's process-start instant from session worker data. Other callers keep the existing load-time capture.
+
+### Why
+
+Bun worker uptime starts at isolate creation. A worker lease using that instant was removed by the host's admission recheck as a reused PID, leaving holder endpoint evidence undiscoverable.
+
+### Why an extension could not handle it
+
+The identity is needed when the runtime first publishes its lease.
+
+### Expected merge conflict zones
+
+`process-identity.ts` load-time start capture.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Import the unchanged shared process identity implementation from utils/process-identity.ts instead of the retired app-server tree.
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/process-identity.ts`
+- `packages/coding-agent/src/core/extensions/builtin/terminal/process-start-probe.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - An exited session keeps its final screen, not its screen model (senpi#3171)
 
 ### What changed

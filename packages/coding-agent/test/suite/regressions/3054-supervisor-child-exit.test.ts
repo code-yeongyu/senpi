@@ -3,7 +3,6 @@ import { once } from "node:events";
 import { access, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { processStartTimeMs, readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { readHostCrashRecords } from "../../../src/modes/rpc/host-crash-record.ts";
 import {
 	createDaemonDirectories,
@@ -20,6 +19,7 @@ import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
 import { hostChildAlive } from "../../../src/modes/rpc/host-stalled-evidence.ts";
 import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
 import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
+import { processStartTimeMs, readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
 import { type GenerationScratch, generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
 import { processAlive } from "../../helpers/spawned-host-reaper.ts";

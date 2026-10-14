@@ -19,7 +19,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { open, rm, writeFile } from "node:fs/promises";
-import { waitForStartTime } from "../app-server/daemon/process.ts";
+import { waitForStartTime } from "../../utils/process-identity.ts";
 import { generationPaths, HOST_STATE_FILE_MODE, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import {
 	type HostRegistration,

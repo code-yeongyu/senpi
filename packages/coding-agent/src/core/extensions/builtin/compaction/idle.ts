@@ -6,7 +6,7 @@ import { WARM_GENERATION_FLOOR_RATIO } from "./speculation-lead.ts";
 export const IDLE_COMPACTION_INSTRUCTIONS =
 	"Proactively compact at idle before the next agent turn, while the user is not waiting.";
 
-const PERSISTENT_MODES: ReadonlySet<ExtensionMode> = new Set(["tui", "rpc", "app-server"]);
+const PERSISTENT_MODES: ReadonlySet<ExtensionMode> = new Set(["tui", "rpc"]);
 
 export interface IdleCompactionDecision {
 	willRetry: boolean;

@@ -1,10 +1,10 @@
 import { chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { processMatchesPidFile, readProcessStartTime } from "../src/modes/app-server/daemon/process.ts";
 import { HostEnsureRefusedError } from "../src/modes/rpc/host-decision.ts";
 import { ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { stopHost } from "../src/modes/rpc/host-stop.ts";
+import { processMatchesPidFile, readProcessStartTime } from "../src/utils/process-identity.ts";
 import {
 	ensureFixtureHost,
 	fixturePath,

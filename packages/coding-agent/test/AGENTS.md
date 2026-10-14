@@ -13,8 +13,8 @@ compaction/        Compaction mechanics and policy (own AGENTS.md)
 session-manager/   Persistence, branching, context construction
 dynamic-prompt/    Dynamic system-prompt + workstation fact coverage
 tool-pair-guard/   Provider payload tool-pair sanitization tests
-client/            RPC/app-server client coverage
-server/            App-server/server surface coverage
+client/            RPC client coverage
+server/            Server surface coverage
 extensions/        Extension loading and API behavior
 cursor-cli-oauth/  Cursor CLI OAuth provider-lane coverage (own AGENTS.md)
 tool-search/       Shared tool-catalog / `tool_search` exposure coverage
@@ -25,7 +25,6 @@ helpers/           Shared subprocess/QA/fixture helpers
 benchmarks/        Perf-oriented probes (not part of the default correctness gate)
 examples/          Coverage for the shipped `examples/` extensions
 manual-qa/         Explicit manual QA scripts (excluded from the default suite; SENPI_MANUAL_QA=1 to run a *.test.ts)
-qa/app-server/     Real app-server surface drivers (own AGENTS.md)
 integration/       Explicitly gated real-provider tests
 fixtures/, goldens/ Shared deterministic inputs and snapshots
 model-runtime*.test.ts / models-store.test.ts / remote-catalog-provider.test.ts / runtime-credentials.test.ts
@@ -50,7 +49,7 @@ Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runt
 - Use `suite/regressions/<issue>-<slug>.test.ts` for issue regressions.
 - Do not extend the legacy `test-harness.ts` unless the preferred harness lacks a required capability.
 - Keep fixtures deterministic, local, and secret-free. Spawned process tests must clean up children, sockets, and temporary directories.
-- Tests involving PTY, MCP, app-server, or other subprocess-heavy surfaces must remain reliable with `CI=1`, where Vitest uses one fork.
+- Tests involving PTY, MCP, RPC hosts, or other subprocess-heavy surfaces must remain reliable with `CI=1`, where Vitest uses one fork.
 
 ## QUARANTINE CONTRACT (load-bearing)
 
@@ -66,7 +65,6 @@ Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runt
 ## LIVE AND MANUAL SURFACES
 
 - `integration/` is opt-in only with `PI_RUN_INTEGRATION=1`; it may use real credentials and incur cost.
-- `qa/app-server/` contains focused real-surface drivers. The separate `bun run qa:app-server` command runs the packaged handshake, multiclient, approval, and real-client probes.
 - Runtime changes covered here still require the repository's `senpi-qa` evidence gate when the root guide requires it.
 
 ## VALIDATION

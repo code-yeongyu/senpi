@@ -1,3 +1,61 @@
+## 2026-10-13 - Treat a trailing print flag like an explicit mode after the retired command (senpi#3167)
+
+### What changed
+
+- `args.ts`: `--verbose app-server -p` now keeps `app-server` as the print prompt, exactly like `--verbose app-server --mode json`. The retired-command rejection applies only when neither an explicit mode nor print mode was requested.
+
+### Why
+
+The Opus review of #3223 found that the two explicit-mode spellings disagreed: a trailing `--mode` kept the prompt, while a trailing `-p` rejected it.
+
+### Why an extension could not handle it
+
+Argument parsing runs before any extension loads, so only the CLI parser can decide whether a positional word is a prompt.
+
+### Expected merge conflict zones
+
+The retired-command check near the end of `parseArgs` in `args.ts`.
+
+## 2026-10-13 - Reject retired commands after leading options (senpi#3167)
+
+### What changed
+
+Reject an implicit app-server command after recognized leading options before it can become a model prompt. Keep explicit modes, including a mode supplied after the positional argument, explicit print values, delimiter-separated text, option values and non-command prompt tokens unchanged.
+
+### Why
+
+The initial retirement guard checked only the first raw argument, so a former invocation such as `--verbose app-server` could silently become a prompt.
+
+### Why an extension could not handle it
+
+Argument rejection must happen before model-runtime or extension initialization.
+
+### Expected merge conflict zones
+
+The positional and final-validation branches in `args.ts`, and the focused `3167-retired-app-server.test.ts` regression cases.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Reject the retired app-server command before runtime creation, remove its lazy dispatch and help entries, and drop its project-trust mode conversion. Explicit prompt text and Native RPC arguments retain their normal parsing.
+
+- `packages/coding-agent/src/cli/args.ts`
+- `packages/coding-agent/src/cli/deferred-commands.ts`
+- `packages/coding-agent/src/cli/project-trust.ts`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-10 - Session control CLI over the shared host (senpi#3073)
 
 ### What changed

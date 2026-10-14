@@ -12,12 +12,12 @@ import { realpathSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { HostEnsureRefusedError } from "../../../src/modes/rpc/host-decision.ts";
 import { type EnsuredHost, ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { probeHost } from "../../../src/modes/rpc/host-probe.ts";
 import { signalGeneration, stopHost } from "../../../src/modes/rpc/host-stop.ts";
+import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import {
 	GENERATION_HOST_ARGS,
 	type GenerationScratch,

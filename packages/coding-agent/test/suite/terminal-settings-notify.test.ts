@@ -168,7 +168,6 @@ describe("terminal notifier guards", () => {
 		const modeMatrix = [
 			{ mode: "tui", surfaces: true },
 			{ mode: "rpc", surfaces: true },
-			{ mode: "app-server", surfaces: true },
 			{ mode: "print", surfaces: false },
 			{ mode: "json", surfaces: false },
 		] as const;

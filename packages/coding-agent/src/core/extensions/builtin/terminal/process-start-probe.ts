@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { processStartTimeMs } from "../../../../modes/app-server/daemon/process.ts";
+import { processStartTimeMs } from "../../../../utils/process-identity.ts";
 
 const LINUX_CLOCK_TICKS_PER_SECOND = 100;
 

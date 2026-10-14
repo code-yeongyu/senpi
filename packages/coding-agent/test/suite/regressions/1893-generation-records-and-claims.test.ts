@@ -8,11 +8,11 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readProcessStartTime } from "../../../src/modes/app-server/daemon/process.ts";
 import { createHostDaemonPaths, type HostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts";
 import { createSessionPathReservations, reservationFile } from "../../../src/modes/rpc/host-reservations.ts";
 import { readHostStatus } from "../../../src/modes/rpc/host-status.ts";
+import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { waitForPidGone } from "../../helpers/spawned-host-reaper.ts";
 
 const roots: string[] = [];

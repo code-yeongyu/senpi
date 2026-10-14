@@ -26,7 +26,7 @@ goal per thread, re-engages the agent via hidden continuation prompts. 34 `.ts` 
 ## NO BUDGET-DRIVEN BEHAVIOR
 
 The deliberate divergence from `pi-goal` / codex `ext/goal`. `Goal` may persist an optional
-`tokenBudget` **only** as inert app-server wire-compatibility metadata; the tools neither
+`tokenBudget` **only** as inert legacy metadata; the tools neither
 create nor interpret it. No `budgetLimited`/`usageLimited` status, no budget-limit continuation,
 no budget-driven transition. `tokensUsed`/`timeUsedSeconds` are display-only. Status is
 `active | paused | blocked | complete`; `blocked` carries `blockedReason`/`blockedAt` and

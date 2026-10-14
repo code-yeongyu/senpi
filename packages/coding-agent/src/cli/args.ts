@@ -116,6 +116,15 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		diagnostics: [],
 	};
 
+	if (args[0] === "app-server") {
+		result.diagnostics.push({
+			type: "error",
+			message: `The app-server command has been removed. Use "${APP_NAME} --mode rpc" for process integration.`,
+		});
+		return result;
+	}
+
+	let hasRetiredCommand = false;
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 
@@ -321,8 +330,17 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		} else if (arg.startsWith("-") && !arg.startsWith("--")) {
 			result.diagnostics.push({ type: "error", message: `Unknown option: ${arg}` });
 		} else if (!arg.startsWith("-")) {
+			if (result.messages.length === 0 && arg === "app-server") hasRetiredCommand = true;
 			result.messages.push(arg);
 		}
+	}
+
+	if (hasRetiredCommand && result.mode === undefined && !result.print) {
+		result.messages = [];
+		result.diagnostics.push({
+			type: "error",
+			message: `The app-server command has been removed. Use "${APP_NAME} --mode rpc" for process integration.`,
+		});
 	}
 
 	return result;
@@ -358,10 +376,6 @@ ${chalk.bold("Commands:")}
                                  Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} models discover <provider>
                                  Add an OpenAI-compatible provider's /models listing to models.json
-  ${APP_NAME} app-server [--listen <url>] [--extension <path>]...
-                                 Serve agent sessions over the Codex app-server protocol
-  ${APP_NAME} app-server daemon <start|stop|status|restart> [--listen <url>] [--extension <path>]...
-                                 Manage the app-server daemon
   ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [--launch-spec <file>]
                                  Get, inspect or end the shared RPC daemon (one JSON line per call)
   ${APP_NAME} schedule <list|cancel|run> [--watch] [--exec <command>]
@@ -483,10 +497,6 @@ ${chalk.bold("Examples:")}
   # Export a session file to HTML
   ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
   ${APP_NAME} --export session.jsonl output.html
-
-  # Start Codex app-server protocol scaffolding
-  ${APP_NAME} app-server --listen stdio://
-  ${APP_NAME} app-server --listen ws://127.0.0.1:18991
 
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_AUTH_TOKEN             - Anthropic bearer auth token

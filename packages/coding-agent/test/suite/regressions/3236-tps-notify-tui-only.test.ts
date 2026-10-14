@@ -7,7 +7,7 @@ import tpsExtension from "../../../src/core/extensions/builtin/tps.ts";
 // when ctx.mode is "tui".
 
 type ExtensionContextLike = {
-	mode: "tui" | "rpc" | "app-server" | "json" | "print";
+	mode: "tui" | "rpc" | "json" | "print";
 	hasUI: true;
 	ui: {
 		notify(message: string): void;
@@ -94,7 +94,7 @@ describe("tps builtin extension notify gating (senpi#3236)", () => {
 		expect(notifications).toEqual(["TPS 100.0 tok/s. Cache hit 75.0%, 1.0s"]);
 	});
 
-	it.each(["rpc", "app-server", "json", "print"] as const)("does not notify in %s mode", async (mode) => {
+	it.each(["rpc", "json", "print"] as const)("does not notify in %s mode", async (mode) => {
 		vi.useFakeTimers();
 		vi.setSystemTime(0);
 		const notifications: string[] = [];

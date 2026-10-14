@@ -12,6 +12,12 @@ on:
   schedule:
     - cron: '23 1 * * *'
   workflow_dispatch:
+  # #3243: when main's catalog data moves (another refresh, a release regeneration), regenerate the
+  # refresh branch on top of it at once, so an open refresh PR never carries an older snapshot.
+  push:
+    branches: [main]
+    paths:
+      - 'packages/ai/src/providers/data/**'
   pull_request:
     paths:
       - '.github/workflows/opengateway-catalog-refresh.yml'

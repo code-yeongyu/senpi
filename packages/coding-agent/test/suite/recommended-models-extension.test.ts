@@ -1,4 +1,3 @@
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import { builtinExtensions } from "../../src/core/extensions/builtin/index.ts";
@@ -11,9 +10,7 @@ import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { createAgentSession } from "../../src/core/sdk.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
-import { createAppServerRuntime } from "../../src/modes/app-server/runtime.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
-import { configureModeEnv, scratchRoot, seedFauxConfig } from "./app-server-mode-harness.ts";
 import { createHarness, model } from "./recommended-models-harness.ts";
 
 afterEach(() => {
@@ -283,28 +280,6 @@ describe("recommended-models builtin", () => {
 			expect(events).toEqual([{ type: "session_start", reason: "startup", initialModelProvenance: "settings" }]);
 		} finally {
 			session.dispose();
-		}
-	});
-
-	it("#given an app-server faux settings default #when recommended models initialize #then the faux model remains selected", async () => {
-		const root = await scratchRoot();
-		const faux = registerFauxProvider();
-		faux.setResponses([fauxAssistantMessage("faux response")]);
-		await seedFauxConfig(root, faux);
-		configureModeEnv(root);
-		const runtime = createAppServerRuntime(() => {});
-		const entry = await runtime.threads.createThread({ cwd: root });
-		try {
-			expect(entry.session.model?.provider).toBe(faux.getModel().provider);
-			expect(entry.session.model?.id).toBe(faux.getModel().id);
-
-			await entry.session.prompt("use the configured faux model");
-
-			expect(faux.state.callCount).toBe(1);
-		} finally {
-			entry.session.dispose();
-			runtime.dispose();
-			faux.unregister();
 		}
 	});
 

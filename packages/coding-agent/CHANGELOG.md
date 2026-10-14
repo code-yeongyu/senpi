@@ -8,11 +8,17 @@
 
 - The footer's `watching` indicator now pulses gently while the agent idles on monitors, so a long wait no longer looks frozen. Set `reducedMotion: true` to keep it static ([#3281](https://github.com/code-yeongyu/senpi/pull/3281), requested by @devxoul).
 
+- RPC effect ledger (capability `effect_ledger`): `abort`, `set_model` and `set_thinking_level` take an optional `effectId` and get a durable receipt written before the effect is applied; a retry with the same id replays the receipt instead of acting twice, and a different request under that id is refused with `effect_id_conflict`. `get_effect_status` answers any receipt by id, including inputs by `clientMessageId`, from a loaded session or from a transcript on disk. Input receipts now say how their turn ended (completed, aborted and by whom, error), a reopened session seals receipts its dead process left running, and queued input dropped by `new_session`/`switch_session` reads `failed` instead of vanishing ([#3199](https://github.com/code-yeongyu/senpi/issues/3199)).
+
 ### Changed
 
 ### Fixed
 
+- A provider whose credentials were locked when the store was first read no longer reports "not configured" to `get_auth_providers` after the lock clears, while its models already work. The status now re-reads the store the same way model availability does (omo-desktop-app#2249).
+
 ### Removed
+
+- Removed the Codex `app-server` command, daemon, generated protocol and compatibility QA harness. Process integrations use Native RPC (`senpi --mode rpc` or `senpi host`); OpenAI API and ChatGPT subscription models remain supported, and historical model-change records remain readable. Extensions that compared `ctx.mode` with `"app-server"` must drop that branch: `ExtensionMode` no longer includes it ([#3167](https://github.com/code-yeongyu/senpi/issues/3167), requested by @code-yeongyu).
 
 ## [2026.10.13] - 2026-10-13
 
@@ -21,6 +27,8 @@
 ### Added
 
 - RPC clients now see scheduled goal continuations, their due time, and their resumption through the `goal_continuation_scheduled`, `goal_continuation_timer_state`, and `goal_continuation_resumed` extension events. The `goal_continuation_fire_now` extension request runs an armed continuation immediately through its normal eligibility checks; a timer held while the user types stays held ([#3208](https://github.com/code-yeongyu/senpi/pull/3208)).
+
+- Shared RPC hosts publish each session holder's public socket and host instance in validated lease evidence. Clients can pass `open_session.expectedHostInstance` to attach only to that live host generation; a changed owner or released path returns a typed refusal with a rediscovery action instead of creating another writer ([#3255](https://github.com/code-yeongyu/senpi/issues/3255), [#3257](https://github.com/code-yeongyu/senpi/pull/3257)).
 
 ### Changed
 
@@ -31,6 +39,8 @@
 ### Fixed
 
 - Busy multi-session RPC hosts now reclaim freed heap pages when their session count drops and their footprint is at least 2 GB, even while other children keep running. Drops during the trim interval stay pending until it expires, including when a new session replaces the closed one between checks. Busy-host collections wait at least a minute and at least 100 times the previous collection pause; `host_trimmed` reports `sessions` and `pauseMs`. This prevents long sessions with many concurrent children from retaining their peak memory footprint ([#3240](https://github.com/code-yeongyu/senpi/pull/3240), [#3221](https://github.com/code-yeongyu/senpi/pull/3221)).
+
+- `senpi host session` commands now return only after the host has dropped their attachment: on a host that advertises the new `detach_connection` capability the client asks for the detach and waits for the answer (bounded at 5 s, with one plain line if it never comes), so a listing right after `open` no longer shows the short-lived client as still attached. A connection leaving a session that another client also holds now releases its attachment at once, even while a turn runs; only the last attachment of a non-retained session still waits for the turn to settle. After a request timed out or the connection was lost, the client closes without asking for the detach. Older hosts keep the release on socket close. ([#3238](https://github.com/code-yeongyu/senpi/issues/3238))
 
 - Per-run TPS/cache-hit notices now appear only in the TUI, preventing an extra info row after every agent run in RPC clients ([#3237](https://github.com/code-yeongyu/senpi/pull/3237)).
 

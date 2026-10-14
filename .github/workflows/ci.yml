@@ -404,8 +404,8 @@ jobs:
         run: node ../../scripts/run-tests.mjs vitest run test/suite/host-cli-win32.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
-      - name: Run app-server daemon tests
-        run: node ../../scripts/run-tests.mjs vitest run test/suite/app-server-daemon.test.ts --reporter=verbose
+      - name: Run shared process identity tests
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/process-identity.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
       # endpoint.json written and read back on Windows paths: registry_version, endpoint_kind, and a

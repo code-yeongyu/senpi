@@ -43,6 +43,13 @@ export const QUESTION_CAPABILITY = "question";
 export const RETAIN_ON_DISCONNECT_CAPABILITY = "retain_on_disconnect";
 
 /**
+ * Advertised by a multi-session host that answers `detach_connection`: it drops every attachment the
+ * asking connection holds and replies only once that is done, so a short-lived client can return knowing
+ * no other connection will still see it attached (senpi#3238).
+ */
+export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
+
+/**
  * HOST capability: this host accepts `open_session.context`, hands it to that session's
  * extensions as `pi.sessionContext`, and republishes it on `list_sessions { include_workers: true }`.
  */

@@ -13,8 +13,8 @@ const execFileAsync = promisify(execFile);
 const fixture = fileURLToPath(new URL("../fixtures/2599-eval-parent.mjs", import.meta.url));
 const loader = fileURLToPath(import.meta.resolve("tsx"));
 
-// Regression: senpi#2599. These are the three issue-listed launchers reachable from a Node eval caller.
-for (const kind of ["daemon", "schedule", "update"] as const) {
+// Regression: senpi#2599. These are the remaining issue-listed launchers reachable from a Node eval caller.
+for (const kind of ["schedule", "update"] as const) {
 	it(`Given an eval caller when ${kind} starts a script child then the caller runs once`, async () => {
 		const root = await mkdtemp(join(tmpdir(), "s2599-"));
 		try {
@@ -52,9 +52,7 @@ for (const kind of ["daemon", "schedule", "update"] as const) {
 			expect(result.receipt.execArgv).toEqual(["--import", loader]);
 			expect(result.launchError).toBeNull();
 			expect(result.childrenSettled).toBe(true);
-			expect(result.receipt.argv).toContain(
-				kind === "daemon" ? "app-server" : kind === "update" ? "update" : "--session",
-			);
+			expect(result.receipt.argv).toContain(kind === "update" ? "update" : "--session");
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

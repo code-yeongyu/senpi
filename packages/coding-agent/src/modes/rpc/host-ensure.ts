@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import { processIsLive, readProcessStartTime } from "../app-server/daemon/process.ts";
+import { processIsLive, readProcessStartTime } from "../../utils/process-identity.ts";
 import {
 	createDaemonDirectories,
 	createHostDaemonPaths,

@@ -190,9 +190,11 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	thinkingLevel: string;
 	/** Explicit selector provenance. Omitted by legacy entries and SDK-defaulted fallbacks. */
 	thinkingSelection?: ThinkingSelection;
-	/** Set when a model switch re-applied this level: the switch's source (senpi#2870). */
+	/** Source of a model switch or explicit thinking-level request, including RPC requests without an effectId. */
 	triggerSource?: ModelChangeSource;
 	triggerActor?: string;
+	/** The RPC model or thinking-level effect that applied this value. */
+	effectId?: string;
 }
 
 export interface ConfigurationUpdateEntry extends SessionEntryBase {
@@ -215,6 +217,8 @@ export interface ModelChangeEntry extends SessionEntryBase {
 	actor?: string;
 	/** The switch landed while a turn was streaming. */
 	duringTurn?: boolean;
+	/** The RPC `effectId` that asked for the switch, so a reopen can tell the receipt was applied. */
+	effectId?: string;
 }
 
 /**
@@ -1757,6 +1761,7 @@ export class SessionManager {
 			thinkingSelection,
 			...(trigger === undefined ? {} : { triggerSource: trigger.source }),
 			...(trigger?.actor === undefined ? {} : { triggerActor: trigger.actor }),
+			...(trigger?.effectId === undefined ? {} : { effectId: trigger.effectId }),
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1815,6 +1820,7 @@ export class SessionManager {
 			...(attribution === undefined ? {} : { source: attribution.origin.source }),
 			...(attribution?.origin.actor === undefined ? {} : { actor: attribution.origin.actor }),
 			...(attribution?.duringTurn ? { duringTurn: true } : {}),
+			...(attribution?.origin.effectId === undefined ? {} : { effectId: attribution.origin.effectId }),
 		};
 		this._appendEntry(entry);
 		return entry.id;

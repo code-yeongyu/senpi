@@ -56,7 +56,7 @@ function result(
 }
 /**
  * Deliver a settled async answer as one framed user message. The extension owns
- * this so every surface (interactive TUI, RPC, app-server) only has to RESOLVE
+ * this so every surface (interactive TUI, RPC) only has to RESOLVE
  * the question; a surface that delivered on its own would send it twice. It
  * steers into a running turn and follows up when idle - a follow-up always
  * triggers a turn, which is what wakes the model after a timeout. A cancelled

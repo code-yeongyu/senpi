@@ -94,6 +94,11 @@ export class WorkerSessionRegistry {
 			const owner = key ? this.reservations.owner(key) : undefined;
 			if (key && owner) return this.attach(owner, key, options, profile);
 		}
+		if (options?.attachOnly)
+			throw new RpcSessionRegistryError("session_not_held", undefined, {
+				reason: "session_not_held",
+				action: "rediscover_holder",
+			});
 		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
 		const handle = `rpc-${++this.serial}`;
 		const claims = new WorkerSessionClaims(this.options.pathReservations);

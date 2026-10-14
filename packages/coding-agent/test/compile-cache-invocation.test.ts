@@ -73,7 +73,7 @@ describe("startup compile cache invocation decision", () => {
 			[],
 			["-p", "hello"],
 			["--mode", "rpc"],
-			["app-server"],
+			["--mode", "json", "-p", "hello"],
 			["config"],
 			["--", "--list-tips"],
 			["--system-prompt", "--list-tips"],

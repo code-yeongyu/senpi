@@ -109,7 +109,7 @@ export function writeMockModelsJson(agentDir, fake) {
 				providers: {
 					mock: {
 						baseUrl,
-						apiKey: "sk-senpi-app-server-qa",
+						apiKey: "sk-senpi-qa",
 						api: "openai-completions",
 						models: [
 							{

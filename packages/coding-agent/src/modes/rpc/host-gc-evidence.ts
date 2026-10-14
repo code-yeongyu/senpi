@@ -15,7 +15,7 @@ import {
 	ProcessIdentityUnreadableError,
 	parseDaemonPidFile,
 	processMatchesPidFile,
-} from "../app-server/daemon/process.ts";
+} from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonDirectory } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts";

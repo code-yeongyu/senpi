@@ -5,13 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
-import {
-	ProcessIdentityUnreadableError,
-	processIsLive,
-	processMatchesPidFile,
-	readProcessStartTime,
-	waitForStartTime,
-} from "../src/modes/app-server/daemon/process.ts";
 import { type HostPidFileWriter, readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY, HostEnsureRefusedError } from "../src/modes/rpc/host-decision.ts";
 import { createHostDaemonPaths, defaultHostLaunch, ensureHost } from "../src/modes/rpc/host-ensure.ts";
@@ -22,6 +15,13 @@ import {
 	sendSocketHandshake,
 	socketSecretPath,
 } from "../src/modes/rpc/socket-transport.ts";
+import {
+	ProcessIdentityUnreadableError,
+	processIsLive,
+	processMatchesPidFile,
+	readProcessStartTime,
+	waitForStartTime,
+} from "../src/utils/process-identity.ts";
 import { killAndWait, processesUnder, reapProcessesUnder, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
 
 const roots: string[] = [];

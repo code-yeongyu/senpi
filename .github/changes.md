@@ -1,3 +1,62 @@
+## 2026-10-13 - Catalog refresh branches regenerate on main data changes and refuse hand commits (#3243)
+
+### What changed
+
+- `.github/workflows/opengateway-catalog-refresh.yml`: also runs on a push to `main` that touches `packages/ai/src/providers/data/**`, so the refresh branch is regenerated on top of the new main (or its PR closed when main already matches the gateway).
+- `.github/workflows/automation-branch-guard.yml` (new): on a pull request from `automation/opengateway-catalog-refresh`, `scripts/check-bot-branch-commits.mjs` fails when any commit between base and head was not written by the bot (`actions@github.com`), including a hand merge of main.
+- Review delta (Opus on a73f822521): the guard refuses a PR whose head repository is not this one (a fork can reuse the branch name), and runs the checker from the base commit, not the branch under review. The checker compares real file URLs to decide it was started directly, because a hand-built `file://` URL missed paths with spaces or symlinks and then exited 0 without checking. It requires both the author and committer email to be the bot's and passes `--end-of-options` before the range. `scripts/check-bot-branch-commits.test.mjs` adds two cases, a person-committed bot commit and a start through a symlinked path with a space, and both fail on the reviewed script.
+- Delta review nits (Opus on 393e302e74): the workflow comments now say that running the checker from the base commit protects the script, not the workflow file. A pull request can still edit or delete the workflow, because GitHub reads it from the PR's merge ref, so the guard stops accidents, not forgery, and only a required check makes a missing guard fail.
+
+### Why
+
+- `.github/workflows/opengateway-catalog-refresh.yml`: #3243 was opened at 01:55Z; #3248 and #3256 then refreshed the catalog on main, and a hand merge of main into the bot branch kept the branch's older manifest and `opengateway.json` over the newer data. That left a manifest `check:model-data` rejects and put `maxTokens` 943718 back to 393216, under a title that still read as a routine refresh. Regenerating on main data changes keeps the branch current without hand edits; the guard keeps a hand-edited branch from merging.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- The `on:` block of `.github/workflows/opengateway-catalog-refresh.yml`.
+
+## 2026-10-13 - Catalog drift is advisory in the releasability gate
+
+### What changed
+
+- `.github/workflows/releasability.yml`: the `Model catalog regeneration` job reports generated drift as a warning (`Report generated drift`) instead of failing the job; the warning step prints the catalog diff (first 400 lines) and the step summary says the drift is advisory, with the changed files in a details block. Regeneration, the Claude-id check, static checks, build and both test suites against the regenerated catalog still fail the job.
+
+### Why
+
+- `.github/workflows/releasability.yml`: provider listings and prices move within hours, so the committed catalog went stale between the regeneration commit and the end of the gate's ~50 min test step repeatedly on 2026-10-13: three data-only PRs and two blocked release cuts, each needing another gate run. `scripts/release.mjs` already regenerates the catalog, commits any change to main and waits for that commit's green CI before tagging, so drift never ships; the gate only needs to prove the regenerated catalog builds and passes tests.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- The drift steps of the `model-catalog-regen` job in `.github/workflows/releasability.yml`.
+
+## 2026-10-12 - Retire Codex app-server compatibility (senpi#3167)
+
+### What changed
+
+Replace the retired app-server daemon job target with the shared process identity suite on Windows.
+
+- `.github/workflows/ci.yml`
+
+### Why
+
+The executable Codex compatibility layer is being removed. Shared Native runtime behavior and historical records must remain independent of that layer.
+
+### Why an extension could not handle it
+
+These host contracts, import paths and build or verification targets belong to the repository; an extension cannot retire them.
+
+### Expected merge conflict zones
+
+The listed paths, especially command dispatch, mode unions and process identity imports. Keep the supported runtime branches and the shared utility behavior.
+
 ## 2026-10-12 - The Windows zip install fails in its own step when Chocolatey is down (senpi#3088)
 
 ### What changed

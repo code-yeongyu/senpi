@@ -175,7 +175,15 @@ export class ModelRegistry {
 	}
 
 	getProviderAuthStatus(provider: string): AuthStatus {
-		return this.runtime.getProviderAuthStatus(provider);
+		this.retryBusyCredentialRead();
+		const status = this.runtime.getProviderAuthStatus(provider);
+		if (status.configured || this.runtime.hasAvailabilitySnapshot()) return status;
+		// Until an availability pass succeeds the runtime's stored-provider set is empty, so answer
+		// from the live store, as getAvailable() does through hasAuth(); otherwise a store that was
+		// locked on its first read keeps reporting "not configured" while its models are usable
+		// (#2249). getAuthStatus() labels the source (stored, --api-key, environment) correctly.
+		const live = this.authStorage.getAuthStatus(provider);
+		return live.configured ? live : status;
 	}
 
 	getProvider(provider: string): Provider | undefined {
