@@ -6214,28 +6214,8 @@ export class AgentSession {
 		// Turn boundary: restore the primary model if the fallback cooldown expired.
 		if (!this.isStreaming) {
 			try {
-				await this._maybeRestoreFallbackPrimary();
-				const model = this.model;
-				// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
-				// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
-				if (
-					model &&
-					!this._pendingModelSwitch &&
-					this._retryFallback.isProviderSpent(model.provider) &&
-					!(attributionOf(options) === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
-				) {
-					this._retryFallback.resetTurn();
-					this._fallbackTurnFailures = [];
-					const errorMessage = this._retryFallback.accountError(model.provider);
-					// Routing around a remembered failure did not observe another provider failure.
-					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
-						throw new AccountUsageLimitError(
-							model.provider,
-							errorMessage,
-							this._retryFallback.accountResetAt(model.provider),
-						);
-					}
-				}
+				await this._prepareFallbackForTurn(attributionOf(options));
+				throwIfCancelled();
 			} catch (error) {
 				releaseStart(false);
 				throw error;
@@ -7662,6 +7642,11 @@ export class AgentSession {
 				try {
 					if (this._extensionBindingPromptReadiness === undefined && !this._lifecycleBinding.isRestored)
 						await this._lifecycleBinding.restore();
+					await this._prepareFallbackForTurn("agent");
+					if (userAbortGeneration !== this._userAbortGeneration) {
+						queueTriggerForLater();
+						return;
+					}
 					await this._assertModelReadyForTurn();
 					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 					this._refreshToolDeclarationsForModel();
@@ -9398,6 +9383,31 @@ export class AgentSession {
 			invalidateCompaction: true,
 			origin,
 		});
+	}
+
+	private async _prepareFallbackForTurn(attribution: InputAttribution): Promise<void> {
+		this._retryFallback.resetTurn();
+		await this._maybeRestoreFallbackPrimary();
+		const model = this.model;
+		// A turn the user started asks the provider again unless it stated when the limit resets (senpi#5568);
+		// automated turns keep the remembered hold so a loop never hammers a spent account (senpi#3131).
+		if (
+			model &&
+			!this._pendingModelSwitch &&
+			this._retryFallback.isProviderSpent(model.provider) &&
+			!(attribution === "user" && this._retryFallback.releaseGuessedAccountHold(model.provider))
+		) {
+			this._fallbackTurnFailures = [];
+			const errorMessage = this._retryFallback.accountError(model.provider);
+			// Routing around a remembered failure did not observe another provider failure.
+			if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
+				throw new AccountUsageLimitError(
+					model.provider,
+					errorMessage,
+					this._retryFallback.accountResetAt(model.provider),
+				);
+			}
+		}
 	}
 
 	private async _maybeRestoreFallbackPrimary(boundary: "turn" | "continuation" = "turn"): Promise<void> {

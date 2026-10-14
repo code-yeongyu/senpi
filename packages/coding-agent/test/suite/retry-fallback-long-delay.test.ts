@@ -153,9 +153,10 @@ describe("retry fallback for over-threshold provider delays", () => {
 
 		await harness.session.prompt("hello");
 
-		// A spent chain must drive canTryFallback() false, or the new gate arm loops.
+		// One head probe is allowed after the tail; a spent chain then drives
+		// canTryFallback() false rather than starting another traversal.
 		expect(harness.eventsOfType("retry_fallback_applied")).toHaveLength(1);
 		expect(harness.eventsOfType("auto_retry_end").map((event) => event.success)).toEqual([false]);
-		expect(harness.faux.state.callCount).toBe(2);
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-1"]);
 	});
 });
