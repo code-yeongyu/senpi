@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 2 models.
+
 ### Fixed
 
 - OpenCode Go models now use the documented `https://opencode.ai/inference/go` base. The legacy `/zen/go` base has no route for the native generate-content wire, so the Argon Contributor model failed with a 404 page ([#3377](https://github.com/code-yeongyu/senpi/issues/3377)).
