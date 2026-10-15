@@ -47,6 +47,7 @@ function sessionEntry(sessionFile: string | undefined, cwd: string) {
 		isFastModeActive: () => false,
 		getSteeringMessages: () => [],
 		getFollowUpMessages: () => [],
+		getQueuedInputs: () => [],
 		getContextUsage: () => undefined,
 	};
 	// Any member buildRpcSessionState touches that the base does not define resolves to a value
