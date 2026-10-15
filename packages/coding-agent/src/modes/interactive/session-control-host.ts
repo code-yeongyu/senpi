@@ -56,8 +56,17 @@ export class TuiSessionControlHost implements ControlEndpointHost {
 			{ ...this.context(), editorRevision: () => this.editorRevision },
 			options,
 		);
-		if ("endpoint" in outcome) this.active = outcome.endpoint;
-		return outcome.registration;
+		if (!("endpoint" in outcome)) return outcome.registration;
+		const endpoint = outcome.endpoint;
+		this.active = endpoint;
+		return {
+			...outcome.registration,
+			// Its owner disposing it (a retired extension generation, senpi#3246) also takes it off this host.
+			dispose: async () => {
+				if (this.active === endpoint) this.active = undefined;
+				await endpoint.dispose();
+			},
+		};
 	}
 
 	/** Wraps the editor's callbacks; call after both are assigned. `hasDraft` reads the composer now. */

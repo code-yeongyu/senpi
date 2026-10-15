@@ -1,3 +1,23 @@
+## 2026-10-15 - A reload retires the control endpoints its old extension generation registered (senpi#3246)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-control-actions.ts`: `createSessionControlActions` returns a `GenerationSessionControlActions`, which owns every control endpoint registered through it. `retire()` disposes them and refuses a registration that completes after retirement.
+- `packages/coding-agent/src/core/agent-session.ts`: the session keeps the current generation's actions. `reload()` retires the old generation's actions just before it invalidates the old runner.
+- `packages/coding-agent/src/modes/interactive/session-control-host.ts`: an endpoint disposed by its owner also leaves the host, so no later editor edge or question update reaches it.
+
+### Why
+
+A control endpoint's `drain` is a closure of the extension generation that registered it, but nothing tied the endpoint to that generation. After a hot reload (the config-reload extension, `/reload`, `omo update` rewriting extension bundles), an extension that registered only at startup left its endpoint serving. Every wake then ran the retired generation's `drain` and printed "control endpoint drain failed: stale extension generation after reload", and deliveries stopped being admitted.
+
+### Why an extension could not handle it
+
+The extension's own generation is the one retired; it cannot outlive the reload to dispose its endpoint, and the runtime gave it no retirement hook tied to the endpoint.
+
+### Expected merge conflict zones
+
+- `agent-session.ts` `_rebuildRuntimeForReload` (the `finally` around `invalidate`) and the `sessionControl` field in `_buildRuntime`.
+
 ## 2026-10-14 - A hard error parks only its rung, so a later rung of the same model stays reachable (senpi#3311)
 
 ### What changed

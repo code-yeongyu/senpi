@@ -315,7 +315,11 @@ import {
 } from "./retry-fallback/usage-limit.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
-import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
+import {
+	type ControlEndpointHost,
+	createSessionControlActions,
+	type GenerationSessionControlActions,
+} from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjection } from "./session-manager.ts";
@@ -1150,6 +1154,8 @@ export class AgentSession {
 			}),
 	});
 	private _controlEndpointHost: ControlEndpointHost | undefined;
+	/** The current extension generation's `pi.session`; a reload retires it with its runner. */
+	private _sessionControl: GenerationSessionControlActions | undefined;
 	// Queues held while the first post-compaction response is classified. Agent
 	// core otherwise drains steering immediately before AgentSession can consume
 	// the stale-usage exemption and schedule the continuation itself.
@@ -9194,6 +9200,13 @@ export class AgentSession {
 			return [...extensionCommands, ...templates, ...skills];
 		};
 
+		// This generation's `pi.session`: it owns the control endpoints this generation registers (senpi#3246).
+		const sessionControl = createSessionControlActions({
+			admission: this.externalAdmission,
+			sessionManager: this.sessionManager,
+			host: () => this._controlEndpointHost,
+		});
+		this._sessionControl = sessionControl;
 		runner.bindCore(
 			{
 				sendMessage: (message, options) => {
@@ -9287,11 +9300,7 @@ export class AgentSession {
 				},
 				setSessionThinkingLevel: (level) => this.setSessionThinkingLevel(level),
 				setSessionFastMode: (enabled) => this.setSessionFastMode(enabled),
-				sessionControl: createSessionControlActions({
-					admission: this.externalAdmission,
-					sessionManager: this.sessionManager,
-					host: () => this._controlEndpointHost,
-				}),
+				sessionControl,
 			},
 			{
 				getModel: () => this.model,
@@ -9764,6 +9773,7 @@ export class AgentSession {
 	}): Promise<{ cancelled: false }> {
 		resetTimings("reload");
 		const oldExtensionRunner = this._extensionRunner;
+		const oldSessionControl = this._sessionControl;
 		const oldExtensionIdentities = oldExtensionRunner.getExtensionIdentities();
 		const previousActiveToolRegistrationIds = new Map<string, string>();
 		// Cover withheld eval-only tools too: the rebuild drops any seeded name missing from this
@@ -9855,6 +9865,15 @@ export class AgentSession {
 					});
 				}
 			} finally {
+				// The control endpoints the retiring generation registered drain through its closures:
+				// they go with it, before anything can wake them on the retired runner (senpi#3246).
+				await oldSessionControl?.retire().catch((error: unknown) => {
+					this._extensionRunner.emitError({
+						extensionPath: "<session-control>",
+						event: "reload",
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
 				oldExtensionRunner.invalidate("stale extension generation after reload");
 			}
 			time("runtime", "reload");

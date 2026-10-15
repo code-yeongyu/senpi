@@ -23,13 +23,45 @@ export interface SessionControlActionDeps {
 	readonly host: () => ControlEndpointHost | undefined;
 }
 
-export function createSessionControlActions(deps: SessionControlActionDeps): SessionControlActions {
+/** One extension generation's `pi.session`, which owns the control endpoints that generation registered. */
+export interface GenerationSessionControlActions extends SessionControlActions {
+	/**
+	 * Disposes every endpoint this generation registered. A reload calls it as it retires the
+	 * generation: the endpoint's `drain` is that generation's closure, so it must not outlive it
+	 * (senpi#3246). Idempotent.
+	 */
+	retire(): Promise<void>;
+}
+
+export function createSessionControlActions(deps: SessionControlActionDeps): GenerationSessionControlActions {
+	const owned = new Set<Extract<SessionControlRegistration, { readonly status: "registered" }>>();
+	let retired = false;
 	return {
 		registerControlEndpoint: async (options) => {
 			if (process.platform === "win32") return { status: "unsupported", reason: "unsupported_platform" };
 			const host = deps.host();
 			if (host === undefined) return { status: "unsupported", reason: "unsupported_mode" };
-			return host.register(options);
+			const registration = await host.register(options);
+			if (registration.status !== "registered") return registration;
+			// Registered while this generation was being retired: it is released at once, never left serving.
+			if (retired) {
+				await registration.dispose();
+				return { status: "failed", reason: "stale extension generation after reload" };
+			}
+			owned.add(registration);
+			return {
+				...registration,
+				dispose: async () => {
+					owned.delete(registration);
+					await registration.dispose();
+				},
+			};
+		},
+		retire: async () => {
+			retired = true;
+			const registrations = [...owned];
+			owned.clear();
+			await Promise.all(registrations.map((registration) => registration.dispose()));
 		},
 		admissionGate: () => deps.admission.gate(),
 		admitExternalMessage: (input) => deps.admission.admit(input),

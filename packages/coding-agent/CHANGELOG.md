@@ -11,6 +11,7 @@
 - The terminal transcript folds a handoff block into one muted line, `▸ Handoff · Now: … · Next: …`, and keeps its `For you` answer as ordinary text. Ctrl+O, or a click on the line, opens the block as written ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), proposed by @devxoul).
 
 ### Fixed
+- After a hot reload (`/reload`, a settings or extension change, `omo update`), a control endpoint registered by the previous extension generation is closed with that generation, so inbox and command wakes no longer repeat "control endpoint drain failed: stale extension generation after reload" and stop delivering ([#3246](https://github.com/code-yeongyu/senpi/issues/3246)).
 
 - Plain answers in the terminal no longer come wrapped in the Ask / For you / Now / Next block. When a question did not end in `?`, the first-request todo list made it a one-task plan, and that list's result told the model to write the block. A one-task list now asks for nothing, and every preset reserves the block for turns that changed something, so an answer stays an answer even when finding it took tool calls ([#3323](https://github.com/code-yeongyu/senpi/issues/3323), reported by @devxoul).
 
