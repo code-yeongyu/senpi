@@ -16,6 +16,8 @@ import type {
 	MonitorSnapshotEntry,
 	MonitorSourceHost,
 } from "./monitor-types.ts";
+import { loadRpcMonitorSource } from "./rpc-monitor.lazy.ts";
+import type { RegisterRpcMonitorOptions, RpcMonitorSource } from "./rpc-monitor-source.ts";
 
 export type { RegisterMonitorOptions } from "./command-monitor-source.ts";
 export type { RegisterFileMonitorOptions } from "./file-monitor-source.ts";
@@ -50,6 +52,8 @@ export class MonitorRegistry {
 	readonly #onFire: ((snapshot: readonly MonitorSnapshotEntry[]) => void) | undefined;
 	readonly #commands: CommandMonitorSource;
 	readonly #files: FileMonitorSource;
+	readonly #host: MonitorSourceHost;
+	#rpc: RpcMonitorSource | undefined;
 	#parked = false;
 
 	constructor(emit: (event: MonitorEvent) => void, options?: MonitorRegistryOptions) {
@@ -63,6 +67,7 @@ export class MonitorRegistry {
 			ended: (record, reason, exitCode) => this.#emitEnded(record, reason, exitCode),
 			changed: () => this.#notifyChange(),
 		};
+		this.#host = host;
 		this.#commands = new CommandMonitorSource(host);
 		this.#files = new FileMonitorSource(host, options?.reserve);
 	}
@@ -75,7 +80,7 @@ export class MonitorRegistry {
 	}
 
 	snapshot(): readonly MonitorSnapshotEntry[] {
-		return [...this.#commands.values(), ...this.#files.values()].map((record) => ({
+		return [...this.#commands.values(), ...this.#files.values(), ...(this.#rpc?.values() ?? [])].map((record) => ({
 			id: record.id,
 			monitorId: record.monitorId,
 			description: record.description,
@@ -108,7 +113,7 @@ export class MonitorRegistry {
 
 	/** Inject one line into a live command or file watch's event stream (e.g. a restore notice). */
 	emitLine(id: string, line: string): boolean {
-		const record = this.#commands.get(id) ?? this.#files.get(id);
+		const record = this.#commands.get(id) ?? this.#files.get(id) ?? this.#rpc?.get(id);
 		if (!record || record.settled) return false;
 		this.#emitForRecord(record, { type: "line", id: record.id, description: record.description, line });
 		return true;
@@ -126,10 +131,27 @@ export class MonitorRegistry {
 		return this.#commands.register(options);
 	}
 
+	/** Arms an rpc watch (the source loads on the first one); resolves with the arm-time session rows. */
+	async registerRpc(options: RegisterRpcMonitorOptions): Promise<{ id: string; monitorId: string; rows: string[] }> {
+		if (this.#rpc === undefined) {
+			const { RpcMonitorSource } = await loadRpcMonitorSource();
+			this.#rpc ??= new RpcMonitorSource(this.#host);
+		}
+		return this.#rpc.register(options);
+	}
+
+	stopRpc(id: string): boolean {
+		return this.#rpc?.settle(id, "watcher killed") ?? false;
+	}
+
+	stopAllRpc(): number {
+		return this.#rpc?.settleAll("watcher killed") ?? 0;
+	}
+
 	pause(ids: readonly string[]): string[] {
 		const paused: string[] = [];
 		for (const id of ids) {
-			const record = this.#commands.get(id) ?? this.#files.get(id);
+			const record = this.#commands.get(id) ?? this.#files.get(id) ?? this.#rpc?.get(id);
 			if (!record || record.paused) continue;
 			record.paused = true;
 			if ("watch" in record) record.watch.pause();
@@ -140,14 +162,14 @@ export class MonitorRegistry {
 	}
 
 	pauseAll(): string[] {
-		return this.pause([...this.#commands.keys(), ...this.#files.keys()]);
+		return this.pause([...this.#commands.keys(), ...this.#files.keys(), ...(this.#rpc?.keys() ?? [])]);
 	}
 
 	resume(ids?: readonly string[]): MonitorResumeResult[] {
-		const candidates = ids ?? [...this.#commands.keys(), ...this.#files.keys()];
+		const candidates = ids ?? [...this.#commands.keys(), ...this.#files.keys(), ...(this.#rpc?.keys() ?? [])];
 		const resumed: MonitorResumeResult[] = [];
 		for (const id of candidates) {
-			const record = this.#commands.get(id) ?? this.#files.get(id);
+			const record = this.#commands.get(id) ?? this.#files.get(id) ?? this.#rpc?.get(id);
 			if (!record?.paused) continue;
 			record.paused = false;
 			const mutedDropped = "mutedDropped" in record ? record.mutedDropped : 0;
@@ -162,11 +184,11 @@ export class MonitorRegistry {
 	}
 
 	mutedDropped(id: string): number {
-		return this.#commands.get(id)?.mutedDropped ?? 0;
+		return this.#commands.get(id)?.mutedDropped ?? this.#rpc?.get(id)?.mutedDropped ?? 0;
 	}
 
 	rearm(id: string): MonitorRearmResult {
-		const record = this.#commands.get(id) ?? this.#files.get(id);
+		const record = this.#commands.get(id) ?? this.#files.get(id) ?? this.#rpc?.get(id);
 		if (!record) return "not_found";
 		if (!record.paused) return "not_paused";
 		this.resume([id]);
@@ -181,6 +203,7 @@ export class MonitorRegistry {
 	dispose(): void {
 		this.#commands.dispose();
 		this.#files.dispose();
+		this.#rpc?.settleAll("watcher disposed");
 		this.#notifyChange();
 	}
 

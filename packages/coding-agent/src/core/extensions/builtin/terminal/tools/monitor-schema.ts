@@ -16,6 +16,28 @@ export const monitorSchema = Type.Object({
 			description: "Defaults to create. rearm resumes a monitor paused by the wake budget.",
 		}),
 	),
+	type: Type.Optional(
+		StringEnum(["command", "path", "rpc"] as const, {
+			description:
+				"Create: which source to watch; inferred when omitted (command -> command, path -> path, target -> rpc).",
+		}),
+	),
+	target: Type.Optional(
+		Type.String({
+			minLength: 1,
+			description:
+				'Create, rpc branch: "children" (sessions this one spawned, including ones spawned later), "all" (every session on every host and terminal of this user) or one session id, path or st_ task id.',
+		}),
+	),
+	events: Type.Optional(
+		Type.Union([Type.Literal("all"), Type.Array(Type.String({ minLength: 1 }))], {
+			description:
+				'Rpc branch: record kinds to report, any RPC record type; default ["session_status"] (children: plus "effect_status"); "all" reports every kind, streaming collapsed to one line per 2 s.',
+		}),
+	),
+	exclude: Type.Optional(
+		Type.Array(Type.String({ minLength: 1 }), { description: 'Rpc branch with events "all": record kinds to drop.' }),
+	),
 	description: Type.Optional(
 		Type.String({
 			minLength: 1,
@@ -42,7 +64,9 @@ export const monitorSchema = Type.Object({
 		}),
 	),
 	filter: Type.Optional(
-		Type.String({ description: "Only PTY output lines matching this regex become monitor events." }),
+		Type.String({
+			description: "Only lines matching this regex become monitor events (command output lines, rpc event lines).",
+		}),
 	),
 	timeout_ms: Type.Optional(
 		Type.Number({
