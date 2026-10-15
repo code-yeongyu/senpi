@@ -14,7 +14,12 @@ terminal/
 ├── pty.lazy.ts          # Deferred import of @earendil-works/pi-pty / @xterm/headless
 ├── runtime-session.ts   # TerminalRuntimeSession: one live PTY
 ├── session-bundle.ts    # TerminalSessionBundle: reload parking/claiming across extension generations
-├── monitor-registry.ts  # MonitorRegistry: registered watches over session output
+├── monitor-registry.ts  # MonitorRegistry: coordinator over the sources (snapshot, pause/rearm, one emit sink)
+├── monitor-types.ts     # Monitor events, snapshot entry, mon_ ids, the record contract + source host hooks
+├── command-monitor-source.ts # Command watches: PTY output lines, filter, durable fire budget
+├── file-monitor-source.ts    # File watches: registration, check loop, settle/stop, parking
+├── file-monitor-{record,guard,registration,check}.ts # File record shape, deadline-raced registration window,
+│                         target identity proof, one check pass
 ├── monitor-notify.ts    # Event → notification delivery (283 LOC, largest non-tool file)
 ├── monitor-status*.ts   # Footer status text + 1s unref'd ticker
 ├── notify.ts            # TerminalNotifier

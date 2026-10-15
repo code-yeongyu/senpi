@@ -23,6 +23,7 @@ import {
 	handMonitorSpec,
 	manifestSessionKey,
 } from "./monitor-manifest-binding.ts";
+import { createRpcMonitor, monitorSourceOf } from "./monitor-rpc.ts";
 import {
 	compileFilter,
 	isCreateInput,
@@ -132,7 +133,7 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 		name: TERMINAL_MONITOR_TOOL,
 		label: "monitor",
 		description:
-			"Subscribe to a change instead of polling. Pass command XOR path, never both: command watches a PTY session, injecting matching newline-terminated output lines (stderr merged) plus an exit summary; path natively watches one file and fires once, where create (the default) fires only when the file appears after registration, so use event modify for an existing file, and filter is rejected. Returns a bash_id immediately; peek with bash_output, stop with kill_bash.",
+			'Subscribe to a change instead of polling. Pass one source: command watches a PTY session, injecting matching newline-terminated output lines (stderr merged) plus an exit summary; path natively watches one file and fires once, where create (the default) fires only when the file appears after registration, so use event modify for an existing file, and filter is rejected; target (type rpc) watches sessions\' status, effects and content on every RPC host and terminal ("children", "all" or one session). Returns a bash_id immediately; peek with bash_output, stop with kill_bash.',
 		promptSnippet:
 			"Subscribe to a command's output or a file's create/modify event as injected events instead of polling",
 		promptGuidelines: [
@@ -140,6 +141,7 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 			'Waiting for one file to appear or change is the path branch: `monitor({ description, path, event? })` beats wrapping `test -f` in a shell poll loop; a file that already exists needs `event: "modify"`, since `create` only fires on appearance, and registration needs the parent directory to exist already — when the run creates that directory too, use the `command` branch instead.',
 			"Shape the command for the events you need: one-shot gate = `until <cond>; do sleep 1; done; printf 'READY\\n'` with filter ^READY$; stream = `tail -n 0 -F <log> | grep --line-buffered <pat>` with persistent: true, then kill_bash.",
 			'Persistent command watches are re-run after a restart with `SENPI_MONITOR_RESTORED=1`; keep any baseline in `$SENPI_MONITOR_STATE_DIR` so a move during downtime (at most `$SENPI_MONITOR_DOWNTIME_MS` ms) is still reported: `b="$SENPI_MONITOR_STATE_DIR/base"; p=$(cat "$b" 2>/dev/null || git rev-parse origin/main | tee "$b"); while sleep 30; do git fetch -q || true; n=$(git rev-parse origin/main); [ "$n" != "$p" ] && { echo "MOVED $p..$n"; p=$n; echo "$p" > "$b"; }; done`. A watch whose command exits is not restarted, so keep failures inside the loop non-fatal.',
+			'Waiting on other sessions (your children, a task, every session) is the rpc branch: `monitor({ type: "rpc", target: "children", description: "children status" })` reports each status change and effect receipt as it happens; `events: "all"` adds their content (streaming collapses to one line per 2 s), `exclude` drops kinds.',
 			"Sleep loops belong INSIDE the monitor command, never in your turn: about to sleep, re-poll bash_output, or foreground-block on a long command means register a monitor and keep working.",
 		],
 		parameters: monitorSchema,
@@ -176,9 +178,18 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 						: `Monitor ${bashId} re-armed.`,
 				);
 			}
+			const source = monitorSourceOf(input);
+			if (typeof source !== "string") return errorResult(source.error);
+			if (source === "rpc") {
+				await ctx.ensurePersistence?.();
+				if (input.persistent === true) {
+					const refused = durableAdmissionError(ctx);
+					if (refused) return refused;
+				}
+				return createRpcMonitor(ctx, input);
+			}
 			const fileInput = isFileCreateInput(input);
 			const commandInput = isCreateInput(input);
-			if (fileInput && commandInput) return errorResult("monitor accepts either command or path, not both.");
 			// Every create binds persistence first (lazy lease + recorder: an ephemeral watch with time
 			// left is restorable too), then durable admission runs before either create branch touches
 			// a PTY or the registry.

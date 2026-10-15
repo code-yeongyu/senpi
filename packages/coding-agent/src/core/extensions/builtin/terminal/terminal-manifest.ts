@@ -17,6 +17,7 @@ import {
 	TERMINAL_MANIFEST_VERSION,
 	type TerminalManifest,
 	type TerminalManifestCheckpoint,
+	type TerminalManifestRpcCheckpoint,
 	type TerminalManifestSession,
 } from "./terminal-manifest-model.ts";
 import { parseTerminalManifest } from "./terminal-manifest-parse.ts";
@@ -60,6 +61,7 @@ export class TerminalManifestWriter {
 	readonly #entries = new Map<string, ManifestMonitor>();
 	readonly #backgrounds = new Map<string, ManifestBackgroundSession>();
 	readonly #pending = new Map<string, TerminalManifestCheckpoint>();
+	readonly #pendingRpc = new Map<string, TerminalManifestRpcCheckpoint>();
 	#timer: ReturnType<typeof setTimeout> | undefined;
 	#tail: Promise<void> = Promise.resolve();
 	/** Last persist failure: transitions never reject, so a durability write can never fail a live tool call. */
@@ -174,6 +176,16 @@ export class TerminalManifestWriter {
 	/** Debounced checkpoint persist: a burst inside the window collapses into one write. */
 	scheduleCheckpoint(monitorId: string, checkpoint: TerminalManifestCheckpoint): void {
 		this.#pending.set(monitorId, checkpoint);
+		this.#debounce();
+	}
+
+	/** An rpc watch's view (hosts, statuses), debounced like a file checkpoint. */
+	scheduleRpcCheckpoint(monitorId: string, checkpoint: TerminalManifestRpcCheckpoint): void {
+		this.#pendingRpc.set(monitorId, checkpoint);
+		this.#debounce();
+	}
+
+	#debounce(): void {
 		if (this.#timer !== undefined) clearTimeout(this.#timer);
 		this.#timer = setTimeout(() => {
 			this.#timer = undefined;
@@ -188,7 +200,7 @@ export class TerminalManifestWriter {
 			clearTimeout(this.#timer);
 			this.#timer = undefined;
 		}
-		if (this.#pending.size === 0) await this.#tail;
+		if (this.#pending.size === 0 && this.#pendingRpc.size === 0) await this.#tail;
 		else {
 			this.#absorbPending();
 			await this.#persist();
@@ -229,6 +241,11 @@ export class TerminalManifestWriter {
 			if (entry) this.#entries.set(monitorId, { ...entry, lastCheckpoint: checkpoint });
 		}
 		this.#pending.clear();
+		for (const [monitorId, rpcCheckpoint] of this.#pendingRpc) {
+			const entry = this.#entries.get(monitorId);
+			if (entry) this.#entries.set(monitorId, { ...entry, rpcCheckpoint });
+		}
+		this.#pendingRpc.clear();
 	}
 
 	#entryFor({ monitorId, spec, runtime, deadlineMs }: MonitorRegistration): ManifestMonitor {
@@ -245,12 +262,21 @@ export class TerminalManifestWriter {
 				? "ephemeral"
 				: spec.kind === "file"
 					? "checkpointed-file"
-					: "restartable-command",
+					: spec.kind === "rpc"
+						? "checkpointed-rpc"
+						: "restartable-command",
 			command: spec.kind === "command" ? spec.command : undefined,
 			path: spec.kind === "file" ? spec.path : undefined,
 			event: spec.kind === "file" ? spec.event : undefined,
-			filter: spec.kind === "command" ? spec.filter : undefined,
-			cwd: spec.cwd,
+			filter: spec.kind === "file" ? undefined : spec.filter,
+			cwd: spec.kind === "rpc" ? undefined : spec.cwd,
+			...(spec.kind === "rpc"
+				? {
+						target: spec.target,
+						...(spec.events === undefined ? {} : { events: spec.events }),
+						...(spec.exclude === undefined ? {} : { exclude: spec.exclude }),
+					}
+				: {}),
 			approvedParent: spec.kind === "file" ? spec.approvedParent : undefined,
 			createdAt,
 			// Absolute durability deadline for every restart-surviving entry, set once here and

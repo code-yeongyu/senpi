@@ -12,7 +12,7 @@ platform/runtime).
 |------|---------|
 | `bash` | Run a command in a PTY. `run_in_background: true` starts a persistent session and returns a `bash_id` immediately. Foreground `timeout` (seconds) is a kill deadline. |
 | `bash_output` | Peek at a session without blocking: new output since the last read, or the status line. `filter` regex-filters lines; `view: "screen"` returns the rendered xterm grid. |
-| `monitor` | Watch a change and inject it as coalesced events, passing `command` XOR `path`: a long-running command (`description`, `command`, `filter?`, `timeout_ms?`, `persistent?`) injects matching PTY output lines, while a file (`description`, `path`, `event?`, `persistent?`) fires once natively. Every call returns a stable `mon_` id (with the runtime `bash_N` handle as `details.bash_id`); either id addresses the watch. While watches are live, the interactive footer shows a brief `watching …` status (descriptions, count, paused markers). |
+| `monitor` | Watch a change and inject it as coalesced events, passing exactly one source - `command`, `path` or `target`: a long-running command (`description`, `command`, `filter?`, `timeout_ms?`, `persistent?`) injects matching PTY output lines, a file (`description`, `path`, `event?`, `persistent?`) fires once natively, and sessions (`type: "rpc"`, `target`, `events?`, `exclude?`, `filter?`, `persistent?`) report status changes, effect receipts and, opted in, content from every RPC host and terminal. Every call returns a stable `mon_` id (with the runtime `bash_N` handle as `details.bash_id`); either id addresses the watch. While watches are live, the interactive footer shows a brief `watching …` status (descriptions, count, paused markers). |
 | `bash_input` | Send stdin (`input`) or named keys (`keys: ["ctrl+c"]`, `["enter"]`, `["up"]`) to steer a REPL or interrupt a process. |
 | `bash_resize` | Resize a session's PTY (`cols`, `rows`) so full-screen TUIs reflow. |
 | `kill_bash` | Tree-kill one session (`bash_id`) or all (`all: true`), leaving no orphans. |
@@ -121,7 +121,7 @@ fires only when the file appears after registration; to watch a file that
 already exists, pass `event: "modify"`. Registration needs the parent directory
 (`dist/` here) to exist already, and the target must be a regular file, not a
 symlink — when the build creates the directory too, keep a command poll loop
-like the port recipe below. This branch is XOR with `command` and takes no
+like the port recipe below. This branch is one source of three and takes no
 `filter`. Expected event: one hit when the file lands, then the watch is done.
 Consume the artifact. Add `persistent: true` to make it a standing watch that
 survives a restart and reports a change it missed while detached.
@@ -148,6 +148,23 @@ monitor({ description: "subtask done",
 Expected event: `READY` once the child flips its status file. Read the child's
 results and integrate. Exits on its own; no cleanup.
 
+### Session status (rpc branch)
+
+```ts
+monitor({ type: "rpc", target: "children", description: "children status" })
+```
+
+The result lists every matched session (`<label> <status> (<n> attached, model <id>)`); after that each
+status change arrives as `rpc <label> status <from> -> <to> (<cause>, by <by>) seq=<n>` and each effect
+receipt as `rpc <label> effect <kind> <id tail> <state> (<disposition|reason>)`. `target` is
+`"children"` (matched by the host, so children spawned after arming appear), `"all"` (every session of
+every host and terminal endpoint you run) or one session id, path or `st_` task id. `events` names any
+RPC record kinds (default `["session_status"]`, children add `"effect_status"`); `"all"` adds content,
+with streaming collapsed to `rpc <label> streaming +<n> deltas (last: "...")` per session per 2 s and
+`exclude` dropping kinds. Content is a `mirror` opt-in: the monitor never attaches, so the session's
+`attachments` count does not change. `persistent: true` survives a restart and reports what moved while
+detached (`changed while detached`, `closed (gone while detached)`, `host ... restarted (generation a -> b)`).
+
 ### Anti-patterns
 
 | Anti-pattern | Do instead |
@@ -163,7 +180,7 @@ results and integrate. Exits on its own; no cleanup.
 | Polling `test -f` in a command to await one file | Use the file branch: `monitor({ description, path, event? })` |
 | `event: "create"` on a file that already exists | `create` fires only on appearance; use `event: "modify"` |
 | `path` whose parent directory the build has yet to create | Registration fails; poll for it with a `command` watch instead |
-| Passing `command` and `path` in one call | They are XOR; pick the branch that matches what you await |
+| Passing two of `command`, `path`, `target` in one call | One source per call; pick the branch that matches what you await |
 | Monitoring sub-minute deterministic work | Run it directly in the foreground |
 | Rearming a monitor that was never paused | Rearm only a `bash_id` named in a pause notice |
 
