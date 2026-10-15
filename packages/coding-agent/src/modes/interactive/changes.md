@@ -1,3 +1,22 @@
+## 2026-10-12 - Optional markdown emphasis theme colors
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/theme/theme.ts`: optional `mdBold`, `mdItalic`, and `mdStrikethrough` theme colors (`MarkdownEmphasisColor`). `createTheme()` passes them to `Theme` separately from `ThemeColor`, `Theme.markdownEmphasis()` colors text only when the theme sets the token, and `getMarkdownTheme()` wires them into the new `MarkdownTheme` `strong`/`emphasis`/`deleted` hooks. The tokens have no fallback, so themes that omit them, including the generated system theme, render exactly as before.
+- `packages/coding-agent/src/modes/interactive/theme/theme-json.ts` and `packages/coding-agent/src/modes/interactive/theme/theme-schema.json`: accept the three optional keys.
+
+### Why
+
+- Themes could color every markdown element except inline bold, italic, and strikethrough text.
+
+### Why an extension could not handle it
+
+- Theme loading, validation, and the markdown theme wiring are host-owned.
+
+### Expected merge conflict zones
+
+- LOW: `Theme` constructor options, `createTheme()`, and `getMarkdownTheme()`; the markdown block of the schema.
+
 ## 2026-10-12 - Explicit thinking saves own the startup default (senpi#3178)
 
 ### What changed

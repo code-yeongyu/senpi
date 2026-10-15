@@ -6,6 +6,8 @@
 
 ### Added
 
+- `MarkdownTheme` gains optional `strong`, `emphasis`, and `deleted` hooks for inline `**strong**`, `*em*`, and `~~del~~` text, falling back to `bold`, `italic`, and `strikethrough`. A hook color takes precedence over the surrounding heading or `DefaultTextStyle` color; headings and blockquotes keep using the generic style functions ([#3195](https://github.com/code-yeongyu/senpi/pull/3195)).
+
 ### Changed
 
 ### Fixed
