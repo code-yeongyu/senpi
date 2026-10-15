@@ -31,6 +31,9 @@ export class ControlAttachments {
 					? { entry: this.entryView(), runtime: sessionRuntimeView(session, pendingQuestions()) }
 					: undefined,
 		});
+		// A permanent, never-attached connection keeps the writer off its stdio lane: records reach attached
+		// connections and the replay snapshot only, and nothing queues for a sink that writes nowhere.
+		this.writer.registerConnection(NULL_CONNECTION, { writeRaw: () => {}, waitForBackpressure: async () => {} });
 		this.stopRecords = subscribeSessionRecords(session, (record) => this.writer.enqueue(this.handle, record));
 	}
 
@@ -93,6 +96,9 @@ export class ControlAttachments {
 	}
 }
 
-function keyOf(connection: ControlConnection): string {
+const NULL_CONNECTION = "tui-null";
+
+/** The writer's id for one control connection. */
+export function keyOf(connection: ControlConnection): string {
 	return `tui-${connection.id}`;
 }

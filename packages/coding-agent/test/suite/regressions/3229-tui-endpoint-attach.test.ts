@@ -5,9 +5,9 @@
  * for a client that attached or asked for it with `mirror`. A real interactive mode (virtual terminal)
  * registers the endpoint at session start, as OmO's thread component does.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, symlinkSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { TUI } from "@earendil-works/pi-tui";
@@ -32,7 +32,9 @@ class Client {
 	readonly records: WireRecord[] = [];
 	private readonly waiters: Array<{ match: (r: WireRecord) => boolean; resolve: (r: WireRecord) => void }> = [];
 	private next = 0;
-	private constructor(private readonly socket: Socket) {
+	private readonly socket: Socket;
+	private constructor(socket: Socket) {
+		this.socket = socket;
 		let buffer = "";
 		socket.on("data", (chunk: Buffer) => {
 			buffer += chunk.toString("utf8");
@@ -144,6 +146,40 @@ describe("terminal control endpoint serves its session like a host (senpi#3229)"
 		const delta = await client.waitFor(isDelta);
 		expect(delta.sessionId).toBe(harness.session.sessionId);
 		expect(client.records.indexOf(opened)).toBeLessThan(client.records.indexOf(delta));
+	});
+
+	it("opens its session through a symlinked spelling of the path, and a repeat open stays attached once", async () => {
+		const { harness, socket } = await terminal();
+		await harness.session.sessionManager.persistHeaderNow();
+		const own = harness.session.sessionFile ?? "";
+		const link = join(harness.tempDir, "linked-sessions");
+		symlinkSync(dirname(own), link);
+		const client = await Client.connect(socket);
+
+		const first = await client.request({ type: "open_session", sessionPath: join(link, basename(own)) });
+		const again = await client.request({ type: "open_session", sessionPath: own });
+		const rows = (await client.request({ type: "subscribe_sessions", sessions: "all" })).data as {
+			snapshot: WireRecord[];
+		};
+
+		expect(first).toMatchObject({ success: true, data: { attached: true } });
+		expect(again).toMatchObject({ success: true, data: { attached: true } });
+		expect(rows.snapshot[0]).toMatchObject({ attachments: 2 });
+	});
+
+	it("refuses input fields its admission cannot carry, naming them, and delivers nothing", async () => {
+		const { harness, socket } = await terminal();
+		const client = await Client.connect(socket);
+
+		const answer = await client.request({
+			type: "steer",
+			message: "look",
+			images: [{ type: "image", data: "AA==", mimeType: "image/png" }],
+		});
+
+		expect(answer).toMatchObject({ success: false, errorCode: "unsupported_field" });
+		expect(String(answer.error)).toContain("images");
+		expect(harness.session.agent.hasQueuedMessages()).toBe(false);
 	});
 
 	it("refuses to open a session the terminal does not host", async () => {

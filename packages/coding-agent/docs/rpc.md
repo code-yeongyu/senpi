@@ -1594,11 +1594,16 @@ registrant opens no socket and writes no registry directory.
     (`session_status`, `effect_status`, the same `mirror` opt-in for content to a client that never attached).
     `attachments` counts the terminal plus each attached client; a subscriber, mirrored or not, is not one.
   - `steer`/`follow_up { message, whenIdle?, clientMessageId?, expected_turn_id? }` and
-    `prompt { message, streamingBehavior? }`: delivered through `admitExternalMessage` with the host's meaning of
-    `whenIdle` (`queue`, the default, holds input on an idle session for its next turn; `start` starts one;
-    `prompt` always starts). A steer that names no `expected_turn_id` steers the current turn. The answer's
-    `disposition` is `started` or `queued`; `held_draft` (the user is composing) and `turn_conflict` are
-    refusals with a reason and an action.
+    `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
+    (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
+    default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
+    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started` or
+    `queued`; `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
+    terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
+    skills, no admission receipt, and a repeated `clientMessageId` answers `duplicate: true`. Frames carrying
+    `images`, `thinkingLevel`, `expandPromptTemplates`, `unknownCommandAsText`, `sessionTitlePrompt` or
+    `enqueueOrder` are refused `unsupported_field`, naming them.
   - `get_effect_status { effectId, sessionPath? }`: the same effect ledger as a host.
   - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
   - `extension_ui_response`: answers only a question this session asked and still waits on

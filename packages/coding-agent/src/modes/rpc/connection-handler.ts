@@ -61,7 +61,6 @@ import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { handleClientInput } from "./client-input-handler.ts";
-import { ClientMessageEvents } from "./client-message-events.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
 	AUTO_TITLE_SESSIONS_CAPABILITY,
@@ -101,7 +100,6 @@ import { buildRpcSessionState } from "./rpc-session-state.ts";
 import type {
 	RpcAuthProvider,
 	RpcCommand,
-	RpcCommandInvocationEvent,
 	RpcExtensionEvent,
 	RpcExtensionUIProgress,
 	RpcExtensionUIRequest,
@@ -111,7 +109,6 @@ import type {
 	RpcMcpServerStatus,
 	RpcResponse,
 	RpcSessionReplacedEvent,
-	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
 import {
 	RPC_ERROR_ENTRY_NOT_FOUND,

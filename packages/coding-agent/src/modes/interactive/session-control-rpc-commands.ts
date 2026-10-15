@@ -7,13 +7,15 @@
  * `undefined` and falls through to the endpoint's other commands.
  */
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { ExternalDeliverAs } from "../../core/extensions/session-control-types.ts";
 import { runGetEffectStatus } from "../rpc/effect-commands.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
 import type { RpcCommand } from "../rpc/rpc-types.ts";
 import { answerSubscribeSessions, answerUnsubscribeSessions, refusal } from "../rpc/session-status-commands.ts";
-import type { ControlAttachments } from "./session-control-attach.ts";
+import { type ControlAttachments, keyOf } from "./session-control-attach.ts";
 import type { ControlCommand, ControlConnection } from "./session-control-server.ts";
 
 type Command<T extends RpcCommand["type"]> = Extract<RpcCommand, { type: T }>;
@@ -47,7 +49,7 @@ export async function runTuiRpcCommand(
 		case "unsubscribe_sessions":
 			return answerUnsubscribeSessions(
 				frame<"unsubscribe_sessions">(command),
-				keyFor(context, connection),
+				keyOf(connection),
 				context.attachments.writer.status,
 			);
 		case "steer":
@@ -59,7 +61,7 @@ export async function runTuiRpcCommand(
 			return runGetEffectStatus(
 				{
 					session: context.session,
-					by: { connectionId: `tui-${connection.id}` },
+					by: { connectionId: keyOf(connection) },
 					sessionId: context.attachments.handle,
 				},
 				frame<"get_effect_status">(command),
@@ -74,10 +76,6 @@ function frame<T extends RpcCommand["type"]>(command: ControlCommand): Command<T
 	return command as unknown as Command<T>;
 }
 
-function keyFor(context: RpcCommandContext, connection: ControlConnection): string {
-	return context.attachments.run(connection, () => context.attachments.writer.currentConnection() ?? "");
-}
-
 function idOf(command: ControlCommand): string | undefined {
 	return typeof command.id === "string" ? command.id : undefined;
 }
@@ -88,7 +86,7 @@ function openSession(
 	command: ControlCommand,
 ): object | null {
 	const { session, attachments } = context;
-	const ownPath = command.sessionPath !== undefined && command.sessionPath === session.sessionFile;
+	const ownPath = typeof command.sessionPath === "string" && samePath(command.sessionPath, session.sessionFile);
 	const ownId = command.sessionId !== undefined && command.sessionId === session.sessionId;
 	if (!ownPath && !ownId)
 		return refusal(idOf(command), "open_session", "terminal_single_session", {
@@ -110,7 +108,7 @@ function openSession(
 
 function subscribe(context: RpcCommandContext, connection: ControlConnection, command: Command<"subscribe_sessions">) {
 	const { writer } = context.attachments;
-	const key = keyFor(context, connection);
+	const key = keyOf(connection);
 	const { answer, activate } = answerSubscribeSessions(command, key, writer.status);
 	if (activate === undefined) return answer;
 	// As on a host: the answer reaches the connection's FIFO before the subscription goes live, so its
@@ -135,6 +133,28 @@ function admitPrompt(context: RpcCommandContext, command: ControlCommand): objec
 	return admitInput(context, command, behavior === "followUp" ? "followUp" : "steer", "start");
 }
 
+/** Input fields a host honours that admission cannot: refused by name instead of silently dropped. */
+const UNSERVED_INPUT_FIELDS = [
+	"images",
+	"thinkingLevel",
+	"expandPromptTemplates",
+	"unknownCommandAsText",
+	"sessionTitlePrompt",
+	"enqueueOrder",
+] as const;
+
+function samePath(requested: string, own: string | undefined): boolean {
+	if (own === undefined) return false;
+	const canonical = (path: string): string => {
+		try {
+			return realpathSync(resolve(path));
+		} catch {
+			return resolve(path);
+		}
+	};
+	return canonical(requested) === canonical(own);
+}
+
 function admitInput(
 	context: RpcCommandContext,
 	command: ControlCommand,
@@ -142,6 +162,12 @@ function admitInput(
 	whenIdle: unknown,
 ): object {
 	const id = idOf(command);
+	const unserved = UNSERVED_INPUT_FIELDS.filter((field) => command[field] !== undefined);
+	if (unserved.length > 0)
+		return refusal(id, command.type, "unsupported_field", {
+			reason: `a terminal delivers input through its admission, which carries text only, not ${unserved.join(", ")}`,
+			action: "send the message without those fields, or send it to a host session",
+		});
 	const message = command.message;
 	if (typeof message !== "string" || message.trim() === "")
 		return refusal(id, command.type, "invalid_message", {

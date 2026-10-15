@@ -9,6 +9,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } from "../rpc/jsonl.ts";
 import { rpcCommandShapeError } from "../rpc/rpc-input-validation.ts";
 import type { SessionEventWriterConnection } from "../rpc/session-event-fanout.ts";
+import { socketSink } from "../rpc/socket-sink.ts";
 import { authenticateSocket } from "../rpc/socket-transport.ts";
 
 export interface ControlConnection {
@@ -63,22 +64,13 @@ export async function listenControlSocket(
 function acceptConnection(socket: Socket, id: number, handlers: ControlServerHandlers): void {
 	const connection: ControlConnection = {
 		id,
+		// Every record, answers and feed events alike, leaves through the endpoint's writer when it has one,
+		// so this connection's output keeps one order.
 		send: (record) => {
-			if (!socket.destroyed) socket.write(serializeJsonLine(record));
+			if (handlers.respond !== undefined) handlers.respond(connection, record);
+			else if (!socket.destroyed) socket.write(serializeJsonLine(record));
 		},
-		transport: {
-			writeRaw: (chunk) => {
-				if (!socket.destroyed) socket.write(chunk);
-			},
-			waitForBackpressure: () =>
-				socket.destroyed || !socket.writableNeedDrain
-					? Promise.resolve()
-					: new Promise<void>((resolve) => {
-							socket.once("drain", resolve);
-							socket.once("close", resolve);
-						}),
-			close: () => socket.destroy(),
-		},
+		transport: socketSink(socket),
 	};
 	handlers.opened?.(connection);
 	const detach = attachJsonlLineReader(socket, (line) => void answer(connection, line, handlers), {
@@ -106,8 +98,7 @@ async function answer(connection: ControlConnection, line: string, handlers: Con
 	}
 	const answer = await handlers.command(connection, parsed);
 	if (answer === null) return;
-	if (handlers.respond === undefined) connection.send(answer);
-	else handlers.respond(connection, answer);
+	connection.send(answer);
 }
 
 function isCommand(value: unknown): value is ControlCommand {
