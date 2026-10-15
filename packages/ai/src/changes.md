@@ -1,3 +1,21 @@
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `KnownClassifierApi` drops the `"llama-cpp-classify"` member.
+
+### Why
+
+Q's 2026-10-12 order removes the `/llama` llama.cpp feature from senpi and the desktop app entirely. The classify backend is part of that feature, not a shared capability.
+
+### Why an extension could not handle it
+
+The feature is built into the provider-neutral `ai` package's API surface and type unions; removing it requires deleting the implementation and narrowing the union, which an extension cannot do from outside.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the `KnownClassifierApi` union.
+
 ## 2026-10-11 - Usage-limit advice retains structured cause (senpi#3131 review)
 
 ### What changed

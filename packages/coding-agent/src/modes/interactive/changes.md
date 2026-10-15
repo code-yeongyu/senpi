@@ -16,6 +16,24 @@
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `applyThinkingLevel` and `onThinkingLevelChange`.
 
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: removes `llamaCppPostLoginGuidance` and the post-login `llama.cpp` branch.
+
+### Why
+
+Q's 2026-10-12 order removes the `/llama` llama.cpp feature from the desktop app and the TUI. The post-login guidance branch is part of that feature.
+
+### Why an extension could not handle it
+
+The branch lives inside interactive mode's authentication flow, which an extension cannot reach.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the removed guidance function and branch.
+
 ## 2026-10-12 - Short owned temp roots contain TUI socket fallbacks (Refs senpi#3064)
 
 ### What changed

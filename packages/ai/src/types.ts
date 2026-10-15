@@ -57,7 +57,7 @@ export type KnownImageApi = "openrouter-images" | "openai-images";
 
 export type ImageApi = KnownImageApi | (string & {});
 
-export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one" | "llama-cpp-classify";
+export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one";
 
 export type ClassifierApi = KnownClassifierApi | (string & {});
 

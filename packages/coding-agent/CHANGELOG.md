@@ -4,6 +4,8 @@
 
 ### Breaking Changes
 
+- Removed the built-in `/llama` llama.cpp router integration and its `/llama` command, the `llama.cpp` inline extension, and the interactive post-login llama.cpp guidance. A saved `llama.cpp` provider or credential in a user config is ignored and no longer resolves; the Ollama provider and third-party `meta-llama` catalog models are unaffected ([#3202](https://github.com/code-yeongyu/senpi/issues/3202), requested by @code-yeongyu).
+
 ### Added
 
 ### Changed

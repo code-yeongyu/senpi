@@ -333,12 +333,6 @@ interface Expandable {
 	setExpanded(expanded: boolean): void;
 }
 
-function llamaCppPostLoginGuidance(actionLabel: string, loadedModelCount: number): string {
-	return loadedModelCount === 0
-		? `${actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it.`
-		: `${actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.`;
-}
-
 interface ActiveEditor extends EditorComponent {
 	getCursor?(): { line: number; col: number };
 }
@@ -9116,10 +9110,7 @@ export class InteractiveMode {
 			if (isUnknownModel(previousModel)) {
 				const availableModels = this.session.modelRuntime.getAvailableSnapshot();
 				const providerModels = availableModels.filter((model) => model.provider === providerId);
-				// Matches LLAMA_PROVIDER_ID from extensions/llama/provider.ts; kept inline to avoid coupling interactive mode to the built-in extension.
-				if (providerId === "llama.cpp") {
-					selectionError = llamaCppPostLoginGuidance(actionLabel, providerModels.length);
-				} else if (!hasDefaultModelProvider(providerId)) {
+				if (!hasDefaultModelProvider(providerId)) {
 					selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
 				} else if (providerModels.length === 0) {
 					selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;

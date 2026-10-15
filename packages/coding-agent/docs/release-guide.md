@@ -186,7 +186,6 @@ Four global default extension factories load separately:
 ### Other bundled surfaces
 
 - `codemode` is bundled as `@code-yeongyu/senpi-codemode`.
-- `llama.cpp` is a hidden inline extension.
 - `.codex-plugin/plugin.json` belongs to the hooks plugin-manifest loader. Runtime-discovered
   hook plugins are user resources; no hook plugin is bundled by this repository.
 

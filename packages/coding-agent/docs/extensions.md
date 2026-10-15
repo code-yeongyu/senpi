@@ -2391,7 +2391,7 @@ Register or override a model provider dynamically. Useful for proxies, custom en
 
 Calls made during the extension factory function are queued and applied once the runner initialises. Calls made after that — for example from a command handler following a user setup flow — take effect immediately without requiring a `/reload`.
 
-Dynamic providers can implement `refreshModels`. Senpi calls it during model refresh, publishes the returned list synchronously through the provider, and passes the canonical credential/stored-catalog/network/signal context. The extension decides whether to persist catalog metadata through generation-checked `context.publish({ persist: entry })`; live servers such as llama.cpp can return models without persisting them.
+Dynamic providers can implement `refreshModels`. Senpi calls it during model refresh, publishes the returned list synchronously through the provider, and passes the canonical credential/stored-catalog/network/signal context. The extension decides whether to persist catalog metadata through generation-checked `context.publish({ persist: entry })`; live servers can return models without persisting them.
 
 `context.signal` is always a concrete signal and provider callbacks must pass it to blocking I/O. Public `ModelRuntime.refresh()` and `ModelRegistry.refresh()` calls accept an optional signal and are unbounded when it is omitted; extensions and applications choose their own deadlines. Cancellation stops the caller waiting even if a provider ignores the signal, but cooperation is still required to stop the underlying work.
 
@@ -2445,8 +2445,8 @@ pi.registerProvider("my-proxy", {
   ]
 });
 
-// Register a live llama.cpp catalog without persisting discovered models
-pi.registerProvider("llama.cpp", {
+// Register a live local catalog without persisting discovered models
+pi.registerProvider("local-server", {
   baseUrl: "http://localhost:8080/v1",
   apiKey: "local",
   api: "openai-completions",

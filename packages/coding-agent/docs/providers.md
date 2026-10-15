@@ -10,7 +10,6 @@ Senpi supports subscription-based providers via OAuth and API key providers via 
 - [Auth File](#auth-file)
 - [Provider Specific Config](#provider-specific-config)
 - [Ollama Cloud](#ollama-cloud)
-- [llama.cpp](#llamacpp)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
 
@@ -648,12 +647,6 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
-
-## llama.cpp
-
-Senpi supports the llama.cpp router server. Configure it with `/login llama.cpp`, manage loaded models with `/llama`, and select a loaded model with `/model`.
-
-See [llama.cpp](llama-cpp.md) for server setup, model directory layout, environment variables, and command usage.
 
 ## Custom Providers
 

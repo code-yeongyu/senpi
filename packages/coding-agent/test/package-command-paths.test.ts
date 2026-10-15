@@ -518,7 +518,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			cwd: projectDir,
 			agentDir,
 			settingsManager,
-			builtinExtensions: ["llama.cpp", "mcp"],
+			builtinExtensions: ["example-ext", "mcp"],
 		}).resolve();
 		const selector = new ConfigSelectorComponent(
 			{ global: resolvedPaths, project: resolvedPaths },
@@ -535,11 +535,11 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		const list = selector.getResourceList();
 		initTheme("dark");
 		expect(list.render(80).join("\n")).toContain("Built-in");
-		expect(list.render(80).join("\n")).toContain("llama.cpp");
+		expect(list.render(80).join("\n")).toContain("example-ext");
 		list.handleInput(" ");
-		expect(settingsManager.getGlobalSettings().extensions).toEqual(["-builtin:llama.cpp"]);
+		expect(settingsManager.getGlobalSettings().extensions).toEqual(["-builtin:example-ext"]);
 		list.handleInput(" ");
-		expect(settingsManager.getGlobalSettings().extensions).toEqual(["+builtin:llama.cpp"]);
+		expect(settingsManager.getGlobalSettings().extensions).toEqual(["+builtin:example-ext"]);
 	});
 
 	it("cycles project built-in extension overrides in config local mode", async () => {

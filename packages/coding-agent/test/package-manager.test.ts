@@ -130,27 +130,27 @@ describe("DefaultPackageManager", () => {
 				cwd: tempDir,
 				agentDir,
 				settingsManager,
-				builtinExtensions: ["mcp", "llama.cpp"],
+				builtinExtensions: ["mcp", "example-ext"],
 			});
 			const builtins = async () =>
 				(await pm.resolve()).extensions.map((r) => [r.path, r.enabled, r.metadata.source, r.metadata.scope]);
 
 			expect(await builtins()).toEqual([
 				["builtin:mcp", true, "builtin", "user"],
-				["builtin:llama.cpp", true, "builtin", "user"],
+				["builtin:example-ext", true, "builtin", "user"],
 			]);
 
 			settingsManager.setExtensionPaths(["-builtin:mcp"]);
-			settingsManager.setProjectExtensionPaths(["+builtin:mcp", "-builtin:llama.cpp"]);
+			settingsManager.setProjectExtensionPaths(["+builtin:mcp", "-builtin:example-ext"]);
 			expect(await builtins()).toEqual([
 				["builtin:mcp", true, "builtin", "project"],
-				["builtin:llama.cpp", false, "builtin", "project"],
+				["builtin:example-ext", false, "builtin", "project"],
 			]);
 
 			settingsManager.setProjectExtensionPaths([]);
 			expect(await builtins()).toEqual([
 				["builtin:mcp", false, "builtin", "user"],
-				["builtin:llama.cpp", true, "builtin", "user"],
+				["builtin:example-ext", true, "builtin", "user"],
 			]);
 		});
 

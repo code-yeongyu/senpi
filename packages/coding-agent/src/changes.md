@@ -40,6 +40,30 @@ Cache enablement happens in the CLI bootstrap before extension loading and befor
 
 - LOW: the shared startup compile-cache helper and its two entry-point calls. Preserve the pre-import ordering for sessions and await the command decision.
 
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/coding-agent/src/extensions/llama/index.ts`: deleted. This was the built-in `/llama` extension entry point.
+- `packages/coding-agent/src/extensions/llama/client.ts`: deleted. The llama-server client.
+- `packages/coding-agent/src/extensions/llama/provider.ts`: deleted. The llama.cpp provider and slash command wiring.
+- `packages/coding-agent/src/extensions/llama/ui.ts`: deleted. The `/llama` model-management UI.
+- `packages/coding-agent/src/extensions/llama/huggingface.ts`: deleted. The Hugging Face download helper used only by `/llama`.
+- `packages/coding-agent/src/extensions/index.ts`: `builtInExtensions` becomes an empty array; the llama.cpp extension was its only entry.
+
+### Why
+
+Q's 2026-10-12 order removes the `/llama` llama.cpp feature from the desktop app and the TUI. The built-in extension is the feature.
+
+### Why an extension could not handle it
+
+The feature is the built-in inline extension registered by the host itself, plus a post-login branch inside interactive mode; removing it requires deleting the host's own registration and the core branch, which an extension cannot do.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/extensions/llama/`: deleted; upstream edits will conflict.
+- `packages/coding-agent/src/extensions/index.ts`: the `builtInExtensions` list.
+
 ## 2026-10-11 - Export eval cell RPC contracts (senpi#3072)
 
 ### What changed

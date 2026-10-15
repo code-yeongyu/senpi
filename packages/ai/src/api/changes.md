@@ -37,6 +37,26 @@
 
 - LOW: one more `Set` beside `toolReferenceReplayFallbacks` and its cleanup loop, one demotion call in `createRequest`, and one retry branch in the fork-only retry block; `anthropic-web-search-expiry.ts` is fork-only.
 
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: deleted. This classifier API existed only to back the removed `/llama` extension; it had no consumers outside it.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: deleted alongside its eager twin.
+
+### Why
+
+Q's 2026-10-12 order removes the `/llama` llama.cpp feature from senpi and the desktop app entirely. The classify backend is part of that feature, not a shared capability.
+
+### Why an extension could not handle it
+
+The feature is built into the provider-neutral `ai` package's API surface; removing it requires deleting the wire implementation, which an extension cannot do from outside.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: deleted; upstream edits will conflict.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: deleted alongside.
+
 ## 2026-10-11 - Replay opted-in GLM server-result pairs (senpi#3125 delta)
 
 ### What changed

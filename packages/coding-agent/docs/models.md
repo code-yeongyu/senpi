@@ -473,8 +473,6 @@ Classifier models do not chat. They answer typed questions about JSON state: pic
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
 
-Chat models on a [llama.cpp router](llama-cpp.md#classification) are also listed as classifier models.
-
 Classifier models do not appear in `/model`. Extensions call them through `ctx.modelRegistry.classify()`, and [virtual models](virtual-models.md#route-requests) can use them to route requests; see the `jev-router.ts` example. When the service reports token counts, `result.usage` carries them with their cost at the model's catalog price.
 
 ## Overriding Built-in Providers
