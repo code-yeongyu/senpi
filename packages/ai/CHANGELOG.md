@@ -8,6 +8,7 @@
 
 ### Changed
 
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 2 models.
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`github-copilot`, `google`, `google-vertex`, `meta`, `opencode`, `opencode-go`, `opengateway`, `openrouter`, `vercel-ai-gateway`).
 
 ### Fixed
