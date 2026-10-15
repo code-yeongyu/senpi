@@ -21,6 +21,8 @@ export interface RegisterRpcMonitorOptions {
 	readonly expiresAt?: number;
 	readonly monitorId?: string;
 	readonly agentDir: string;
+	/** Endpoint discovery override (tests); defaults to the endpoints registered under `agentDir`. */
+	readonly endpoints?: () => Promise<readonly string[]>;
 	/** A restore's saved view: the lines for what changed are injected once the watch has joined. */
 	readonly restoredFrom?: RpcMonitorCheckpoint;
 	readonly onCheckpoint?: (monitorId: string, checkpoint: RpcMonitorCheckpoint) => void;
@@ -64,6 +66,7 @@ export class RpcMonitorSource {
 			target: options.target,
 			events: options.events,
 			exclude: options.exclude,
+			...(options.endpoints === undefined ? {} : { endpoints: options.endpoints }),
 			line: (line) => this.#line(id, line),
 			...(options.onCheckpoint === undefined
 				? {}

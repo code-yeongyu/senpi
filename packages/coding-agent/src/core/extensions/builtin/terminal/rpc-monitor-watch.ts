@@ -29,6 +29,8 @@ export interface RpcWatchOptions {
 	readonly target: RpcTarget;
 	readonly events: RpcEvents;
 	readonly exclude: readonly string[];
+	/** Where to look for endpoints; defaults to every endpoint registered under `agentDir`. */
+	readonly endpoints?: () => Promise<readonly string[]>;
 	/** Every line this watch reports. */
 	readonly line: (line: string) => void;
 	/** The watch's view changed (a host joined, a status moved): persist it. */
@@ -95,7 +97,8 @@ export class RpcMonitorWatch {
 	}
 
 	async #join(): Promise<string[]> {
-		const sockets = await endpointSockets(this.#options.agentDir).catch(() => [] as readonly string[]);
+		const list = this.#options.endpoints ?? (() => endpointSockets(this.#options.agentDir));
+		const sockets = await list().catch(() => [] as readonly string[]);
 		const fresh = sockets.filter((socket) => !this.#observers.has(socket));
 		const rows = await Promise.all(fresh.map((socket) => this.#observe(socket)));
 		return rows.flat();
