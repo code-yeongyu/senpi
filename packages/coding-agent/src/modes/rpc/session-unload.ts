@@ -54,7 +54,7 @@ interface Refusal {
 }
 
 const ACTIONS = {
-	extension_work: "let the named work finish, or unload with force: true (it is stopped, not resumed on reopen)",
+	extension_work: "let the named work finish, or unload with force: true (it is stopped; only persistent monitors come back on reopen)",
 	turn_active: "wait for the turn to end, or unload with interrupt: true to stop it first",
 	work_pending: "wait for the work to finish, or unload with interrupt: true",
 	children_live: 'wait for the child tasks, or unload with children: "detach" to leave them running',

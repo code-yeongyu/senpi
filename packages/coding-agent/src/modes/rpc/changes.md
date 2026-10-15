@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/modes/rpc/session-unload.ts` (new): `unloadSession` classifies blockers (`turn_active`, `work_pending`, `children_live`, `attached`), interrupts only when every blocker is interruptible, re-checks and claims the close in one synchronous step, and records the `unload` ledger effect (`done` before the teardown releases the file, or `failed` with a `refused` outcome).
+- `packages/coding-agent/src/modes/rpc/session-unload.ts` (new): `unloadSession` classifies blockers (`turn_active`, `work_pending`, `extension_work`, `children_live`, `attached`), interrupts only when every blocker is interruptible, re-checks and claims the close in one synchronous step, and records the `unload` ledger effect (`done` before the teardown releases the file, or `failed` with a `refused` outcome).
 - `packages/coding-agent/src/modes/rpc/session-command-router.ts`: routes `unload_session` with its port (caller attachment excluded, child worker sessions counted from `list()` contexts) and `tearDownUnloaded` (the idle park's teardown, sealed `reason: "unloaded"`); the idle sweep's park now passes `reason: "idle"`.
 - `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `parkSession(id, path, reason)`.
 - `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `rpc-input-validation.ts`, `host-capabilities.ts`, `effect-record.ts`, `effect-commands.ts`, `rpc-client.ts`, `host-session-runner.ts`: the command, `RpcUnloadAnswer`, `session_parked.reason`, validation, the `unload_session` capability, the `refused` outcome kind, exported effect helpers, `RpcClient.unloadSession`, the CLI action.
