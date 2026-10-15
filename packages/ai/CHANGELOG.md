@@ -8,7 +8,7 @@
 
 ### Changed
 
-- The bundled model catalog is refreshed from models.dev and the providers' model listings (`github-copilot`, `google`, `google-vertex`, `meta`, `opencode`, `opencode-go`, `opengateway`, `openrouter`, `vercel-ai-gateway`).
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`, `vercel-ai-gateway`).
 
 ### Fixed
 
