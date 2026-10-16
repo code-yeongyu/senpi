@@ -6,6 +6,8 @@
 
 ### Added
 
+- `senpi --print-prompt-sizes` prints a sizes-only JSON breakdown of the first-turn system prompt and provider tool declarations, without a model call. It includes context file sources, skills limits, extension contributions, the ten largest tools and a total; unsafe preview handlers cause a JSON error instead of an approximate result ([#3483](https://github.com/code-yeongyu/senpi/issues/3483)).
+
 - A permission prompt for a tool without its own parser offers a wider "Allow always": for a URL, that domain in this project ("Allow <tool> on <host> always in this project"); for other tools, the tool in this project. Commands, paths and built-in tools never get it.
 
 - `RpcClient.abort(options)` sends a typed abort (`effectId`, `awaitIdle`, `clearQueue`, `graceMs`) and returns the host's answer (`stopped`, `idle`, `cleared`, receipt); `RpcClient.getEffectStatus(effectId, { sessionPath? })` reads an effect receipt. `abort()` without options is unchanged ([#3453](https://github.com/code-yeongyu/senpi/issues/3453)).

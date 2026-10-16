@@ -8,6 +8,7 @@
  * - Interact with the user via UI primitives
  */
 
+import type { PromptSizeReport } from "../prompt-size-report.ts";
 import type { ContextEvent } from "./context-event.ts";
 
 export type { ContextEvent } from "./context-event.ts";
@@ -648,9 +649,13 @@ export interface PromptCachePrefixRequest {
 	readonly model: Model<Api>;
 	readonly context: Context;
 	readonly options: SimpleStreamOptions;
+	/** Sizes of the exact preview composition; never includes prompt or tool content. */
+	readonly sizeReport?: PromptSizeReport;
 }
 
 export interface PromptCachePrefixRequestOptions {
+	/** Inspect composition without resolving credentials (which may refresh over the network). */
+	readonly sizesOnly?: boolean;
 	/** Aborting stops the preview pass before its next handler and resolves the build as `skipped`. */
 	readonly signal?: AbortSignal;
 }

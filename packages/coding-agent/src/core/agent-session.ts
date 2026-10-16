@@ -4822,9 +4822,7 @@ export class AgentSession {
 			customPrompt: loaderSystemPrompt,
 			appendSystemPrompt: loaderAppendSystemPrompt.length > 0 ? loaderAppendSystemPrompt.join("\n\n") : undefined,
 		};
-		const basePrompt = loaderSystemPrompt ?? buildDynamicSystemPrompt(this._baseSystemPromptOptions);
-		const prompt =
-			loaderAppendSystemPrompt.length > 0 ? `${basePrompt}\n\n${loaderAppendSystemPrompt.join("\n\n")}` : basePrompt;
+		const prompt = buildDynamicSystemPrompt(this._baseSystemPromptOptions);
 		if (!this._isEvalOnlyPolicyArmed()) return prompt;
 		const armed = this._evalOnlyToolNames ?? new Set<string>();
 		const registered = new Set([...armed].filter((name) => this._toolRegistry.has(name)));

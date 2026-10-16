@@ -5024,3 +5024,20 @@ The package barrel is the only public entry point; an extension cannot add expor
 ### Expected merge conflict zones
 
 - LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.
+## 2026-10-16 - Offline prompt size CLI route (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `--print-prompt-sizes` forces offline print startup, opens the normal runtime and exits through the diagnostic before stdin, model streaming or catalog refresh.
+
+### Why
+
+The size breakdown must describe the loaded current project, including extensions, while making no provider request.
+
+### Why an extension could not handle it
+
+The flag changes core startup and dispatch before extensions can handle a turn.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: offline selection, app mode selection and the post-runtime-creation diagnostic branch.

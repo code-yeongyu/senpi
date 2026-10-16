@@ -852,3 +852,21 @@ CLI argument semantics live in the executable entry, below any extension hook.
 ### Expected merge conflict zones
 
 Upstream edits to cli/args.ts at the next sync.
+## 2026-10-16 - First-turn prompt size inspection (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parse and document `--print-prompt-sizes`.
+- `packages/coding-agent/src/cli/print-prompt-sizes.ts`: bind a normal session, request a sizes-only prefix preview, emit JSON and exit. Missing models and skipped previews exit nonzero with a reason. Prompt and tool content never enter the output.
+
+### Why
+
+Users need to see which first-turn components consume their input budget without publishing their instructions.
+
+### Why an extension could not handle it
+
+The diagnostic must select an offline, non-streaming CLI route before normal mode dispatch and stdin consumption.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: Args, the flag parser and help template.

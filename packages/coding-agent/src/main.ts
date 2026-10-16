@@ -45,6 +45,7 @@ import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
+import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { prepareSessionOpening } from "./cli/session-opening.ts";
@@ -1103,7 +1104,8 @@ export async function main(args: string[], options?: MainOptions) {
 	// over when the first statement runs, so it is read from the process clock rather than measured.
 	recordTiming("processStart->main", Math.round(process.uptime() * 1000));
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
-	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
+	const offlineMode =
+		args.includes("--print-prompt-sizes") || args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
 	if (offlineMode) {
 		process.env.PI_OFFLINE = "1";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
@@ -1198,7 +1200,9 @@ export async function main(args: string[], options?: MainOptions) {
 		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
 	}
 
-	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
+	let appMode: AppMode = parsed.printPromptSizes
+		? "print"
+		: resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
 	const shouldTakeOverStdout =
 		appMode !== "interactive" && (!isPlainRuntimeMetadataCommand(parsed) || (parsed.help && parsed.mode === "json"));
 	if (shouldTakeOverStdout) {
@@ -1432,6 +1436,9 @@ export async function main(args: string[], options?: MainOptions) {
 			startupLoadingIndicator.stop();
 		});
 	time("createAgentSessionRuntime");
+	if (parsed.printPromptSizes) {
+		await printPromptSizes(runtime);
+	}
 	await prepareSessionOpening(sessionManager, appMode);
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;

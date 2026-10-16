@@ -10633,3 +10633,23 @@ Context files and the skills section are assembled by core before extensions see
 - `resource-loader.ts`: the import block and the `loadProjectContextFiles` call in `reload`.
 - `skills.ts`: the area where `formatSkillsForPrompt` used to live.
 - `settings-manager.ts`: the `Settings` interface beside `compaction`.
+## 2026-10-16 - Account for the composed first-turn prefix (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildSystemPrompt` delegates loader custom and append branches to the same dynamic builder; the resulting bytes are unchanged.
+- `packages/coding-agent/src/core/prompt-cache-prefix-request.ts`: each preview composition carries its base parts and observed extension byte deltas into a sizes-only report, measured with tools from `buildProviderContext`. A recomposition pass discards the prior pass's accounting. Sizes-only inspection skips credential preparation, which can refresh credentials over the network.
+- `packages/coding-agent/src/core/prompt-size-report.ts`: per-component UTF-8 bytes, engine token estimates, home-relative sources, context file details, skill bounds and count, and provider tools with count and the ten largest declarations. Replacing a prompt is marked `rewritten` with its signed net delta.
+
+### Why
+
+The old prefix flattened its system message and exposed no section accounting. #3137/#3154 concern total projected-context admission, not per-section accounting; they provide no reusable breakdown. The sum here equals the composed system prompt bytes plus the JSON-serialized provider declarations from that very build.
+
+### Why an extension could not handle it
+
+Only the shared builder sees both the real preview composition and the agent loop's final provider declarations.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_rebuildSystemPrompt` custom/append branch.
+- `packages/coding-agent/src/core/prompt-cache-prefix-request.ts`: preview composition and ready result.

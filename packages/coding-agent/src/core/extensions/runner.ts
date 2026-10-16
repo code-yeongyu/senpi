@@ -2100,6 +2100,8 @@ export class ExtensionRunner {
 			readonly preview?: boolean;
 			readonly signal?: AbortSignal;
 			readonly trigger?: BeforeAgentStartEvent["trigger"];
+			/** Internal size accounting; observes only preview composition, never real turns. */
+			readonly observePrompt?: (extensionPath: string, before: string, after: string) => void;
 		} = {},
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		let currentSystemPrompt = systemPrompt;
@@ -2131,6 +2133,7 @@ export class ExtensionRunner {
 						systemPromptOptions,
 						...(options.preview === true ? { preview: true } : {}),
 					};
+					const promptBefore = currentSystemPrompt;
 					const handlerResult = await handler(event, ctx);
 
 					if (handlerResult) {
@@ -2142,6 +2145,9 @@ export class ExtensionRunner {
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
 						}
+					}
+					if (options.preview === true) {
+						options.observePrompt?.(ext.path, promptBefore, currentSystemPrompt);
 					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);

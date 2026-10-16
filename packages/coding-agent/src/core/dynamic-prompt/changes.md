@@ -1,5 +1,24 @@
 # changes.md — dynamic-prompt
 
+## 2026-10-16 - Named byte-preserving prompt parts (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: `buildDynamicSystemPromptParts` returns ordered named parts, with each separator owned by its part. `buildDynamicSystemPrompt` joins those exact texts with no delimiter. Context files keep individual source paths. Loader custom and append branches use the same assembly path.
+- Committed golden fixtures captured at main `89ecd50ca0` preserve realistic multi-root context and skills, compact skills, app and model-core variants, custom and append prompts, and a composed memory-style extension suffix.
+
+### Why
+
+Prompt-size inspection needs section provenance without changing any prompt text, ordering or whitespace, since those bytes determine cache hits.
+
+### Why an extension could not handle it
+
+An extension cannot recover part boundaries from an opaque composed prompt without duplicating assembly.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: options and assembly.
+
 ## 2026-10-15 - Preset-overridable sentences in three section builders (senpi#3385)
 
 ### What changed

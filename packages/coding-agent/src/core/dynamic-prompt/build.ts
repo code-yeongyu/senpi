@@ -32,6 +32,9 @@ export interface DynamicPromptCoreContext {
 }
 
 export interface BuildDynamicSystemPromptOptions {
+	/** Loader replacement and additions, assembled here with the same separators as the session. */
+	customPrompt?: string;
+	appendSystemPrompt?: string;
 	/** Host identity; omitted preserves the Native runtime's configured brand. */
 	appName?: string;
 	/**
@@ -66,24 +69,22 @@ export interface BuildDynamicSystemPromptOptions {
 	surface?: PromptSurface;
 }
 
-function buildContextFilesSection(contextFiles: Array<{ path: string; content: string }>): string {
-	if (contextFiles.length === 0) {
-		return "";
-	}
-
-	const lines = [
-		"## Project Context",
-		"",
-		"Project instruction files (below, and in [Directory Context: ...] blocks injected during reads) bind files under their directory; deeper files win on conflict; explicit user instructions override.",
-		"",
-	];
-	for (const contextFile of contextFiles) {
-		lines.push(`### ${contextFile.path}`, "", contextFile.content.trimEnd(), "");
-	}
-	return lines.join("\n").trimEnd();
+export interface DynamicSystemPromptPart {
+	readonly name: string;
+	readonly source?: string;
+	/** Includes its separators: joining every text with "" is the exact provider prompt. */
+	readonly text: string;
 }
 
-export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOptions): string {
+export function buildDynamicSystemPromptParts(options: BuildDynamicSystemPromptOptions): DynamicSystemPromptPart[] {
+	if (options.customPrompt !== undefined) {
+		return [
+			{ name: "custom_prompt", source: "loader", text: options.customPrompt },
+			...(options.appendSystemPrompt === undefined
+				? []
+				: [{ name: "append_system_prompt", source: "loader", text: `\n\n${options.appendSystemPrompt}` }]),
+		];
+	}
 	const tools = categorizeTools(options.selectedTools);
 
 	const toolSection = buildToolSection({
@@ -113,28 +114,49 @@ export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOption
 				buildStyleSection({ surface }),
 			];
 
+	const parts: DynamicSystemPromptPart[] = [{ name: "core", source: "dynamic-prompt", text: sections.join("\n") }];
 	const tuning = options.tuningSection?.trim();
 	if (tuning) {
-		sections.push("", tuning);
+		parts.push({ name: "tuning", source: "prompt-preset", text: `\n\n${tuning}` });
 	}
 
-	const contextFilesSection = buildContextFilesSection(options.contextFiles);
-	if (contextFilesSection) {
-		sections.push("", contextFilesSection);
+	if (options.contextFiles.length > 0) {
+		parts.push({
+			name: "project_context",
+			source: "dynamic-prompt",
+			text: "\n\n## Project Context\n\nProject instruction files (below, and in [Directory Context: ...] blocks injected during reads) bind files under their directory; deeper files win on conflict; explicit user instructions override.\n\n",
+		});
+		for (const [index, file] of options.contextFiles.entries()) {
+			const text = `### ${file.path}\n\n${file.content.trimEnd()}`;
+			parts.push({
+				name: "project_context",
+				source: file.path,
+				text: index === options.contextFiles.length - 1 ? text.trimEnd() : `${text}\n\n`,
+			});
+		}
 	}
 
 	const skillsSection = formatSkillsForPrompt(options.skills);
 	if (skillsSection) {
-		sections.push(skillsSection);
+		parts.push({ name: "skills", source: "skills", text: `\n${skillsSection}` });
 	}
 
-	sections.push(
-		"",
-		buildWorkstationSection({
+	parts.push({
+		name: "workstation",
+		source: "dynamic-prompt",
+		text: `\n\n${buildWorkstationSection({
 			selectedTools: options.selectedTools,
 			dialect: options.workstationDialect ?? "default",
-		}),
-	);
+		})}`,
+	});
+	if (options.appendSystemPrompt !== undefined) {
+		parts.push({ name: "append_system_prompt", source: "loader", text: `\n\n${options.appendSystemPrompt}` });
+	}
+	return parts;
+}
 
-	return sections.join("\n");
+export function buildDynamicSystemPrompt(options: BuildDynamicSystemPromptOptions): string {
+	return buildDynamicSystemPromptParts(options)
+		.map((part) => part.text)
+		.join("");
 }
