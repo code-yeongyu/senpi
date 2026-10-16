@@ -145,12 +145,37 @@ function resolveCacheRetention(
 	return fallback;
 }
 
+// A turn sized to outlive the 5-minute default cache TTL: max/high effort, or an expected
+// output of at least this many tokens (senpi#3280). 18k-60k-token turns were measured missing
+// the cache outright, so the threshold sits just under that band.
+const AUTO_LONG_CACHE_MIN_OUTPUT_TOKENS = 16384;
+
+/**
+ * Whether this turn can outlive the 5-minute prompt-cache TTL: max/high resolved effort, or a
+ * long expected output. Only then is the 2x cache-write cost of the 1h tier accepted (senpi#3280).
+ * `AnthropicOptions` carries no `reasoning` field — `streamSimple` maps a caller's reasoning level
+ * to `effort` before this point, so the resolved `effort` is the only reasoning signal here.
+ */
+function turnCanOutliveShortCache(options: AnthropicOptions | undefined): boolean {
+	if (!options) return false;
+	const effort = options.effort;
+	if (effort === "max" || effort === "xhigh" || effort === "high") return true;
+	const maxTokens = options.maxTokens;
+	return maxTokens !== undefined && maxTokens >= AUTO_LONG_CACHE_MIN_OUTPUT_TOKENS;
+}
+
 function getCacheControl(
 	model: Model<"anthropic-messages">,
 	cacheRetention?: CacheRetention,
 	env?: ProviderEnv,
+	autoLongRetention = false,
 ): { retention: CacheRetention; cacheControl?: CacheControlEphemeral } {
-	const retention = resolveCacheRetention(cacheRetention, env, "short");
+	let retention = resolveCacheRetention(cacheRetention, env, "short");
+	// Auto 1h TTL (senpi#3280): nothing configured, and the turn can outlive 5 minutes. Only an
+	// unset fallback is upgraded; any explicit or env-driven answer stands.
+	if (retention === "short" && autoLongRetention && cacheRetention === undefined) {
+		retention = "long";
+	}
 	if (retention === "none") {
 		return { retention };
 	}
@@ -2318,7 +2343,12 @@ function buildParams(
 	unsignedThinkingReplay = getAnthropicCompat(model).unsignedThinkingReplay,
 ): MessageCreateParamsStreamingWithFallbacks {
 	const compat = getAnthropicCompat(model);
-	const { cacheControl } = getCacheControl(model, options?.cacheRetention ?? model.cacheRetention, options?.env);
+	const { cacheControl } = getCacheControl(
+		model,
+		options?.cacheRetention ?? model.cacheRetention,
+		options?.env,
+		turnCanOutliveShortCache(options),
+	);
 	const initialSystemMessage = getInitialSystemMessage(context.messages);
 	const initialSystemText = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {

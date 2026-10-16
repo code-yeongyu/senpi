@@ -1,3 +1,22 @@
+## 2026-10-13 - Automatic 1-hour prompt-cache TTL for turns that can outlive 5 minutes (senpi#3280)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `getCacheControl` gains an `autoLongRetention` signal; `buildParams` passes `turnCanOutliveShortCache(options)`. When nothing configured a retention (no caller or model `cacheRetention`, no `PI_CACHE_RETENTION`) and the turn can outlive the 5-minute default TTL — the resolved effort is `max`/`xhigh`/`high`, or `maxTokens >= 16384` — the retention resolves to `long`, which the existing gate maps to `cache_control.ttl = "1h"` only for a first-party Anthropic base URL with `supportsLongCacheRetention`. Short turns keep the ephemeral default with no explicit ttl; every other provider and gateway is unchanged. (`AnthropicOptions` carries no `reasoning` field; `streamSimple` maps a caller's reasoning level to `effort` before `buildParams`, so the resolved `effort` is the only reasoning signal at that point.)
+- `packages/ai/test/anthropic-auto-cache-ttl.test.ts`: request-shape coverage — a max-reasoning turn and a long-expected-output turn mark the stable prefix with `ttl: "1h"`; a short turn and an explicit `cacheRetention: "short"` keep the ephemeral default.
+
+### Why
+
+- A user's own analysis of one session found 26 of 27 unexplained prompt-cache misses immediately after responses that took 4-10 minutes (18k-60k output tokens): the 5-minute default TTL expired before the next request, so the whole stable prefix was rewritten at full cost. The 1h tier costs 2x cache write; accepting it only where a turn can outlive 5 minutes confines that cost to the turns that need it.
+
+### Why an extension could not handle it
+
+- The retention decision is made inside the Anthropic request builder from the turn's resolved options (`options.reasoning`, `options.effort`, `options.maxTokens`), which no extension hook observes at that point; the cache_control marker is written onto the stable prefix by the request builder itself.
+
+### Expected merge conflict zones
+
+- `getCacheControl` and the `buildParams` call site in `packages/ai/src/api/anthropic-messages.ts`.
+
 ## 2026-10-13 - Advertised [CC] floor 2.1.296 (senpi#3258)
 
 ### What changed
