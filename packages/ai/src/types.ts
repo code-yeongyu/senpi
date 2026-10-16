@@ -813,6 +813,8 @@ export interface AssistantImages {
 	background?: "transparent" | "opaque";
 	stopReason: ImagesStopReason;
 	errorMessage?: string;
+	/** Structured classification of a provider rejection (HTTP status, category); set only on `error`. */
+	providerDiagnostic?: ProviderDiagnostic;
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
