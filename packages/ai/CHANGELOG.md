@@ -12,6 +12,9 @@
 
 ### Fixed
 
+- Fixed OAuth credential pool rotation desync in `mergeRefreshed`: when top-level access tokens are desynchronized from the `accounts` array, token rotation falls back to updating the primary account slot rather than leaving `accounts[0]` with expired tokens ([#3407](https://github.com/code-yeongyu/senpi/issues/3407)).
+
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16
