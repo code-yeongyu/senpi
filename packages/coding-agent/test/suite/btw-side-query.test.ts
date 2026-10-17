@@ -1,6 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import type { Component, TUI } from "@earendil-works/pi-tui";
+import type { ResponseCreateParams } from "openai/resources/responses/responses.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
 import btwExtension from "../../src/core/extensions/builtin/btw/index.ts";
@@ -226,6 +227,65 @@ describe("runSideQuery", () => {
 		// The faux call log replays tools from the transcript and omits them when none are declared (L2a decision 56).
 		expect(call?.context.tools).toBeUndefined();
 		expect(call?.options?.sessionId).toMatch(/^session-1:btw:/);
+	});
+
+	it.each([
+		{ api: "openai-responses" as const, provider: "openai", withText: false },
+		{ api: "openai-responses" as const, provider: "openai", withText: true },
+		{ api: "openai-codex-responses" as const, provider: "chatgpt-subscription", withText: false },
+		{ api: "openai-codex-responses" as const, provider: "chatgpt-subscription", withText: true },
+	])("omits native web search from $api side requests (withText=$withText)", async ({ api, provider, withText }) => {
+		const model = { ...setup().getModel(), id: "btw-native-replay", api, provider, baseUrl: "http://127.0.0.1:1/v1" };
+		const assistant = {
+			...fauxAssistantMessage(withText ? "earlier visible answer" : ""),
+			api,
+			provider,
+			model: model.id,
+		};
+		assistant.content = [
+			{
+				type: "providerNative",
+				subtype: "web_search_call",
+				raw: {
+					id: "ws_btw_fixture",
+					type: "web_search_call",
+					status: "completed",
+					action: { type: "search", query: "fixture documentation" },
+				},
+			},
+			...(withText ? assistant.content : []),
+		];
+		const history = [{ role: "user" as const, content: "earlier question", timestamp: 1 }, assistant];
+		const originalHistory = structuredClone(history);
+		let payload: ResponseCreateParams | undefined;
+
+		await expect(
+			runSideQuery(
+				{
+					model,
+					auth: { apiKey: "btw-fixture-key" },
+					sessionId: "btw-native-fixture",
+					streamFn: (requestModel, context, options) =>
+						streamSimple(requestModel, context, {
+							...options,
+							onPayload: (body) => {
+								payload = body as ResponseCreateParams;
+								throw new Error("btw payload captured before transport");
+							},
+						}),
+				},
+				buildSideQueryContext({ systemPrompt: "BASE", history, question: "side question" }),
+				{},
+			),
+		).rejects.toThrow("btw payload captured before transport");
+
+		expect(payload).toBeDefined();
+		expect(payload?.tools ?? []).toEqual([]);
+		expect(payload?.input).not.toContainEqual(expect.objectContaining({ type: "web_search_call" }));
+		expect(JSON.stringify(payload?.input)).toContain("earlier question");
+		expect(JSON.stringify(payload?.input)).toContain("side question");
+		if (withText) expect(JSON.stringify(payload?.input)).toContain("earlier visible answer");
+		expect(history).toEqual(originalHistory);
 	});
 
 	it("rejects when the provider errors", async () => {

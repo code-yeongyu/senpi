@@ -70,8 +70,17 @@ export function getSideQueryPromptContextWindow(model: Pick<Model<string>, "cont
 
 export function buildSideQueryContext(input: SideQueryContextInput): Context {
 	const systemPrompt = `${input.systemPrompt}\n\n${SIDE_QUERY_INSTRUCTION}`;
+	// Native web-search replay requires a tool declaration; side queries deliberately have none.
+	const history = input.history.flatMap((message): Message[] => {
+		if (message.role !== "assistant") return [message];
+		const content = message.content.filter(
+			(block) => block.type !== "providerNative" || block.subtype !== "web_search_call",
+		);
+		if (content.length === message.content.length) return [message];
+		return content.length > 0 ? [{ ...message, content }] : [];
+	});
 	const messages = boundSideQueryMessages(
-		[...input.history, { role: "user", content: input.question, timestamp: Date.now() }],
+		[...history, { role: "user", content: input.question, timestamp: Date.now() }],
 		systemPrompt,
 		input.promptContextWindow,
 	);
