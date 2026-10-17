@@ -123,7 +123,7 @@ describe("builtin compaction canonical routes", () => {
 				trigger: "prompt",
 				prompt: "incoming prompt ".repeat(1_500),
 				systemPrompt: "You are senpi.",
-				systemPromptOptions: { cwd: process.cwd() },
+				systemPromptOptions: { cwd: process.cwd(), sections: {} },
 			},
 			{
 				model: OPENAI_MODEL,

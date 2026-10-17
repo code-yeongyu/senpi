@@ -63,9 +63,13 @@ export type SystemPromptSections = Record<string, string>;
 
 const SYSTEM_PROMPT_SECTION_NAME = /^[a-z][a-z0-9_-]*$/;
 
+export function isValidSystemPromptSectionName(name: string): boolean {
+	return SYSTEM_PROMPT_SECTION_NAME.test(name) && name !== "preamble";
+}
+
 function assertSystemPromptSectionNames(sections: Record<string, string>): void {
 	for (const name of Object.keys(sections)) {
-		if (!SYSTEM_PROMPT_SECTION_NAME.test(name) || name === "preamble") {
+		if (!isValidSystemPromptSectionName(name)) {
 			throw new Error(`Invalid system prompt section name: ${name}`);
 		}
 	}
@@ -219,7 +223,8 @@ export function buildSystemPromptState(input: BuildSystemPromptOptions): {
 	return { content: "", sections: buildSystemPromptSections(input) };
 }
 
-function renderCustomSections(sections: Record<string, string> | undefined): string {
+/** Render custom sections as `\n\n<name>\ncontent\n</name>` blocks, skipping empty content. */
+export function renderCustomSections(sections: Record<string, string> | undefined): string {
 	if (!sections) return "";
 	assertSystemPromptSectionNames(sections);
 	let rendered = "";

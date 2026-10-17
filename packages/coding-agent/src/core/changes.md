@@ -10674,3 +10674,21 @@ Context files and the skills section are assembled by core before extensions see
 - `resource-loader.ts`: the import block and the `loadProjectContextFiles` call in `reload`.
 - `skills.ts`: the area where `formatSkillsForPrompt` used to live.
 - `settings-manager.ts`: the `Settings` interface beside `compaction`.
+
+## 2026-10-17 - Export section helpers for before_agent_start (senpi#3579)
+
+### What changed
+
+- `packages/coding-agent/src/core/system-prompt.ts`: exports `isValidSystemPromptSectionName` and `renderCustomSections` so the extension runner validates and renders `before_agent_start` sections with the same rules as `buildSystemPrompt`.
+
+### Why
+
+The runner appends handler-added sections to the turn prompt (see `extensions/changes.md`, senpi#3579) and must not fork the name rule or the tag format.
+
+### Why an extension could not handle it
+
+The helpers are consumed by core runner code, not by an extension.
+
+### Expected merge conflict zones
+
+`assertSystemPromptSectionNames` and the `renderCustomSections` declaration in `system-prompt.ts`.
