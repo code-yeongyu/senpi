@@ -15,7 +15,7 @@ import {
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
-import { resolveToCwd } from "./path-utils.ts";
+import { assertNotSpecialFile, resolveToCwd } from "./path-utils.ts";
 import { type EditRenderState, editRenderers } from "./renderers/edit.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
@@ -149,6 +149,7 @@ export function createEditToolDefinition(
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
 	const ops = options?.operations ?? defaultEditOperations;
 	const filesystemPolicy = options?.filesystemPolicy;
+	const refuseSpecialFiles = !options?.operations;
 	return {
 		name: "edit",
 		label: "edit",
@@ -194,6 +195,10 @@ export function createEditToolDefinition(
 					throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
 				}
 				throwIfAborted();
+				if (refuseSpecialFiles) {
+					await assertNotSpecialFile(absolutePath, path, "edit");
+					throwIfAborted();
+				}
 
 				// Read the file.
 				const buffer = await ops.readFile(absolutePath);
