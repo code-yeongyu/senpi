@@ -92,6 +92,7 @@ import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
 import { settleExtensionUiResponse } from "./extension-ui-response.ts";
+import { entryPageBounds, pageEntries, RPC_RESPONSE_BYTE_BUDGET } from "./get-entries-page.ts";
 import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
 import { answerMemoryReport } from "./memory-report-command.ts";
@@ -123,8 +124,10 @@ import {
 	RPC_ERROR_ENTRY_NOT_FOUND,
 	RPC_ERROR_EVAL_CELL_NOT_FOUND,
 	RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
+	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
+	RPC_ERROR_RESPONSE_TOO_LARGE,
 	STEER_WHEN_IDLE_CAPABILITY,
 } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
@@ -1619,9 +1622,26 @@ export function createRpcConnectionHandler(
 					}
 					entries = entries.slice(sinceIndex + 1);
 				}
-				const described = entries.map(describeUsageLimitEntry);
-				session.releaseFullHistoryView();
-				return success(id, "get_entries", { entries: described, leafId: sessionManager.getLeafId() });
+				const bounds = entryPageBounds(command);
+				if (!bounds.ok) return error(id, "get_entries", bounds.message, RPC_ERROR_INVALID_ARGUMENT);
+				const page = pageEntries(entries, describeUsageLimitEntry, bounds);
+				// A client walking pages asks again at once; keeping the view until the last page spares each page a
+				// full re-read of the file. A walk left unfinished is released when the session next settles idle.
+				if (!(bounds.paged && page.hasMore)) session.releaseFullHistoryView();
+				if (!bounds.paged && page.hasMore) {
+					return error(
+						id,
+						"get_entries",
+						`The session history is larger than one answer can carry (${RPC_RESPONSE_BYTE_BUDGET} bytes). Read it in pages: pass limit or maxBytes, then since: nextSince until hasMore is false.`,
+						RPC_ERROR_RESPONSE_TOO_LARGE,
+					);
+				}
+				return success(id, "get_entries", {
+					entries: page.entries,
+					leafId: sessionManager.getLeafId(),
+					...(bounds.paged ? { hasMore: page.hasMore } : {}),
+					...(page.nextSince === undefined ? {} : { nextSince: page.nextSince }),
+				});
 			}
 
 			case "get_tree": {

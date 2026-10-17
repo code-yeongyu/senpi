@@ -247,7 +247,7 @@ type RpcSessionCommand =
 	  }
 	| { id?: string; type: "clone" }
 	| { id?: string; type: "get_fork_messages" }
-	| { id?: string; type: "get_entries"; since?: string }
+	| { id?: string; type: "get_entries"; since?: string; limit?: number; maxBytes?: number }
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
@@ -303,6 +303,8 @@ export const RPC_ERROR_MULTI_SESSION_DISABLED = "multi_session_disabled";
 export const RPC_ERROR_INVALID_PATH = "invalid_path";
 /** A command field outside its documented range; `errorData` carries `reason` and `action`. */
 export const RPC_ERROR_INVALID_ARGUMENT = "invalid_argument";
+/** An answer would pass the per-response byte budget; read the history in pages (`get_entries` `limit`/`maxBytes`). */
+export const RPC_ERROR_RESPONSE_TOO_LARGE = "response_too_large";
 export const RPC_ERROR_OPEN_FAILED = "open_failed";
 export const RPC_ERROR_OWNER_CHANGED = "owner_changed";
 export const RPC_ERROR_SESSION_NOT_HELD = "session_not_held";
@@ -1212,7 +1214,7 @@ export type RpcResponse =
 			type: "response";
 			command: "get_entries";
 			success: true;
-			data: { entries: SessionEntry[]; leafId: string | null };
+			data: { entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string };
 	  }
 	| {
 			id?: string;
