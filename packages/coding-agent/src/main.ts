@@ -1161,12 +1161,14 @@ export async function main(args: string[], options?: MainOptions) {
 	const hostExitCode = await dispatchHostCommand(args);
 	if (hostExitCode !== undefined) {
 		await exitAfterOutput("", hostExitCode);
+		return;
 	}
 
 	// Durable scheduled prompts: fired out of process, so a job scheduled by an exited --print run still runs.
 	const scheduleExitCode = await dispatchScheduleCommand(args);
 	if (scheduleExitCode !== undefined) {
 		await exitAfterOutput("", scheduleExitCode);
+		return;
 	}
 
 	const parsed = parseArgs(args);
@@ -1183,6 +1185,7 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.version) {
 		await printThenExit(() => console.log(DISPLAY_VERSION), 0);
+		return;
 	}
 
 	if (parsed.export) {
@@ -1193,9 +1196,10 @@ export async function main(args: string[], options?: MainOptions) {
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : "Failed to export session";
 			console.error(chalk.red(`Error: ${message}`));
-			process.exit(1);
+			return process.exit(1);
 		}
 		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
+		return;
 	}
 
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
@@ -1204,13 +1208,24 @@ export async function main(args: string[], options?: MainOptions) {
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
 	}
+	let restoreConsoleLog: (() => void) | undefined;
 	if (parsed.mode === "json") {
-		const log = console.log.bind(console);
+		const log = console.log;
 		console.log = (...args: unknown[]) => console.error(...args);
-		process.once("exit", () => {
+		restoreConsoleLog = () => {
 			console.log = log;
-		});
+		};
+		process.once("exit", restoreConsoleLog);
 	}
+	// A command that returns before print mode hands stdout back as print mode does, for a caller whose
+	// process.exit returns (an embedder or a test).
+	const releaseOutput = (): void => {
+		restoreStdout();
+		if (restoreConsoleLog) {
+			process.off("exit", restoreConsoleLog);
+			restoreConsoleLog();
+		}
+	};
 
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
 		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
@@ -1251,11 +1266,14 @@ export async function main(args: string[], options?: MainOptions) {
 			printHelp(flags);
 			printTimings();
 		}, 0);
+		return;
 	}
 
 	if (parsed.listTips) {
 		const { listTips } = await import("./cli/list-tips.ts");
 		await printThenExit(listTips, 0);
+		releaseOutput();
+		return;
 	}
 
 	if (parsed.listModels !== undefined) {
@@ -1284,6 +1302,8 @@ export async function main(args: string[], options?: MainOptions) {
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
+		releaseOutput();
+		return;
 	}
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
@@ -1443,6 +1463,9 @@ export async function main(args: string[], options?: MainOptions) {
 	const extensionFlags = loadedExtensions.flatMap((extension) => Array.from(extension.flags.values()));
 	if (parsed.help) {
 		await printThenExit(() => printHelp(extensionFlags), 0);
+		await runtime.dispose();
+		releaseOutput();
+		return;
 	}
 	time("extensionFlags");
 	// Every full launch refreshes what `--help` reads, so the fast path stays warm without a help
