@@ -32,6 +32,8 @@ export type FailoverEvent = {
 
 export type FailoverOptions<TEvent> = {
 	accounts: readonly AccountSlot[];
+	/** When false, only the selected account may be attempted; same-account retries remain enabled. */
+	readonly accountFallback?: boolean;
 	selectFn: (accounts: readonly AccountSlot[]) => AccountSlot;
 	runAttempt: (slot: AccountSlot) => AsyncIterable<TEvent> | Promise<AsyncIterable<TEvent>>;
 	classify: (error: unknown) => SdkErrorClassification;
@@ -363,13 +365,14 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	const now = options.now ?? Date.now;
 	const baseBlockMs = options.baseBlockMs ?? DEFAULT_RATE_LIMIT_BLOCK_MS;
 	let accounts = clearExpiredBlocks(withSessionBlocks(options.accounts, options.sessionKey, now()), now());
+	const attemptLimit = options.accountFallback === false ? Math.min(accounts.length, 1) : accounts.length;
 	let lastError: ClassifiedSdkError | undefined;
 	const retriedOnStoredMaterial = new Set<string>();
 	let transientRetriesUsed = 0;
 	let longContextRetried = false;
 	let retryAccountName: string | undefined;
 
-	for (let attempt = 0; attempt < accounts.length; attempt++) {
+	for (let attempt = 0; attempt < attemptLimit; attempt++) {
 		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
 		// attempt holding the same stored object must still report the token it actually sent.
 		const retrySlot =
@@ -451,7 +454,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				visibleDeltaEmitted,
 			};
 			try {
-				if (!visibleDeltaEmitted && attempt + 1 < accounts.length) {
+				if (!visibleDeltaEmitted && attempt + 1 < attemptLimit) {
 					event.nextAccount = options.selectFn(accounts);
 				}
 			} finally {

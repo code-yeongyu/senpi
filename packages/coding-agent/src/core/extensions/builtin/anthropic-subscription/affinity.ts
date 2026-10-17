@@ -13,6 +13,8 @@ export type AffinityOptions = {
 	 * session does not move accounts and re-send its whole conversation (senpi#2891).
 	 */
 	preferredAccount?: string;
+	/** When false, a blocked pin, resident account, or HRW winner is never skipped. */
+	readonly accountFallback?: boolean;
 	now?: number;
 	/** The requested model; an account blocked only for another model stays eligible for it. */
 	model?: string;
@@ -146,17 +148,25 @@ function limitedModel(accounts: readonly AccountSlot[], now: number, model: stri
 /** Selects a pinned or HRW-ranked account with no provider-global selection state. */
 export function selectAccount(accounts: readonly AccountSlot[], options: AffinityOptions = {}): AccountSlot {
 	const now = options.now ?? Date.now();
-	const selected = selectUnblocked(accounts, options, now);
+	let candidates = accounts;
+	if (options.accountFallback === false) {
+		const name =
+			options.pinnedAccount ??
+			options.preferredAccount ??
+			rendezvousOrder(getAffinityKey(options), accounts)[0]?.name;
+		candidates = accounts.filter((account) => account.name === name);
+	}
+	const selected = selectUnblocked(candidates, options, now);
 	if (selected) return selected;
 
 	// A stale persisted rate-limit entry must not dead-end the pool. Retry once
 	// against the cleared view before reporting the earliest available account.
-	const cleared = clearExpiredBlocks(accounts, now);
+	const cleared = clearExpiredBlocks(candidates, now);
 	const afterClear = selectUnblocked(cleared, options, now);
 	if (afterClear) return afterClear;
 	throw new AllAccountsBlockedError(
-		soonestUnblockAt(accounts, now, options.model),
-		accounts.some((account) => account.blockReason === "auth_error") ? "auth_error" : undefined,
-		limitedModel(accounts, now, options.model),
+		soonestUnblockAt(candidates, now, options.model),
+		candidates.some((account) => account.blockReason === "auth_error") ? "auth_error" : undefined,
+		limitedModel(candidates, now, options.model),
 	);
 }

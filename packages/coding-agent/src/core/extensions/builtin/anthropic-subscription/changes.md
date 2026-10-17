@@ -2007,3 +2007,22 @@ This is the builtin's own denial reason, which the deny hook hands to Claude Cod
 
 ### Expected merge conflict zones
 - `tools.ts`: the denial constant and the fingerprint version.
+## 2026-10-16 - Opt out of managed account fallback (senpi#3465)
+
+### What changed
+
+- `settings.ts` parses `anthropicSubscriptionProvider.accountFallback` and `SENPI_CLAUDE_SDK_OAUTH_ACCOUNT_FALLBACK`, defaulting to the existing enabled behavior.
+- `affinity.ts` limits selection to the explicit pin, resident account, or deterministic affinity winner when disabled, including subsequent requests after that account is blocked.
+- `auth-lane.ts` passes the policy to account selection and `failover.ts`, which limits attempts to one account while preserving same-account retries and refresh recovery. `account-command.ts` uses the same selection policy for the displayed affinity pick.
+
+### Why
+
+- Disabling model fallback does not prevent spending another Claude account's allowance. Users need an opt-out without deleting stored credentials.
+
+### Why an extension could not handle it
+
+- This builtin owns the managed account pool and its internal retry loop; an external extension cannot prevent an account switch inside that loop.
+
+### Expected merge conflict zones
+
+- LOW: provider settings parsing, the candidate list in `selectAccount`, and the attempt bound in `runFailover`.
