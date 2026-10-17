@@ -107,7 +107,24 @@ export function normalizeSessionName(value: string): string | undefined {
 	return name.length > 0 ? name : undefined;
 }
 
-export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } = {}): Args {
+export interface ParseArgsOptions {
+	grokNeoEnabled?: boolean;
+	booleanFlags?: Iterable<string>;
+}
+
+function isKnownBooleanExtensionFlag(name: string, customBooleanFlags?: Iterable<string>): boolean {
+	if (name.startsWith("no-") || name.endsWith("-disabled")) {
+		return true;
+	}
+	if (customBooleanFlags) {
+		for (const flag of customBooleanFlags) {
+			if (flag === name) return true;
+		}
+	}
+	return false;
+}
+
+export function parseArgs(args: string[], options: ParseArgsOptions = {}): Args {
 	const grokNeoEnabled = options.grokNeoEnabled ?? isGrokNeoEnabled();
 	const result: Args = {
 		messages: [],
@@ -319,8 +336,9 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 				result.unknownFlags.set(arg.slice(2, eqIndex), arg.slice(eqIndex + 1));
 			} else {
 				const flagName = arg.slice(2);
+				const isBoolean = isKnownBooleanExtensionFlag(flagName, options.booleanFlags);
 				const next = args[i + 1];
-				if (next !== undefined && !next.startsWith("-") && !next.startsWith("@")) {
+				if (!isBoolean && next !== undefined && !next.startsWith("-") && !next.startsWith("@")) {
 					result.unknownFlags.set(flagName, next);
 					i++;
 				} else {
