@@ -54,7 +54,7 @@ async function pressEnterOnFile(exec: (command: string, args: string[]) => ExecR
 	const ctx = {
 		hasUI: true,
 		cwd: "C:\\Users\\me",
-		sessionManager: { getBranch: () => branch },
+		sessionManager: { getBranch: () => branch, getFullBranch: () => branch },
 		ui: {
 			notify: (message: string, level: string) => notices.push({ message, level }),
 			custom: async (

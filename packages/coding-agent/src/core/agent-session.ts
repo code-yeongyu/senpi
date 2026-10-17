@@ -2760,6 +2760,16 @@ export class AgentSession {
 	 * Called when a run settles idle and after a resumed session's first render, which builds the
 	 * views without any run settling afterwards.
 	 */
+	/**
+	 * Drops the session manager's materialized views while nothing runs, when a full-history view of a trimmed
+	 * mirror is among them (senpi#3519). Unlike `releaseSettledSessionMemory`, nothing is tokenized in place, so a
+	 * history read can call it while its answer, which may share message objects, is still unwritten.
+	 */
+	releaseFullHistoryView(): void {
+		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		if (this.sessionManager.holdsMaterializedHistory()) this.sessionManager.dropMaterializedCaches();
+	}
+
 	releaseSettledSessionMemory(): void {
 		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
 		// A trimmed mirror bounds memory to the kept tail; a full-history view held across idle

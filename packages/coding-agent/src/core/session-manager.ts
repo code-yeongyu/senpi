@@ -44,6 +44,7 @@ import {
 } from "./session-discovery.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
+import { planLoadedTail } from "./session-loaded-tail.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 import {
 	discardFailedFirstFlush,
@@ -155,6 +156,10 @@ export interface UsageTotals {
 	cacheWrite: number;
 	cost: number;
 	latestCacheHitRate: number | undefined;
+}
+
+function emptyUsageTotals(): UsageTotals {
+	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, latestCacheHitRate: undefined };
 }
 
 export const CURRENT_SESSION_VERSION = 3;
@@ -439,6 +444,7 @@ export type ReadonlySessionManager = Pick<
 	| "getEntry"
 	| "getLabel"
 	| "getBranch"
+	| "getFullBranch"
 	| "buildContextEntries"
 	| "buildSessionContext"
 	| "buildSessionProjection"
@@ -1144,6 +1150,8 @@ export class SessionManager {
 	private leafId: string | null = null;
 	private residentStore = new ResidentStringStore();
 	private mirrorTrimmed = false;
+	// Set while a navigation to an entry outside the mirror reloads the whole file into it.
+	private loadingFullMirror = false;
 	/**
 	 * Ids of entries a compaction trimmed from the resident mirror. They are still in the session file,
 	 * so a new entry must not reuse one: a reused id turns the file's parent chain into a cycle and the
@@ -1246,6 +1254,17 @@ export class SessionManager {
 		this._setSessionFile(this.sessionFile, fileEntries);
 	}
 
+	/** Brings `id` back into the mirror by reloading the whole file when the mirror does not hold it. */
+	private _loadFullMirrorFor(id: string): void {
+		if (this.byId.has(id) || !this.sessionFile) return;
+		this.loadingFullMirror = true;
+		try {
+			this.reloadFromDisk();
+		} finally {
+			this.loadingFullMirror = false;
+		}
+	}
+
 	/** Switch to a different session file (used for resume and branching) */
 	setSessionFile(sessionFile: string): void {
 		this._setSessionFile(sessionFile);
@@ -1295,9 +1314,15 @@ export class SessionManager {
 			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
 			}
+			const loadedHistory = this._retainLoadedTail();
 
 			this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
 			this._buildIndex();
+			// The entries this load already parsed answer the open-time history readers; the view goes when
+			// the session settles idle, like any full-history view of a trimmed mirror.
+			if (loadedHistory !== undefined) {
+				this.historyView = { source: this.fileEntries, length: this.fileEntries.length, entries: loadedHistory };
+			}
 			this.mutationCount++;
 			this.flushed = true;
 			this.ownedHeaderFile = undefined;
@@ -1399,6 +1424,26 @@ export class SessionManager {
 		this.mutationCount++;
 	}
 
+	/**
+	 * Keeps only the latest compaction's window of a just-loaded file resident (senpi#3519). The
+	 * full-history count and usage totals are taken from the whole file first: a trimmed mirror
+	 * cannot recompute them, so `_buildIndex` leaves them alone while the mirror is trimmed. Returns the
+	 * file's full history when it trimmed, undefined when the whole file stays resident.
+	 */
+	private _retainLoadedTail(): SessionEntry[] | undefined {
+		if (!this.persist || this.loadingFullMirror) return undefined;
+		const tail = planLoadedTail(this.fileEntries);
+		if (tail === undefined) return undefined;
+		const history = this.fileEntries.filter((entry): entry is SessionEntry => entry.type !== "session");
+		this.usageTotals = emptyUsageTotals();
+		this.fullEntryCount = history.length;
+		for (const entry of history) this._accumulateUsage(entry);
+		for (const id of tail.trimmedIds) this.trimmedIds.add(id);
+		this.mirrorTrimmed = true;
+		this.fileEntries = tail.retained;
+		return history;
+	}
+
 	private _buildIndex(): void {
 		this.byId.clear();
 		this.entryOrdersById.clear();
@@ -1407,14 +1452,8 @@ export class SessionManager {
 		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.sessionNameCache = undefined;
-		this.usageTotals = {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			cost: 0,
-			latestCacheHitRate: undefined,
-		};
+		// A trimmed mirror cannot replace the full-history totals, like the count below.
+		if (!this.mirrorTrimmed) this.usageTotals = emptyUsageTotals();
 		let fullEntryCount = 0;
 		for (const [order, entry] of this.fileEntries.entries()) {
 			if (entry.type === "session") continue;
@@ -1422,7 +1461,7 @@ export class SessionManager {
 			this.byId.set(entry.id, entry);
 			this.entryOrdersById.set(entry.id, order);
 			this.leafId = entry.id;
-			this._accumulateUsage(entry);
+			if (!this.mirrorTrimmed) this._accumulateUsage(entry);
 			if (entry.type === "session_info") {
 				// Empty names explicitly clear the session title.
 				this.sessionNameCache = entry.name?.trim() || undefined;
@@ -2110,7 +2149,7 @@ export class SessionManager {
 	 * Pass undefined or empty string to clear the label.
 	 */
 	appendLabelChange(targetId: string, label: string | undefined): string {
-		if (!this.byId.has(targetId)) {
+		if (!this.byId.has(targetId) && this.getEntry(targetId) === undefined) {
 			throw new Error(`Entry ${targetId} not found`);
 		}
 		const entry: LabelEntry = {
@@ -2181,6 +2220,26 @@ export class SessionManager {
 			};
 		}
 		return materializedPath;
+	}
+
+	/**
+	 * The path from `fromId` (default: the leaf) to the root over the whole persisted history. `getBranch()`
+	 * answers a trimmed mirror from the latest compaction window (senpi#3519); readers that need every entry
+	 * of the path, such as a fork's new file or the files a session touched, read it here from the file.
+	 */
+	getFullBranch(fromId?: string): SessionEntry[] {
+		if (!this.mirrorTrimmed || !this.sessionFile) return this.getBranch(fromId);
+		const byId = new Map<string, SessionEntry>();
+		for (const entry of this.getEntries()) byId.set(entry.id, entry);
+		const path: SessionEntry[] = [];
+		const visited = new Set<string>();
+		let current = byId.get(fromId ?? this.leafId ?? "");
+		while (current && !visited.has(current.id)) {
+			visited.add(current.id);
+			path.push(current);
+			current = current.parentId ? byId.get(current.parentId) : undefined;
+		}
+		return path.reverse();
 	}
 
 	/**
@@ -2541,9 +2600,7 @@ export class SessionManager {
 	 * are not modified or deleted.
 	 */
 	branch(branchFromId: string): void {
-		if (!this.byId.has(branchFromId) && this.sessionFile) {
-			this.reloadFromDisk();
-		}
+		this._loadFullMirrorFor(branchFromId);
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -2573,6 +2630,7 @@ export class SessionManager {
 		fromHook?: boolean,
 		usage?: Usage,
 	): string {
+		if (branchFromId !== null) this._loadFullMirrorFor(branchFromId);
 		if (branchFromId !== null && !this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -2599,7 +2657,7 @@ export class SessionManager {
 	 */
 	createBranchedSession(leafId: string): string | undefined {
 		const previousSessionFile = this.sessionFile;
-		const path = this.getBranch(leafId);
+		const path = this.getFullBranch(leafId);
 		if (path.length === 0) {
 			throw new Error(`Entry ${leafId} not found`);
 		}

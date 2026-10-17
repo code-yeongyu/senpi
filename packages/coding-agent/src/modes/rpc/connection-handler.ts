@@ -914,13 +914,19 @@ export function createRpcConnectionHandler(
 			// The subscription is already installed on the replaced session above, so
 			// the deferred refresh only needs its failure reported. Re-installing here
 			// would replay the settings-source selection a second time.
-			void refresh.catch((cause) => {
-				outputEvent({ type: "rpc_error", error: String(cause) });
-			});
+			void refresh.then(
+				() => session.releaseSettledSessionMemory(),
+				(cause) => {
+					outputEvent({ type: "rpc_error", error: String(cause) });
+				},
+			);
 			return;
 		}
 		await refresh;
 		await ClientAdmissions.forSession(session).ready;
+		// The open-time readers above (receipt seals, extension starts) read the full history; an idle
+		// session lets it go now instead of holding it until its first turn settles (senpi#3519).
+		session.releaseSettledSessionMemory();
 	};
 
 	/**
@@ -1613,10 +1619,9 @@ export function createRpcConnectionHandler(
 					}
 					entries = entries.slice(sinceIndex + 1);
 				}
-				return success(id, "get_entries", {
-					entries: entries.map(describeUsageLimitEntry),
-					leafId: sessionManager.getLeafId(),
-				});
+				const described = entries.map(describeUsageLimitEntry);
+				session.releaseFullHistoryView();
+				return success(id, "get_entries", { entries: described, leafId: sessionManager.getLeafId() });
 			}
 
 			case "get_tree": {
@@ -1628,6 +1633,7 @@ export function createRpcConnectionHandler(
 					node.entry = describeUsageLimitEntry(node.entry);
 					for (const child of node.children) nodes.push(child);
 				}
+				session.releaseFullHistoryView();
 				return success(id, "get_tree", { tree, leafId: sessionManager.getLeafId() });
 			}
 

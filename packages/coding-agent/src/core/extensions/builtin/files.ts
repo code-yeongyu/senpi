@@ -27,8 +27,8 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Get the current branch (path from leaf to root)
-			const branch = ctx.sessionManager.getBranch();
+			// The whole path from leaf to root, including entries before the latest compaction
+			const branch = ctx.sessionManager.getFullBranch();
 
 			// First pass: collect tool calls (id -> {path, name}) from assistant messages
 			const toolCalls = new Map<string, { paths: string[]; name: FileToolName; timestamp: number }>();

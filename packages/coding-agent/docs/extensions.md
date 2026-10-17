@@ -1250,7 +1250,8 @@ For `tool_call`, this state is synchronized through the current assistant messag
 
 ```typescript
 ctx.sessionManager.getEntries()             // All entries
-ctx.sessionManager.getBranch()              // Current branch
+ctx.sessionManager.getBranch()              // Current branch (from the latest compaction window once the session compacted)
+ctx.sessionManager.getFullBranch()          // Current branch over the whole history, read from the session file
 ctx.sessionManager.buildContextEntries()    // Active branch entries with compaction applied
 ctx.sessionManager.getLeafId()              // Current leaf entry ID
 ```

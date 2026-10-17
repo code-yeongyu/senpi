@@ -1,3 +1,22 @@
+## 2026-10-17 - Binding, get_entries and get_tree do not keep an idle session's history resident (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: binding a connection to a session releases the settled session memory once the bind's own readers (effect ledger seal, admissions, deferred refresh) are done, so a session opened over RPC idles without the full-history view its open read.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` and `get_tree` call `session.releaseFullHistoryView()` after building their answer: when no run or session work is active and the read left a full-history view of a trimmed mirror, the session manager's materialized views are dropped (they rebuild on demand). Nothing is tokenized in place, so the answer, which may share message objects, is written intact.
+
+### Why
+
+- Desktop hydrates every thread with `get_entries`. On a session whose mirror is trimmed that read materializes the whole file, and the view stayed held until the session's next turn settled, so idle threads pinned their full transcripts again (#3519).
+
+### Why an extension could not handle it
+
+- The views belong to the `SessionManager` the RPC command reads; no extension hook runs inside the command handler.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts`, the end of the session bind and the `get_entries` and `get_tree` cases.
+
 ## 2026-10-17 - A session reopened right after its park is never refused (senpi#3485)
 
 ### What changed
