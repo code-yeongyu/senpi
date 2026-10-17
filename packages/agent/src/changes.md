@@ -1,3 +1,22 @@
+## 2026-10-17 - Preserve supplied non-Error abort reasons (senpi#3510)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `abortError` converts supplied non-Error reasons to text instead of replacing them with the generic abort message. Error instances remain unchanged; absent reasons and values that cannot be converted to text keep the fallback.
+- The existing pre-stream test owner covers default, string, numeric, Error and unprintable object reasons, and separately pins provider-creation failure messages when the caller has also aborted.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts` discarded caller cancellation details such as `abort("user stop")`, even though the signal carried them through a completed pre-stream step.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts` constructs the terminal error below extension hooks and is also the public agent runtime used without coding-agent extensions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, the private `abortError` helper only. Pre-stream deadline selection and provider-failure precedence are unchanged.
+
 ## 2026-10-16 - The pre-stream bound leaves a caller abort as it was (fixes the #3472 regression)
 
 ### What changed

@@ -183,7 +183,17 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 		expect(assistant?.errorMessage).toBe("Idle timeout waiting for provider stream after 30ms");
 	});
 
-	it("lets a step finish after a caller abort, as before the bound: the provider is still called and the turn reads aborted", async () => {
+	it.each([
+		{ label: "default", reason: undefined, errorMessage: undefined },
+		{ label: "string", reason: "user stop", errorMessage: "user stop" },
+		{ label: "number", reason: 42, errorMessage: "42" },
+		{ label: "Error", reason: new Error("caller error"), errorMessage: "caller error" },
+		{
+			label: "unprintable object",
+			reason: Object.create(null) as Record<string, unknown>,
+			errorMessage: "Request was aborted",
+		},
+	])("lets a step finish after a caller abort with a $label reason", async ({ reason, errorMessage }) => {
 		// given: the key lookup is still running when the caller aborts, then completes
 		const controller = new AbortController();
 		const asked = Promise.withResolvers<void>();
@@ -216,12 +226,40 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 
 		// when: the abort is not raced against the step; the step completes and the request goes out aborted
 		await asked.promise;
-		controller.abort();
+		controller.abort(reason);
 		key.resolve("key");
 
 		// then
-		expect(assistantOf(await turn)?.stopReason).toBe("aborted");
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		if (errorMessage !== undefined) expect(assistant?.errorMessage).toBe(errorMessage);
 		expect(streamCalls).toBe(1);
+	});
+
+	it("preserves a provider creation failure when the caller has also aborted", async () => {
+		const controller = new AbortController();
+		const entered = Promise.withResolvers<void>();
+		const creation = Promise.withResolvers<AssistantEventStream>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 0,
+			timeoutMs: 0,
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => {
+				entered.resolve();
+				return creation.promise;
+			}),
+		);
+
+		await entered.promise;
+		controller.abort("user stop");
+		creation.reject(new Error("provider authentication failed"));
+
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		expect(assistant?.errorMessage).toBe("provider authentication failed");
 	});
 
 	it("ends a caller-aborted turn whose step never finishes at the bound, still as aborted", async () => {
