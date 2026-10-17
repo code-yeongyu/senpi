@@ -1,6 +1,7 @@
 /** The shapes the in-process session registry hands out: entries, launch profiles, rows and its typed error. */
 import type { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { AgentSessionLaunchProfile, AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import type { EventLoopSlicer } from "../../core/event-loop-slicer.ts";
 import type { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
 import type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 import { EMPTY_SESSION_CONTEXT } from "../../core/extensions/types.ts";
@@ -118,6 +119,14 @@ export interface RpcSessionRegistryOptions {
 	pathReservations?: SessionPathReservations;
 	/** Called after every entry is added or removed, with the new count (the zero-session trim's signal). */
 	onSizeChange?: (size: number) => void;
+	/**
+	 * How an existing session file is loaded. `sliced` (the default) yields to the event loop while a
+	 * large transcript loads, because every session of an in-process host shares that loop (senpi#3518).
+	 * A session worker owns its isolate's loop, so it loads in one synchronous pass, exactly as before.
+	 */
+	sessionFileLoad?: "sliced" | "blocking";
+	/** Slicer for a `sliced` load; defaults to an 8 ms budget on the real clock. */
+	createSlicer?: () => EventLoopSlicer;
 }
 
 /** Host-side lifecycle policy for one `open_session`, distinct from the session's launch profile. */
