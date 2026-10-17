@@ -597,12 +597,18 @@ export function expandTildePath(path: string): string {
 	return normalizePath(path);
 }
 
-const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
+/**
+ * Base URL of an opt-in `/share` viewer, or undefined. There is no default: a
+ * viewer receives the gist id, so only one the user configured is used (#3524).
+ */
+export function getShareViewerBase(): string | undefined {
+	return envValue("SHARE_VIEWER_URL")?.trim() || undefined;
+}
 
-/** Get the share viewer URL for a gist ID. */
-export function getShareViewerUrl(gistId: string): string {
-	const baseUrl = envValue("SHARE_VIEWER_URL") || DEFAULT_SHARE_VIEWER_URL;
-	return `${baseUrl}#${gistId}`;
+/** True when `/share` is switched off for this machine (`<PREFIX>_DISABLE_SHARE=1`). */
+export function isShareDisabledByEnvironment(): boolean {
+	const value = envValue("DISABLE_SHARE")?.trim().toLowerCase();
+	return value !== undefined && value !== "" && value !== "0" && value !== "false";
 }
 
 // =============================================================================

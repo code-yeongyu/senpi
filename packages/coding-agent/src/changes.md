@@ -1,3 +1,21 @@
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/config.ts`: `getShareViewerUrl` and the `https://pi.dev/session/` default are replaced by `getShareViewerBase()` (the `SHARE_VIEWER_URL` value or undefined) and `isShareDisabledByEnvironment()` (`<PREFIX>_DISABLE_SHARE`).
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: the share viewer block in `config.ts`.
+
 ## 2026-10-16 - Non-interactive startup reports context size warnings once (senpi#3460)
 
 ### What changed

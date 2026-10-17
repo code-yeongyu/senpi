@@ -1,3 +1,21 @@
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleShareCommand` runs `runShare` (`core/share/share-session.ts`) and maps its outcome to status/error lines; the cancellable gist loader moved to `uploadShareWithLoader`. The preview dialog offers Upload, Review the exact file first, and Cancel; cancel says nothing was uploaded. The unused `spawnSync` import is gone.
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- MEDIUM: `handleShareCommand` in `interactive-mode.ts` (rewritten); the `config.ts` import block.
+
 ## 2026-10-16 - Context size warnings use resource notices (senpi#3460)
 
 ### What changed

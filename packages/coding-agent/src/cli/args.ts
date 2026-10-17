@@ -554,7 +554,8 @@ ${chalk.bold("Environment Variables:")}
   PI_RULES_MAX_RULE_CHARS          - Per-rule formatted payload character cap (default: 12000)
   PI_RULES_MAX_RESULT_CHARS        - Complete static/dynamic block character cap (default: 40000)
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
-  PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
+  PI_SHARE_VIEWER_URL              - Opt-in viewer base URL for /share (default: none, gist link only)
+  PI_DISABLE_SHARE                 - Set to 1 to turn /share off
 
 ${chalk.bold("Built-in Tool Names:")}
   read       - Read file contents

@@ -1,3 +1,24 @@
+## 2026-10-17 - /share redacts the session, previews it and asks before uploading (senpi#3524)
+
+### What changed
+
+- `packages/coding-agent/src/core/export-html/index.ts`: `renderSessionToHtml(sm, state, opts)` renders in memory; `exportSessionToHtml` writes its result. `ExportOptions.sanitize` rewrites the entries before custom tools pre-render them and then the whole session payload.
+- `packages/coding-agent/src/core/agent-session.ts`: `AgentSession.renderToHtml({ themeName, sanitize })`; theme and tool-renderer resolution moved into the private `htmlExportOptions`, shared with `exportToHtml`.
+- `packages/coding-agent/src/core/settings-manager.ts`: `enableSessionShare` (default true; global or project) and `getEnableSessionShare()`.
+- New fork-only `packages/coding-agent/src/core/share/`: `share-redaction.ts` (identity first: home in every separator spelling, account and host names; then private keys, provider/GitHub/Slack/AWS/Google keys, JWTs, bearer/basic headers, URL credentials, cookies, sensitive key=value and JSON fields, emails, non-loopback IPv4; images replaced by a note; every replacement counted), `share-session.ts` (`runShare`: kill switch, gh check, redact, preview, Upload/Review/Cancel, upload, review copy in a private `mkdtemp` removed on every exit), `share-gh.ts` (gist created from stdin, nothing written to disk).
+
+### Why
+
+- `/share` uploaded the whole session unredacted, with no confirmation, to a secret (unlisted) gist, after writing it to a fixed `os.tmpdir()/session.html`, and pointed users at the third-party `pi.dev` viewer by default. Any key, token, home path or email in a prompt or tool result left the machine in clear text. Regressions: `test/suite/regressions/3524-share-redaction.test.ts`, `test/suite/regressions/3524-share-consent.test.ts`.
+
+### Why an extension could not handle it
+
+- `/share` is a built-in interactive command and the HTML export is core; an extension cannot intercept either before the upload.
+
+### Expected merge conflict zones
+
+- LOW: `exportSessionToHtml` / `renderSessionToHtml` in `export-html/index.ts`; `exportToHtml` in `agent-session.ts`; the settings interface and getter block in `settings-manager.ts`.
+
 ## 2026-10-16 - The fallback circuit takes one step per open episode and only reroutes sessions it concerns (senpi#3467)
 
 ### What changed
