@@ -42,6 +42,12 @@ const V41_FLASH_MODEL_IDS: ReadonlyArray<readonly [id: string, provider: string]
 	["accounts/fireworks/models/deepseek-v4p1-flash", "fireworks"],
 	["deepseek-v4-1-flash", "venice"],
 	["DeepSeek-V4.1-Flash", "custom"],
+	// The 2026-10-17 snapshot (DeepSeek-V4.1-Flash-1017): the official API serves it
+	// as deepseek-flash; gateways list it under a dated id.
+	["deepseek/deepseek-v4.1-flash-1017", "openrouter"],
+	["deepseek/deepseek-v4.1-flash-1017", "vercel-ai-gateway"],
+	["deepseek/deepseek-v4.1-flash-1017", "kilo"],
+	["deepseek-ai/DeepSeek-V4.1-Flash-1017", "huggingface"],
 ];
 
 // The official API retired V4 Flash on 2026-09-10 and serves these names with V4.1 Flash.
@@ -155,6 +161,21 @@ describe("DeepSeek V4.1 Flash prompt preset", () => {
 		expect(catalogModelIds.some((id) => id.startsWith("opencode-go/"))).toBe(true);
 		expect(misses).toEqual([]);
 	});
+
+	it.each(["openrouter", "vercel-ai-gateway"] as const)(
+		"ships the 1017 snapshot row on %s on the V4.1 preset",
+		(provider) => {
+			// given
+			const model = (getModels(provider) as Model<Api>[]).find(
+				(candidate) => candidate.id === "deepseek/deepseek-v4.1-flash-1017",
+			);
+
+			// then
+			expect(model?.reasoning).toBe(true);
+			expect(model?.input).toContain("image");
+			expect(model && resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
+		},
+	);
 });
 
 describe("DeepSeek V4.1 Flash prompt content", () => {
