@@ -2469,6 +2469,13 @@ A `steer` or `follow_up` sent **without** a `clientMessageId` is still recorded 
 
 For both commands, `status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused, and so is an edit whose `text` is empty or longer than `MAX_RPC_MESSAGE_CHARACTERS` (use `dequeue_message` to remove an input). An edited input that has a `clientMessageId` (its own or, for input sent without one, the host's) keeps the edit across a reopen, and a retry of its original send still replays.
 
+**Expected revision** (capability `queued_message_revision`): every entry in `get_state.ordered` and `queue_update.ordered` also carries `revision`, 1 when queued and +1 on every successful edit. Both commands accept an optional `expectedRevision` (a whole number of at least 1). When it is present and the input's current revision is different, the answer is `status: "conflict"` with `currentRevision`, `reason` and `action`, and nothing is changed; the check and the change happen in one step, so no other client's edit or a delivery can land between them. With `effectId` the receipt ends `failed` with outcome `conflict`, and a same-id retry replays that conflict. An input that is gone answers `already_delivered` or `not_found` as above, never `conflict`. An `edited` answer carries the resulting `text` and `revision`. A same-id retry answers with exactly the fields the live call returned (the receipt stores them). Revisions, like `queuedId`, hold only for the session's current lifetime: a reopen restores queued inputs at revision 1 under new ids, so re-read `get_state` after a reopen.
+
+```json
+{"type": "edit_queued_message", "queuedId": "q_4", "text": "use the staging database", "expectedRevision": 1}
+{"type": "response", "command": "edit_queued_message", "success": true, "data": {"queuedId": "q_4", "status": "conflict", "currentRevision": 2, "reason": "conflict", "action": "read the input's current text and revision from get_state or queue_update, then retry with that expectedRevision if the change still applies"}}
+```
+
 #### clear_queue
 
 Remove queued steering and follow-up messages and return their text.

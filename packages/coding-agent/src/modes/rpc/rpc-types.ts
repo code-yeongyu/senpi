@@ -115,9 +115,16 @@ type RpcSessionCommand =
 	| { id?: string; type: "check_reload_veto" }
 	| { id?: string; type: "clear_queue"; abortWillFollow?: boolean }
 	/** Remove one queued input by its `queuedId` (from `get_state` / `queue_update`) before it reaches a turn. */
-	| { id?: string; type: "dequeue_message"; queuedId: string; effectId?: string }
+	| { id?: string; type: "dequeue_message"; queuedId: string; expectedRevision?: number; effectId?: string }
 	/** Replace the text of one queued input in place, keeping its order and identity. */
-	| { id?: string; type: "edit_queued_message"; queuedId: string; text: string; effectId?: string }
+	| {
+			id?: string;
+			type: "edit_queued_message";
+			queuedId: string;
+			text: string;
+			expectedRevision?: number;
+			effectId?: string;
+	  }
 	| { id?: string; type: "get_steering_messages" }
 	| { id?: string; type: "get_follow_up_messages" }
 	| { id?: string; type: "abort_branch_summary" }
@@ -456,7 +463,12 @@ export type RpcWhenIdle = "queue" | "start";
 /** What `dequeue_message` / `edit_queued_message` did; anything but removed/edited carries reason + action. */
 export interface RpcQueuedInputChange {
 	queuedId: string;
-	status: "removed" | "edited" | "already_delivered" | "not_found";
+	status: "removed" | "edited" | "already_delivered" | "not_found" | "conflict";
+	/** `edited`: the text and revision the input now has. */
+	text?: string;
+	revision?: number;
+	/** `conflict`: the input's revision, which `expectedRevision` did not match; nothing was changed. */
+	currentRevision?: number;
 	reason?: string;
 	action?: string;
 }

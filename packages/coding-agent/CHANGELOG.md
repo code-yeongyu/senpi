@@ -6,6 +6,8 @@
 
 ### Added
 
+- `dequeue_message` and `edit_queued_message` accept `expectedRevision`: every queued input carries a `revision` (1 when queued, +1 per edit), and a change based on a stale revision answers `conflict` with `currentRevision` and changes nothing, so two clients editing one queued message can no longer overwrite each other silently. Capability `queued_message_revision` ([#3459](https://github.com/code-yeongyu/senpi/issues/3459)).
+
 ### Changed
 
 ### Fixed

@@ -208,14 +208,21 @@ export async function runQueuedInputChange(
 			data: {
 				queuedId,
 				status: replayedStatus(begun.replay, command.type),
+				...begun.replay.answer,
+				...(begun.replay.outcome === undefined
+					? {}
+					: { reason: begun.replay.outcome.reason, action: begun.replay.outcome.action }),
 				...effectAnswer(begun.replay, ctx.sessionId, true),
 			},
 		});
 	const clientMessageId = ctx.session.getQueuedInputs().find((input) => input.queuedId === queuedId)?.clientMessageId;
+	const expected = command.expectedRevision === undefined ? undefined : { expectedRevision: command.expectedRevision };
 	const status =
 		command.type === "dequeue_message"
-			? ctx.session.dequeueQueuedInput(queuedId)
-			: ctx.session.editQueuedInput(queuedId, command.text);
+			? ctx.session.dequeueQueuedInput(queuedId, expected)
+			: ctx.session.editQueuedInput(queuedId, command.text, expected);
+	// Read in the same synchronous step as the change: the revision the answer reports is the one it made or met.
+	const current = ctx.session.getQueuedInputs().find((input) => input.queuedId === queuedId);
 	// A durable input is restored from its admission record on reopen: that record must carry the edit too.
 	if (status === "edited" && clientMessageId !== undefined && command.type === "edit_queued_message")
 		ClientAdmissions.forSession(ctx.session).editQueuedText(clientMessageId, command.text);
@@ -224,19 +231,30 @@ export async function runQueuedInputChange(
 			? EFFECT_OUTCOMES.queuedInputAlreadyDelivered
 			: status === "not_found"
 				? EFFECT_OUTCOMES.queuedInputNotFound
+				: status === "conflict"
+					? EFFECT_OUTCOMES.queuedInputConflict
+					: undefined;
+	const answer =
+		status === "edited" && current !== undefined
+			? { text: current.text, revision: current.revision }
+			: status === "conflict" && current !== undefined
+				? { currentRevision: current.revision }
 				: undefined;
+	// The receipt keeps the answer too: a same-id retry after a dropped response must answer exactly as this call did.
+	const stored = answer === undefined ? {} : { answer };
 	const ledger = effectId === undefined ? undefined : EffectLedger.forSession(ctx.session);
 	const recorded =
 		effectId === undefined || ledger === undefined
 			? undefined
 			: outcome === undefined
-				? ledger.transition(effectId, "done", { disposition: status })
-				: ledger.transition(effectId, "failed", { outcome });
+				? ledger.transition(effectId, "done", { disposition: status, ...stored })
+				: ledger.transition(effectId, "failed", { outcome, ...stored });
 	return respond(command.id, {
 		command: command.type,
 		data: {
 			queuedId,
 			status,
+			...answer,
 			...(outcome === undefined ? {} : { reason: outcome.reason, action: outcome.action }),
 			...(recorded === undefined ? {} : effectAnswer(recorded, ctx.sessionId)),
 		},
@@ -244,7 +262,12 @@ export async function runQueuedInputChange(
 }
 
 function replayedStatus(status: EffectStatus, command: "dequeue_message" | "edit_queued_message") {
-	if (status.outcome?.kind === "already_delivered" || status.outcome?.kind === "not_found") return status.outcome.kind;
+	if (
+		status.outcome?.kind === "already_delivered" ||
+		status.outcome?.kind === "not_found" ||
+		status.outcome?.kind === "conflict"
+	)
+		return status.outcome.kind;
 	return command === "dequeue_message" ? ("removed" as const) : ("edited" as const);
 }
 

@@ -16,6 +16,7 @@ import {
 	MOVED_PATH_GUARD_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
+	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
@@ -58,6 +59,7 @@ export function multiSessionHostCapabilities(options: {
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
 			AUTH_KEY_VERIFY_CAPABILITY,
+			QUEUED_MESSAGE_REVISION_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the

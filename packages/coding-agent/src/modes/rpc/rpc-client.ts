@@ -769,7 +769,7 @@ export class RpcClient {
 	async clearQueue(options?: { abortWillFollow?: boolean }): Promise<{
 		steering: string[];
 		followUp: string[];
-		ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
+		ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number; revision: number }>;
 	}> {
 		const response = await this.send({ type: "clear_queue", abortWillFollow: options?.abortWillFollow });
 		return this.getData(response);

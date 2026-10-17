@@ -77,6 +77,7 @@ import {
 	EXTENSION_EVENTS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	QUESTION_CAPABILITY,
+	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 } from "./custom-capability.ts";
@@ -1018,6 +1019,7 @@ export function createRpcConnectionHandler(
 								CONTINUE_FROM_LEAF_CAPABILITY,
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
+								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								// Client flags cannot advertise a host guard this classic binding does not run.
 								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),

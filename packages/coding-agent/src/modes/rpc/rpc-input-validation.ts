@@ -107,6 +107,13 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 		return `text must be a non-empty string of at most ${MAX_RPC_MESSAGE_CHARACTERS} characters; dequeue_message removes an input.`;
 	}
 	if (
+		(value.type === "dequeue_message" || value.type === "edit_queued_message") &&
+		value.expectedRevision !== undefined &&
+		!(Number.isSafeInteger(value.expectedRevision) && (value.expectedRevision as number) >= 1)
+	) {
+		return "expectedRevision must be a whole number of at least 1; read it from the input's revision in get_state or queue_update.";
+	}
+	if (
 		value.type === "resolve_path" &&
 		!(typeof value.path === "string" && value.path.trim().length > 0 && value.path.length <= 4096)
 	) {
