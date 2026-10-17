@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- A disposed terminal screen drops its scrollback right away. Under Bun the last fired timer keeps xterm's write closure, and through it the whole terminal, alive until another timer fires, so an exited session's screen model (about 8 MB for 4,000 lines) briefly outlived its release ([#3423](https://github.com/code-yeongyu/senpi/issues/3423)).
 - A terminal screen's replay history (up to 1,000,000 chars per terminal) is kept as flat strings: `sanitizeString` no longer builds its result one character at a time, which cost about 31 bytes per char, and an oversized chunk trimmed to the cap no longer keeps the whole chunk alive ([#3170](https://github.com/code-yeongyu/senpi/issues/3170)).
 
 - `TerminalSession.kill()` no longer swallows an escalation: repeating the last delivered signal stays idempotent, but a different signal (notably `SIGKILL` after an ignored `SIGTERM`) now reaches the backend.

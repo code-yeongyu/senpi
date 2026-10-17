@@ -166,6 +166,7 @@ export class TerminalScreen {
 		for (const operation of pending) {
 			settleOperation(operation.settlers, null);
 		}
+		this.terminal.reset();
 		this.terminal.dispose();
 	}
 
