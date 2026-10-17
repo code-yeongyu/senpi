@@ -113,6 +113,45 @@ describe("zero-session host trim", () => {
 		expect(harness.records.map((record) => record.footprintBeforeMb)).toEqual([500, 400]);
 	});
 
+	it("answers a drop to zero inside the spacing once it ends, if the host is still empty (senpi#3360)", () => {
+		const harness = createTrimmer();
+		harness.setSessions(1);
+		harness.setSessions(0);
+		harness.tick();
+		harness.advance(30_000);
+		harness.allocate(400);
+		harness.setSessions(20);
+		harness.setSessions(0);
+		harness.tick();
+		expect(harness.records).toHaveLength(1);
+
+		harness.advance(ZERO_SESSION_TRIM_MIN_INTERVAL_MS - 30_000);
+		harness.tick();
+		harness.tick();
+		harness.tick();
+
+		expect(harness.records.map((record) => [record.footprintBeforeMb, record.sessions])).toEqual([
+			[500, 0],
+			[400, 0],
+		]);
+		expect(harness.collections()).toBe(2);
+	});
+
+	it("drops a pending zero edge when sessions come back before the spacing ends (senpi#3360)", () => {
+		const harness = createTrimmer();
+		harness.setSessions(1);
+		harness.setSessions(0);
+		harness.tick();
+		harness.advance(30_000);
+		harness.setSessions(2);
+		harness.setSessions(0);
+		harness.setSessions(1);
+		harness.advance(ZERO_SESSION_TRIM_MIN_INTERVAL_MS);
+		harness.tick();
+
+		expect(harness.collections()).toBe(1);
+	});
+
 	it("trims a busy host whose session count drops while its footprint is at least the floor (senpi#3218)", () => {
 		// Given: a DAG shard that held 3 sessions and grew to 3 GB.
 		const harness = createTrimmer();
