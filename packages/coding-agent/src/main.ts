@@ -157,21 +157,30 @@ export function collectAuthDiagnostics(
 	context: string,
 	options: { persistSeen: boolean },
 ): AgentSessionRuntimeDiagnostic[] {
-	return [
-		...authStorage.drainErrors().map((error) => error.message),
-		...authStorage.takePendingNotices(options).map((notice) => notice.message),
-	].map((message) => ({ type: "warning", message: `(${context}, auth storage) ${message}` }));
+	// Take notices first: recording them as seen can itself fail, and that error must be drained here too.
+	const notices = authStorage.takePendingNotices(options).map((notice) => notice.message);
+	return [...authStorage.drainErrors().map((error) => error.message), ...notices].map((message) => ({
+		type: "warning",
+		message: `(${context}, auth storage) ${message}`,
+	}));
 }
 
 /** The TUI shows auth problems at startup; credential notices are marked seen once shown (senpi#3486). */
-export function interactiveAuthNotices(authStorage: AuthStorage): { messages: string[]; markSeen: () => void } {
+export function interactiveAuthNotices(authStorage: AuthStorage): {
+	messages: string[];
+	markSeen: () => string[];
+} {
 	const pending = authStorage.takePendingNotices({ persistSeen: false });
 	return {
 		messages: [
 			...authStorage.drainErrors().map((error) => error.message),
 			...pending.map((notice) => notice.message),
 		],
-		markSeen: () => authStorage.markNoticesSeen(pending.map((notice) => notice.id)),
+		// Returns a failed write's message, so the TUI shows it instead of dropping it.
+		markSeen: () => {
+			authStorage.markNoticesSeen(pending.map((notice) => notice.id));
+			return authStorage.drainErrors().map((error) => error.message);
+		},
 	};
 }
 

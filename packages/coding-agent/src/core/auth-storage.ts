@@ -28,6 +28,7 @@ import {
 	upsertSlot,
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { createHmac, randomBytes } from "crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -80,8 +81,8 @@ export type AuthNotice = { readonly id: string; readonly provider: string; reado
  * Nothing is changed: which credential pays stays the user's choice, so the notice names the
  * unused login, where it still is, and the action that switches to it.
  */
-function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
-	const notices: AuthNotice[] = [];
+function unusedLoginNotices(data: AuthStorageData): Array<AuthNotice & { readonly material: string }> {
+	const notices: Array<AuthNotice & { readonly material: string }> = [];
 	for (const [provider, credential] of Object.entries(data)) {
 		if (typeof credential !== "object" || credential === null) continue;
 		for (const kind of unusedSlotKinds(credential)) {
@@ -89,8 +90,8 @@ function unusedLoginNotices(data: AuthStorageData): AuthNotice[] {
 			const inUse = KIND_LABEL[credential.type];
 			const names = slots.map((slot) => slot.name);
 			notices.push({
-				// Slot names, never key material: a new unused login gets a new id and is shown again.
 				id: `${provider}:${kind}:${names.join(",")}`,
+				material: slots.map((slot) => `${slot.name}\0${slot.key ?? ""}\0${slot.refresh ?? ""}`).join("\0\0"),
 				provider,
 				message: `${provider}: an ${KIND_LABEL[kind]} saved earlier is stored next to your ${inUse} but is never used; the ${inUse} stays in use. It is still in auth.json (${slots.map((slot) => slot.name).join(", ")}); to switch to it, save it again with /login (the ${inUse} is backed up first).`,
 			});
@@ -473,6 +474,7 @@ export class AuthStorage implements CredentialStore {
 	private errors: Error[] = [];
 	private readonly reportedMigrationSkips = new Set<string>();
 	private notices: AuthNotice[] = [];
+	private noticeSalt: string | undefined;
 	private readonly seenInMemory = new Set<string>();
 	private readonly takenNotices = new Set<string>();
 	private readonly replacements = new Map<string, CredentialReplacement>();
@@ -557,7 +559,13 @@ export class AuthStorage implements CredentialStore {
 				),
 			);
 		}
-		this.notices = unusedLoginNotices(moved.data);
+		// The id names the slots plus a keyed digest of their material, so a different key under the
+		// same slot name is a new change; the key itself never reaches the seen file (senpi#3486).
+		const salt = this.seenRecord().salt;
+		this.notices = unusedLoginNotices(moved.data).map(({ material, ...notice }) => ({
+			...notice,
+			id: `${notice.id}:${createHmac("sha256", salt).update(material).digest("hex").slice(0, 16)}`,
+		}));
 		return {
 			data: moved.data,
 			repaired: repaired.repaired,
@@ -712,27 +720,31 @@ export class AuthStorage implements CredentialStore {
 
 	/**
 	 * Records notices as shown, so the next launch stays quiet until the problem changes. Ids of
-	 * problems that no longer exist are dropped. A failed write never aborts startup: it is reported,
-	 * and the notice may be shown once more.
+	 * problems that no longer exist are dropped, also when nothing new is marked. A failed write never
+	 * aborts startup: it is returned (and recorded) with the step that fixes it, and the notice may be
+	 * shown once more.
 	 */
-	markNoticesSeen(ids: readonly string[]): void {
-		if (ids.length === 0) return;
+	markNoticesSeen(ids: readonly string[]): string[] {
 		const path = this.seenNoticesPath();
 		if (!path) {
 			for (const id of ids) this.seenInMemory.add(id);
-			return;
+			return [];
 		}
+		const record = this.seenRecord();
 		const current = new Set(this.notices.map((notice) => notice.id));
-		const seen = [...new Set([...this.seenNoticeIds(), ...ids])].filter((id) => current.has(id));
+		const seen = [...new Set([...record.seen, ...ids])].filter((id) => current.has(id));
+		if (record.persisted && seen.length === record.seen.length && seen.every((id) => record.seen.includes(id)))
+			return [];
+		if (!record.persisted && seen.length === 0) return [];
 		try {
-			writeFileSync(path, JSON.stringify(seen, null, 2), AUTH_FILE_WRITE_OPTIONS);
+			writeFileSync(path, JSON.stringify({ salt: record.salt, seen }, null, 2), AUTH_FILE_WRITE_OPTIONS);
+			this.seenCache = { salt: record.salt, seen, persisted: true };
+			return [];
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
-			this.recordError(
-				new Error(
-					`Could not record which credential notices were shown (${path}): ${reason}. They may be shown again on the next start; check that the file is writable.`,
-				),
-			);
+			const message = `Could not record which credential notices were shown (${path}): ${reason}. They may be shown again on the next start; check that the file is writable.`;
+			this.recordError(new Error(message));
+			return [message];
 		}
 	}
 
@@ -740,15 +752,39 @@ export class AuthStorage implements CredentialStore {
 		return this.authPath ? join(dirname(this.authPath), "auth-notices-seen.json") : undefined;
 	}
 
-	private seenNoticeIds(): Set<string> {
+	private seenCache: { salt: string; seen: string[]; persisted: boolean } | undefined;
+
+	/** The seen ids plus the per-directory salt for notice ids; a missing or unreadable file starts fresh. */
+	private seenRecord(): { salt: string; seen: string[]; persisted: boolean } {
+		if (this.seenCache) return this.seenCache;
 		const path = this.seenNoticesPath();
-		if (!path) return new Set(this.seenInMemory);
+		let record: { salt: string; seen: string[]; persisted: boolean } = {
+			salt: randomBytes(16).toString("hex"),
+			seen: [],
+			persisted: false,
+		};
 		try {
-			const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
-			return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+			const parsed: unknown = path ? JSON.parse(readFileSync(path, "utf-8")) : undefined;
+			if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+				const { salt, seen } = parsed as { salt?: unknown; seen?: unknown };
+				if (typeof salt === "string" && salt.length > 0) {
+					record = {
+						salt,
+						seen: Array.isArray(seen) ? seen.filter((id): id is string => typeof id === "string") : [],
+						persisted: true,
+					};
+				}
+			}
 		} catch {
-			return new Set();
+			// A missing or unreadable record starts fresh; a failed write is reported by markNoticesSeen.
 		}
+		this.seenCache = record;
+		return record;
+	}
+
+	private seenNoticeIds(): Set<string> {
+		if (!this.seenNoticesPath()) return new Set(this.seenInMemory);
+		return new Set(this.seenRecord().seen);
 	}
 
 	private noteReplacement(

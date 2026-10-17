@@ -21,7 +21,7 @@ describe("the TUI shows pending credential notices at startup (senpi#3486)", () 
 		process.env.PI_OFFLINE = "1";
 		try {
 			const chatContainer = new Container();
-			const markSeen = vi.fn();
+			const markSeen = vi.fn((): string[] => []);
 			const message =
 				"openrouter: an API key saved earlier is stored next to your OAuth login but is never used; the OAuth login stays in use.";
 			const context = {

@@ -871,7 +871,7 @@ export interface InteractiveModeOptions {
 	/** Runtime diagnostics collected during session creation. */
 	startupDiagnostics?: Array<{ type: "info" | "warning" | "error"; message: string }>;
 	/** Credential notices to show once at startup; `markSeen` runs after they are shown (senpi#3486). */
-	authNotices?: { readonly messages: readonly string[]; readonly markSeen: () => void };
+	authNotices?: { readonly messages: readonly string[]; readonly markSeen: () => readonly string[] };
 	/** Warning message if session model couldn't be restored */
 	modelFallbackMessage?: string;
 	/** Cwd to trust after reload if it gained a .pi directory during this implicitly trusted session. */
@@ -1900,7 +1900,7 @@ export class InteractiveMode {
 		}
 		if (authNotices && authNotices.messages.length > 0) {
 			for (const message of authNotices.messages) this.showWarning(message);
-			authNotices.markSeen();
+			for (const message of authNotices.markSeen()) this.showWarning(message);
 		}
 
 		const modelsJsonError = this.session.modelRuntime.getError();

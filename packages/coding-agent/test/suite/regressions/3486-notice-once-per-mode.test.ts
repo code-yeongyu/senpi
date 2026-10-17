@@ -91,4 +91,30 @@ describe("credential notices: exactly once per change in every mode (senpi#3486)
 		]);
 		await expect(pinCredentialAccount(storage, "openrouter", "login-2", {}, repository)).rejects.toThrow(/\/login/);
 	});
+
+	it("a different key saved under the same slot name is a new change and is shown again", () => {
+		interactiveAuthNotices(launch()).markSeen();
+		const replaced = structuredClone(mixed);
+		replaced.openrouter.accounts[1] = { name: "login-2", source: "login", key: "sk-another-key-3486" };
+		writeFileSync(authPath, JSON.stringify(replaced));
+		expect(count(interactiveAuthNotices(launch()).messages)).toBe(1);
+		expect(readFileSync(join(dir, "agent", "auth-notices-seen.json"), "utf-8")).not.toContain("sk-another-key-3486");
+	});
+
+	it("a failed seen write is reported in every mode, not dropped", () => {
+		mkdirSync(join(dir, "agent", "auth-notices-seen.json"));
+		const listing = messages(collectAuthDiagnostics(launch(), "model listing", { persistSeen: true }));
+		expect(listing.some((message) => message.includes("check that the file is writable"))).toBe(true);
+		const interactive = interactiveAuthNotices(launch());
+		expect(interactive.markSeen().some((message) => message.includes("check that the file is writable"))).toBe(true);
+	});
+
+	it("drops a seen id once its problem is gone, even when nothing new is shown", () => {
+		interactiveAuthNotices(launch()).markSeen();
+		const fixed = structuredClone(mixed);
+		fixed.openrouter.accounts = [fixed.openrouter.accounts[0]];
+		writeFileSync(authPath, JSON.stringify(fixed));
+		collectAuthDiagnostics(launch(), "model listing", { persistSeen: true });
+		expect(readFileSync(join(dir, "agent", "auth-notices-seen.json"), "utf-8")).not.toContain("openrouter");
+	});
 });
