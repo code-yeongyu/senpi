@@ -1004,6 +1004,18 @@ export class ExtensionRunner {
 		}
 	}
 
+	/**
+	 * Reports a failure from event dispatch. Once the runner is retired (session replaced, reloaded
+	 * or disposed), a handler that fails on its stale context leaves a leftover, not an extension
+	 * failure, so that report is dropped. Every other failure is reported, including a cleanup
+	 * handler that a session replacement dispatches on the retired runner on purpose
+	 * (session_extensions_removed). Direct reports, such as a command's failure, go through emitError.
+	 */
+	private reportDispatchError(error: ExtensionError): void {
+		if (this.staleMessage !== undefined && error.error.includes(this.staleMessage)) return;
+		this.emitError(error);
+	}
+
 	hasHandlers(eventType: string): boolean {
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get(eventType);
@@ -1745,7 +1757,7 @@ export class ExtensionRunner {
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: event.type,
 						error: message,
@@ -1792,7 +1804,7 @@ export class ExtensionRunner {
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: "model_select",
 						error: message,
@@ -1819,7 +1831,7 @@ export class ExtensionRunner {
 					if (!handlerResult?.message) continue;
 
 					if (handlerResult.message.role !== currentMessage.role) {
-						this.emitError({
+						this.reportDispatchError({
 							extensionPath: ext.path,
 							event: "message_end",
 							error: "message_end handlers must return a message with the same role",
@@ -1832,7 +1844,7 @@ export class ExtensionRunner {
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: "message_end",
 						error: message,
@@ -1892,7 +1904,7 @@ export class ExtensionRunner {
 					const stack = err instanceof Error ? err.stack : undefined;
 					endStatus = "failed";
 					errorMessage = message;
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: "tool_result",
 						error: message,
@@ -1968,7 +1980,7 @@ export class ExtensionRunner {
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: "user_bash",
 						error: message,
@@ -1996,7 +2008,7 @@ export class ExtensionRunner {
 			contextHandlers: snapshotEventHandlers(this.extensions, "context"),
 			contextWithSystemHandlers: snapshotEventHandlers(this.extensions, "context_with_system"),
 			createContext: (path) => this.createContext(path),
-			emitError: (error) => this.emitError(error),
+			emitError: (error) => this.reportDispatchError(error),
 			excludeExtensionPath,
 			source,
 		});
@@ -2042,7 +2054,7 @@ export class ExtensionRunner {
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: "before_provider_request",
 						error: message,
@@ -2068,7 +2080,7 @@ export class ExtensionRunner {
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: "before_provider_headers",
 						error: message,
@@ -2146,7 +2158,7 @@ export class ExtensionRunner {
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: "before_agent_start",
 						error: message,
@@ -2208,7 +2220,7 @@ export class ExtensionRunner {
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: "resources_discover",
 						error: message,
@@ -2250,7 +2262,7 @@ export class ExtensionRunner {
 						currentImages = result.images ?? currentImages;
 					}
 				} catch (err) {
-					this.emitError({
+					this.reportDispatchError({
 						extensionPath: ext.path,
 						event: "input",
 						error: err instanceof Error ? err.message : String(err),
