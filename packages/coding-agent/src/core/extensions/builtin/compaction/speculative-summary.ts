@@ -157,7 +157,9 @@ export async function generateSummaryMessage(options: {
 		const headers = providerRequest
 			? await providerRequest.transformHeaders(options.auth.headers ?? {})
 			: options.auth.headers;
+		const sessionId = options.context.sessionManager?.getSessionId();
 		const responseStream = summarizationStream(options.context, options.snapshot.model, requestContext, {
+			...(sessionId !== undefined ? { sessionId } : {}),
 			apiKey: options.auth.apiKey,
 			headers,
 			extraBody: options.auth.extraBody,

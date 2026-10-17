@@ -10,6 +10,9 @@
 
 ### Fixed
 
+- Compaction forwards `sessionId` to `summarizationStream`, restoring the `x-opencode-session` routing header on OpenCode Go compaction requests. Previously, omitting `sessionId` in `speculative-summary.ts` caused OpenCode Go API endpoints to reject summarization requests with HTTP 400 `MissingSessionID` ([#3406](https://github.com/code-yeongyu/senpi/issues/3406)).
+
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16
