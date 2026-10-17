@@ -1,6 +1,6 @@
 # Provider error presentation fixture
 
-Run from the repository root with Bun 1.4.2:
+Run from the repository root with Bun 1.4.3:
 
 ```sh
 bun .agents/skills/senpi-qa/scripts/scenarios/provider-error-tui-qa.mjs retry-recovery
