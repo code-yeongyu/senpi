@@ -1,3 +1,25 @@
+## 2026-10-17 - Discover Elorian API credentials
+
+### What changed
+
+- `packages/ai/src/env-api-keys.ts`: maps `elorian` to `ELORIAN_API_KEY`.
+- `packages/ai/src/types.ts`: includes Elorian in the known provider union.
+
+### Why
+
+- `packages/ai/src/env-api-keys.ts`: Elorian credentials must participate in provider discovery and credential slots.
+- `packages/ai/src/types.ts`: built-in provider enumeration must remain assignable to the public provider type.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/env-api-keys.ts`: the built-in credential mapping is read before extensions load.
+- `packages/ai/src/types.ts`: the public provider union is a compile-time contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/env-api-keys.ts`: provider environment map.
+- `packages/ai/src/types.ts`: `KnownProvider`.
+
 ## 2026-10-15 - ProviderDiagnostic gains the network category and structured_transport evidence (senpi#3228)
 
 ### What changed

@@ -16,6 +16,8 @@ import { cursorProvider } from "./cursor.ts";
 import modelDataManifest from "./data/.manifest.json" with { type: "json" };
 import { deepseekProvider } from "./deepseek.ts";
 import { devinProvider } from "./devin.ts";
+import { ELORIAN_MODELS } from "./elorian.models.ts";
+import { elorianProvider } from "./elorian.ts";
 import { fireworksProvider } from "./fireworks.ts";
 import { githubCopilotProvider } from "./github-copilot.ts";
 import { googleProvider } from "./google.ts";
@@ -63,6 +65,7 @@ export { ollamaProvider, radiusProvider };
  * read below must see them exactly like a generated one.
  */
 const FORK_OWNED_CATALOGS = {
+	elorian: ELORIAN_MODELS,
 	"kimi-coding": KIMI_CODING_MODELS,
 } as const;
 
@@ -224,6 +227,7 @@ export function builtinProviders(): Provider[] {
 		cursorProvider(),
 		devinProvider(),
 		deepseekProvider(),
+		elorianProvider(),
 		fireworksProvider(),
 		githubCopilotProvider(),
 		googleProvider(),

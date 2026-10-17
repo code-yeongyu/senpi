@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added the `elorian` provider with native image/video inputs, hosted-tool settings, account-aware limits, background runs, and client-side XML tool handoffs while retaining Elorian usage and provenance.
+
 ### Changed
 
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).

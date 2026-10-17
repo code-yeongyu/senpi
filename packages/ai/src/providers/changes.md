@@ -1,3 +1,33 @@
+## 2026-10-17 - Elorian native capabilities and account-aware catalog
+
+### What changed
+
+- `packages/ai/src/providers/all.ts`: registers Elorian and its fork-owned catalog so regeneration does not remove it.
+- `packages/ai/src/providers/elorian.ts`, `packages/ai/src/providers/elorian.models.ts`: add Glimpse, API-key authentication, published prices, supported thinking levels, account-specific limits, and the standard conservative vision resize profile.
+- `packages/ai/src/providers/elorian-stream.ts`, `packages/ai/src/providers/elorian-files.ts`: adapt Elorian media and hosted capabilities to the existing completion stream; encode local tools with the existing MorphXML protocol and a client-side handoff user turn because the live API rejects client function declarations and its hosted dispatcher cannot execute local functions. Images and video stay native. The provider applies this protocol itself so legacy dispatch does not double-wrap and discard native metadata.
+- `packages/ai/src/providers/elorian-runs.ts`: maps background runs to deferred handles, completion retrieval, and cancellation, selecting the protocol from the final payload and retaining chat header precedence across the lifecycle. Handles persist JSON tool declarations so completed XML handoffs still become executable calls after session reload.
+
+### Why
+
+- `packages/ai/src/providers/all.ts`: Elorian is absent from models.dev but must be available through the built-in model lookup and CLI.
+- `packages/ai/src/providers/elorian.ts`, `packages/ai/src/providers/elorian.models.ts`: Elorian limits vary by account and reasoning only accepts low, medium, or xhigh.
+- `packages/ai/src/providers/elorian-stream.ts`, `packages/ai/src/providers/elorian-files.ts`: Elorian's video uploads, hosted tools and response metadata are not standard OpenAI fields; its deployed endpoint accepts hosted declarations but rejects client function tools despite the SDK compatibility table.
+- `packages/ai/src/providers/elorian-runs.ts`: queued background work returns a run rather than a streaming completion.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/all.ts`: the immutable built-in catalog is assembled before extension registration.
+- `packages/ai/src/providers/elorian.ts`, `packages/ai/src/providers/elorian.models.ts`: built-in provider authentication and refreshed limits belong to the model runtime.
+- `packages/ai/src/providers/elorian-stream.ts`, `packages/ai/src/providers/elorian-files.ts`: the provider must preserve wire capabilities on every dispatch, including noninteractive clients.
+- `packages/ai/src/providers/elorian-runs.ts`: durable deferred handles must reach the core response lifecycle.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/all.ts`: provider imports, fork-owned catalogs, and provider construction.
+- `packages/ai/src/providers/elorian.ts`, `packages/ai/src/providers/elorian.models.ts`: provider registration and catalog metadata if upstream adds Elorian.
+- `packages/ai/src/providers/elorian-stream.ts`, `packages/ai/src/providers/elorian-files.ts`: Elorian request and media protocol changes.
+- `packages/ai/src/providers/elorian-runs.ts`: run status and deferred-response protocol.
+
 ## 2026-10-16 - Xiaomi MiMo compat covers mimo-v2.6-pro (senpi v2026.10.16 release)
 
 ### What changed

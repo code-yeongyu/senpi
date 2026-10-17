@@ -365,6 +365,7 @@ senpi
 | Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
 | B.AI | `BAI_API_KEY` | `bai` |
+| Elorian | `ELORIAN_API_KEY` | `elorian` |
 | Ollama Cloud | `OLLAMA_API_KEY` | `ollama` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia` |
@@ -404,6 +405,92 @@ senpi
 | Alibaba Token Plan (ap-southeast-1) | `ALIBABA_TOKEN_PLAN_API_KEY` | `alibaba-token-plan` |
 
 With no key or token set, Anthropic uses workload identity federation when `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE` are set: the Anthropic SDK exchanges the identity token for a short-lived access token and refreshes it itself (re-reading the identity token file, so keep that file fresh for long sessions). `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID` are passed through when set.
+
+#### Elorian
+
+Use `/login elorian` or export `ELORIAN_API_KEY`, then select
+`elorian/elorian-1-agent` (Glimpse):
+
+```bash
+senpi --provider elorian --model elorian-1-agent
+```
+
+Elorian uses `https://api.elorian.ai/v1/chat/completions`, not the Responses API.
+Its supported reasoning levels are `low`, `medium`, and `xhigh` (the default);
+thinking cannot be disabled. The catalog includes text, images, and video, with
+$0.60 input, $0.06 cached input, and $3.00 output per million tokens. Account
+context and output limits are refreshed from `/v1/limits`; the documented
+8,000-token output default may be reduced by your tier.
+
+API calls require purchased credits even on the Free tier. A 429 with
+`credits_exhausted` means billing, not a rate limit: add credits under
+[Plans and billing](https://platform.elorian.ai/settings/billing).
+
+Glimpse runs its own Python and web searches when needed. Explicit hosted tools
+use Elorian's native declarations. The live endpoint rejects client function
+tools despite the SDK compatibility table, so Senpi uses its existing MorphXML
+text-tool protocol for local tools. Images and video remain native media; they
+are not reduced to textual descriptions. For visual/spatial specialist calls
+that need no local execution, use `--tools ""` and attach the original media:
+
+```bash
+senpi --provider elorian --model elorian-1-agent --tools "" @scene.png "Explain the spatial relationships."
+```
+
+Set native options in `models.json` using `samplingParams`:
+
+```json
+{
+  "providers": {
+    "elorian": {
+      "modelOverrides": {
+        "elorian-1-agent": {
+          "samplingParams": {
+            "video_fps": 5,
+            "pixels_per_frame": 200000,
+            "mode": "max",
+            "elorian_hosted_tools": [
+              { "type": "code_interpreter" },
+              { "type": "web_search" },
+              { "type": "visual_search" }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+`mode: "max"` selects Elorian's multi-agent mode and uses more quota; omit it for
+ordinary requests. `elorian_hosted_tools` is a Senpi option that appends native
+tool declarations alongside text-encoded local tools. Other hosted
+choices are `calculator` and `current_time`. SDK callers can pass the same
+options in `extraBody`. Video attachments use Elorian's `video_url` parts:
+inline video is uploaded first and referenced by file id rather than sent as
+an unsupported inline video URL. Images remain OpenAI-style `image_url` parts.
+Clips up to 512 MiB use `/files`; larger clips use `/uploads` in ordered 64 MiB
+parts. Ready file ids are reused across follow-ups within the provider instance,
+scoped to the endpoint and credentials. Upload and processing waits are bounded
+and honor cancellation.
+
+SDK callers can set `deferred: true` (or `extraBody.background: true`) to start
+a background run. The provider returns `stopReason: "deferred"` and a durable
+handle; `fetchDeferred(model, handle, options)` performs a status read, returning
+the handle again while queued or running and the parsed completion when done.
+`cancelDeferred(model, handle, options)` cancels the remote run. Completed
+artifacts and Elorian progress are preserved as `providerNative` blocks with
+subtype `elorian`; media and audio-transcription provenance uses
+`usage.elorian`. Artifact URLs require the same account's API key to download.
+
+Prompt caching is automatic; cached tokens and reasoning-token counts use the
+standard usage fields. JSON-schema output can be requested with the existing
+`response_format` sampling parameter, but Elorian rejects it for models that do
+not support structured output. Audio-only input, embeddings, image generation,
+nonzero penalties, logprobs, and `n > 1` are not supported.
+
+See [Elorian's SDK compatibility reference](https://platform.elorian.ai/settings/docs#sdk-compatibility)
+for its native media, hosted tools, file uploads, and long-running agent work.
 
 #### OpenGateway
 

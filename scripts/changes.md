@@ -1,3 +1,21 @@
+## 2026-10-17 - Seed Elorian credentials in development environments
+
+### What changed
+
+- `scripts/devenv-setup.mjs`: recognizes `ELORIAN_API_KEY` when seeding the local development environment.
+
+### Why
+
+- `scripts/devenv-setup.mjs`: provider credentials must stay synchronized with the devcontainer and QA environment reference.
+
+### Why an extension could not handle it
+
+- `scripts/devenv-setup.mjs`: development bootstrap runs outside the agent.
+
+### Expected merge conflict zones
+
+- `scripts/devenv-setup.mjs`: `PROVIDER_KEYS`.
+
 ## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
 
 ### What changed

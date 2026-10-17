@@ -57,6 +57,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	radius: "balanced",
 	nvidia: "nvidia/nemotron-3-ultra-550b-a55b",
 	deepseek: "deepseek-v4-pro",
+	elorian: "elorian-1-agent",
 	google: "gemini-3.1-pro-preview",
 	"google-vertex": "gemini-3.1-pro-preview",
 	"github-copilot": "gpt-5.4",

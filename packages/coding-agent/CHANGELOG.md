@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added `elorian/elorian-1-agent` with `ELORIAN_API_KEY` authentication, native image/video inputs, account-aware limits, and local tool execution through XML handoffs.
+
 ### Changed
 
 ### Fixed

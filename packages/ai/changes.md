@@ -1,3 +1,21 @@
+## 2026-10-17 - Preserve Elorian's manually owned catalog shard
+
+### What changed
+
+- `packages/ai/scripts/model-shards.ts`: declares `elorian.models.ts` as fork-owned.
+
+### Why
+
+- `packages/ai/scripts/model-shards.ts`: catalog regeneration must retain the provider's manually maintained model metadata.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/model-shards.ts`: shard pruning runs during generation before runtime extensions load.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/model-shards.ts`: `FORK_OWNED_MODEL_SHARDS`.
+
 ## 2026-10-15 - Effective-dated cost cards in the generated catalog (senpi#3378)
 
 ### What changed

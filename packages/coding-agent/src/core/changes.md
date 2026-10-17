@@ -1,3 +1,21 @@
+## 2026-10-17 - Select the bundled Elorian model by default
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: add `elorian-1-agent` as the default for the bundled Elorian provider.
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: Elorian must have a catalog-backed default when selected without a model; the existing built-in provider default contract caught the missing entry.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in default table belongs to core model selection.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the provider rows in `defaultModelPerProvider`.
+
 ## 2026-10-16 - The fallback circuit takes one step per open episode and only reroutes sessions it concerns (senpi#3467)
 
 ### What changed

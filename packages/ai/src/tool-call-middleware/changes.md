@@ -1,5 +1,23 @@
 # Tool Call Middleware Changes
 
+## 2026-10-17 - Opt-in native metadata preservation for text tools
+
+### What changed
+
+- `packages/ai/src/tool-call-middleware/stream-wrapper.ts`: exposes the existing projection's metadata-preservation option so Elorian's local text tools retain reasoning-token counts and provider metadata. Legacy callers keep their current default.
+
+### Why
+
+- `packages/ai/src/tool-call-middleware/stream-wrapper.ts`: the legacy projection drops optional usage fields, including the reasoning count verified by the Elorian HTTP-boundary regression.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/tool-call-middleware/stream-wrapper.ts`: the text parser constructs projected assistant messages before the provider/session consumer can preserve metadata.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/tool-call-middleware/stream-wrapper.ts`: wrapper options and `StreamMessageProjection` construction.
+
 ## 2026-09-08 - Preserve server fallback boundaries during recovery
 
 ### What changed

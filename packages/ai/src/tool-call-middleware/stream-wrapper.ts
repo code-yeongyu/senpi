@@ -7,6 +7,7 @@ export function wrapStreamWithToolCallMiddleware(
 	innerStream: AssistantMessageEventStream,
 	protocol: ToolCallProtocol,
 	tools: Tool[],
+	options: { readonly preserveSourceMetadata?: boolean } = {},
 ): AssistantMessageEventStream {
 	const outerStream = new AssistantMessageEventStreamImpl();
 	const parser = protocol.createStreamParser(tools);
@@ -28,7 +29,7 @@ export function wrapStreamWithToolCallMiddleware(
 			for await (const event of innerStream) {
 				switch (event.type) {
 					case "start":
-						projection = new StreamMessageProjection(outerStream, event.partial);
+						projection = new StreamMessageProjection(outerStream, event.partial, options);
 						outerStream.push({ type: "start", partial: projection.message });
 						break;
 					case "text_start":
@@ -65,7 +66,7 @@ export function wrapStreamWithToolCallMiddleware(
 						projection.finishThinking(event.contentIndex, event.content, event.partial);
 						break;
 					case "done": {
-						projection ??= new StreamMessageProjection(outerStream, event.message);
+						projection ??= new StreamMessageProjection(outerStream, event.message, options);
 						flushParser();
 						projection.finalizeDanglingToolCalls();
 						const message = projection.finalize(event.message, sawToolCall);
@@ -104,13 +105,13 @@ export function wrapStreamWithToolCallMiddleware(
 			}
 
 			const innerMessage = await innerStream.result();
-			projection ??= new StreamMessageProjection(outerStream, innerMessage);
+			projection ??= new StreamMessageProjection(outerStream, innerMessage, options);
 			flushParser();
 			projection.finalizeDanglingToolCalls();
 			outerStream.end(projection.finalize(innerMessage, sawToolCall));
 		} catch (error) {
 			flushParser();
-			projection ??= new StreamMessageProjection(outerStream, await innerStream.result());
+			projection ??= new StreamMessageProjection(outerStream, await innerStream.result(), options);
 			projection.finalizeDanglingToolCalls();
 			const fallback = projection.message;
 			fallback.stopReason = "error";

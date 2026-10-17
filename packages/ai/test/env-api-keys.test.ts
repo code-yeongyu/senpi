@@ -68,6 +68,12 @@ afterEach(() => {
 });
 
 describe("environment API keys", () => {
+	it("discovers Elorian keys in the provider-scoped environment", () => {
+		const env = { ELORIAN_API_KEY: "elor-test-key", OPENAI_API_KEY: "different-key" };
+		expect(findEnvKeys("elorian", env)).toEqual(["ELORIAN_API_KEY"]);
+		expect(getEnvApiKey("elorian", env)).toBe("elor-test-key");
+	});
+
 	it("does not treat generic GitHub tokens as GitHub Copilot credentials", () => {
 		delete process.env.COPILOT_GITHUB_TOKEN;
 		process.env.GH_TOKEN = "gh-token";
