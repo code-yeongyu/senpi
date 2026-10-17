@@ -19,6 +19,7 @@ import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallP
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
+import { runtimeExecArgv } from "./utils/runtime-exec-argv.js";
 // Upstream's `cli/setup.ts` helper is deliberately not used here: this launcher only decides the
 // runtime and process structure, and `cli-main.ts` performs the equivalent process/title/env/http
 // setup for both entry paths (Node launcher and the Bun binary).
@@ -99,7 +100,9 @@ const ISOLATED_CHILD_ENV = "SENPI_CLI_ISOLATED_CHILD";
  * debugger socket has to be released here and re-opened over there, which a same-process load
  * cannot do. Custom exec arguments (`--max-old-space-size`, a loader `--import`, ...) were chosen
  * for the process that runs the agent, and they are only applied at process start, so they must be
- * replayed onto a fresh one. Brand scrubbing does NOT justify it: `cli-main` calls
+ * replayed onto a fresh one. Only runtime options count: an eval or print entry mode belongs to the
+ * caller, and replaying it would run the caller again instead of the agent (senpi#2952). Brand
+ * scrubbing does NOT justify it: `cli-main` calls
  * `scrubBrandFromEnvironment()` itself, so loading it here scrubs this process's environment before
  * anything the agent spawns can inherit it.
  */
@@ -108,7 +111,7 @@ function requiresIsolatedProcess() {
     // same exec arguments and spawn again forever. The marker is read before anything else runs.
     if (process.env[ISOLATED_CHILD_ENV] === "1")
         return false;
-    return process.execArgv.length > 0 || hasInheritedInspectorOption();
+    return runtimeExecArgv().length > 0 || hasInheritedInspectorOption();
 }
 async function spawnFullCli() {
     const extension = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
@@ -122,7 +125,7 @@ async function spawnFullCli() {
     releaseInheritedInspectorForChild();
     const childEnvironment = isBundledNode ? { ...process.env, [ISOLATED_CHILD_ENV]: "1" } : process.env;
     return await new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [...process.execArgv, fullCliPath, ...args], {
+        const child = spawn(process.execPath, [...runtimeExecArgv(), fullCliPath, ...args], {
             env: childEnvironment,
             stdio: "inherit",
         });
