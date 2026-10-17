@@ -4052,7 +4052,7 @@ never write, with `"reason": "session_closed"`, on the same broadcast as every `
 
 `entry_appended` carries the full durable session entry in `entry`. For `entry.type: "custom"`, self-stops use these `entry.customType` values:
 
-- `goal-continuation-stopped`: `entry.data` contains `goalId`, `reason` (`stale`, `repetition`, `cap`, `unattended`, `length-exhausted`, or `context-overflow`), `consecutiveContinuations`, `unattendedContinuations`, and `at`.
+- `goal-continuation-stopped`: `entry.data` contains `goalId`, `reason` (`stale`, `repetition`, `cap`, `no-progress`, `length-exhausted`, or `context-overflow`; older sessions may carry the retired `unattended`), `consecutiveContinuations`, `unattendedContinuations`, `noProgressContinuations`, and `at`.
 - `engine-paused`: `entry.data` contains `reason` (`repetition`, `goal-repeat`, `cap-per-message`, `cap-per-minute`, or `goal-stale`), `at`, and optional `rule`, `customType`, and `count`.
 
 `at` is epoch milliseconds. These records survive session reopen and are available through the session-entry history. A goal stop is historical: accepted user input or `/goal resume` resets the stop, rather than deleting the entry. See [Session File Format](session-format.md#goal-and-engine-self-stop-entries) for the reason mapping and stale measurement-window behavior. Existing limit/rule entries and UI notices are preserved.

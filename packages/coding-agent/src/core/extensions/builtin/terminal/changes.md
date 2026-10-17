@@ -1,3 +1,23 @@
+## 2026-10-17 - Human-input command monitors (oh-my-openagent#10280)
+
+### What changed
+
+- `tools/monitor-schema.ts` / `tools/monitor.ts`: command monitors accept `human_input: true` for watches whose output lines are messages a person wrote (a chat or inbox bridge); the file branch refuses it.
+- `command-monitor-source.ts` tags that watch's output lines `humanInput: true` (`monitor-types.ts`); restore notices and exit summaries stay untagged. `monitor-notify.ts` sets `humanInput: true` on the matching `details.monitors` entry, and the custom type plus `isHumanInputMonitorNotification` live in the shared `monitor-state-event.ts` seam the goal builtin reads.
+- `terminal-manifest*.ts` / `durable-command.ts`: the flag persists on the manifest entry and a restored watch keeps it.
+
+### Why
+
+- Goal continuation must count a person's words as new input even when they arrive through a monitor, while machine status must not reset its no-progress guard. Only the agent that arms the watch knows which kind it is.
+
+### Why an extension could not handle it
+
+- The notification payload and the durable monitor record are owned by this builtin.
+
+### Expected merge conflict zones
+
+- LOW: the monitor schema, `#consume` in `command-monitor-source.ts`, `#monitorDetails` in `monitor-notify.ts`, the manifest field lists.
+
 ## 2026-10-13 - Session workers share the host process start instant (senpi#3255)
 
 ### What changed

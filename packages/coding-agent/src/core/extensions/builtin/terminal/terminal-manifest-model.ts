@@ -42,6 +42,8 @@ export interface ManifestMonitor {
 	readonly path?: string;
 	readonly event?: "create" | "modify";
 	readonly filter?: string;
+	/** Command watch whose output lines are a person's words; absent on older entries. */
+	readonly humanInput?: boolean;
 	readonly cwd?: string;
 	readonly approvedParent?: string;
 	readonly createdAt: number;
@@ -78,6 +80,7 @@ export interface CommandMonitorSpec {
 	readonly description: string;
 	readonly command: string;
 	readonly filter?: string;
+	readonly humanInput?: boolean;
 	readonly cwd?: string;
 	readonly persistent: boolean;
 }

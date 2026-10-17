@@ -60,6 +60,12 @@ export const monitorSchema = Type.Object({
 	bash_id: Type.Optional(
 		Type.String({ description: "Rearm: paused monitor id (mon_ or bash_id) to resume; omit for all paused." }),
 	),
+	human_input: Type.Optional(
+		Type.Boolean({
+			description:
+				"Command branch only: set true when each output line is a message a person wrote (a chat or inbox bridge). Its deliveries then count as new user input, so a running goal keeps going; leave unset for machine status.",
+		}),
+	),
 });
 export type MonitorInput = Static<typeof monitorSchema>;
 

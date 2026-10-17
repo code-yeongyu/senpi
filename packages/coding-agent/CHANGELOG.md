@@ -6,7 +6,11 @@
 
 ### Added
 
+- Command monitors accept `human_input: true` for watches that deliver messages a person wrote (a chat or inbox bridge). Those deliveries count as new user input for a running goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
+
 ### Changed
+
+- Goals no longer stop after a fixed 150 automatic continuations. They stop only after 60 automatic continuations in a row without progress (no new tool effect, todo change, or new message from a person; repeating the same tool call with the same result is not progress), with a notice that says why and that any message resumes the goal ([oh-my-openagent#10280](https://github.com/code-yeongyu/oh-my-openagent/issues/10280)).
 
 ### Fixed
 

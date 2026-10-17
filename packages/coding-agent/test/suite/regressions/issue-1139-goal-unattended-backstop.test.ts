@@ -15,10 +15,11 @@ import {
 
 const GOAL_CONTINUATION_MESSAGE_TYPE = "goal-continuation";
 
-// The unattended budget is a policy pin, mirroring how issue-447 pins its 50-turn
-// bound. It must stay above the #447 distinct-progress pin (50) and above an
-// 8-hour monitor-backstop cadence (~120 deliveries at 240s).
-const UNATTENDED_LIMIT = 150;
+// omo#10280 replaced the fixed 150 budget with the no-progress guard: the #1139 stall
+// (varied toolless narration) must still stop, now after 60 continuations without progress.
+const NO_PROGRESS_LIMIT = 60;
+const NO_PROGRESS_BLOCKED_REASON =
+	"no progress across repeated automatic continuations (no new tool result, todo change, or new message)";
 const UNATTENDED_BLOCKED_REASON = "unattended continuation limit reached";
 
 afterEach(async () => {
@@ -78,7 +79,7 @@ async function runAcceptedDirectInput(
 }
 
 describe("issue #1139: unattended continuation backstop", () => {
-	it("blocks an active goal after the unattended limit despite varied toolless narration", {
+	it("blocks an active goal at the no-progress guard despite varied toolless narration", {
 		timeout: 60_000,
 	}, async () => {
 		const notices: string[] = [];
@@ -89,24 +90,24 @@ describe("issue #1139: unattended continuation backstop", () => {
 
 		// Every turn varies its narration, so the #539/#567 progress semantics reset
 		// the consecutive streak each time and the cap can never accumulate.
-		for (let turn = 1; turn <= UNATTENDED_LIMIT + 1; turn++) {
+		for (let turn = 1; turn <= NO_PROGRESS_LIMIT + 1; turn++) {
 			const promptsBeforeTurn = harness.sent.length;
 			await runContinuationTurn(harness, ctx, cleanAssistantStopWithText(`varied status narration ${turn}`));
 			expect(harness.sent.length - promptsBeforeTurn).toBeLessThanOrEqual(1);
 		}
 
-		expect(harness.sent).toHaveLength(UNATTENDED_LIMIT);
+		expect(harness.sent).toHaveLength(NO_PROGRESS_LIMIT);
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
 			status: "blocked",
-			blockedReason: UNATTENDED_BLOCKED_REASON,
+			blockedReason: NO_PROGRESS_BLOCKED_REASON,
 		});
 		expect(notices).toContainEqual(
-			`Goal continuation blocked: ${UNATTENDED_BLOCKED_REASON}. Send any message to resume.`,
+			`Goal continuation blocked: ${NO_PROGRESS_BLOCKED_REASON}. Send any message to resume.`,
 		);
 		expect(harness.events.emitted).toContainEqual(
 			expect.objectContaining({
 				channel: "goal_continuation_guard_tripped",
-				data: expect.objectContaining({ reason: "unattended" }),
+				data: expect.objectContaining({ reason: "no-progress" }),
 			}),
 		);
 	});
@@ -124,16 +125,18 @@ describe("issue #1139: unattended continuation backstop", () => {
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
 			status: "active",
 			unattendedContinuations: 2,
+			noProgressContinuations: 2,
 		});
 
 		await runAcceptedDirectInput(harness, ctx, "issue-1139-reset");
 		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
 			status: "active",
 			unattendedContinuations: 0,
+			noProgressContinuations: 0,
 		});
 	});
 
-	it("reactivates a backstop-blocked goal on accepted direct input with the budget restored", async () => {
+	it("reactivates a goal persisted with the retired unattended block on accepted direct input", async () => {
 		const notices: string[] = [];
 		const harness = createGoalHarness();
 		const ctx = await makeGoalContext(notices, "issue-1139-reactivation");
@@ -172,6 +175,9 @@ describe("issue #1139: unattended continuation backstop", () => {
 
 		expect(harness.sent).toHaveLength(2);
 		expect(harness.sent[1]?.message.customType).toBe(GOAL_CONTINUATION_MESSAGE_TYPE);
-		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ unattendedContinuations: 1 });
+		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
+			unattendedContinuations: 1,
+			noProgressContinuations: 1,
+		});
 	});
 });

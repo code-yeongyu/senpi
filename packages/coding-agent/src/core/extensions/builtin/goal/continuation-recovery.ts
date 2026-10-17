@@ -1,7 +1,10 @@
 export const CONTINUATION_CAP_BLOCKED_REASON = "continuation cap reached";
 export const REPETITION_BLOCKED_REASON = "repeated assistant output";
 export const LENGTH_EXHAUSTED_BLOCKED_REASON = "output truncation repeated";
+/** Retired by omo#10280; still mechanical so a goal persisted with it resumes on the next message. */
 export const UNATTENDED_CONTINUATION_BLOCKED_REASON = "unattended continuation limit reached";
+export const NO_PROGRESS_BLOCKED_REASON =
+	"no progress across repeated automatic continuations (no new tool result, todo change, or new message)";
 export const PROVIDER_ERROR_BLOCKED_REASON = "provider error ended the turn (retries exhausted)";
 export const CONTEXT_OVERFLOW_BLOCKED_REASON = "context overflow ended the turn (compaction did not recover)";
 export const PROVIDER_AUTH_BLOCKED_REASON_PREFIX = "provider rejected the request: ";
@@ -16,6 +19,7 @@ const MECHANICAL_CONTINUATION_BLOCKS: readonly string[] = [
 	REPETITION_BLOCKED_REASON,
 	LENGTH_EXHAUSTED_BLOCKED_REASON,
 	UNATTENDED_CONTINUATION_BLOCKED_REASON,
+	NO_PROGRESS_BLOCKED_REASON,
 	PROVIDER_ERROR_BLOCKED_REASON,
 	CONTEXT_OVERFLOW_BLOCKED_REASON,
 ];

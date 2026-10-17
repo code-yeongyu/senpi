@@ -1,3 +1,4 @@
+import { MONITOR_NOTIFICATION_CUSTOM_TYPE, type MonitorNotificationDetail } from "../monitor-state-event.ts";
 import type { MonitorEvent } from "./monitor-registry.ts";
 import { getTerminalNotificationDelivery, type TerminalNotifierDeps } from "./notify.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
@@ -7,7 +8,6 @@ import { FIRE_BUDGET_AUTO_MUTE_SUMMARY } from "./shared.ts";
 const SYSTEM_REMINDER_OPEN = "<system-reminder>";
 const SYSTEM_REMINDER_CLOSE = "</system-reminder>";
 const QUEUE_OVERHEAD_CHARS = 512;
-const MONITOR_NOTIFICATION_CUSTOM_TYPE = "senpi-monitor:notification";
 const WAKE_STREAK_QUIET_GAP_MULTIPLIER = 2;
 
 export interface MonitorNotificationScheduler {
@@ -34,6 +34,7 @@ interface Overflow {
 	readonly description: string;
 	count: number;
 	kinds: Set<MonitorEvent["type"]>;
+	humanInput: boolean;
 }
 
 function boundedPositiveInt(value: number, fallback: number, minimum: number, maximum: number): number {
@@ -153,9 +154,11 @@ export class MonitorNotifier {
 			description: event.description,
 			count: 0,
 			kinds: new Set<MonitorEvent["type"]>(),
+			humanInput: false,
 		};
 		overflow.count++;
 		overflow.kinds.add(event.type);
+		if (event.type === "line" && event.humanInput === true) overflow.humanInput = true;
 		this.#overflow.set(event.id, overflow);
 	}
 
@@ -282,20 +285,20 @@ export class MonitorNotifier {
 		if (remainingIds.size > 0) this.#scheduleNextRateLimit(remainingIds, now, settings);
 	}
 
-	#monitorDetails(
-		events: readonly MonitorEvent[],
-		ids: ReadonlySet<string>,
-	): Array<{ id: string; description: string; eventCount: number; kinds: string[] }> {
+	#monitorDetails(events: readonly MonitorEvent[], ids: ReadonlySet<string>): MonitorNotificationDetail[] {
 		return [...ids].map((id) => {
 			const own = events.filter((event) => event.id === id);
 			const overflow = this.#overflow.get(id);
 			const kinds = new Set<MonitorEvent["type"]>(own.map((event) => event.type));
 			for (const kind of overflow?.kinds ?? []) kinds.add(kind);
+			const humanInput =
+				own.some((event) => event.type === "line" && event.humanInput === true) || overflow?.humanInput === true;
 			return {
 				id,
 				description: own[0]?.description ?? overflow?.description ?? id,
 				eventCount: own.length + (overflow?.count ?? 0),
 				kinds: [...kinds],
+				...(humanInput ? { humanInput: true as const } : {}),
 			};
 		});
 	}

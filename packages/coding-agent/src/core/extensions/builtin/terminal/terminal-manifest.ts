@@ -250,6 +250,7 @@ export class TerminalManifestWriter {
 			path: spec.kind === "file" ? spec.path : undefined,
 			event: spec.kind === "file" ? spec.event : undefined,
 			filter: spec.kind === "command" ? spec.filter : undefined,
+			humanInput: spec.kind === "command" && spec.humanInput === true ? true : undefined,
 			cwd: spec.cwd,
 			approvedParent: spec.kind === "file" ? spec.approvedParent : undefined,
 			createdAt,

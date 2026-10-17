@@ -18,8 +18,8 @@ import {
 	CONTINUATION_CAP_BLOCKED_REASON,
 	continuationCapRecoveryHint,
 	LENGTH_EXHAUSTED_BLOCKED_REASON,
+	NO_PROGRESS_BLOCKED_REASON,
 	REPETITION_BLOCKED_REASON,
-	UNATTENDED_CONTINUATION_BLOCKED_REASON,
 } from "./continuation-recovery.ts";
 import { buildContinuationPrompt } from "./prompt.ts";
 import { recordContinuationDelivered, recordGoalContinuationStopped } from "./store.ts";
@@ -206,6 +206,7 @@ async function handleDeniedContinuation(
 			reason,
 			count: input.consecutiveContinuations,
 			unattendedContinuations: goal.unattendedContinuations ?? 0,
+			noProgressContinuations: goal.noProgressContinuations ?? 0,
 		});
 	}
 	try {
@@ -214,6 +215,7 @@ async function handleDeniedContinuation(
 			reason,
 			consecutiveContinuations: input.consecutiveContinuations,
 			unattendedContinuations: goal.unattendedContinuations ?? 0,
+			noProgressContinuations: goal.noProgressContinuations ?? 0,
 			at,
 		});
 	} catch (error) {
@@ -249,8 +251,8 @@ function blockedReasonForContinuationGuard(
 	switch (reason) {
 		case "cap":
 			return CONTINUATION_CAP_BLOCKED_REASON;
-		case "unattended":
-			return UNATTENDED_CONTINUATION_BLOCKED_REASON;
+		case "no-progress":
+			return NO_PROGRESS_BLOCKED_REASON;
 		case "repetition":
 			return REPETITION_BLOCKED_REASON;
 		case "length-exhausted":

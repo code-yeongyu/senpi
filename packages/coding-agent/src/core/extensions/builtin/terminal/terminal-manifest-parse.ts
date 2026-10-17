@@ -115,6 +115,7 @@ function parseMonitor(entry: unknown): ManifestMonitor {
 		path: opt(entry, "path", str),
 		event: opt(entry, "event", (raw, field) => oneOf(FILE_EVENTS, raw, field)),
 		filter: opt(entry, "filter", str),
+		humanInput: opt(entry, "humanInput", bool),
 		cwd: opt(entry, "cwd", str),
 		approvedParent: opt(entry, "approvedParent", str),
 		createdAt: num(entry, "createdAt"),

@@ -1,3 +1,24 @@
+## 2026-10-17 - No fixed auto-continue cap; a no-progress guard instead (oh-my-openagent#10280)
+
+### What changed
+
+- `continuation.ts`: `GOAL_UNATTENDED_CONTINUATION_LIMIT` (150) and the `unattended` deny reason are gone. `GOAL_NO_PROGRESS_CONTINUATION_LIMIT` (60) and the `no-progress` deny reason replace them, read from the new persisted `Goal.noProgressContinuations`. `hasGoalTodoProgress` compares only the todo part of the continuation signature.
+- `store.ts`: every counted delivery increments `noProgressContinuations` (monitor-delayed deliveries stay exempt); `resetContinuationStreak(ref, { progress })` clears it, `{ unattended }` (human input) clears both counters, and status transitions zero it.
+- `monitor-continuation.ts`: a turn is progress when its tool effect is new, the todo state changed, or it carried a human-input monitor notification (`isHumanInputMonitorNotification`). A tool effect is `toolEffectFingerprint` (every call's name and arguments, every result's text and error flag); one that matches any of the last `GOAL_TOOL_EFFECT_WINDOW` (8) tool turns is a repeat, so re-running the same failing test or peeking the same unchanged output is not progress. Varied narration still resets the consecutive streak (#539/#567) but no longer the no-progress count. A human-input monitor delivery also resets the unattended count and clears the repetition and toolless windows, like typed input.
+- `continuation-recovery.ts` / `lifecycle-helpers.ts`: new mechanical block reason `NO_PROGRESS_BLOCKED_REASON`, so the notice ends with "Send any message to resume." `UNATTENDED_CONTINUATION_BLOCKED_REASON` stays mechanical so goals persisted with it still resume. `goal_continuation_guard_tripped` and `goal-continuation-stopped` add `noProgressContinuations`; `unattendedContinuations` stays as an informational count.
+
+### Why
+
+- A persistent setup paused after 150 continuations even while it worked, because the budget refilled only on typed input and a person's message delivered through a monitor never counted. Thresholds: across 593 local goal sessions (30 days), toolless stretches that recovered into tool use peaked at 29 (p99 7); the #1139 stall ran 122 toolless turns. 60 is twice the measured peak and above the #447 50-turn pin.
+
+### Why an extension could not handle it
+
+- Admission, the persisted counters and progress detection are private to the goal builtin.
+
+### Expected merge conflict zones
+
+- LOW: the deny-reason union, `afterAgentEnd` progress detection, `recordContinuationDelivered` / `resetContinuationStreak`.
+
 ## 2026-10-14 - Provider-recovery continuations back off and wake when the pool frees up (senpi#3264)
 
 ### What changed
@@ -688,7 +709,7 @@ Terminal-provider-error classification is goal-extension core logic; nothing for
   result is unchanged.
 - Tests: `test/goal-renderers.test.ts`.
 
-## 2026-08-27 - unattended continuation backstop (#1139)
+## 2026-08-27 - unattended continuation backstop (#1139) - superseded by the no-progress guard (oh-my-openagent#10280)
 
 ### What changed
 

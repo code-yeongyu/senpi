@@ -67,6 +67,7 @@ export async function createGoal(ref: GoalStoreRef, objective: string, tokenBudg
 			timeUsedSeconds: 0,
 			consecutiveContinuations: 0,
 			unattendedContinuations: 0,
+			noProgressContinuations: 0,
 			createdAt: now,
 			updatedAt: now,
 			lastStartedAt: now,
@@ -109,6 +110,7 @@ export async function updateGoal(
 				timeUsedSeconds: 0,
 				consecutiveContinuations: 0,
 				unattendedContinuations: 0,
+				noProgressContinuations: 0,
 				createdAt: now,
 				updatedAt: now,
 				...(tokenBudget === undefined ? {} : { tokenBudget }),
@@ -133,12 +135,14 @@ export async function updateGoal(
 		if (next.status !== current.status) {
 			next.consecutiveContinuations = 0;
 			next.unattendedContinuations = 0;
+			next.noProgressContinuations = 0;
 			delete next.lastContinuationSignature;
 			delete next.continuationStoppedAt;
 		}
 		if (source === "user" && requestedStatus === "active") {
 			next.consecutiveContinuations = 0;
 			next.unattendedContinuations = 0;
+			next.noProgressContinuations = 0;
 			delete next.lastContinuationSignature;
 			delete next.continuationStoppedAt;
 			next.lastStartedAt ??= nowSeconds();
@@ -207,10 +211,12 @@ export async function recordContinuationDelivered(
 	return withGoalFileLock(ref, async (held) => {
 		const goal = await readGoalFile(ref);
 		if (!goal || (expectedGoalId !== undefined && goal.id !== expectedGoalId)) return null;
+		const counted = options.countUnattended === false ? 0 : 1;
 		const next: Goal = {
 			...goal,
 			consecutiveContinuations: (goal.consecutiveContinuations ?? 0) + 1,
-			unattendedContinuations: (goal.unattendedContinuations ?? 0) + (options.countUnattended === false ? 0 : 1),
+			unattendedContinuations: (goal.unattendedContinuations ?? 0) + counted,
+			noProgressContinuations: (goal.noProgressContinuations ?? 0) + counted,
 			lastContinuationSignature: signature,
 		};
 		delete next.continuationStoppedAt;
@@ -222,13 +228,14 @@ export async function recordContinuationDelivered(
 
 export async function resetContinuationStreak(
 	ref: GoalStoreRef,
-	options: { unattended?: boolean } = {},
+	options: { unattended?: boolean; progress?: boolean } = {},
 ): Promise<Goal | null> {
 	return withGoalFileLock(ref, async (held) => {
 		const goal = await readGoalFile(ref);
 		if (!goal) return goal;
 		const next: Goal = { ...goal, consecutiveContinuations: 0 };
 		if (options.unattended === true) next.unattendedContinuations = 0;
+		if (options.unattended === true || options.progress === true) next.noProgressContinuations = 0;
 		delete next.lastContinuationSignature;
 		delete next.continuationStoppedAt;
 		if (options.unattended === true && next.status === "active") next.lastStartedAt ??= nowSeconds();
@@ -265,6 +272,7 @@ export async function recordGoalContinuationStopped(
 		if (blockedReason !== undefined) {
 			next.consecutiveContinuations = 0;
 			next.unattendedContinuations = 0;
+			next.noProgressContinuations = 0;
 			delete next.lastContinuationSignature;
 		}
 		delete next.lastStartedAt;

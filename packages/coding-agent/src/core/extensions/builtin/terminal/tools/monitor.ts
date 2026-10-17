@@ -92,6 +92,7 @@ async function createMonitor(
 		command: input.command,
 		persistent: input.persistent === true,
 		deadlineMs,
+		...(input.human_input === true ? { humanInput: true } : {}),
 		// Only persistent command watches are restartable-command durable: those carry the fire budget.
 		durabilityClass: input.persistent === true ? "restartable-command" : "ephemeral",
 		// Same deadline the manifest writer persists, so the footer warns off the live record too.
@@ -108,6 +109,7 @@ async function createMonitor(
 			description: input.description,
 			command: input.command,
 			filter: input.filter,
+			...(input.human_input === true ? { humanInput: true } : {}),
 			cwd,
 			persistent: input.persistent === true,
 		},
@@ -189,6 +191,8 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 			}
 			if (fileInput) {
 				if (input.filter !== undefined) return errorResult("Native file monitors do not support filter.");
+				if (input.human_input === true)
+					return errorResult("human_input applies to command monitors; a file watch carries no message text.");
 				if (!ctx.monitorRegistry)
 					return errorResult("Native file monitors require a lifecycle-owned monitor registry.");
 				try {
