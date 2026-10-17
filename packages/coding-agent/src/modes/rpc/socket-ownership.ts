@@ -49,7 +49,7 @@ export function generationBindPath(publicSocket: string, generation: number): st
 	return `${publicSocket}.next-${generation}`;
 }
 
-function sameSocketIdentity(a: SocketFileIdentity, b: SocketFileIdentity): boolean {
+export function sameSocketIdentity(a: SocketFileIdentity, b: SocketFileIdentity): boolean {
 	return a.dev === b.dev && a.ino === b.ino;
 }
 

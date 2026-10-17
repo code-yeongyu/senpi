@@ -121,7 +121,10 @@ async function ensureHostLocked(
 	)
 		throw new HostEnsureRefusedError(socket, "host_stalled", undefined);
 	// A reusable host is held from the connection that proved it compatible, never re-probed later.
-	const held = await holdProtocolInfo(socket, EXISTING_HOST_PROBE_TIMEOUT_MS);
+	const held = await holdProtocolInfo(
+		socket,
+		testOptions?.existingHostProbeTimeoutMs ?? EXISTING_HOST_PROBE_TIMEOUT_MS,
+	);
 	const protocol = held?.info;
 	if (protocol?.lifecycle === "stopping") {
 		held?.hold.release();
@@ -225,6 +228,17 @@ async function ensureHostLocked(
 	const legacyRefusal = await retireIdleLegacyHost(paths, probe, testOptions?.stopTimeoutMs);
 	if (legacyRefusal !== undefined) throw new HostEnsureRefusedError(socket, "legacy_host", protocol, legacyRefusal);
 	if (stranded !== undefined) return startHost(paths, socket, options, stranded.generation + 1);
+	// Something no registration names still ACCEPTS at the public path and did not answer the probe.
+	// A start can only lose the bind ("address already in use") and exit without a reason, and the
+	// holder is not ours to remove (I1): refuse with the reason instead. A stale entry nobody listens
+	// behind reads as free here, so the start below still replaces it.
+	if (process.platform !== "win32" && !socket.startsWith("\0") && (await publicEndpointAccepts(socket)))
+		throw new HostEnsureRefusedError(
+			socket,
+			"endpoint_occupied",
+			protocol,
+			"no host registration names this socket and its listener did not answer get_protocol_info",
+		);
 	if (registeredHere) await clearHostRegistration(paths);
 	return startHost(paths, socket, options);
 }

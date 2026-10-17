@@ -28,6 +28,8 @@ export interface EnsureHostOptions {
 	readonly stoppingTimeoutMs?: number;
 	readonly _test?: {
 		readonly readinessTimeoutMs?: number;
+		/** How long the existing-host probe waits for get_protocol_info; tests shorten it. */
+		readonly existingHostProbeTimeoutMs?: number;
 		readonly stopTimeoutMs?: number;
 		readonly spawn?: { readonly command: string; readonly args: readonly string[] };
 		/** Builds the spawnable command from supervisor argv; tests point it at the source entry. */

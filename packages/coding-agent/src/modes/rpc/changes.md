@@ -1,3 +1,44 @@
+## 2026-10-17 - A stale socket entry is unlinked only while it is still the dead one (senpi#3541 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts`: `prepareSocketPath` records the entry's identity before probing it, probes with `entryHasListener` (only ECONNREFUSED or ENOENT read as nobody; EAGAIN, a full backlog or any other error is a live owner), and right before `unlink` re-reads the identity and probes again: a different entry, or one that now accepts, throws "address already in use by a live server" instead of being removed. It skips abstract sockets, and takes test-only `PrepareSocketPathHooks.afterStaleProbe`.
+- `packages/coding-agent/src/modes/rpc/multi-session-host.ts`: its private `prepareSocketPath`/`probeSocket` (which read a 1 s connect timeout as dead and unlinked) are gone; it uses the shared one.
+- `packages/coding-agent/src/modes/rpc/socket-ownership.ts`: `sameSocketIdentity` is exported.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts` and `host-ensure-types.ts`: `_test.existingHostProbeTimeoutMs` bounds the existing-host probe in tests; the `endpoint_occupied` refusal carries a `detail`.
+
+### Why
+
+- Review of #3542: a listener that binds the path between the stale probe and the unlink lost its entry (I1), and the `--listen` path removed a live but slow-to-accept listener after 1 s. Tests: `test/rpc-prepare-socket-path.test.ts` (stale entry removed, live entry kept, a listener appearing after the probe kept) and two `rpc-host-ensure.test.ts` cases driven by a gated fixture listener (answers inside the probe bound: reused; only after it: refused `endpoint_occupied`, kept).
+
+### Why an extension could not handle it
+
+- Socket preparation and the ensure probe are RPC host internals with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-lifecycle-proxy.ts` `prepareSocketPath`; `packages/coding-agent/src/modes/rpc/multi-session-host.ts` around its former `prepareSocketPath`.
+
+## 2026-10-17 - An unregistered listener on the public socket is refused, not crashed into
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: in `ensureHostLocked`, after the stranded and legacy checks and before `startHost`, a POSIX endpoint whose public path still accepts connections (`publicEndpointAccepts`) refuses with `endpoint_occupied`. Reaching that point means the protocol probe got no answer and no registration names a live owner, so nothing here may remove the holder (I1). An entry nobody listens behind still reads as free and is replaced by the start, as before.
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `HostRefusalReason` gains `endpoint_occupied` with its refusal detail.
+- `packages/coding-agent/docs/rpc.md`: the I1 section documents the refusal.
+
+### Why
+
+- A process that listens on the public path, never answers `get_protocol_info`, and is not registered (seen on a desktop user's machine with an older omo CLI) made every `host ensure` start a host whose supervisor then failed its bind ("address already in use by a live server ... ownership unknown; leaving it"). The CLI reported the generic `host_error` with exit 1, so the desktop showed a reasonless spawn failure and retried forever. A typed refusal (exit 3) names the cause, and callers can tell the user what to clear.
+
+### Why an extension could not handle it
+
+- The ensure decision and its endpoint lock are RPC host internals; no extension hook runs inside `ensureHost`.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/host-ensure.ts`, the tail of `ensureHostLocked` before `startHost`; `packages/coding-agent/src/modes/rpc/host-decision.ts`, `HostRefusalReason` and `refusalDetail`.
+
 ## 2026-10-17 - A session reopened right after its park is never refused (senpi#3485)
 
 ### What changed

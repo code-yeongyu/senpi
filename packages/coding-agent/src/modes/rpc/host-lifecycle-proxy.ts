@@ -9,7 +9,12 @@ import { dirname } from "node:path";
 import type { HostAdmission } from "./host-admission.ts";
 import { proxyWithAdmission } from "./host-admission-proxy.ts";
 import type { ClientOccupancy } from "./host-client-occupancy.ts";
-import { MAX_SOCKET_PATH_BYTES, type SocketFileIdentity, statSocketIdentity } from "./socket-ownership.ts";
+import {
+	MAX_SOCKET_PATH_BYTES,
+	type SocketFileIdentity,
+	sameSocketIdentity,
+	statSocketIdentity,
+} from "./socket-ownership.ts";
 import {
 	authenticateSocket,
 	ensureSocketSecret,
@@ -122,8 +127,33 @@ function canConnect(socketPath: string, secret?: Uint8Array): Promise<boolean> {
 	});
 }
 
-export async function prepareSocketPath(socketPath: string): Promise<void> {
-	if (process.platform === "win32") return;
+/** Test-only seams for `prepareSocketPath`'s stale-entry check. */
+export interface PrepareSocketPathHooks {
+	/** Runs after the entry was probed dead and before it is unlinked. */
+	readonly afterStaleProbe?: () => Promise<void>;
+}
+
+/**
+ * Whether something listens behind the entry. Only a refused connection or a missing entry
+ * reads as nothing: a full backlog (EAGAIN) or any other error is a live owner whose entry
+ * must not be removed (I1).
+ */
+function entryHasListener(socketPath: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		const socket: Socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform));
+		const settle = (value: boolean): void => {
+			socket.destroy();
+			resolve(value);
+		};
+		socket.once("connect", () => settle(true));
+		socket.once("error", (cause: NodeJS.ErrnoException) =>
+			settle(cause.code !== "ECONNREFUSED" && cause.code !== "ENOENT"),
+		);
+	});
+}
+
+export async function prepareSocketPath(socketPath: string, hooks: PrepareSocketPathHooks = {}): Promise<void> {
+	if (process.platform === "win32" || socketPath.startsWith("\0")) return;
 	// A path the kernel would truncate binds a DIFFERENT endpoint than the one every client was
 	// told about, and the failure surfaces much later as "the host does not answer". Refuse here.
 	if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH_BYTES) {
@@ -138,7 +168,16 @@ export async function prepareSocketPath(socketPath: string): Promise<void> {
 		if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return;
 		throw cause;
 	}
-	if (await canConnect(socketPath)) throw new Error(`${socketPath}: address already in use by a live server.`);
+	const probed = await statSocketIdentity(socketPath);
+	const inUse = new Error(`${socketPath}: address already in use by a live server.`);
+	if (await entryHasListener(socketPath)) throw inUse;
+	await hooks.afterStaleProbe?.();
+	// Something may have bound the path since the probe. Unlink only the entry that was probed
+	// dead, and only while it still has nobody behind it.
+	const current = await statSocketIdentity(socketPath);
+	if (current === undefined) return;
+	if (probed === undefined || !sameSocketIdentity(probed, current) || (await entryHasListener(socketPath)))
+		throw inUse;
 	await unlink(socketPath);
 }
 

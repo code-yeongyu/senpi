@@ -435,6 +435,10 @@ are what this decision encodes; the other two are what a client must not undo el
   that window, while its process is alive, the ensure fails with `HostEnsureRefusedError { reason: "host_stalled" }`
   and sends no signal, starts no generation beside it and leaves its registration untouched - a stalled host is still
   serving its sessions.
+  When no registration names the endpoint at all, yet something still accepts connections at the public path and did
+  not answer `get_protocol_info`, the ensure fails with `HostEnsureRefusedError { reason: "endpoint_occupied" }` (exit 3)
+  and leaves that process and its entry alone: a start there could only lose the bind and exit without a reason. An
+  entry nobody listens behind is still free and is replaced by the start.
 - **I2 - compatibility is protocol version + capabilities, never semver equality.** An ordinal that cannot be
   compared (a build without git metadata, a host that reports none) is EQUAL, and since a handoff requires
   STRICTLY greater, such a pair attaches instead of upgrading.

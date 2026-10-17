@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `senpi host ensure` refuses with `endpoint_occupied` (exit 3) when an unregistered process holds the public socket and does not answer, instead of starting a host that loses the bind and exits 1 with only `host_error`.
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16

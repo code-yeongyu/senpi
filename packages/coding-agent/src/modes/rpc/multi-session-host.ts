@@ -1,5 +1,5 @@
-import { access, chmod, mkdir, unlink } from "node:fs/promises";
-import { createConnection, createServer, type Server } from "node:net";
+import { chmod } from "node:fs/promises";
+import { createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
 import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
@@ -25,6 +25,7 @@ import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { parseIdleExitMs } from "./host-lifecycle.ts";
+import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
@@ -638,32 +639,6 @@ function formatSocketAddress(socketPath: string): string {
 	return socketPath.startsWith("\0") ? `unix://@${socketPath.slice(1)}` : `unix://${socketPath}`;
 }
 
-async function prepareSocketPath(socketPath: string): Promise<void> {
-	if (process.platform === "win32" || socketPath.startsWith("\0")) return;
-	await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
-	try {
-		await access(socketPath);
-	} catch (cause) {
-		if (isNodeErrorCode(cause, "ENOENT")) return;
-		throw cause;
-	}
-	if (await probeSocket(socketPath)) throw new Error(`${socketPath}: address already in use by a live server.`);
-	await unlink(socketPath);
-}
-
-function probeSocket(socketPath: string): Promise<boolean> {
-	return new Promise((resolve) => {
-		const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform));
-		const settle = (live: boolean) => {
-			socket.destroy();
-			resolve(live);
-		};
-		socket.once("connect", () => settle(true));
-		socket.once("error", () => settle(false));
-		socket.setTimeout(1_000, () => settle(false));
-	});
-}
-
 function listen(server: Server, socketPath: string, secret?: Uint8Array): Promise<SocketFileIdentity | undefined> {
 	return new Promise((resolve, reject) => {
 		server.once("error", reject);
@@ -692,10 +667,6 @@ function closeServer(server: Server): Promise<void> {
 
 function hostLog(message: string): void {
 	process.stderr.write(`senpi rpc host: ${message}\n`);
-}
-
-function isNodeErrorCode(cause: unknown, code: string): boolean {
-	return cause instanceof Error && "code" in cause && cause.code === code;
 }
 
 function registerShutdownSignals(shutdown: (exitCode?: number) => Promise<never>): void {

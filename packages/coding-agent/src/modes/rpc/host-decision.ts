@@ -116,7 +116,8 @@ export type HostRefusalReason =
 	| "legacy_host"
 	| "host_busy"
 	| "host_stopping"
-	| "host_stalled";
+	| "host_stalled"
+	| "endpoint_occupied";
 
 /**
  * An ensure that found an unusable host and refused to act on it. A refusal is FINAL by design:
@@ -154,6 +155,8 @@ function refusalDetail(reason: HostRefusalReason, host: HostProtocolInfo | undef
 			return "its socket accepts connections but did not answer inside the probe budget: a live host under load, which is never ended to make room for a replacement";
 		case "host_stopping":
 			return "this generation is stopping; wait for its exit before launching a successor";
+		case "endpoint_occupied":
+			return "another process accepts connections on this socket but does not answer as a host, and no host registration names it; it is never removed while it listens, so quit the process holding it and ensure again";
 		case "host_stalled":
 			return "nothing reaches its socket, but its process is alive and its own loop-lag watchdog measured a recent stall: a stalled host is still serving its sessions, so it is neither stopped nor replaced";
 		default:

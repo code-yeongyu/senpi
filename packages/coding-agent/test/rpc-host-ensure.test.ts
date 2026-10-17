@@ -250,6 +250,75 @@ describe("ensureHost", () => {
 		20_000,
 	);
 
+	it.skipIf(process.platform === "win32")(
+		"refuses an unregistered listener that accepts but never answers, and leaves it alone",
+		async () => {
+			// A process nobody registered holds the public path and never answers get_protocol_info.
+			// Starting a host there can only fail its bind ("address already in use") and exit 1 with
+			// no reason a caller can act on; the ensure refuses with a typed reason instead.
+			const qa = await scratch("unregistered-listener");
+			const listener = await startUnregisteredListener(qa.socket);
+
+			const failure = await ensureFixtureHost(qa).catch((error: unknown) => error);
+
+			expect(failure).toBeInstanceOf(HostEnsureRefusedError);
+			expect((failure as HostEnsureRefusedError).reason).toBe("endpoint_occupied");
+			expect(processIsLive(listener.pid ?? 0)).toBe(true);
+			await expect(access(qa.socket)).resolves.toBeUndefined();
+			expect(await readHostRegistration(daemonPaths(qa))).toBeUndefined();
+		},
+		20_000,
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"uses an unregistered host that answers inside the probe bound, never refusing or removing it",
+		async () => {
+			// Duty check 1: slow but alive. The probe waits; the host answers once the test lets it.
+			const qa = await scratch("slow-inside-bound");
+			const slow = await startGatedListener(qa.socket);
+			const ensured = ensureHost({
+				agentDir: qa.agentDir,
+				socket: qa.socket,
+				_test: { existingHostProbeTimeoutMs: 15_000, launch: refuseToSpawn },
+			});
+			await slow.probed;
+			slow.release();
+
+			const result = await ensured;
+			result.release();
+
+			expect(result.reused).toBe(true);
+			expect(processIsLive(slow.child.pid ?? 0)).toBe(true);
+			await expect(access(qa.socket)).resolves.toBeUndefined();
+		},
+		20_000,
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"refuses an unregistered host that answers only after the probe bound, and leaves it alone",
+		async () => {
+			// Duty check 1, the other side: the answer comes after the probe gave up, so nothing
+			// identified the listener; it still accepts, so it is refused and kept.
+			const qa = await scratch("slow-past-bound");
+			const slow = await startGatedListener(qa.socket);
+			const ensured = ensureHost({
+				agentDir: qa.agentDir,
+				socket: qa.socket,
+				_test: { existingHostProbeTimeoutMs: 200, launch: refuseToSpawn },
+			}).catch((error: unknown) => error);
+			await slow.probed;
+
+			const failure = await ensured;
+			slow.release();
+
+			expect(failure).toBeInstanceOf(HostEnsureRefusedError);
+			expect((failure as HostEnsureRefusedError).reason).toBe("endpoint_occupied");
+			expect(processIsLive(slow.child.pid ?? 0)).toBe(true);
+			await expect(access(qa.socket)).resolves.toBeUndefined();
+		},
+		20_000,
+	);
+
 	it("cleans a stale dead pidfile and starts fresh", async () => {
 		const qa = await scratch("stale-pidfile");
 		const paths = daemonPaths(qa);
@@ -843,6 +912,51 @@ async function startManagedProcess(
 		options.writer,
 		options.selfWriterStartTime,
 	);
+}
+
+/** A live process listening on the public path that is not a registered host and never answers. */
+async function startUnregisteredListener(socketPath: string): Promise<ChildProcess> {
+	const script = [
+		'const net = require("node:net");',
+		'net.createServer(() => {}).listen(process.env.HELD_SOCKET, () => process.stdout.write("listening\\n"));',
+		"setInterval(() => {}, 1000);",
+	].join(" ");
+	const child = spawn(process.execPath, ["-e", script], {
+		stdio: ["ignore", "pipe", "ignore"],
+		env: { ...process.env, HELD_SOCKET: socketPath },
+	});
+	children.push(child);
+	await new Promise<void>((resolve, reject) => {
+		child.stdout?.once("data", () => resolve());
+		child.once("exit", (code) => reject(new Error(`listener exited before listening (code ${code})`)));
+	});
+	return child;
+}
+
+/**
+ * An unregistered listener that answers get_protocol_info only when the test releases it: a slow
+ * host whose timing the test drives. `probed` settles when the first probe reaches it.
+ */
+async function startGatedListener(socketPath: string): Promise<{
+	child: ChildProcess;
+	probed: Promise<void>;
+	release: () => void;
+}> {
+	const child = spawn(process.execPath, [fixture, socketPath, VERSION, CAPABILITIES, "gated"], {
+		stdio: ["pipe", "pipe", "ignore"],
+	});
+	children.push(child);
+	let resolveProbed!: () => void;
+	const probed = new Promise<void>((resolve) => (resolveProbed = resolve));
+	await new Promise<void>((resolve, reject) => {
+		child.stdout?.on("data", (chunk: Buffer) => {
+			const text = chunk.toString("utf8");
+			if (text.includes("listening")) resolve();
+			if (text.includes("probe")) resolveProbed();
+		});
+		child.once("exit", (code) => reject(new Error(`gated listener exited before listening (code ${code})`)));
+	});
+	return { child, probed, release: () => child.stdin?.write("go\n") };
 }
 
 /**
