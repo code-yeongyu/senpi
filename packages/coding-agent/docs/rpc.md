@@ -910,7 +910,7 @@ process is started, each reported with exit 2:
 
 | Reason | When |
 |---|---|
-| `launch_spec_insecure` | the file is not owned by this uid, or it is group/world writable |
+| `launch_spec_insecure` | the file is owned by neither this uid nor root, or it is group/world writable |
 | `launch_spec_path_escape` | an extension path leaves the spec directory's tree, lexically or through a symlink |
 | `launch_spec_env_denied` | an `env` key outside `^(SENPI\|OMO\|PI)_[A-Z0-9_]+$` |
 | `launch_spec_missing_extension` | a listed extension does not exist - a daemon never boots with half a profile |
