@@ -548,6 +548,40 @@ describe("credential rotation over a pooled provider", () => {
 		expect(blocked?.blockedUntil).toBe(NOW + 60_000);
 	});
 
+	test("a status-less 401 credential rejection rotates to the sibling and persists auth_error", async () => {
+		// Same no-status contract as the taxonomy case: only the message text
+		// identifies the rejection, and the dead slot must block itself rather
+		// than fail the request before the sibling is tried.
+		const attempted: string[] = [];
+		const rejection =
+			'OpenAI API error (401): {"type":"server_error","message":"Upstream request failed: Invalid credential"}';
+		const events = await collect(
+			streamWithCredentialRotation({
+				sources: {
+					providerId: "test",
+					credential: pooled(),
+					env: () => undefined,
+					repository,
+					now: () => NOW,
+				},
+				affinityKey: "rejected-credential-session",
+				hasher: sha256SlotHasher,
+				runAttempt: (slot) => {
+					attempted.push(slot.name);
+					return attempted.length === 1
+						? stream(startEvent(), errorEvent(rejection))
+						: stream(startEvent(), textEvent("healthy-sibling"));
+				},
+			}),
+		);
+
+		expect(attempted).toHaveLength(2);
+		expect(attempted[0]).not.toBe(attempted[1]);
+		expect(events.some((event) => event.type === "text_delta" && event.delta === "healthy-sibling")).toBe(true);
+		const persisted = await repository.listSlots("test", "stored");
+		expect(persisted[attempted[0] ?? ""]).toMatchObject({ blockReason: "auth_error" });
+	});
+
 	test("the same affinity key sticks to the same slot with no config present", async () => {
 		const chosen: string[] = [];
 		for (let index = 0; index < 3; index++) {
