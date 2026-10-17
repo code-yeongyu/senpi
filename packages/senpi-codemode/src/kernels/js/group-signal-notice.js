@@ -26,10 +26,178 @@ const PKILL_GROUP = new RegExp(String.raw`${COMMAND_POSITION}pkill\b[^\n;|&]*\s(
 // can include the agent's own (bun, node, senpi). Inside an `echo` string it is only text.
 const KILLALL = new RegExp(String.raw`${COMMAND_POSITION}killall\s`, "mu");
 
+// senpi#3019: a keyword inside quoted text is not a command position, so the scan runs on a copy whose inert text is
+// blanked: single-quoted strings, comments, and the literal parts of double-quoted strings and heredoc bodies (all of a
+// body whose delimiter is quoted). A command substitution, `$(...)` or a backtick pair, runs even inside double quotes
+// and unquoted heredoc bodies, so it keeps its text, as a `-c` script does; both are command lines, with their own inert
+// text blanked in turn. A `<<` whose delimiter line never comes blanks nothing.
+const SCRIPT_FLAG_BEFORE_QUOTE = /(?:^|\s)-[A-Za-z]*c\s+$/u;
+const WORD_END = /[\s;&|<>()]/u;
+const BEFORE_COMMENT = /[\s;&|()]/u;
+
+function blank(text) {
+	return text.replace(/[^\n]/gu, "x");
+}
+
+// For a `$(` or a backtick at `index`: the index of the `)` or backtick that closes it, or -1 when none does. Anything
+// else: undefined.
+function substitutionEnd(text, index) {
+	if (text[index] === "`") return text.indexOf("`", index + 1);
+	if (text[index] !== "$" || text[index + 1] !== "(") return undefined;
+	let depth = 0;
+	for (let at = index + 1; at < text.length; at++) {
+		const char = text[at];
+		if (char === "\\") {
+			at++;
+		} else if (char === "'" || char === '"') {
+			at = closingQuote(text, at);
+		} else if (char === "(") {
+			depth++;
+		} else if (char === ")") {
+			depth--;
+			if (depth === 0) return at;
+		}
+	}
+	return -1;
+}
+
+// The index of the quote that closes the one at `open`, or the text length. A substitution inside double quotes is a
+// context of its own, so a quote inside it does not close the string.
+function closingQuote(text, open) {
+	const quote = text[open];
+	for (let index = open + 1; index < text.length; index++) {
+		if (text[index] === quote) return index;
+		if (quote === "'") continue;
+		const end = substitutionEnd(text, index);
+		if (end === -1) return text.length;
+		if (end !== undefined) index = end;
+		else if (text[index] === "\\") index++;
+	}
+	return text.length;
+}
+
+function blankLiteralText(text) {
+	let out = "";
+	let index = 0;
+	while (index < text.length) {
+		const end = substitutionEnd(text, index);
+		if (end !== undefined && end !== -1) {
+			const open = text[index] === "`" ? 1 : 2;
+			out += text.slice(index, index + open) + blankQuotedText(text.slice(index + open, end)) + text[end];
+			index = end + 1;
+			continue;
+		}
+		const step = text[index] === "\\" ? 2 : 1;
+		out += blank(text.slice(index, index + step));
+		index += step;
+	}
+	return out;
+}
+
+// `<<` or `<<-`, optional blanks, then the delimiter word up to an unquoted blank or operator. Quote removal gives the
+// delimiter, and any quoting in the word leaves the body unexpanded.
+function readHeredoc(text, at) {
+	let index = at + 2;
+	const stripTabs = text[index] === "-";
+	if (stripTabs) index++;
+	while (text[index] === " " || text[index] === "\t") index++;
+	let delimiter = "";
+	let quoted = false;
+	while (index < text.length && !WORD_END.test(text[index])) {
+		const char = text[index];
+		if (char === "'" || char === '"') {
+			const end = text.indexOf(char, index + 1);
+			if (end === -1) return undefined;
+			delimiter += text.slice(index + 1, end);
+			quoted = true;
+			index = end + 1;
+		} else if (char === "\\") {
+			delimiter += text[index + 1] ?? "";
+			quoted = true;
+			index += 2;
+		} else {
+			delimiter += char;
+			index++;
+		}
+	}
+	return delimiter ? { delimiter, quoted, stripTabs, end: index } : undefined;
+}
+
+function closingLine(text, from, { delimiter, stripTabs }) {
+	let start = from;
+	while (start < text.length) {
+		const newline = text.indexOf("\n", start);
+		const end = newline === -1 ? text.length : newline;
+		const line = text.slice(start, end);
+		if ((stripTabs ? line.replace(/^\t+/u, "") : line) === delimiter) return { start, end };
+		start = end + 1;
+	}
+	return undefined;
+}
+
+function blankQuotedText(text) {
+	let out = "";
+	const heredocs = [];
+	let index = 0;
+	while (index < text.length) {
+		const char = text[index];
+		if (char === "\\") {
+			out += text.slice(index, index + 2);
+			index += 2;
+			continue;
+		}
+		if (char === "'" || char === '"') {
+			const end = closingQuote(text, index);
+			const inner = text.slice(index + 1, end);
+			if (SCRIPT_FLAG_BEFORE_QUOTE.test(out)) out += char + blankQuotedText(inner);
+			else out += char + (char === "'" ? blank(inner) : blankLiteralText(inner));
+			if (end < text.length) out += char;
+			index = end + 1;
+			continue;
+		}
+		if (char === "#" && (index === 0 || BEFORE_COMMENT.test(text[index - 1]))) {
+			const newline = text.indexOf("\n", index);
+			const end = newline === -1 ? text.length : newline;
+			out += blank(text.slice(index, end));
+			index = end;
+			continue;
+		}
+		if (text.startsWith("<<<", index)) {
+			out += "<<<";
+			index += 3;
+			continue;
+		}
+		const heredoc = text.startsWith("<<", index) ? readHeredoc(text, index) : undefined;
+		if (heredoc) {
+			heredocs.push(heredoc);
+			out += text.slice(index, heredoc.end);
+			index = heredoc.end;
+			continue;
+		}
+		out += char;
+		index++;
+		if (char !== "\n") continue;
+		// Each body starts on the line after its `<<` and ends at a line holding only its delimiter.
+		for (const pending of heredocs.splice(0)) {
+			const close = closingLine(text, index, pending);
+			if (!close) break;
+			const body = text.slice(index, close.start);
+			out += (pending.quoted ? blank(body) : blankLiteralText(body)) + text.slice(close.start, close.end);
+			index = close.end;
+			if (text[index] === "\n") {
+				out += "\n";
+				index++;
+			}
+		}
+	}
+	return out;
+}
+
 export const GROUP_SIGNAL_NOTICE_TAG = "[senpi:group-signal]";
 
 export function signalsProcessGroup(commandText) {
-	return KILL_GROUP.test(commandText) || PKILL_GROUP.test(commandText) || KILLALL.test(commandText);
+	const text = blankQuotedText(commandText);
+	return KILL_GROUP.test(text) || PKILL_GROUP.test(text) || KILLALL.test(text);
 }
 
 export function groupSignalNotice(api, readGroup = agentProcessGroup) {
