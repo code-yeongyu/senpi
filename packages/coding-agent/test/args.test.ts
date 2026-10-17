@@ -82,6 +82,22 @@ describe("parseArgs", () => {
 			expect(result.print).toBe(true);
 			expect(result.provider).toBe("openai");
 			expect(result.messages).toEqual(["Say hi."]);
+			expect(result.unknownFlags.size).toBe(0);
+		});
+
+		test("boolean extension flags before the prompt leave the prompt intact (#3521)", () => {
+			const result = parseArgs(["-p", "--provider", "anthropic", "--no-model-fallback", "Reply with OK."]);
+			expect(result.print).toBe(true);
+			expect(result.provider).toBe("anthropic");
+			expect(result.messages).toEqual(["Reply with OK."]);
+			expect(result.unknownFlags.get("no-model-fallback")).toBe(true);
+		});
+
+		test("boolean extension flags like --no-ask-user before the prompt leave the prompt intact (#3521)", () => {
+			const result = parseArgs(["-p", "--no-ask-user", "Do this."]);
+			expect(result.print).toBe(true);
+			expect(result.messages).toEqual(["Do this."]);
+			expect(result.unknownFlags.get("no-ask-user")).toBe(true);
 		});
 	});
 
