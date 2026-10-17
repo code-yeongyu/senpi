@@ -339,7 +339,7 @@ type ResolvedSession =
 	| { type: "path"; path: string } // Direct file path
 	| { type: "local"; path: string } // Found in current project
 	| { type: "global"; path: string; cwd: string } // Found in different project
-	| { type: "not_found"; arg: string }; // Not found anywhere
+	| { type: "not_found"; arg: string; path?: string }; // Not found anywhere; `path` is the missing file a path argument named
 
 /**
  * Resolve a session argument to a file path.
@@ -356,9 +356,10 @@ async function findLocalSessionByExactId(
 }
 
 async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: string): Promise<ResolvedSession> {
-	// If it looks like a file path, resolve it before handing it to the session manager.
+	// A file path must name an existing file: the session manager would start a new session at a missing one (senpi#2889).
 	if (sessionArg.includes("/") || sessionArg.includes("\\") || sessionArg.endsWith(".jsonl")) {
-		return { type: "path", path: resolvePath(sessionArg, cwd) };
+		const path = resolvePath(sessionArg, cwd);
+		return existsSync(path) ? { type: "path", path } : { type: "not_found", arg: sessionArg, path };
 	}
 
 	// Try to match as session ID in current project first
@@ -381,6 +382,12 @@ async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: 
 
 	// Not found anywhere
 	return { type: "not_found", arg: sessionArg };
+}
+
+function sessionNotFoundMessage(resolved: { arg: string; path?: string }): string {
+	return resolved.path === undefined
+		? `No session found matching '${resolved.arg}'`
+		: `No session file at ${resolved.path}`;
 }
 
 /**
@@ -535,7 +542,7 @@ export async function createSessionManager(
 				return forkSessionOrExit(resolved.path, cwd, sessionDir, parsed.sessionId);
 
 			case "not_found":
-				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+				console.error(chalk.red(sessionNotFoundMessage(resolved)));
 				process.exit(1);
 		}
 	}
@@ -543,7 +550,7 @@ export async function createSessionManager(
 	if (parsed.rebind) {
 		const resolved = await resolveSessionPath(parsed.rebind, cwd, sessionDir);
 		if (resolved.type === "not_found") {
-			console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+			console.error(chalk.red(sessionNotFoundMessage(resolved)));
 			process.exit(1);
 		}
 		const sessionCwd = resolved.type === "global" ? resolved.cwd : sessionCwdOrUndefined(resolved.path);
@@ -594,7 +601,7 @@ export async function createSessionManager(
 			}
 
 			case "not_found":
-				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+				console.error(chalk.red(sessionNotFoundMessage(resolved)));
 				process.exit(1);
 		}
 	}

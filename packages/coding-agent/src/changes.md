@@ -168,6 +168,24 @@ Snapshot materialization precedes extension loading. An extension cannot reduce 
 
 - None upstream: `runtime-snapshot/` is fork-only. Part A's package selection moved from layout into package-files; preserve it when merging other snapshot changes.
 
+## 2026-10-11 - A session path that names no file is reported, not opened as a new session (senpi#2889)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `resolveSessionPath` resolves a path-shaped `--session`, `--fork` or `--rebind` argument to `not_found`, carrying the resolved path, when no file exists there. `createSessionManager` reports that case as `No session file at <path>` and exits 1, the way an unknown id or prefix already exits with `No session found matching '<arg>'`. An existing path opens unchanged.
+
+### Why
+
+- `SessionManager.open` accepts a path that does not exist and starts a fresh session at it, so a mistyped session path in print, RPC or interactive mode silently began a new conversation instead of failing like the id form. `--fork` already failed, but with a different message.
+
+### Why an extension could not handle it
+
+- The CLI resolves session arguments and creates the session manager before any extension loads.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the `ResolvedSession` type, the path branch of `resolveSessionPath`, the `sessionNotFoundMessage` helper after it, and the three `not_found` reports in `createSessionManager` (`--fork`, `--rebind`, `--session`).
+
 ## 2026-10-10 - The runtime snapshot copies the shipped package files only (#3083)
 
 ### What changed
