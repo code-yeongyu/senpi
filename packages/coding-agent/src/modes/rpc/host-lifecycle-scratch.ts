@@ -9,11 +9,35 @@ import { join } from "node:path";
 import { readProcessIdentity, readProcessStartTime } from "../../utils/process-identity.ts";
 import { writeJsonAtomic } from "./host-state-json.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
+import { MAX_SOCKET_PATH_BYTES } from "./socket-ownership.ts";
+
+export const INTERNAL_HOST_DIR_PREFIX = "senpi-rpc-host-internal-";
+const SHORT_TEMP_ROOT = "/tmp";
+
+/**
+ * Where the internal hop directories may live: the OS temp directory first, then `/tmp` for a
+ * temp directory too deep for sun_path (a nested per-user or per-job TMPDIR, senpi#3487). The
+ * reaper scans the same roots, so a hop placed in the fallback is still collected.
+ */
+export function internalHostDirRoots(): readonly string[] {
+	const primary = tmpdir();
+	return primary === SHORT_TEMP_ROOT ? [primary] : [primary, SHORT_TEMP_ROOT];
+}
+
+function internalHostDirRoot(name: string): string {
+	for (const root of internalHostDirRoots()) {
+		if (Buffer.byteLength(join(root, name, "host.sock")) <= MAX_SOCKET_PATH_BYTES) return root;
+	}
+	throw new Error(
+		`internal_socket_path_too_long: ${join(tmpdir(), name, "host.sock")} exceeds ${MAX_SOCKET_PATH_BYTES} bytes and /tmp cannot hold it either; set TMPDIR to a shorter directory`,
+	);
+}
 
 /**
  * The internal hop must stay short enough for sun_path (104 bytes on macOS)
  * regardless of where the public socket lives, and private against other local
- * users, so it gets its own 0700 directory under the OS temp directory.
+ * users, so it gets its own 0700 directory under the OS temp directory, or under
+ * `/tmp` when the temp directory itself is too deep (senpi#3487).
  *
  * On win32 the directory lives under the caller-supplied rpc-host-daemon
  * directory, which ensureHost() creates but a direct --internal-rpc-host-supervisor
@@ -32,7 +56,9 @@ export async function createInternalSocketPath(
 			secretPath: join(dir, "secret"),
 		};
 	}
-	const dir = join(tmpdir(), `senpi-rpc-host-internal-${randomUUID().slice(0, 8)}`);
+	const name = `${INTERNAL_HOST_DIR_PREFIX}${randomUUID().slice(0, 8)}`;
+	// Non-recursive and 0700: a fresh, unguessable directory of this user's, never an existing one.
+	const dir = join(internalHostDirRoot(name), name);
 	await mkdir(dir, { recursive: false, mode: 0o700 });
 	await writeFile(
 		join(dir, ".owner"),

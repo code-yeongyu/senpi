@@ -1,22 +1,27 @@
 /**
- * Opportunistic GC of other installs' leftover `senpi-rpc-host-internal-*` directories in the tmpdir.
+ * Opportunistic GC of other installs' leftover `senpi-rpc-host-internal-*` directories in the tmpdir
+ * and in the `/tmp` fallback root (senpi#3487).
  * Safe without any lock: a directory is removed only when older than 60 s, holding nothing but its
  * `.owner` record, and owned by a provably dead process.
  */
 import { readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProcessIdentityUnreadableError, processMatchesPidFile } from "../../utils/process-identity.ts";
+import { INTERNAL_HOST_DIR_PREFIX, internalHostDirRoots } from "./host-lifecycle-scratch.ts";
 
 export async function reapOrphanedInternalHostDirs(): Promise<void> {
+	await Promise.all(internalHostDirRoots().map((root) => reapOrphanedInternalHostDirsIn(root)));
+}
+
+async function reapOrphanedInternalHostDirsIn(root: string): Promise<void> {
 	try {
-		const entries = await readdir(tmpdir(), { withFileTypes: true });
+		const entries = await readdir(root, { withFileTypes: true });
 		await Promise.all(
 			entries
-				.filter((entry) => entry.isDirectory() && entry.name.startsWith("senpi-rpc-host-internal-"))
+				.filter((entry) => entry.isDirectory() && entry.name.startsWith(INTERNAL_HOST_DIR_PREFIX))
 				.map(async (entry) => {
 					try {
-						const owner = JSON.parse(await readFile(join(tmpdir(), entry.name, ".owner"), "utf8")) as {
+						const owner = JSON.parse(await readFile(join(root, entry.name, ".owner"), "utf8")) as {
 							pid?: unknown;
 							processStartTime?: unknown;
 							createdAt?: unknown;
@@ -27,7 +32,7 @@ export async function reapOrphanedInternalHostDirs(): Promise<void> {
 							typeof owner.createdAt === "number" &&
 							owner.processStartTime.length > 0 &&
 							owner.createdAt < Date.now() - 60_000 &&
-							(await readdir(join(tmpdir(), entry.name))).length === 1 &&
+							(await readdir(join(root, entry.name))).length === 1 &&
 							!(await processMatchesPidFile({ pid: owner.pid, processStartTime: owner.processStartTime }).catch(
 								(error: unknown) => {
 									// Unreadable but live: assume the owner is alive rather than steal its lock.
@@ -36,7 +41,7 @@ export async function reapOrphanedInternalHostDirs(): Promise<void> {
 								},
 							))
 						)
-							await rm(join(tmpdir(), entry.name), { recursive: true, force: true });
+							await rm(join(root, entry.name), { recursive: true, force: true });
 					} catch {}
 				}),
 		);
