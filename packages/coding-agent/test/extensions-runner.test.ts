@@ -1261,6 +1261,33 @@ describe("ExtensionRunner", () => {
 			});
 			expect(baseOptions.sections).toBeUndefined();
 		});
+
+		it("drops an invalid section even when the handler that added it throws", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_agent_start", async (event) => {
+						event.systemPromptOptions.sections["Bad Name"] = "dropped";
+						throw new Error("handler failed");
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-throws.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, "base", { cwd: tempDir });
+
+			expect(combined).toBeUndefined();
+			expect(errors).toEqual([
+				`Invalid system prompt section "Bad Name": names match /^[a-z][a-z0-9_-]*$/ (not "preamble") and content is a string`,
+				"handler failed",
+			]);
+		});
 	});
 
 	describe("boundary chaining", () => {
