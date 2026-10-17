@@ -1,5 +1,23 @@
 # changes — senpi-monorepo root
 
+## 2026-10-17 - Pin TypeScript type roots to the repository (senpi#3482)
+
+### What changed
+
+- `tsconfig.base.json`: `typeRoots` is pinned to the repository's own `node_modules/@types` and `node_modules`, next to the existing `types: ["node"]`.
+
+### Why
+
+- With only `types`, TypeScript also looks for `@types` packages in every ancestor directory, so a checkout below a folder with its own `node_modules/@types/node` (for example `~/node_modules`) could typecheck against that copy instead of the repository's. The type roots resolve relative to this file, so every package config that extends it reads types only from the checkout.
+
+### Why an extension could not handle it
+
+- The TypeScript project configuration is read by the compiler before any agent code exists.
+
+### Expected merge conflict zones
+
+- The `compilerOptions` block of `tsconfig.base.json`. Keep `typeRoots` next to `types` when upstream changes either.
+
 ## 2026-10-10 - Isolate test-process temp directories (senpi#3064)
 
 ### What changed

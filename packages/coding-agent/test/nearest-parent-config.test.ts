@@ -87,7 +87,11 @@ describe("nearest parent config discovery", () => {
 	it("refuses symlinked project config directories", () => {
 		const root = createTempDir();
 		const home = join(root, "home");
-		const project = join(root, "project");
+		// The project sits inside the fake home, so the climb ends there and never reaches an agent
+		// directory above it: a decoy one at the temp root, or the real ~/.senpi when the temp dir is
+		// under the user's home (senpi#3482).
+		const project = join(home, "project");
+		createAgentDir(root);
 		const cwd = join(project, "src");
 		const linkedConfigSource = join(root, "linked-config");
 		const homeAgentDir = createAgentDir(home);
