@@ -139,22 +139,25 @@ for (const provider of ["openai", "chatgpt-subscription"] as const) {
 	}
 }
 
-describe("ChatGPT Subscription GPT-6.1 Sol Ultrafast", () => {
-	it("ships a subscription-only alias with Sol capabilities and unchanged cost metadata", () => {
-		const base = getModel("chatgpt-subscription", "gpt-6.1-sol");
-		const ultrafast = getModel("chatgpt-subscription", "gpt-6.1-sol-ultrafast");
+describe.each([
+	{ id: "gpt-6.1-sol", name: "GPT-6.1 Sol", contextWindow: SUBSCRIPTION_SOL_CONTEXT_WINDOW },
+	{ id: "gpt-6-astra", name: "GPT-6 Astra", contextWindow: 600_000 },
+] as const)("ChatGPT Subscription $name Ultrafast", ({ id, name, contextWindow }) => {
+	it("ships a subscription-only alias with base capabilities and unchanged cost metadata", () => {
+		const base = getModel("chatgpt-subscription", id);
+		const ultrafast = getModel("chatgpt-subscription", `${id}-ultrafast`);
 		expect(ultrafast).toEqual({
 			...base,
-			id: "gpt-6.1-sol-ultrafast",
-			name: "GPT-6.1 Sol Ultrafast",
-			upstreamModelId: "gpt-6.1-sol",
+			id: `${id}-ultrafast`,
+			name: `${name} Ultrafast`,
+			upstreamModelId: id,
 			serviceTier: "ultrafast",
 			defaultThinkingLevel: "xhigh",
 		});
-		expect(ultrafast?.cost).toEqual(EXPECTED["gpt-6.1-sol"].cost);
-		expect(ultrafast?.contextWindow).toBe(SUBSCRIPTION_SOL_CONTEXT_WINDOW);
+		expect(ultrafast?.cost).toEqual(base?.cost);
+		expect(ultrafast?.contextWindow).toBe(contextWindow);
 		expect(ultrafast && getSupportedThinkingLevels(ultrafast)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-		expect(getModels("openai").some((model) => model.id === "gpt-6.1-sol-ultrafast")).toBe(false);
+		expect(getModels("openai").some((model) => model.id === `${id}-ultrafast`)).toBe(false);
 	});
 });
 

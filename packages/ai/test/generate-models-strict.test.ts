@@ -204,14 +204,19 @@ describe("strict model generation", () => {
 		);
 		for (const content of selectedFirst.slice(0, 2)) expect(content).toContain('"chat:glm-4.7"');
 		const subscription = JSON.parse(selectedFirst[2])["openai-codex-responses"];
-		expect(subscription["chat:gpt-6.1-sol-ultrafast"]).toEqual({
-			...subscription["chat:gpt-6.1-sol"],
-			id: "gpt-6.1-sol-ultrafast",
-			name: "GPT-6.1 Sol Ultrafast",
-			upstreamModelId: "gpt-6.1-sol",
-			serviceTier: "ultrafast",
-			defaultThinkingLevel: "xhigh",
-		});
+		for (const [id, name] of [
+			["gpt-6.1-sol", "GPT-6.1 Sol"],
+			["gpt-6-astra", "GPT-6 Astra"],
+		]) {
+			expect(subscription[`chat:${id}-ultrafast`]).toEqual({
+				...subscription[`chat:${id}`],
+				id: `${id}-ultrafast`,
+				name: `${name} Ultrafast`,
+				upstreamModelId: id,
+				serviceTier: "ultrafast",
+				defaultThinkingLevel: "xhigh",
+			});
+		}
 		const manifestFirst = readFileSync(join(isolatedPackageRoot, "src/providers/data/.manifest.json"), "utf8");
 
 		const second = spawnSync(process.execPath, args, { cwd: isolatedPackageRoot, encoding: "utf8", timeout: 10_000 });

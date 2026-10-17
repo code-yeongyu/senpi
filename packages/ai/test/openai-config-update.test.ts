@@ -64,6 +64,7 @@ describe("OpenAI mid-session configuration updates", () => {
 		["openai", "gpt-6-sol"],
 		["openai", "gpt-6.1-sol"],
 		["chatgpt-subscription", "gpt-6-astra-fast"],
+		["chatgpt-subscription", "gpt-6-astra-ultrafast"],
 		["chatgpt-subscription", "gpt-6.1-sol"],
 		["chatgpt-subscription", "gpt-6.1-sol-fast"],
 		["chatgpt-subscription", "gpt-6.1-sol-ultrafast"],
@@ -126,6 +127,7 @@ describe("configuration_update catalog flag", () => {
 		expect(flagged).toEqual([
 			"gpt-6-astra",
 			"gpt-6-astra-fast",
+			"gpt-6-astra-ultrafast",
 			"gpt-6.1-sol",
 			"gpt-6.1-sol-fast",
 			"gpt-6.1-sol-ultrafast",

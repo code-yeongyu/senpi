@@ -1,3 +1,21 @@
+## 2026-10-17 - Native Astra Ultrafast catalog alias
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: emits `chatgpt-subscription/gpt-6-astra-ultrafast` alongside Sol Ultrafast, cloning the processed Astra metadata with `upstreamModelId: gpt-6-astra`, `serviceTier: ultrafast`, and `defaultThinkingLevel: xhigh`.
+
+### Why
+
+- Astra already supports Ultrafast requests, but its missing catalog alias prevented selecting it by name without a local extension. The alias preserves the base model's capabilities and Standard cost metadata; the adapter applies the tier multiplier.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts` owns the shipped catalog. A local extension can supply the alias for one installation, but cannot make it available by default to every user.
+
+### Expected merge conflict zones
+
+- LOW: the Ultrafast clone filter in `packages/ai/scripts/generate-models.ts`; the subscription catalog and manifest are regenerated.
+
 ## 2026-10-15 - Effective-dated cost cards in the generated catalog (senpi#3378)
 
 ### What changed

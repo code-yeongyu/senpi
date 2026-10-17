@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added `chatgpt-subscription/gpt-6-astra-ultrafast` alongside Sol Ultrafast, with native Ultrafast routing and the full Astra reasoning-effort range.
+
 ### Changed
 
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).

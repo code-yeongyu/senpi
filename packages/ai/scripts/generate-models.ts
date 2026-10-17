@@ -4308,11 +4308,14 @@ async function generateModels() {
 	}
 	allModels.push(...openAiFastVariants, ...codexFastVariants);
 
-	// Subscription-only alias: keep Standard rates; adapters apply Ultrafast pricing at request time.
+	// Subscription-only aliases: keep Standard rates; adapters apply Ultrafast pricing at request time.
 	// Clone after metadata application, just like the Priority variants above.
 	const codexUltrafastVariants: Model<Api>[] = [];
 	for (const model of allModels) {
-		if (model.provider !== "chatgpt-subscription" || model.id !== "gpt-6.1-sol") continue;
+		if (
+			model.provider !== "chatgpt-subscription" ||
+			(model.id !== "gpt-6.1-sol" && model.id !== "gpt-6-astra")
+		) continue;
 		codexUltrafastVariants.push({
 			...model,
 			id: `${model.id}-ultrafast`,

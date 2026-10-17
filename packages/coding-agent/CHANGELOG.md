@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added `chatgpt-subscription/gpt-6-astra-ultrafast` to the model picker and CLI, alongside Sol Ultrafast.
+
 ### Changed
 
 ### Fixed
