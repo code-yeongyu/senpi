@@ -1284,7 +1284,14 @@ export type RpcResponse =
 	// The URL and completion arrive as auth_login_url / auth_login_end events.
 	| { id?: string; type: "response"; command: "login_start"; success: true }
 	| { id?: string; type: "response"; command: "login_cancel"; success: true }
-	| { id?: string; type: "response"; command: "login_api_key"; success: true }
+	| {
+			id?: string;
+			type: "response";
+			command: "login_api_key";
+			success: true;
+			/** Present when the key replaced a login of the other kind; `backupPath` holds the previous file (senpi#3448). */
+			data?: { replaced: "oauth" | "api_key"; backupPath?: string };
+	  }
 	| { id?: string; type: "response"; command: "logout"; success: true }
 	| {
 			id?: string;

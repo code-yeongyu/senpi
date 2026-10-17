@@ -21,7 +21,12 @@ function usage(ctx: ExtensionCommandContext): void {
 }
 
 function statusOf(account: CredentialAccountSummary): string {
-	const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
+	const availability = account.unused
+		? "unused (other login kind; switch with /login)"
+		: account.blocked
+			? "blocked"
+			: "available";
+	const states = [accountLabel(account), account.source, availability];
 	for (const { model, until } of account.blockedModels ?? []) {
 		states.push(`blocked for ${model} until ${new Date(until).toISOString()}`);
 	}

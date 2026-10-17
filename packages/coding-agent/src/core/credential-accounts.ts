@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
+import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
 import {
 	accountDisplayName,
 	listSlots,
@@ -26,6 +27,8 @@ export type CredentialAccountSummary = {
 	readonly pinned: boolean;
 	/** Usage limits binding one model (family) while the account serves the rest (senpi#2555). */
 	readonly blockedModels?: readonly { readonly model: string; readonly until: number }[];
+	/** A slot of the other kind than the stored credential: kept, never used, cannot be pinned (senpi#3486). */
+	readonly unused?: true;
 };
 
 const ACCOUNT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -142,6 +145,7 @@ export async function summarizeCredentialAccounts(
 					? listSlots(credential)
 					: []
 				: listSlots(credential);
+		const usable = new Set(slotsOfOwnKind(credential).map((slot) => slot.name));
 		for (const slot of storedAccounts) {
 			const displayName = accountDisplayName(slot.displayName);
 			const persisted = state[slot.name];
@@ -159,6 +163,7 @@ export async function summarizeCredentialAccounts(
 				blocked: slotBlocked(slot, applicable, now),
 				pinned: pinned === slot.name,
 				...blockedModels(now, applicable?.modelBlocks, storedModelBlocks(slot)),
+				...(usable.has(slot.name) ? {} : { unused: true as const }),
 			});
 		}
 		if (normalizeProviderId(provider) !== "anthropic-subscription") return summaries;
@@ -217,8 +222,14 @@ export async function pinCredentialAccount(
 	if (name !== null) {
 		assertValidAccountName(name);
 		const accounts = await getCredentialAccounts(storage, provider, env, repo);
-		if (!accounts.some((account) => account.name === name)) {
+		const account = accounts.find((candidate) => candidate.name === name);
+		if (!account) {
 			throw new Error(`Provider account not found: ${name}`);
+		}
+		if (account.unused) {
+			throw new Error(
+				`Account ${name} holds a login of the other kind and is never used, so it cannot be pinned. To switch ${provider} to it, save it again with /login.`,
+			);
 		}
 	}
 	await storage.modify(provider, async (current) => {

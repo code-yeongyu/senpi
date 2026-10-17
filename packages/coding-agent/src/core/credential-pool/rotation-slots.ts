@@ -1,5 +1,6 @@
 import type { Credential } from "@earendil-works/pi-ai";
-import { listSlots as listCredentialSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
+import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
+import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { resolveConfigValue } from "../resolve-config-value.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
@@ -127,7 +128,8 @@ export async function listRotationSlots(
 	if (credential) {
 		const state = await repository.listSlots(providerId, "stored");
 		const slots: RotationSlot[] = [];
-		for (const slot of listCredentialSlots(credential)) {
+		// A slot of the other kind cannot project, so a session must never be handed it (senpi#3486).
+		for (const slot of slotsOfOwnKind(credential)) {
 			const persisted = state[slot.name];
 			const storedRevision = await repository.storedCredentialRevision(providerId, slot.name, {
 				key: slot.key,

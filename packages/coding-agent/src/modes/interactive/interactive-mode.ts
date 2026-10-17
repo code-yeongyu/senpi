@@ -80,6 +80,7 @@ import {
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import { formatNoModelsAvailableMessage } from "../../core/auth-guidance.ts";
 import { isApiKeyLoginProvider } from "../../core/auth-providers.ts";
+import { describeCredentialReplacement } from "../../core/auth-storage.ts";
 import { markModeCrashHandler } from "../../core/bootstrap-crash-listeners.ts";
 import { envValue } from "../../core/brand.ts";
 import {
@@ -869,6 +870,8 @@ export interface InteractiveModeOptions {
 	legacyPiEditNotice?: string;
 	/** Runtime diagnostics collected during session creation. */
 	startupDiagnostics?: Array<{ type: "info" | "warning" | "error"; message: string }>;
+	/** Credential notices to show once at startup; `markSeen` runs after they are shown (senpi#3486). */
+	authNotices?: { readonly messages: readonly string[]; readonly markSeen: () => void };
 	/** Warning message if session model couldn't be restored */
 	modelFallbackMessage?: string;
 	/** Cwd to trust after reload if it gained a .pi directory during this implicitly trusted session. */
@@ -1877,6 +1880,7 @@ export class InteractiveMode {
 			migratedProviders,
 			legacyPiEditNotice,
 			startupDiagnostics,
+			authNotices,
 			modelFallbackMessage,
 			initialMessage,
 			initialImages,
@@ -1893,6 +1897,10 @@ export class InteractiveMode {
 		for (const diagnostic of startupDiagnostics ?? []) {
 			if (diagnostic.type === "warning") this.showWarning(diagnostic.message);
 			else if (diagnostic.type === "error") this.showError(diagnostic.message);
+		}
+		if (authNotices && authNotices.messages.length > 0) {
+			for (const message of authNotices.messages) this.showWarning(message);
+			authNotices.markSeen();
 		}
 
 		const modelsJsonError = this.session.modelRuntime.getError();
@@ -9374,6 +9382,8 @@ export class InteractiveMode {
 		providerId: string,
 		method: "api_key" | "oauth",
 	): Promise<void> {
+		// A replacement recorded by another login path must not be reported as this one's.
+		this.session.modelRegistry.authStorage.takeReplacement(providerId);
 		await this.session.modelRuntime.login(
 			providerId,
 			method,
@@ -9384,6 +9394,9 @@ export class InteractiveMode {
 			},
 			{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId() },
 		);
+		// A login of the other kind replaced the stored one: say where it went (senpi#3448).
+		const replacement = this.session.modelRegistry.authStorage.takeReplacement(providerId);
+		if (replacement) this.showWarning(describeCredentialReplacement(providerId, replacement));
 	}
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {

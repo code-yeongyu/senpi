@@ -10606,6 +10606,25 @@ It serves core RPC auth commands.
 
 None (fork-only file).
 
+## 2026-10-16 - A login of the other kind replaces the credential, recoverably (#3448)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: when a login of the other kind replaces a provider's credential, `set` and `modify` (the interactive `/login` path) first back up auth.json, then record `{ replaced, backupPath }`; `set` returns it and `takeReplacement(provider)` hands it to the caller once. `describeCredentialReplacement` words the notice. Loading never rewrites a mixed-kind pool written by older builds: the credential that pays stays in use, and `pendingNotices()` returns one notice per provider naming the unused login, its slots in auth.json and the `/login` step that switches to it. `markNoticesSeen(ids)` records shown ids in `auth-notices-seen.json` beside auth.json; an id is derived from the unused slots, so a changed problem is shown again. `set` returns `CredentialReplacement | undefined`.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts`: an API key saved over an OAuth login was appended as a slot the pool could never project, so it was never used and `login_api_key` still answered success (omo-desktop-app#2793). The fix must never delete a credential silently or switch which credential bills without the user's action (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/auth-storage.ts` owns the credential store every login and load goes through.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `set`, `modify`, `takeReplacement`/`noteReplacement`, `parseStorageContent`, and the notice helpers after `repairPoisonedPoolSlots`.
+
+
 ## 2026-10-16 - Context files and a large skills catalog are size-bounded (senpi#3460)
 
 ### What changed
@@ -10633,3 +10652,24 @@ Context files and the skills section are assembled by core before extensions see
 - `resource-loader.ts`: the import block and the `loadProjectContextFiles` call in `reload`.
 - `skills.ts`: the area where `formatSkillsForPrompt` used to live.
 - `settings-manager.ts`: the `Settings` interface beside `compaction`.
+
+## 2026-10-17 - Credential notices once per run and per change; unused slots in the account list (#3486)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `takePendingNotices({ persistSeen })` hands each pending notice out once per process and, for runs a person reads, records it as seen. Notice ids are built from slot names, never key material. `markNoticesSeen` drops ids of problems that no longer exist and reports a failed write instead of throwing.
+- `packages/coding-agent/src/core/credential-accounts.ts`: a stored slot of the other kind is summarized with `unused: true`, and `pinCredentialAccount` refuses it with the `/login` step.
+
+### Why
+
+- `packages/coding-agent/src/core/auth-storage.ts`: print mode collects auth diagnostics twice per run and showed the notice twice; a failed seen-file write aborted TUI startup; the id hashed key material into a second file (#3486 review).
+- `packages/coding-agent/src/core/credential-accounts.ts`: the account list showed the unusable slot as a normal account, and pinning it was silently ignored (#3486 review).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/auth-storage.ts` and `packages/coding-agent/src/core/credential-accounts.ts` own the credential store and the account surface.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `unusedLoginNotices`, `takePendingNotices` and `markNoticesSeen`.
+- `packages/coding-agent/src/core/credential-accounts.ts`: `CredentialAccountSummary`, the stored-slot loop in `summarizeCredentialAccounts`, and `pinCredentialAccount`.

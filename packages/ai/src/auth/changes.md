@@ -40,3 +40,22 @@ Exchange classification and credential resolution happen before provider request
 ### Expected merge conflict zones
 
 - The exchange catch in `oauth-refresh.ts` and error mapping in `resolve.ts`.
+
+## 2026-10-16 - A pool holds one kind of credential (#3448)
+
+### What changed
+
+- `packages/ai/src/auth/pool/slots.ts`: `appendLoginSlot` replaces a stored credential of the other kind instead of appending the login as a slot; the store backs up what it replaces.
+- `packages/ai/src/auth/pool/kinds.ts` (new): `slotKind` (only from a slot's own material; a slot with neither tokens nor a key is unclassified) `unusedSlotKinds`, which names the other-kind slots of a mixed pool so the store can report them, and `slotsOfOwnKind`, the slots a credential can project (rotation selects only from these).
+
+### Why
+
+- `packages/ai/src/auth/pool/slots.ts`: slots are projected through the top-level type, so a key slot under an OAuth credential projected to nothing and was never used (omo-desktop-app#2793).
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/pool/slots.ts` is the pool algebra every credential write goes through.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/pool/slots.ts`: the start of `appendLoginSlot`.
