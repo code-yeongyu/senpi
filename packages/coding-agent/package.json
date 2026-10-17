@@ -39,6 +39,7 @@
 		"!dist/**/*.map",
 		"!dist/experimental",
 		"!dist/cli/experimental",
+		"native/prebuilds/*/senpi_grep.*.node",
 		"docs",
 		"examples",
 		"containerization.md",

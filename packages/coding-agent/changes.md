@@ -1,3 +1,21 @@
+## 2026-10-17 - The published package ships the native grep prebuilds (senpi#3513)
+
+### What changed
+
+- `packages/coding-agent/package.json`: `files` adds `native/prebuilds/*/senpi_grep.*.node`, so the tarball carries the grep addons that the publish-only job stages under `native/prebuilds/<target>/`.
+
+### Why
+
+- `packages/coding-agent/package.json`: the grep loader probes `<package>/native/prebuilds/<host>/senpi_grep.<host>.node`, but `files` never listed `native/`, so no published runtime had the addon and every grep ran the rg fallback, whose JavaScript candidate walk was the largest host main-thread CPU consumer in a 10-session profile.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: the published file list is package metadata, not runtime extension surface.
+
+### Expected merge conflict zones
+
+- LOW: the `files` array of `packages/coding-agent/package.json`.
+
 ## 2026-10-15 - A removed custom provider stops being served after logout (senpi#3339)
 
 ### What changed

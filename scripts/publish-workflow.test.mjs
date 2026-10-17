@@ -48,8 +48,8 @@ describe("publish-only workflow", () => {
 		// index-based copies would mislabel the sorted-first grep addon as PTY.
 		assert.match(nativePrebuildWorkflow, /cp "\$\{pty_file\}" "\$\{prebuild_dir\}\/senpi_pty\.\$\{host\}\.node"/);
 		assert.doesNotMatch(nativePrebuildWorkflow, /node_files\[0\]/);
-		// The grep addon stays in the artifact for its own consumers.
-		assert.match(nativePrebuildWorkflow, /cp "\$\{grep_file\}" "\$\{artifact_dir\}\/"/);
+		// The grep addon lands beside it under its own loader name (senpi#3513).
+		assert.match(nativePrebuildWorkflow, /cp "\$\{grep_file\}" "\$\{prebuild_dir\}\/senpi_grep\.\$\{host\}\.node"/);
 		// The download goes to an untracked scratch root, never straight into the package.
 		assert.match(nativeDownload, /path: packages\/pty\/\.native-prebuild-artifacts/);
 		assert.match(nativeDownload, /merge-multiple: true/);

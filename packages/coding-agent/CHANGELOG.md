@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- The published package now ships the native grep engine for every release-built platform, so `grep` no longer falls back to the rg engine and its JavaScript directory walk on darwin-arm64, darwin-x64, linux-x64, linux-arm64 and win32-x64 ([#3513](https://github.com/code-yeongyu/senpi/issues/3513)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16

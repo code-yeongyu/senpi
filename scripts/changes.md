@@ -1,3 +1,26 @@
+## 2026-10-17 - Publish requires the native grep prebuilds in the senpi tarball (senpi#3513)
+
+### What changed
+
+- `.github/workflows/native-prebuilds.yml`: the Stage artifact step copies the grep addon to `native/prebuilds/<host>/senpi_grep.<host>.node` beside the PTY addon instead of leaving it flat at the artifact root under its napi tag name.
+- `.github/workflows/publish-npm.yml`: a new publish-only step, "Stage grep prebuilds into the coding-agent package", copies every target's grep addon from the merged download into `packages/coding-agent/native/prebuilds/<target>/`.
+- `scripts/senpi-publish-pack-checks.mjs`: `assertSenpiPackedWorkspaceFiles` takes `options.requiredNativePrebuildTargets` and throws, naming each missing `native/prebuilds/<target>/senpi_grep.<target>.node`, when a required target's grep addon is not in the senpi tarball. The prebuild file map gains the `@code-yeongyu/senpi` -> `senpi_grep.<target>.node` pattern, and both checks share one supported-target validation.
+- `scripts/publish.mjs`: forwards `--require-native-prebuilds` to the senpi pack check as well as the workspace checks.
+- `scripts/native-prebuild-staging.test-support.mjs`: the workflow-step runner, matrix fixtures and pack helpers move out of `native-prebuild-staging.test.mjs` so `native-grep-prebuild-staging.test.mjs` runs the same producer and consumer shell.
+
+### Why
+
+- `scripts/senpi-publish-pack-checks.mjs`: native-prebuilds.yml built the grep addon for every target, but nothing staged it into the senpi package, so every published runtime fell back to the rg engine and nothing failed the release. A required target must now be present or the publish stops.
+
+### Why an extension could not handle it
+
+- `scripts/senpi-publish-pack-checks.mjs`: release packaging and its gates are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/senpi-publish-pack-checks.mjs`: `NATIVE_PREBUILD_FILE_NAMES` and the end of `assertSenpiPackedWorkspaceFiles`.
+- `scripts/publish.mjs`: the coding-agent branch of `validatePack`.
+
 ## 2026-10-16 - A forced release tests its code before stamping the version and changelogs (senpi#3446)
 
 ### What changed
