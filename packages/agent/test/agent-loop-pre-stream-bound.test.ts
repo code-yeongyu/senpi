@@ -224,15 +224,21 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 		expect(streamCalls).toBe(1);
 	});
 
-	it("ends a caller-aborted turn whose step never finishes at the bound, still as aborted", async () => {
+	// senpi#3481: an already-aborted request must keep its caller's reason at either bound.
+	it.each([
+		{ bound: "start", streamStartTimeoutMs: 40, timeoutMs: 10_000, reason: undefined },
+		{ bound: "idle", streamStartTimeoutMs: undefined, timeoutMs: 40, reason: undefined },
+		{ bound: "start", streamStartTimeoutMs: 40, timeoutMs: 10_000, reason: new Error("Caller stopped this turn") },
+		{ bound: "idle", streamStartTimeoutMs: undefined, timeoutMs: 40, reason: new Error("Caller stopped this turn") },
+	])("preserves abort at $bound ($reason)", async ({ streamStartTimeoutMs, timeoutMs, reason }) => {
 		// given
 		const controller = new AbortController();
 		const asked = Promise.withResolvers<void>();
 		const config: AgentLoopConfig = {
 			model: createModel(),
 			convertToLlm: identityConverter,
-			streamStartTimeoutMs: 40,
-			timeoutMs: 10_000,
+			streamStartTimeoutMs,
+			timeoutMs,
 			getApiKey: () => {
 				asked.resolve();
 				return never<string>();
@@ -244,10 +250,12 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 
 		// when
 		await asked.promise;
-		controller.abort();
+		controller.abort(reason);
 
 		// then
-		expect(assistantOf(await turn)?.stopReason).toBe("aborted");
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		expect(assistant?.errorMessage).toBe(controller.signal.reason.message);
 	});
 
 	it("reports the configured start bound even when a step before the stream used part of it", async () => {

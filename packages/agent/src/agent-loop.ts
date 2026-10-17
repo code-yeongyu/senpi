@@ -885,9 +885,9 @@ function createPreStreamBound(
 					(error: unknown) => finish(() => reject(error)),
 				);
 				timer = setTimeout(() => {
-					const error = timeoutError();
+					const error = request.signal.aborted ? abortError(request.signal.reason) : timeoutError();
 					finish(() => reject(error));
-					// Abort after rejecting so the failure reads as the timeout, and the hung step is told to stop.
+					// Settle before aborting the hung step so an un-aborted request keeps its timeout failure.
 					request.abort(error);
 				}, budget);
 			});

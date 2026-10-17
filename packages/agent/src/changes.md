@@ -1,3 +1,21 @@
+## 2026-10-16 - Preserve caller-abort diagnostics at pre-stream deadlines (senpi#3481)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: a pre-stream deadline uses the request's existing abort reason when the caller already aborted; an unaborted request still gets the configured start/idle timeout error.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: a never-settling step ended as aborted but reported timeout advice, replacing the caller's default or explicit abort reason.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the deadline and request signal are private to the browser-safe provider loop, before extension consumers receive the terminal message.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, the deadline callback in `createPreStreamBound.run()`.
+
 ## 2026-10-16 - The pre-stream bound leaves a caller abort as it was (fixes the #3472 regression)
 
 ### What changed
