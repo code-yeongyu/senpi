@@ -1,5 +1,5 @@
 import { type GrepEngine, GrepEngineError } from "./engine.ts";
-import type { NativeGrepLoaderOptions } from "./native-loader.ts";
+import { type NativeGrepLoaderOptions, NativeGrepSentinelMismatchError } from "./native-loader.ts";
 
 export type GrepEngineSelectorOptions = NativeGrepLoaderOptions;
 
@@ -24,11 +24,23 @@ async function selectEngine(options: GrepEngineSelectorOptions): Promise<GrepEng
 	try {
 		return await loadNativeEngine(options, env);
 	} catch (error) {
-		// ABI mismatch is fatal, not a missing optional addon.
+		if (isNativeGrepSentinelMismatchError(error)) {
+			console.warn(
+				`[grep] native engine ABI mismatch in ${error.modulePath}; falling back to rg. Reinstall or rebuild senpi to update native prebuilds.`,
+			);
+			return loadRgEngine();
+		}
 		if (!(error instanceof GrepEngineError) || error.code !== "ENGINE_UNAVAILABLE") throw error;
 		console.warn(`[grep] native engine unavailable; falling back to rg: ${error.message}`);
 		return loadRgEngine();
 	}
+}
+
+function isNativeGrepSentinelMismatchError(error: unknown): error is NativeGrepSentinelMismatchError {
+	return (
+		error instanceof NativeGrepSentinelMismatchError ||
+		(error instanceof Error && "code" in error && (error as { code: unknown }).code === "native-sentinel-mismatch")
+	);
 }
 
 async function loadRgEngine(): Promise<GrepEngine> {
