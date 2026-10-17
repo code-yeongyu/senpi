@@ -14,20 +14,25 @@ function modelOf(model: { readonly provider: string; readonly id: string } | und
 	return model === undefined ? undefined : { provider: model.provider, id: model.id };
 }
 
+type LiveSession = NonNullable<NonNullable<RpcSessionEntry["runtime"]>["session"]>;
+
+/** What a live in-process session contributes; `pendingQuestions` defaults to its RPC question bridge. */
+export function sessionRuntimeView(session: LiveSession, pendingQuestions?: number): SessionStatusRuntimeView {
+	const model = modelOf(session.model);
+	return {
+		isStreaming: session.isStreaming === true,
+		isCompacting: session.isCompacting === true,
+		...(model !== undefined ? { model } : {}),
+		...(session.thinkingLevel !== undefined ? { thinkingLevel: session.thinkingLevel } : {}),
+		steering: typeof session.getSteeringMessages === "function" ? session.getSteeringMessages().length : 0,
+		followUp: typeof session.getFollowUpMessages === "function" ? session.getFollowUpMessages().length : 0,
+		pendingQuestions: pendingQuestions ?? sessionQuestionBridges.get(session)?.pendingQuestions()?.length ?? 0,
+	};
+}
+
 function runtimeView(entry: RpcSessionEntry): SessionStatusRuntimeView | undefined {
 	const session = entry.runtime?.session;
-	if (session !== undefined) {
-		const model = modelOf(session.model);
-		return {
-			isStreaming: session.isStreaming === true,
-			isCompacting: session.isCompacting === true,
-			...(model !== undefined ? { model } : {}),
-			...(session.thinkingLevel !== undefined ? { thinkingLevel: session.thinkingLevel } : {}),
-			steering: typeof session.getSteeringMessages === "function" ? session.getSteeringMessages().length : 0,
-			followUp: typeof session.getFollowUpMessages === "function" ? session.getFollowUpMessages().length : 0,
-			pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions()?.length ?? 0,
-		};
-	}
+	if (session !== undefined) return sessionRuntimeView(session);
 	const state = entry.worker?.snapshot?.state;
 	if (state === undefined) return undefined;
 	const model = modelOf(state.model ?? undefined);

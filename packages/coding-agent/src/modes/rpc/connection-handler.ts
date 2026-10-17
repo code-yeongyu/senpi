@@ -65,7 +65,6 @@ import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { handleClientInput } from "./client-input-handler.ts";
-import { ClientMessageEvents } from "./client-message-events.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
 	AUTH_KEY_VERIFY_CAPABILITY,
@@ -107,7 +106,6 @@ import { buildRpcSessionState } from "./rpc-session-state.ts";
 import type {
 	RpcAuthProvider,
 	RpcCommand,
-	RpcCommandInvocationEvent,
 	RpcExtensionEvent,
 	RpcExtensionUIProgress,
 	RpcExtensionUIRequest,
@@ -117,7 +115,6 @@ import type {
 	RpcMcpServerStatus,
 	RpcResponse,
 	RpcSessionReplacedEvent,
-	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
 import {
 	RPC_ERROR_ENTRY_NOT_FOUND,
@@ -129,6 +126,7 @@ import {
 } from "./rpc-types.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
+import { subscribeSessionRecords } from "./session-record-stream.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
 
@@ -855,54 +853,8 @@ export function createRpcConnectionHandler(
 		function installSessionSubscriptions(): void {
 			unsubscribe?.();
 			unsubscribeBackpressure?.();
-			const correlatedEvents = new ClientMessageEvents(
-				outputEvent,
-				() => ClientAdmissions.forSession(session).hasIdentities,
-			);
-			unsubscribe = session.subscribe((event) => {
-				if (event.type === "skill_invocation") {
-					correlatedEvents.accept(event satisfies RpcSkillInvocationEvent);
-					return;
-				}
-				if (event.type === "command_invocation") {
-					correlatedEvents.accept(event satisfies RpcCommandInvocationEvent);
-					return;
-				}
-				if (event.type === "queue_update") {
-					// Same route as every other event; only the minted ids are taken out of the projection.
-					correlatedEvents.accept({ ...event, ordered: event.ordered.map(clientFacingIdentity) });
-					return;
-				}
-				if (event.type === "thinking_level_changed" || event.type === "model_changed") {
-					// Core emits the effective level only; the selection provenance lives beside it
-					// on the session and is what distinguishes an explicit choice from a default.
-					const thinkingSelection = session.thinkingSelection;
-					outputEvent(thinkingSelection === undefined ? event : { ...event, thinkingSelection });
-					return;
-				}
-				if (event.type === "agent_end") {
-					// The subscribe-path `agent_end` carries only { type, messages, willRetry };
-					// the abort provenance the extension hook receives is stripped from it. Read
-					// it from the session, which still reports the owner at this point, and retain
-					// it for `get_state` because the getter clears once the turn settles.
-					const abortSource = session.currentAbortSource;
-					if (abortSource !== undefined) lastAbortSource = abortSource;
-					const deadline = session.currentDeadline;
-					const abortedBy = abortSource === undefined ? undefined : ClientAdmissions.forSession(session).abortedBy;
-					correlatedEvents.accept({
-						...event,
-						...(abortSource === undefined ? {} : { aborted: true, abortSource }),
-						...(abortedBy === undefined ? {} : { abortedBy }),
-						...(deadline === undefined ? {} : { deadline }),
-					});
-					return;
-				}
-				if (event.type === "session_abort") {
-					const abortedBy = ClientAdmissions.forSession(session).abortedBy;
-					correlatedEvents.accept(abortedBy === undefined ? event : { ...event, abortedBy });
-					return;
-				}
-				correlatedEvents.accept(event);
+			unsubscribe = subscribeSessionRecords(session, outputEvent, (abortSource) => {
+				lastAbortSource = abortSource;
 			});
 			unsubscribeBackpressure = session.agent.subscribe(async () => {
 				await waitForRpcBackpressure();

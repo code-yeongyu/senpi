@@ -56,6 +56,11 @@ export interface AdmitExternalMessageInput {
 	readonly deliverAs: ExternalDeliverAs;
 	/** The `turn_epoch` the sender observed; a steer is admitted only while it is still current. */
 	readonly expected_turn_id?: number;
+	/**
+	 * What an idle session does with it: `start` (the default) starts a turn, `queue` enqueues it for the next
+	 * turn, like an RPC `steer`/`follow_up` with `whenIdle: "queue"`.
+	 */
+	readonly whenIdle?: "start" | "queue";
 }
 
 /**
