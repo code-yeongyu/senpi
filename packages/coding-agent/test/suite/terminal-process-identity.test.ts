@@ -8,12 +8,13 @@ import {
 } from "../../src/core/extensions/builtin/terminal/process-identity.ts";
 
 describe("terminal process identity", () => {
-	it("derives a whole-second boot instant from os.uptime that two consecutive reads agree on", () => {
+	it("derives a whole-second boot instant from os.uptime that two consecutive reads place on the same boot", () => {
 		const boot = processBootAtMs();
 		expect(Number.isInteger(boot)).toBe(true);
 		expect(boot % 1000).toBe(0);
 		expect(boot).toBeLessThan(Date.now());
-		expect(processBootAtMs()).toBe(boot);
+		// senpi#3152: os.uptime() is integral, so a second read can land one whole second away; leases compare with sameBoot.
+		expect(sameBoot(boot, processBootAtMs())).toBe(true);
 	});
 
 	it.runIf(process.platform === "darwin")("matches the kernel boot time on darwin within the tolerance", () => {
