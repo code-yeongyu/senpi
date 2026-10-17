@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- In print mode, boolean extension flags like `--no-model-fallback` and `--no-ask-user` placed before the prompt no longer swallow the prompt, and print mode with an empty prompt exits non-zero with a usage message ([#3521](https://github.com/code-yeongyu/senpi/issues/3521)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16

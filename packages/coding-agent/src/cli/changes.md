@@ -1,3 +1,21 @@
+## 2026-10-17 - Boolean extension flags before prompt leave prompt intact (senpi#3521)
+
+### What changed
+
+- `args.ts`: `parseArgs()` recognizes boolean extension flags (any flag starting with `no-`, ending with `-disabled`, or passed via `options.booleanFlags`) so they do not consume following positional arguments as values.
+
+### Why
+
+`--no-model-fallback` placed before the prompt swallowed the prompt as its value, causing senpi in print mode to exit 0 with an empty run (#3521).
+
+### Why an extension could not handle it
+
+CLI argument parsing occurs before extensions are loaded.
+
+### Expected merge conflict zones
+
+- `args.ts`: unknown flag parsing loop and `ParseArgsOptions`.
+
 ## 2026-10-15 - senpi host session unload (senpi#3225)
 
 ### What changed
