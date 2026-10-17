@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A host daemon now inherits every credential variable the engine reads, including `CLAUDE_CODE_OAUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and numbered slots such as `OPENAI_API_KEY_2`, so a Claude subscription from the environment works through a host as it does in a direct process (#3531).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16

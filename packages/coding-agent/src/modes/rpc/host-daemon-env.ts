@@ -14,6 +14,8 @@
  * `SystemRoot`, `ComSpec` or `PATHEXT` cannot spawn a child at all.
  */
 import { join } from "node:path";
+import { providerCredentialEnvNames } from "@earendil-works/pi-ai";
+import { envSlotVarNames } from "../../core/credential-pool/env-slots.ts";
 import type { HostDaemonPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined, writeStateFile } from "./host-daemon-state.ts";
 
@@ -27,6 +29,16 @@ const ALLOWED_ENV_NAMES = [
 	/^[A-Z0-9_]+_API_KEY$/u,
 	/^(ANTHROPIC|OPENAI|GOOGLE|GEMINI|AZURE|AWS|OPENROUTER|XAI|MISTRAL|DEEPSEEK|GROQ|CEREBRAS|MINIMAX)_/u,
 ] as const;
+
+/**
+ * The exact credential names the engine's own provider lookup reads (`getEnvApiKey`, numbered env
+ * slots, `CLAUDE_CODE_OAUTH_TOKEN`), derived from that lookup so a daemon and a direct process can
+ * never disagree about which credentials exist (senpi#3531). Exact names only, no new prefix.
+ */
+const PROVIDER_CREDENTIAL_ENV_NAMES: ReadonlySet<string> = new Set([
+	...providerCredentialEnvNames(),
+	...envSlotVarNames(),
+]);
 
 /**
  * win32 wiring no process can run without. Dropping `SystemRoot` alone makes every subsequent
@@ -83,8 +95,14 @@ const TRANSIENT_ENV_NAMES = new Set([
 export function daemonEnvIsAllowed(name: string, platform: NodeJS.Platform = process.platform): boolean {
 	const upper = name.toUpperCase();
 	if (TRANSIENT_ENV_NAMES.has(platform === "win32" ? upper : name)) return false;
-	if (platform !== "win32") return ALLOWED_ENV_NAMES.some((pattern) => pattern.test(name));
-	return WINDOWS_SYSTEM_ENV_NAMES.has(upper) || ALLOWED_ENV_NAMES.some((pattern) => pattern.test(upper));
+	if (platform !== "win32") {
+		return PROVIDER_CREDENTIAL_ENV_NAMES.has(name) || ALLOWED_ENV_NAMES.some((pattern) => pattern.test(name));
+	}
+	return (
+		WINDOWS_SYSTEM_ENV_NAMES.has(upper) ||
+		PROVIDER_CREDENTIAL_ENV_NAMES.has(upper) ||
+		ALLOWED_ENV_NAMES.some((pattern) => pattern.test(upper))
+	);
 }
 
 /**

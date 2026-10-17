@@ -6,6 +6,8 @@
 
 ### Added
 
+- `apiKeyEnvProviders()` and `providerCredentialEnvNames()` list the providers and variable names the environment credential lookup reads (#3531).
+
 ### Changed
 
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).

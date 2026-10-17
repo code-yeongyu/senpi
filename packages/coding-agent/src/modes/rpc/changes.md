@@ -1,3 +1,22 @@
+## 2026-10-17 - A host daemon inherits every credential the engine reads (senpi#3531)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: `daemonEnvIsAllowed` also allows `PROVIDER_CREDENTIAL_ENV_NAMES`, the exact names from `providerCredentialEnvNames()` (pi-ai) and `envSlotVarNames()`. It is exact names only, with no new prefix pattern; on win32 the comparison is upper-cased like the rest of the list.
+- `packages/coding-agent/test/suite/host-daemon-credential-env.test.ts`: runs the engine's lookup (`getEnvApiKey`, `discoverEnvSlots`) against an environment that records every name it reads, and asserts each one is daemon-allowed on linux, darwin and win32. It also checks that a subscription token and its `_2` slot reach `daemonEnvironment`, and that `DATABASE_URL`, `GITHUB_TOKEN` and slots past `_16` are still dropped.
+
+### Why
+
+senpi#3531: `ALLOWED_ENV_NAMES` passed `*_API_KEY` and some vendor prefixes only, so 439 names the lookup reads never reached a host. They include `CLAUDE_CODE_OAUTH_TOKEN`(`_N`), `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and every `*_API_KEY_<N>` slot. A Claude subscription supplied through the environment worked in a direct process and was "not configured" through a host, which is what the OmO desktop showed.
+
+### Why an extension could not handle it
+
+The daemon environment is built by the host lifecycle before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: the imports, the set above `WINDOWS_SYSTEM_ENV_NAMES`, and `daemonEnvIsAllowed`.
+
 ## 2026-10-17 - A session reopened right after its park is never refused (senpi#3485)
 
 ### What changed
