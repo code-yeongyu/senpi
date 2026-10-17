@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- A turn you stop while its context transform or API key lookup is still running ends with your stop, not with "Provider stream start timed out" and advice to raise a timeout setting ([#3481](https://github.com/code-yeongyu/senpi/issues/3481)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16

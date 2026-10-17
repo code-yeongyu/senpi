@@ -1,3 +1,21 @@
+## 2026-10-17 - A caller-aborted turn past the pre-stream bound carries the abort's message (senpi#3481)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse`'s failure path gives a turn the caller aborted the abort's own error (`abortError(signal.reason)`) when the error it ended on is the pre-stream bound's `StreamStartTimeoutError` / `StreamIdleTimeoutError`. The `stopReason` was already `aborted`; only the message changes. Every other failure keeps its error.
+
+### Why
+
+- `packages/agent/src/agent-loop.ts`: a turn aborted while a pre-stream step never finished ended at the bound and told the user a provider timed out and to raise a timeout setting; the user had stopped it.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent-loop.ts`: the terminal assistant message is built inside one provider request in the agent loop.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/agent-loop.ts`, the `createTerminalFailureAssistantMessage` call in `streamAssistantResponse`.
+
 ## 2026-10-16 - The pre-stream bound leaves a caller abort as it was (fixes the #3472 regression)
 
 ### What changed

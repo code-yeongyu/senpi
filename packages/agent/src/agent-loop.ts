@@ -796,10 +796,14 @@ async function streamAssistantResponse(
 			await emit({ type: "message_end", message: finalMessage });
 			return { message: finalMessage, providerToolResults };
 		}
+		// A caller abort is the reason a turn ended even when the bound fired first on a step that never finished:
+		// the user gets the abort's own message, not a timeout and advice to raise it (#3481).
+		const callerAbortedPastBound =
+			signal?.aborted === true && (error instanceof StreamStartTimeoutError || isStreamIdleTimeoutError(error));
 		const finalMessage = createTerminalFailureAssistantMessage(
 			config.model,
 			signal?.aborted ? "aborted" : "error",
-			error,
+			callerAbortedPastBound ? abortError(signal.reason) : error,
 			partialMessage,
 		);
 		propagateThinkingTiming(finalMessage);

@@ -224,6 +224,35 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 		expect(streamCalls).toBe(1);
 	});
 
+	it("gives a caller-aborted turn whose step never finishes the abort's message, not the bound's timeout text (#3481)", async () => {
+		// given
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 40,
+			timeoutMs: 10_000,
+			getApiKey: () => {
+				asked.resolve();
+				return never<string>();
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort(new Error("Stopped by the user"));
+
+		// then
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		expect(assistant?.errorMessage).toBe("Stopped by the user");
+		expect(assistant?.errorMessage).not.toContain("timed out");
+	});
+
 	it("ends a caller-aborted turn whose step never finishes at the bound, still as aborted", async () => {
 		// given
 		const controller = new AbortController();
