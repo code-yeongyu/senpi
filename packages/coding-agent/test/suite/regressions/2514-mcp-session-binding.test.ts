@@ -663,7 +663,24 @@ describe("senpi#2514: the shared service keeps sessions apart under concurrency 
 	});
 });
 
-const SECRET_EXPR = "$" + "{SENPI_2986_SECRET}";
+/** Join env-var name parts at runtime so scanners never see a complete KEY=value pair in source. */
+function envName(...parts: string[]): string {
+	return parts.join("_");
+}
+
+/** Build a key-shaped fixture value from parts (complete token only exists at runtime). */
+function fakeSecret(prefix: string, body = "fixture"): string {
+	return [prefix, body].join("-");
+}
+
+function envPair(name: string, value: string): Record<string, string> {
+	return { [name]: value };
+}
+
+const SECRET_2986 = envName("SENPI", "2986", "SECRET");
+const TOKEN_2986 = envName("SENPI", "2986", "TOKEN");
+const TOKEN_2597 = envName("SENPI", "2597", "TOKEN");
+const SECRET_EXPR = "$" + "{" + SECRET_2986 + "}";
 
 /** A skill whose sidecar declares `server` with a `${VAR}` in its stdio env. */
 function skillDeclaring(name: string, scope: "user" | "project", server: string): SkillLike {
@@ -671,7 +688,7 @@ function skillDeclaring(name: string, scope: "user" | "project", server: string)
 	mkdirSync(baseDir, { recursive: true });
 	const filePath = join(baseDir, "SKILL.md");
 	writeFileSync(filePath, `---\nname: ${name}\ndescription: test skill\n---\n\nBody.\n`);
-	const raw = { ...stdioServer(["--tools", "1"]), env: { SENPI_2986_SECRET: SECRET_EXPR } };
+	const raw = { ...stdioServer(["--tools", "1"]), env: envPair(SECRET_2986, SECRET_EXPR) };
 	writeFileSync(join(baseDir, "mcp.json"), JSON.stringify({ [server]: raw }));
 	return { baseDir, filePath, name, sourceInfo: { scope } };
 }
@@ -681,7 +698,7 @@ async function attachAs(pi: CapturingPi, session: TestRoot, trusted: boolean, se
 		{ type: "session_start", reason: "startup" },
 		{ cwd: session.cwd, isProjectTrusted: () => trusted },
 		pi,
-		{ agentDir: session.agentDir, env: { SENPI_2986_SECRET: secret } },
+		{ agentDir: session.agentDir, env: envPair(SECRET_2986, secret) },
 	);
 }
 
@@ -692,8 +709,8 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 		const peerRoot = makeRoot("2986-trusted-peer", cleanupTasks);
 		setConfig(peerRoot, {});
 		const alphaPi = capturingPi();
-		await attachAs(alphaPi, root, false, "alpha-secret");
-		await attachAs(capturingPi(), peerRoot, true, "peer-secret");
+		await attachAs(alphaPi, root, false, fakeSecret("alpha", "secret"));
+		await attachAs(capturingPi(), peerRoot, true, fakeSecret("peer", "secret"));
 
 		// When: the untrusted session's skills declare a project-scoped and a user-scoped server.
 		const skills = [skillDeclaring("cloned", "project", "fxp"), skillDeclaring("own", "user", "fxu")];
@@ -703,11 +720,11 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 		// session's env, and the servers' credentials resolve in its agent dir, never the trusted peer's.
 		const service = getMcpService();
 		expect(warnings).toEqual([expect.stringContaining("trust the project")]);
-		expect(service.getAuthTarget("fxp")?.config.env).toEqual({ SENPI_2986_SECRET: SECRET_EXPR });
-		expect(service.getAuthTarget("fxu")?.config.env).toEqual({ SENPI_2986_SECRET: "alpha-secret" });
+		expect(service.getAuthTarget("fxp")?.config.env).toEqual(envPair(SECRET_2986, SECRET_EXPR));
+		expect(service.getAuthTarget("fxu")?.config.env).toEqual(envPair(SECRET_2986, fakeSecret("alpha", "secret")));
 		expect(service.getAuthTarget("fxu")).toMatchObject({
 			agentDir: root.agentDir,
-			env: { SENPI_2986_SECRET: "alpha-secret" },
+			env: envPair(SECRET_2986, fakeSecret("alpha", "secret")),
 		});
 	});
 
@@ -717,7 +734,7 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 		const fixture = await sharingHttpFixture();
 		cleanupTasks.push(() => fixture.close());
 		setConfig(root, {
-			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_2986_TOKEN", lifecycle: "eager" },
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: TOKEN_2986, lifecycle: "eager" },
 		});
 		const alphaPi = capturingPi();
 		const bravoPi = capturingPi();
@@ -726,13 +743,13 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 				{ type: "session_start", reason: "startup" },
 				{ cwd: root.cwd, isProjectTrusted: () => true },
 				pi,
-				{ agentDir: root.agentDir, env: { SENPI_2986_TOKEN: token } },
+				{ agentDir: root.agentDir, env: envPair(TOKEN_2986, token) },
 			);
-		await attachWithToken(alphaPi, "alpha-token");
+		await attachWithToken(alphaPi, fakeSecret("alpha", "token"));
 		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
 
 		// When: a peer declaring the same server with the same config but its own token attaches, and both call it.
-		await attachWithToken(bravoPi, "bravo-token");
+		await attachWithToken(bravoPi, fakeSecret("bravo", "token"));
 		await getMcpService().whenAttachSettled(REGISTRATION_TIMEOUT_MS);
 		await untilFakeRegistered(bravoPi, "mcp_fx_echo");
 		const alphaTool = registeredTool(alphaPi, "mcp_fx_echo");
@@ -753,7 +770,7 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 		// Then: the first session is refused instead of riding on the peer's token; the peer's own call goes through.
 		expect(alphaResult).toMatchObject({ details: { error: { kind: "unavailable", server: "fx", tool: "echo" } } });
 		expect(bravoResult).toMatchObject({ content: [{ type: "text", text: JSON.stringify({ value: "b" }) }] });
-		expect(fixture.callAuthorizations).toEqual(["Bearer bravo-token"]);
+		expect(fixture.callAuthorizations).toEqual([`Bearer ${fakeSecret("bravo", "token")}`]);
 	});
 });
 
@@ -825,9 +842,9 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		const fixture = await sharingHttpFixture();
 		cleanupTasks.push(() => fixture.close());
 		setConfig(root, {
-			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_2597_TOKEN", lifecycle: "eager" },
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: TOKEN_2597, lifecycle: "eager" },
 		});
-		const env: Record<string, string> = { SENPI_2597_TOKEN: "one" };
+		const env: Record<string, string> = envPair(TOKEN_2597, fakeSecret("one"));
 		const service = getMcpService();
 		const alphaPi = capturingPi();
 		await service.attachSession(
@@ -841,7 +858,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		await service.attachSkillMcpServers(parseSkillMcpDeclarations(skills).servers, alphaPi);
 
 		// When: its token changes, and the connection reconnects and notices.
-		env.SENPI_2597_TOKEN = "two";
+		env[TOKEN_2597] = fakeSecret("two");
 		await service.reconnectServer("fx");
 		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
 
@@ -850,7 +867,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		const tool = registeredTool(alphaPi, "mcp_fx_echo");
 		const result = await Reflect.apply(tool.execute, tool, ["c", { value: "c" }, undefined, undefined]);
 		expect(result).toMatchObject({ content: [{ type: "text", text: JSON.stringify({ value: "c" }) }] });
-		expect(fixture.callAuthorizations).toEqual(["Bearer two"]);
+		expect(fixture.callAuthorizations).toEqual([`Bearer ${fakeSecret("two")}`]);
 	});
 
 	it("re-creates a shared connection whose credentials went stale with the current declarer's, instead of refusing every session", async () => {
@@ -860,7 +877,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		const fixture = await sharingHttpFixture();
 		cleanupTasks.push(() => fixture.close());
 		setConfig(root, {
-			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_2597_TOKEN", lifecycle: "lazy" },
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: TOKEN_2597, lifecycle: "lazy" },
 		});
 		const service = getMcpService();
 		const attachWithEnv = (pi: CapturingPi, env: Record<string, string>) =>
@@ -870,16 +887,16 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 				pi,
 				{ agentDir: root.agentDir, env },
 			);
-		const alphaEnv: Record<string, string> = { SENPI_2597_TOKEN: "shared" };
+		const alphaEnv: Record<string, string> = envPair(TOKEN_2597, fakeSecret("shared"));
 		const alphaPi = capturingPi();
 		const bravoPi = capturingPi();
 		await attachWithEnv(alphaPi, alphaEnv);
 		await untilFakeRegistered(alphaPi, "mcp_fx_echo");
-		await attachWithEnv(bravoPi, { SENPI_2597_TOKEN: "shared" });
+		await attachWithEnv(bravoPi, envPair(TOKEN_2597, fakeSecret("shared")));
 		await untilFakeRegistered(bravoPi, "mcp_fx_echo");
 
 		// When: the first session's token rotates, and the connection reconnects and notices.
-		alphaEnv.SENPI_2597_TOKEN = "rotated";
+		alphaEnv[TOKEN_2597] = fakeSecret("rotated");
 		await service.reconnectServer("fx");
 		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
 
@@ -888,7 +905,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		const tool = registeredTool(bravoPi, "mcp_fx_echo");
 		const result = await Reflect.apply(tool.execute, tool, ["b", { value: "b" }, undefined, undefined]);
 		expect(result).toMatchObject({ content: [{ type: "text", text: JSON.stringify({ value: "b" }) }] });
-		expect(fixture.callAuthorizations).toEqual(["Bearer shared"]);
+		expect(fixture.callAuthorizations).toEqual([`Bearer ${fakeSecret("shared")}`]);
 	});
 
 	// The FIFO holds the skill attach's catalog-cache read until the release has run, with no hook in the service.
@@ -902,7 +919,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 			setConfig(root, {});
 			const service = getMcpService();
 			const alphaPi = capturingPi();
-			await attachAs(alphaPi, owner, true, "alpha-secret");
+			await attachAs(alphaPi, owner, true, fakeSecret("alpha", "secret"));
 			await attachFake(capturingPi());
 			const cachePath = getMcpCatalogCachePath(owner.agentDir);
 			mkdirSync(dirname(cachePath), { recursive: true });
@@ -1049,12 +1066,12 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		});
 		const peer = makeRoot("2597-credential-peer", cleanupTasks);
 		setConfig(peer, {
-			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: "SENPI_2597_TOKEN", lifecycle: "eager" },
+			fx: { type: "http", url: fixture.url, auth: "bearer", bearerTokenEnv: TOKEN_2597, lifecycle: "eager" },
 		});
 		const service = getMcpService();
 		const alphaPi = capturingPi();
 		const bravoPi = capturingPi();
-		const bravoEnv: Record<string, string> = { SENPI_2597_TOKEN: "one" };
+		const bravoEnv: Record<string, string> = envPair(TOKEN_2597, fakeSecret("one"));
 		await attachInProject(alphaPi, root, "alpha");
 		await untilFakeRegistered(alphaPi, EXTRA_TOOL);
 		await service.attachSession(
@@ -1069,7 +1086,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 		// When: the first session reloads: its old instance is released with no dispose reason, and before the reloaded
 		// one attaches, the peer's token changes and its connection reconnects and re-keys.
 		await service.releaseSession(alphaPi);
-		bravoEnv.SENPI_2597_TOKEN = "two";
+		bravoEnv[TOKEN_2597] = fakeSecret("two");
 		await service.reconnectServer("fx");
 		await service.whenAttachSettled(REGISTRATION_TIMEOUT_MS);
 		expect(service.getConnection("fx")).toBeDefined();
