@@ -16,7 +16,7 @@ import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
-import { type RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
+import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
 import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
 import {
@@ -25,6 +25,7 @@ import {
 	type SessionWorkerToHost,
 	type WorkerSnapshot,
 } from "./session-worker-protocol.ts";
+import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
 
 if (isBunBinary) {
 	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");
@@ -162,7 +163,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			);
 			const factory = createCliRuntimeFactory(prepared.configuration, { startupSettingsManager });
 			initTheme(startupSettingsManager.getTheme(), false);
-			registry = new RpcSessionRegistry({ agentDir: prepared.configuration.agentDir, createRuntime: factory });
+			registry = createSessionWorkerRegistry(prepared.configuration.agentDir, factory);
 			const opened = await registry.openSession(prepared.profile);
 			entry = registry.getForCommand(opened.sessionId, "open_session");
 			send({ type: "ready", request: message.request, snapshot: snapshot() });

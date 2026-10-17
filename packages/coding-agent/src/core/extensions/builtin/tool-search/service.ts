@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { basename, extname } from "node:path";
+import type { EventLoopSlicer } from "../../../event-loop-slicer.ts";
 import { extensionLoadKey } from "../../extension-load-key.ts";
 import type { ExtensionAPI, ToolInfo } from "../../types.ts";
 import {
@@ -12,6 +13,7 @@ import {
 } from "./engine/bm25.ts";
 import type { ToolSearchDocument, ToolSearchSource } from "./engine/document.ts";
 import { deriveExtensionRegistrationId, rehydrate } from "./engine/marker.ts";
+import { activationMarkerCandidates } from "./engine/marker-candidates.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "./tool.ts";
 
 export interface ToolSearchFeederHooks {
@@ -188,9 +190,29 @@ export class ToolSearchService {
 
 	/** Replay ownership-aware and legacy MCP history once per catalog generation. */
 	maybeRehydrateFromHistory(messages: readonly unknown[]): string[] {
+		// Reading the catalog first may refresh it into a new generation, which must be scanned.
 		const catalog = this.getCatalog();
 		if (this.#historyScannedGeneration === this.#registryGeneration) return [];
 		this.#historyScannedGeneration = this.#registryGeneration;
+		return this.#rehydrate(messages, catalog);
+	}
+
+	/**
+	 * `maybeRehydrateFromHistory` for a whole session's entries: the candidate scan yields to the
+	 * event loop, so a large transcript does not hold a shared host while it opens (senpi#3518).
+	 */
+	async maybeRehydrateFromHistoryInSlices(messages: readonly unknown[], slicer: EventLoopSlicer): Promise<string[]> {
+		this.getCatalog();
+		if (this.#historyScannedGeneration === this.#registryGeneration) return [];
+		const generation = this.#registryGeneration;
+		this.#historyScannedGeneration = generation;
+		const candidates = await activationMarkerCandidates(messages, slicer);
+		// A catalog change while scanning is replayed by the next context build against the new generation.
+		if (this.isDisposed || generation !== this.#registryGeneration) return [];
+		return this.#rehydrate(candidates, this.getCatalog());
+	}
+
+	#rehydrate(messages: readonly unknown[], catalog: ToolSearchDocument[]): string[] {
 		const docsByName = new Map(
 			catalog.map((doc) => [
 				doc.name,

@@ -221,18 +221,11 @@
 			"note": "DELIBERATE transcript path: forked transcript written once (session-scale)"
 		},
 		{
-			"file": "src/core/session-manager.ts",
+			"file": "src/core/session-entry-file.ts",
 			"api": "appendFileSync",
-			"symbol": "open",
+			"symbol": "terminateFinalSessionLine",
 			"count": 1,
-			"note": "DELIBERATE transcript path: session file read and re-appended on open (session-scale)"
-		},
-		{
-			"file": "src/core/session-manager.ts",
-			"api": "readFileSync",
-			"symbol": "open",
-			"count": 1,
-			"note": "DELIBERATE transcript path: session file read and re-appended on open (session-scale)"
+			"note": "Newline repair of an unterminated final entry on open: reads the last byte and appends one newline (constant size; the whole-file read it replaced was session-scale, senpi#3518)"
 		},
 		{
 			"file": "src/core/session-resident-store.ts",
