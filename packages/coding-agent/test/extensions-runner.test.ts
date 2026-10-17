@@ -1219,7 +1219,6 @@ describe("ExtensionRunner", () => {
 			});
 		});
 
-		// senpi#3579: sections was undefined, and entries a handler added never reached the prompt.
 		it("shares one sections object across handlers and appends its entries to the final prompt", async () => {
 			const extCode1 = `
 				export default function(pi) {
