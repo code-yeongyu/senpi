@@ -259,6 +259,11 @@ export class ModelRegistry {
 		}
 	}
 
+	/** Whether the provider's resolved non-stored credential is a sign-in (`AuthCheck.type === "oauth"`). */
+	isProviderAuthOAuth(provider: string): boolean {
+		return this.runtime.isUsingOAuth(provider);
+	}
+
 	isUsingOAuth(model: Model<Api>): boolean {
 		return this.authStorage.get(model.provider)?.type === "oauth" || this.runtime.isUsingOAuth(model.provider);
 	}

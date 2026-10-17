@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- `get_auth_providers` reports a Claude subscription supplied by `CLAUDE_CODE_OAUTH_TOKEN` or an ambient Claude Code login on the subscription's sign-in row instead of its API-key row, so RPC clients show it as a connected subscription (#3537).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16

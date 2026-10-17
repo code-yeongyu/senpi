@@ -1,3 +1,23 @@
+## 2026-10-17 - A non-stored subscription sign-in is reported on the sign-in row (senpi#3537)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus` reports an `environment` credential on the provider's `oauth` row, and `{configured: false}` on its `api_key` row, when the provider's own auth check resolved it as a sign-in (`AuthCheck.type === "oauth"`). Every other non-stored source stays on the `api_key` row as before: an env `*_API_KEY`, models.json, a runtime `--api-key` or the fallback.
+- `packages/coding-agent/src/core/model-registry.ts`: `isProviderAuthOAuth(provider)`, a facade over `ModelRuntime.isUsingOAuth`.
+
+### Why
+
+senpi#3537: `CLAUDE_CODE_OAUTH_TOKEN` and the ambient Claude Code login pass `anthropic-subscription`'s check as `type: "oauth"`, and the router uses them as a sign-in. `get_auth_providers` still filed them on the api_key row, so RPC clients (the OmO desktop, sisyphuslabs/omo-desktop-app#2988) showed the subscription as not connected beside a second "API key".
+
+### Why an extension could not handle it
+
+Row status is computed by core `get_auth_providers`; an extension supplies only the check.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/auth-providers.ts`: `authMethodStatus` and its doc comment.
+- `packages/coding-agent/src/core/model-registry.ts`: the method above `isUsingOAuth`.
+
 ## 2026-10-16 - The fallback circuit takes one step per open episode and only reroutes sessions it concerns (senpi#3467)
 
 ### What changed

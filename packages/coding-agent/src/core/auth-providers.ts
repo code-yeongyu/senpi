@@ -107,7 +107,9 @@ export function buildLogoutProviderInfos(modelRegistry: ModelRegistry): AuthProv
  * any credential; a provider listed with both an oauth and an api_key row must not light both
  * for one credential. A stored credential belongs to the row of its own type. Every other source
  * (runtime `--api-key`, environment, models.json, fallback) is a key, so it belongs to the
- * api_key row when the provider has one, and to the only row otherwise.
+ * api_key row when the provider has one, and to the only row otherwise, unless the provider's own
+ * auth check reports it as a sign-in (`type: "oauth"`, e.g. `CLAUDE_CODE_OAUTH_TOKEN` or an ambient
+ * Claude Code login): the router uses that as a sign-in, so it belongs to the oauth row (#3537).
  */
 export function authMethodStatus(
 	modelRegistry: ModelRegistry,
@@ -119,6 +121,9 @@ export function authMethodStatus(
 	if (status.source === "stored") {
 		const storedType = modelRegistry.authStorage.get(info.id)?.type;
 		return storedType === undefined || storedType === info.authType ? status : { configured: false };
+	}
+	if (status.source === "environment" && modelRegistry.isProviderAuthOAuth(info.id)) {
+		return info.authType === "oauth" ? status : { configured: false };
 	}
 	return info.authType === "api_key" || !providerHasApiKeyRow ? status : { configured: false };
 }
