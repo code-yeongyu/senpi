@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Native grep ABI mismatch falls back to the ripgrep engine with a diagnostic warning naming the addon path and remediation advice instead of failing all grep searches, unless `SENPI_GREP_ENGINE=native` explicitly requires the native engine ([#3532](https://github.com/code-yeongyu/senpi/issues/3532)).
+
 ### Removed
 
 ## [2026.10.16-4] - 2026-10-16
