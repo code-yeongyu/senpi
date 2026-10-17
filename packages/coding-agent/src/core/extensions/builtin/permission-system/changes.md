@@ -1,5 +1,24 @@
 # Permission System Builtin Extension
 
+## 2026-10-16 - Normalize domain-grant schemes and padded ports (senpi#3458)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/always-scope.ts`: the strict URL prefix accepts case-insensitive HTTP(S) schemes, and the port is normalized numerically before comparing it with the scheme's default. Non-default ports remain in the literal origin.
+- `packages/coding-agent/test/permission/tool-scope-allow-always.test.ts`: the existing origin-grant owner covers uppercase schemes, padded HTTP/HTTPS default ports and a padded non-default port, including permission matching in both directions.
+
+### Why
+
+An uppercase scheme offered no domain option, and a padded default port disagreed with WHATWG's empty default port. Both URLs identify the same origin as their normalized spellings.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/permission-system/always-scope.ts` is the permission builtin's shared normalizer for offering and matching domain grants; an external extension cannot repair that decision.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/permission-system/always-scope.ts`: the strict URL prefix and port normalization in `canonicalUrlOrigin`.
+
 ## 2026-10-16 - A wider "Allow always" for tools without a parser (senpi#3403)
 
 ### What changed
