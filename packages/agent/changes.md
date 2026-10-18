@@ -1,3 +1,24 @@
+## 2026-10-18 - An unknown-tool error names the closest registered tools (omo#10416)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: a call to a name no tool carries now appends `Did you mean ...?` with up to three nearest registered tool names (folded case/separator, gateway and server namespaces), instead of the bare `Tool <name> not found`. The removed-tool hint path is unchanged and still takes precedence.
+- `packages/agent/src/tool-name-alias.ts`: `suggestToolNames` / `unknownToolSuggestion` / `unknownToolErrorText` — nearest-name ranking over the same name forms the alias resolver accepts, gated by an edit budget of a third of the folded candidate length (at least one edit, at most three); nothing close keeps the bare error.
+
+### Why
+
+- A slightly wrong tool name (typo, singular/plural, prefix drift between servers) cost at least one extra turn: the model re-listed tools or guessed. Every major MCP client answers this in the error itself.
+
+### Why an extension could not handle it
+
+- Extensions can resolve a name to a tool (`resolveUnknownToolCall`), but the error text for a call that resolves to nothing is produced inside `packages/agent/src/agent-loop.ts` (tool-call preparation) before any tool runs; no hook observes or rewrites that text.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `!tool` branch of `prepareToolCall` in `packages/agent/src/agent-loop.ts`, against any rework of unknown-tool handling (e.g. the removed-tool hint path).
+- LOW: `packages/agent/src/tool-name-alias.ts` — the new helper block appended to the file; take upstream's version of the file wholesale if the alias module is reworked.
+- LOW: the import statement for `./tool-name-alias.ts` in `packages/agent/src/agent-loop.ts`; keep `resolveCallTool`, `unknownToolErrorText`, and `withToolNameCorrection` together.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed

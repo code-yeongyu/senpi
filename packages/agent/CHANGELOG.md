@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- An unknown tool call's error now names the closest registered tools (`Did you mean ...?`, up to three), so a mistyped name costs one turn to repair instead of a re-list ([#10416](https://github.com/code-yeongyu/oh-my-openagent/issues/10416) by [@Bearmancer](https://github.com/Bearmancer)).
+
 ### Removed
 
 ## [2026.10.18-1] - 2026-10-18
