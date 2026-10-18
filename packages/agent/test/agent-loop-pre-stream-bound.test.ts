@@ -224,6 +224,255 @@ describe("the start bound covers the work before the provider stream (senpi#3471
 		expect(streamCalls).toBe(1);
 	});
 
+	it("gives a caller-aborted turn whose step never finishes the abort's message, not the bound's timeout text (#3481)", async () => {
+		// given
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 40,
+			timeoutMs: 10_000,
+			getApiKey: () => {
+				asked.resolve();
+				return never<string>();
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort(new Error("Stopped by the user"));
+
+		// then
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		expect(assistant?.errorMessage).toBe("Stopped by the user");
+		expect(assistant?.errorMessage).not.toContain("timed out");
+	});
+
+	it("carries a caller's non-Error abort reason as the message (#3510)", async () => {
+		// given
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 40,
+			timeoutMs: 10_000,
+			getApiKey: () => {
+				asked.resolve();
+				return never<string>();
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort("user stop");
+
+		// then
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		expect(assistant?.errorMessage).toBe("user stop");
+	});
+
+	it.each([
+		["a plain string", "user stop", "user stop"],
+		["an Error", new Error("Stopped by the user"), "Stopped by the user"],
+		["an Error with a long message, kept whole as before", new Error("e".repeat(600)), "e".repeat(600)],
+		["an object with a message", { message: "stopped from the client" }, "stopped from the client"],
+		["undefined (a bare abort)", undefined, "This operation was aborted"],
+		["a number", 42, "Request was aborted"],
+		["an object without a message", { code: 1 }, "Request was aborted"],
+		["an empty string", "", "Request was aborted"],
+		["a whitespace-only string", "   ", "Request was aborted"],
+	] as const)(
+		"keeps the caller's reason for %s on a caller-aborted turn (#3510)",
+		async (_shape, reason, expected) => {
+			// given
+			const controller = new AbortController();
+			const asked = Promise.withResolvers<void>();
+			const config: AgentLoopConfig = {
+				model: createModel(),
+				convertToLlm: identityConverter,
+				streamStartTimeoutMs: 40,
+				timeoutMs: 10_000,
+				getApiKey: () => {
+					asked.resolve();
+					return never<string>();
+				},
+			};
+			const turn = settledTurn(
+				agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+			);
+
+			// when
+			await asked.promise;
+			if (reason === undefined) controller.abort();
+			else controller.abort(reason);
+
+			// then
+			const assistant = assistantOf(await turn);
+			expect(assistant?.stopReason).toBe("aborted");
+			expect(assistant?.errorMessage).toBe(expected);
+		},
+	);
+
+	it("bounds a long string abort reason in the message (#3510)", async () => {
+		// given
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 40,
+			timeoutMs: 10_000,
+			getApiKey: () => {
+				asked.resolve();
+				return never<string>();
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort("x".repeat(5000));
+
+		// then
+		const message = assistantOf(await turn)?.errorMessage ?? "";
+		expect(message.length).toBe(501);
+		expect(message.endsWith("\u2026")).toBe(true);
+	});
+
+	it("caps a long reason on whole characters, never splitting an emoji (#3510)", async () => {
+		// given
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 40,
+			timeoutMs: 10_000,
+			getApiKey: () => {
+				asked.resolve();
+				return never<string>();
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort(`${"x".repeat(499)}\u{1F600}tail`);
+
+		// then
+		const message = assistantOf(await turn)?.errorMessage ?? "";
+		expect(message.isWellFormed()).toBe(true);
+		expect(message).toBe(`${"x".repeat(499)}\u{1F600}\u2026`);
+	});
+
+	it.each([
+		["a long string", "y".repeat(5000), `${"y".repeat(500)}\u2026`],
+		["an object with a message", { message: "stopped from the client" }, "stopped from the client"],
+	] as const)("shapes %s rethrown by a step through the same rules (#3510)", async (_shape, reason, expected) => {
+		// given: a context transform that rethrows the caller's own reason once aborted
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 10_000,
+			timeoutMs: 10_000,
+			transformContext: async (messages, signal) => {
+				asked.resolve();
+				await release.promise;
+				signal?.throwIfAborted();
+				return messages;
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort(reason);
+		release.resolve();
+
+		// then
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		expect(assistant?.errorMessage).toBe(expected);
+	});
+
+	it("keeps a step's own thrown value when it is not the caller's reason (#3510)", async () => {
+		// given: the step throws its own string after the caller aborted with a different reason
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 10_000,
+			timeoutMs: 10_000,
+			transformContext: async () => {
+				asked.resolve();
+				await release.promise;
+				throw "transform failed";
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort("user stop");
+		release.resolve();
+
+		// then
+		expect(assistantOf(await turn)?.errorMessage).toBe("transform failed");
+	});
+
+	it("keeps the step's own error on a caller-aborted turn that fails for another reason (#3510)", async () => {
+		// given: the key lookup is running when the caller aborts, then fails on its own
+		const controller = new AbortController();
+		const asked = Promise.withResolvers<void>();
+		const key = Promise.withResolvers<string>();
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			streamStartTimeoutMs: 10_000,
+			timeoutMs: 10_000,
+			getApiKey: () => {
+				asked.resolve();
+				return key.promise;
+			},
+		};
+		const turn = settledTurn(
+			agentLoop([userMessage("Hello")], context(), config, controller.signal, () => new AssistantEventStream()),
+		);
+
+		// when
+		await asked.promise;
+		controller.abort(new Error("Stopped by the user"));
+		key.reject(new Error("key service answered 500"));
+
+		// then: only the bound's own timeout is replaced by the abort; any other error is kept
+		const assistant = assistantOf(await turn);
+		expect(assistant?.stopReason).toBe("aborted");
+		expect(assistant?.errorMessage).toBe("key service answered 500");
+	});
+
 	it("ends a caller-aborted turn whose step never finishes at the bound, still as aborted", async () => {
 		// given
 		const controller = new AbortController();

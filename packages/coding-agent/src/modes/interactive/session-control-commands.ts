@@ -16,9 +16,12 @@ import type {
 	QuestionResponse,
 	SessionControlDrainResult,
 } from "../../core/extensions/types.ts";
+import { SESSION_STATUS_CAPABILITY } from "../rpc/custom-capability.ts";
 import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
+import type { ControlAttachments } from "./session-control-attach.ts";
 import type { ControlFeed } from "./session-control-feed.ts";
+import { runTuiRpcCommand, TUI_RPC_COMMANDS } from "./session-control-rpc-commands.ts";
 import { type ControlCommand, type ControlConnection, failure, success } from "./session-control-server.ts";
 import {
 	runSessionControlCommand,
@@ -41,6 +44,7 @@ export interface ControlCommandContext {
 	readonly surface: TuiControlSurface;
 	readonly feed: ControlFeed;
 	readonly wake: (deliveryIds?: readonly string[]) => Promise<SessionControlDrainResult>;
+	readonly attachments: ControlAttachments;
 }
 
 export const TUI_CONTROL_CAPABILITY = "tui_control";
@@ -55,13 +59,14 @@ const TUI_CONTROL_COMMANDS = [
 	"wake",
 	"extension_ui_response",
 	...SESSION_CONTROL_COMMANDS,
+	...TUI_RPC_COMMANDS,
 ];
 
 export async function runControlCommand(
 	context: ControlCommandContext,
 	connection: ControlConnection,
 	command: ControlCommand,
-): Promise<object> {
+): Promise<object | null> {
 	const { id, type } = command;
 	const { session } = context;
 	switch (type) {
@@ -70,8 +75,9 @@ export async function runControlCommand(
 			return success(id, type, {
 				protocolVersion: 1,
 				serverVersion: VERSION,
-				capabilities: [TUI_CONTROL_CAPABILITY],
+				capabilities: [TUI_CONTROL_CAPABILITY, SESSION_STATUS_CAPABILITY],
 				mode: "tui",
+				endpoint_kind: "tui",
 				instanceId: context.instanceId,
 				generation: 0,
 				engineVersion: build.text,
@@ -111,8 +117,11 @@ export async function runControlCommand(
 		}
 		case "extension_ui_response":
 			return answerQuestion(context.surface, command);
-		default:
+		default: {
+			const rpc = await runTuiRpcCommand(context, connection, command);
+			if (rpc !== undefined) return rpc;
 			return (await runSessionControlCommand(session, context.surface, command)) ?? failure(id, type, "unsupported");
+		}
 	}
 }
 

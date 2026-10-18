@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
@@ -104,6 +105,7 @@ export function streamWithCredentialRotation(
 	const hasher = options.hasher ?? sha256SlotHasher;
 	const affinityKey = options.affinityKey ?? randomUUID();
 	const useAffinity = sources.policy?.affinity !== false;
+	const pooled: PooledCredential | undefined = sources.credential;
 	const now = sources.now ?? Date.now;
 
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
@@ -111,7 +113,8 @@ export function streamWithCredentialRotation(
 		select: (candidates) => {
 			const pinned = candidates.find((candidate) => candidate.pinned === true);
 			if (pinned) return pinned;
-			const ordered = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
+			const ranked = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
+			const ordered = applyAccountOrder(pooled?.order, ranked);
 
 			const winner = ordered[0];
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");

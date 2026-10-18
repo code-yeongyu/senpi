@@ -185,6 +185,66 @@ describe("restartable-command durability class", () => {
 		expect(entry?.persistent).toBe(false);
 	});
 
+	it("(b2) persists human_input and tags only the watch's output lines as human input (omo#10280)", async () => {
+		await mkdir(workDir, { recursive: true });
+		bindTerminalManifestWriter(sessionId, writer);
+		await createMonitorTool(ctx).execute("durable-human", {
+			description: "team chat",
+			command: "sh -c 'printf \"a person wrote this\\n\"; sleep 30'",
+			persistent: true,
+			human_input: true,
+		});
+		const event = await sink.waitFor(
+			(candidate) => candidate.type === "line" && candidate.line === "a person wrote this",
+			"human line",
+		);
+		expect(event).toMatchObject({ humanInput: true });
+		await writer.flush();
+		expect((await writer.store.read())?.monitors[0]?.humanInput).toBe(true);
+
+		const refused = await createMonitorTool(ctx).execute("file-human", {
+			description: "a file",
+			path: join(workDir, "inbox"),
+			human_input: true,
+		});
+		expect(refused.content[0]).toMatchObject({
+			text: expect.stringContaining("human_input applies to command monitors"),
+		});
+
+		const rpcRefused = await createMonitorTool(ctx).execute("rpc-human", {
+			description: "children status",
+			type: "rpc",
+			target: "children",
+			human_input: true,
+		});
+		expect(rpcRefused.content[0]).toMatchObject({
+			text: expect.stringContaining("an rpc watch reports session status"),
+		});
+	});
+
+	it("(b3) a restored human_input watch keeps tagging its lines; the restore notice stays machine status", async () => {
+		await mkdir(workDir, { recursive: true });
+		const marker = join(workDir, "human-marker");
+		await restore(
+			manifestMonitor({
+				monitorId: "mon_DURABLEHUMAN000A",
+				command: `sh -c 'printf "person after restart\\n"; while [ ! -e "${marker}" ]; do sleep 0.05; done'`,
+				cwd: workDir,
+				humanInput: true,
+			}),
+		);
+		const human = await sink.waitFor(
+			(event) => event.type === "line" && event.line === "person after restart",
+			"restored human line",
+		);
+		expect(human).toMatchObject({ humanInput: true });
+		const notice = await sink.waitFor(
+			(event) => event.type === "line" && event.line.startsWith("restored after"),
+			"restore notice",
+		);
+		expect(notice).not.toHaveProperty("humanInput");
+	});
+
 	it("(c) restores by spawning exactly once with the saved command and cwd, keeping the mon_ id", async () => {
 		await mkdir(workDir, { recursive: true });
 		const marker = join(workDir, "restored-marker");

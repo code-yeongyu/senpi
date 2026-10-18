@@ -1,3 +1,21 @@
+## 2026-10-18 - --tool-runtime selects where heavy tool work runs (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: `Args.toolRuntime`, one parse branch for `--tool-runtime <in-process|child>` (an unknown value pushes the parse error "--tool-runtime must be in-process or child" and sets nothing) and one help line. The default and the `SENPI_TOOL_RUNTIME` fallback live in the fork-only `cli/tool-runtime.ts` (`resolveToolRuntime`), not here.
+
+### Why
+
+The per-session tool child (senpi#3566) needs one switch every mode reads. The flag is plumbing only in this step: it changes no execution.
+
+### Why an extension could not handle it
+
+CLI flags that the host process itself reads before any extension loads are parsed in core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the `Args` interface beside `sessionRuntime`, the parse switch beside `--session-runtime`, and the help block.
+
 ## 2026-10-15 - senpi host session unload (senpi#3225)
 
 ### What changed

@@ -134,6 +134,7 @@ async function selectStoredAccount(
 	return selectAccount(accounts, {
 		...options.affinity,
 		pinnedAccount: options.affinity?.pinnedAccount ?? credential?.pinned,
+		...(credential?.order === undefined ? {} : { accountOrder: credential.order }),
 		now,
 	});
 }

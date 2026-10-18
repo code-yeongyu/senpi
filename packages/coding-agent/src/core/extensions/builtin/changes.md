@@ -1,3 +1,21 @@
+## 2026-10-17 - /files lists the whole active path after a reopen (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/files.ts`: `/files` reads `ctx.sessionManager.getFullBranch()` instead of `getBranch()`.
+
+### Why
+
+- A reopened compacted session keeps only its latest compaction window in memory (#3519), so `getBranch()` covers only that window; `/files` promises the files of the whole session.
+
+### Why an extension could not handle it
+
+- This is the builtin extension itself; the fix is the call it makes.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/files.ts`, the branch read at the top of the handler.
+
 ## 2026-10-15 - TPS is timed from the first streamed token to the last (senpi#3393)
 
 ### What changed

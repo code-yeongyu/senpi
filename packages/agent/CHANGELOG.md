@@ -10,6 +10,21 @@
 
 ### Fixed
 
+- A turn you stop with a reason (`abort("user stop")`, or an object with a `message`) shows that reason, capped at 500 characters, not "Request was aborted" ([#3510](https://github.com/code-yeongyu/senpi/issues/3510)).
+- A turn you stop while its context transform or API key lookup is still running ends with your stop, not with "Provider stream start timed out" and advice to raise a timeout setting ([#3481](https://github.com/code-yeongyu/senpi/issues/3481)).
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
 - Aborting a turn while its context transform or API key lookup is still running behaves as it did before the start bound covered that work: the request still goes out with the aborted signal and the turn ends aborted; the bound only ends a step that nothing else ended.
 
 - A turn no longer waits forever when the context transform, the API key lookup or the provider's stream function never finishes: the start bound (or the idle bound when none is set) now covers that work and ends the turn with a provider timeout ([#3471](https://github.com/code-yeongyu/senpi/issues/3471)).

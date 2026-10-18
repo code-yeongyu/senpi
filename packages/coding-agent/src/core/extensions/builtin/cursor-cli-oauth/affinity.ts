@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { applyAccountOrder } from "@earendil-works/pi-ai/auth/pool/select";
 
 export const DEFAULT_CURSOR_AFFINITY_KEY = "cursor-cli-oauth-default";
 
@@ -12,6 +13,8 @@ export type CursorAffinityOptions = {
 	affinityKey?: string;
 	sessionId?: string;
 	pinnedAccount?: string;
+	/** The user's account order (senpi#3591): tried after the pin, before HRW. */
+	accountOrder?: readonly string[];
 	now?: number;
 };
 
@@ -70,7 +73,9 @@ function selectUnblocked<T extends CursorAffinityAccountSlot>(
 			? undefined
 			: accounts.find((account) => account.name === options.pinnedAccount);
 	if (pinned && !isBlocked(pinned, now)) return pinned;
-	return rendezvousOrder(getAffinityKey(options), accounts).find((account) => !isBlocked(account, now));
+	return applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts)).find(
+		(account) => !isBlocked(account, now),
+	);
 }
 
 function soonestUnblockAt(accounts: readonly CursorAffinityAccountSlot[], now: number): number | undefined {

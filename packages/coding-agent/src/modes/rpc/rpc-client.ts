@@ -769,7 +769,7 @@ export class RpcClient {
 	async clearQueue(options?: { abortWillFollow?: boolean }): Promise<{
 		steering: string[];
 		followUp: string[];
-		ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
+		ordered: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number; revision: number }>;
 	}> {
 		const response = await this.send({ type: "clear_queue", abortWillFollow: options?.abortWillFollow });
 		return this.getData(response);
@@ -1069,11 +1069,19 @@ export class RpcClient {
 	}
 
 	/**
-	 * Get session entries in append order, optionally only those after the `since` entry id.
+	 * Get session entries in append order, optionally only those after the `since` entry id. Pass `page`
+	 * (`limit` and/or `maxBytes`) to read a long history in bounded pages: repeat with `since: nextSince`
+	 * until `hasMore` is false. An unpaged read of a history too large for one answer fails with
+	 * `response_too_large`.
 	 */
-	async getEntries(since?: string): Promise<{ entries: SessionEntry[]; leafId: string | null }> {
-		const response = await this.send({ type: "get_entries", since });
-		return this.getData<{ entries: SessionEntry[]; leafId: string | null }>(response);
+	async getEntries(
+		since?: string,
+		page?: { readonly limit?: number; readonly maxBytes?: number },
+	): Promise<{ entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string }> {
+		const response = await this.send({ type: "get_entries", since, ...page });
+		return this.getData<{ entries: SessionEntry[]; leafId: string | null; hasMore?: boolean; nextSince?: string }>(
+			response,
+		);
 	}
 
 	/**
@@ -1210,6 +1218,11 @@ export class RpcClient {
 	/** Pin a provider account for future session-affine requests, or clear the pin. */
 	async pinProviderAccount(provider: string, name: string | null): Promise<void> {
 		await this.send({ type: "account_pin", provider, name });
+	}
+
+	/** Set the order the provider's accounts are tried in after a pin, or clear it with null. */
+	async orderProviderAccounts(provider: string, names: string[] | null): Promise<void> {
+		await this.send({ type: "account_order", provider, names });
 	}
 
 	/** Remove a persisted provider account slot. Environment slots are read-only. */

@@ -96,6 +96,7 @@ type ManagedPool = {
 	environment: NodeJS.ProcessEnv;
 	lane: Exclude<AnthropicSubscriptionTokenInjection, "ambient">;
 	pinnedAccount?: string;
+	accountOrder?: readonly string[];
 	store: CredentialStore;
 };
 
@@ -130,7 +131,14 @@ async function managedPool(
 	if (lane === "ambient") return undefined;
 	if (accounts.length === 0) throw new Error(NO_MANAGED_ACCOUNTS_ERROR);
 	const stored = credential?.type === "oauth" ? (credential as AnthropicSubscriptionCredential) : undefined;
-	return { accounts, environment, lane, pinnedAccount: settings.pinnedAccount ?? stored?.pinned, store };
+	return {
+		accounts,
+		environment,
+		lane,
+		pinnedAccount: settings.pinnedAccount ?? stored?.pinned,
+		...(stored?.order === undefined ? {} : { accountOrder: stored.order }),
+		store,
+	};
 }
 
 function storedAccounts(credential: Credential | undefined, pool: ManagedPool): AccountSlot[] {
@@ -290,6 +298,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			selectAccount(accounts, {
 				sessionId: input.sessionId,
 				pinnedAccount: input.pinnedAccount ?? pool.pinnedAccount,
+				...(pool.accountOrder === undefined ? {} : { accountOrder: pool.accountOrder }),
 				...(input.preferredAccount === undefined ? {} : { preferredAccount: input.preferredAccount }),
 				now: activeBoundary.now(),
 				...(input.model === undefined ? {} : { model: input.model }),

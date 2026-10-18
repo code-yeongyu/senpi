@@ -865,20 +865,36 @@ export class ModelRuntime implements Models {
 	}
 
 	getProviderAuthStatus(providerId: string): AuthStatus {
-		if (this.credentials.hasRuntimeApiKey(providerId)) return { configured: true, source: "runtime" };
-		if (this.snapshot.storedProviders.has(providerId)) return { configured: true, source: "stored" };
+		return this.resolveProviderAuth(providerId).status;
+	}
+
+	/**
+	 * The provider's auth status plus whether it is a non-stored sign-in (#3537). `signIn` is set
+	 * only by the last branch, the provider's own check resolving `type: "oauth"`, so a runtime key,
+	 * a stored credential or a configured models.json/extension key always wins first.
+	 */
+	resolveProviderAuth(providerId: string): { status: AuthStatus; signIn: boolean } {
+		if (this.credentials.hasRuntimeApiKey(providerId)) {
+			return { status: { configured: true, source: "runtime" }, signIn: false };
+		}
+		if (this.snapshot.storedProviders.has(providerId)) {
+			return { status: { configured: true, source: "stored" }, signIn: false };
+		}
 		const configured = configuredRequestAuthStatus(
 			this.config.getProvider(providerId),
 			this.extensionProviders.get(providerId),
 		);
-		if (configured) return configured;
+		if (configured) return { status: configured, signIn: false };
 		const check = this.snapshot.auth.get(providerId);
-		if (!check) return { configured: false };
+		if (!check) return { status: { configured: false }, signIn: false };
 		return {
-			configured: true,
-			source: "environment",
-			label: check.source,
-			...(check.ambient ? { ambient: true } : {}),
+			status: {
+				configured: true,
+				source: "environment",
+				label: check.source,
+				...(check.ambient ? { ambient: true } : {}),
+			},
+			signIn: check.type === "oauth",
 		};
 	}
 

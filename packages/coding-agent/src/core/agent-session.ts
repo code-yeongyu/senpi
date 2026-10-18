@@ -968,10 +968,20 @@ export type QueuedInput = ClientMessageIdentity & {
 	readonly enqueueOrder: number;
 	/** Session-unique id of this queued input (`q_<n>`), stable until it is delivered or removed. */
 	readonly queuedId: string;
+	/** 1 when queued, +1 on every edit: a change can name the revision it was based on (senpi#3459). */
+	readonly revision: number;
 };
 
-/** What a dequeue or edit of one queued input did; `already_delivered` once the input reached a turn. */
-export type QueuedInputChange = "removed" | "edited" | "already_delivered" | "not_found";
+/**
+ * What a dequeue or edit of one queued input did; `already_delivered` once the input reached a turn, `conflict`
+ * when the caller's `expectedRevision` is not the input's current revision (nothing was changed).
+ */
+export type QueuedInputChange = "removed" | "edited" | "already_delivered" | "not_found" | "conflict";
+
+/** A queued-input change applies only while the input is still at this revision. */
+export interface QueuedInputChangeOptions {
+	readonly expectedRevision?: number;
+}
 
 export type ClearedQueue = {
 	steering: string[];
@@ -2753,6 +2763,16 @@ export class AgentSession {
 		queueMicrotask(() => {
 			void this._emitAgentIdleAfterDeferredTurns(settlementEpoch, deferredTurnClaims);
 		});
+	}
+
+	/**
+	 * Drops the session manager's materialized views while nothing runs, when a full-history view of a trimmed
+	 * mirror is among them (senpi#3519). Unlike `releaseSettledSessionMemory`, nothing is tokenized in place, so a
+	 * history read can call it while its answer, which may share message objects, is still unwritten.
+	 */
+	releaseFullHistoryView(): void {
+		if (this._isAgentRunActive || this._sessionWorkBarrier.hasActiveWork) return;
+		if (this.sessionManager.holdsMaterializedHistory()) this.sessionManager.dropMaterializedCaches();
 	}
 
 	/**
@@ -6249,7 +6269,14 @@ export class AgentSession {
 		this._nextQueuedInputOrder = Math.max(this._nextQueuedInputOrder, order);
 		this._nextQueuedId += 1;
 		const queuedId = `q_${this._nextQueuedId}`;
-		this._queuedInputOrder.push({ text, mode, enqueueOrder: order, queuedId, ...clientMessageIdentity(options) });
+		this._queuedInputOrder.push({
+			text,
+			mode,
+			enqueueOrder: order,
+			queuedId,
+			revision: 1,
+			...clientMessageIdentity(options),
+		});
 		if (message !== undefined) this._queuedMessages.set(queuedId, message);
 		return queuedId;
 	}
@@ -6276,16 +6303,21 @@ export class AgentSession {
 	 * Removes one queued input before it reaches a turn, from the visible lists and the native queue alike.
 	 * An input already drained into a turn answers `already_delivered`.
 	 */
-	dequeueQueuedInput(queuedId: string): QueuedInputChange {
-		return this._changeQueuedInput(queuedId, undefined);
+	dequeueQueuedInput(queuedId: string, options?: QueuedInputChangeOptions): QueuedInputChange {
+		return this._changeQueuedInput(queuedId, undefined, options?.expectedRevision);
 	}
 
-	/** Replaces the text of one queued input in place, keeping its order and identity. */
-	editQueuedInput(queuedId: string, text: string): QueuedInputChange {
-		return this._changeQueuedInput(queuedId, text);
+	/** Replaces the text of one queued input in place, keeping its order and identity, and bumps its revision. */
+	editQueuedInput(queuedId: string, text: string, options?: QueuedInputChangeOptions): QueuedInputChange {
+		return this._changeQueuedInput(queuedId, text, options?.expectedRevision);
 	}
 
-	private _changeQueuedInput(queuedId: string, nextText: string | undefined): QueuedInputChange {
+	// Synchronous from the revision check to the change: nothing else on the session loop can land in between.
+	private _changeQueuedInput(
+		queuedId: string,
+		nextText: string | undefined,
+		expectedRevision: number | undefined,
+	): QueuedInputChange {
 		const index = this._queuedInputOrder.findIndex((input) => input.queuedId === queuedId);
 		if (index === -1) return this._deliveredQueuedIds.has(queuedId) ? "already_delivered" : "not_found";
 		const record = this._queuedInputOrder[index]!;
@@ -6309,6 +6341,13 @@ export class AgentSession {
 						],
 					};
 		const deferredIndex = message === undefined ? -1 : deferred.indexOf(message);
+		if (expectedRevision !== undefined && record.revision !== expectedRevision) {
+			// An input that already left the native queue answers already_delivered, as without a revision;
+			// replacing the message with itself is a read-only probe of that queue.
+			const queued =
+				message !== undefined && (deferredIndex !== -1 || this.agent.replaceQueuedMessage(message, message));
+			return queued ? "conflict" : "already_delivered";
+		}
 		const stillQueued =
 			message !== undefined &&
 			(deferredIndex !== -1 ||
@@ -6332,7 +6371,7 @@ export class AgentSession {
 			this._queuedMessages.delete(queuedId);
 		} else {
 			if (textIndex !== -1) texts[textIndex] = nextText;
-			this._queuedInputOrder[index] = { ...record, text: nextText };
+			this._queuedInputOrder[index] = { ...record, text: nextText, revision: record.revision + 1 };
 			this._queuedMessages.set(queuedId, nextMessage);
 		}
 		this._emitQueueUpdate();
@@ -11802,7 +11841,8 @@ export class AgentSession {
 			cwd: this.sessionManager.getCwd(),
 		};
 
-		const branchEntries = this.sessionManager.getBranch();
+		// The whole path from the file: a reopened or compacted session keeps only its latest window resident (senpi#3519).
+		const branchEntries = this.sessionManager.getFullBranch();
 		const lines = [JSON.stringify(header)];
 
 		// Re-chain parentIds to form a linear sequence

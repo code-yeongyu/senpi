@@ -2,6 +2,29 @@ export const TERMINAL_MONITOR_STATE_EVENT = "terminal_monitor_state";
 export const TERMINAL_MONITOR_ENDED_EVENT = "terminal_monitor_ended";
 export const WAKE_SOURCE_STATE_EVENT = "wake_source_state";
 export const CONTINUATION_HOLD_STATE_EVENT = "continuation_hold_state";
+export const MONITOR_NOTIFICATION_CUSTOM_TYPE = "senpi-monitor:notification";
+
+/** Per-monitor entry in a monitor notification's `details.monitors`. */
+export interface MonitorNotificationDetail {
+	readonly id: string;
+	readonly description: string;
+	readonly eventCount: number;
+	readonly kinds: readonly string[];
+	/** Set when the watch was created with `human_input` and this delivery carries its output lines. */
+	readonly humanInput?: true;
+}
+
+/** True for a delivered monitor notification that carries a person's words (omo#10280). */
+export function isHumanInputMonitorNotification(message: unknown): boolean {
+	if (typeof message !== "object" || message === null) return false;
+	const candidate = message as { role?: unknown; customType?: unknown; details?: { monitors?: unknown } };
+	if (candidate.role !== "custom" || candidate.customType !== MONITOR_NOTIFICATION_CUSTOM_TYPE) return false;
+	const monitors = candidate.details?.monitors;
+	return (
+		Array.isArray(monitors) &&
+		monitors.some((monitor) => typeof monitor === "object" && monitor !== null && monitor.humanInput === true)
+	);
+}
 
 export interface WakeSourceStateItem {
 	readonly id: string;

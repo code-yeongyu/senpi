@@ -1,3 +1,4 @@
+import { type ToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
 import {
 	ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,
 	AUTO_PERMISSION_PRESET_CAPABILITY,
@@ -16,6 +17,7 @@ import {
 	MOVED_PATH_GUARD_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
+	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
@@ -38,10 +40,12 @@ export const RESOLVE_PATH_CAPABILITY = "resolve_path";
 
 /**
  * The capabilities a multi-session host advertises in `get_protocol_info`, in their wire order. `warm` is added only
- * when the runtime is in-process, and `negotiated` carries the launch capabilities this connection was given.
+ * when the runtime is in-process, `tool_runtime:<kind>` names where heavy tool work runs, and `negotiated` carries
+ * the launch capabilities this connection was given.
  */
 export function multiSessionHostCapabilities(options: {
 	readonly warm: boolean;
+	readonly toolRuntime: ToolRuntimeKind;
 	readonly negotiated: readonly string[];
 }): string[] {
 	return [
@@ -58,6 +62,7 @@ export function multiSessionHostCapabilities(options: {
 			CONTINUE_FROM_LEAF_CAPABILITY,
 			EVAL_CELLS_CAPABILITY,
 			AUTH_KEY_VERIFY_CAPABILITY,
+			QUEUED_MESSAGE_REVISION_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the
@@ -90,6 +95,7 @@ export function multiSessionHostCapabilities(options: {
 			AUTO_PERMISSION_PRESET_CAPABILITY,
 			// Only an in-process runtime shares the loop a warm loads into (senpi#2314).
 			...(options.warm ? [WARM_CAPABILITY] : []),
+			toolRuntimeCapability(options.toolRuntime),
 			...options.negotiated,
 		]),
 	];

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { applyAccountOrder } from "@earendil-works/pi-ai/auth/pool/select";
 import { activeModelBlockUntil, pruneModelBlocks } from "../../../credential-pool/model-scope.ts";
 import type { AccountSlot } from "./accounts.ts";
 
@@ -13,6 +14,8 @@ export type AffinityOptions = {
 	 * session does not move accounts and re-send its whole conversation (senpi#2891).
 	 */
 	preferredAccount?: string;
+	/** The user's account order (senpi#3591): tried after the pin and the session's own account, before HRW. */
+	accountOrder?: readonly string[];
 	now?: number;
 	/** The requested model; an account blocked only for another model stays eligible for it. */
 	model?: string;
@@ -111,7 +114,7 @@ function selectUnblocked(
 			? undefined
 			: accounts.find((account) => account.name === options.preferredAccount);
 	if (preferred && !isBlockedFor(preferred, now, options.model)) return preferred;
-	return rendezvousOrder(getAffinityKey(options), accounts).find(
+	return applyAccountOrder(options.accountOrder, rendezvousOrder(getAffinityKey(options), accounts)).find(
 		(account) => !isBlockedFor(account, now, options.model),
 	);
 }

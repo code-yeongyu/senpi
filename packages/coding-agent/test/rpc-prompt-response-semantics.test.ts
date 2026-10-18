@@ -105,7 +105,7 @@ function expectedQueueUpdate(type: "steer" | "follow_up"): ParsedOutputLine {
 		type: "queue_update",
 		steering: type === "steer" ? ["B"] : [],
 		followUp: type === "follow_up" ? ["B"] : [],
-		ordered: [{ text: "B", mode, enqueueOrder: expect.any(Number), queuedId: expect.any(String) }],
+		ordered: [{ text: "B", mode, enqueueOrder: expect.any(Number), queuedId: expect.any(String), revision: 1 }],
 	};
 }
 
@@ -568,12 +568,14 @@ describe("RPC prompt response semantics", () => {
 								mode: "steer",
 								enqueueOrder: expect.any(Number),
 								queuedId: expect.any(String),
+								revision: 1,
 							},
 							{
 								text: "Summarize when finished",
 								mode: "followUp",
 								enqueueOrder: expect.any(Number),
 								queuedId: expect.any(String),
+								revision: 1,
 							},
 						],
 					},

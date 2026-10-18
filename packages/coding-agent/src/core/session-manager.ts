@@ -19,7 +19,6 @@ import {
 	mkdirSync,
 	openSync,
 	readdirSync,
-	readFileSync,
 	readSync,
 	rmSync,
 	statSync,
@@ -30,6 +29,7 @@ import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
@@ -42,8 +42,15 @@ import {
 	type SessionListProgress,
 	sortSessionInfos,
 } from "./session-discovery.ts";
+import {
+	loadEntriesFromFile,
+	loadEntriesFromFileAsync,
+	parseSessionEntryLine,
+	terminateFinalSessionLine,
+} from "./session-entry-file.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
+import { planLoadedTail } from "./session-loaded-tail.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 import {
 	discardFailedFirstFlush,
@@ -59,6 +66,7 @@ import {
 import { isVirtualModel } from "./virtual-models.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
+export { loadEntriesFromFile, loadEntriesFromFileAsync } from "./session-entry-file.ts";
 
 // Fork change: inlined UUIDv7 (upstream uses the `uuid` npm package). Keeps this
 // package self-contained so consumers don't need a transitive `uuid` install.
@@ -155,6 +163,10 @@ export interface UsageTotals {
 	cacheWrite: number;
 	cost: number;
 	latestCacheHitRate: number | undefined;
+}
+
+function emptyUsageTotals(): UsageTotals {
+	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, latestCacheHitRate: undefined };
 }
 
 export const CURRENT_SESSION_VERSION = 3;
@@ -439,6 +451,7 @@ export type ReadonlySessionManager = Pick<
 	| "getEntry"
 	| "getLabel"
 	| "getBranch"
+	| "getFullBranch"
 	| "buildContextEntries"
 	| "buildSessionContext"
 	| "buildSessionProjection"
@@ -915,7 +928,6 @@ export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultA
 	return sessionDir;
 }
 
-const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 const SESSION_HEADER_READ_BUFFER_SIZE = 4096;
 /** Bound synchronous header discovery while allowing large cwd and custom metadata fields. */
 const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
@@ -925,61 +937,6 @@ class SessionHeaderScanLimitError extends Error {
 		super(`Session header exceeds ${MAX_SESSION_HEADER_SCAN_BYTES}-byte scan limit: ${filePath}`);
 		this.name = "SessionHeaderScanLimitError";
 	}
-}
-
-function parseSessionEntryLine(line: string): FileEntry | null {
-	if (!line.trim()) return null;
-	try {
-		return JSON.parse(line) as FileEntry;
-	} catch {
-		// Skip malformed lines
-		return null;
-	}
-}
-
-/** Exported for testing */
-export function loadEntriesFromFile(filePath: string): FileEntry[] {
-	const resolvedFilePath = normalizePath(filePath);
-	if (!existsSync(resolvedFilePath)) return [];
-
-	const entries: FileEntry[] = [];
-	let pending = "";
-	const fd = openSync(resolvedFilePath, "r");
-	try {
-		const decoder = new StringDecoder("utf8");
-		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
-
-		while (true) {
-			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
-			if (bytesRead === 0) break;
-
-			pending += decoder.write(buffer.subarray(0, bytesRead));
-			let lineStart = 0;
-			let newlineIndex = pending.indexOf("\n", lineStart);
-			while (newlineIndex !== -1) {
-				const entry = parseSessionEntryLine(pending.slice(lineStart, newlineIndex));
-				if (entry) entries.push(entry);
-				lineStart = newlineIndex + 1;
-				newlineIndex = pending.indexOf("\n", lineStart);
-			}
-			pending = pending.slice(lineStart);
-		}
-
-		pending += decoder.end();
-		const finalEntry = parseSessionEntryLine(pending);
-		if (finalEntry) entries.push(finalEntry);
-	} finally {
-		closeSync(fd);
-	}
-
-	// Validate session header before repairing the file.
-	if (entries.length === 0) return entries;
-	const header = entries[0];
-	if (header.type !== "session" || typeof header.id !== "string") {
-		return [];
-	}
-
-	return entries;
 }
 
 /**
@@ -1054,6 +1011,42 @@ function getSessionHeaderCwd(header: SessionHeader): string | undefined {
 	return typeof cwd === "string" ? cwd : undefined;
 }
 
+interface OpenHeaderDiscovery {
+	header: SessionHeader | null;
+	/** The bounded header scan gave up: only a full load can find the header. */
+	needsFullLoad: boolean;
+}
+
+function discoverOpenHeader(resolvedPath: string, cwdOverride: string | undefined): OpenHeaderDiscovery {
+	if (cwdOverride !== undefined || !existsSync(resolvedPath)) return { header: null, needsFullLoad: false };
+	try {
+		return { header: readSessionHeader(resolvedPath), needsFullLoad: false };
+	} catch (error) {
+		if (!(error instanceof SessionHeaderScanLimitError)) throw error;
+		return { header: null, needsFullLoad: true };
+	}
+}
+
+function headerOf(entries: FileEntry[] | undefined): SessionHeader | null {
+	const firstEntry = entries?.[0];
+	return firstEntry?.type === "session" ? firstEntry : null;
+}
+
+function openLocation(
+	resolvedPath: string,
+	sessionDir: string | undefined,
+	cwdOverride: string | undefined,
+	header: SessionHeader | null,
+): { cwd: string; dir: string } {
+	// The header keeps the cwd it was recorded with; a folder the OmO desktop moved opens where it lives now,
+	// and the file is never rewritten (senpi#2990).
+	const headerCwd = header ? getSessionHeaderCwd(header) : undefined;
+	const cwd = cwdOverride ?? (headerCwd ? resolveMovedPath(headerCwd) : headerCwd) ?? process.cwd();
+	// If no sessionDir provided, derive from file's parent directory
+	const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
+	return { cwd, dir };
+}
+
 /** Exported for testing */
 export function findMostRecentSession(sessionDir: string, cwd?: string): string | null {
 	const resolvedSessionDir = normalizePath(sessionDir);
@@ -1088,6 +1081,8 @@ export function findMostRecentSession(sessionDir: string, cwd?: string): string 
  * handles compaction summaries and follows the path from root to current leaf.
  */
 let sessionEntryLoader = loadEntriesFromFile;
+
+const DEFERRED_FILE_LOAD = Symbol("deferred-session-file-load");
 
 /** Test seam for observing disk reloads without mocking ESM filesystem exports. */
 export function setSessionEntryLoaderForTesting(loader: typeof loadEntriesFromFile): () => void {
@@ -1144,6 +1139,8 @@ export class SessionManager {
 	private leafId: string | null = null;
 	private residentStore = new ResidentStringStore();
 	private mirrorTrimmed = false;
+	// Set while a navigation to an entry outside the mirror reloads the whole file into it.
+	private loadingFullMirror = false;
 	/**
 	 * Ids of entries a compaction trimmed from the resident mirror. They are still in the session file,
 	 * so a new entry must not reuse one: a reused id turns the file's parent chain into a cycle and the
@@ -1201,7 +1198,7 @@ export class SessionManager {
 		sessionFile: string | undefined,
 		persist: boolean,
 		newSessionOptions?: NewSessionOptions,
-		preloadedFileEntries?: FileEntry[],
+		preloadedFileEntries?: FileEntry[] | typeof DEFERRED_FILE_LOAD,
 	) {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
@@ -1221,8 +1218,10 @@ export class SessionManager {
 		});
 
 		if (sessionFile) {
-			this._setSessionFile(sessionFile, preloadedFileEntries, newSessionOptions);
-		} else if (preloadedFileEntries?.length) {
+			// `openAsync` loads the file itself, in slices, once construction returns.
+			if (preloadedFileEntries !== DEFERRED_FILE_LOAD)
+				this._setSessionFile(sessionFile, preloadedFileEntries, newSessionOptions);
+		} else if (preloadedFileEntries !== DEFERRED_FILE_LOAD && preloadedFileEntries?.length) {
 			this._loadEntries(preloadedFileEntries, newSessionOptions);
 		} else {
 			this.newSession(newSessionOptions);
@@ -1246,6 +1245,17 @@ export class SessionManager {
 		this._setSessionFile(this.sessionFile, fileEntries);
 	}
 
+	/** Brings `id` back into the mirror by reloading the whole file when the mirror does not hold it. */
+	private _loadFullMirrorFor(id: string): void {
+		if (this.byId.has(id) || !this.sessionFile) return;
+		this.loadingFullMirror = true;
+		try {
+			this.reloadFromDisk();
+		} finally {
+			this.loadingFullMirror = false;
+		}
+	}
+
 	/** Switch to a different session file (used for resume and branching) */
 	setSessionFile(sessionFile: string): void {
 		this._setSessionFile(sessionFile);
@@ -1256,66 +1266,109 @@ export class SessionManager {
 		preloadedFileEntries?: FileEntry[],
 		newSessionOptions?: NewSessionOptions,
 	): void {
-		if (this.persist) reserveSessionWrite(resolvePath(sessionFile));
-		this.sessionFile = resolvePath(sessionFile);
+		const existingFile = this._beginSessionFile(sessionFile, newSessionOptions);
+		if (existingFile === undefined) return;
+		const entries = preloadedFileEntries ?? loadEntriesFromFile(existingFile);
+		if (!this._adoptFileEntries(existingFile, entries, newSessionOptions)) return;
+		const loadedHistory = this._retainLoadedTail();
+		this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
+		this._completeFileLoad(loadedHistory);
+	}
+
+	/**
+	 * `_setSessionFile` for a host that shares its event loop: the same steps, with the
+	 * transcript-sized parse and externalize run in slices that yield (senpi#3518).
+	 */
+	private async _setSessionFileAsync(
+		sessionFile: string,
+		preloadedFileEntries: FileEntry[] | undefined,
+		newSessionOptions: NewSessionOptions | undefined,
+		slicer: EventLoopSlicer,
+	): Promise<void> {
+		const existingFile = this._beginSessionFile(sessionFile, newSessionOptions);
+		if (existingFile === undefined) return;
+		const entries = preloadedFileEntries ?? (await loadEntriesFromFileAsync(existingFile, slicer));
+		if (!this._adoptFileEntries(existingFile, entries, newSessionOptions)) return;
+		const loadedHistory = this._retainLoadedTail();
+		this.fileEntries = await mapInSlices(this.fileEntries, (entry) => this.residentStore.externalize(entry), slicer);
+		this._completeFileLoad(loadedHistory);
+	}
+
+	/** Points this manager at `sessionFile`; the path when it exists, undefined when a new session was started there. */
+	private _beginSessionFile(sessionFile: string, newSessionOptions?: NewSessionOptions): string | undefined {
+		const resolvedFile = resolvePath(sessionFile);
+		if (this.persist) reserveSessionWrite(resolvedFile);
+		this.sessionFile = resolvedFile;
 		this.mirrorTrimmed = false;
 		this.trimmedIds.clear();
 		this.residentStore.clear();
-		if (existsSync(this.sessionFile)) {
-			const entries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
-
-			// If file was empty, initialize it with a valid session header. If it was
-			// non-empty but did not parse as a pi session, fail without modifying it.
-			if (entries.length === 0) {
-				const explicitPath = this.sessionFile;
-				if (statSync(explicitPath).size > 0) {
-					throw new Error(`Session file is not a valid ${APP_NAME} session: ${explicitPath}`);
-				}
-				// The explicit path is already granted above and keeps being written here:
-				// allocating a second path would take a grant no writer ever uses.
-				// An empty file carries no identity yet, so a caller-supplied id still applies.
-				this._resetToNewSession(newSessionOptions);
-				this._rewriteFile();
-				this.flushed = true;
-				return;
-			}
-
-			// A file-backed load keeps the reader contract: an entry set without a header
-			// adopts a fresh id in memory instead of creating a replacement session file
-			// (which `_loadEntries`' header-less branch would do for ingested entries).
-			this.fileEntries = entries;
-
-			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
-			this.sessionId = header?.id ?? createSessionId();
-			// Blobs left under this id by a process that is gone are a disposable cache:
-			// the JSONL is the authority for every entry and this store rewrites what it
-			// evicts, so clearing them bounds the directory to one process lifetime.
-			this._releaseBlobsDirUnlessShared();
-
-			if (migrateToCurrentVersion(this.fileEntries)) {
-				this._rewriteFile();
-			}
-
-			this.fileEntries = this.fileEntries.map((entry) => this.residentStore.externalize(entry));
-			this._buildIndex();
-			this.mutationCount++;
+		if (existsSync(resolvedFile)) return resolvedFile;
+		// Same here: the explicit path from --session stays the only granted one.
+		// The file does not exist yet, so this open CREATES the session: a caller-supplied
+		// id is the session's identity from here on. An EXISTING file never reaches this
+		// branch, which is why a supplied id can never overwrite a header id.
+		this._resetToNewSession(newSessionOptions);
+		// A host-minted id is referenced by nothing yet, so its file may wait for the first
+		// assistant message. A CALLER-chosen id is already held in the caller's own records:
+		// the file has to answer to it now, or a reopen before the first reply would mint a
+		// different identity and the caller's record would point at nothing (#2010).
+		if (newSessionOptions?.id !== undefined) {
+			this._rewriteFile();
 			this.flushed = true;
-			this.ownedHeaderFile = undefined;
-		} else {
-			// Same here: the explicit path from --session stays the only granted one.
-			// The file does not exist yet, so this open CREATES the session: a caller-supplied
-			// id is the session's identity from here on. An EXISTING file never reaches this
-			// branch, which is why a supplied id can never overwrite a header id.
-			this._resetToNewSession(newSessionOptions);
-			// A host-minted id is referenced by nothing yet, so its file may wait for the first
-			// assistant message. A CALLER-chosen id is already held in the caller's own records:
-			// the file has to answer to it now, or a reopen before the first reply would mint a
-			// different identity and the caller's record would point at nothing (#2010).
-			if (newSessionOptions?.id !== undefined) {
-				this._rewriteFile();
-				this.flushed = true;
-			}
 		}
+		return undefined;
+	}
+
+	/** Takes the loaded entries as this session's history; false when an empty file was initialized instead. */
+	private _adoptFileEntries(
+		sessionFile: string,
+		entries: FileEntry[],
+		newSessionOptions?: NewSessionOptions,
+	): boolean {
+		// If file was empty, initialize it with a valid session header. If it was
+		// non-empty but did not parse as a pi session, fail without modifying it.
+		if (entries.length === 0) {
+			if (statSync(sessionFile).size > 0) {
+				throw new Error(`Session file is not a valid ${APP_NAME} session: ${sessionFile}`);
+			}
+			// The explicit path is already granted above and keeps being written here:
+			// allocating a second path would take a grant no writer ever uses.
+			// An empty file carries no identity yet, so a caller-supplied id still applies.
+			this._resetToNewSession(newSessionOptions);
+			this._rewriteFile();
+			this.flushed = true;
+			return false;
+		}
+
+		// A file-backed load keeps the reader contract: an entry set without a header
+		// adopts a fresh id in memory instead of creating a replacement session file
+		// (which `_loadEntries`' header-less branch would do for ingested entries).
+		this.fileEntries = entries;
+
+		const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
+		this.sessionId = header?.id ?? createSessionId();
+		// Blobs left under this id by a process that is gone are a disposable cache:
+		// the JSONL is the authority for every entry and this store rewrites what it
+		// evicts, so clearing them bounds the directory to one process lifetime.
+		this._releaseBlobsDirUnlessShared();
+
+		if (migrateToCurrentVersion(this.fileEntries)) {
+			this._rewriteFile();
+		}
+		return true;
+	}
+
+	/** Indexes the externalized entries; the file is the session's flushed authority from here on. */
+	private _completeFileLoad(loadedHistory: SessionEntry[] | undefined): void {
+		this._buildIndex();
+		// The entries this load already parsed answer the open-time history readers; the view goes when
+		// the session settles idle, like any full-history view of a trimmed mirror.
+		if (loadedHistory !== undefined) {
+			this.historyView = { source: this.fileEntries, length: this.fileEntries.length, entries: loadedHistory };
+		}
+		this.mutationCount++;
+		this.flushed = true;
+		this.ownedHeaderFile = undefined;
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
@@ -1399,6 +1452,26 @@ export class SessionManager {
 		this.mutationCount++;
 	}
 
+	/**
+	 * Keeps only the latest compaction's window of a just-loaded file resident (senpi#3519). The
+	 * full-history count and usage totals are taken from the whole file first: a trimmed mirror
+	 * cannot recompute them, so `_buildIndex` leaves them alone while the mirror is trimmed. Returns the
+	 * file's full history when it trimmed, undefined when the whole file stays resident.
+	 */
+	private _retainLoadedTail(): SessionEntry[] | undefined {
+		if (!this.persist || this.loadingFullMirror) return undefined;
+		const tail = planLoadedTail(this.fileEntries);
+		if (tail === undefined) return undefined;
+		const history = this.fileEntries.filter((entry): entry is SessionEntry => entry.type !== "session");
+		this.usageTotals = emptyUsageTotals();
+		this.fullEntryCount = history.length;
+		for (const entry of history) this._accumulateUsage(entry);
+		for (const id of tail.trimmedIds) this.trimmedIds.add(id);
+		this.mirrorTrimmed = true;
+		this.fileEntries = tail.retained;
+		return history;
+	}
+
 	private _buildIndex(): void {
 		this.byId.clear();
 		this.entryOrdersById.clear();
@@ -1407,14 +1480,8 @@ export class SessionManager {
 		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.sessionNameCache = undefined;
-		this.usageTotals = {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			cost: 0,
-			latestCacheHitRate: undefined,
-		};
+		// A trimmed mirror cannot replace the full-history totals, like the count below.
+		if (!this.mirrorTrimmed) this.usageTotals = emptyUsageTotals();
 		let fullEntryCount = 0;
 		for (const [order, entry] of this.fileEntries.entries()) {
 			if (entry.type === "session") continue;
@@ -1422,7 +1489,7 @@ export class SessionManager {
 			this.byId.set(entry.id, entry);
 			this.entryOrdersById.set(entry.id, order);
 			this.leafId = entry.id;
-			this._accumulateUsage(entry);
+			if (!this.mirrorTrimmed) this._accumulateUsage(entry);
 			if (entry.type === "session_info") {
 				// Empty names explicitly clear the session title.
 				this.sessionNameCache = entry.name?.trim() || undefined;
@@ -2110,7 +2177,8 @@ export class SessionManager {
 	 * Pass undefined or empty string to clear the label.
 	 */
 	appendLabelChange(targetId: string, label: string | undefined): string {
-		if (!this.byId.has(targetId)) {
+		// A target the mirror trimmed is checked against the memoized full history, not a fresh parse of the file.
+		if (!this.byId.has(targetId) && !this.getEntries().some((entry) => entry.id === targetId)) {
 			throw new Error(`Entry ${targetId} not found`);
 		}
 		const entry: LabelEntry = {
@@ -2181,6 +2249,26 @@ export class SessionManager {
 			};
 		}
 		return materializedPath;
+	}
+
+	/**
+	 * The path from `fromId` (default: the leaf) to the root over the whole persisted history. `getBranch()`
+	 * answers a trimmed mirror from the latest compaction window (senpi#3519); readers that need every entry
+	 * of the path, such as a fork's new file or the files a session touched, read it here from the file.
+	 */
+	getFullBranch(fromId?: string): SessionEntry[] {
+		if (!this.mirrorTrimmed || !this.sessionFile) return this.getBranch(fromId);
+		const byId = new Map<string, SessionEntry>();
+		for (const entry of this.getEntries()) byId.set(entry.id, entry);
+		const path: SessionEntry[] = [];
+		const visited = new Set<string>();
+		let current = byId.get(fromId ?? this.leafId ?? "");
+		while (current && !visited.has(current.id)) {
+			visited.add(current.id);
+			path.push(current);
+			current = current.parentId ? byId.get(current.parentId) : undefined;
+		}
+		return path.reverse();
 	}
 
 	/**
@@ -2541,9 +2629,7 @@ export class SessionManager {
 	 * are not modified or deleted.
 	 */
 	branch(branchFromId: string): void {
-		if (!this.byId.has(branchFromId) && this.sessionFile) {
-			this.reloadFromDisk();
-		}
+		this._loadFullMirrorFor(branchFromId);
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -2573,6 +2659,7 @@ export class SessionManager {
 		fromHook?: boolean,
 		usage?: Usage,
 	): string {
+		if (branchFromId !== null) this._loadFullMirrorFor(branchFromId);
 		if (branchFromId !== null && !this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -2599,7 +2686,7 @@ export class SessionManager {
 	 */
 	createBranchedSession(leafId: string): string | undefined {
 		const previousSessionFile = this.sessionFile;
-		const path = this.getBranch(leafId);
+		const path = this.getFullBranch(leafId);
 		if (path.length === 0) {
 			throw new Error(`Entry ${leafId} not found`);
 		}
@@ -2752,33 +2839,47 @@ export class SessionManager {
 	static open(path: string, sessionDir?: string, cwdOverride?: string, options?: NewSessionOptions): SessionManager {
 		const resolvedPath = resolvePath(path);
 		reserveSessionWrite(resolvedPath);
-		let header: SessionHeader | null = null;
-		let preloadedFileEntries: FileEntry[] | undefined;
-		if (cwdOverride === undefined && existsSync(resolvedPath)) {
-			try {
-				header = readSessionHeader(resolvedPath);
-			} catch (error) {
-				if (!(error instanceof SessionHeaderScanLimitError)) throw error;
-				// The bounded scan is only a discovery optimization. A full load remains
-				// authoritative for legacy files with very large headers or prefixes.
-				preloadedFileEntries = loadEntriesFromFile(resolvedPath);
-				const firstEntry = preloadedFileEntries[0];
-				header = firstEntry?.type === "session" ? firstEntry : null;
-			}
-		}
+		const discovery = discoverOpenHeader(resolvedPath, cwdOverride);
+		// The bounded scan is only a discovery optimization. A full load remains
+		// authoritative for legacy files with very large headers or prefixes.
+		const preloadedFileEntries = discovery.needsFullLoad ? loadEntriesFromFile(resolvedPath) : undefined;
 		// This process opens the session for append; normalize a final unterminated
 		// JSONL entry here, never from read-only loadEntriesFromFile callers.
-		if (existsSync(resolvedPath)) {
-			const content = readFileSync(resolvedPath);
-			if (content.length > 0 && content[content.length - 1] !== 10) appendFileSync(resolvedPath, "\n");
-		}
-		// The header keeps the cwd it was recorded with; a folder the OmO desktop moved opens where it lives now,
-		// and the file is never rewritten (senpi#2990).
-		const headerCwd = header ? getSessionHeaderCwd(header) : undefined;
-		const cwd = cwdOverride ?? (headerCwd ? resolveMovedPath(headerCwd) : headerCwd) ?? process.cwd();
-		// If no sessionDir provided, derive from file's parent directory
-		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
+		terminateFinalSessionLine(resolvedPath);
+		const header = discovery.header ?? headerOf(preloadedFileEntries);
+		const { cwd, dir } = openLocation(resolvedPath, sessionDir, cwdOverride, header);
 		return new SessionManager(cwd, dir, resolvedPath, true, options, preloadedFileEntries);
+	}
+
+	/**
+	 * `open` for a process whose event loop serves other sessions (the multi-session RPC host):
+	 * the transcript is parsed and externalized in slices that yield, so opening a large
+	 * session never holds every other session's requests (senpi#3518).
+	 */
+	static async openAsync(
+		path: string,
+		sessionDir?: string,
+		cwdOverride?: string,
+		options?: NewSessionOptions,
+		slicer: EventLoopSlicer = new EventLoopSlicer(),
+	): Promise<SessionManager> {
+		const resolvedPath = resolvePath(path);
+		reserveSessionWrite(resolvedPath);
+		const discovery = discoverOpenHeader(resolvedPath, cwdOverride);
+		const preloadedFileEntries = discovery.needsFullLoad
+			? await loadEntriesFromFileAsync(resolvedPath, slicer)
+			: undefined;
+		terminateFinalSessionLine(resolvedPath);
+		const header = discovery.header ?? headerOf(preloadedFileEntries);
+		const { cwd, dir } = openLocation(resolvedPath, sessionDir, cwdOverride, header);
+		const manager = new SessionManager(cwd, dir, resolvedPath, true, options, DEFERRED_FILE_LOAD);
+		try {
+			await manager._setSessionFileAsync(resolvedPath, preloadedFileEntries, options, slicer);
+		} catch (error) {
+			manager.dispose();
+			throw error;
+		}
+		return manager;
 	}
 
 	/**

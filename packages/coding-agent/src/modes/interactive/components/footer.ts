@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
 import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
-import { rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
-import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
+import { applyAccountOrder, rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
+import { accountLabel, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
@@ -43,18 +43,21 @@ export function formatTokens(count: number): string {
 /**
  * Mirrors the provider-shown-only-when->1 rule for accounts: the active account
  * name appears only when the provider actually pools more than one slot. The
- * pick shown is the pin when present, else the session's HRW winner - the same
- * hash the rotation engine uses, so the footer names the slot that will serve.
+ * pick shown is the pin when present, else the first account of the user order
+ * (senpi#3591), else the session's HRW winner - the same ranking the rotation
+ * engine uses, so the footer names the slot that will serve.
  */
 export function accountFooterSuffix(credential: Credential | undefined, sessionId: string): string {
+	const pooled: PooledCredential | undefined = credential;
 	// Only slots the credential can serve with; a mixed pool's other-kind slot never does (senpi#3486).
 	const slots = credential ? slotsOfOwnKind(credential) : [];
 	if (slots.length < 2) return "";
 	const pinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
 	const pinnedSlot = slots.find((slot) => slot.name === pinned);
 	if (pinnedSlot) return `@${footerAccountLabel(pinnedSlot)}`;
-	const winner = rendezvousOrder(sessionId, slots, (input) =>
-		createHash("sha256").update(input).digest().readBigUInt64BE(0),
+	const winner = applyAccountOrder(
+		pooled?.order,
+		rendezvousOrder(sessionId, slots, (input) => createHash("sha256").update(input).digest().readBigUInt64BE(0)),
 	)[0];
 	return winner === undefined ? "" : `@${footerAccountLabel(winner)}`;
 }

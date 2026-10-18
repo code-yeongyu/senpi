@@ -97,6 +97,31 @@ describe("Cursor CLI OAuth account failover", () => {
 		expect(events[1]).toEqual(assistant(`answer from ${expected[1]}`));
 	});
 
+	it("tries the stored account order first and fails over down it (senpi#3591)", async () => {
+		const store = await makeStore();
+		const sessionId = "ordered";
+		const order = rendezvousOrder(sessionId, accountPool)
+			.map((account) => account.name)
+			.reverse();
+		await store.modify(providerId, async (current) =>
+			current?.type === "oauth" ? { ...current, order: [order[0] ?? "", order[1] ?? ""] } : current,
+		);
+		const attempts: string[] = [];
+
+		await collect(
+			runCursorCliFailover<AttemptEvent>({
+				...failoverOptions(store, sessionId),
+				runAttempt: async function* (account) {
+					attempts.push(account.name);
+					if (attempts.length === 1) throw { stderr: "HTTP 429 rate limit retry-after-ms: 2500" };
+					yield assistant(`answer from ${account.name}`);
+				},
+			}),
+		);
+
+		expect(attempts).toEqual([order[0], order[1]]);
+	});
+
 	it("surfaces a post-delta rate limit without rotating", async () => {
 		const store = await makeStore();
 		const attempts: string[] = [];

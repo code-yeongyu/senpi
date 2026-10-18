@@ -14,6 +14,8 @@ export interface MonitorLineEvent {
 	readonly id: string;
 	readonly description: string;
 	readonly line: string;
+	/** The line came from a human-input watch: a person's words, not machine status. */
+	readonly humanInput?: true;
 }
 
 export interface MonitorSummaryEvent {

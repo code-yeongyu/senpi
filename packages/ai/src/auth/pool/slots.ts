@@ -25,6 +25,8 @@ export type CredentialSlot = {
 export type PooledCredential = Credential & {
 	accounts?: CredentialSlot[];
 	pinned?: string;
+	/** User order: these accounts are tried first, in this order, after a pin (senpi#3591). */
+	order?: string[];
 };
 
 const SLOT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -272,7 +274,7 @@ export function projectSlot(credential: PooledCredential | undefined, name: stri
 	if (!credential) return undefined;
 	const slot = findSlot(credential, name);
 	if (!slot) return undefined;
-	const { accounts: _accounts, pinned: _pinned, ...flat } = credential;
+	const { accounts: _accounts, pinned: _pinned, order: _order, ...flat } = credential;
 	const env = slot.env === undefined ? {} : { env: slot.env };
 	if (flat.type === "oauth") {
 		if (slot.access === undefined || slot.refresh === undefined || slot.expires === undefined) return undefined;

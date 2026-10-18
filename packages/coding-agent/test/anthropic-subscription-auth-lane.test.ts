@@ -17,6 +17,10 @@ import {
 	emptyCredential,
 } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
+	DEFAULT_AFFINITY_KEY,
+	rendezvousOrder,
+} from "../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
+import {
 	overrideAuthLaneBoundary,
 	resetAuthLaneBoundary,
 } from "../src/core/extensions/builtin/anthropic-subscription/auth-lane.ts";
@@ -368,6 +372,22 @@ describe("Claude SDK OAuth auth lanes", () => {
 			expect(env.PATH).toBe("/usr/bin");
 		});
 	}
+
+	it("serves the stored account order ahead of HRW on the oauth-slots lane (senpi#3591)", async () => {
+		const accounts = [slot("A", "access-a"), slot("B", "access-b")];
+		const hrwLast = rendezvousOrder(DEFAULT_AFFINITY_KEY, accounts).at(-1)?.name;
+		const store = await storeWith(...accounts);
+		configureAuth(store, managedEnvironment(), undefined, "oauth-slots");
+		await store.modify(providerId, async (current) =>
+			current?.type === "oauth" && hrwLast !== undefined ? { ...current, order: [hrwLast] } : current,
+		);
+		const captured: Options[] = [];
+		overrideSdkBoundary({ query: queryCapturing(captured) });
+
+		await streamAnthropicSubscription(model, context).result();
+
+		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe(hrwLast === "A" ? "access-a" : "access-b");
+	});
 
 	it("transfers resident-query ownership on failover and fences the discarded generation", async () => {
 		const store = await storeWith(slot("A", "access-a"), slot("B", "access-b"));

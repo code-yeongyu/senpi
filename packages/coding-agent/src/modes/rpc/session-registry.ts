@@ -206,7 +206,15 @@ export class RpcSessionRegistry {
 		try {
 			const newSessionOptions = requestedDurableId !== undefined ? { id: requestedDurableId } : undefined;
 			const manager = sessionPath
-				? SessionManager.open(sessionPath, undefined, storedProfile.cwd, newSessionOptions)
+				? this.options.sessionFileLoad === "blocking"
+					? SessionManager.open(sessionPath, undefined, storedProfile.cwd, newSessionOptions)
+					: await SessionManager.openAsync(
+							sessionPath,
+							undefined,
+							storedProfile.cwd,
+							newSessionOptions,
+							this.options.createSlicer?.(),
+						)
 				: SessionManager.create(storedProfile.cwd, undefined, newSessionOptions);
 			entry.runtime = await runWithProviderScope(entry.scope, () =>
 				createAgentSessionRuntime(this.options.createRuntime, {

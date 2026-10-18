@@ -129,6 +129,26 @@ Use `/account <provider> rename <id> <display name...>` or the corresponding `/g
 
 A label is stored NFC-normalized with internal whitespace collapsed, must contain at least one visible character, and may not exceed 32 terminal columns (measured in grapheme clusters, so CJK and emoji count two columns each). Uniqueness within a provider folds case, Unicode compatibility forms, invisible code points, and Cyrillic lookalikes, so two labels that render identically are refused.
 
+## Account order
+
+By default a provider's accounts are picked per session by rendezvous hashing, and a failed account fails over in that hash order. A user order replaces that ranking: requests try the pinned account first, then the first unblocked account in the order, then the accounts the order does not name, in hash order. On the Claude subscription lane, a session keeps the account its conversation already lives on while that account can serve, ahead of the order, so setting an order does not move running conversations.
+
+`get_provider_accounts` lists the accounts the order names first, in that order, then the rest in stored order (the hash ranking is per session, so a listing cannot show it). It reports `ordered: true` while a stored order names at least one listed account. A pinned account serves first wherever it is listed; read its `pinned` flag. Every lane that picks an account honors the order: the generic credential pool, the Claude subscription lane and the Cursor CLI lane.
+
+#### account_order
+
+Set the order, or clear it with `names: null`:
+
+```json
+{"id": "o1", "type": "account_order", "provider": "openai", "names": ["work", "default"]}
+```
+
+```json
+{"id": "o1", "type": "response", "command": "account_order", "success": true}
+```
+
+`names` may name a subset; accounts it leaves out come after it. The command fails without changing anything when a name is not one of the provider's accounts, appears twice, or the list is empty, and when the provider has no stored credential (the order is kept beside the pin in `auth.json`). Removing an account drops it from the order. Success emits `auth_accounts_changed`. Only account names cross RPC, never credential material.
+
 ## Starting RPC Mode
 
 ### RPC client lifecycle
@@ -263,6 +283,17 @@ which lazily spawns one filesystem-watch Worker per session
 measured 0 additional threads per session. Size a daemon from those numbers: it never refuses an `open_session` for
 occupancy, so the ceiling is the machine's memory and its per-process thread and descriptor limits, not a session
 count the host enforces.
+
+### Tool runtime (`--tool-runtime in-process|child`)
+
+`--tool-runtime` selects where a session's heavy tool work runs. `SENPI_TOOL_RUNTIME` is the fallback when the flag is
+absent, and `in-process` is the default. Any other value, from either source, is a startup error.
+
+- `in-process` - every tool runs on the host's own event loop, as it always has.
+- `child` - reserved for the per-session tool child (senpi#3566). Selecting it changes nothing yet.
+
+A multi-session host and a single-session `--mode rpc` process each advertise their choice as exactly one
+`tool_runtime:in-process` or `tool_runtime:child` entry in `get_protocol_info.capabilities`.
 
 ### Host identity (`get_protocol_info`)
 
@@ -1629,9 +1660,10 @@ registrant opens no socket and writes no registry directory.
   `endpoint_kind: "tui"`, `owner` and `alive`, probing it for at most 1.5 s. `senpi host gc` reaps a dead one on
   the same evidence as a host. `ensure`, `handoff` and `stop` refuse it with `unsupported_endpoint_kind` (exit 3)
   before connecting, because a terminal endpoint is owned by its terminal process.
-- **Commands.** Anything not listed below is answered `unsupported` as data. No command can prompt, steer, queue a
-  follow-up, open a session or run a command.
-  - `get_protocol_info`: `mode: "tui"`, `capabilities: ["tui_control"]`, `generation: 0`, the endpoint's
+- **Commands.** Anything not listed below is answered `unsupported` as data. No command opens another session or
+  runs a command; input goes through the terminal's admission (`steer`/`follow_up`/`prompt` below), so the
+  user's draft still holds it.
+  - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status"]`, `generation: 0`, the endpoint's
     `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
     controls below lists no `commands`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
@@ -1643,6 +1675,26 @@ registrant opens no socket and writes no registry directory.
     `state`, `report` (an assistant message's text), `question` (pending question ids) or `completion` (the
     session went idle, with `turn_epoch`). Resubscribing with the last `seq` replays what the 256-record ring
     still holds after it.
+  - `open_session { sessionPath }` (or `{ sessionId }`) naming this terminal's session attaches the connection, as
+    on a host: the answer is `{ sessionId, state, attached: true }`, preceded by the replay of the in-flight
+    message and pending questions, then the session's records (`message_update`, `agent_end`, ...) in the
+    host's projection. A path or id of any other session is refused `terminal_single_session`; a terminal hosts
+    one session. Detaching is closing the connection; neither changes the terminal.
+  - `subscribe_sessions` / `unsubscribe_sessions`: the host's status stream over this one session
+    (`session_status`, `effect_status`, the same `mirror` opt-in for content to a client that never attached).
+    `attachments` counts the terminal plus each attached client; a subscriber, mirrored or not, is not one.
+  - `steer`/`follow_up { message, whenIdle?, clientMessageId?, expected_turn_id? }` and
+    `prompt { message, streamingBehavior? }`: delivered through the terminal's admission
+    (`admitExternalMessage`), so the user's draft holds them, with the host's `whenIdle` choice (`queue`, the
+    default, holds input on an idle session for its next turn; `start` starts one; `prompt` always starts). A
+    steer that names no `expected_turn_id` steers the current turn. The answer's `disposition` is `started` or
+    `queued`; `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
+    Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
+    terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
+    skills, no admission receipt, and a repeated `clientMessageId` answers `duplicate: true`. Frames carrying
+    `images`, `thinkingLevel`, `expandPromptTemplates`, `unknownCommandAsText`, `sessionTitlePrompt` or
+    `enqueueOrder` are refused `unsupported_field`, naming them.
+  - `get_effect_status { effectId, sessionPath? }`: the same effect ledger as a host.
   - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
   - `extension_ui_response`: answers only a question this session asked and still waits on
     (`unknown_request` / `question_incomplete` / `invalid_response` otherwise). `uiRequestId` names the
@@ -2468,6 +2520,13 @@ Every queued input carries a session-unique `queuedId` (`q_<n>`) in `get_state.o
 A `steer` or `follow_up` sent **without** a `clientMessageId` is still recorded durably under a host-minted id (`host:<durableSessionId>:<uuid>`), so it survives a host restart and a reopen restores it exactly once. No client-facing record carries that id: the send response, `get_state.ordered`, `queue_update.ordered`, `get_steering_messages` / `get_follow_up_messages` and event correlation (`clientMessageId` / `clientMessages` on events) all leave it out, and it never switches on event correlation for a client that sends no ids, before or after a restart. It stays on the stored user message in the transcript, and `get_effect_status` / `effect_status` report it as the input's `effectId`. An edit of such an input survives a restart too. A queued `prompt` sent without an id (`streamingBehavior` while busy) is not durable.
 
 For both commands, `status` is `removed` / `edited`, or `already_delivered` (the input was already handed to the agent) or `not_found` (no such id in this session); those two also carry `reason` and `action`, and an `effectId` receipt ends `failed` with that outcome. A missing or over-long `queuedId` is refused, and so is an edit whose `text` is empty or longer than `MAX_RPC_MESSAGE_CHARACTERS` (use `dequeue_message` to remove an input). An edited input that has a `clientMessageId` (its own or, for input sent without one, the host's) keeps the edit across a reopen, and a retry of its original send still replays.
+
+**Expected revision** (capability `queued_message_revision`): every entry in `get_state.ordered` and `queue_update.ordered` also carries `revision`, 1 when queued and +1 on every successful edit. Both commands accept an optional `expectedRevision` (a whole number of at least 1). When it is present and the input's current revision is different, the answer is `status: "conflict"` with `currentRevision`, `reason` and `action`, and nothing is changed; the check and the change happen in one step, so no other client's edit or a delivery can land between them. With `effectId` the receipt ends `failed` with outcome `conflict`, and a same-id retry replays that conflict. An input that is gone answers `already_delivered` or `not_found` as above, never `conflict`. An `edited` answer carries the resulting `text` and `revision`. A same-id retry answers with exactly the fields the live call returned (the receipt stores them). Revisions, like `queuedId`, hold only for the session's current lifetime: a reopen restores queued inputs at revision 1 under new ids, so re-read `get_state` after a reopen.
+
+```json
+{"type": "edit_queued_message", "queuedId": "q_4", "text": "use the staging database", "expectedRevision": 1}
+{"type": "response", "command": "edit_queued_message", "success": true, "data": {"queuedId": "q_4", "status": "conflict", "currentRevision": 2, "reason": "conflict", "action": "read the input's current text and revision from get_state or queue_update, then retry with that expectedRevision if the change still applies"}}
+```
 
 #### clear_queue
 
@@ -3530,6 +3589,17 @@ Response:
 
 `leafId` is the id of the current leaf entry (`null` for an empty session), so a client can tell in one round trip whether the active branch moved. If `since` does not match any entry id, the response is `success: false`.
 
+**Pages.** One answer travels as one line on the connection's event queue, which closes the connection past 64 MiB. Pass `limit` (entries) and/or `maxBytes` (serialized bytes, capped at 48 MiB; 8 MiB when only `limit` is given) to read a long history in pages. A paged answer carries `hasMore`, and `nextSince` (the last entry id it returned) while more entries follow; ask again with `since: nextSince` until `hasMore` is `false`. A page always holds at least one entry, so it always moves forward. Both bounds must be positive integers, otherwise the request fails with `errorCode: "invalid_argument"`.
+
+```json
+{"type": "get_entries", "limit": 500, "maxBytes": 8388608}
+{"type": "get_entries", "limit": 500, "maxBytes": 8388608, "since": "<nextSince>"}
+```
+
+An unpaged request (neither bound) answers exactly as before while the whole history fits in 48 MiB. A longer history is refused with `errorCode: "response_too_large"` instead of an answer that would close the connection; read it in pages.
+
+A single entry larger than 48 MiB cannot travel in any answer, so a read whose next entry is that large (paged or not) is refused with `response_too_large` naming the entry. While a walk has more pages, the host keeps the session's full history in memory for the next page; it lets it go 30 s after the last page request, so a client that stops mid-walk does not pin the history.
+
 #### get_tree
 
 Get the session as a tree of entries. Each node is `{entry, children, label?, labelTimestamp?}`. A well-formed session has a single root; orphaned entries (broken parent chain) also appear as roots.
@@ -4052,7 +4122,7 @@ never write, with `"reason": "session_closed"`, on the same broadcast as every `
 
 `entry_appended` carries the full durable session entry in `entry`. For `entry.type: "custom"`, self-stops use these `entry.customType` values:
 
-- `goal-continuation-stopped`: `entry.data` contains `goalId`, `reason` (`stale`, `repetition`, `cap`, `unattended`, `length-exhausted`, or `context-overflow`), `consecutiveContinuations`, `unattendedContinuations`, and `at`.
+- `goal-continuation-stopped`: `entry.data` contains `goalId`, `reason` (`stale`, `repetition`, `cap`, `no-progress`, `length-exhausted`, or `context-overflow`; older sessions may carry the retired `unattended`), `consecutiveContinuations`, `unattendedContinuations`, `noProgressContinuations`, and `at`.
 - `engine-paused`: `entry.data` contains `reason` (`repetition`, `goal-repeat`, `cap-per-message`, `cap-per-minute`, or `goal-stale`), `at`, and optional `rule`, `customType`, and `count`.
 
 `at` is epoch milliseconds. These records survive session reopen and are available through the session-entry history. A goal stop is historical: accepted user input or `/goal resume` resets the stop, rather than deleting the entry. See [Session File Format](session-format.md#goal-and-engine-self-stop-entries) for the reason mapping and stale measurement-window behavior. Existing limit/rule entries and UI notices are preserved.

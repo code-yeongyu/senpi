@@ -1,5 +1,6 @@
 import type { MonitorRegistry } from "../monitor-registry.ts";
 import type { MonitorRegistration, TerminalManifestWriter } from "../terminal-manifest.ts";
+import type { TerminalManifestRpcCheckpoint } from "../terminal-manifest-model.ts";
 import { errorResult, type TerminalToolContext, type TerminalToolResult } from "./context.ts";
 
 const manifestWriters = new Map<string, TerminalManifestWriter>();
@@ -65,6 +66,16 @@ export function handFileCheckpoint(
 	const writer = sessionKey === undefined ? undefined : manifestWriters.get(sessionKey);
 	const checkpoint = registry.fileCheckpoint(runtimeId);
 	if (writer && checkpoint) writer.scheduleCheckpoint(monitorId, checkpoint);
+}
+
+/** Persist an rpc watch's view (host generations, session statuses) through the session's writer. */
+export function handRpcCheckpoint(
+	sessionKey: string | undefined,
+	monitorId: string,
+	checkpoint: TerminalManifestRpcCheckpoint,
+): void {
+	const writer = sessionKey === undefined ? undefined : manifestWriters.get(sessionKey);
+	writer?.scheduleRpcCheckpoint(monitorId, checkpoint);
 }
 
 /**

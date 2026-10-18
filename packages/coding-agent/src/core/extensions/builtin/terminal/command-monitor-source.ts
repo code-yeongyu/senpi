@@ -31,6 +31,8 @@ export interface RegisterMonitorOptions {
 	readonly fireWindow?: MonitorFireWindow;
 	/** Durability deadline of a durable watch; omitted for an ephemeral one. */
 	readonly expiresAt?: number;
+	/** Output lines are a person's words (a chat bridge); goal continuation counts them as new input. */
+	readonly humanInput?: boolean;
 }
 
 export interface MonitorRecord extends MonitorRecordBase {
@@ -54,6 +56,7 @@ export interface MonitorRecord extends MonitorRecordBase {
 	fireWindow: MonitorFireWindow | undefined;
 	unsubscribeOutput: (() => void) | undefined;
 	unsubscribeExit: (() => void) | undefined;
+	readonly humanInput: boolean;
 }
 
 export class CommandMonitorSource {
@@ -99,6 +102,7 @@ export class CommandMonitorSource {
 			fireWindow: durable ? { ...(options.fireWindow ?? { startMs: Date.now(), count: 0 }) } : undefined,
 			unsubscribeOutput: undefined,
 			unsubscribeExit: undefined,
+			humanInput: options.humanInput === true,
 		};
 		this.#records.set(record.id, record);
 		this.#host.changed();
@@ -136,7 +140,13 @@ export class CommandMonitorSource {
 				record.mutedDropped += 1;
 				continue;
 			}
-			this.#host.emit(record, { type: "line", id: record.id, description: record.description, line });
+			this.#host.emit(record, {
+				type: "line",
+				id: record.id,
+				description: record.description,
+				line,
+				...(record.humanInput ? { humanInput: true as const } : {}),
+			});
 			if (record.fireWindow !== undefined) {
 				const now = Date.now();
 				if (now - record.fireWindow.startMs >= FIRE_BUDGET_WINDOW_MS)

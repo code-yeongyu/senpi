@@ -6,6 +6,23 @@
 
 ### Added
 
+- `auth/pool/select`: `applyAccountOrder` puts the accounts a user order names first, in that order, ahead of the ranked rest; `withoutOrderedAccount` drops a removed account from a stored order. `PooledCredential` gains `order` ([#3591](https://github.com/code-yeongyu/senpi/issues/3591)).
+- `apiKeyEnvProviders()` and `providerCredentialEnvNames()` list the providers and variable names the environment credential lookup reads (#3531).
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
 ### Changed
 
 ### Fixed

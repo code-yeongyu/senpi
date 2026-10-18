@@ -221,20 +221,6 @@
 			"note": "DELIBERATE transcript path: forked transcript written once (session-scale)"
 		},
 		{
-			"file": "src/core/session-manager.ts",
-			"api": "appendFileSync",
-			"symbol": "open",
-			"count": 1,
-			"note": "DELIBERATE transcript path: session file read and re-appended on open (session-scale)"
-		},
-		{
-			"file": "src/core/session-manager.ts",
-			"api": "readFileSync",
-			"symbol": "open",
-			"count": 1,
-			"note": "DELIBERATE transcript path: session file read and re-appended on open (session-scale)"
-		},
-		{
 			"file": "src/core/session-resident-store.ts",
 			"api": "readFileSync",
 			"symbol": "_readBlob",

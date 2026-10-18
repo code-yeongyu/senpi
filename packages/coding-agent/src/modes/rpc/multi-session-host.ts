@@ -1,6 +1,7 @@
 import { access, chmod, mkdir, unlink } from "node:fs/promises";
 import { createConnection, createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
+import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { CreateAgentSessionRuntimeFactory } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
 import { HostMcpRegistry } from "../../core/extensions/builtin/mcp/host-registry.ts";
@@ -67,6 +68,8 @@ export interface MultiSessionHostOptions {
 	creationModel?: { provider: string; modelId: string };
 	initialThinkingLevel?: string;
 	listen?: string;
+	/** Resolved `--tool-runtime`; absent means `in-process`. Advertised as `tool_runtime:<value>`. */
+	toolRuntime?: ToolRuntimeKind;
 	/** Test seam: defaults to the real shared-session binding. */
 	createBinding?: RpcBindingFactory;
 }

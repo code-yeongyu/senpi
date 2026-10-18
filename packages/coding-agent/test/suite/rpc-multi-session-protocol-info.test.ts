@@ -34,6 +34,7 @@ describe("multi-session RPC protocol info", () => {
 					"continue_from_leaf",
 					"eval_cells",
 					"auth_key_verify",
+					"queued_message_revision",
 					"session_held",
 					"retain_on_disconnect",
 					"detach_connection",
@@ -50,6 +51,7 @@ describe("multi-session RPC protocol info", () => {
 					"retry_fallback_profile",
 					"permission_preset_accept_edits",
 					"permission_preset_auto",
+					"tool_runtime:in-process",
 				],
 				mode: "multi",
 				// Host identity (`protocol-identity.ts`): the instance is this process, the

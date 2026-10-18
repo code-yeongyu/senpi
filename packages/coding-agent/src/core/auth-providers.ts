@@ -1,13 +1,13 @@
 /**
  * Provider-list builders for the /login and /logout selectors.
  *
- * This is the single source of truth shared by the classic interactive mode and
- * the RPC connection handler. It intentionally depends only on the ModelRegistry
- * (and its AuthStorage) so both the TUI and the headless RPC path
- * produce IDENTICAL provider lists — same ids, same display names, same
- * oauth/api_key classification, same status source.
+ * Shared by the classic interactive mode and the RPC connection handler. Both
+ * attribute a credential to a row through `authMethodStatus`, so a row either
+ * surface lists gets the same status. RPC lists rows from
+ * `buildLoginProviderInfos`; the TUI lists the methods each provider declares.
  */
 
+import type { AuthCheck } from "@earendil-works/pi-ai";
 import { getProviders } from "@earendil-works/pi-ai/compat";
 import type { ModelRegistry } from "./model-registry.ts";
 import type { AuthStatus } from "./provider-composer.ts";
@@ -103,22 +103,35 @@ export function buildLogoutProviderInfos(modelRegistry: ModelRegistry): AuthProv
 }
 
 /**
- * The status of ONE login method row. Provider-level auth status says whether the provider has
- * any credential; a provider listed with both an oauth and an api_key row must not light both
- * for one credential. A stored credential belongs to the row of its own type. Every other source
- * (runtime `--api-key`, environment, models.json, fallback) is a key, so it belongs to the
- * api_key row when the provider has one, and to the only row otherwise.
+ * The status of ONE login method row, by one rule for every surface (#3537). A stored credential
+ * belongs to the row of its own type. A non-stored sign-in (the provider's own check resolved
+ * `type: "oauth"`, e.g. `CLAUDE_CODE_OAUTH_TOKEN` or an ambient Claude Code login) belongs to the
+ * oauth row. Every other source (runtime `--api-key`, environment key, models.json, fallback) is a
+ * key and belongs to the api_key row only: a key never lights a sign-in row, even on a provider
+ * that lists no api_key row.
  */
-export function authMethodStatus(
+export function authMethodStatus(modelRegistry: ModelRegistry, info: AuthProviderInfo): AuthStatus {
+	if (modelRegistry.authStorage.get(info.id)?.type === info.authType) return { configured: true, source: "stored" };
+	const { status, signIn } = modelRegistry.resolveProviderAuth(info.id);
+	if (!status.configured || status.source === "stored") return { configured: false };
+	return (signIn ? "oauth" : "api_key") === info.authType ? status : { configured: false };
+}
+
+/**
+ * The TUI picker's single status for one row: the row's own `authMethodStatus` when it is
+ * configured, otherwise the other method's, so the picker can say "API key configured" beside an
+ * unconfigured sign-in row (#3537).
+ */
+export function loginRowStatus(
 	modelRegistry: ModelRegistry,
-	info: AuthProviderInfo,
-	providerHasApiKeyRow: boolean,
-): AuthStatus {
-	const status = modelRegistry.getProviderAuthStatus(info.id);
-	if (!status.configured) return status;
-	if (status.source === "stored") {
-		const storedType = modelRegistry.authStorage.get(info.id)?.type;
-		return storedType === undefined || storedType === info.authType ? status : { configured: false };
+	provider: { id: string; name: string },
+	authType: "oauth" | "api_key",
+): AuthCheck | undefined {
+	for (const type of [authType, authType === "oauth" ? "api_key" : "oauth"] as const) {
+		const status = authMethodStatus(modelRegistry, { ...provider, authType: type });
+		if (!status.configured) continue;
+		const source = status.label ?? status.source;
+		return source === undefined ? { type } : { type, source };
 	}
-	return info.authType === "api_key" || !providerHasApiKeyRow ? status : { configured: false };
+	return undefined;
 }

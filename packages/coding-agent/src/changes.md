@@ -1,3 +1,21 @@
+## 2026-10-18 - The host resolves and advertises its tool runtime (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: right after argument parsing, `resolveToolRuntime(parsed)` (flag, then `SENPI_TOOL_RUNTIME`, then `in-process`) runs once; an invalid env value prints `Error: ...` and exits 1, like an invalid flag, except for `--version` and `--help`, which run no tool. `CliRuntimeConfiguration` gains an optional `toolRuntime` (absent means `in-process`), set on both the multi-session and the single-session configuration, `runMultiSessionHost` receives `toolRuntime`, which the router advertises as `tool_runtime:<value>` in `get_protocol_info`, and `runRpcMode(runtime, toolRuntime)` does the same for a single-session RPC process.
+
+### Why
+
+Clients must be able to see which tool runtime a host they attach to uses, and a worker isolate must not re-read the env to learn it.
+
+### Why an extension could not handle it
+
+The host's startup configuration and its protocol answer are assembled in core before extensions load.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: the parse-diagnostics block in `main`, `CliRuntimeConfiguration`, and the `runMultiSessionHost` call.
+
 ## 2026-10-16 - Non-interactive startup reports context size warnings once (senpi#3460)
 
 ### What changed

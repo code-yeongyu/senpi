@@ -98,6 +98,7 @@
  * Full prose docs: `packages/coding-agent/docs/rpc.md` (Multi-session mode).
  */
 
+import type { ToolRuntimeKind } from "../../cli/tool-runtime.ts";
 import type { AgentSessionEvent } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { envValue } from "../../core/brand.ts";
@@ -129,7 +130,7 @@ export type {
  * Run in RPC mode.
  * Listens for JSON commands on stdin, outputs events and responses on stdout.
  */
-export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<never> {
+export async function runRpcMode(runtimeHost: AgentSessionRuntime, toolRuntime?: ToolRuntimeKind): Promise<never> {
 	takeOverStdout();
 
 	const sink: RpcConnectionSink = {
@@ -152,7 +153,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	// it from a client handshake; a plain stdio client that sets nothing gets
 	// byte-identical default behavior.
 	const capabilities = parseClientCapabilities(envValue("RPC_CLIENT_CAPABILITIES"));
-	const handler = createRpcConnectionHandler(runtimeHost, sink, { capabilities, retryFallbackCommand: true });
+	const handler = createRpcConnectionHandler(runtimeHost, sink, {
+		capabilities,
+		retryFallbackCommand: true,
+		...(toolRuntime === undefined ? {} : { toolRuntime }),
+	});
 	ClientAdmissions.sealQueuedOnReplace(runtimeHost);
 	EffectLedger.sealOnReplace(runtimeHost);
 

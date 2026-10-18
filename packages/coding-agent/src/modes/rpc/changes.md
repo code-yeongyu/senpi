@@ -1,3 +1,159 @@
+## 2026-10-18 - Account order over RPC (senpi#3591)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "account_order"; provider; names: string[] | null }` and its response; `get_provider_accounts` response data gains `ordered: boolean`.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `account_order` refuses a `names` that is not an array of strings (or null), then calls `orderCredentialAccounts`; `get_provider_accounts` answers from `listCredentialAccounts`, which lists in effective order and reports `ordered`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `orderProviderAccounts(provider, names | null)`.
+
+### Why
+
+senpi#3591: accounts could be pinned or removed but not ordered, so a client (the OmO desktop, sisyphuslabs/omo-desktop-app#2973) could not say which account to try first.
+
+### Why an extension could not handle it
+
+The RPC command union, its dispatch and the typed client are core protocol surfaces; extensions cannot add a typed command to them.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the account command arms in `RpcCommand` and the `get_provider_accounts`/`account_*` response arms.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the credential-accounts imports and the `get_provider_accounts`/`account_*` cases.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the provider-account methods.
+
+## 2026-10-17 - A host daemon inherits every credential the engine reads (senpi#3531)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: `daemonEnvIsAllowed` also allows `PROVIDER_CREDENTIAL_ENV_NAMES`, the exact names from `providerCredentialEnvNames()` (pi-ai) and `envSlotVarNames()`. It is exact names only, with no new prefix pattern; on win32 the comparison is upper-cased like the rest of the list.
+- `packages/coding-agent/test/suite/host-daemon-credential-env.test.ts`: runs the engine's lookup (`getEnvApiKey`, `discoverEnvSlots`) against an environment that records every name it reads, and asserts each one is daemon-allowed on linux, darwin and win32. It also checks that a subscription token and its `_2` slot reach `daemonEnvironment`, and that `DATABASE_URL`, `GITHUB_TOKEN` and slots past `_16` are still dropped.
+
+### Why
+
+senpi#3531: `ALLOWED_ENV_NAMES` passed `*_API_KEY` and some vendor prefixes only, so 439 names the lookup reads never reached a host. They include `CLAUDE_CODE_OAUTH_TOKEN`(`_N`), `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and every `*_API_KEY_<N>` slot. A Claude subscription supplied through the environment worked in a direct process and was "not configured" through a host, which is what the OmO desktop showed.
+
+### Why an extension could not handle it
+
+The daemon environment is built by the host lifecycle before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-daemon-env.ts`: the imports, the set above `WINDOWS_SYSTEM_ENV_NAMES`, and `daemonEnvIsAllowed`.
+
+## 2026-10-18 - get_auth_providers rows come from the shared row rule (senpi#3537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_auth_providers` calls `authMethodStatus(modelRegistry, info)` without the "provider has an api_key row" flag. A key (runtime `--api-key`, env key, models.json) no longer shows as configured on a provider's only listed sign-in row (for example `github-copilot` or `chatgpt-subscription` with a runtime key).
+
+### Why
+
+senpi#3537 review: the RPC rows and the TUI picker fed the shared rule different row-capability inputs, so the same credential could land on different rows. A desktop client also showed a runtime key as a connected subscription.
+
+### Why an extension could not handle it
+
+`get_auth_providers` is answered by the RPC router from the registry.
+
+### Expected merge conflict zones
+
+- LOW: the `get_auth_providers` case in `connection-handler.ts`.
+
+## 2026-10-18 - A single-session RPC process advertises its tool runtime (senpi#3566)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: `runRpcMode(runtimeHost, toolRuntime?)` passes the resolved `--tool-runtime` to `createRpcConnectionHandler`, whose classic `get_protocol_info` then lists `tool_runtime:<value>` (fork-only `connection-handler.ts`: `RpcConnectionOptions.toolRuntime`; absent keeps the classic answer byte-identical). The multi-session router advertises the same capability through `host-capabilities.ts`.
+
+### Why
+
+A client must see the tool runtime of every RPC process it talks to, single-session or shared, and both `get_protocol_info` call sites answer the same capability question.
+
+### Why an extension could not handle it
+
+The protocol answer is built by the RPC transport before any extension can contribute to it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/rpc-mode.ts`: the `runRpcMode` signature and the `createRpcConnectionHandler` options.
+
+## 2026-10-16 - expectedRevision on dequeue_message / edit_queued_message (senpi#3459)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: both commands accept `expectedRevision`; a mismatch answers `status: "conflict"` with `currentRevision`, `reason`, `action` and changes nothing (a `conflict` effect outcome, replayed on a same-id retry; `expectedRevision` joins the effect fingerprint, and a request without it fingerprints as before). `edited` answers carry `text` and `revision`; the receipt stores those answer fields so a same-id retry answers exactly as the live call did, and the typed client's `ordered` entries carry `revision`. Validation refuses an `expectedRevision` that is not a whole number of at least 1. Hosts advertise `queued_message_revision`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the desktop edits a queued message while other clients and the agent can change or deliver it; without a revision check the last write silently won (desktop #2718 / #2263).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC command surface, its validation, the effect ledger and the capability list are host internals that extensions do not reach.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-input-validation.ts`, `packages/coding-agent/src/modes/rpc/effect-commands.ts`, `packages/coding-agent/src/modes/rpc/effect-outcome-copy.ts`, `packages/coding-agent/src/modes/rpc/effect-record.ts`, `packages/coding-agent/src/modes/rpc/custom-capability.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/effect-ledger.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the queued-input command shapes, `runQueuedInputChange`, the outcome enum and the capability lists.
+
+## 2026-10-15 - A drop to zero inside the trim spacing is answered when it ends (senpi#3360)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: a drop to zero sessions that lands inside the 60 s spacing is kept (`zeroPending`) and trimmed on the first tick after the spacing while the host is still empty; sessions coming back drop it.
+
+### Why
+
+The edge was reset without trimming, so a host emptied shortly after a trim kept its freed pages until sessions came and went again (measured with `unload_session`, #3359).
+
+### Why an extension could not handle it
+
+Host self-trimming is host internals.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts`: `check()`.
+
+## 2026-10-17 - get_entries reads a long history in pages and never closes the connection (senpi#3534)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` takes `limit` and `maxBytes`. A paged read answers one page (`get-entries-page.ts`, fork-only) with `hasMore` and `nextSince`; an unpaged read whose history does not fit in 48 MiB answers `errorCode: "response_too_large"`; invalid bounds answer `invalid_argument`. Only the returned page is projected and measured.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a read whose first entry alone is larger than the 48 MiB budget is refused with `response_too_large` instead of being sent. While a paged walk has more pages the full-history view is held for the next page (`holdEntryWalk`); the hold expires 30 s after the last page request (`ENTRY_WALK_HOLD_MS`), so a walk a client abandons on an already-idle session does not pin the whole history, and any answer that is not a continuing page releases it at once.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `getEntries(since?, page?)` takes `limit` / `maxBytes` and returns `hasMore` / `nextSince`, so the bundled client can page a long history.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the `get_entries` command gains `limit?` and `maxBytes?`, its answer `hasMore?` and `nextSince?`, and `RPC_ERROR_RESPONSE_TOO_LARGE` is new.
+
+### Why
+
+- An unpaged `get_entries` on a long session (279 MB transcript) built one ~290 MB line; the connection's 64 MiB event queue refused it and closed the connection, cutting every session on it, so Desktop could not hydrate such a thread at all (#3534).
+- Holding the full-history view across pages keeps a walk from re-reading the file for every page (194 s to 66-72 s for 38 pages of a 279 MB transcript), but a hold without an expiry would pin that history on an idle session whose client stopped mid-walk, which is the retention #3519 removed.
+
+### Why an extension could not handle it
+
+- The answer is built and framed inside the RPC command handler; no extension hook runs there.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts`, the `get_entries` case and the `rpc-types.ts` import list.
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, the `get_entries` command and answer shapes and the error-code constants.
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the `getEntries` signature.
+
+## 2026-10-17 - Binding, get_entries and get_tree do not keep an idle session's history resident (senpi#3519)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: binding a connection to a session releases the settled session memory once the bind's own readers (effect ledger seal, admissions, deferred refresh) are done, so a session opened over RPC idles without the full-history view its open read.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `get_entries` and `get_tree` call `session.releaseFullHistoryView()` after building their answer: when no run or session work is active and the read left a full-history view of a trimmed mirror, the session manager's materialized views are dropped (they rebuild on demand). Nothing is tokenized in place, so the answer, which may share message objects, is written intact.
+
+### Why
+
+- Desktop hydrates every thread with `get_entries`. On a session whose mirror is trimmed that read materializes the whole file, and the view stayed held until the session's next turn settled, so idle threads pinned their full transcripts again (#3519).
+
+### Why an extension could not handle it
+
+- The views belong to the `SessionManager` the RPC command reads; no extension hook runs inside the command handler.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-handler.ts`, the end of the session bind and the `get_entries` and `get_tree` cases.
+
 ## 2026-10-17 - A session reopened right after its park is never refused (senpi#3485)
 
 ### What changed

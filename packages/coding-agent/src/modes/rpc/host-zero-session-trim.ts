@@ -63,6 +63,8 @@ export class ZeroSessionTrimmer {
 	 * in the same second must not hide it either.
 	 */
 	private declined = false;
+	/** A drop to zero that landed inside the spacing: answered when it ends, unless sessions came back first. */
+	private zeroPending = false;
 	private lastTrimAt: number | undefined;
 	/** A collection that ran on the previous tick; its record waits for the allocator to return the pages. */
 	private pending: PendingTrim | undefined;
@@ -101,15 +103,20 @@ export class ZeroSessionTrimmer {
 		this.lastSessionCount = sessions;
 		if (sessions > 0) {
 			this.heldSessions = true;
+			this.zeroPending = false;
 			if (!this.declined || !this.busyIntervalElapsed()) return;
 			this.declined = false;
 			if (this.readFootprint().bytes >= DECLINE_TRIM_FLOOR_BYTES) this.trim(sessions);
 			return;
 		}
 		this.declined = false;
-		if (!this.heldSessions) return;
+		if (!this.heldSessions && !this.zeroPending) return;
 		this.heldSessions = false;
-		if (!this.intervalElapsed(ZERO_SESSION_TRIM_MIN_INTERVAL_MS)) return;
+		if (!this.intervalElapsed(ZERO_SESSION_TRIM_MIN_INTERVAL_MS)) {
+			this.zeroPending = true;
+			return;
+		}
+		this.zeroPending = false;
 		this.trim(0);
 	}
 

@@ -46,12 +46,18 @@ describe("TUI session control endpoint", () => {
 		const reply = await controlRequest(fixture.socket, { type: "get_protocol_info" }, Buffer.alloc(32, 7));
 		expect(reply).toEqual({ kind: "closed", bytes: 0 });
 		const info = await controlData(fixture.socket, { type: "get_protocol_info" });
-		expect(info).toMatchObject({ protocolVersion: 1, capabilities: ["tui_control"], mode: "tui" });
+		expect(info).toMatchObject({
+			protocolVersion: 1,
+			capabilities: ["tui_control", "session_status"],
+			mode: "tui",
+			endpoint_kind: "tui",
+		});
 	});
 
-	it("answers commands outside the allowlist as unsupported data, prompt included", async () => {
+	it("answers commands outside the allowlist as unsupported data", async () => {
+		// Input and attach are served through admission and the record writer (senpi#3229); these never are.
 		const fixture = await endpoint();
-		for (const type of ["prompt", "steer", "follow_up", "open_session", "bash", "abort", "cycle_model", "nope"]) {
+		for (const type of ["bash", "abort", "cycle_model", "new_session", "switch_session", "nope"]) {
 			const reply = await controlRequest(fixture.socket, { type, message: "hi" });
 			expect(reply.kind === "answered" && reply.record).toMatchObject({ success: false, error: "unsupported" });
 		}

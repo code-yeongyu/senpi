@@ -1,5 +1,6 @@
 import type { GrepEngineRequest, GrepEngineResult } from "../engine.ts";
-import { segmentFlags } from "./args.ts";
+import { argumentCost, segmentFlags } from "./args.ts";
+import { argvBudget, roomAfter } from "./argv.ts";
 import type { Candidate } from "./enumerate.ts";
 import { collectSegmentRows, type FileRows } from "./json-rows.ts";
 import { pathOrder } from "./paths.ts";
@@ -7,22 +8,51 @@ import { MAX_FILE_BYTES, readSearchablePrefix } from "./prefix-pass.ts";
 import type { RgRun } from "./process.ts";
 
 const CAPPED_BATCH_SIZE = 200;
+const MAX_CAPPED_BATCH_SIZE = 1600;
 
-function planSegments(ordered: Candidate[], request: GrepEngineRequest): Candidate[][] {
+// A capped segment may grow to the ordered prefix already planned: launches grow
+// logarithmically while the work searched past the cap stays at most double.
+function cappedLimit(head: Candidate): number {
+	return Math.min(MAX_CAPPED_BATCH_SIZE, Math.max(CAPPED_BATCH_SIZE, head.ordinal - 1));
+}
+
+function joins(previous: Candidate[], candidate: Candidate, request: GrepEngineRequest): boolean {
+	const head = previous[0];
+	if (head.size > MAX_FILE_BYTES || candidate.size > MAX_FILE_BYTES) return false;
+	// Explicit files from any root share one rg launch; binary members stay out of its argv.
+	if (head.root.file && candidate.root.file)
+		return request.maxCount === undefined || previous.length < cappedLimit(head);
+	return (
+		!head.binary &&
+		!candidate.binary &&
+		head.root === candidate.root &&
+		(request.maxCount === undefined || previous.length < cappedLimit(head))
+	);
+}
+
+export interface SegmentPlan {
+	walk: string[];
+	matcher: string[];
+	budget?: number | undefined;
+	platform?: NodeJS.Platform;
+}
+
+/** Orders candidates into rg launches whose whole command line, fixed arguments included, fits the argv budget. */
+export function planSegments(ordered: Candidate[], request: GrepEngineRequest, plan: SegmentPlan): Candidate[][] {
+	const platform = plan.platform ?? process.platform;
+	const budget = plan.budget ?? argvBudget(platform);
 	const segments: Candidate[][] = [];
+	let room = 0;
 	for (const candidate of ordered) {
 		const previous = segments.at(-1);
-		if (
-			!candidate.binary &&
-			candidate.size <= MAX_FILE_BYTES &&
-			previous &&
-			!previous[0].binary &&
-			previous[0].size <= MAX_FILE_BYTES &&
-			previous[0].root === candidate.root &&
-			(request.maxCount === undefined || previous.length < CAPPED_BATCH_SIZE)
-		)
+		const cost = candidate.binary ? 0 : argumentCost(candidate, platform);
+		if (previous && joins(previous, candidate, request) && cost <= room) {
 			previous.push(candidate);
-		else segments.push([candidate]);
+			room -= cost;
+		} else {
+			segments.push([candidate]);
+			room = roomAfter(segmentFlags([candidate], request.pattern, plan.walk, plan.matcher), budget, platform);
+		}
 	}
 	return segments;
 }
@@ -89,6 +119,7 @@ export async function searchSegments({
 	run,
 	check,
 	result,
+	budget,
 }: {
 	candidates: Candidate[];
 	request: GrepEngineRequest;
@@ -97,16 +128,18 @@ export async function searchSegments({
 	run: RgRun;
 	check: () => void;
 	result: GrepEngineResult;
+	budget?: number | undefined;
 }): Promise<void> {
-	const segments = planSegments(candidates, request);
+	const segments = planSegments(candidates, request, { walk, matcher, budget });
 	let matcherRan = false;
 	for (const [segmentIndex, segment] of segments.entries()) {
 		check();
-		const first = segment[0];
-		if (first.binary) {
-			result.filesSearched = first.ordinal;
+		const searchable = segment.filter((candidate) => !candidate.binary);
+		if (searchable.length === 0) {
+			result.filesSearched = segment[segment.length - 1].ordinal;
 			continue;
 		}
+		const first = searchable[0];
 		const oversized = first.size > MAX_FILE_BYTES;
 		const prefix = oversized ? await readSearchablePrefix(first, result, check) : undefined;
 		if (oversized && prefix === undefined) {
@@ -114,10 +147,10 @@ export async function searchSegments({
 			continue;
 		}
 
-		const { files, segmentBinary, onEvent } = collectSegmentRows(segment, request, oversized);
+		const { files, segmentBinary, onEvent } = collectSegmentRows(searchable, request, oversized);
 		matcherRan = true;
 		if (oversized) await run([...matcher, "--", request.pattern], request.cwd, onEvent, prefix);
-		else await run(segmentFlags(segment, request.pattern, walk, matcher), first.root.cwd, onEvent);
+		else await run(segmentFlags(searchable, request.pattern, walk, matcher), first.root.cwd, onEvent);
 		check();
 		// Nothing from a partially completed segment is visible before this point.
 		if (oversized) result.prefixSearched++;

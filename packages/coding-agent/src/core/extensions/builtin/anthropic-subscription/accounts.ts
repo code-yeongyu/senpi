@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Credential, CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
+import { withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
 import type { ModelBlocks } from "../../../credential-pool/model-scope.ts";
 
 export type AccountSlot = {
@@ -33,6 +34,7 @@ export type SlotState = Record<
 export type AnthropicSubscriptionCredential = OAuthCredential & {
 	accounts?: AccountSlot[];
 	pinned?: string;
+	order?: string[];
 	slotState?: SlotState;
 };
 
@@ -141,7 +143,7 @@ export function removeAccount(
 	const accounts = storedSlots(credential).filter((slot) => slot.name !== name);
 	const next: AnthropicSubscriptionCredential = { ...credential, accounts };
 	if (credential.pinned === name) delete next.pinned;
-	return next;
+	return withoutOrderedAccount(next, name);
 }
 
 export function pinAccount(credential: AnthropicSubscriptionCredential, name: string): AnthropicSubscriptionCredential {

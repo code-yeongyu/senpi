@@ -1,3 +1,39 @@
+## 2026-10-18 - The footer names the account the user order serves (senpi#3591)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: `accountFooterSuffix` ranks the slots with `applyAccountOrder(credential.order, hrw)`, so with no pin the footer names the first account of the user order instead of the session's HRW winner.
+
+### Why
+
+senpi#3591 review M2: the rotation engine serves the first ordered account, so the footer's "the slot that will serve" claim was false once an order was set.
+
+### Why an extension could not handle it
+
+The footer's account segment is built in core interactive mode; extensions cannot replace it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the pool imports and `accountFooterSuffix`.
+
+## 2026-10-17 - The /login picker attributes a credential to its row through the shared rule (senpi#3537)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getLoginProviderOptions` gives each row its status from `loginRowStatus` (core `auth-providers.ts`, built on `authMethodStatus`): the row's own status, or the other method's for the "configured" hint. It no longer pairs `getProviderAuthStatus` with the snapshot type from `isUsingOAuth`, so a runtime `--api-key` never shows as a configured sign-in, including on providers whose only row is the sign-in row.
+
+### Why
+
+senpi#3537 review: with `CLAUDE_CODE_OAUTH_TOKEN` set and a runtime `--api-key` for `anthropic-subscription`, the picker showed the runtime key as "configured" on the subscription's sign-in row, because the snapshot type said `oauth` while the status came from the runtime key. RPC `get_auth_providers` already attributed it correctly; both surfaces now share one rule.
+
+### Why an extension could not handle it
+
+The picker rows are built inside `InteractiveMode`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `getLoginProviderOptions` and the `auth-providers.ts` import.
+
 ## 2026-10-16 - Context size warnings use resource notices (senpi#3460)
 
 ### What changed
