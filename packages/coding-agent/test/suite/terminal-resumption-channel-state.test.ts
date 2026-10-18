@@ -33,6 +33,7 @@ interface FakeRunner {
 	readonly pi: ExtensionAPI;
 	readonly tools: Map<string, ToolLike>;
 	readonly channelStates: WakeSourceStateEvent[];
+	readonly rpcChannelStates: WakeSourceStateEvent[];
 	readonly legacyMonitorStates: LegacyMonitorStateEvent[];
 	emitLifecycle(eventType: string, payload: Record<string, unknown>, ctx: ExtensionContext): Promise<void>;
 	waitForChannel(source: string, activeCount: number): Promise<WakeSourceStateEvent>;
@@ -54,6 +55,7 @@ function createRunner(): FakeRunner {
 	const tools = new Map<string, ToolLike>();
 	const eventListeners = new Map<string, Set<EventListener>>();
 	const channelStates: WakeSourceStateEvent[] = [];
+	const rpcChannelStates: WakeSourceStateEvent[] = [];
 	const legacyMonitorStates: LegacyMonitorStateEvent[] = [];
 	let activeTools: string[] = [];
 
@@ -90,6 +92,11 @@ function createRunner(): FakeRunner {
 			handlers.set(eventType, registered);
 		},
 		events,
+		rpc: {
+			emit(eventType: string, data: unknown) {
+				if (eventType === WAKE_SOURCE_STATE_EVENT && isChannelState(data)) rpcChannelStates.push(data);
+			},
+		},
 		sendMessage: () => {},
 		sendUserMessage: () => {},
 		getActiveTools: () => activeTools,
@@ -102,6 +109,7 @@ function createRunner(): FakeRunner {
 		pi,
 		tools,
 		channelStates,
+		rpcChannelStates,
 		legacyMonitorStates,
 		async emitLifecycle(eventType, payload, ctx) {
 			for (const handler of handlers.get(eventType) ?? []) await handler(payload, ctx);
@@ -232,6 +240,12 @@ describe("terminal wake source state", () => {
 		const killedState = runner.waitForChannel("terminal-background-sessions", 0);
 		await runner.tools.get("kill_bash")?.execute("kill", { bash_id: bashId });
 		expect(await killedState).toMatchObject({ source: "terminal-background-sessions", activeCount: 0, items: [] });
+
+		// senpi#3492: a task supervisor only sees what crosses the RPC channel, so every
+		// background-session transition must mirror onto it, not only the in-process bus.
+		const backgroundStates = (states: WakeSourceStateEvent[]) =>
+			states.filter((state) => state.source === "terminal-background-sessions");
+		expect(backgroundStates(runner.rpcChannelStates)).toEqual(backgroundStates(runner.channelStates));
 	});
 
 	it("tracks two concurrent backgrounds and decrements when one exits", async () => {

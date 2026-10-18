@@ -92,11 +92,13 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 			if (state.manifestWriter) void state.manifestWriter.observeMonitorState(snapshot);
 		},
 		onBackgroundState: (snapshot) => {
-			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
+			const payload = {
 				source: "terminal-background-sessions",
 				activeCount: snapshot.length,
 				items: snapshot,
-			});
+			};
+			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, payload);
+			pi.rpc?.emit(WAKE_SOURCE_STATE_EVENT, payload);
 			const record = (): void => {
 				const writer = state.manifestWriter;
 				if (!writer) return;
