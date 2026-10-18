@@ -142,7 +142,7 @@ async function scanTransitions(file: string): Promise<TransitionEntry[]> {
 		}
 		// After the last newline is the torn tail of a crash, or nothing. A final line that parses was written whole
 		// (a writer outside senpi that omits the newline); the loader keeps it, so it is read too (#3586 review L1).
-		const tail = finalSegmentTransition(pending, lineNumber + 1);
+		const tail = transitionOf(pending, lineNumber + 1, { tolerateTorn: true });
 		if (tail !== undefined) entries.push(tail);
 		return entries;
 	} finally {
@@ -150,22 +150,18 @@ async function scanTransitions(file: string): Promise<TransitionEntry[]> {
 	}
 }
 
-function finalSegmentTransition(segment: string, lineNumber: number): TransitionEntry | undefined {
-	if (!segment.includes(PENDING_INPUT_TRANSITION)) return undefined;
-	try {
-		JSON.parse(segment);
-	} catch {
-		return undefined;
-	}
-	return transitionOf(segment, lineNumber);
-}
-
-function transitionOf(line: string, lineNumber: number): TransitionEntry | undefined {
+/** A complete line that names a transition and does not parse is corrupt; a torn final segment is just dropped. */
+function transitionOf(
+	line: string,
+	lineNumber: number,
+	options: { readonly tolerateTorn?: boolean } = {},
+): TransitionEntry | undefined {
 	if (!line.includes(PENDING_INPUT_TRANSITION)) return undefined;
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(line);
 	} catch {
+		if (options.tolerateTorn === true) return undefined;
 		throw new PendingInputJournalCorruptError(lineNumber);
 	}
 	if (
