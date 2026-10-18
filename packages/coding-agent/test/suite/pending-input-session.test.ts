@@ -5,6 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { PendingInputJournalGapError } from "../../src/core/pending-input-journal.ts";
 import {
 	ClientMessageIdConflictError,
 	PendingInputDivergenceError,
@@ -452,6 +453,50 @@ describe("pending-input recovery on reopen", () => {
 		let queuedIds = 100;
 		return new SessionPendingInputs({ sessionManager, nextQueuedId: () => `q_${++queuedIds}` });
 	}
+
+	it("opens again after a transient failure, but keeps refusing a journal that cannot be read (#3608)", async () => {
+		const records: PendingInputJournalRecord[] = [];
+		let failReads = 1;
+		const journal: PendingInputJournal = {
+			append: async (record) => {
+				records.push(record);
+			},
+			read: async () => {
+				if (failReads > 0) {
+					failReads -= 1;
+					throw new Error("file briefly locked");
+				}
+				return records;
+			},
+		};
+		const sessionManager = SessionManager.inMemory();
+		const inputs = new SessionPendingInputs({ sessionManager, nextQueuedId: () => "q_1", journal });
+		await expect(
+			inputs.admit({ clientMessageId: "c-1", text: "q", mode: "followUp" }, () => undefined),
+		).rejects.toThrow("file briefly locked");
+
+		await inputs.admit({ clientMessageId: "c-1", text: "q", mode: "followUp" }, () => undefined);
+
+		expect((await inputs.snapshot()).inputs.map((input) => input.clientMessageId)).toEqual(["c-1"]);
+
+		let gapReads = 0;
+		const unreadable = new SessionPendingInputs({
+			sessionManager: SessionManager.inMemory(),
+			nextQueuedId: () => "q_1",
+			journal: {
+				append: async () => {},
+				read: async () => {
+					gapReads += 1;
+					throw new PendingInputJournalGapError(2);
+				},
+			},
+		});
+		const admitOnce = () =>
+			unreadable.admit({ clientMessageId: "c-9", text: "q", mode: "followUp" }, () => undefined);
+		await expect(admitOnce()).rejects.toBeInstanceOf(PendingInputJournalGapError);
+		await expect(admitOnce()).rejects.toBeInstanceOf(PendingInputJournalGapError);
+		expect(gapReads).toBe(1);
+	});
 
 	it("reports a failed eager open to the next caller, never as an unhandled rejection", async () => {
 		const records: PendingInputJournalRecord[] = [];

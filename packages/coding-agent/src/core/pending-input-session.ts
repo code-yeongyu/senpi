@@ -2,7 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import type { QueuedInputPort } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { attachmentFingerprint, PendingInputAttachments } from "./pending-input-attachments.ts";
-import { SessionPendingInputJournal } from "./pending-input-journal.ts";
+import {
+	PendingInputJournalCorruptError,
+	PendingInputJournalError,
+	PendingInputJournalGapError,
+	SessionPendingInputJournal,
+} from "./pending-input-journal.ts";
 import type { PendingInputProjection } from "./pending-input-projection.ts";
 import { pruneSettledAttachments, type RecoveredInput, recoverQueuedInputs } from "./pending-input-recovery.ts";
 import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
@@ -79,6 +84,8 @@ export class SessionPendingInputs {
 	readonly lifetimeId = randomUUID();
 	private readonly options: SessionPendingInputsOptions;
 	private storeOpening: Promise<PendingInputStore> | undefined;
+	/** Set by the first open; every use after it reopens through `store()` when a transient failure cleared it. */
+	private storeWanted = false;
 	private port: QueuedInputPort | undefined;
 	private attempts = 0;
 	/** Bumped synchronously by every clear, so a change can tell a clear it raced from a real divergence. */
@@ -114,8 +121,8 @@ export class SessionPendingInputs {
 	async restoreHandle(
 		clientMessageId: string,
 	): Promise<{ readonly queuedId: string } | "retired" | "held" | undefined> {
-		if (this.storeOpening === undefined) return undefined;
-		const input = (await this.storeOpening).current(clientMessageId);
+		if (!this.storeWanted) return undefined;
+		const input = (await this.store()).current(clientMessageId);
 		if (input === undefined) return undefined;
 		// Already in the native queue this lifetime: restoring it again would queue it twice.
 		if (this.held.has(clientMessageId)) return "held";
@@ -163,9 +170,9 @@ export class SessionPendingInputs {
 		request: QueuedInputChangeRequest,
 		applyNative: () => QueuedInputChangeOutcome,
 	): Promise<QueuedInputChangeOutcome | undefined> {
-		if (this.storeOpening === undefined) return undefined;
+		if (!this.storeWanted) return undefined;
 		const clearsAtStart = this.clears;
-		const store = await this.storeOpening;
+		const store = await this.store();
 		return store.transaction(async (tx) => {
 			const current = tx.current(request.clientMessageId);
 			if (current === undefined) return undefined;
@@ -201,8 +208,8 @@ export class SessionPendingInputs {
 	 */
 	async recordCleared(clientMessageIds: readonly string[]): Promise<void> {
 		this.clears += 1;
-		if (this.storeOpening === undefined || clientMessageIds.length === 0) return;
-		const store = await this.storeOpening;
+		if (!this.storeWanted || clientMessageIds.length === 0) return;
+		const store = await this.store();
 		// One record for the whole clear: it lands or not as a unit, never split around a later entry.
 		await store.transaction(async (tx) => {
 			const queued = clientMessageIds.filter((clientMessageId) => tx.current(clientMessageId)?.phase === "queued");
@@ -221,7 +228,7 @@ export class SessionPendingInputs {
 	 * `throughCursor`: apply it, then only updates with a later cursor. Absence from `inputs` is never an outcome.
 	 */
 	async snapshot(knownClientMessageIds: readonly string[] = []): Promise<PendingInputSnapshot> {
-		const store = this.storeOpening === undefined ? undefined : await this.storeOpening;
+		const store = this.storeWanted ? await this.store() : undefined;
 		const inputs = (store?.snapshot() ?? []).filter(
 			(input) => input.state !== "delivered" && input.state !== "removed",
 		);
@@ -248,6 +255,7 @@ export class SessionPendingInputs {
 	}
 
 	private store(): Promise<PendingInputStore> {
+		this.storeWanted = true;
 		this.storeOpening ??= PendingInputStore.open({
 			journal: this.options.journal ?? new SessionPendingInputJournal(this.options.sessionManager),
 			lifetimeId: this.lifetimeId,
@@ -268,12 +276,18 @@ export class SessionPendingInputs {
 				);
 			return store;
 		});
-		return this.storeOpening;
+		const opening = this.storeOpening;
+		// A failed open that a later try could pass (a file briefly locked, a disk briefly full) is forgotten, so
+		// the next use opens again from the journal; a journal that cannot be read safely keeps refusing (#3608).
+		opening.catch((error: unknown) => {
+			if (this.storeOpening === opening && !journalUnreadable(error)) this.storeOpening = undefined;
+		});
+		return opening;
 	}
 
 	private async openPort(): Promise<QueuedInputPort | undefined> {
-		if (this.storeOpening === undefined) return undefined;
-		const store = await this.storeOpening;
+		if (!this.storeWanted) return undefined;
+		const store = await this.store();
 		this.port ??= createSessionQueuedInputPort({
 			store,
 			ownerId: `${process.pid}:${this.lifetimeId}`,
@@ -282,6 +296,14 @@ export class SessionPendingInputs {
 		});
 		return this.port;
 	}
+}
+
+function journalUnreadable(error: unknown): boolean {
+	return (
+		error instanceof PendingInputJournalCorruptError ||
+		error instanceof PendingInputJournalGapError ||
+		error instanceof PendingInputJournalError
+	);
 }
 
 function admissionFingerprint(input: IdentifiedInput): string {
