@@ -15,6 +15,7 @@ import {
 	EVAL_CELLS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	MOVED_PATH_GUARD_CAPABILITY,
+	PENDING_INPUT_LIFECYCLE_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
@@ -63,6 +64,7 @@ export function multiSessionHostCapabilities(options: {
 			EVAL_CELLS_CAPABILITY,
 			AUTH_KEY_VERIFY_CAPABILITY,
 			QUEUED_MESSAGE_REVISION_CAPABILITY,
+			PENDING_INPUT_LIFECYCLE_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the

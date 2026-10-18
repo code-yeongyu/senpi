@@ -73,6 +73,7 @@ import {
 	EVAL_CELLS_CAPABILITY,
 	EXTENSION_EVENTS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
+	PENDING_INPUT_LIFECYCLE_CAPABILITY,
 	QUESTION_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RETRY_FALLBACK_COMMAND_CAPABILITY,
@@ -987,6 +988,7 @@ export function createRpcConnectionHandler(
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
+								PENDING_INPUT_LIFECYCLE_CAPABILITY,
 								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
 								...(options.toolRuntime ? [toolRuntimeCapability(options.toolRuntime)] : []),
 								// Client flags cannot advertise a host guard this classic binding does not run.

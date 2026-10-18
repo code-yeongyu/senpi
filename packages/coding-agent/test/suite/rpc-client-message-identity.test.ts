@@ -41,7 +41,7 @@ describe("durable RPC client message admission", () => {
 		});
 		const protocol = await rpc.send({ type: "get_protocol_info" });
 		expect(protocol).toMatchObject({
-			data: { capabilities: expect.arrayContaining(["durable_client_message_id"]) },
+			data: { capabilities: expect.arrayContaining(["durable_client_message_id", "pending_input_lifecycle_v1"]) },
 		});
 		expect(rpc.messages().filter((event) => event.type === "turn_start")).toEqual([
 			expect.objectContaining({ clientMessageId: "message-1", clientTurnId: "turn-1" }),

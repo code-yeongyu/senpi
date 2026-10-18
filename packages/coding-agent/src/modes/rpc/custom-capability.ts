@@ -179,3 +179,9 @@ export const AUTH_KEY_VERIFY_CAPABILITY = "auth_key_verify";
 
 /** Queued inputs carry a `revision`, and `dequeue_message` / `edit_queued_message` accept `expectedRevision` (senpi#3459). */
 export const QUEUED_MESSAGE_REVISION_CAPABILITY = "queued_message_revision";
+
+/**
+ * Every queued input is kept by the engine's pending-input lifecycle, TUI input included: `get_pending_inputs`,
+ * `pending_input_update`, durable custody across a reopen, and a clear that always wins (senpi#3549).
+ */
+export const PENDING_INPUT_LIFECYCLE_CAPABILITY = "pending_input_lifecycle_v1";
