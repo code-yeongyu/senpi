@@ -5840,9 +5840,17 @@ export class AgentSession {
 			this._enqueuePreparedInput(input);
 			return;
 		}
+		// One order for the record and the native queue, so a reopen requeues it where it was.
+		const enqueueOrder = input.enqueueOrder ?? this.reserveQueuedInputOrder();
 		await this._pendingInputs.admit(
-			{ clientMessageId, text: input.text, ...(input.images ? { images: input.images } : {}), mode: input.mode },
-			(queuedId) => this._enqueuePreparedInput({ ...input, queuedId }),
+			{
+				clientMessageId,
+				text: input.text,
+				...(input.images ? { images: input.images } : {}),
+				mode: input.mode,
+				enqueueOrder,
+			},
+			(queuedId) => this._enqueuePreparedInput({ ...input, enqueueOrder, queuedId }),
 		);
 	}
 
@@ -5855,6 +5863,12 @@ export class AgentSession {
 		// The pending-input record is the authority: an input it already retired, or already requeued itself on
 		// reopen, is not queued again.
 		if (restored === "retired" || restored === "held") return;
+		// T37: an identified input the store never held (admitted before durable custody) is admitted now, once;
+		// from then on the store owns it and every later reopen requeues it from the record.
+		if (restored === undefined && input.clientMessageId !== undefined) {
+			await this._enqueueQueuedInput(input);
+			return;
+		}
 		this._enqueuePreparedInput(restored === undefined ? input : { ...input, queuedId: restored.queuedId });
 	}
 
@@ -5866,6 +5880,7 @@ export class AgentSession {
 			text: input.text,
 			images: [...input.images],
 			mode: input.mode,
+			...(input.enqueueOrder === undefined ? {} : { enqueueOrder: input.enqueueOrder }),
 		});
 		if (input.missingAttachments > 0)
 			this._extensionRunner

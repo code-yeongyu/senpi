@@ -66,6 +66,8 @@ export interface PendingInput {
 	readonly text: string;
 	readonly attachments: readonly string[];
 	readonly requestedMode: PendingInputMode;
+	/** Where it sorts among queued inputs; kept so a reopen requeues it where the client put it. */
+	readonly enqueueOrder?: number;
 	readonly phase: PendingInputPhase;
 	readonly failure?: PendingInputFailure;
 	readonly removedBy?: RemovalCause;
@@ -85,6 +87,7 @@ export interface SubmitEvent {
 	readonly text: string;
 	readonly attachments: readonly string[];
 	readonly requestedMode: PendingInputMode;
+	readonly enqueueOrder?: number;
 }
 
 /** A mutation names the handle and revision it was based on, and carries an effect id for replay. */

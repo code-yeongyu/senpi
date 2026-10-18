@@ -42,6 +42,7 @@ function submit(current: PendingInput | undefined, event: SubmitEvent): PendingI
 		text: event.text,
 		attachments: event.attachments,
 		requestedMode: event.requestedMode,
+		...(event.enqueueOrder === undefined ? {} : { enqueueOrder: event.enqueueOrder }),
 		phase: "queued",
 		attemptCount: 0,
 		superseded: [],

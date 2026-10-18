@@ -531,4 +531,29 @@ describe("pending-input recovery on reopen", () => {
 
 		expect(harness.session.getQueuedInputs()).toEqual([]);
 	});
+
+	it("admits a legacy ledger input the store never held once, so it is queued once and then owned by the store (T37)", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+
+		await harness.session.restoreQueuedInput({
+			clientMessageId: "legacy-1",
+			text: "old",
+			mode: "followUp",
+			enqueueOrder: 1,
+		});
+		await harness.session.restoreQueuedInput({
+			clientMessageId: "legacy-1",
+			text: "old",
+			mode: "followUp",
+			enqueueOrder: 1,
+		});
+
+		expect(harness.session.getQueuedInputs().map((input) => [input.clientMessageId, input.text])).toEqual([
+			["legacy-1", "old"],
+		]);
+		expect((await harness.session.getPendingInputs(["legacy-1"])).outcomes).toEqual([
+			expect.objectContaining({ clientMessageId: "legacy-1", status: "admitted" }),
+		]);
+	});
 });

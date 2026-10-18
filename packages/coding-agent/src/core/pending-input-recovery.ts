@@ -16,6 +16,7 @@ export interface RecoveredInput {
 	readonly text: string;
 	readonly images: readonly ImageContent[];
 	readonly mode: PendingInputMode;
+	readonly enqueueOrder?: number;
 	readonly missingAttachments: number;
 }
 
@@ -35,6 +36,7 @@ export function recoverQueuedInputs(
 			text: input.text,
 			images,
 			mode: input.requestedMode,
+			...(input.enqueueOrder === undefined ? {} : { enqueueOrder: input.enqueueOrder }),
 			missingAttachments: missing.length,
 		});
 		recovered.add(input.clientMessageId);

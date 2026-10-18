@@ -14,6 +14,7 @@ export interface IdentifiedInput {
 	readonly text: string;
 	readonly images?: readonly ImageContent[];
 	readonly mode: PendingInputMode;
+	readonly enqueueOrder?: number;
 }
 
 export interface SessionPendingInputsOptions {
@@ -100,7 +101,8 @@ export class SessionPendingInputs {
 				return file !== undefined && this.options.sessionManager.isPersisted() ? `${file}.attachments` : undefined;
 			},
 		});
-	private recovered = new Set<string>();
+	/** Every input natively queued in this lifetime, admitted or requeued on open: never restored a second time. */
+	private readonly held = new Set<string>();
 
 	/**
 	 * How a restored input (from the RPC admission ledger after a reopen) re-enters the native queue: under the
@@ -113,8 +115,8 @@ export class SessionPendingInputs {
 		if (this.storeOpening === undefined) return undefined;
 		const input = (await this.storeOpening).current(clientMessageId);
 		if (input === undefined) return undefined;
-		// The store already requeued it on open: restoring it again would queue it twice.
-		if (this.recovered.has(clientMessageId)) return "held";
+		// Already in the native queue this lifetime: restoring it again would queue it twice.
+		if (this.held.has(clientMessageId)) return "held";
 		return input.phase === "queued" ? { queuedId: input.handle.queuedId } : "retired";
 	}
 
@@ -137,11 +139,15 @@ export class SessionPendingInputs {
 				text: input.text,
 				attachments: (input.images ?? []).map(attachmentFingerprint),
 				requestedMode: input.mode,
+				...(input.enqueueOrder === undefined ? {} : { enqueueOrder: input.enqueueOrder }),
 			});
 			if (result?.outcome === "client_message_id_conflict")
 				throw new ClientMessageIdConflictError(input.clientMessageId);
 			const admitted = tx.current(input.clientMessageId);
-			if (result?.outcome === "admitted" && admitted !== undefined) enqueue(admitted.handle.queuedId);
+			if (result?.outcome === "admitted" && admitted !== undefined) {
+				enqueue(admitted.handle.queuedId);
+				this.held.add(input.clientMessageId);
+			}
 			return result;
 		});
 	}
@@ -250,7 +256,8 @@ export class SessionPendingInputs {
 		}).then((store) => {
 			const attachments = this.attachments();
 			const requeue = this.options.requeue;
-			if (requeue !== undefined) this.recovered = recoverQueuedInputs(store, attachments, requeue);
+			if (requeue !== undefined)
+				for (const id of recoverQueuedInputs(store, attachments, requeue)) this.held.add(id);
 			store.subscribe((projections) => pruneSettledAttachments(store, attachments, projections));
 			const onChange = this.options.onChange;
 			if (onChange !== undefined)
