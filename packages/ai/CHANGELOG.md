@@ -10,6 +10,7 @@
 
 ### Changed
 
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 3 models.
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
 
 ### Fixed
