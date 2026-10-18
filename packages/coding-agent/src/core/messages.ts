@@ -7,6 +7,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
+	CONTEXT_PROVENANCE_FIELD,
 	copyContextProvenance,
 	dropFailedAssistantTurns,
 	type ImageContent,
@@ -217,7 +218,9 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						role: "user" as const,
 						content,
 						timestamp: m.timestamp,
-					});
+					}) as Message & { [CONTEXT_PROVENANCE_FIELD]?: Record<string, unknown> };
+					const provenance = converted[CONTEXT_PROVENANCE_FIELD] ?? {};
+					converted[CONTEXT_PROVENANCE_FIELD] = { ...provenance, customType: m.customType };
 					if (m.customType === ENVIRONMENT_CONTEXT_MESSAGE_TYPE) environmentMessages.add(converted);
 					return converted;
 				}

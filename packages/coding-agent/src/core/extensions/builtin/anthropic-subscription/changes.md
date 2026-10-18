@@ -1,3 +1,22 @@
+## 2026-10-18 - Ignore rewrite-in-place hook bodies in subscription continuity hashes
+
+### What changed
+
+- `session-sync.ts`: `sentMessageHashes` hashes rewrite-in-place custom hooks by their provenance `customType` while leaving them in the transmitted list; memory notices, RULES blocks, and senpi-task notices retain content-prefix compatibility. Append-only goal continuations remain content-significant.
+- `packages/coding-agent/test/suite/regressions/anthropic-subscription-volatile-hook-continuity.test.ts`: coverage hashes actual `convertToLlm` output, confirms reattach bindings, and keeps structural prepend and real-user rewrite cases fail-closed.
+
+### Why
+
+- Rewritten hook bodies can falsely report `sent_stream_diverged` and flatten a valid SDK session, but removing hooks from the transmitted list would omit hook-only turns from the resident delta payload.
+
+### Why an extension could not handle it
+
+- This is the extension: `session-sync.ts` owns the provider-private continuity ledger and delta index.
+
+### Expected merge conflict zones
+
+- LOW: `session-sync.ts` around `sentMessageHashes` and hook-kind detection.
+
 ## 2026-10-16 - A transient failure never rotates or blocks an account (senpi#3466)
 
 ### What changed

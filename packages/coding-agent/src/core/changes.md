@@ -1,3 +1,21 @@
+## 2026-10-18 - Preserve custom message type through LLM conversion provenance
+
+### What changed
+
+- `packages/coding-agent/src/core/messages.ts`: the custom-message arm of `convertToLlm` stamps `customType` into request-local `__piContextProvenance` while preserving existing provenance fields.
+
+### Why
+
+- Provider-private continuity logic must distinguish converted extension hooks from ordinary user messages after conversion removes the `role: custom` shape; content-only inference cannot reliably identify monitor, wake, terminal, or directive messages.
+
+### Why an extension could not handle it
+
+- `convertToLlm` is the core representation boundary used before provider dispatch. An extension cannot restore source type metadata after that conversion without changing provider-visible content.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/messages.ts` in the `case "custom"` conversion arm.
+
 ## 2026-10-17 - A reopened session keeps only its latest compaction window resident (senpi#3519)
 
 ### What changed
