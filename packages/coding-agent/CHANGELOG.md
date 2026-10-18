@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- A custom message with several text blocks that starts a turn now reaches `before_agent_start` handlers with its blocks joined by a newline, as user messages are, instead of run together ([#3588](https://github.com/code-yeongyu/senpi/issues/3588)).
 - A queued message with several text blocks, such as an async question answered with a comment or typed words, now leaves the queue when it is delivered. It used to reach the model but stay listed as `Steering:` above the editor (and in queue counts and RPC queue snapshots) for the rest of the session ([#3588](https://github.com/code-yeongyu/senpi/issues/3588)).
 - A host daemon now inherits every credential variable the engine reads, including `CLAUDE_CODE_OAUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and numbered slots such as `OPENAI_API_KEY_2`, so a Claude subscription from the environment works through a host as it does in a direct process (#3531).
 

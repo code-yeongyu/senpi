@@ -1,3 +1,22 @@
+## 2026-10-18 - A multi-block trigger-turn message reaches before_agent_start with newline-joined text (senpi#3588 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `sendCustomMessage(..., { triggerTurn: true })` path passes `contentText(appMessage.content)` (blocks joined by `"\n"`) to `emitBeforeAgentStart` instead of `contentText(appMessage.content, "")`.
+
+### Why
+
+- Every other user-facing text in the session joins text blocks with a newline (`userTextContent`, the queue, the #3588 dequeue match). This path fused the blocks of a multi-block custom message into one run, so a `before_agent_start` handler saw `"first blocksecond block"`.
+- Regression: `test/suite/regressions/issue-3588-trigger-turn-prompt-joins-blocks.test.ts` (fails on the previous head with the fused text).
+
+### Why an extension could not handle it
+
+- The `prompt` field of `before_agent_start` is built by the session before any handler runs.
+
+### Expected merge conflict zones
+
+- LOW: the one changed argument in `agent-session.ts`.
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588)
 
 ### What changed
@@ -7,7 +26,7 @@
 ### Why
 
 - Since senpi#2920 a later ask-user answer keeps its frame and the user's words in separate text blocks, and `userTextContent` keeps blocks only while `blocks.join("\n") === text`. The queue records that `text`; the old match joined with no separator, so a multi-block steer or follow-up reached the model but stayed queued for the rest of the session (the TUI kept showing `Steering: [Answer to question <id>]`; queue counts and RPC queue snapshots counted it).
-- Regression: `test/suite/regressions/issue-3588-multi-block-queued-input-leaves-queue.test.ts` (the real `ask_user_question` tool answered while a tool runs, extension steer, extension follow-up, identified steer with `clientMessageId`, displaced started prompt). All five fail on main; reverting either half fails its cases.
+- Regression: `test/suite/regressions/issue-3588-multi-block-queued-input-leaves-queue.test.ts` (the real `ask_user_question` tool answered while a tool runs, extension steer, extension follow-up, identified steer with `clientMessageId`, displaced started prompt). All five fail on main. Reverting the `message_start` match fails all five; reverting the `_extractUserMessageText` join fails only the displaced-prompt case, the one test that covers that path.
 
 ### Why an extension could not handle it
 

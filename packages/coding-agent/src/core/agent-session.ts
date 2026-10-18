@@ -5975,7 +5975,7 @@ export class AgentSession {
 					this._refreshToolDeclarationsForModel();
 					this._promptCachePrefixBuilds.cancelAll();
 					const result = await this._extensionRunner.emitBeforeAgentStart(
-						contentText(appMessage.content, ""),
+						contentText(appMessage.content),
 						undefined,
 						this._baseSystemPrompt,
 						this._baseSystemPromptOptions,
