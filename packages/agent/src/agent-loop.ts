@@ -41,7 +41,7 @@ import { type InternalLoopConfig, internalProgressSink } from "./internal-events
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
 import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiveness } from "./stream-keepalive.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
-import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
+import { resolveCallTool, unknownToolErrorText, withToolNameCorrection } from "./tool-name-alias.ts";
 import type { ToolHost } from "./execution/tool-host.ts";
 import type {
 	AgentContext,
@@ -1496,7 +1496,12 @@ async function prepareToolCall(
 			kind: "immediate",
 			toolCall,
 			result: createErrorToolResult(
-				hint === undefined ? `Tool ${toolCall.name} not found` : `Tool ${toolCall.name} not found. ${hint}`,
+				hint === undefined
+					? unknownToolErrorText(
+							toolCall.name,
+							(currentContext.tools ?? []).map((candidate) => candidate.name),
+						)
+					: `Tool ${toolCall.name} not found. ${hint}`,
 			),
 			isError: true,
 		};
