@@ -3,6 +3,8 @@ export type CompactionQueuedMessage = {
 	readonly mode: "steer" | "followUp";
 	/** Global recovery order reserved when the TUI accepts the input. */
 	readonly enqueueOrder?: number;
+	/** Minted when the TUI accepts the input, so the flush hands it to durable custody under one id (senpi#3549). */
+	readonly clientMessageId?: string;
 	/** TUI-local render record; never enters AgentSession or persistence. */
 	readonly pendingEchoId?: string;
 	/** Typed after leading whitespace: deliver `/...` text even when no command handles it. */

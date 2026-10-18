@@ -7443,6 +7443,7 @@ export class InteractiveMode {
 			text,
 			mode,
 			enqueueOrder: this.session.reserveQueuedInputOrder(),
+			clientMessageId: crypto.randomUUID(),
 			...(unknownCommandAsText ? { unknownCommandAsText } : {}),
 		});
 		this.getSessionLogger().debug("compaction_queue_enqueue", {
@@ -7574,6 +7575,9 @@ export class InteractiveMode {
 									: undefined;
 								return session.prompt(message.text, {
 									streamingBehavior: message.mode,
+									...(message.clientMessageId === undefined
+										? {}
+										: { clientMessageId: message.clientMessageId }),
 									...(message.unknownCommandAsText ? { unknownCommandAsText: true } : {}),
 									preflightResult: (success) => {
 										echoOptions?.preflightResult(success);
@@ -7602,16 +7606,13 @@ export class InteractiveMode {
 							throw error;
 						}),
 					deliverQueued: (message) => {
-						if (message.enqueueOrder === undefined) {
-							return message.mode === "followUp" ? session.followUp(message.text) : session.steer(message.text);
-						}
+						const options = {
+							...(message.enqueueOrder === undefined ? {} : { enqueueOrder: message.enqueueOrder }),
+							...(message.clientMessageId === undefined ? {} : { clientMessageId: message.clientMessageId }),
+						};
 						return message.mode === "followUp"
-							? session.followUp(message.text, undefined, {
-									enqueueOrder: message.enqueueOrder,
-								})
-							: session.steer(message.text, undefined, {
-									enqueueOrder: message.enqueueOrder,
-								});
+							? session.followUp(message.text, undefined, options)
+							: session.steer(message.text, undefined, options);
 					},
 					reportFailure: (error, undeliveredCount) => {
 						this.showError(
